@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { observationGlyph, observationWord, projectStructure, visibleBoxes,
-  type StructureData, type StructureNode, type StructureObservation } from './structure.model';
+import { applyStructureDelta, factLines, isStructuralDelta, isUndeclared, observationGlyph, observationWord,
+  projectStructure, visibleBoxes,
+  type StructureData, type StructureDelta, type StructureNode, type StructureObservation } from './structure.model';
+import { observedStructure } from './structure.fixtures';
 import { structureTestClockMs } from './structure-test-clock';
 
 const node = (id: string, kind: string, label: string, parentId: string | null,
@@ -89,7 +91,8 @@ describe('Structure projection', () => {
   it.each([
     ['matched', 'up', 'Up', '●'],
     ['declared-only', 'not observed', 'Not observed', '○'],
-    ['undeclared', 'up', 'Not declared', '○'],
+    ['undeclared', 'up', 'Up', '●'],
+    ['undeclared', 'not observed', 'Not observed', '○'],
     ['differs', 'up', 'Differs', '▲'],
     ['stale', 'stale', 'Stale', '○'],
     ['unreachable-by-design', 'not observed', 'Unreachable by design', '○'],
@@ -114,5 +117,53 @@ describe('Structure projection', () => {
     const roots = projectStructure(fixture, 'host', 3, {});
     expect(roots[0].children[0].children.map(child => child.id)).toEqual(['machine:web']);
     expect(fixture.nodes.find(item => item.id === 'machine:web')?.parentId).toBe('installation');
+  });
+
+  it('applies a delta in place and tells a fact update from a changed shape (AGT-3954)', () => {
+    const base: StructureData = { revision: 7, nodes: [node('a', 'physical', 'A', null), node('b', 'physical', 'B', null)],
+      links: [{ id: 'link:a>b:call', from: 'a', to: 'b', kind: 'call', label: 'Call', sourceRef: 'fixture' }] };
+    const delta = (change: Partial<StructureDelta>): StructureDelta => ({ scope: 'workspace', environment: null, baseRevision: 7,
+      revision: 8, generatedAt: '2026-11-17T12:00:00Z', nodes: [], removedNodes: [], links: [], removedLinks: [], ...change });
+    const update = delta({ nodes: [{ ...base.nodes[1], label: 'B2' }],
+      links: [{ ...base.links[0], facts: { state: 'up', latencyMs: 3 } }] });
+    expect(isStructuralDelta(base, update)).toBe(false);
+    const updated = applyStructureDelta(base, update);
+    expect(updated.nodes.map(item => item.label)).toEqual(['A', 'B2']);
+    expect(updated.links[0].facts?.latencyMs).toBe(3);
+    expect(updated.revision).toBe(8);
+    expect(base.nodes[1].label).toBe('B');
+
+    const shape = delta({ nodes: [node('c', 'physical', 'C', null)], removedNodes: ['a'], removedLinks: ['link:a>b:call'] });
+    expect(isStructuralDelta(base, shape)).toBe(true);
+    expect(isStructuralDelta(base, delta({ nodes: [node('c', 'physical', 'C', null)] }))).toBe(true);
+    expect(isStructuralDelta(base, delta({ links: [{ from: 'b', to: 'a', kind: 'call', label: 'Back', sourceRef: 'fixture' }] }))).toBe(true);
+    const reshaped = applyStructureDelta(base, shape);
+    expect(reshaped.nodes.map(item => item.id)).toEqual(['b', 'c']);
+    expect(reshaped.links).toEqual([]);
+  });
+
+  it('lists the facts of a node as plain pairs and marks what only reports (AGT-3954)', () => {
+    const find = (id: string): StructureNode => observedStructure.nodes.find(item => item.id === id)!;
+    expect(isUndeclared(find('machine:review-1'))).toBe(true);
+    expect(isUndeclared(find('machine:old-host'))).toBe(true);
+    expect(isUndeclared(find('machine:spare'))).toBe(false);
+    expect(factLines(find('machine:spare'))).toEqual([]);
+    const host = Object.fromEntries(factLines(find('machine:review-1')).map(line => [line.label, line.value]));
+    expect(host).toMatchObject({
+      'Reported as': 'container · docker · review-host-1', Roles: 'review', CPU: '37% of 24 cores',
+      Load: '2.50 · 2.00 · 1.50', Memory: '8.0 GiB of 32.0 GiB',
+      'Disk /srv/work': '60.0 GiB used · 40.0 GiB free · runner work', Network: '↓ 1.2 KiB/s · ↑ 3.3 KiB/s',
+      Slots: '1 busy · 1 free', 'Running cards': 'AGT-7', Version: '2.0 · stable 2.0 · current',
+      Tools: 'claude 1.2.0 (behind, target 1.3.0), dotnet 10.0.100', Missing: 'toolchain:playwright',
+      'Waiting cards': 'AGT-10 refused (toolchain:playwright)',
+    });
+    const studio = Object.fromEntries(factLines(find('machine:studio-server')).map(line => [line.label, line.value]));
+    expect(studio).toMatchObject({
+      'Workspace repository': '3.0 GiB · backup and git remote', 'Project checkouts': 'at least 9.0 GiB · git remote',
+      'Application state directory': '200.0 MiB · backup', 'Secrets key': '0 KiB · not covered',
+      'Edge certificates': 'not visible to the API',
+    });
+    expect(Object.fromEntries(factLines(find('machine:runner-host')).map(line => [line.label, line.value]))['Version'])
+      .toBe('1.9 · stable 2.0 · behind · install pending');
   });
 });

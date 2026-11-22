@@ -1,0 +1,21 @@
+@if (cards().length) {
+  <section class="off-stable-grades" data-testid="off-stable-grades" aria-labelledby="off-stable-grades-title">
+    <h4 id="off-stable-grades-title">
+      Graded by a build that is not Stable · <span data-testid="off-stable-grades-count">{{ cards().length }}</span>
+    </h4>
+    <ol class="off-stable-grades__list">
+      @for (card of cards(); track card.projectName + '::' + card.taskKey) {
+        <li class="off-stable-grades__row" data-testid="off-stable-grade-row" [attr.data-task-key]="card.taskKey">
+          <a data-testid="off-stable-grade-card" [href]="'#/tasks/' + card.taskKey"
+             (click)="openCard($event, card.taskKey)">{{ card.taskKey }}</a>
+          <span class="off-stable-grades__title">{{ card.title }}</span>
+          <span class="off-stable-grades__lane" data-testid="off-stable-grade-lane">{{ laneName(card.lane) }}</span>
+          @if (card.gradedAt) {
+            <time [attr.datetime]="card.gradedAt" [attr.title]="card.gradedAt">{{ card.gradedAt | date:'short' }}</time>
+          }
+          <span class="off-stable-grades__notice" data-testid="off-stable-grade-notice-text">{{ card.notice }}</span>
+        </li>
+      }
+    </ol>
+  </section>
+}

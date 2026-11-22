@@ -106,10 +106,12 @@ function mount(opts: {
     providers: [
       provideZonelessChangeDetection(),
       { provide: TaskService, useValue: taskStub },
-      { provide: BatchGateService, useValue: opts.batchGate ?? {
-        retryInfrastructureGate: vi.fn(() => of({ retried: true })),
+      { provide: BatchGateService, useValue: {
+        retryInfrastructureGate: vi.fn(() => of({ requestId: 'retry-1', taskKey: 'AGT-1994', requestedAtUtc: '2026-11-10T10:00:00Z', status: 'pending' })),
         getSettings: vi.fn(() => of(batchSettings)),
         putSettings: vi.fn(() => of(batchSettings)),
+        state: () => signal(null), watch: () => vi.fn(),
+        ...opts.batchGate,
       } },
       { provide: HttpClient, useValue: { post: opts.retryReview ?? vi.fn(() => of({ status: 'review-started' })) } },
       { provide: TaskTimelinePollService, useValue: timelineStub },
@@ -163,7 +165,7 @@ describe('EscalationSummaryComponent', () => {
       reason: '[gate-infrastructure] The verification gate could not run.',
     } as TaskDetail['info']['parkedBlocker'];
     const gate = {
-      retryInfrastructureGate: vi.fn(() => of({ retried: true })),
+      retryInfrastructureGate: vi.fn(() => of({ requestId: 'retry-1', taskKey: 'AGT-1994', requestedAtUtc: '2026-11-10T10:00:00Z', status: 'pending' })),
       getSettings: vi.fn(() => of(batchSettings)),
       putSettings: vi.fn(() => of(batchSettings)),
     };
@@ -174,6 +176,11 @@ describe('EscalationSummaryComponent', () => {
     expect(element.querySelector('[data-testid="escalation-action-accept-escalated"]')).toBeNull();
     (element.querySelector('[data-testid="escalation-action-retry-gate"]') as HTMLButtonElement).click();
     expect(gate.retryInfrastructureGate).toHaveBeenCalledWith('Demo', 'AGT-1994');
+    fixture.detectChanges();
+    expect(element.querySelector('[data-testid="gate-infrastructure-retry-status"]')?.textContent)
+      .toContain('waits for the batch gate');
+    expect((element.querySelector('[data-testid="escalation-action-retry-gate"]') as HTMLButtonElement).disabled)
+      .toBe(true);
     (element.querySelector('[data-testid="escalation-action-disable-batch"]') as HTMLButtonElement).click();
     expect(gate.putSettings).toHaveBeenCalledWith('Demo', expect.objectContaining({ enabled: false }));
   });
@@ -546,6 +553,29 @@ describe('EscalationSummaryComponent', () => {
     fixture.detectChanges();
     expect(submit.disabled).toBe(false);
     expect(el.querySelector<HTMLInputElement>('.escalation-confirm__findings input')?.checked).toBe(true);
+  });
+
+  it('requires and explains an owner note when no findings are available', () => {
+    const fixture = mount({ reviews: [] });
+    const emitted: unknown[] = [];
+    fixture.componentInstance.triageAction.subscribe(action => emitted.push(action));
+    fixture.componentInstance.openDecision('reissue-escalated');
+    fixture.detectChanges();
+    const el: HTMLElement = fixture.nativeElement;
+    expect(el.querySelector('[data-testid="reissue-no-findings"]')?.textContent).toContain('original task');
+    expect(el.querySelector('.escalation-confirm__note')?.textContent).toContain('required without selected findings');
+    const submit = el.querySelector<HTMLButtonElement>('[data-testid="escalation-confirm-submit"]')!;
+    expect(submit.disabled).toBe(true);
+    const note = el.querySelector<HTMLTextAreaElement>('[data-testid="escalation-owner-note"]')!;
+    note.value = 'Recheck the library API contract.';
+    note.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(submit.disabled).toBe(false);
+    submit.click();
+    expect(emitted).toEqual([expect.objectContaining({
+      id: 'reissue-escalated',
+      reissueInstructions: { findings: [], note: 'Recheck the library API contract.' },
+    })]);
   });
 
   it('replaces three empty context columns with one compact message', () => {

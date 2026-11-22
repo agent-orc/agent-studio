@@ -295,13 +295,15 @@ cases in `backend.Tests/RemoteDeliveryIntegrationTests.cs`):
 | `AgentRoundRequired` | 1 | `StartAgentRound` |
 | `AgentRoundRequired` | 2 or more | `LeaveForHumanReview` |
 
-`MaxAutomaticAgentRounds` is 2 and is counted per fenced delivery chain. The
-immutable result ref and delivered SHA form the persisted `deliveryChainId` on
-each automatic recovery event. Another review of the same delivery shares the
-budget across review epochs; a newly published delivery starts a fresh budget.
-Legacy events without the identifier count conservatively. An exhausted park
-records `automatic recovery budget used: 2/2 for delivery <short sha>` rather
-than a review-verdict placeholder, and says when legacy rounds contributed.
+`MaxAutomaticAgentRounds` is counted per card and integration target
+(AGT-3968). Each automatic recovery event still records the `deliveryChainId`
+(immutable result ref and delivered SHA) as evidence, but a newly published
+delivery no longer starts a fresh budget: every automatic round publishes one.
+An event recorded for another integration branch does not count. Legacy events
+without a delivery identifier count conservatively. An exhausted park records
+`automatic recovery budget used: 1/1 for this card on develop.` followed by the
+conflicting files and the other cards involved, rather than a review-verdict
+placeholder, and says when legacy rounds contributed.
 
 ## Conflict handling and recovery
 

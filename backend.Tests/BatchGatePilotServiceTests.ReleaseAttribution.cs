@@ -123,6 +123,120 @@ public sealed class BatchGatePilotReleaseAttributionTests : BatchGatePilotServic
             pending.Subject.TaskKey == member.Key);
     }
 
+    /// <summary>
+    /// AGT-3968: the runner reports the round's start head as the pickup base.
+    /// AGT-3905 delivered the runner's own develop merge (the base itself);
+    /// AGT-3914 re-delivered its earlier SHA unchanged. Both pickup ranges are
+    /// empty, so the result SHA was never recorded for the new attempt and the
+    /// batch refused the passing review. The sweep attributes the integration
+    /// merge-base range and the card enters the batch without a coding run.
+    /// </summary>
+    [Theory]
+    [InlineData("runner-start-merge")]
+    [InlineData("unchanged-redelivery")]
+    public async Task Continuation_without_own_commit_is_reattributed_and_enters_the_batch(string shape)
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-3968", "docs/continuation.md",
+            settleReview: false, initialState: TaskStates.Escalated);
+
+        var resultSha = member.ResultSha;
+        if (shape == "runner-start-merge")
+        {
+            Git(_repo, "checkout", "-q", "develop");
+            File.WriteAllText(Path.Combine(_repo, "integrated-three.txt"), "three");
+            Git(_repo, "add", "-A");
+            Git(_repo, "commit", "-qm", "fix(DOC-OTHER-3): integrated three");
+            Git(_repo, "push", "-q", "origin", "develop");
+            Git(_repo, "checkout", "-q", "--detach", member.ResultSha);
+            Git(_repo, "-c", "user.name=Agent Studio Runner", "-c", "user.email=runner@agent-studio.invalid",
+                "merge", "-q", "--no-ff", "--no-edit", "origin/develop");
+            resultSha = Git(_repo, "rev-parse", "HEAD");
+            PublishResult(member.Key, resultSha);
+        }
+
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var run = authority.AcquireRun(member.Key, RepositoryId, null, "coding-runner",
+            "coding-host", 600, "continuation-run-" + shape).RunAttempt!;
+        var resultRef = "refs/heads/agent-studio/results/" + member.Key;
+        var settled = authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch,
+                "continuation-settle"),
+            Outcome = "done",
+            ResultSha = resultSha,
+            // The pickup base is the round's start head: the result itself.
+            ResultEnvelope = new Contract.ImmutableResultEnvelope(RepositoryId, run.AttemptId,
+                resultSha, resultSha, resultRef, null, new string('b', 64)),
+        });
+        Assert.True(settled.Accepted, settled.Message);
+        var priorPlan = authority.GetReview(member.ReviewAttemptId)!.Subject.Plan;
+        var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            member.Key, RepositoryId, resultSha, run.AttemptId, "requirements", "policy", [],
+            "continuation-review-" + shape, ResultRef: resultRef, Plan: priorPlan));
+        Assert.True(created.Accepted, created.Message);
+        var claimed = authority.ClaimReview(created.ReviewAttempt!.AttemptId, "review-executor",
+            "review-host", 600, "continuation-review-claim");
+        Assert.True(claimed.Accepted, claimed.Message);
+        var review = authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(claimed.ReviewAttempt!.AttemptId,
+                claimed.ReviewAttempt.LastFence, claimed.ReviewAttempt.AuthorityEpoch,
+                "continuation-review-pass"), resultSha, ReviewTerminalOutcome.Pass));
+        Assert.True(review.Accepted, review.Message);
+
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var folder = scanner.FindJob(member.Key, _watchPath)!.FolderPath;
+        ReviewSubjectStore.Write(folder, new ReviewSubjectRecord
+        {
+            TaskKey = member.Key,
+            RunAttemptId = run.AttemptId,
+            AttemptChainId = "continuation-chain",
+            Project = ProjectName,
+            Repository = RepositoryId,
+            ResultSha = resultSha,
+            BaseSha = resultSha,
+            ImmutableResultRef = resultRef,
+            IntegrationBranch = "refs/heads/develop",
+            CompletedAtUtc = _clock,
+        });
+        scanner.InvalidateCache();
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => pilot.EnqueueAsync(
+            scanner.FindJob(member.Key, _watchPath)!, review.ReviewAttempt!,
+            authority.GetRun(run.AttemptId)!, _clock, CancellationToken.None));
+        Assert.Contains("Commit attribution is missing", refused.Message);
+
+        var timeline = factory.Services.GetRequiredService<TimelineLog>();
+        var sweep = new RemoteCompletionAttributionSweep(scanner,
+            factory.Services.GetRequiredService<AgentStudio.Git.GitService>(),
+            factory.Services.GetRequiredService<TaskMutationService>(),
+            factory.Services.GetRequiredService<RemoteTokenReceiptService>(),
+            Path.Combine(_workspace, "continuation-migrations", RemoteCompletionAttributionSweep.ReportFileName),
+            _clock, NullLogger<RemoteCompletionAttributionSweep>.Instance,
+            factory.Services.GetRequiredService<TaskStateMachine>(), timeline, authority);
+
+        var report = sweep.RunIntegrationHistoryRepairOnce();
+
+        var row = Assert.Single(report.Tasks);
+        Assert.Null(row.Warning);
+        var repaired = scanner.FindJob(member.Key, _watchPath)!;
+        Assert.Equal(TaskStates.AutoReview, repaired.State);
+        Assert.Contains(repaired.Commits, commit => commit.Sha == member.ResultSha
+            && commit.RunAttemptId == member.RunAttemptId);
+        Assert.Contains(repaired.Commits, commit => commit.Sha == resultSha
+            && commit.DeliveryAttemptId == run.AttemptId);
+        Assert.Contains(timeline.ReadAll(repaired.FolderPath), evt =>
+            evt.Kind == TimelineEventKinds.IntegrationHistoryAttributionRepaired
+            && evt.Details?.GetValueOrDefault("reason") == "continuation-without-own-commit");
+
+        await pilot.EnqueueAsync(repaired, review.ReviewAttempt!, authority.GetRun(run.AttemptId)!,
+            _clock, CancellationToken.None);
+        Assert.Contains(factory.Services.GetRequiredService<BatchGateStore>().ListPending(), pending =>
+            pending.Subject.TaskKey == member.Key);
+    }
+
     [Fact]
     public void Escalated_passing_review_recovers_imported_integration_history_without_agent_round()
     {
@@ -454,6 +568,8 @@ public sealed class BatchGatePilotReleaseAttributionTests : BatchGatePilotServic
         var status = File.ReadAllText(Path.Combine(_watchPath, TaskStates.Escalated,
             member.Key, "status.md"));
         Assert.Contains("Commit attribution is missing", status);
+        Assert.Matches(@"Commits missing this delivery's attribution: [0-9a-f]{7,12} \(", status);
+        Assert.Contains("The next round must publish task-owned commits", status);
         Assert.Equal(0, _gate.BatchRuns);
         Assert.Equal(0, _gate.FallbackRuns);
     }

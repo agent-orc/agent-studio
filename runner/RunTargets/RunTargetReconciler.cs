@@ -7,12 +7,14 @@ public sealed record RunTargetReconcilerSettings(
     int HttpPort = 80,
     int HttpsPort = 443,
     int HealthAttempts = 20,
-    double HealthIntervalSeconds = 3);
+    double HealthIntervalSeconds = 3,
+    string? BackupDirectory = null);
 
 public sealed record RunTargetCycleResult(
     IReadOnlyList<RunTargetObservation> Observations,
     IReadOnlyList<RunTargetJobReport> JobReports,
-    IReadOnlyList<RunTargetDatabaseObservation>? Databases = null);
+    IReadOnlyList<RunTargetDatabaseObservation>? Databases = null,
+    IReadOnlyList<RunTargetDatabaseOperationResult>? Operations = null);
 
 /// <summary>
 /// Converges the host to Studio's desired state. A new revision is pulled,
@@ -30,7 +32,9 @@ public sealed record RunTargetCycleResult(
 /// that maps to the same key is refused. Managed databases (AGT-3877) are
 /// provisioned before the app revision that uses them and outlive it: a
 /// database Studio no longer declares is stopped with its volume kept, and only
-/// an owner's deletion from Studio removes the volume.
+/// an owner's deletion from Studio removes the volume. Their dumps, readiness
+/// checks and restores (AGT-3878) are in <see cref="RunTargetDatabaseBackups"/>;
+/// scheduled dumps and readiness checks continue while Studio is unreachable.
 /// </summary>
 public sealed class RunTargetReconciler(
     IRunTargetDocker docker,
@@ -44,6 +48,10 @@ public sealed class RunTargetReconciler(
     IRunTargetCredentialSource? credentials = null)
 {
     private const int MaxEvents = 20;
+
+    private readonly RunTargetDatabaseBackups _backups = new(docker, store,
+        settings.BackupDirectory ?? store.Directory.TrimEnd(Path.DirectorySeparatorChar) + "-backups",
+        settings, clock, delay, log);
 
     public Task<RunTargetCycleResult> ReconcileAsync(RunTargetDesiredState desired, CancellationToken ct)
         => CycleAsync(desired, offlineReason: null, ct);
@@ -61,6 +69,8 @@ public sealed class RunTargetReconciler(
         CancellationToken ct)
     {
         var state = store.Load();
+        foreach (var app in state.Apps.Values)
+            app.TotalDockerRestarts = Math.Max(app.TotalDockerRestarts, app.DockerRestarts);
         await RetryPendingCleanupAsync(state, ct);
         await RetryPendingStopsAsync(state, ct);
         var reports = new List<RunTargetJobReport>();
@@ -147,20 +157,24 @@ public sealed class RunTargetReconciler(
         var observations = state.Apps.Values
             .Where(app => specs.ContainsKey(RunTargetNames.AppKey(app.Project, app.EnvironmentId)))
             .Select(app => new RunTargetObservation(app.Project, app.EnvironmentId, app.Status,
-                app.Current?.Artifact, app.Previous?.Artifact, app.DockerRestarts + app.HostRestarts, now,
-                app.Events.ToArray()))
+                app.Current?.Artifact, app.Previous?.Artifact, app.TotalDockerRestarts + app.HostRestarts, now,
+                app.Events.ToArray(), app.CrashOutput.ToArray()))
             // The removed observation confirms the removal, so Studio stops sending it.
             .Concat(removed.Select(item => new RunTargetObservation(item.Project, item.EnvironmentId, "removed",
                 null, null, 0, now, [])))
             .ToArray();
+        await _backups.CheckAsync(state, ct);
         if (offlineReason is null) await MeasureDatabasesAsync(state, ct);
+        // Without Studio no operation arrives, but scheduled dumps and retention go on.
+        var operations = await _backups.RunAsync(state, offlineReason is null ? desired.DatabaseOperations ?? [] : [], ct);
         var databases = state.Databases.Values
             .Select(item => new RunTargetDatabaseObservation(item.Project, item.EnvironmentId, item.Name, item.Status,
-                item.Version, item.VolumeBytes, now))
+                item.Version, item.VolumeBytes, now, item.Ready, item.Connections, item.MaxConnections,
+                item.Backups.ToArray(), item.LastBackupAttemptAt, item.LastBackupError))
             .Concat(deletedDatabases.Select(item => new RunTargetDatabaseObservation(item.Project, item.EnvironmentId,
                 item.Name, "deleted", null, null, now)))
             .ToArray();
-        return new(observations, reports, databases);
+        return new(observations, reports, databases, operations);
     }
 
     private static string Name(RunTargetEnvironmentSpec spec) => $"{spec.Project}/{spec.EnvironmentId}";
@@ -349,6 +363,8 @@ public sealed class RunTargetReconciler(
         app.DockerRestarts = 0;
         app.LastRestartAt = app.NextRestartAt = null;
         app.RecentRestarts.Clear();
+        // A crash rollback still needs the failed revision's output in the host report.
+        if (!restoring) app.CrashOutput.Clear();
         store.Save(state);
         if (older is not null) await RemoveOrQueueAsync(older, state, ct);
         return true;
@@ -362,7 +378,19 @@ public sealed class RunTargetReconciler(
         var status = await docker.InspectAsync(slot.ComposeProject, ct);
         // Docker's count starts again for a recreated container.
         var dockerRestarts = status.RestartCount >= app.DockerRestarts ? status.RestartCount - app.DockerRestarts : status.RestartCount;
+        app.TotalDockerRestarts += dockerRestarts;
         app.DockerRestarts = status.RestartCount;
+        if (dockerRestarts > 0 || status.State is RunTargetContainerState.Exited or RunTargetContainerState.Restarting)
+        {
+            var output = await docker.LogsAsync(slot.ComposeProject, ct);
+            if (output.Ok)
+            {
+                var secretValues = secretFiles.ValuesForMasking(slot.ComposeProject)
+                    .Concat((slot.Databases ?? []).SelectMany(database =>
+                        secretFiles.ValuesForMasking(database.DatabaseKey)));
+                app.CrashOutput = [.. RunTargetCrashOutput.Sanitize(output.Detail, secretValues)];
+            }
+        }
         app.RecentRestarts = [.. RunTargetCrashPolicy.InWindow(app.RecentRestarts, now), .. Enumerable.Repeat(now, dockerRestarts)];
         if (RunTargetCrashPolicy.ShouldRollBack(app.RecentRestarts, now) && await RollBackCrashLoopAsync(name, app, state, ct))
             return;
@@ -716,13 +744,16 @@ public sealed class RunTargetReconciler(
                 return false;
             }
             var composeFile = Path.Combine(store.DatabasesDirectory, databaseKey, "compose.yaml");
-            var changed = store.WriteIfChanged(composeFile,
-                RunTargetComposeFile.Database(spec, database, key, databaseKey, secretFiles.Directory(databaseKey)));
+            // The bind mount needs the directory before the container starts.
+            _backups.EnsureDirectory(key, database.Name);
+            var changed = store.WriteIfChanged(composeFile, RunTargetComposeFile.Database(spec, database, key, databaseKey,
+                secretFiles.Directory(databaseKey), _backups.EnvironmentDirectory(key)));
             if (stored is null)
                 state.Databases[databaseKey] = stored = new RunTargetDatabaseState
                     { Project = spec.Project, EnvironmentId = spec.EnvironmentId, Name = database.Name };
             stored.ComposeFile = composeFile;
             stored.PasswordRef = database.PasswordRef;
+            stored.Backup = RunTargetBackupSchedule.Sanitize(database.Backup);
             var status = await docker.InspectAsync(databaseKey, ct);
             if (!changed && status.State == RunTargetContainerState.Running && stored.Status == "running") continue;
 
@@ -841,6 +872,8 @@ public sealed class RunTargetReconciler(
                 return false;
             }
         }
+        // The owner deletes the data, so its dumps go too, before the volume.
+        if (!await _backups.DeleteAllAsync(key, deletion.Name, stored?.Version, ct)) return false;
         var removed = await docker.RemoveVolumeAsync(RunTargetNames.DatabaseVolume(databaseKey), ct);
         if (!removed.Ok)
         {

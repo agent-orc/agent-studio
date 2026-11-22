@@ -73,12 +73,23 @@ describe('usage chip number formatting', () => {
 });
 
 describe('CLI chip view', () => {
+  it('shows reported Fable usage separately without borrowing it as all-model weekly usage', () => {
+    const window = { ...cli().windows[0], id: 'claude/fable', label: 'Weekly (Fable)', usedPct: 84 };
+    const view = buildCliChipView('claude', cli({ cliId: 'claude', windows: [window, cli().windows[0]] }), ZONE, NOW);
+    expect(view.fable).toMatchObject({ reported: true, value: '84%' });
+    expect(view.weekly.value).toBe('15%');
+    expect(view.ariaLabel).toContain('Fable weekly 84 percent used');
+    const onlyFable = buildCliChipView('claude', cli({ windows: [window] }), ZONE, NOW);
+    expect(onlyFable.weekly.reported).toBe(false);
+    expect(buildCliChipView('codex', cli(), ZONE, NOW).fable.reported).toBe(false);
+  });
   it('names both windows with expanded wording and ends with the action', () => {
     const view = buildCliChipView('codex', cli(), ZONE, NOW);
     expect(view.state).toBe('normal');
     expect([view.weekly.tag, view.weekly.value, view.session.tag, view.session.value]).toEqual(['WK', '15%', '5H', '32%']);
     expect(view.ariaLabel).toBe('Codex, weekly 15 percent used, current five-hour window 32 percent used. Open usage.');
     expect(view.detail).toContain('Weekly: 15% used, resets Tue 29 Sept, 09:00 Europe/Berlin (Tue 29 Sept, 07:00 UTC)');
+    expect(view.detail).toContain('provider week Tue 22 Sept, 09:00 Europe/Berlin (Tue 22 Sept, 07:00 UTC) to Tue 29 Sept');
   });
 
   it('never borrows the weekly value for an unreported session window', () => {
@@ -86,6 +97,12 @@ describe('CLI chip view', () => {
     expect(view.session).toMatchObject({ tag: 'Session', value: 'N/A', reported: false });
     expect(view.ariaLabel).toContain('current session not reported');
     expect(view.ariaLabel).not.toMatch(/session[^.]*0 percent/);
+  });
+
+  it('uses the provider-observed weekly start when the cycle resets early', () => {
+    const observed = cli({ windows: [{ ...cli().windows[0], startAtUtc: '2026-09-23T07:00:00Z' }] });
+    expect(buildCliChipView('codex', observed, ZONE, NOW).detail)
+      .toContain('provider week Wed 23 Sept, 09:00 Europe/Berlin');
   });
 
   it('uses 5H only when the provider reports a five-hour window', () => {

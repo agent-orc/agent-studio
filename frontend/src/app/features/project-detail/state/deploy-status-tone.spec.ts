@@ -21,7 +21,7 @@ describe('deploy status tones', () => {
   it('maps every health state onto a tone', () => {
     const matrix: Record<string, string> = {
       healthy: 'success', up: 'success', degraded: 'warning', unhealthy: 'danger',
-      down: 'danger', invalid: 'danger', unknown: 'neutral',
+      down: 'danger', invalid: 'warning', unknown: 'neutral',
     };
     for (const [state, tone] of Object.entries(matrix)) expect(healthStateTone(state)).toBe(tone);
   });

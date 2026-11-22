@@ -143,14 +143,22 @@ public sealed class ConceptDeliveryPostSteps
         }
 
         var branch = _git.ResolveIntegrationBranch(repositoryRoot, request.IntegrationBranch);
-        var baseRef = _git.IntegrationBaseRef(repositoryRoot, branch);
-        var changed = _git.ChangedPathsAgainstMergeBase(repositoryRoot, baseRef, resultSha!);
+        var runBase = ReviewSubjectStore.Read(card.FolderPath)?.BaseSha is { } recordedBase
+                      && ReviewSubjectStore.IsValidResultSha(recordedBase)
+            ? recordedBase
+            : null;
+        // AGT-3964: the concept's own change is measured against its merge
+        // base with the current integration line (lane, freshly fetched
+        // origin, and the run's base when that line carries it). A runner
+        // merges the integration branch into the concept branch at the start
+        // of every round; against a lagging lane alone, that merged history
+        // read as product files and a second Dossier of the concept (AGT-3951).
+        var changed = _git.ChangedPathsAgainstIntegrationLine(
+            repositoryRoot, branch, resultSha!, runBase is null ? null : [runBase]);
         // A replayed integration (a restart between merge and lane move) finds
         // the result already on the integration line; its own change is then
         // read against the base the run started from.
-        if (changed is { Count: 0 }
-            && ReviewSubjectStore.Read(card.FolderPath)?.BaseSha is { } runBase
-            && ReviewSubjectStore.IsValidResultSha(runBase))
+        if (changed is { Count: 0 } && runBase is not null)
             changed = _git.ChangedPathsAgainstMergeBase(repositoryRoot, runBase, resultSha!);
         if (changed is null)
             return new($"The changed files of {Short(resultSha!)} against {branch} could not be computed.");

@@ -1,0 +1,6 @@
+.per-task-gates { padding: var(--studio-spacing-4) 0; border-bottom: 1px solid var(--studio-border); }
+.per-task-gates h3 { margin: 0 0 var(--studio-spacing-2); }
+.per-task-gates p { margin: 0 0 var(--studio-spacing-2); overflow-wrap: anywhere; }
+.per-task-gates__list { margin: var(--studio-spacing-2) 0; padding-left: var(--studio-spacing-5); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.per-task-gates__list li { margin-bottom: var(--studio-spacing-2); }
+.per-task-gates__time { font-variant-numeric: tabular-nums; color: var(--studio-fg-muted); }

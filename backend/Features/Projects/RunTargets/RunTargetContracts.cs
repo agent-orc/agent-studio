@@ -23,7 +23,8 @@ public sealed record RunTargetDesiredState(
     IReadOnlyList<RunTargetEnvironmentSpec> Environments,
     IReadOnlyList<RunTargetSkip> Skipped,
     IReadOnlyList<RunTargetRemoval> Removals,
-    IReadOnlyList<RunTargetDatabaseDeletion>? DatabaseDeletions = null);
+    IReadOnlyList<RunTargetDatabaseDeletion>? DatabaseDeletions = null,
+    IReadOnlyList<RunTargetDatabaseOperation>? DatabaseOperations = null);
 
 /// <summary>
 /// A project whose declarations or state Studio could not read in this poll:
@@ -78,7 +79,34 @@ public sealed record RunTargetDatabaseSpec(
     string Size,
     RunTargetResources Resources,
     string Variable,
-    string PasswordRef);
+    string PasswordRef,
+    RunTargetBackupPolicy? Backup = null);
+
+/// <summary>
+/// How often the host dumps a managed database and how long it keeps the dumps
+/// (AGT-3878). A dump is kept while it is younger than <see cref="RetentionDays"/>
+/// or one of the <see cref="MinimumKept"/> newest.
+/// </summary>
+public sealed record RunTargetBackupPolicy(int IntervalHours, int RetentionDays, int MinimumKept);
+
+/// <summary>
+/// An operation Studio asks the host to run on a managed database (AGT-3878):
+/// <c>backup</c> dumps <see cref="Name"/> now; <c>verify</c> restores backup
+/// <see cref="BackupId"/> of <see cref="Name"/> into a scratch database; <c>restore</c>
+/// replaces the data of <see cref="TargetName"/>, which is <see cref="Name"/> or another
+/// database of the same environment, with that backup. A restore that reaches the host
+/// is approved; the host answers once with a <see cref="RunTargetDatabaseOperationResult"/>.
+/// </summary>
+public sealed record RunTargetDatabaseOperation(string Id, string Project, string EnvironmentId, string Name,
+    string Kind, string? BackupId, string? TargetName);
+
+/// <summary>One dump the host keeps for a database, outside its volume.</summary>
+public sealed record RunTargetBackupRecord(string Id, DateTime TakenAt, long Bytes, string Kind,
+    DateTime? VerifiedAt = null, int? VerifiedTables = null);
+
+/// <summary>What one operation did. <see cref="State"/> is <c>succeeded</c> or <c>failed</c>.</summary>
+public sealed record RunTargetDatabaseOperationResult(string Id, string Project, string EnvironmentId, string Name,
+    string State, string? Message, DateTime FinishedAt, string? BackupId = null);
 
 /// <summary>An owner's confirmed deletion of a database the environment no longer declares; the host drops its volume.</summary>
 public sealed record RunTargetDatabaseDeletion(string Project, string EnvironmentId, string Name);
@@ -94,7 +122,13 @@ public sealed record RunTargetDatabaseObservation(
     string State,
     string? Version,
     long? VolumeBytes,
-    DateTime ObservedAt);
+    DateTime ObservedAt,
+    bool? Ready = null,
+    int? Connections = null,
+    int? MaxConnections = null,
+    IReadOnlyList<RunTargetBackupRecord>? Backups = null,
+    DateTime? LastBackupAttemptAt = null,
+    string? LastBackupError = null);
 
 /// <summary>Operator confirmation of a pending removal; without a host it applies to every host it is pending on.</summary>
 public sealed record RunTargetRemovalConfirmRequest(string? HostId);
@@ -103,7 +137,12 @@ public sealed record RunTargetRemovalConfirmRequest(string? HostId);
 public sealed record RunTargetDomainSuffixesRequest(IReadOnlyList<string>? Suffixes);
 
 public sealed record RunTargetObservedReport(IReadOnlyList<RunTargetObservation> Environments,
-    IReadOnlyList<RunTargetDatabaseObservation>? Databases = null);
+    IReadOnlyList<RunTargetDatabaseObservation>? Databases = null,
+    IReadOnlyList<RunTargetDatabaseOperationResult>? DatabaseOperations = null);
+
+/// <summary>A container template that the deploy host must supervise between deploy jobs.</summary>
+public sealed record DeployHostContainerTarget(string Project, string EnvironmentId, string Container,
+    string Artifact);
 
 public sealed record RunTargetObservation(
     string Project,
@@ -113,7 +152,8 @@ public sealed record RunTargetObservation(
     string? PreviousArtifact,
     int Restarts,
     DateTime ObservedAt,
-    IReadOnlyList<RunTargetEvent> Events);
+    IReadOnlyList<RunTargetEvent> Events,
+    IReadOnlyList<string>? CrashOutput = null);
 
 public sealed record RunTargetEvent(DateTime At, string Kind, string? Artifact);
 
@@ -137,4 +177,11 @@ public static class RunTargetVocabulary
     /// </summary>
     public static readonly IReadOnlySet<string> DatabaseStates = new HashSet<string>(StringComparer.Ordinal)
         { "provisioning", "running", "unhealthy", "failed", "retained", "upgrade-refused", "deleted" };
+
+    public static readonly IReadOnlySet<string> DatabaseOperationKinds = new HashSet<string>(StringComparer.Ordinal)
+        { "backup", "verify", "restore" };
+
+    /// <summary><c>pre-restore</c>: the dump the host takes of a database right before a restore replaces its data.</summary>
+    public static readonly IReadOnlySet<string> BackupKinds = new HashSet<string>(StringComparer.Ordinal)
+        { "scheduled", "manual", "pre-restore" };
 }

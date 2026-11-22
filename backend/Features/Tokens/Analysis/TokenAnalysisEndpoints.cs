@@ -1,5 +1,7 @@
 using AgentStudio.Registry;
 using AgentStudio.Security;
+using AgentStudio.Cli;
+using AgentStudio.Shared;
 
 namespace AgentStudio.Tokens;
 
@@ -18,6 +20,40 @@ public static class TokenAnalysisEndpoints
 {
     public static void MapTokenAnalysisEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/workspace/tokens/subscription-week", (HttpContext context, string cli,
+            string? subscriptionKey, string? workspaceId, WorkspaceRegistry workspaces,
+            ProjectRegistry registry, QuotaService quota, TokenAnalysisService analysis) =>
+        {
+            if (cli is not ("claude" or "codex"))
+                return Results.BadRequest(new { error = "A supported CLI is required." });
+            var workspace = string.IsNullOrWhiteSpace(workspaceId)
+                ? workspaces.List().FirstOrDefault(item => item.IsDefault) ?? workspaces.List().FirstOrDefault()
+                : workspaces.Find(workspaceId);
+            if (workspace is null) return Results.NotFound(new { error = "Unknown workspace." });
+            var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal;
+            var visible = registry.List().Where(record => !record.Archived
+                    && string.Equals(record.WorkspaceId, workspace.Id, StringComparison.OrdinalIgnoreCase))
+                .Where(record => human is null || ProjectAccessAuthorization.Allows(human.User, record.Id, registry))
+                .ToList();
+            if (human is not null && !ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User)
+                && visible.Count == 0) return Results.StatusCode(StatusCodes.Status403Forbidden);
+            var accounts = quota.GetCached().Snapshots
+                .Where(snapshot => string.Equals(snapshot.CliType, cli, StringComparison.OrdinalIgnoreCase)).ToList();
+            var account = accounts.FirstOrDefault(snapshot => string.Equals(snapshot.SubscriptionKey,
+                subscriptionKey, StringComparison.Ordinal)) ?? (accounts.Count == 1 ? accounts[0] : null);
+            if (account is null) return Results.NotFound(new { error = "No matching CLI subscription was reported." });
+            var weeklyWindows = account.Windows.Where(window =>
+                QuotaForecastPolicy.Classify(window.Label) == QuotaWindowKind.Weekly
+                && !window.Label.Contains("spark", StringComparison.OrdinalIgnoreCase)).ToList();
+            var weekly = weeklyWindows.FirstOrDefault(window => window.Label.Contains("all", StringComparison.OrdinalIgnoreCase))
+                ?? weeklyWindows.FirstOrDefault();
+            var sources = visible.Select(record => new TokenAnalysisProjectSource(record.Id,
+                record.DisplayName, record.StorageLocation)).ToList();
+            return Results.Ok(analysis.SubscriptionWeek(cli, account.SubscriptionKey, weekly,
+                account.FetchedAt, sources, accounts.Count > 1,
+                human is null || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User)));
+        });
+
         app.MapGet("/api/workspace/tokens/analysis", (HttpContext context, int? days, string? project,
             string? workspaceId, WorkspaceRegistry workspaces, ProjectRegistry registry,
             TokenAnalysisService analysis) =>

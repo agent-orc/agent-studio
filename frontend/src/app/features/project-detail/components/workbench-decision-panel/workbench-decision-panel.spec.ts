@@ -123,6 +123,30 @@ describe('WorkbenchDecisionPanelComponent', () => {
 
   afterEach(() => http.verify());
 
+  it('returns actions and shows an unchanged round while retaining the rework receipt', () => {
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT,
+      entryFingerprint: 'a'.repeat(64),
+      workbench: { ...DOCUMENT.workbench, decision: {
+        outcome: 'rework', state: 'pending', operationId: 'rework-1',
+        sourceRevision: DOCUMENT.revision, sourceFingerprint: DOCUMENT.fingerprint,
+        sourceEntryFingerprint: 'a'.repeat(64),
+        preparedAt: '2026-11-15T10:00:00Z', preparedBy: 'Owner',
+        confirmedAt: '2026-11-15T10:00:00Z', confirmedBy: 'Owner',
+        decidedAt: null, reason: null, failure: null, spawnedTaskKeys: [],
+        responses: RESPONSES, taskDraft: null, revisionTaskKey: 'AGT-2300',
+      } },
+      revisionRound: { status: 'unchanged', taskKey: 'AGT-2300',
+        title: 'Concept: routing policy', queueReason: null, detail: null },
+    });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-receipt"]')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-revision-round"]')?.textContent)
+      .toContain('unchanged');
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-rework"]')).toBeTruthy();
+  });
+
   it('records one answer while leaving another explicitly open and does not create a card', () => {
     const partial = [RESPONSES[0], {
       decisionId: 'proof', kind: 'single', selectedOptionIds: [], comment: null,
@@ -705,6 +729,32 @@ describe('WorkbenchDecisionPanelComponent', () => {
         'Agent changed from codex · gpt-5-codex · medium to claude · claude-opus-5 · high');
     });
 
+    it('shows a refused rework route as requested, without claiming a route change', () => {
+      fixture.componentRef.setInput('document', {
+        ...CODEX_DOCUMENT,
+        revisionRound: { status: 'failed', taskKey: 'AGT-2300', title: 'Concept: routing policy',
+          queueReason: null, detail: 'Continue was refused before admission.' },
+        workbench: {
+          ...CODEX_DOCUMENT.workbench,
+          status: 'decision-pending',
+          decision: {
+            outcome: 'rework', action: 'rework-requested', state: 'pending', operationId: 'refused-round',
+            sourceRevision: 'c'.repeat(40), sourceFingerprint: 'b'.repeat(64),
+            preparedAt: '2026-11-15T09:00:00Z', preparedBy: 'Operator',
+            confirmedAt: '2026-11-15T09:00:00Z', confirmedBy: 'Operator', decidedAt: null,
+            reason: null, failure: null, spawnedTaskKeys: [], responses: RESPONSES, taskDraft: null,
+            cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high',
+            request: 'Add a privacy section.', revisionTaskKey: 'AGT-2300',
+          },
+        },
+      });
+      fixture.detectChanges();
+      expect(text('workbench-decision-agent-receipt')).toContain('claude · claude-opus-5 · high');
+      expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-route-change-receipt"]'))
+        .toBeNull();
+      expect(text('workbench-decision-revision-round')).toContain('Continue was refused before admission.');
+    });
+
     it('returns to the browser default for a combined task after a cancelled rework', () => {
       click('workbench-decision-rework');
       expect(actionsComponent().cliType()).toBe('codex');
@@ -777,7 +827,10 @@ describe('decision panel status tones', () => {
     expect(decisionStageTone('later', false)).toBe('neutral');
     expect(decisionOutcomeTone('feature-spawn')).toBe('success');
     expect(decisionOutcomeTone('archive')).toBe('neutral');
-    expect(decisionOutcomeTone('rework')).toBe('warning');
+    expect(decisionOutcomeTone('rework')).toBe('success');
+    expect(decisionOutcomeTone('rework', 'succeeded')).toBe('success');
+    expect(decisionOutcomeTone('rework', 'failed')).toBe('danger');
+    expect(decisionOutcomeTone('feature-spawn', 'pending')).toBe('running');
     expect(decisionOutcomeTone(null)).toBe('neutral');
   });
 });

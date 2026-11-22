@@ -574,7 +574,7 @@ public sealed partial class MergeIntoDevelopRunner
                         delivery.Ref,
                         delivery.ExpectedResultSha ?? string.Empty,
                         branch,
-                        ct)).ConfigureAwait(false);
+                        ct, MergeSubjectFor(jobId, watchPath))).ConfigureAwait(false);
             }
             else
             {
@@ -586,7 +586,8 @@ public sealed partial class MergeIntoDevelopRunner
                     developerRoot,
                     repoRoot,
                     branch,
-                    () => _git.MergeBranchIntoIntegration(repoRoot, taskBranch, branch, ct)).ConfigureAwait(false);
+                    () => _git.MergeBranchIntoIntegration(repoRoot, taskBranch, branch, ct,
+                        MergeSubjectFor(jobId, watchPath))).ConfigureAwait(false);
             }
 
             if (synchronized.Success)
@@ -1168,7 +1169,7 @@ public sealed partial class MergeIntoDevelopRunner
                     delivery.Ref,
                     delivery.ExpectedResultSha ?? string.Empty,
                     workBranch,
-                    ct)).ConfigureAwait(false)
+                    ct, MergeSubjectFor(jobId, watchPath))).ConfigureAwait(false)
             : await MergeIntoIntegrationGatedAsync(
                 project,
                 jobId,
@@ -1181,7 +1182,7 @@ public sealed partial class MergeIntoDevelopRunner
                     repoRoot,
                     delivery.Ref,
                     workBranch,
-                    ct)).ConfigureAwait(false);
+                    ct, MergeSubjectFor(jobId, watchPath))).ConfigureAwait(false);
 
         if (!developMerge.Outcome.IsSuccessfulIntegration())
         {
@@ -1525,8 +1526,8 @@ public sealed partial class MergeIntoDevelopRunner
         }
 
         var settings = ProjectSettingsFor(project);
-        var postMergeMode = (_postMergeMode?.Resolve(project, settings)
-            ?? IntegrationTestModes.Resolve(settings)) == IntegrationTestModes.PostMerge
+        var postMergeMode = PostMergeModeService.Effective(_postMergeMode, project, settings)
+            == IntegrationTestModes.PostMerge
             && !IsReleaseBranch(integrationBranch);
         var review = postMergeMode ? ReviewVerificationStore.Read(jobFolderPath) : null;
         IReadOnlyList<string>? deliveryPaths = null;
@@ -2086,8 +2087,9 @@ public sealed partial class MergeIntoDevelopRunner
                     delivery.Ref,
                     delivery.ExpectedResultSha ?? string.Empty,
                     releaseBranch,
-                    ct)
-                : _git.MergeBranchIntoIntegration(repoRoot, taskBranch, releaseBranch, ct);
+                    ct, MergeSubjectFor(jobId))
+                : _git.MergeBranchIntoIntegration(repoRoot, taskBranch, releaseBranch, ct,
+                    MergeSubjectFor(jobId));
             return (docsMerge, lightGate);
         }
 

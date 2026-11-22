@@ -10,9 +10,9 @@ Release creation refuses a declaration that diverges from schema 2. See the
 for migration and validation.
 
 The API uses JSON with camel-case property names. On a networked installation,
-all four routes require HTTPS and a Runner service bearer with `runner.deploy`.
+the deploy host routes require HTTPS and a Runner service bearer with `runner.deploy`.
 The claim request's `hostId` must equal the enrolled Runner principal's ID.
-The report and log routes additionally require the current claim's `leaseToken`;
+The job report and step-log routes additionally require the current claim's `leaseToken`;
 the token is a claim capability and must stay out of operator logs and UI
 responses. The public demo denies these execution routes.
 
@@ -22,6 +22,47 @@ responses. The public demo denies these execution routes.
 | `POST /api/deploy/jobs/{project}/{jobId}/log` | `{ "leaseToken": "...", "step": "deploy[0]:static-site", "message": "..." }` | `200` after appending the line to the deploy run; `409` if validation or the claim fails. |
 | `POST /api/deploy/jobs/{project}/{jobId}/renew` | `{ "leaseToken": "..." }` | `200` after extending a live claim by five minutes; `409` for an expired or fenced token. |
 | `POST /api/deploy/jobs/{project}/{jobId}/report` | `{ "leaseToken": "...", "healthy": true, "evidence": "health-ok", "steps": [{ "name": "deploy[0]:static-site", "succeeded": true }] }` | `200` after closing the job and reconciling the run; `409` for a stale token, invalid step sequence, or a job that is no longer claimed. |
+| `GET /api/deploy/hosts/{hostId}/containers` | No body. The caller's enrolled Runner ID must equal `hostId`. | Last successful container template targets on this host, including deployments made before host observation was added. |
+| `POST /api/deploy/hosts/{hostId}/observed-state` | Bounded per-environment Docker state, restart count, crash events and masked crash output. | `200` with the number of accepted observations. The caller's enrolled Runner ID must equal `hostId`. |
+
+When a poll has no deploy job, the host inspects its listed containers and reads
+the last 20 Docker log lines from stdout and stderr. It masks values found in
+the container environment and common credential assignments before reporting;
+Studio enforces a 20-line, 400-character-per-line bound and masks credential
+assignments again. An observed crash loop opens or updates a durable environment
+runtime incident and raises an Activity alert. A later running observation
+closes the incident and records recovery. The project Operations view shows the
+host restart count and last crash output even without application telemetry.
+Observation is best effort: an unreadable target list, Docker inspect output
+of an unexpected shape, or a refused or unreachable observed-state report is
+written to the host's stderr and never fails the job-less poll. A container
+whose inspect output cannot be read is reported as `failed`.
+
+## Run host identity and liveness
+
+An Owner issues a run host identity from Settings > Access > Runner
+enrollments or Hosts > Add host, both with the identity "Run host (deploy)".
+The enrollment code carries only `runner.deploy` and the projects the Owner
+chooses; the claim route skips jobs of other projects, so a code without a
+project deploys nothing. The page prints the host commands: `agent-host
+--enroll` saves the runner id (`runner_...`) in `installation.env`, the second
+command copies it into `/etc/agent-runner/deploy.env` as `RUNNER_HOSTNAME`,
+and `agent-runner-deploy.service` claims with that id as its `hostId`. The
+same id, or the host's unique enrollment name, is the `targetHostId` of every
+environment the host serves. The Task
+Server host join token stays coding and review only: it mints a Task Server
+principal, which these routes do not accept.
+
+A run host sends no claim heartbeat. Its contact is its claims, renewals,
+reports and run-target polls: each one stamps the identity's `lastSeenAt`, a
+claim that returns a job also `lastClaimAt`, and a report `lastReportAt`.
+`GET /api/deploy/run-hosts` lists every run host with a `state` of
+`reachable` (contact within two minutes), `unreachable`, or `no-contact`;
+Hosts shows each one as a "Run host" role row. `GET
+/api/projects/{project}/environments` adds `runHosts`, the status of each
+declared `targetHostId` under that id, resolving an enrollment name to its run
+host, with `not-enrolled` for an id no run host holds, and
+the Deploy area names that host and its state on each environment card.
 
 The claim response supplies `id`, `project`, `environmentId`, `hostId`,
 `artifact`, `template`, `destination`, `healthUrl`, `secretRefs`, `containerPort`,
@@ -37,9 +78,11 @@ Non-release jobs may still carry `variables`; each one has a `name` and either
 a plain `value` or a secret name in `secret`. The deploy host uses the snapshot,
 not the repository's current working tree, to execute the
 job. A claim for a release's environment goes to its currently registered host.
-The SSH executor requires each snapshotted step's `target` to equal that host.
-If host registration changes after the release, an old release's step fails
-this check; create a new release with the new target before deploying there.
+The SSH executor requires each step's `target` to equal that host. The
+backend writes the routed host into every step's `target` when it queues the
+job, so after a host change a rollback or redeploy of an older release runs on
+the current host with the snapshot's artifact, paths and variables. Release
+verification compares the snapshot steps with that same host substitution.
 Schema 2 jobs use the `ssh-v2` template so an older deploy host refuses them
 instead of running its local Docker or static template. Deploy the backend
 before installing the new agent-host binary on deploy hosts. Then switch

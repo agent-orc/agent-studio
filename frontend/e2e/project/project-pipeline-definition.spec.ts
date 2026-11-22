@@ -49,6 +49,13 @@ async function openSettings(page: Page, definition: object): Promise<void> {
   await page.route('**/api/watch-paths**', route => route.fulfill({ json: [
     { name: project, path: '/tasks', rootPath: '/repo', repositoryPath: '/repo' },
   ] }));
+  // An empty project list opens the first-run settings over the restored Settings tab.
+  await page.route('**/api/v1/projects', route => route.fulfill({ json: [{
+    sourceType: 'local-folder', id: 'PROJ-WEB', displayName: project, shortCode: 'WEB', workspaceId: 'ws',
+    color: null, cliDefault: null, modelDefault: null, sortOrder: 0, storageLocation: '/tasks',
+    repositoryPath: '/repo', rootPath: '/repo', repositoryUrl: null, urls: [], ownershipMappings: [],
+    archived: false, createdAt: '2026-10-01T00:00:00Z',
+  }] }));
   await page.route(`**/api/projects/${project}/workbenches**`, route => route.fulfill({ json: { items: [] } }));
   await page.route(`**/api/projects/${project}/execution`, route => route.fulfill({ json: {
     repositoryDefinition: 'schemaVersion: 1\nstack: [node]', definitionSha256: sha('a'), valid: true, issues: [],
@@ -154,4 +161,52 @@ test('Schema 1 migration is a dry run until the operator confirms it', async ({ 
   await expect(section.getByTestId('pipeline-migration')).toHaveCount(0);
   expect(posts).toBe(1);
   await capture(page, 'pipeline-definition-schema-2');
+});
+
+test('Schema 2 without deploy steps takes the deploy-step form through a reviewed preview', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const bare = environments.map(environment => ({ ...environment, steps: [], variables: [] }));
+  const migrated = {
+    ...schemaOne, schemaVersion: 2, migrationAvailable: false, deployStepsAvailable: true, definitionSha256: sha('b'),
+    diagram: { ...schemaTwoDiagram, artifacts: [], environments: bare },
+  };
+  const writes: unknown[] = [];
+  await openSettings(page, migrated);
+  await page.route(`**/api/projects/${project}/pipeline-definition/deploy-steps/preview`, route => route.fulfill({ json: {
+    project, available: true, baseSha256: sha('b'), proposalSha256: sha('c'), valid: true, issues: [], notes: [],
+    proposedYaml: 'schemaVersion: 2\n# Deploy steps written by Agent Studio from the Settings > Pipeline form.\nartifacts:\n  - name: site\n    type: static\n    path: dist\ndeploy:\n  - step: static-site\n',
+    diagram: schemaTwoDiagram,
+  } }));
+  await page.route(`**/api/projects/${project}/pipeline-definition/deploy-steps`, async route => {
+    writes.push(route.request().postDataJSON());
+    await route.fulfill({ json: {
+      changed: true, commitSha: '7a8b9c0d1e2f3a4b', pushQueued: true,
+      definition: { ...migrated, deployStepsAvailable: false, definitionSha256: sha('c'), diagram: schemaTwoDiagram },
+    } });
+  });
+
+  const section = page.getByTestId('project-pipeline-definition');
+  await section.getByTestId('pipeline-add-deploy-steps').click();
+  const form = section.getByTestId('deploy-steps-form');
+  for (const [name, directory, url] of [
+    ['staging', '/srv/www/_staging/studio', 'https://agent-orchestrator.dev/_staging/studio/'],
+    ['production', '/srv/www/studio', 'https://agent-orchestrator.dev/'],
+  ]) {
+    const environment = form.getByTestId(`deploy-steps-env-${name}`);
+    await environment.getByTestId('deploy-steps-target').fill('web-vm');
+    await environment.getByTestId('deploy-steps-directory').fill(directory);
+    await environment.getByTestId('deploy-steps-health-url').fill(url);
+  }
+  await capture(page, 'pipeline-definition-deploy-step-form');
+  await form.getByTestId('deploy-steps-preview-button').click();
+  await expect(form.getByTestId('deploy-steps-yaml')).toContainText('step: static-site');
+  expect(writes).toHaveLength(0);
+  await capture(page, 'pipeline-definition-deploy-step-preview');
+
+  await setTheme(page, 'light');
+  await form.getByTestId('deploy-steps-confirm').click();
+  await expect(section.getByRole('status')).toContainText('commit 7a8b9c0');
+  expect(writes).toHaveLength(1);
+  expect(writes[0]).toMatchObject({ artifactType: 'static', artifactPath: 'dist', baseSha256: sha('b'), proposalSha256: sha('c') });
+  await expect(section.getByTestId('deploy-steps-form')).toHaveCount(0);
 });

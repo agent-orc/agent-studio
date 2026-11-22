@@ -71,7 +71,7 @@ public class TitleGenerationService
         sw.Stop();
 
         var (text, usage) = AdHocClaudeInvoker.ParseOrFallback(raw, fallbackModel);
-        AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.TitleGeneration, fallbackModel, usage, sw.ElapsedMilliseconds, ok);
+        AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.TitleGeneration, fallbackModel, usage, sw.ElapsedMilliseconds, ok, CliTypes.Claude);
 
         if (!ok || string.IsNullOrWhiteSpace(text))
             throw new InvalidOperationException(error ?? "Title generator returned empty response");

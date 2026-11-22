@@ -62,6 +62,8 @@ public sealed class ModelPinAdmissionPolicyTests
     [Theory]
     [InlineData(ModelIds.Gpt61Sol)]
     [InlineData(AgentStudio.TaskServer.Contracts.CodexCliRelease.Gpt61Terra)]
+    [InlineData(ModelIds.Gpt62Sol)]
+    [InlineData(ModelIds.Gpt62Astra)]
     public void Codex_pin_below_verified_floor_names_cli_version_even_if_catalogue_lists_model(string model)
     {
         var decision = ModelPinAdmissionPolicy.Evaluate(
@@ -72,6 +74,18 @@ public sealed class ModelPinAdmissionPolicyTests
         Assert.Equal(ModelPinAdmissionPolicy.RejectionCode, decision.Code);
         Assert.Contains("not offered by codex-cli 0.155.0", decision.Reason);
         Assert.Contains("requires 0.166.0", decision.Reason);
+    }
+
+    [Theory]
+    [InlineData(ModelIds.Gpt62Sol)]
+    [InlineData(ModelIds.Gpt62Astra)]
+    public void Gpt62_pin_is_admitted_at_the_verified_floor_when_the_catalogue_lists_it(string model)
+    {
+        var decision = ModelPinAdmissionPolicy.Evaluate(
+            CliTypes.Codex, model, explicitlyPinned: true,
+            installedCliVersion: "codex-cli 0.166.0", supportedModels: [model, ModelIds.Gpt61Sol]);
+
+        Assert.True(decision.IsAllowed);
     }
 
 }

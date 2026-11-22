@@ -4,7 +4,11 @@
     <div class="runners__issued" data-testid="access-enrollment-code" role="status">
       <p>Copy this enrollment code now. It is shown once and works for a single runner. The runner's credential expires 30 days after enrollment.</p>
       <p class="access-secret">{{ value }}</p>
-      <div class="access-row"><button type="button" class="access-secondary" (click)="code.set(null)">Done</button></div>
+      @if (hostCommand(); as command) {
+        <p>On the run host, enroll and start the deploy service. Enrollment prints the runner id (<code>runner_…</code>); the deploy service claims with it, and each environment this host serves names it as its <code>targetHostId</code>.</p>
+        <pre class="access-secret" data-testid="access-run-host-command">{{ command }}</pre>
+      }
+      <div class="access-row"><button type="button" class="access-secondary" (click)="done()">Done</button></div>
     </div>
   }
   <div class="access-row">
@@ -12,16 +16,17 @@
       <input data-testid="access-enrollment-name" [value]="name()" (input)="name.set($any($event.target).value)" />
     </label>
     <label>Identity
-      <select (change)="setKind($any($event.target).value)">
+      <select data-testid="access-enrollment-kind" (change)="setKind($any($event.target).value)">
         <option value="runner" [selected]="kind() === 'runner'">Coding and review</option>
+        <option value="deploy" [selected]="kind() === 'deploy'">Run host (deploy)</option>
         <option value="orchestrator" [selected]="kind() === 'orchestrator'">Orchestration engine</option>
       </select>
     </label>
     <button type="button" data-testid="access-enrollment-create" [disabled]="!name().trim() || access.busy()" (click)="create()">Create code</button>
   </div>
-  @if (kind() === 'runner') {
+  @if (kind() !== 'orchestrator') {
     <fieldset class="runners__projects" data-testid="access-enrollment-projects">
-      <legend>Projects this runner may work on</legend>
+      <legend>{{ kind() === 'deploy' ? 'Projects this run host may deploy' : 'Projects this runner may work on' }}</legend>
       <label class="runners__choice">
         <input type="checkbox" [checked]="selected().includes(allProjects)" (change)="toggleSelected(allProjects)" />
         All projects
@@ -34,7 +39,7 @@
         </label>
       }
       @if (!selected().length) {
-        <p class="access-hint" data-testid="access-enrollment-no-project">Without a project, the runner claims and reads nothing.</p>
+        <p class="access-hint" data-testid="access-enrollment-no-project">{{ kind() === 'deploy' ? 'Without a project, the run host deploys nothing.' : 'Without a project, the runner claims and reads nothing.' }}</p>
       }
     </fieldset>
   }

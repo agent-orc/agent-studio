@@ -225,6 +225,12 @@ public sealed record BatchReplayResult(
 
     public static BatchReplayResult Conflict(IReadOnlyList<string> files, string error, BatchReplayRoute route)
         => new(false, null, [], files, error, route, BatchReplayFailure.Conflict);
+
+    /// <summary>
+    /// AGT-3968: add/add hunks the merge route resolved by keeping both sides.
+    /// Empty for an ordinary replay.
+    /// </summary>
+    public IReadOnlyList<UnionResolvedHunk> UnionResolvedHunks { get; init; } = [];
 }
 public sealed record BatchCandidateRefResult(bool Success, string? Error);
 
@@ -359,7 +365,10 @@ public record GitCommitInfo(
     int Added,
     int Removed,
     string? Body = null,
-    bool IsMerge = false);
+    bool IsMerge = false)
+{
+    public IReadOnlyList<string> ParentShas { get; init; } = [];
+}
 
 public sealed record RemoteDeliveryCommitRange(
     bool Success,
@@ -2397,6 +2406,14 @@ public partial class GitService
         => FindWatchPathEntry(watchPath) is { } entry
            && !string.IsNullOrWhiteSpace(ResolveConfiguredRepositoryPath(entry));
 
+    /// <summary>
+    /// Reads only filesystem facts to check whether the configured path can be
+    /// used as a server checkout for integration.
+    /// </summary>
+    public bool HasUsableConfiguredRepository(string? watchPath)
+        => FindWatchPathEntry(watchPath) is { } entry
+           && IntegrationWorktreeProvider.HasUsableCheckout(ResolveConfiguredRepositoryPath(entry));
+
     private WatchPathEntry? FindWatchPathEntry(string? watchPath)
     {
         var entries = _scanner.GetWatchPaths();
@@ -3147,12 +3164,12 @@ public partial class GitService
             sw.Stop();
             if (p.ExitCode != 0)
             {
-                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: false, jobId: jobId);
+                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: false, cliType: CliTypes.Codex, jobId: jobId);
                 return new GenerateMessageResult(null, $"codex exited {p.ExitCode}: {stderr.Trim()}");
             }
 
             var text = ParseCodexAgentMessage(stdout);
-            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: true, jobId: jobId);
+            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: true, cliType: CliTypes.Codex, jobId: jobId);
 
             var (msg, suspicious) = ParseCommitReview(text);
             if (!string.IsNullOrWhiteSpace(suspicious))
@@ -5177,16 +5194,19 @@ public partial class GitService
                     .Select(path => path.Trim()).Where(path => path.Length > 0).Distinct().ToArray()
                 : [];
             var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
-                "--format=%H%x1f%h%x1f%aI%x1f%aN%x1f%s", sha);
+                "--format=%H%x1f%h%x1f%aI%x1f%aN%x1f%s%x1f%P", sha);
             if (metadataCode != 0) continue;
             var parts = metadata.Trim().Split('\x1f');
-            if (parts.Length < 5 || !DateTime.TryParse(parts[2],
+            if (parts.Length < 6 || !DateTime.TryParse(parts[2],
                     System.Globalization.CultureInfo.InvariantCulture,
                     System.Globalization.DateTimeStyles.AssumeUniversal
                     | System.Globalization.DateTimeStyles.AdjustToUniversal, out var at)) continue;
             commits.Add(new GitCommitInfo(parts[0], parts[1],
                 DateTime.SpecifyKind(at, DateTimeKind.Utc), parts[3], parts[4],
-                changed.Length, 0, 0, IsMerge: true));
+                changed.Length, 0, 0, IsMerge: true)
+            {
+                ParentShas = parts[5].Split(' ', StringSplitOptions.RemoveEmptyEntries),
+            });
         }
         if (commits.Count == 0) return commits;
         string[] orderArgs = ["rev-list", revisions, .. exclusion, RevisionsOnly];
@@ -5564,7 +5584,8 @@ public partial class GitService
         string repoRoot,
         string taskBranch,
         string integrationBranch,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? mergeSubject = null)
     {
         if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
             return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: "Repo root does not exist.");
@@ -5580,7 +5601,7 @@ public partial class GitService
             return MergeIntoIntegrationResult.Failed(
                 AcceptedIntegrationFailureCodes.ForBranchSync(synchronized.Error),
                 synchronized.Error);
-        return MergeRefIntoIntegration(repoRoot, taskBranch, integrationBranch);
+        return MergeRefIntoIntegration(repoRoot, taskBranch, integrationBranch, mergeSubject);
     }
 
     /// <summary>
@@ -5844,7 +5865,8 @@ public partial class GitService
         string deliveryBranch,
         string expectedResultSha,
         string integrationBranch,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? mergeSubject = null)
     {
         if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
             return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: "Repo root does not exist.");
@@ -5869,7 +5891,8 @@ public partial class GitService
         return MergeRefIntoIntegration(
             repoRoot,
             expectedResultSha,
-            integrationBranch);
+            integrationBranch,
+            mergeSubject);
     }
 
     /// <summary>
@@ -6530,10 +6553,11 @@ public partial class GitService
     private MergeIntoIntegrationResult MergeRefIntoIntegration(
         string repoRoot,
         string sourceRef,
-        string integrationBranch)
+        string integrationBranch,
+        string? mergeSubject = null)
     {
         var tipBeforeMerge = GetBranchTip(repoRoot, IntegrationLineAt(repoRoot, integrationBranch));
-        var merged = MergeRefIntoIntegrationCore(repoRoot, sourceRef, integrationBranch);
+        var merged = MergeRefIntoIntegrationCore(repoRoot, sourceRef, integrationBranch, mergeSubject);
         if (merged.Outcome is not (MergeIntoIntegrationOutcome.Merged or MergeIntoIntegrationOutcome.MergedAfterRebase))
             return merged;
 
@@ -6550,7 +6574,8 @@ public partial class GitService
     private MergeIntoIntegrationResult MergeRefIntoIntegrationCore(
         string repoRoot,
         string sourceRef,
-        string integrationBranch)
+        string integrationBranch,
+        string? mergeSubject)
     {
         var integrationLine = IntegrationLineAt(repoRoot, integrationBranch);
         if (GetBranchTip(repoRoot, integrationLine) is null)
@@ -6626,14 +6651,10 @@ public partial class GitService
             }
         }
 
-        var (_, directMergeError, directMergeCode) = RunGitArgs(
-            repoRoot,
-            "-c",
-            "rerere.enabled=false",
-            "merge",
-            "--no-ff",
-            "--no-edit",
-            sourceRef);
+        var directMergeArgs = new[] { "-c", "rerere.enabled=false", "merge", "--no-ff" }
+            .Concat(mergeSubject is null ? ["--no-edit"] : new[] { "-m", mergeSubject })
+            .Append(sourceRef).ToArray();
+        var (_, directMergeError, directMergeCode) = RunGitArgs(repoRoot, directMergeArgs);
         IReadOnlyList<string> directConflicts = directMergeCode == 0 ? [] : ListUnmergedFiles(repoRoot);
         var reportOnlyConflict = directMergeCode != 0
             && DeliveryReportPathPolicy.IsEnabled(repoRoot)
@@ -6651,7 +6672,9 @@ public partial class GitService
                     return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
                         error: $"Could not retain integration report paths: {restoreError.Trim()}");
                 }
-                var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit", "--no-verify");
+                var (_, commitError, commitCode) = mergeSubject is null
+                    ? RunGitArgs(repoRoot, "commit", "--no-edit", "--no-verify")
+                    : RunGitArgs(repoRoot, "commit", "-m", mergeSubject, "--no-verify");
                 if (commitCode != 0)
                 {
                     RunGitArgs(repoRoot, "merge", "--abort");
@@ -6680,7 +6703,7 @@ public partial class GitService
                 error: $"Direct merge failed before conflict recovery: {directMergeError.Trim()}");
         }
 
-        var mechanicalMerge = TryMechanicalMerge(repoRoot, sourceRef);
+        var mechanicalMerge = TryMechanicalMerge(repoRoot, sourceRef, mergeSubject);
         if (mechanicalMerge.Success)
         {
             _logger.LogInformation(
@@ -6735,7 +6758,9 @@ public partial class GitService
         var netChange = recovery.Outcome == "net-change";
         var (_, mergeErr, mergeCode) = netChange
             ? RunGitArgs(repoRoot, "merge", "--ff-only", recovery.RebasedTip!)
-            : RunGitArgs(repoRoot, "-c", "rerere.enabled=false", "merge", "--no-ff", "--no-edit", recovery.RebasedTip!);
+            : mergeSubject is null
+                ? RunGitArgs(repoRoot, "-c", "rerere.enabled=false", "merge", "--no-ff", "--no-edit", recovery.RebasedTip!)
+                : RunGitArgs(repoRoot, "-c", "rerere.enabled=false", "merge", "--no-ff", "-m", mergeSubject, recovery.RebasedTip!);
         if (mergeCode != 0)
         {
             var conflicted = ListUnmergedFiles(repoRoot);
@@ -6790,19 +6815,14 @@ public partial class GitService
     /// </summary>
     private MechanicalMergeAttempt TryMechanicalMerge(
         string repoRoot,
-        string sourceRef)
+        string sourceRef,
+        string? mergeSubject)
     {
-        var (_, mergeError, mergeCode) = RunGitArgs(
-            repoRoot,
-            "-c",
-            "rerere.enabled=true",
-            "-c",
-            "rerere.autoupdate=true",
-            "merge",
-            "--strategy=ort",
-            "--no-ff",
-            "--no-edit",
-            sourceRef);
+        var mergeArgs = new[] { "-c", "rerere.enabled=true", "-c", "rerere.autoupdate=true",
+                "merge", "--strategy=ort", "--no-ff" }
+            .Concat(mergeSubject is null ? ["--no-edit"] : new[] { "-m", mergeSubject })
+            .Append(sourceRef).ToArray();
+        var (_, mergeError, mergeCode) = RunGitArgs(repoRoot, mergeArgs);
         if (mergeCode == 0)
             return MechanicalMergeAttempt.Applied(ReadHeadShaAt(repoRoot)!);
 
@@ -6815,7 +6835,9 @@ public partial class GitService
                 $"Mechanical three-way merge remained conflicted: {mergeError.Trim()}");
         }
 
-        var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit");
+        var (_, commitError, commitCode) = mergeSubject is null
+            ? RunGitArgs(repoRoot, "commit", "--no-edit")
+            : RunGitArgs(repoRoot, "commit", "-m", mergeSubject);
         if (commitCode == 0)
             return MechanicalMergeAttempt.Applied(ReadHeadShaAt(repoRoot)!);
 
@@ -6880,6 +6902,13 @@ public partial class GitService
             && DeliveryReportPathPolicy.IsEnabled(repoRoot)
             && DeliveryReportPathPolicy.AreOnlyReportConflicts(replay.ConflictedFiles))
             return MergeBatchMember(repoRoot, immutableResultRef, expectedResultSha, batchTip);
+        // AGT-3968: a conflict whose hunks all only add lines on both sides is
+        // resolved by the merge route, which keeps every delivery SHA. Any
+        // other conflict stays the rebase conflict it was.
+        if (replay.FailureKind == MechanicalRebaseFailureKind.Conflict
+            && MergeBatchMember(repoRoot, immutableResultRef, expectedResultSha, batchTip)
+                is { Success: true, UnionResolvedHunks.Count: > 0 } union)
+            return union;
         return replay.FailureKind switch
         {
             MechanicalRebaseFailureKind.Conflict => BatchReplayResult.Conflict(
@@ -7029,6 +7058,22 @@ public partial class GitService
                 }
                 else mergeError = restoreError;
             }
+            // AGT-3968: both sides only added lines at the same places. Keep
+            // both; the batch gate then builds and tests the candidate, and a
+            // red gate sends the member through isolation as before.
+            var union = conflicted.Count > 0 ? TryResolveAddAddConflicts(worktreePath, conflicted) : null;
+            if (union is { Resolved: true })
+            {
+                var (_, commitError, commitCode) = RunGitArgs(worktreePath, "commit", "--no-edit");
+                if (commitCode == 0)
+                {
+                    var verified = VerifyBatchMergeParents(worktreePath, resultSha, batchTip);
+                    return verified.Success ? verified with { UnionResolvedHunks = union.Hunks } : verified;
+                }
+                mergeError = commitError;
+            }
+            else if (union?.Refusal is { } refusal)
+                mergeError = $"{mergeError.Trim()} Not resolved by union: {refusal}";
             RunGitArgs(worktreePath, "merge", "--abort");
             return conflicted.Count > 0
                 ? BatchReplayResult.Conflict(conflicted, $"Batch merge conflicted and was aborted: {mergeError.Trim()}",
@@ -9117,6 +9162,31 @@ public partial class GitService
     }
 
     /// <summary>
+    /// AGT-3879: commit, parents (first parent first) and message of each
+    /// commit reachable from <paramref name="tip"/> but not from
+    /// <paramref name="exclusiveBase"/>, newest first. The instance deploy view
+    /// walks the first-parent chain of a deploy range with them. Empty when a
+    /// revision is invalid or unknown.
+    /// </summary>
+    public IReadOnlyList<AgentStudio.Deploy.RangeCommit> ListRangeCommits(string repoRoot, string tip,
+        string? exclusiveBase, int maxCount)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot) || !IsLikelyBranchName(tip)
+            || exclusiveBase is not null && !IsLikelyBranchName(exclusiveBase)) return [];
+        var arguments = new List<string> { "log", $"--max-count={Math.Max(1, maxCount)}", "--format=%H%x1f%P%x1f%B%x1e", tip };
+        if (exclusiveBase is not null) arguments.Add("^" + exclusiveBase);
+        arguments.Add(RevisionsOnly);
+        var (output, _, code) = RunGitArgs(repoRoot, [.. arguments]);
+        if (code != 0) return [];
+        return output.Split('\x1e', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(entry => entry.Split('\x1f', 3))
+            .Where(fields => fields.Length >= 2)
+            .Select(fields => new AgentStudio.Deploy.RangeCommit(fields[0],
+                fields[1].Split(' ', StringSplitOptions.RemoveEmptyEntries), fields.Length > 2 ? fields[2] : ""))
+            .ToArray();
+    }
+
+    /// <summary>
     /// BD-1: whether <paramref name="ancestor"/> is an ancestor of
     /// <paramref name="descendant"/>, or null when git cannot answer. Unlike
     /// <see cref="IsAncestor"/>, only exit code 1 of
@@ -9155,6 +9225,26 @@ public partial class GitService
             .Where(parts => parts.Length == 2 && parts[0].Split(' ') is [_, "blob", _])
             .Select(parts => parts[1])
             .ToArray();
+    }
+
+    /// <summary>
+    /// Writes the uncompressed <c>git archive</c> of a full commit SHA to
+    /// <paramref name="outputFile"/>, limited to <paramref name="path"/> when
+    /// given. An integration release packs the gated tree this way. False when
+    /// git cannot read the commit or the path.
+    /// </summary>
+    public bool ArchiveCommit(string repoRoot, string sha, string? path, string outputFile)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Regex.IsMatch(sha, @"\A[0-9a-f]{40}\z")
+            || path is not null && !Regex.IsMatch(path,
+                AgentStudio.TaskServer.Contracts.ProjectDeploymentVocabulary.ArtifactPathPattern)) return false;
+        var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
+        if (!Directory.Exists(root)) return false;
+        string[] args = path is null or "."
+            ? ["archive", "--format=tar", "-o", outputFile, sha]
+            : ["archive", "--format=tar", "-o", outputFile, sha, path];
+        var (_, _, code) = RunGitArgs(root, args);
+        return code == 0 && File.Exists(outputFile);
     }
 
     /// <summary>

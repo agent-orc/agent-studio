@@ -7,13 +7,12 @@ using Xunit;
 
 namespace TaskServer.Tests;
 
-public sealed class StudioTaskMetadataTests
+public sealed class StudioTaskMetadataTests(StudioClassFixture fixture) : IClassFixture<StudioClassFixture>
 {
     [Fact]
     public async Task Title_updates_the_shared_task_row_and_rejects_a_stale_expected_version()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var (project, task) = await CreateProjectAndTaskAsync(store, "Title");
@@ -33,8 +32,7 @@ public sealed class StudioTaskMetadataTests
     [Fact]
     public async Task Change_project_moves_the_task_and_rejects_a_stale_expected_version()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var (project, task) = await CreateProjectAndTaskAsync(store, "ChangeProject");
@@ -65,8 +63,7 @@ public sealed class StudioTaskMetadataTests
     [Fact]
     public async Task Cli_type_upserts_the_studio_fields_row_and_rejects_a_stale_expected_version()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var (project, task) = await CreateProjectAndTaskAsync(store, "CliType");
@@ -90,8 +87,7 @@ public sealed class StudioTaskMetadataTests
     [Fact]
     public async Task Model_upserts_the_studio_fields_row_and_rejects_a_stale_expected_version()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var (project, task) = await CreateProjectAndTaskAsync(store, "Model");
@@ -111,8 +107,7 @@ public sealed class StudioTaskMetadataTests
     [Fact]
     public async Task Thinking_level_upserts_the_studio_fields_row_and_rejects_a_stale_expected_version()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var (project, task) = await CreateProjectAndTaskAsync(store, "ThinkingLevel");
@@ -134,8 +129,7 @@ public sealed class StudioTaskMetadataTests
     [Fact]
     public async Task Task_type_upserts_the_studio_fields_row_and_rejects_a_stale_expected_version()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var (project, task) = await CreateProjectAndTaskAsync(store, "TaskType");
@@ -155,8 +149,7 @@ public sealed class StudioTaskMetadataTests
     [Fact]
     public async Task Release_upserts_the_studio_fields_row_and_rejects_a_stale_expected_version()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var (project, task) = await CreateProjectAndTaskAsync(store, "Release");
@@ -176,8 +169,7 @@ public sealed class StudioTaskMetadataTests
     [Fact]
     public async Task References_replaces_the_set_validates_existence_and_rejects_a_stale_expected_version()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var (project, task) = await CreateProjectAndTaskAsync(store, "References");
@@ -213,8 +205,7 @@ public sealed class StudioTaskMetadataTests
     [Fact]
     public async Task Tags_replaces_the_set_validates_existence_and_rejects_a_stale_expected_version()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var (project, task) = await CreateProjectAndTaskAsync(store, "Tags");
@@ -244,8 +235,7 @@ public sealed class StudioTaskMetadataTests
     [Fact]
     public async Task Task_metadata_routes_resolve_by_task_id_alone_for_the_connector_unscoped_project_token()
     {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
+        var factory = fixture.Factory;
         using var client = StudioTestClient.Create(factory);
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         var (project, task) = await CreateProjectAndTaskAsync(store, "Unscoped");

@@ -193,8 +193,7 @@ public sealed class WorkbenchCatalogueService
                 var linked = item with
                 {
                     LinkedTaskKeys = members
-                        .Where(member => member.Task.Dossier is { Path.Length: > 0 })
-                        .Select(member => member.Task.Key)
+                        .Select(member => member.Task.Key ?? member.Task.Id)
                         .Where(key => !string.IsNullOrWhiteSpace(key))
                         .Select(key => key!)
                         .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -1510,6 +1509,7 @@ public record WorkbenchDocument(WorkbenchListItem Workbench, string Html, string
     public DossierCardList? Cards { get; init; }
     /// <summary>The card a rework request would run its revision on (AGT-3703).</summary>
     public WorkbenchRevisionCard? RevisionCard { get; init; }
+    public WorkbenchRevisionRoundResult? RevisionRound { get; init; }
     /// <summary>Whether Create implementation cards can work for this Dossier (AGT-3875).</summary>
     public WorkbenchPromotion? Promotion { get; init; }
 }

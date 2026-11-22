@@ -1,10 +1,12 @@
 using AgentStudio.Deploy;
 using AgentStudio.Security;
 using AgentStudio.Secrets;
+using AgentStudio.Telemetry;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Management;
 using AgentStudio.Registry;
 using AgentStudio.Git;
+using AgentStudio.Runner;
 using AgentStudio.Host;
 using AgentStudio.Diagnostics;
 using System.Net.Http.Json;
@@ -15,14 +17,11 @@ public static class ProjectOperatorDashboardEndpoints
 {
     public static void MapProjectOperatorDashboardEndpoints(this WebApplication app)
     {
+        // AGT-3954: the projection is cached and refreshed in the background by
+        // StructureSnapshotService. A request reads the cache; it never rebuilds
+        // the structure per client and never asks a host.
         app.MapGet("/api/v1/operations/structure", async Task<IResult> (HttpContext context, string? scope, string? environment,
-            IConfiguration configuration, ProjectRegistry projects, WorkspaceRegistry workspaces, ProjectEnvironmentService environments,
-            GitService git, AgentStudio.Runner.V1ReviewExecutorRegistry hosts,
-            LinkSupervisor links, EnvironmentHealthService health,
-            AgentStudio.Runner.HostReleaseDriftWatchdog releases,
-            AgentStudio.Runner.OrchestrationEngineReadiness engine,
-            AgentStudio.Pipeline.PullGateStore gates, TimeProvider clock,
-            IHttpClientFactory clients, CancellationToken cancellationToken) =>
+            ProjectRegistry projects, StructureSnapshotService structure, CancellationToken cancellationToken) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (scope is not null && scope != "workspace" && !scope.StartsWith("project:", StringComparison.Ordinal))
@@ -34,45 +33,16 @@ public static class ProjectOperatorDashboardEndpoints
                 if (project is null) return Results.NotFound();
                 projectId = project.Id;
             }
-            InstallationConnectivityManifest? manifest = null;
-            var path = configuration[ConnectivityManifestLoader.ManifestPathKey];
-            if (!string.IsNullOrWhiteSpace(path))
-            {
-                try { manifest = InstallationConnectivityManifest.Parse(File.ReadAllText(Path.GetFullPath(path))); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-                { return Results.Problem("Connectivity manifest is unavailable.", statusCode: 503); }
-            }
-            var selected = projects.List().Where(p => !p.Archived).ToArray();
-            var declared = StructureProjection.Build(manifest, selected,
-                environments.DeclarationFiles, projectId, environment,
-                project => git.ResolveRepoRootForProject(project.DisplayName),
-                workspaces.List().Where(workspace => projectId is null ||
-                    projects.FindById(projectId)?.WorkspaceId == workspace.Id)
-                    .SelectMany(workspace => workspace.Systems).ToArray(),
-                ManagedServiceProbes(health));
-            var deploymentFacts = selected.SelectMany(project =>
-                environments.Read(project.DisplayName)?.Environments.Select(view =>
-                    new StructureDeploymentFact(project.Id, view)) ?? []).ToArray();
-            var healthFacts = health.Overview().Environments.Join(selected,
-                view => view.Project, project => project.DisplayName,
-                (view, project) => new StructureHealthFact(project.Id, view)).ToArray();
-            IReadOnlyList<RunnerCapabilitySnapshotDto> hostFacts = hosts.ListCapabilitySnapshots();
-            if (TaskServerPlaneProxy.IsConfigured(configuration))
-            {
-                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                deadline.CancelAfter(TimeSpan.FromSeconds(5));
-                try
-                {
-                    hostFacts = await clients.CreateClient(TaskServerPlaneProxy.ClientName)
-                        .GetFromJsonAsync<RunnerCapabilitySnapshotDto[]>("/api/v1/management/remote-hosts",
-                            deadline.Token) ?? [];
-                }
-                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
-                { SilentCatch.Warn(ex, "StructureProjection: remote host reports unavailable"); }
-            }
-            return Results.Ok(ObservedStructureProjection.Apply(declared, hostFacts,
-                links.Snapshot(), deploymentFacts, healthFacts, releases.Current,
-                engine.State, clock.GetUtcNow().UtcDateTime, gates.Hosts()));
+            var read = await structure.ReadAsync(projectId, string.IsNullOrWhiteSpace(environment) ? null : environment,
+                cancellationToken);
+            if (read.Response is not { } response)
+                return Results.Problem(read.Error ?? "Structure is unavailable.", statusCode: 503);
+            // The revision is the entity tag: a view that already holds it gets 304 and keeps its nodes.
+            var tag = $"\"{response.Revision}\"";
+            context.Response.Headers.ETag = tag;
+            return context.Request.Headers.IfNoneMatch.ToString() == tag
+                ? Results.StatusCode(StatusCodes.Status304NotModified)
+                : Results.Ok(response);
         });
 
         app.MapGet("/api/v1/operations/structure/library", async (StructureLibraryService library,
@@ -88,7 +58,8 @@ public static class ProjectOperatorDashboardEndpoints
         // starts the automatic Staging phase of the standard lifecycle.
         app.MapPost("/api/deploy/gate-releases", async (HttpContext context, GateArtifactRequest request,
             ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration,
-            AccessSecurityStore security, ReleaseCandidateGate gate, CancellationToken ct) =>
+            AccessSecurityStore security, ReleaseCandidateGate gate, DeployStore store, TimeProvider clock,
+            CancellationToken ct) =>
         {
             var builder = RunnerCredential(context, configuration, security);
             if (builder is null || !builder.Scopes.Contains(RunnerScopes.Release))
@@ -96,8 +67,14 @@ public static class ProjectOperatorDashboardEndpoints
             ReleaseCandidateGateResult candidate;
             try { candidate = await gate.InspectAsync(request.Project, request.Commit, ct); }
             catch (HttpRequestException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
-            if (candidate.Mode == "invalid") return Results.BadRequest(new { error = candidate.Error });
-            if (!candidate.Allowed) return Results.Conflict(new { error = candidate.Error });
+            // F2: a refusal stays visible in the Deploy area until a release is created.
+            if (candidate.Project.Length > 0)
+                store.SaveReleaseRefusal(candidate.Project, candidate.Allowed ? null
+                    : new ReleaseGateRefusal(candidate.CommitSha, candidate.Mode, candidate.Error!,
+                        candidate.NextStep, clock.GetUtcNow()));
+            if (candidate.Mode == "invalid")
+                return Results.BadRequest(new { error = candidate.Error, nextStep = candidate.NextStep });
+            if (!candidate.Allowed) return Results.Conflict(new { error = candidate.Error, nextStep = candidate.NextStep });
             return DeployEndpoints.QuotaRefusable(() => environments.RegisterGateArtifact(
                 request.Project, request.Artifact, request.Commit, builder.RunnerId)
                 ? ReleaseCreated(deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate",
@@ -131,9 +108,12 @@ public static class ProjectOperatorDashboardEndpoints
             catch (HttpRequestException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
+        // F4: each environment names its run host and whether that host is reachable.
         app.MapGet("/api/projects/{projectName}/environments", (string projectName,
-            ProjectEnvironmentService environments) => environments.Read(projectName) is { } value
-                ? Results.Ok(value) : Results.NotFound());
+            ProjectEnvironmentService environments, RunHostDirectory runHosts) => environments.Read(projectName) is { } value
+                ? Results.Ok(runHosts.Attach(value)) : Results.NotFound());
+
+        app.MapGet("/api/deploy/run-hosts", (RunHostDirectory runHosts) => Results.Ok(runHosts.List()));
 
         app.MapGet("/api/projects/{projectName}/previews/{cardKey}/screenshot", (
             HttpContext context, string projectName, string cardKey,
@@ -158,9 +138,16 @@ public static class ProjectOperatorDashboardEndpoints
 
         // The access boundary admits scoped human Approvers; DeployService
         // decides each production approval again in the standard lifecycle.
-        app.MapPost("/api/projects/{projectName}/environments/promotions/approve", (
-            HttpContext context, string projectName, PromotionDecisionRequest request, DeployService deploy) =>
-            DeployEndpoints.QuotaRefusable(() => DecidePromotion(context, projectName, request, approve: true, deploy)))
+        app.MapPost("/api/projects/{projectName}/environments/promotions/approve", async (
+            HttpContext context, string projectName, PromotionDecisionRequest request, DeployService deploy,
+            DeploySecretReadiness readiness, CancellationToken ct) =>
+            await DeployEndpoints.WithSecretPreflight(readiness, projectName,
+                DeployEndpoints.Actor(context, projectName).IsApprover
+                    && deploy.PendingPromotionRunId(projectName, request.Artifact) is { } runId
+                    ? deploy.SecretDemandForRun(projectName, runId) : null,
+                request.ConfirmMissingSecrets,
+                missing => DeployEndpoints.QuotaRefusable(() => DecidePromotion(context, projectName, request,
+                    approve: true, deploy, missing)), ct))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/projects/{projectName}/environments/promotions/reject", (
@@ -178,7 +165,7 @@ public static class ProjectOperatorDashboardEndpoints
             return DeployEndpoints.QuotaRefusable(() => deploy.RollbackEnvironment(projectName, environmentId, actor) switch
             {
                 { Kind: DeployOutcomeKind.Ok } => Results.Accepted(),
-                { Kind: DeployOutcomeKind.NotFound } => Results.Conflict(new { error = "No previous artifact is available." }),
+                { Kind: DeployOutcomeKind.NotFound } refused => Results.NotFound(new { error = refused.Error }),
                 { Kind: DeployOutcomeKind.Forbidden } refused => Results.Json(new { error = refused.Error },
                     statusCode: StatusCodes.Status403Forbidden),
                 var refused => Results.Conflict(new { error = refused.Error }),
@@ -215,26 +202,31 @@ public static class ProjectOperatorDashboardEndpoints
 
         app.MapPost("/api/deploy/jobs/claim", async (HttpContext context, DeployClaimRequest request,
             ProjectEnvironmentService environments, DeployService deploy, RunbookService runbooks,
-            ProjectSecretBindings bindings,
-            IConfiguration configuration, CancellationToken ct) =>
+            ProjectSecretBindings bindings, AccessSecurityStore security, DeployTelemetryCredentials telemetry,
+            RunHostDirectory runHosts, ProjectRegistry projects, IConfiguration configuration, CancellationToken ct) =>
         {
-            if (SecurityProfiles.IsNetworked(configuration) &&
-                (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
-                 || principal.RunnerId != request.HostId))
-                return Results.Forbid();
-            var job = environments.Claim(request.HostId, requireVerifiedRelease: true);
+            // F6: the credential must belong to the claimed host on every profile, before
+            // a lease exists, so a mismatch cannot surface only at secret resolution.
+            if (DeployClaimRefusal(context, request.HostId, configuration, security) is { } refused) return refused;
+            // F4: a run host deploys only the projects its credential is bound to.
+            var job = environments.Claim(request.HostId, requireVerifiedRelease: true,
+                project => RunnerProjectBinding.Allows(context, project, projects));
+            runHosts.RecordContact(RunnerCredential(context, configuration, security),
+                job is null ? DeployHostContact.Poll : DeployHostContact.Claim);
+            var endpoint = TelemetryEndpoints.RequestEndpoint(context);
             return await CompleteClaimAsync(job, project =>
             {
                 deploy.SyncAfterHostCall(project);
                 runbooks.SyncAfterHostCall(project);
-            }, bindings, ct);
+            }, bindings, ct, (claimed, token) => telemetry.PrepareClaimAsync(claimed, endpoint, token));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
-        app.MapPost("/api/deploy/jobs/{project}/{jobId}/report", (string project, string jobId,
+        app.MapPost("/api/deploy/jobs/{project}/{jobId}/report", (HttpContext context, string project, string jobId,
             DeployReportRequest request, ProjectEnvironmentService environments, DeployService deploy,
-            RunbookService runbooks) =>
+            RunbookService runbooks, AccessSecurityStore security, RunHostDirectory runHosts, IConfiguration configuration) =>
         {
             if (!environments.Report(project, jobId, request, requireVerifiedRelease: true)) return Results.Conflict();
+            runHosts.RecordContact(RunnerCredential(context, configuration, security), DeployHostContact.Report);
             deploy.SyncAfterHostCall(project);
             runbooks.SyncAfterHostCall(project);
             return Results.Ok();
@@ -251,7 +243,7 @@ public static class ProjectOperatorDashboardEndpoints
             var claim = environments.FindClaimedJobVerification(project, jobId, lease, requireVerifiedRelease: true);
             if (claim.Retryable) return RegistryUnavailable();
             var job = claim.Job;
-            if (job is null || SecurityProfiles.IsNetworked(configuration) && principal.RunnerId != job.HostId)
+            if (job is null || !DeployHostIdentity.Belongs(principal, job.HostId, security.DeployHostRunnerId(job.HostId)))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             try
             {
@@ -283,20 +275,44 @@ public static class ProjectOperatorDashboardEndpoints
         // AGT-3877: managed database credentials exist before the host may resolve them.
         app.MapGet("/api/deploy/run-targets/{hostId}/desired-state", async (HttpContext context, string hostId,
             ProjectEnvironmentService environments, ManagedDatabaseCredentials credentials,
-            IConfiguration configuration, CancellationToken ct) =>
+            AccessSecurityStore security, RunHostDirectory runHosts, IConfiguration configuration, CancellationToken ct) =>
         {
             if (RunTargetCallerDenied(context, hostId, configuration)) return RunTargetForbidden();
+            RecordRunTargetContact(context, hostId, configuration, security, runHosts, DeployHostContact.Poll);
             await ManagedDatabaseEndpoints.QuietlyAsync(context, () => credentials.EnsureForHostAsync(hostId, ct));
             return Results.Ok(environments.DesiredState(hostId));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         app.MapPost("/api/deploy/run-targets/{hostId}/observed-state", async (HttpContext context, string hostId,
             RunTargetObservedReport report, ProjectEnvironmentService environments,
-            ManagedDatabaseCredentials credentials, IConfiguration configuration, CancellationToken ct) =>
+            ManagedDatabaseCredentials credentials, ManagedDatabaseMetrics metrics, OrchestratorLog activity,
+            IConfiguration configuration, AccessSecurityStore security, RunHostDirectory runHosts,
+            CancellationToken ct) =>
+        {
+            if (RunTargetCallerDenied(context, hostId, configuration)) return RunTargetForbidden();
+            RecordRunTargetContact(context, hostId, configuration, security, runHosts, DeployHostContact.Report);
+            var measured = new List<(string Project, ManagedDatabaseRecord Record)>();
+            var accepted = environments.RecordObserved(hostId, report, measured);
+            environments.PublishRuntimeIncidentEvents(activity, (report.Environments ?? []).Select(item => item.Project));
+            // AGT-3878: database size and connections reach the environment's operations intake.
+            metrics.Publish(measured);
+            await ManagedDatabaseEndpoints.QuietlyAsync(context, () => credentials.RetireDeletedAsync(ct));
+            return Results.Ok(new { accepted });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
+        app.MapGet("/api/deploy/hosts/{hostId}/containers", (HttpContext context, string hostId,
+            ProjectEnvironmentService environments, IConfiguration configuration) =>
+            RunTargetCallerDenied(context, hostId, configuration) ? RunTargetForbidden()
+                : Results.Ok(environments.ContainerTargets(hostId)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
+
+        app.MapPost("/api/deploy/hosts/{hostId}/observed-state", (HttpContext context, string hostId,
+            RunTargetObservedReport report, ProjectEnvironmentService environments, OrchestratorLog activity,
+            IConfiguration configuration) =>
         {
             if (RunTargetCallerDenied(context, hostId, configuration)) return RunTargetForbidden();
             var accepted = environments.RecordObserved(hostId, report);
-            await ManagedDatabaseEndpoints.QuietlyAsync(context, () => credentials.RetireDeletedAsync(ct));
+            environments.PublishRuntimeIncidentEvents(activity, (report.Environments ?? []).Select(item => item.Project));
             return Results.Ok(new { accepted });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
@@ -305,10 +321,15 @@ public static class ProjectOperatorDashboardEndpoints
             deploy.AppendHostStepLog(project, jobId, request) ? Results.Ok() : Results.Conflict())
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
-        app.MapPost("/api/deploy/jobs/{project}/{jobId}/renew", (string project, string jobId,
-            DeployLeaseRequest request, ProjectEnvironmentService environments) =>
-            environments.RenewClaim(project, jobId, request.LeaseToken) ? Results.Ok() : Results.Conflict())
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+        // A long deploy renews its lease; the renewal keeps the run host reachable meanwhile.
+        app.MapPost("/api/deploy/jobs/{project}/{jobId}/renew", (HttpContext context, string project, string jobId,
+            DeployLeaseRequest request, ProjectEnvironmentService environments, AccessSecurityStore security,
+            RunHostDirectory runHosts, IConfiguration configuration) =>
+        {
+            if (!environments.RenewClaim(project, jobId, request.LeaseToken)) return Results.Conflict();
+            runHosts.RecordContact(RunnerCredential(context, configuration, security), DeployHostContact.Poll);
+            return Results.Ok();
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
         app.MapGet("/api/projects/{projectName}/throughput", (
             string projectName,
@@ -362,16 +383,25 @@ public static class ProjectOperatorDashboardEndpoints
         });
     }
 
+    /// <param name="telemetry">
+    /// Mints the environment's deploy ingest token and adds the intake endpoint
+    /// to a job whose environment enables telemetry (M5). The token then goes
+    /// through the same secret preflight as the declared references.
+    /// </param>
     internal static async Task<IResult> CompleteClaimAsync(DeployJob? job, Action<string> sync,
-        ProjectSecretBindings bindings, CancellationToken ct)
+        ProjectSecretBindings bindings, CancellationToken ct,
+        Func<DeployJob, CancellationToken, Task<DeployJob>>? telemetry = null)
     {
         if (job is null) return Results.Ok(job);
         try
         {
             sync(job.Project);
-            if (job.SecretRefs.Count == 0 || job.RetryStep == "health" || job.RunbookName is not null
+            if (job.RetryStep == "health" || job.RunbookName is not null
                 || job.Kind is "preview" or "preview-remove") return Results.Ok(job);
-            var check = await bindings.CheckAsync(job.Project, job.EnvironmentId, job.SecretRefs,
+            if (job.Telemetry is not null && telemetry is not null) job = await telemetry(job, ct);
+            var names = PreflightNames(job);
+            if (names.Count == 0) return Results.Ok(job);
+            var check = await bindings.CheckAsync(job.Project, job.EnvironmentId, names,
                 job.EnvironmentKind ?? "production", ct);
             return Results.Ok(job with
             {
@@ -383,7 +413,8 @@ public static class ProjectOperatorDashboardEndpoints
         {
             // The lease is already claimed. Return a reportable, unusable job
             // without exposing provider or storage exception text to the host.
-            var names = job.SecretRefs.Count == 0 ? ["deploy-preflight"] : job.SecretRefs;
+            var declared = PreflightNames(job);
+            var names = declared.Count == 0 ? ["deploy-preflight"] : declared;
             return Results.Ok(job with
             {
                 SecretBindings = null,
@@ -394,10 +425,46 @@ public static class ProjectOperatorDashboardEndpoints
         }
     }
 
+    private static IReadOnlyList<string> PreflightNames(DeployJob job)
+        => job.Telemetry is { } telemetry
+            ? [.. job.SecretRefs.Append(telemetry.SecretName).Distinct(StringComparer.Ordinal)]
+            : job.SecretRefs;
+
     // Results.Forbid() needs an authentication scheme; Runner credentials are
     // checked by AccessSecurityMiddleware, so answer 403 directly.
     private static IResult RunTargetForbidden() => Results.Json(
         new { error = "A run target may access only its enrolled host identity." }, statusCode: StatusCodes.Status403Forbidden);
+
+    private static void RecordRunTargetContact(HttpContext context, string hostId, IConfiguration configuration,
+        AccessSecurityStore security, RunHostDirectory runHosts, DeployHostContact contact)
+    {
+        if (RunnerCredential(context, configuration, security) is { } host && host.RunnerId == hostId)
+            runHosts.RecordContact(host, contact);
+    }
+
+    /// <summary>
+    /// Null when the caller may claim for <paramref name="hostId"/>. A presented runner
+    /// credential must belong to that host on every profile; only the local profile
+    /// still admits a claim that presents no runner credential at all.
+    /// </summary>
+    private static IResult? DeployClaimRefusal(HttpContext context, string hostId, IConfiguration configuration,
+        AccessSecurityStore security)
+    {
+        var principal = RunnerCredential(context, configuration, security);
+        if (principal is null)
+            return SecurityProfiles.IsNetworked(configuration) || HasBearer(context)
+                ? Results.Json(new { error = "A deploy claim needs a valid runner credential.", code = DeployHostIdentity.DeniedCode },
+                    statusCode: StatusCodes.Status403Forbidden)
+                : null;
+        return DeployHostIdentity.Belongs(principal, hostId, security.DeployHostRunnerId(hostId))
+            ? null
+            : Results.Json(new { error = DeployHostIdentity.Refusal(hostId, principal), code = DeployHostIdentity.DeniedCode },
+                statusCode: StatusCodes.Status403Forbidden);
+    }
+
+    private static bool HasBearer(HttpContext context)
+        => context.Request.Headers.Authorization.Any(value =>
+            value?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true);
 
     private static bool RunTargetCallerDenied(HttpContext context, string hostId, IConfiguration configuration)
         => SecurityProfiles.IsNetworked(configuration)
@@ -417,35 +484,17 @@ public static class ProjectOperatorDashboardEndpoints
     };
 
     private static IResult DecidePromotion(HttpContext context, string project, PromotionDecisionRequest request,
-        bool approve, DeployService deploy)
+        bool approve, DeployService deploy, IReadOnlyList<string>? confirmedMissingSecrets = null)
     {
         var actor = DeployEndpoints.Actor(context, project);
         if (!actor.IsApprover) return ApprovalRequired();
-        return deploy.DecidePromotion(project, request.Artifact, approve, actor) switch
+        return deploy.DecidePromotion(project, request.Artifact, approve, actor, confirmedMissingSecrets) switch
         {
             { Kind: DeployOutcomeKind.Ok } => Results.Ok(),
             { Kind: DeployOutcomeKind.NotFound } => Results.Conflict(new { error = "Promotion is not pending." }),
             { Kind: DeployOutcomeKind.Forbidden } refused => Results.Json(new { error = refused.Error },
                 statusCode: StatusCodes.Status403Forbidden),
             var refused => Results.Conflict(new { error = refused.Error }),
-        };
-    }
-
-    /// <summary>
-    /// A managed service is observed through the environment health check it
-    /// names; the control-plane worker already probes those checks. One health
-    /// read per project and request.
-    /// </summary>
-    private static Func<ProjectRecord, string, string, StructureProbe?> ManagedServiceProbes(EnvironmentHealthService health)
-    {
-        var read = new Dictionary<string, ProjectEnvironmentHealthResponse?>(StringComparer.OrdinalIgnoreCase);
-        return (project, environment, checkId) =>
-        {
-            if (!read.TryGetValue(project.DisplayName, out var response))
-                read[project.DisplayName] = response = health.Read(project.DisplayName);
-            var check = response?.Environments.FirstOrDefault(item => item.EnvironmentId == environment)?
-                .Checks.FirstOrDefault(item => item.Id == checkId);
-            return check is null ? null : new StructureProbe(check.Kind, check.Status);
         };
     }
 

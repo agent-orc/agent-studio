@@ -162,7 +162,7 @@ export class ProjectHubViewComponent {
     effect(() => {
       const target = resolveProjectSection(this.initialSection());
       const requested = new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('view');
-      const deepLinked = ['history', 'releases', 'operations', 'runbooks'].includes(requested ?? '')
+      const deepLinked = ['history', 'releases', 'operations', 'runbooks', 'telemetry'].includes(requested ?? '')
         ? requested as DeployView : null;
       this.deployView.update(view => target.deployView === 'steps' ? 'steps' : deepLinked && target.rail === 'deploy'
         ? deepLinked : (view === 'steps' ? 'overview' : view));
@@ -235,6 +235,10 @@ export class ProjectHubViewComponent {
    * opens (open-or-focus by key), so both entry points land on one tab.
    */
   openUrlPreview(url: { id: string }): void {
+    if (url.id === 'repo') {
+      this.tabState.open({ kind: 'hub', projectName: this.projectName(), section: 'git' });
+      return;
+    }
     this.tabState.open({ kind: 'url-preview', projectName: this.projectName(), urlId: url.id }, 'new');
   }
 

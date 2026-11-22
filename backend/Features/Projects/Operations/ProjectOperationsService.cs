@@ -7,15 +7,17 @@ public sealed record OperationsMarker(string DeploymentId, string ReleaseId, str
     DateTime AtUtc, string Trigger, string State, IReadOnlyList<string> CardKeys);
 
 public sealed record EnvironmentOperationsView(DeployEnvironment Environment, bool TelemetryAvailable,
-    OperationsMetrics? Metrics, IReadOnlyList<OperationsMarker> Markers);
+    OperationsMetrics? Metrics, IReadOnlyList<OperationsMarker> Markers,
+    RunTargetObservation? Observed = null, RuntimeIncident? RuntimeIncident = null);
 
 public sealed record ProjectOperationsView(string Project, DateTimeOffset Since, DateTimeOffset Until,
     IReadOnlyList<EnvironmentOperationsView> Environments, DoraSummary Dora);
 
-public sealed record OperationsLogResult(bool TelemetryAvailable, IReadOnlyList<OperationsLogLine> Lines);
+public sealed record OperationsLogResult(bool TelemetryAvailable, IReadOnlyList<OperationsLogLine> Lines, string? NextCursor);
 
 public sealed class ProjectOperationsService(DeployService deploy, TaskScannerService scanner,
-    IOperationsTelemetryReader telemetry, TimeProvider clock)
+    ProjectEnvironmentService hostEnvironments, IOperationsTelemetryReader telemetry, TimeProvider clock,
+    HealthCheckStore health)
 {
     public ProjectOperationsView? Read(string project)
     {
@@ -25,6 +27,7 @@ public sealed class ProjectOperationsService(DeployService deploy, TaskScannerSe
         if (environments is null || releases is null || deployments is null) return null;
         var until = clock.GetUtcNow();
         var since = until.AddDays(-30);
+        var hostViews = hostEnvironments.Read(project)?.Environments ?? [];
         var releaseById = releases.ToDictionary(item => item.Id, StringComparer.Ordinal);
         var cards = scanner.ScanAllJobsWithArchive()
             .Where(item => string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase))
@@ -33,11 +36,14 @@ public sealed class ProjectOperationsService(DeployService deploy, TaskScannerSe
         var rows = environments.Select(environment =>
         {
             var metrics = telemetry.ReadMetrics(project, environment.Id, since, until);
+            var host = hostViews.FirstOrDefault(item => item.Declaration.Id == environment.Id);
             return new EnvironmentOperationsView(environment, metrics is not null, metrics,
-                CompletedMarkers(environment.Id, deployments, releaseById, since, until));
+                CompletedMarkers(environment.Id, deployments, releaseById, since, until),
+                host?.Observed, host?.RuntimeIncident);
         }).ToArray();
         return new(project, since, until, rows,
-            DoraMetrics.Calculate(environments, releases, deployments, cards, since, until));
+            DoraMetrics.Calculate(environments, releases, deployments, cards, since, until,
+                health.Load(project).Environments.Values.SelectMany(item => item.IncidentHistory).ToArray()));
     }
 
     public static IReadOnlyList<OperationsMarker> CompletedMarkers(string environmentId,
@@ -54,7 +60,7 @@ public sealed class ProjectOperationsService(DeployService deploy, TaskScannerSe
         .ToArray();
 
     public OperationsLogResult? SearchLogs(string project, string environmentId, DateTimeOffset? since,
-        DateTimeOffset? until, string? level, string? releaseId, string? text, int? limit)
+        DateTimeOffset? until, string? level, string? releaseId, string? text, int? limit, string? cursor)
     {
         if (deploy.Environments(project) is not { } environments) return null;
         if (!environments.Any(item => item.Id == environmentId)) return null;
@@ -64,11 +70,15 @@ public sealed class ProjectOperationsService(DeployService deploy, TaskScannerSe
             throw new ArgumentException("Log search must use an ordered range of at most 30 days.");
         if (text?.Length > 200 || releaseId?.Length > 100 || level?.Length > 30)
             throw new ArgumentException("A log search filter is too long.");
+        if (!string.IsNullOrWhiteSpace(level) && AgentStudio.Telemetry.TelemetrySeverity.Parse(level) is null)
+            throw new ArgumentException("Log level is invalid.");
+        if (!string.IsNullOrWhiteSpace(cursor) && AgentStudio.Telemetry.LogCursor.Decode(cursor) is null)
+            throw new ArgumentException("Log cursor is invalid.");
         var query = new OperationsLogQuery(project, environmentId, start, end,
             string.IsNullOrWhiteSpace(level) ? null : level,
             string.IsNullOrWhiteSpace(releaseId) ? null : releaseId,
-            string.IsNullOrWhiteSpace(text) ? null : text, Math.Clamp(limit ?? 100, 1, 100));
-        var lines = telemetry.SearchLogs(query);
-        return new(lines is not null, lines?.Take(query.Limit).ToArray() ?? []);
+            string.IsNullOrWhiteSpace(text) ? null : text, Math.Clamp(limit ?? 100, 1, 100), cursor);
+        var page = telemetry.SearchLogs(query);
+        return new(page is not null, page?.Lines ?? [], page?.NextCursor);
     }
 }

@@ -2,6 +2,24 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { ProjectDeploymentPanelComponent } from './project-deployment-panel.component';
+import { DEPLOY_CLOCK } from '../../state/deploy-area.model';
+import {
+  DEPLOY_FIXTURE_NOW,
+  RELEASE_1,
+  deployEnvironmentsFixture,
+  deployStatusFixture,
+  productionRollbackFixture,
+  productionDownHealthFixture,
+} from '../../testing/deploy-fixtures';
+import { buildRollbackOffers } from '../../state/rollback-offer.model';
+
+/** The deploy status and control-plane health reads of the shared environment projection; 404 means "not on this server". */
+function answerStateSources(http: HttpTestingController, project: string, status?: unknown, health?: unknown): void {
+  const statusRead = http.expectOne(`/api/projects/${project}/deploy/status`);
+  if (status === undefined) statusRead.flush('', { status: 404, statusText: 'Not Found' });
+  else statusRead.flush(status);
+  http.expectOne(`/api/projects/${project}/environments/health`).flush(health ?? { capturedAt: '', probeOrigin: 'test', environments: [] });
+}
 
 describe('ProjectDeploymentPanelComponent', () => {
   it('renders the shared baseline, pending delta, and newest-first history', async () => {
@@ -24,11 +42,15 @@ describe('ProjectDeploymentPanelComponent', () => {
         stageHealthyAt: '2026-10-16T12:00:00Z', status: 'pending', actor: null, expiresAt: '2026-10-17T12:00:00Z' }],
       failureCards: [],
     });
+    answerStateSources(http, 'Demo%20Project', [{
+      environment: { id: 'stage' }, currentRelease: { version: '2026.10.16.3', artifactDigests: ['sha256:' + 'a'.repeat(64)] },
+      currentDeployment: null, newerRelease: null, cardsSinceLastDeploy: [], health: 'healthy', releaseUncertain: false,
+    }]);
     http.expectOne('/api/watch-paths').flush([{ name: 'Demo Project', path: 'C:/projects/demo' }]);
     http
       .expectOne('/api/projects/Demo%20Project/deployment/summary')
       .flush({
-        project: 'Demo Project', available: true, reason: null,
+        project: 'Demo Project', available: true, reason: null, stableBaseline: true,
         source: 'logs/stable-restarts.jsonl', pendingCount: 2,
         defaultEvidenceRun: { id: 'TR-green', commit: 'bbbbbbbb', branch: 'develop', scope: { level: 'project', testSet: 'all' }, completedAt: '2026-07-11T08:00:00Z', distanceToHead: 2, headDirection: 'head-ahead' },
         pendingCommits: [{ sha: 'cccccccc', shortSha: 'cccccccc', subject: 'Pending', authorDateUtc: '2026-07-11T10:00:00Z' }],
@@ -55,11 +77,13 @@ describe('ProjectDeploymentPanelComponent', () => {
     expect(fixture.nativeElement.textContent).not.toContain('Run deployment');
     expect(fixture.nativeElement.textContent).toContain('Head is 2 commits ahead');
     expect(fixture.nativeElement.textContent).toContain('Promotion pending');
+    expect(fixture.nativeElement.textContent).toContain('Release 2026.10.16.3');
     fixture.nativeElement.querySelector('[data-testid="pending-promotion"] button').click();
     const approval = http.expectOne('/api/projects/Demo%20Project/environments/promotions/approve');
     expect(approval.request.body).toEqual({ artifact: 'app@sha256:' + 'a'.repeat(64) });
     approval.flush({});
     http.expectOne('/api/projects/Demo%20Project/environments').flush({ project: 'Demo Project', environments: [], promotions: [], failureCards: [] });
+    answerStateSources(http, 'Demo%20Project', []);
 
     fixture.nativeElement.querySelector('[data-testid="deployment-visible-task"]').click();
     fixture.detectChanges();
@@ -80,6 +104,40 @@ describe('ProjectDeploymentPanelComponent', () => {
     expect(fixture.nativeElement.querySelector('[data-testid="project-deployment-created"]').textContent).toContain('AGT-3000');
   });
 
+  it('rolls back only through the Deploy offer and never calls the older rollback route (F13)', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectDeploymentPanelComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectDeploymentPanelComponent);
+    fixture.componentRef.setInput('projectName', 'Website');
+    fixture.componentRef.setInput('now', DEPLOY_FIXTURE_NOW);
+    const emitted: string[] = [];
+    fixture.componentInstance.rollback.subscribe(id => emitted.push(id));
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    const scenario = productionRollbackFixture();
+    http.expectOne('/api/projects/Website/environments').flush(scenario.environments);
+    answerStateSources(http, 'Website', scenario.statuses);
+    http.expectOne('/api/watch-paths').flush([]);
+    http.expectOne('/api/projects/Website/deployment/summary').flush({ project: 'Website', available: false, reason: null,
+      source: 'none', pendingCount: null, defaultEvidenceRun: null, pendingCommits: [], lastDeployment: null, history: [], targets: [] });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const host = fixture.nativeElement as HTMLElement;
+    // Staging has four history rows, but without a lifecycle target there is no rollback button.
+    expect(host.querySelector('[data-testid="environment-stage"] button')).toBeNull();
+
+    fixture.componentRef.setInput('rollbackOffers', buildRollbackOffers(scenario.statuses));
+    fixture.detectChanges();
+    const offer = host.querySelector('[data-testid="environment-production"] [data-testid="rollback-offer-production"]');
+    expect(offer?.textContent).toContain(`Release ${RELEASE_1.version}`);
+    (offer!.querySelector('[data-testid="rollback-offer-button"]') as HTMLButtonElement).click();
+    expect(emitted).toEqual(['production']);
+    http.expectNone(request => request.url.endsWith('/rollback'));
+    http.verify();
+  });
+
   it('accepts false as a provided value for ordinary required yes-no parameters', async () => {
     await TestBed.configureTestingModule({
       imports: [ProjectDeploymentPanelComponent],
@@ -90,6 +148,7 @@ describe('ProjectDeploymentPanelComponent', () => {
     fixture.detectChanges();
     TestBed.inject(HttpTestingController).expectOne('/api/projects/Demo%20Project/environments')
       .flush({ project: 'Demo Project', environments: [], promotions: [], failureCards: [] });
+    answerStateSources(TestBed.inject(HttpTestingController), 'Demo%20Project', []);
     const target = {
       id: 'docs', title: 'Docs', kind: 'template' as const, template: 'caddy-site', summary: 'Deploy docs.',
       runnable: true, source: 'deployment.json', command: 'bash scripts/deploy.sh --reload {{reload}}', targetHostId: 'web',
@@ -114,14 +173,70 @@ describe('ProjectDeploymentPanelComponent', () => {
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Other/environments')
       .flush({ project: 'Other', environments: [], promotions: [], failureCards: [] });
+    answerStateSources(http, 'Other', []);
     http.expectOne('/api/watch-paths').flush([]);
     http.expectOne('/api/projects/Other/deployment/summary').flush({
       project: 'Other', available: false, reason: 'Latest deploy-stable revision range does not belong to this project repository.',
       source: 'logs/stable-restarts.jsonl', lastDeployment: null, history: [], pendingCount: null, pendingCommits: [], targets: [],
-      defaultEvidenceRun: null,
+      defaultEvidenceRun: null, stableBaseline: true,
     });
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="project-deployment-unavailable"]').textContent)
       .toContain('does not belong to this project repository');
+  });
+
+  it('M2: shows Production down from the open incident and the release version, not the last report and raw digest', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectDeploymentPanelComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting(), { provide: DEPLOY_CLOCK, useValue: () => DEPLOY_FIXTURE_NOW }],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectDeploymentPanelComponent);
+    fixture.componentRef.setInput('projectName', 'Website');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    // Every deploy report still says healthy.
+    http.expectOne('/api/projects/Website/environments').flush(deployEnvironmentsFixture());
+    answerStateSources(http, 'Website', deployStatusFixture(), productionDownHealthFixture());
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const production = fixture.nativeElement.querySelector('[data-testid="environment-production"]') as HTMLElement;
+    const health = production.querySelector('[data-testid="environment-state-health"]') as HTMLElement;
+    expect(health.textContent?.trim()).toBe('Down');
+    expect(health.dataset['tone']).toBe('danger');
+    expect(production.querySelector('[data-testid="environment-state-release"]')?.textContent?.replace(/\s+/g, ' ').trim())
+      .toBe(`Release ${RELEASE_1.version} deployed 13 h ago`);
+    expect(production.querySelector('[data-testid="environment-state-digest"]')?.textContent?.trim()).toBe('website@sha256:aaaaaaaaaaaa');
+    expect(production.querySelector('[data-testid="environment-health-state"]')).toBeNull();
+    const staging = fixture.nativeElement.querySelector('[data-testid="environment-stage"] [data-testid="environment-state-health"]') as HTMLElement;
+    expect(staging.textContent?.trim()).toBe('Up');
+  });
+
+  it('leaves Studio\'s stable baseline out and points a schema 2 project to Deploy', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectDeploymentPanelComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectDeploymentPanelComponent);
+    fixture.componentRef.setInput('projectName', 'Shop');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Shop/environments')
+      .flush({ project: 'Shop', environments: [], promotions: [], failureCards: [] });
+    answerStateSources(http, 'Shop', []);
+    http.expectOne('/api/watch-paths').flush([]);
+    http.expectOne('/api/projects/Shop/deployment/summary').flush({
+      project: 'Shop', available: false, reason: 'The deploy-stable baseline is Studio\'s own deployment history.',
+      source: 'logs/stable-restarts.jsonl', lastDeployment: null, history: [], pendingCount: null, pendingCommits: [], targets: [],
+      defaultEvidenceRun: null, stableBaseline: false, pipelineDeploySteps: 2,
+    });
+    fixture.detectChanges();
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).not.toContain('stable-restarts.jsonl');
+    expect(text).not.toContain('Stable baseline');
+    expect(fixture.nativeElement.querySelector('[data-testid="project-deployment-no-targets"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="project-deployment-pipeline-steps"]').textContent)
+      .toContain('2 deploy steps in project.yml');
   });
 });

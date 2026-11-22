@@ -44,6 +44,15 @@ public sealed partial record RunTargetOptions(
         var runtimeDirectory = Value("RUN_TARGET_SECRET_RUNTIME_DIR") ?? "/run/agent-host/run-target-secrets";
         if (!Path.IsPathFullyQualified(runtimeDirectory))
             throw new ArgumentException("RUN_TARGET_SECRET_RUNTIME_DIR must be an absolute path.");
+        // AGT-3878: managed database dumps live outside every Docker volume, ideally on another disk.
+        var backupDirectory = Value("RUN_TARGET_BACKUP_DIR") ?? Path.Combine(runner.StateDir, "run-target-backups");
+        if (!Path.IsPathFullyQualified(backupDirectory))
+            throw new ArgumentException("RUN_TARGET_BACKUP_DIR must be an absolute path.");
+        backupDirectory = Path.GetFullPath(backupDirectory);
+        if (backupDirectory.IndexOfAny([',', '=', '\r', '\n', '\0']) >= 0)
+            throw new ArgumentException("RUN_TARGET_BACKUP_DIR must not contain commas, equals signs or line breaks.");
+        if (backupDirectory == stateDirectory || backupDirectory.StartsWith(stateDirectory + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            throw new ArgumentException("RUN_TARGET_BACKUP_DIR must not lie inside RUN_TARGET_STATE_DIR.");
         var edgeImage = Value("RUN_TARGET_EDGE_IMAGE") ?? DefaultEdgeImage;
         if (!RunTargetNames.IsDigest(edgeImage))
             throw new ArgumentException("RUN_TARGET_EDGE_IMAGE must be pinned by sha256 digest.");
@@ -58,7 +67,8 @@ public sealed partial record RunTargetOptions(
                 new RunTargetEdgeSettings(email, certificates is not null, proxies),
                 certificates,
                 Port("RUN_TARGET_HTTP_PORT", 80),
-                Port("RUN_TARGET_HTTPS_PORT", 443)));
+                Port("RUN_TARGET_HTTPS_PORT", 443),
+                BackupDirectory: backupDirectory));
     }
 }
 
@@ -120,7 +130,7 @@ public sealed class RunTargetDaemon(
             if (!await controlPlane.ReportJobAsync(report, ct))
                 log($"run-target: Studio no longer holds deploy job {report.JobId}; the next poll reconciles it");
         }
-        await controlPlane.PostObservedStateAsync(new(result.Observations, result.Databases), ct);
+        await controlPlane.PostObservedStateAsync(new(result.Observations, result.Databases, result.Operations), ct);
     }
 
     private async Task SuperviseWithoutStudioAsync(string reason, CancellationToken ct)

@@ -34,6 +34,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
 
         Assert.Equal(AcceptanceReadinessClasses.Ready, item.Readiness);
         Assert.Equal(CompletionAdmissionStages.Admitted, item.Stage);
+        Assert.True(item.OverrideAllowed);
         Assert.Null(item.Round);
         Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
 
@@ -115,6 +116,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
 
         Assert.Equal(AcceptanceReadinessClasses.ReviewConcerns, item.Readiness);
         Assert.Equal(CompletionAdmissionStages.Content, item.Stage);
+        Assert.True(item.OverrideAllowed);
         Assert.Equal("requirement-fit", item.Aspect);
         Assert.Equal("The lane shows no reason on the card.", item.Concern);
         Assert.Contains("requirement-fit verdict was concerns", item.Refusal);
@@ -192,6 +194,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         var item = Assert.Single(body.RootElement.GetProperty("items").EnumerateArray());
         Assert.Equal(Slug, item.GetProperty("jobId").GetString());
         Assert.Equal(AcceptanceReadinessClasses.NotIntegrated, item.GetProperty("readiness").GetString());
+        Assert.True(item.GetProperty("overrideAllowed").GetBoolean());
         Assert.False(string.IsNullOrWhiteSpace(item.GetProperty("reason").GetString()));
         Assert.Equal(1, body.RootElement.GetProperty("counts").GetProperty(AcceptanceReadinessClasses.NotIntegrated).GetInt32());
         Assert.Equal(0, body.RootElement.GetProperty("counts").GetProperty(AcceptanceReadinessClasses.Ready).GetInt32());

@@ -4,8 +4,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node --check server.mjs",
-    "start": "node server.mjs",
+    "build": "node --check server.mjs && node --check telemetry.mjs",
+    "start": "node --import ./telemetry.mjs server.mjs",
     "test": "node --test"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.10.0",
+    "@opentelemetry/core": "^3.1.1",
+    "@opentelemetry/exporter-logs-otlp-proto": "^0.301.2",
+    "@opentelemetry/exporter-metrics-otlp-proto": "^0.301.2",
+    "@opentelemetry/host-metrics": "^0.40.0",
+    "@opentelemetry/instrumentation-http": "^0.301.2",
+    "@opentelemetry/instrumentation-runtime-node": "^0.38.0",
+    "@opentelemetry/sdk-logs": "^3.1.1",
+    "@opentelemetry/sdk-metrics": "^3.1.1",
+    "@opentelemetry/sdk-node": "^0.301.2"
   }
 }

@@ -62,6 +62,9 @@ public sealed partial class TelemetryStore
         return Path.Combine(Root, Uri.EscapeDataString(key.Project.ToLowerInvariant()), key.Environment + ".sqlite");
     }
 
+    /// <summary>True once the environment has received telemetry, so its database exists.</summary>
+    public bool HasStore(TelemetryEnvironmentKey key) => File.Exists(DatabasePath(key));
+
     /// <summary>Environments that have a database, for the retention sweep.</summary>
     public IReadOnlyList<TelemetryEnvironmentKey> KnownEnvironments()
     {
@@ -74,7 +77,8 @@ public sealed partial class TelemetryStore
     }
 
     public TelemetryWriteResult Write(TelemetryEnvironmentKey key, IReadOnlyList<MetricSample> metrics,
-        IReadOnlyList<TelemetryLogRecord> logs, DateTimeOffset now, string? batchId = null)
+        IReadOnlyList<TelemetryLogRecord> logs, DateTimeOffset now, string? batchId = null,
+        IReadOnlyList<TelemetrySpanRecord>? spans = null)
     {
         var path = DatabasePath(key);
         lock (_writeGate)
@@ -92,6 +96,7 @@ public sealed partial class TelemetryStore
                 }
                 var (stored, rejected) = WriteMetrics(connection, transaction, path, metrics, now);
                 var evicted = WriteLogs(connection, transaction, logs);
+                WriteSpans(connection, transaction, spans ?? []);
                 transaction.Commit();
                 // SQLite FULL syncs the WAL commit; persist a newly created database's
                 // directory entry before its stage file can be removed.
@@ -172,6 +177,7 @@ public sealed partial class TelemetryStore
                     """, ("$cutoff", hourCutoff * MetricBucketPolicy.NanosPerSecond));
                 var freed = Scalar(connection, transaction, "SELECT COALESCE(SUM(bytes), 0) FROM logs WHERE time < $cutoff", ("$cutoff", logCutoff));
                 logs = Execute(connection, transaction, "DELETE FROM logs WHERE time < $cutoff", ("$cutoff", logCutoff));
+                Execute(connection, transaction, "DELETE FROM spans WHERE start_time < $cutoff", ("$cutoff", logCutoff));
                 AddLogBytes(connection, transaction, -freed);
                 transaction.Commit();
             }
@@ -329,6 +335,40 @@ public sealed partial class TelemetryStore
         return total > _options.LogMaxBytesPerEnvironment ? EvictOldestLogs(connection, transaction, total) : 0;
     }
 
+    private void WriteSpans(SqliteConnection connection, SqliteTransaction transaction, IReadOnlyList<TelemetrySpanRecord> spans)
+    {
+        if (spans.Count == 0) return;
+        using var insert = Command(connection, transaction, """
+            INSERT INTO spans (trace_id, span_id, parent_span_id, name, kind, start_time, end_time, failed, attributes, bytes)
+            VALUES ($trace, $span, $parent, $name, $kind, $start, $end, $failed, $attributes, $bytes)
+            ON CONFLICT (trace_id, span_id) DO UPDATE SET parent_span_id = excluded.parent_span_id,
+              name = excluded.name, kind = excluded.kind, start_time = excluded.start_time,
+              end_time = excluded.end_time, failed = excluded.failed, attributes = excluded.attributes, bytes = excluded.bytes
+            """, "$trace", "$span", "$parent", "$name", "$kind", "$start", "$end", "$failed", "$attributes", "$bytes");
+        foreach (var span in spans)
+        {
+            var json = span.Attributes.Json;
+            Bind(insert, span.TraceId, span.SpanId, span.ParentSpanId, span.Name, span.Kind,
+                span.StartUnixNano, span.EndUnixNano, span.Failed ? 1 : 0, json, span.StoredBytes(span.Attributes.JsonBytes));
+            insert.ExecuteNonQuery();
+        }
+        var total = Scalar(connection, transaction, "SELECT COALESCE(SUM(bytes), 0) FROM spans");
+        if (total <= _options.LogMaxBytesPerEnvironment) return;
+        var excess = total - _options.LogMaxBytesPerEnvironment / 10 * 9;
+        long freed = 0;
+        var oldest = new List<(string Trace, string Span)>();
+        using (var query = Command(connection, transaction, "SELECT trace_id, span_id, bytes FROM spans ORDER BY start_time, trace_id, span_id"))
+        using (var reader = query.ExecuteReader())
+            while (freed < excess && reader.Read())
+            {
+                oldest.Add((reader.GetString(0), reader.GetString(1)));
+                freed += reader.GetInt64(2);
+            }
+        foreach (var (trace, span) in oldest)
+            Execute(connection, transaction, "DELETE FROM spans WHERE trace_id = $trace AND span_id = $span",
+                ("$trace", trace), ("$span", span));
+    }
+
     private int EvictOldestLogs(SqliteConnection connection, SqliteTransaction transaction, long total)
     {
         var target = _options.LogMaxBytesPerEnvironment / 10 * 9;
@@ -461,6 +501,12 @@ public sealed partial class TelemetryStore
               trace_id TEXT, span_id TEXT, event_name TEXT,
               bytes INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS logs_time ON logs (time, id);
+            CREATE TABLE IF NOT EXISTS spans (
+              trace_id TEXT NOT NULL, span_id TEXT NOT NULL, parent_span_id TEXT,
+              name TEXT NOT NULL, kind TEXT NOT NULL, start_time INTEGER NOT NULL,
+              end_time INTEGER NOT NULL, failed INTEGER NOT NULL, attributes TEXT NOT NULL,
+              bytes INTEGER NOT NULL, PRIMARY KEY (trace_id, span_id));
+            CREATE INDEX IF NOT EXISTS spans_time ON spans (start_time DESC);
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS ingest_commits (id TEXT PRIMARY KEY);
             """);

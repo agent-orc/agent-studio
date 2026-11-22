@@ -13,12 +13,15 @@ public sealed record UsageSourceState(string Status, DateTime? ObservedAt, int? 
 public sealed record UsageProjectCost(string? ProjectId, string Name, decimal? TodayUsd, decimal? WeekUsd,
     UsageSourceState Coverage, DateTime? LatestReceiptAt = null, int UnpricedTodayRuns = 0, int UnpricedWeekRuns = 0);
 
+public sealed record UsageOneShotCost(string Source, decimal TodayUsd, decimal WeekUsd);
+
 public sealed record UsageCostProjection(
     string Currency, UsageCalendar Calendar, decimal? TodayUsd, decimal? WeekUsd,
     IReadOnlyList<UsageProjectCost> Projects, UsageSourceState Coverage,
     string PricingVersion, string NormalizationVersion, string LedgerEndpointTemplate,
     DateTime? LatestReceiptAt = null, decimal? DailyBudgetUsd = null, decimal? WeeklyBudgetUsd = null,
-    int UnpricedTodayRuns = 0, int UnpricedWeekRuns = 0);
+    int UnpricedTodayRuns = 0, int UnpricedWeekRuns = 0,
+    IReadOnlyList<UsageOneShotCost>? OneShotSources = null);
 
 public sealed record UsageCostInput(string? ProjectId, string Name,
     IReadOnlyList<OrchestratorLogEntry> Entries, ProjectTokenDataFreshness Freshness,
@@ -27,7 +30,7 @@ public sealed record UsageCostInput(string? ProjectId, string Name,
 /// <summary>Calendar and accounting rules shared by the endpoint and contract fixtures.</summary>
 public static class UsageCockpitProjection
 {
-    private static DateTime AsUtc(DateTime value) => value.Kind switch
+    internal static DateTime AsUtc(DateTime value) => value.Kind switch
     {
         DateTimeKind.Utc => value,
         DateTimeKind.Unspecified => DateTime.SpecifyKind(value, DateTimeKind.Utc),
@@ -99,6 +102,7 @@ public static class UsageCockpitProjection
     {
         var readAt = AsUtc(readAtUtc);
         var children = new List<UsageProjectCost>(sources.Count);
+        var oneShotCalls = new List<(string Source, DateTime At, decimal Cost)>();
         foreach (var source in sources)
         {
             var available = source.Freshness.Status != "unavailable";
@@ -145,6 +149,8 @@ public static class UsageCockpitProjection
                     legacyUnknown = true;
                 week += estimate.Total;
                 if (at >= calendar.DayStartUtc && at < calendar.DayEndUtc) today += estimate.Total;
+                if (TokenUsageKindPolicy.ForLedger(entry.ParticipantId, entry.Topic, true) == TokenUsageKinds.Enrichment)
+                    oneShotCalls.Add((entry.Topic?.Trim() is { Length: > 0 } topic ? topic : "unknown", at, estimate.Total));
             }
             var status = !available ? "unavailable"
                 : source.Freshness.Status == "partial" || unpriced || legacyUnknown ? "partial" : "complete";
@@ -177,6 +183,11 @@ public static class UsageCockpitProjection
             "/api/projects/{project}/token-usage/summary",
             LatestReceiptAt: children.Select(child => child.LatestReceiptAt).Max(),
             UnpricedTodayRuns: children.Sum(child => child.UnpricedTodayRuns),
-            UnpricedWeekRuns: children.Sum(child => child.UnpricedWeekRuns));
+            UnpricedWeekRuns: children.Sum(child => child.UnpricedWeekRuns),
+            OneShotSources: oneShotCalls.GroupBy(call => call.Source, StringComparer.OrdinalIgnoreCase)
+                .Select(group => new UsageOneShotCost(group.Key,
+                    group.Where(call => call.At >= calendar.DayStartUtc && call.At < calendar.DayEndUtc).Sum(call => call.Cost),
+                    group.Sum(call => call.Cost)))
+                .OrderByDescending(row => row.WeekUsd).ToList());
     }
 }

@@ -45,6 +45,7 @@ import {
   TaskDetailComponent,
   DetailLoadErrorComponent,
   TaskDetailLoadSectionsComponent,
+  TaskMoveRefusalComponent,
 } from './features/task-detail/lazy';
 import {
   TaskSelectionService,
@@ -64,6 +65,7 @@ import {
   type MergeAcceptView,
   type TriageButton,
 } from './features/task-detail/runtime';
+import { AcceptanceReadinessStore } from './features/acceptance-readiness';
 import {
   buildComposerLocationContext,
   OrchestratorFeedStore,
@@ -169,7 +171,6 @@ import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
 import { ServerCheckoutBoardNoticeComponent } from './features/server-checkout';
-import { AcceptanceReadinessStore } from './features/acceptance-readiness';
 const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   prompt: false,
   protocol: false,
@@ -184,6 +185,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     TaskDetailComponent,
     DetailLoadErrorComponent,
     TaskDetailLoadSectionsComponent,
+    TaskMoveRefusalComponent,
     OrchestratorSideSheetHostComponent,
     OrchestratorFeedComponent,
     ProjectOverlaysComponent,
@@ -831,6 +833,11 @@ export class App implements OnInit, OnDestroy {
         else setTimeout(preload, 0);
       }));
     });
+    // F12: the open Human Review card ranks its gaps by its readiness answer.
+    effect(() => {
+      const info = this.selectedJob()?.info;
+      if (info?.state === TaskState.HumanReview) untracked(() => void this.acceptanceReadiness.ensure(info));
+    });
     effect(() => {
       if (this.shellAccess.operator() || !this.projectLookup.loaded()) return;
       this.watchPaths.set(this.projectLookup.allProjects().map(project => ({
@@ -1340,7 +1347,7 @@ export class App implements OnInit, OnDestroy {
   readonly studioAcceptanceRefusal = computed(() => {
     const info = this.selectedJob()?.info;
     if (!info || this.studioTriagePrimary()?.id !== 'mark-done' || this.studioPrimaryDecisionRefusal()) return null;
-    return acceptanceRefusalFor(info, this.acceptanceRefusals.forTask(info.taskKey),
+    return acceptanceRefusalFor(info, this.acceptanceRefusals.forCard(info),
       this.studioPrimaryAwaitingGit(), this.acceptanceReadiness.itemFor(info));
   });
   /** AGT-2795: the decision lane guard's refusal for the studio primary move. */
@@ -1442,7 +1449,7 @@ export class App implements OnInit, OnDestroy {
     // Hold git-dependent acceptance until the branch/merge status has loaded, so
     // a click cannot trigger a merge while the label is still a guess (AGT-2006).
     if (this.studioPrimaryAwaitingGit() || this.studioPrimaryBlockedByIntegration()
-      || this.studioPrimaryDecisionRefusal()) return;
+      || this.studioPrimaryDecisionRefusal() || this.studioAcceptanceRefusal()?.replacesAccept) return;
     this.dispatchStudioTriage(sel.info, p);
   }
 

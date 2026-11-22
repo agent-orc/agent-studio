@@ -939,6 +939,11 @@ export interface TaskInfo {
    * each parsing their own subset of review artifacts. Never persisted.
    */
   reviewProjection?: ReviewProjectionView | null;
+  /**
+   * AGT-3845: the current Remote Review attempt is settled but its grade
+   * report is not written yet, so `reviewProjection` does not carry it yet.
+   */
+  reviewEvidencePending?: boolean;
 
   /**
    * ASS-1751: read-time run-activity classification for `3-progress` cards,
@@ -1868,6 +1873,8 @@ export interface PromoteConceptResponse {
   targetState: string;
   watchPath: string;
   projectName: string;
+  /** Effective route used by each new implementation card. */
+  route?: { cliType: string; model: string | null; thinkingLevel: string | null } | null;
   /** Slices that already have a card from an earlier promotion. */
   promoted?: PromotedConceptTask[];
   recovery?: ConceptPromotionRecovery | null;
@@ -2469,7 +2476,13 @@ export interface ProjectSnapshot {
     maxReviewConcernRounds?: number;
     scopedReviewAfterFinding?: boolean;
     scopedReviewMaximumDeltaFiles?: number;
-    /** AGT-3310: effective per-card test placement (testing.perCard), read-only here. */
+    /** AGT-3965: the project's testing strategy; a project without a stored value is fast. */
+    testingStrategy?: TestingStrategy;
+    /** AGT-3965: every strategy with the one sentence the settings page shows. */
+    testingStrategies?: TestingStrategyOption[];
+    /** AGT-3965: whether develop gets the post-merge runs fast and balanced rely on. */
+    postMergeCoverage?: PostMergeCoverage | null;
+    /** AGT-3310: per-card test placement, derived from testingStrategy since AGT-3965. */
     testingPerCard?: 'affected' | 'full';
     /** F35: every lane resolved to its effective sort strategy (defaults filled in). */
     laneSortStrategies?: Record<string, string>;
@@ -2482,6 +2495,39 @@ export interface ProjectSnapshot {
   /** PUB-1: derived publish targets + pending deltas for the Hub publish badges. */
   publishTargets: PublishTarget[];
   queueHealth: ProjectQueueHealth;
+}
+
+/** AGT-3965: testing.strategy values. */
+export type TestingStrategy = 'fast' | 'balanced' | 'strict';
+
+export interface TestingStrategyOption {
+  id: TestingStrategy;
+  sentence: string;
+  isDefault: boolean;
+}
+
+/** AGT-3965: answer of the post-merge coverage check (PostMergeCoverage on the backend). */
+export interface PostMergeCoverage {
+  project: string;
+  strategy: TestingStrategy;
+  state: 'not-expected' | 'current' | 'missing' | 'unknown';
+  developTipSha: string | null;
+  lastReportedTipSha: string | null;
+  lastReportedAtUtc: string | null;
+  message: string;
+  missing: boolean;
+}
+
+/** AGT-3965: answer of GET /api/projects/{name}/testing. */
+export interface ProjectTesting {
+  strategy: TestingStrategy;
+  stored: boolean;
+  sentence: string;
+  perCard: 'affected' | 'full';
+  mode: 'pre-merge' | 'post-merge';
+  effectiveMode: 'pre-merge' | 'post-merge';
+  postMergeCoverage: PostMergeCoverage | null;
+  strategies: TestingStrategyOption[];
 }
 
 /**

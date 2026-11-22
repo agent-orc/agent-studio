@@ -80,6 +80,20 @@ public sealed class RunTargetReconcilerTests : IDisposable
     private string Caddyfile => File.ReadAllText(_store.CaddyfilePath);
 
     [Fact]
+    public async Task HostObservation_ReportsLastContainerCrashLines()
+    {
+        var spec = Spec(First);
+        await Converge(spec);
+        _docker.CrashLog = "booted\nFATAL: process exited\n";
+        _docker.Containers[Slot(spec)] = new(RunTargetContainerState.Exited, 3);
+
+        var result = await Converge(spec);
+
+        Assert.Contains("FATAL: process exited", Assert.Single(result.Observations).CrashOutput);
+        Assert.True(Assert.Single(result.Observations).Restarts >= 3);
+    }
+
+    [Fact]
     public async Task ArtifactMissing_WithdrawsTheDomain_AndStillSupervisesTheRunningRevision()
     {
         var running = Spec(First, jobId: null);
@@ -335,6 +349,7 @@ public sealed class RunTargetReconcilerTests : IDisposable
         var first = Spec(First, jobId: null);
         await Converge(first);
         await Converge(Spec(Second, jobId: "job-2"));
+        _docker.CrashLog = "FATAL: release failed";
         var running = Spec(Second, jobId: null);
         var crashing = Slot(running);
 
@@ -350,6 +365,7 @@ public sealed class RunTargetReconcilerTests : IDisposable
         Assert.Contains("stop " + crashing, _docker.Calls);
         var observed = Assert.Single(result.Observations);
         Assert.Equal(("running", First, Second), (observed.State, observed.RunningArtifact, observed.PreviousArtifact));
+        Assert.Contains("FATAL: release failed", Assert.IsAssignableFrom<IReadOnlyList<string>>(observed.CrashOutput));
         Assert.Equal([("crash-rollback", Second), ("rolled-back", First)],
             observed.Events.TakeLast(2).Select(item => (item.Kind, item.Artifact)));
         Assert.Contains(_log, line => line.Contains("rolling back to " + First, StringComparison.Ordinal));

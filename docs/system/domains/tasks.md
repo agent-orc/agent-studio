@@ -304,7 +304,11 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   only when no slice was promoted. Promotion leaves the Dossier lifecycle alone.
   The Studio offers this as **Create implementation cards** on the Dossier view
   (through the Dossier's source concept card) and on the concept card's
-  Overview. The Dossier's **Start one combined task** stays the single-card path.
+  Overview. Each new card inherits the concept card's CLI, model, and thinking
+  level; missing route fields use the project CLI and model defaults, then the
+  source owner's task defaults.
+  The panel previews that route beside every slice. The Dossier's **Start one
+  combined task** stays the single-card path.
 - `POST /api/tasks/{id}/continue` on a `concept` or `planning` card refuses
   (`409`, `error: "continue-mode-guard"`) a follow-up prompt that reads as a
   code-change request. The `message` names the card's mode and the two ways
@@ -1200,12 +1204,13 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   cards remain for human review. A recoverable `conflict-skipped` card
   in `5-human-review` or `5e-escalated` receives the shared integration-recovery
   steer and is promoted to the top of `2-ready`. A generic decision-card marker
-  cannot suppress this recovery after a passed review. After two automatic
-  recovery rounds for the same fenced delivery it stays escalated with a reason
-  such as `automatic recovery budget used: 2/2 for delivery 5cd6b1d4bc07`.
-  Re-reviewing one delivery shares that budget across review epochs, while a new
-  result ref and delivered SHA start a fresh one. Identifier-less legacy rounds
-  count conservatively and are named in the park reason. The `orchestrator-hold` tag and entries
+  cannot suppress this recovery after a passed review. Once the card's
+  automatic recovery rounds for its integration target are spent it stays
+  escalated with a reason such as
+  `automatic recovery budget used: 1/1 for this card on develop`. Neither a
+  repeated review nor a new result ref and delivered SHA restart the budget
+  (AGT-3968). Identifier-less legacy rounds count conservatively and are named
+  in the park reason. The `orchestrator-hold` tag and entries
   in `AcceptanceRail:HoldList` match task id, key, or tag and suppress every
   automatic action. The first eligible reviewed conflict in an operator review
   epoch also writes a task-owned `logs/integration-bounce/<idempotency-key>.json`
@@ -1797,6 +1802,10 @@ park for a person (`operator-decision`, `agent-needs-input`,
 `needs-human-input`, a decision request, or a pending decision card). A refused
 class also carries a prefilled round: the refusal, the concern, and the card's
 latest result ref (`ContinueRoundBasePolicy`, AGT-3483).
+The answer also carries `overrideAllowed`, derived from admission facts. It is
+false for a batch-gate refusal and for a missing required research report;
+neither can be admitted by a written operator override. Acceptance next steps
+and the task toolbar offer the round for those refusals.
 
 The Human Review lane groups its cards by class and filters by All, Ready, and
 Not ready; the lane count stays the sum of what it shows. Each card names its

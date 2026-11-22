@@ -214,7 +214,7 @@ test.describe('Modal and menu keyboard focus at 1280 px (AGT-3831)', () => {
   test('usage sheet is a named dialog that Escape closes above an open card, back to the footer chip', async ({ page }) => {
     await page.route('**/api/usage/cockpit**', route => route.fulfill({ json: structuredClone(SNAPSHOT) }));
     await openEscalatedCard(page);
-    const chip = page.getByTestId('status-bar').getByTestId('footer-usage-claude');
+    const chip = page.getByTestId('status-bar').getByTestId('footer-usage-cost');
     await expect(chip).toBeVisible({ timeout: 30_000 });
     await chip.focus();
     await page.keyboard.press('Space');

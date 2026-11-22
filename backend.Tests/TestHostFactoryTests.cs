@@ -167,11 +167,14 @@ public sealed class TestHostFactoryTests : IDisposable
         }
     }
 
-    [Fact]
-    public async Task Disposal_waits_for_a_request_that_is_still_in_the_pipeline()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Disposal_waits_for_a_request_that_is_still_in_the_pipeline(bool removeBackgroundWorkers)
     {
         var hold = new RequestHold();
-        var factory = Configure(new TestHostFactory(), hold: hold);
+        var factory = Configure(new TestHostFactory(), hold: hold,
+            removeBackgroundWorkers: removeBackgroundWorkers);
         // Not factory.CreateClient(): the factory disposes its own clients
         // first, which only cancels the client side of the call. The server
         // side keeps running, and that is the part that needs a live host.
@@ -202,7 +205,8 @@ public sealed class TestHostFactoryTests : IDisposable
     private WebApplicationFactory<Program> Configure(
         WebApplicationFactory<Program> factory,
         MatcherBuildProbe? probe = null,
-        RequestHold? hold = null) =>
+        RequestHold? hold = null,
+        bool removeBackgroundWorkers = false) =>
         factory.WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
@@ -214,6 +218,8 @@ public sealed class TestHostFactoryTests : IDisposable
             builder.UseSetting("ReviewDecisionOrchestrator:Enabled", "false");
             builder.ConfigureTestServices(services =>
             {
+                if (removeBackgroundWorkers)
+                    TestHostFactory.RemoveBackgroundHostedServices(services);
                 if (probe is not null) services.AddSingleton<MatcherPolicy>(probe);
                 if (hold is not null) services.AddSingleton<IStartupFilter>(hold);
             });

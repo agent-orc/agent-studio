@@ -147,6 +147,8 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
             verification?.Reason);
         Assert.Contains("no batch publication covering it", verification?.Reason);
         Assert.Contains("Commit author: test", verification?.Reason);
+        Assert.Contains($"POST /api/projects/{Project}/operator-candidate-verifications for {uncovered}",
+            verification?.Reason);
         Assert.DoesNotContain(covered[..7] + " \"", verification?.Reason);
     }
 
@@ -168,6 +170,119 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
 
         Assert.Equal(IntegrationVerificationStates.Verified, verification?.State);
         Assert.Contains($"publication {covering}", verification?.Reason);
+    }
+
+    [Fact]
+    public async Task Acceptance_RefusedCard_UsesLaterPassedBatchOnNextAcceptAndRecordsEvidence()
+    {
+        var deliverySha = PublishDelivery("batch-cover-delivery.txt", "verified delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "later-covering-batch"));
+        var deps = Build(deliverySha, batchGates: batches);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        IntegrationVerificationStore.Write(card.FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = deliverySha,
+            IntegrationBranch = "develop",
+            DeliveryShas = [deliverySha],
+            Evidence = IntegrationVerificationEvidence.MergeGate,
+            GateVerdict = nameof(BuildTestGateVerdict.Ok),
+            Reason = "The delivery gate passed.",
+        });
+        PublishLaterCommit("batch-cover-hole.txt");
+        var covering = PublishLaterCommit("batch-cover-candidate.txt");
+
+        var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
+        Assert.Contains(covering[..7], refused.Message);
+
+        WriteBatchEvidence(batches, "later-cover", deliverySha, covering);
+        var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        var evidence = deps.Scanner.FindJob(Slug, _watchPath)!.CompletionClaim?.Evidence;
+        Assert.Contains($"covered by the passed gate of {covering} at "
+            + $"{DateTimeOffset.UnixEpoch.AddDays(1):O}", evidence);
+    }
+
+    [Fact]
+    public void Acceptance_LaterFailedBatchDoesNotCoverUngatedPublication()
+    {
+        var deliverySha = PublishDelivery("failed-batch-delivery.txt", "verified delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var hole = PublishLaterCommit("failed-batch-hole.txt");
+        RunGit(_repo, "checkout", "-q", "-B", "failed-batch-tree", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, "failed-batch-candidate.txt"), "failed gate\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "failed batch candidate");
+        var failedTree = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "checkout", "-q", "main");
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "failed-covering-batch"));
+        WriteBatchEvidence(batches, "failed-cover", hole, failedTree,
+            outcome: "fail", published: false);
+
+        var verification = Service(deps, batches, deliverySha)
+            .BuildForAcceptance(deps.Scanner.FindJob(Slug, _watchPath)!).Verification;
+
+        Assert.Equal(IntegrationVerificationStates.Unverified, verification?.State);
+        Assert.Contains(hole[..7], verification?.UncoveredPublication);
+        Assert.DoesNotContain("covered by the passed gate", verification?.Reason);
+    }
+
+    [Fact]
+    public void Acceptance_PassedBatchTreeThatDoesNotContainPublication_DoesNotCoverIt()
+    {
+        var deliverySha = PublishDelivery("side-batch-delivery.txt", "verified delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var hole = PublishLaterCommit("side-batch-hole.txt");
+        RunGit(_repo, "checkout", "-q", "-B", "side-batch-tree", deliverySha);
+        File.WriteAllText(Path.Combine(_repo, "side-batch-candidate.txt"), "outside the publication line\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "side batch candidate");
+        var sideTree = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "checkout", "-q", "main");
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "side-covering-batch"));
+        WriteBatchEvidence(batches, "side-cover", deliverySha, sideTree);
+
+        var verification = Service(deps, batches, deliverySha)
+            .BuildForAcceptance(deps.Scanner.FindJob(Slug, _watchPath)!).Verification;
+
+        Assert.Equal(IntegrationVerificationStates.Unverified, verification?.State);
+        Assert.Contains(hole[..7], verification?.UncoveredPublication);
+        Assert.DoesNotContain(sideTree, verification?.Reason);
+    }
+
+    [Fact]
+    public void Acceptance_ContainingLaterGateStillRunning_SaysAcceptanceWaits()
+    {
+        var deliverySha = PublishDelivery("pending-batch-delivery.txt", "verified delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var hole = PublishLaterCommit("pending-batch-hole.txt");
+        RunGit(_repo, "checkout", "-q", "-B", "pending-batch-tree", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, "pending-batch-candidate.txt"), "pending gate\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "pending batch candidate");
+        var candidate = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "checkout", "-q", "main");
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "pending-covering-batch"));
+        WriteBatchEvidence(batches, "pending-cover", hole, candidate,
+            outcome: null, published: false);
+
+        var verification = Service(deps, batches, deliverySha)
+            .BuildForAcceptance(deps.Scanner.FindJob(Slug, _watchPath)!).Verification;
+
+        Assert.Equal(IntegrationVerificationStates.Unverified, verification?.State);
+        Assert.Contains($"Acceptance waits for the running gate of {candidate}", verification?.Reason);
+        Assert.DoesNotContain("operator-candidate-verifications", verification?.Reason);
     }
 
     [Fact]

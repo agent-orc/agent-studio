@@ -24,6 +24,8 @@ internal ref struct ProtoWireReader
         _position = 0;
     }
 
+    public bool HasRemaining => _position < _buffer.Length;
+
     public bool TryReadTag(out int field, out ProtoWireType wireType)
     {
         if (_position >= _buffer.Length)

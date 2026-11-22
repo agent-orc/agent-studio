@@ -4,9 +4,13 @@ using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Secrets;
 
-/// <summary>A claimed deploy job with a live lease.</summary>
+/// <summary>
+/// A claimed deploy job with a live lease. <see cref="HostRunnerId"/> is the
+/// enrolled runner the job's host name resolves to (F6).
+/// </summary>
 public sealed record DeployJobLease(string JobId, string Project, string EnvironmentId, string HostId,
-    IReadOnlyList<string> SecretRefs, IReadOnlyDictionary<string, string>? SecretBindings = null);
+    IReadOnlyList<string> SecretRefs, IReadOnlyDictionary<string, string>? SecretBindings = null,
+    string? HostRunnerId = null);
 
 /// <summary>
 /// A task run with a live lease. <see cref="DeclaredNames"/> lists the secret
@@ -32,15 +36,23 @@ public interface ISecretWorkloadLeases
 }
 
 public sealed class SecretWorkloadLeases(ProjectEnvironmentService environments, RunLeaseService leases,
-    TaskScannerService scanner, ProjectSecretBindings bindings)
+    TaskScannerService scanner, ProjectSecretBindings bindings, AccessSecurityStore security)
     : ISecretWorkloadLeases
 {
     public DeployJobLease? FindClaimedDeployJob(string project, string jobId, string leaseToken)
         => environments.FindClaimedJob(project, jobId, leaseToken) is { } job
-            ? new DeployJobLease(job.Id, job.Project, job.EnvironmentId, job.HostId, job.SecretRefs,
-                bindings.ApprovedReferences(job.Project, job.EnvironmentId, job.SecretRefs,
-                    job.EnvironmentKind ?? "production"))
+            ? Lease(job)
             : null;
+
+    /// <summary>A deploy job with telemetry also reads the deploy ingest token of its environment (M5).</summary>
+    private DeployJobLease Lease(DeployJob job)
+    {
+        IReadOnlyList<string> names = job.Telemetry is { } telemetry
+            ? [.. job.SecretRefs.Append(telemetry.SecretName).Distinct(StringComparer.Ordinal)] : job.SecretRefs;
+        return new DeployJobLease(job.Id, job.Project, job.EnvironmentId, job.HostId, names,
+            bindings.ApprovedReferences(job.Project, job.EnvironmentId, names, job.EnvironmentKind ?? "production"),
+            security.DeployHostRunnerId(job.HostId));
+    }
 
     public RunTargetCredentialLease? FindRunTargetCredentials(string project, string environmentId)
     {
@@ -113,8 +125,8 @@ public static class SecretWorkloadBinding
                 return Denied("runner-scope-denied", $"Runner credential lacks '{RunnerScopes.Deploy}'.");
             if (job is null)
                 return Denied("workload-lease-invalid", "No claimed deploy job matches this lease.");
-            if (!string.Equals(job.HostId, runner.RunnerId, StringComparison.Ordinal))
-                return Denied("workload-identity-denied", "The deploy job is claimed by another host.");
+            if (!DeployHostIdentity.Belongs(runner, job.HostId, job.HostRunnerId))
+                return Denied(DeployHostIdentity.DeniedCode, DeployHostIdentity.Refusal(job.HostId, runner));
             return (new SecretWorkload(SecretWorkload.DeployJob, runner.RunnerId, job.Project, job.EnvironmentId,
                     job.SecretRefs, job.SecretBindings),
                 SecretAccessDecision.Allow);

@@ -46,6 +46,11 @@ public enum RunTargetLeaseAction { Claim, Renew, Expire }
 public static partial class RunTargetDesiredStatePolicy
 {
     public const int MaxEventsPerEnvironment = 20;
+    public const int MaxCrashOutputLines = 20;
+    public const int MaxCrashOutputLineLength = 400;
+
+    [GeneratedRegex(@"(?i)\b(password|passwd|secret|token|api[_-]?key|authorization)\s*[:=]\s*([^\s,;]+)")]
+    private static partial Regex Credential();
 
     /// <summary>
     /// How long an environment of kind other must stay undeclared for its host
@@ -86,7 +91,8 @@ public static partial class RunTargetDesiredStatePolicy
         return new(project, declaration.Id, declaration.Kind, artifact, snapshot?.ContainerPort ?? declaration.ContainerPort,
             hosting.HealthPath, hosting.Domains, hosting.Edge, hosting.Variables, snapshot?.SecretRefs ?? declaration.SecretRefs,
             hosting.Resources, openJob?.Id, openJob?.LeaseToken, openJob?.IsRollback ?? false,
-            Databases: ManagedDatabasePolicy.Specs(project, declaration.Id, snapshot?.Databases ?? []));
+            Databases: ManagedDatabasePolicy.Specs(project, declaration.Id, snapshot?.Databases ?? [],
+                declaration.EffectiveDatabasePolicy));
     }
 
     /// <summary>
@@ -251,7 +257,7 @@ public static partial class RunTargetDesiredStatePolicy
 
     /// <summary>
     /// The host's report is untrusted text. Keep only the closed vocabulary,
-    /// digests, and a bounded event list, so no host output reaches Studio.
+    /// digests, bounded events, and a masked crash tail before host output reaches Studio.
     /// </summary>
     public static RunTargetObservation? Sanitize(RunTargetObservation observation, DateTime receivedAt)
     {
@@ -262,9 +268,14 @@ public static partial class RunTargetDesiredStatePolicy
             .TakeLast(MaxEventsPerEnvironment)
             .Select(item => new RunTargetEvent(item.At > receivedAt ? receivedAt : item.At, item.Kind, Artifact(item.Artifact)))
             .ToArray();
+        var output = (observation.CrashOutput ?? []).TakeLast(MaxCrashOutputLines)
+            .Select(line => (line ?? "")[..Math.Min((line ?? "").Length, 4096)])
+            .Select(line => Credential().Replace(line, "$1=[redacted]"))
+            .Select(line => new string(line.Where(ch => !char.IsControl(ch) || ch == '\t')
+                .Take(MaxCrashOutputLineLength).ToArray())).ToArray();
         return new(observation.Project, observation.EnvironmentId, observation.State,
             Artifact(observation.RunningArtifact), Artifact(observation.PreviousArtifact),
             Math.Clamp(observation.Restarts, 0, 1_000_000),
-            observation.ObservedAt > receivedAt ? receivedAt : observation.ObservedAt, events);
+            observation.ObservedAt > receivedAt ? receivedAt : observation.ObservedAt, events, output);
     }
 }

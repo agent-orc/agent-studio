@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { catchError, forkJoin, of } from 'rxjs';
 import { ProjectBasicsFormComponent } from '../../../../components/project-basics-form';
@@ -21,7 +21,7 @@ import { TaskService } from '../../../../services/task.service';
 import { WorkspaceManagerService } from '../../../shell/state/workspace-manager.service';
 import { ProjectOverlaysService } from '../../state/project-overlays.service';
 import { ProjectRepositoryCardComponent } from '../project-repository-card/project-repository-card';
-import { ServerCheckoutNoticeComponent, ServerCheckoutStore } from '../../../server-checkout';
+import { ServerCheckoutNoticeComponent, ServerCheckoutStore, serverCheckoutMissing } from '../../../server-checkout';
 
 interface CheckoutStatus {
   status: string;
@@ -56,6 +56,7 @@ export function checkoutStatusTone(status: string): StatusTone {
 })
 export class ProjectBasicsCardComponent {
   readonly projectName = input.required<string>();
+  readonly pathsSaved = output<void>();
 
   private readonly tasks = inject(TaskService);
   private readonly http = inject(HttpClient);
@@ -66,6 +67,11 @@ export class ProjectBasicsCardComponent {
   private readonly overlays = inject(ProjectOverlaysService);
   private readonly serverCheckout = inject(ServerCheckoutStore);
   private checkoutRequestVersion = 0;
+
+  @HostListener('window:beforeunload', ['$event'])
+  warnBeforeUnload(event: BeforeUnloadEvent): void {
+    if (this.saving()) event.preventDefault();
+  }
 
   readonly workspaces = signal<readonly RegistryWorkspaceListItem[]>([]);
   readonly project = signal<RegistryProjectSummary | null>(null);
@@ -110,6 +116,7 @@ export class ProjectBasicsCardComponent {
     projects: this.allProjects(),
     currentProjectId: this.project()?.id,
   }));
+  readonly validationValid = computed(() => projectBasicsAreValid(this.validation()));
   readonly dirty = computed(() => {
     const project = this.project();
     if (!project) return false;
@@ -126,7 +133,7 @@ export class ProjectBasicsCardComponent {
       || (value.agentOverrideEnabled && value.modelDefault.trim() !== (project.modelDefault ?? ''));
   });
   readonly canSave = computed(() =>
-    !this.loading() && !this.saving() && this.dirty() && projectBasicsAreValid(this.validation()),
+    !this.loading() && !this.saving() && this.dirty() && this.validationValid(),
   );
   readonly remoteRepositoryWarning = computed(() =>
     !!this.remoteExecutionLocation()
@@ -188,10 +195,11 @@ export class ProjectBasicsCardComponent {
     });
   }
 
-  private loadCheckout(name: string): void {
+  private loadCheckout(project: RegistryProjectSummary): void {
     this.checkout.set(null);
     const version = ++this.checkoutRequestVersion;
-    this.http.get<CheckoutStatus>(`/api/projects/${encodeURIComponent(name)}/checkout/status`).subscribe({
+    if (serverCheckoutMissing(project)) return;
+    this.http.get<CheckoutStatus>(`/api/projects/${encodeURIComponent(project.displayName)}/checkout/status`).subscribe({
       next: (status) => {
         if (version === this.checkoutRequestVersion) this.checkout.set(status);
       },
@@ -233,6 +241,7 @@ export class ProjectBasicsCardComponent {
           ? 'Saved. Restart the backend before local auto-pickup uses identity or path changes.'
           : 'Project basics saved.');
         this.notifications.success('Project basics saved.');
+        if (pathsChanged) this.pathsSaved.emit();
         if (renamed) {
           this.manager.notifyProjectRenamed(project.displayName, updated.displayName);
           this.overlays.renameOpenProjectShell(updated.displayName);
@@ -272,7 +281,7 @@ export class ProjectBasicsCardComponent {
         )?.[1];
         this.remoteExecutionLocation.set(projectSettings?.executionLocation ?? null);
         this.seed(project);
-        this.loadCheckout(project.displayName);
+        this.loadCheckout(project);
         this.loading.set(false);
       },
       error: () => {

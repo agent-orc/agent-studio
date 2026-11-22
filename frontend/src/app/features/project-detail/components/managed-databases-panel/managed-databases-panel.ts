@@ -2,52 +2,30 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, input, si
 import { HttpClient } from '@angular/common/http';
 import { DatePipe } from '@angular/common';
 import { forkJoin, map, of, Subscription, switchMap } from 'rxjs';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { serverMessage } from '../../services/project-deploy-data.service';
+import { ManagedDatabaseBackupsComponent } from '../managed-database-backups/managed-database-backups';
+import {
+  connections, databaseState, formatBytes, readiness, volumeOverAlert,
+  type DatabaseOperation, type DatabaseOperationRequest, type ManagedDatabase,
+} from './managed-database.model';
+import { PrincipalNamePipe } from '../../../../pipes/principal-name.pipe';
 
-/** One managed database as `GET .../environments/{id}/databases` returns it (AGT-3877). No value field exists. */
-export interface ManagedDatabase {
-  environmentId: string; name: string; engine: string; version: string; runningVersion: string | null; size: string;
-  resources: { cpus: number; memoryMb: number; pidsLimit: number }; variable: string; credentialReference: string;
-  state: string; declared: boolean; volumeBytes: number | null; observedAt: string | null; message: string | null;
-  deletionRequestedBy: string | null; deletionRequestedAt: string | null; deletedAt: string | null;
-}
+export { databaseState, formatBytes, type ManagedDatabase } from './managed-database.model';
+
 interface EnvironmentList { environments: { declaration: { id: string; name: string } }[] }
 interface EnvironmentDatabases { id: string; name: string; databases: ManagedDatabase[] }
-
-const STATES: Record<string, { label: string; tone: StatusTone }> = {
-  'running': { label: 'Running', tone: 'success' },
-  'provisioning': { label: 'Provisioning', tone: 'running' },
-  'pending-deploy': { label: 'Waiting for a deploy', tone: 'info' },
-  'retained': { label: 'Retained, not declared', tone: 'neutral' },
-  'deleting': { label: 'Deletion requested', tone: 'running' },
-  'deleted': { label: 'Data deleted', tone: 'neutral' },
-  'upgrade-refused': { label: 'Upgrade refused', tone: 'warning' },
-  'unhealthy': { label: 'Unhealthy', tone: 'danger' },
-  'failed': { label: 'Failed', tone: 'danger' },
-};
-export function databaseState(state: string): { label: string; tone: StatusTone } {
-  return STATES[state] ?? { label: state, tone: 'neutral' };
-}
-
-export function formatBytes(bytes: number | null): string {
-  if (bytes === null) return 'Not measured yet';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
-  return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
-}
 
 /**
  * Managed databases per environment in the Bereitstellung area. Deleting data
  * is an owner action in two steps: the owner opens the confirmation, types the
- * database name, then confirms. Only retained databases offer it.
+ * database name, then confirms. Only retained databases offer it. Health and
+ * the backups block (back up, test restore, restore, approvals) are per row.
  */
 @Component({
   selector: 'app-managed-databases-panel',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent],
+  imports: [PrincipalNamePipe, DatePipe, StatusIndicatorComponent, ManagedDatabaseBackupsComponent],
   templateUrl: './managed-databases-panel.html',
   styleUrl: './managed-databases-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -69,6 +47,9 @@ export class ManagedDatabasesPanelComponent {
   readonly typed = signal('');
   readonly state = databaseState;
   readonly bytes = formatBytes;
+  readonly readiness = readiness;
+  readonly connections = connections;
+  readonly overAlert = volumeOverAlert;
 
   constructor() {
     effect(onCleanup => {
@@ -79,6 +60,11 @@ export class ManagedDatabasesPanelComponent {
   }
 
   key(database: ManagedDatabase): string { return `${database.environmentId}/${database.name}`; }
+
+  /** Other running databases of the same environment: the "new database" restore targets. */
+  restoreTargets(environment: EnvironmentDatabases, database: ManagedDatabase): string[] {
+    return environment.databases.filter(item => item.name !== database.name && item.state === 'running').map(item => item.name);
+  }
 
   startDeletion(database: ManagedDatabase): void {
     this.confirming.set(this.key(database));
@@ -96,8 +82,7 @@ export class ManagedDatabasesPanelComponent {
     const epoch = this.projectEpoch;
     this.busy.set(true);
     this.error.set(null);
-    this.http.post(`/api/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(database.environmentId)}`
-      + `/databases/${encodeURIComponent(database.name)}/deletion`, { confirm: this.typed() }).subscribe({
+    this.http.post(`${this.databaseUrl(project, database)}/deletion`, { confirm: this.typed() }).subscribe({
       next: () => {
         if (epoch !== this.projectEpoch) return;
         this.busy.set(false);
@@ -111,6 +96,35 @@ export class ManagedDatabasesPanelComponent {
         this.error.set(serverMessage(error) ?? 'The deletion could not be requested.');
       },
     });
+  }
+
+  /** Sends one backup, test restore, restore, approve or reject request and reloads the panel when it is accepted. */
+  runOperation(database: ManagedDatabase, request: DatabaseOperationRequest): void {
+    const project = this.projectName();
+    const epoch = this.projectEpoch;
+    this.busy.set(true);
+    this.error.set(null);
+    this.notice.set(null);
+    this.http.post<{ operation?: DatabaseOperation } | null>(`${this.databaseUrl(project, database)}/${request.path}`, request.body)
+      .subscribe({
+        next: response => {
+          if (epoch !== this.projectEpoch) return;
+          this.busy.set(false);
+          request.done?.();
+          this.notice.set(request.notice(response?.operation ?? null));
+          this.load(project);
+        },
+        error: error => {
+          if (epoch !== this.projectEpoch) return;
+          this.busy.set(false);
+          this.error.set(serverMessage(error) ?? request.fallback);
+        },
+      });
+  }
+
+  private databaseUrl(project: string, database: ManagedDatabase): string {
+    return `/api/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(database.environmentId)}`
+      + `/databases/${encodeURIComponent(database.name)}`;
   }
 
   load(project: string): void {

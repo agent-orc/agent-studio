@@ -84,6 +84,46 @@ public sealed class ReviewDaemonDrainTests : IDisposable
     }
 
     [Fact]
+    public async Task Review_claim_reprobe_refreshes_provider_and_readvertises()
+    {
+        var server = new IdleReviewPlane(reprobeFirstClaim: true);
+        using var http = new HttpClient(server) { BaseAddress = new Uri("http://task-server") };
+        var options = Options();
+        using var client = new TaskServerClient(http, options.RunnerId, usesDurableTaskServer: true, options: options);
+        var logs = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var reprobeObserved = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sampler = new HostTelemetrySampler(options);
+        var daemon = new RemoteReviewDaemon(options, client, line =>
+            {
+                logs.Enqueue(line);
+                if (line.Contains("provider-auth reprobe-request capability=provider-auth:claude",
+                        StringComparison.Ordinal))
+                    reprobeObserved.TrySetResult(server.CapabilityAdvertisements);
+            },
+            (activeSlots, _) => sampler.SampleNow(activeSlots) with
+            { CpuPercent = 1, Load1 = 0, Load5 = 0, Load15 = 0, CpuCores = Environment.ProcessorCount },
+            planeBudgetProbe: OpenPlane());
+        using var shutdown = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var run = daemon.RunAsync(shutdown.Token);
+        try
+        {
+            var advertisementsBeforeReprobe = await reprobeObserved.Task.WaitAsync(shutdown.Token);
+            while (server.CapabilityAdvertisements <= advertisementsBeforeReprobe)
+                await Task.Delay(20, shutdown.Token);
+        }
+        catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+        {
+            throw new InvalidOperationException(
+                $"claims={server.ClaimAttempts} advertisements={server.CapabilityAdvertisements}; "
+                + string.Join(" | ", logs));
+        }
+        Assert.Contains(logs, line => line.Contains("provider-auth reprobe-request capability=provider-auth:claude",
+            StringComparison.Ordinal));
+        ReviewDrainGuard.RequestDrain(options.StateDir, "test complete");
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
     public async Task Drain_waits_for_the_daemon_barrier_when_a_claim_is_in_flight()
     {
         var server = new IdleReviewPlane(blockFirstClaim: true);
@@ -230,6 +270,7 @@ public sealed class ReviewDaemonDrainTests : IDisposable
         StateDir = Path.Combine(_root, "state"),
         BaseBranch = "main",
         ClaudeCliBin = "test",
+        CodexCliBin = "test",
         TtlSeconds = 120,
         HeartbeatSeconds = 30,
         PollSeconds = 1,
@@ -245,7 +286,7 @@ public sealed class ReviewDaemonDrainTests : IDisposable
         => new(() => 12, () => "max 100000", () => "throttled_usec 0");
 
     /// <summary>A review plane that registers the executor and never has work.</summary>
-    private sealed class IdleReviewPlane(bool blockFirstClaim = false) : HttpMessageHandler
+    private sealed class IdleReviewPlane(bool blockFirstClaim = false, bool reprobeFirstClaim = false) : HttpMessageHandler
     {
         private static readonly DateTime Now = new(2026, 9, 7, 3, 10, 0, DateTimeKind.Utc);
         private readonly TaskCompletionSource _claimEntered =
@@ -253,8 +294,10 @@ public sealed class ReviewDaemonDrainTests : IDisposable
         private readonly TaskCompletionSource _releaseClaim =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _claimAttempts;
+        private int _capabilityAdvertisements;
 
         public int ClaimAttempts => Volatile.Read(ref _claimAttempts);
+        public int CapabilityAdvertisements => Volatile.Read(ref _capabilityAdvertisements);
         public Task WaitForClaimAsync() => _claimEntered.Task;
         public void ReleaseClaim() => _releaseClaim.TrySetResult();
 
@@ -269,10 +312,12 @@ public sealed class ReviewDaemonDrainTests : IDisposable
                 _claimEntered.TrySetResult();
                 if (blockFirstClaim && attempt == 1)
                     await _releaseClaim.Task.WaitAsync(cancellationToken);
-                return JsonResponse(new ReviewClaimResponse("empty", Message: "No queued review."));
+                return JsonResponse(new ReviewClaimResponse("empty", Message: "No queued review.",
+                    ReprobeCapabilities: reprobeFirstClaim && attempt == 1 ? ["provider-auth:claude"] : null));
             }
             if (path.EndsWith("/capabilities", StringComparison.Ordinal))
             {
+                Interlocked.Increment(ref _capabilityAdvertisements);
                 var advertisement = await ReadAsync<CapabilityAdvertisementRequest>(request);
                 return JsonResponse(new RunnerCapabilitySnapshotDto(
                     advertisement.RunnerId, "review-runner", "review-host",

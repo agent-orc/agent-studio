@@ -8,7 +8,7 @@ namespace AgentStudio.Telemetry;
 public sealed record OtlpIntakeOutcome(int StatusCode, byte[] Body, string ContentType, int? RetryAfterSeconds = null);
 
 /// <summary>
-/// OTLP/HTTP intake for <c>/v1/metrics</c> and <c>/v1/logs</c>. Order: media
+/// OTLP/HTTP intake for <c>/v1/metrics</c>, <c>/v1/logs</c>, and <c>/v1/traces</c>. Order: media
 /// type, ingest token, a still-declared environment, signal scope, room in the
 /// queue for the environment, a free request slot (in total and for the
 /// environment), bounded body read (gzip allowed), decoding with record, scope,
@@ -116,7 +116,7 @@ public sealed class TelemetryIntakeService
                 (batch, rejected, message) = (new TelemetryIngestBatch(environment, admitted.Items, [], admitted.EstimatedBytes,
                     admitted.StoredBytes), admitted.Rejected, admitted.RejectionMessage);
             }
-            else
+            else if (signal == TelemetrySignals.Logs)
             {
                 var decoded = encoding == OtlpEncoding.Protobuf
                     ? OtlpProtobufDecoder.DecodeLogs(payload, factory)
@@ -124,6 +124,15 @@ public sealed class TelemetryIntakeService
                 var admitted = TelemetryAdmissionPolicy.AdmitLogs(decoded, now, _options);
                 (batch, rejected, message) = (new TelemetryIngestBatch(environment, [], admitted.Items, admitted.EstimatedBytes,
                     admitted.StoredBytes), admitted.Rejected, admitted.RejectionMessage);
+            }
+            else
+            {
+                var decoded = encoding == OtlpEncoding.Protobuf
+                    ? OtlpProtobufDecoder.DecodeTraces(payload, factory)
+                    : OtlpJsonDecoder.DecodeTraces(payload, factory);
+                var admitted = TelemetryAdmissionPolicy.AdmitSpans(decoded, now, _options);
+                (batch, rejected, message) = (new TelemetryIngestBatch(environment, [], [], admitted.EstimatedBytes,
+                    admitted.StoredBytes) { Spans = admitted.Items }, admitted.Rejected, admitted.RejectionMessage);
             }
         }
         catch (OtlpFormatException ex)
@@ -135,7 +144,7 @@ public sealed class TelemetryIntakeService
             return Error(encoding, 413, 8, ex.Message);
         }
 
-        switch (_queue.TryEnqueue(batch))
+        switch (await _queue.TryEnqueueAsync(batch, cancellationToken))
         {
             case TelemetryEnqueueResult.Busy:
                 return Busy(encoding);
@@ -148,7 +157,8 @@ public sealed class TelemetryIntakeService
                 return Error(encoding, 503, 14, "Telemetry staging is unavailable; retry later.")
                     with { RetryAfterSeconds = RetryAfterSeconds };
         }
-        var rejectedField = signal == TelemetrySignals.Metrics ? "rejectedDataPoints" : "rejectedLogRecords";
+        var rejectedField = signal == TelemetrySignals.Metrics ? "rejectedDataPoints"
+            : signal == TelemetrySignals.Logs ? "rejectedLogRecords" : "rejectedSpans";
         return new OtlpIntakeOutcome(200, OtlpResponses.Success(encoding, rejected, message, rejectedField),
             OtlpResponses.ContentType(encoding));
     }

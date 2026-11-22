@@ -40,7 +40,7 @@
 .structure-box[data-kind='process'] .structure-node { padding-inline: var(--studio-spacing-4); }
 .structure-box[data-kind='external'] { background: transparent; border-style: dashed; }
 .structure-box[data-difference='declared-only'], .structure-box[data-difference='unreachable-by-design'] { border-style: dashed; }
-.structure-box[data-difference='undeclared'] { background: repeating-linear-gradient(45deg, var(--studio-bg-surface), var(--studio-bg-surface) 6px, var(--studio-bg-hover) 6px, var(--studio-bg-hover) 12px); }
+.structure-box[data-hatched='true'] { background: repeating-linear-gradient(45deg, var(--studio-bg-surface), var(--studio-bg-surface) 6px, var(--studio-bg-hover) 6px, var(--studio-bg-hover) 12px); }
 .structure-box[data-health='down'] { background-color: color-mix(in srgb, var(--studio-error) 10%, var(--studio-bg-surface)); }
 .structure-box[data-health='degraded'] { background-color: color-mix(in srgb, var(--studio-warn) 10%, var(--studio-bg-surface)); }
 .structure-view[data-overlay='drift'] .structure-box[data-difference='matched'] > .structure-node { opacity: .55; }
@@ -107,3 +107,14 @@
 .structure-targets { display: grid; gap: var(--studio-spacing-2); padding: var(--studio-spacing-3); background: var(--studio-bg-surface); border: 1px solid var(--studio-border); border-radius: 6px; }
 .structure-targets h3 { margin: 0; font-size: 13px; }
 .structure-targets a { color: var(--studio-accent); }
+// Facts of the selected node (AGT-3954): plain label and value rows, numbers aligned.
+.structure-facts { display: grid; gap: var(--studio-spacing-2); margin: var(--studio-spacing-3) 0; padding: var(--studio-spacing-3); background: var(--studio-bg-surface); border: 1px solid var(--studio-border); border-radius: 6px; font-size: 11px; }
+.structure-facts-origin { margin: 0; color: var(--studio-fg-strong); }
+.structure-facts dl { display: grid; gap: var(--studio-spacing-2); margin: 0; }
+.structure-facts dt { color: var(--studio-fg-muted); }
+.structure-facts dd { margin: 0; overflow-wrap: anywhere; color: var(--studio-fg); font-variant-numeric: tabular-nums; }
+// A group header is one line: the kind detail gives way before the name, the state or the chip.
+.structure-box[data-opaque='false'] > .structure-node { flex-wrap: nowrap; }
+.structure-box[data-opaque='false'] > .structure-node strong { flex: 0 1 auto; min-width: 0; }
+.structure-box[data-opaque='false'] > .structure-node small { flex: 1 1 0; min-width: 0; }
+.structure-box[data-opaque='false'] > .structure-node .structure-chip { flex: none; }

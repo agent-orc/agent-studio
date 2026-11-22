@@ -1,5 +1,5 @@
 import { AfterViewInit, Directive, ElementRef, HostListener, inject, input } from '@angular/core';
-import { DECISION_FOCUS_SELECTOR } from '../../../../components/decision-focus/decision-focus.directive';
+import { KEEPS_FOCUS_SELECTOR } from '../../../../components/decision-focus/decision-focus.directive';
 import { DecisionFocusRequestService } from '../../../../services/decision-focus-request.service';
 
 const ARROW_KEY_STEP_PX = 48;
@@ -51,8 +51,9 @@ export class DetailKeyboardSurfaceDirective implements AfterViewInit {
   ngAfterViewInit(): void {
     if (!this.detailKeyboardInitialFocus()) return;
     queueMicrotask(() => {
-      // A card opened to be decided on keeps focus on its decision area (AGT-3833).
-      if (this.decisionFocus.wants() || document.activeElement?.closest(DECISION_FOCUS_SELECTOR)) return;
+      // A card opened to be decided on keeps focus on its decision area (AGT-3833),
+      // and an open dialog such as a refused Accept's override keeps it too (AGT-3873).
+      if (this.decisionFocus.wants() || document.activeElement?.closest(KEEPS_FOCUS_SELECTOR)) return;
       const host = this.host.nativeElement;
       const detail = host.closest('.detail__panes, app-task-detail, app-job-detail') ?? host.parentElement;
       const prompt = detail?.querySelector<HTMLElement>('[data-testid="pane-prompt-body"]') ?? null;

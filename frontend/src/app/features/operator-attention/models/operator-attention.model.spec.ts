@@ -16,6 +16,12 @@ function item(type: string, overrides: Partial<OperatorAttentionItem> = {}): Ope
 }
 
 describe('operator attention model', () => {
+  it('puts an open environment incident first and opens its card', () => {
+    const incident = item('environment.incident-open', { title: 'alpha · Production incident' });
+    const groups = groupAttention([item('decision-card.opened'), incident]);
+    expect(groups[0].spec.key).toBe('incident');
+    expect(attentionTarget(incident, groups[0].spec)).toBe('card');
+  });
   it('maps every decision-event class of the stream and keeps unknown types visible', () => {
     expect(attentionClassOf('decision-card.opened')).toBe('decision');
     expect(attentionClassOf('escalation.opened')).toBe('escalation');
@@ -67,6 +73,15 @@ describe('operator attention model', () => {
     expect(group.spec.label).toBe('Gate host unreachable');
     expect(attentionTarget(group.items[0], group.spec)).toBe('hosts');
     expect(attentionActionLabel(group.items[0], group.spec)).toBe('Open environment');
+  });
+
+  it('opens the project Operations view while post-merge runs are missing (AGT-3965)', () => {
+    const missing = item('post-merge.missing', { cardKey: null, cards: [], project: 'Agent Studio' });
+    expect(attentionClassOf(missing.type)).toBe('post-merge');
+    const [group] = groupAttention([missing]);
+    expect(group.spec.label).toBe('Post-merge runs missing');
+    expect(attentionTarget(group.items[0], group.spec)).toBe('operations');
+    expect(attentionActionLabel(group.items[0], group.spec)).toBe('Open operations');
   });
 
   it('opens the card of a blocked push (AGT-3695)', () => {

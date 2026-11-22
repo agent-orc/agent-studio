@@ -4,7 +4,6 @@ import {
   inject, input, output, signal,
 } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-
 import { TaskState } from '../../../../models/task.model';
 import { ServerCheckoutRemedyComponent } from '../server-checkout-remedy/server-checkout-remedy.component';
 import { ModalFocusDirective } from '../../../../directives/modal-focus.directive';
@@ -13,6 +12,7 @@ import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
 import { CodeReviewListEntry, TaskService } from '../../../../services/task.service';
 import { BatchGateService } from '../../../../services/batch-gate.service';
 import { EscalationGateActions } from './escalation-gate-actions';
+import { GateInfrastructureRetryStatusComponent } from './gate-infrastructure-retry-status/gate-infrastructure-retry-status';
 import { EscalationEvidenceAvailabilityComponent } from './escalation-evidence-availability/escalation-evidence-availability.component';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
 import { RunTimelinePollService } from '../../../polling/services/run-timeline-poll.service';
@@ -41,7 +41,6 @@ import {
   ESCALATION_HEAD_TONES,
   type EscalationSummaryView,
 } from './escalation-summary.util';
-
 /** Escalation decision panel. Aggregates the task detail, timeline, review files,
  * and attached batch diagnostic; see {@link buildEscalationSummaryView} for
  * evidence priority. It also handles bounded answers to agent questions. */
@@ -49,7 +48,7 @@ import {
   selector: 'app-escalation-summary',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [StatusIndicatorComponent,
+  imports: [StatusIndicatorComponent, GateInfrastructureRetryStatusComponent,
     TooltipDirective,
     PendingButtonDirective,
     EscalationDetailsComponent,
@@ -87,6 +86,7 @@ export class EscalationSummaryComponent {
     .map(item => (item.detail ? `${item.text}: ${item.detail}` : item.text)
       .replace(/\s+/g, ' ').trim().slice(0, 500))
     .slice(0, 12));
+  readonly reissueNoteLabel = computed(() => this.selectedFindings().length ? 'Owner note (optional)' : 'Owner note (required without selected findings)');
   readonly instructionsPreview = computed(() => [
     '# Operator reissue instructions',
     '',
@@ -99,9 +99,7 @@ export class EscalationSummaryComponent {
     ...(this.ownerNote().trim() ? ['', 'Owner note:',
       this.selectedFindings().length ? this.ownerNote().trim() : `- [ ] ${this.ownerNote().trim()}`] : []),
   ].join('\n'));
-
   readonly serverCheckoutMissing = computed(() => taskNeedsServerCheckout(this.detail().info));
-
   /** The three terminal operator choices shown beside NEEDS DECISION. */
   readonly decisionActions = computed(() =>
     this.detail().info.state === TaskState.Escalated && !this.gateInfrastructure()
@@ -135,7 +133,6 @@ export class EscalationSummaryComponent {
   private readonly http = inject(HttpClient);
   private readonly timelinePoll = inject(TaskTimelinePollService);
   private readonly runTimelinePoll = inject(RunTimelinePollService);
-
   /** Newest-first code-review list for the open job; drives the verdict head. */
   readonly codeReviews = signal<CodeReviewListEntry[]>([]);
   /** Body of `orchestrator-follow-up.md`, or null when the file is absent. */
@@ -144,7 +141,6 @@ export class EscalationSummaryComponent {
   readonly batchDiagnostic = computed(() => parseBatchDiagnostic(this.batchDiagnosticBody()));
   /** Which job the current fetch results belong to, to drop stale responses. */
   private fetchedJobId: string | null = null;
-
   /**
    * Collapse state of the whole panel, remembered per task (AGT-2060). The
    * header is the click target; collapsing hides the reason line, gate

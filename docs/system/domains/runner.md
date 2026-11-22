@@ -1,7 +1,13 @@
 # Runner Domain Map
 
-Version: 2026-11-02
+Version: 2026-11-22
 Status: System-of-record map for runner-side changes.
+
+Review role release drift becomes operator attention as soon as that role has
+claimed a review. The attention fact names its claimed and graded cards and
+compares the role's commit and image with Stable. An idle role still uses the
+host release watchdog's grace period. A fresh heartbeat reporting the expected
+commit and image clears the attention fact.
 
 ## Persona occurrences, PT-4
 
@@ -501,7 +507,10 @@ It then reports each answered AGT-3176 deploy job on
 `POST /api/deploy/jobs/{project}/{jobId}/report`, and the observed state and
 events on `POST /api/deploy/run-targets/{hostId}/observed-state`. All routes
 require `runner.deploy`, and in the networked profile the caller's Runner ID
-must equal `hostId`. The desired-state read claims the open deploy job, or
+must equal `hostId`. The host also sends a bounded, masked tail of Docker stdout
+and stderr after a restart. Studio keeps that tail with the restart count, opens
+or updates a runtime incident for a crash loop or crash rollback, and writes an
+Activity alert. The desired-state read claims the open deploy job, or
 renews its lease. A run target holds one job for at most 30 minutes from its
 first claim; after that Studio records it as `deploy-step-failed` and queues
 the usual automatic rollback. Without an open job, an environment keeps its
@@ -532,6 +541,15 @@ sends it in `removals` only on a decision:
   `POST /api/projects/{project}/environments/{id}/run-target-removal/confirm`
   (optional body `{ "hostId": ... }`). The actor is recorded.
 - `grace`: kind `other` only, after 10 minutes missing.
+
+The Deploy overview offers Stop for a deployed app and Remove for a declared
+environment. Stop queues a host stop and keeps the declaration. Remove queues a
+card to delete the repository declaration and its `project.yml` references.
+The overview then shows the pending placement with a separate host removal
+confirmation. Each confirmation explains that deploy history, health samples,
+and environment secrets stay stored. Open health incidents
+close as `check-removed` when their checks disappear. The host app is deleted only
+after the second confirmation and the host's next poll.
 
 Deleting, renaming, or retargeting a `production` or `stage` declaration
 therefore removes nothing by itself. It stays `pending-confirmation`, and
@@ -666,6 +684,14 @@ reads `<variable>_FILE`). A database the desired state stops declaring is
 stopped after the new revision is live and its volume kept; only an owner's
 deletion in `databaseDeletions` removes the volume, and the host refuses it
 while a spec still declares the database. A changed major version is refused.
+`RunTargetDatabaseBackups` (AGT-3878) checks readiness every cycle, counts
+connections every minute, dumps each database on its spec's `backup` policy
+into `RUN_TARGET_BACKUP_DIR` (default `$RUNNER_STATE_DIR/run-target-backups`,
+mounted at `/backups` in the environment's database containers), prunes
+dumps past their retention, and runs the `databaseOperations` Studio sends
+(backup, a verification restore into a networkless scratch container, an
+approved restore) once per id. Dumps and readiness checks also run in the
+supervise-only pass while Studio is unreachable.
 
 ### Integration host (standalone review loop)
 
@@ -788,6 +814,10 @@ unreported claim expires with its lease and is queued again.
   this cache policy and log `provider-auth recovered provider=... after=...`
   once per recovery. A live same-provider run is
   counter-evidence and makes the conflicting state claimable but degraded.
+- The management re-probe API accepts only a key registered or held by the
+  runner role. It keeps at most 32 distinct keys per runner, rejects another
+  key with HTTP 429, and discards queued keys when the runner is revoked or a
+  new daemon instance registers the same identity.
 - `backend/Features/Management/RunnerLinks/LinkSupervisor.cs`: Task Server-owned
   SSH reverse-link lifecycle, heartbeat subscription, functional route probe,
   remote listener cleanup, bounded retry ladder, silent child process and
@@ -1166,6 +1196,19 @@ unreported claim expires with its lease and is queued again.
   1,211,213-token observation threshold. Semantic conflicts and invalid
   sessions return to Ready for a policy-qualified fresh claim. The original
   task prompt is never resent on the resume path.
+  Both automatic integration recovery (`IntegrationAgentRoundService`, including
+  batch replay conflicts) and acceptance-rail recovery persist that delta before
+  promoting a card to Ready. Saving only a follow-up prompt does not authorize
+  resume. Automatic recovery uses the lowest supported low/medium reasoning
+  route that clears the existing correctness floor; explicit operator pins are
+  retained. Claim admission still applies its mechanical recovery floor and can
+  raise a queued low selection to medium. A missing session, changed worktree or changed lineage still starts
+  fresh with the recorded rejection reason.
+  Completion evidence carries `sessionMode` (`resumed` or `fresh`), which also
+  travels into the remote coding token receipt and merged usage ledger. It
+  describes the worker's launch choice; captured session IDs provide the
+  independent provider evidence. Historical rows without that evidence remain
+  unknown.
   On the standalone Task Server plane, both direct claims and accepted host
   permits carry a policy-qualified route with the mechanical delta. A resumed
   fallback completes as typed `MechanicalFallback`, records its reason with the
@@ -1192,7 +1235,9 @@ unreported claim expires with its lease and is queued again.
   completions clear it. A rebase conflict at
   integration ends in the existing AGT-2909 dead-end exit
   (`AgentRoundRequired`, `delivery-attribution-ambiguous`). The prompt states
-  the base in one sentence and names no SHA.
+  the base in one sentence and names no SHA. This steer tells the agent to
+  leave the develop merge to the runner, which merges current develop at the
+  start of the round.
 - Operator continue, steer and extend rounds carry the result ref (AGT-3483,
   [operator-agent-level Dossier](../../operator-agent-level/index.html) OP-3).
   A round queued for a runner claim on a card with a recorded result ref saves
@@ -2721,6 +2766,15 @@ holder. `RUNNER_SOURCE_FACTS_PRODUCER=0` turns the producer off on a host.
 
 ## Operational stall monitoring (AGT-3206)
 
+The project cache and server guard share `GitStaleLockPolicy` from
+`TaskServer.Contracts`. The cache uses its one-minute stale Git lock rule before
+delivery preflight and before each fetch. It clears an aged lock only when no
+Git process owns the repository, and waits once for young or owned locks.
+Claim-path fetches disable automatic commit graph writes and maintenance.
+Failed project preflights retain the start of a continuous identical failure;
+after ten minutes the operational sweep opens one host and project case with
+the Git error. A successful preflight removes the fact and closes that case.
+
 The Watcher runs an operational sweep every five minutes by default, including
 when proposal drafting is disabled. `Watcher:OperationalMonitoringEnabled` is
 the separate kill switch (default `true`). The observe-first option from the
@@ -2935,7 +2989,20 @@ execution admission as deployment mutations. Production approval and rejection
 require an Owner or Maintainer. `GET /audit` under the same prefix includes
 runbook request, approval, rejection and completion events. A run response
 includes its `id`, `environmentId`, `state`, `steps` and `definitionCommit`;
-each step has a `logRef` for its filtered log.
+each step has a `logRef` for its filtered log. `requestedByName` and
+`approvedByName` carry the Studio display name of the stored user id, and the
+log lines name people the same way.
+
+A runbook may set `verify: health:<check id>` (an environment health check) or
+`verify: alert:<rule id>` (a telemetry alert rule). The request is refused when
+the environment declares no such check or rule. The run then carries a final
+`verification` step: after the host reports success the run stays `running`
+while the control plane probes the check (up to `Runbooks:VerifyAttempts`,
+default 6, every `Runbooks:VerifyIntervalSeconds`, default 10) or evaluates
+the rule, which must be observed and not firing. Only a passing check makes the
+run `succeeded`; otherwise it is `failed`. The run's `verifies` names the
+target, and `verification` holds the target, the result and one sentence of
+what was observed, which the `verification` step log repeats.
 
 The target host keeps operator-owned scripts at
 `/etc/agent-host/runbooks/<project>/<step>.sh`. The host runs each script with
@@ -2947,8 +3014,14 @@ steer the loader or shell (`LD_*`, `DYLD_*`, `BASH_FUNC_*`, `PATH`, `IFS`,
 `ENV`, `BASH_ENV` and the libc loading variables) are rejected by the
 `project.yml` validator as `variable-name-reserved` and again by the host
 before any script starts. Scripts must exit zero to advance; failure stops the
-remaining steps. The host drains output locally and reports only step success
-or failure, so logs do not expose secret values. A step times out after nine
+remaining steps. The host keeps the last 200 lines of each step's stdout and
+stderr, masks every secret value it passed to the script (and each line of a
+multi-line one) before cutting a line to 400 characters, and reports that tail
+with the step result. A non-zero exit, a timeout and a missing script add a
+line that says so; a missing script names the path the host looked for. The
+control plane applies the credential patterns of `CredentialRedactor` and the
+same bounds again and writes the lines to the step's log before its
+`Operation succeeded.` or `Operation failed.` line. A step times out after nine
 minutes, and the whole run after ten. On Linux, `setsid` gives each script its
 own process group; timeout or host cancellation also applies while draining
 output after the script exits and kills that group. Descendants that start a
@@ -3005,3 +3078,19 @@ seam.
   tests around `ProjectRunner` or the service that owns the transition.
 - Prompt-template changes under `prompts/runtime/` require the matching live CLI
   probe, not only rendered-string tests.
+
+## Automatic post-merge checks
+
+The coding daemon owns `PostMergeHostScheduler`, discovering the projects
+whose testing strategy is `fast` or `balanced` (derived `testingMode`
+`post-merge`, AGT-3965) through Studio's Runner-scoped
+`GET /api/runner/post-merge/projects`. Registry repository URLs and configured
+integration branches are authoritative. Window facts are posted to
+`POST /api/runner/post-merge/projects/{project}/window` with the existing Runner
+completion scope. It maintains dedicated clones under
+its state root, observes every eligible window before and during sequential execution,
+and reuses the existing Runner credential. Window observations are durable
+facts in `PostMergeRunStore`, independent of green/red receipts, and flow to
+`/api/develop-states` and the project Operations alert. Nightly routine checks
+are retried between 02:15 and 06:15 UTC and deduplicated by terminal receipts
+for the UTC day. See [host setup and legacy timer retirement](../../operations/setup/linux-runner-host.md#post-merge-develop-checks).

@@ -235,12 +235,14 @@ internal sealed record SignalCapturingInvocation(
     IReadOnlyList<string> Arguments,
     string StatusPath);
 
-internal sealed class SignalRecordingCliSpawner : CodingAgentRunner.Abstractions.ICliProcessSpawner, IDisposable
+internal sealed class SignalRecordingCliSpawner(IReadOnlyList<string>? extraArguments = null)
+    : CodingAgentRunner.Abstractions.ICliProcessSpawner, IDisposable
 {
     private string? _statusPath;
 
     public CodingAgentRunner.Abstractions.CliSpawn Spawn(ProcessStartInfo startInfo)
     {
+        AddArguments(startInfo.ArgumentList, extraArguments);
         var wrapped = ProcessTermination.Wrap(startInfo.FileName, startInfo.ArgumentList.ToArray());
         _statusPath = wrapped.StatusPath;
         startInfo.FileName = wrapped.FileName;
@@ -254,6 +256,22 @@ internal sealed class SignalRecordingCliSpawner : CodingAgentRunner.Abstractions
             startInfo.RedirectStandardInput ? process.StandardInput.BaseStream : Stream.Null,
             process.StandardOutput,
             process.StandardError);
+    }
+
+    /// <summary>
+    /// Adds caller options the CLI library has no field for (AGT-3971: the review
+    /// aspect's shared system-prompt file). They go right after the print flag,
+    /// ahead of any <c>--</c> separator, so the CLI reads them as options.
+    /// </summary>
+    internal static void AddArguments(IList<string> arguments, IReadOnlyList<string>? extra)
+    {
+        if (extra is null || extra.Count == 0) return;
+        var at = arguments.IndexOf("-p");
+        if (at < 0) at = arguments.IndexOf("--print");
+        var separator = arguments.IndexOf("--");
+        var insertAt = at >= 0 ? at + 1 : separator >= 0 ? separator : arguments.Count;
+        for (var index = 0; index < extra.Count; index++)
+            arguments.Insert(insertAt + index, extra[index]);
     }
 
     public int? ReadRecordedSignal(int exitCode)

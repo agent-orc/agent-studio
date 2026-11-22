@@ -8,6 +8,22 @@ public sealed class ProviderProbeEvidenceTests
 {
     private static readonly DateTimeOffset At = new(2026, 9, 26, 12, 0, 0, TimeSpan.Zero);
 
+    [Theory]
+    [InlineData("You've hit your weekly limit · resets 1pm (Europe/Berlin)", ProviderProbeOutcome.QuotaExhausted)]
+    [InlineData("HTTP 429 too many requests", ProviderProbeOutcome.Indeterminate)]
+    public void Weekly_quota_probe_uses_reported_reset_without_treating_generic_429_as_account_exhaustion(
+        string output, ProviderProbeOutcome expected)
+    {
+        var observed = new DateTimeOffset(2026, 11, 17, 8, 19, 0, TimeSpan.Zero);
+        var result = ProviderProbeClassifier.Classify(new ProviderProbeRequest(
+            "claude", "configured", "claude-code", "native-cli-store", "g1", observed,
+            new ProcessResult(1, "", output)));
+        Assert.Equal(expected, result.Outcome);
+        Assert.Equal(expected == ProviderProbeOutcome.QuotaExhausted
+            ? new DateTimeOffset(2026, 11, 17, 12, 0, 0, TimeSpan.Zero)
+            : (DateTimeOffset?)null, result.ResetAt);
+    }
+
     [Fact]
     public void September_401_requires_applicable_incident_evidence()
     {
@@ -258,7 +274,8 @@ public sealed class ProviderProbeEvidenceTests
         probe.UseRealRequest((_, _, _) => Task.FromResult(new ProcessResult(1, "", "HTTP 401 Unauthorized")),
             new ProviderStatusIncidentAdapter((_, _) => Task.FromResult("{\"incidents\":[]}"), () => now));
         Assert.Equal("unauthorized", (await probe.RefreshAsync("codex", CancellationToken.None)).EvidenceExcerpt);
-        now = now.AddMinutes(6);
+        // Inside the recovery backoff (AGT-3948), so no fresh request runs.
+        now = now.Add(ProviderAuthProbe.RecoveryBackoffBase).AddMinutes(-1);
         Assert.Null((await probe.RefreshAsync("codex", CancellationToken.None)).EvidenceExcerpt);
     }
 
@@ -351,27 +368,7 @@ public sealed class ProviderProbeEvidenceTests
     }
 
     [Fact]
-    public async Task Real_requests_stop_at_the_daily_budget()
-    {
-        var calls = 0;
-        var probe = new ProviderAuthProbe(
-            (_, _, _) => Task.FromResult(new ProcessResult(0, "Logged in", "")),
-            executableExists: _ => true,
-            clock: () => At,
-            credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "native store",
-                EffectiveSource: "native-cli-store", CredentialGeneration: "g1"));
-        probe.UseRealRequest((_, _, _) =>
-        {
-            Interlocked.Increment(ref calls);
-            return Task.FromResult(new ProcessResult(1, "", "unclassified provider refusal"));
-        }, new ProviderStatusIncidentAdapter((_, _) => Task.FromResult("{\"incidents\":[]}"), () => At));
-        for (var i = 0; i < ProviderAuthProbe.DailyRealRequestBudget + 4; i++)
-            await probe.RefreshAsync("codex", CancellationToken.None);
-        Assert.Equal(ProviderAuthProbe.DailyRealRequestBudget, calls);
-    }
-
-    [Fact]
-    public async Task Exhausted_budget_expires_healthy_when_its_real_success_is_too_old()
+    public async Task Failing_real_requests_back_off_and_stay_bounded_for_a_day()
     {
         var now = At;
         var calls = 0;
@@ -383,32 +380,66 @@ public sealed class ProviderProbeEvidenceTests
                 EffectiveSource: "native-cli-store", CredentialGeneration: "g1"));
         probe.UseRealRequest((_, _, _) =>
         {
-            var call = Interlocked.Increment(ref calls);
-            return Task.FromResult(call == ProviderAuthProbe.DailyRealRequestBudget
-                ? new ProcessResult(0, "OK", "")
-                : new ProcessResult(1, "", "unclassified provider refusal"));
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(new ProcessResult(1, "", "unclassified provider refusal"));
+        }, new ProviderStatusIncidentAdapter((_, _) => Task.FromResult("{\"incidents\":[]}"), () => now));
+        for (var i = 0; i < ProviderAuthProbe.DailyRealRequestBudget + 4; i++)
+            await probe.RefreshAsync("codex", CancellationToken.None);
+        Assert.Equal(1, calls);
+
+        // One refresh per minute for a day: the backoff doubles to the ceiling.
+        for (var minute = 0; minute < 24 * 60; minute++)
+        {
+            now = now.AddMinutes(1);
+            await probe.RefreshAsync("codex", CancellationToken.None);
+        }
+        Assert.InRange(calls, (int)(24 * 60 / ProviderAuthProbe.RecoveryBackoffCeiling.TotalMinutes),
+            ProviderAuthProbe.DailyRealRequestBudget + 4);
+        Assert.Equal(ProviderProbeOutcome.Indeterminate, probe.Current("codex").Outcome);
+    }
+
+    [Fact]
+    public async Task Exhausted_budget_still_sends_one_recovery_request_per_ceiling()
+    {
+        var now = At;
+        var calls = 0;
+        var probe = new ProviderAuthProbe(
+            (_, _, _) => Task.FromResult(new ProcessResult(0, "Logged in", "")),
+            executableExists: _ => true,
+            clock: () => now,
+            credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "native store",
+                EffectiveSource: "native-cli-store", CredentialGeneration: "g1"));
+        probe.UseRealRequest((_, _, _) =>
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(new ProcessResult(0, "OK", ""));
         }, new ProviderStatusIncidentAdapter((_, _) => Task.FromResult("{\"incidents\":[]}"), () => now));
 
+        // Run failures keep asking for corroboration until the budget is spent.
         for (var i = 0; i < ProviderAuthProbe.DailyRealRequestBudget; i++)
+        {
+            probe.RecordProcessResult("codex", new ProcessResult(1, "", "HTTP 401 Unauthorized"));
             await probe.RefreshAsync("codex", CancellationToken.None);
+        }
+        Assert.Equal(ProviderAuthProbe.DailyRealRequestBudget, calls);
         Assert.Equal(ProviderProbeOutcome.Healthy, probe.Current("codex").Outcome);
 
-        now = now.Add(ProviderAuthProbe.HealthyRealCheckCeiling).AddSeconds(1);
-        var stale = await probe.RefreshAsync("codex", CancellationToken.None);
-        Assert.Equal(ProviderProbeOutcome.Indeterminate, stale.Outcome);
-        Assert.Equal("indeterminate", stale.Signal);
-        Assert.Equal(At, stale.LastRealSuccessAt);
+        // Beyond the budget a recovery request waits for the ceiling.
+        probe.RecordProcessResult("codex", new ProcessResult(1, "", "HTTP 401 Unauthorized"));
+        var held = await probe.RefreshAsync("codex", CancellationToken.None);
+        Assert.Equal(ProviderProbeOutcome.Indeterminate, held.Outcome);
         Assert.Equal(ProviderAuthProbe.DailyRealRequestBudget, calls);
-        Assert.Equal(ProviderProbeOutcome.Indeterminate, probe.Current("codex").Outcome);
 
-        now = now.AddSeconds(1);
-        var recovered = probe.RecordProcessResult("codex", new ProcessResult(0, "OK", ""),
-            credentialGeneration: "g1");
+        now = now.Add(ProviderAuthProbe.RecoveryBackoffCeiling);
+        var recovered = await probe.RefreshAsync("codex", CancellationToken.None);
+        Assert.Equal(ProviderAuthProbe.DailyRealRequestBudget + 1, calls);
         Assert.Equal(ProviderProbeOutcome.Healthy, recovered.Outcome);
-        Assert.Equal(ProviderAuthProbe.SignalOk, recovered.Signal);
-        Assert.False(recovered.ProbeDegraded);
         Assert.Equal(now, recovered.LastRealSuccessAt);
-        Assert.Equal(ProviderAuthProbe.DailyRealRequestBudget, calls);
+
+        // A healthy binding beyond the budget makes no routine request.
+        now = now.AddMinutes(1);
+        await probe.RefreshAsync("codex", CancellationToken.None);
+        Assert.Equal(ProviderAuthProbe.DailyRealRequestBudget + 1, calls);
     }
 
     [Fact]

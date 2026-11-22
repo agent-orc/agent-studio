@@ -7,6 +7,18 @@ Use this when a change touches Claude, Codex, Copilot, Gemini, prompt handoff,
 stream parsing, session capture, quota probes, model catalogs, sandbox modes, or
 CLI execution tests.
 
+Weekly quota refusals use the shared `ProviderAccessClassifier` for remote
+coding, review and host capability evidence (AGT-3972). A failed Claude
+`result` or typed assistant `error: rate_limit` frame closes provider admission
+until the reported reset, including hour-only clocks with an explicit zone.
+`ExecutionOutcomeAdapter` preserves the reason and selects quota wait instead
+of crash resume. The recovery probe's `ProviderProbeClassifier` also recognizes
+the weekly account refusal and uses the shared reset parser, so its health
+outcome stays quota-exhausted rather than indeterminate while it waits.
+`runner.Tests/WeeklyQuotaRefusalTests.cs` pins classification,
+reset parsing and capability admission; see the
+[run outcome contract](../contracts/run-outcome.md).
+
 ## Entry Points
 
 - [docs/system/cli/supported-clis.md](../cli/supported-clis.md) defines the cross-CLI invocation
@@ -156,6 +168,14 @@ CLI execution tests.
 - Codex Spark quota windows are independent windows. Keep their labels and burn
   percentages separate from the standard 5-hour and weekly windows; never fold
   a Spark-only snapshot into the main-window admission signal.
+- The Claude and Codex account pages show a provider week per subscription.
+  The displayed start and reset come from the selected quota snapshot, and
+  captured receipts are restricted to that interval. Footer weekly percentages
+  link to those pages. Other weekly scopes name their own boundaries: workspace
+  cost follows its configured calendar, admission quota resets Monday 00:00 UTC,
+  and quota forecasts mark a seven-day start as estimated when history supplies
+  only the reset instant. Captured token totals and provider percentages use
+  different units and can differ even inside the same interval.
 - Review-decision and supporting aspect calls default to Codex with the
   gpt-mini compatibility family's current member (`gpt-5.6-luna`, resolved through
   `ModelFamilyResolver.Resolve(ModelFamilies.GptMini)` rather than a pinned
@@ -331,3 +351,34 @@ reset when known, so the visible state distinguishes waiting from switching.
   rendering changes.
 - For Codex changes, re-check current CLI behavior before relying on older
   recovery heuristics.
+
+## Fable 5.2 onboarding (2026-11-17)
+
+`claude-fable-5-2` is an explicit selectable model with a 1M context window,
+128K output limit, and the `low`, `medium`, `high`, `xhigh`, `max` effort
+ladder. Its default is `medium`, matching
+[Claude Code model configuration](https://code.claude.com/docs/en/model-config).
+Qualification preserves explicit card model and effort pins. Host acceptance
+still requires a real request for the named model and the current login;
+registry membership alone does not prove account access. Remote worker, one-shot, and
+read-only turns set Claude Code's effort environment override for an explicit
+Fable 5.2 level because the pinned CAR package predates the model.
+
+The shared subscription parser retains `Current week (Fable)` as
+`Weekly (Fable)` alongside the session and all-model weekly windows. Admission
+applies this window only to Fable routes, including fallback targets. The footer
+shows it separately when reported. No snapshot means no invented Fable limit;
+the provider-reported percentage is already relative to that allowance, so
+Studio does not divide it by 50. See the
+[plan contract](https://support.claude.com/en/articles/15424964).
+
+The 9 November thinking-prefix change was checked against the
+[provider contract](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking/prefix-checks).
+Studio resumes Claude through CAR's session ID and supplies only the new user
+turn. The remote worker likewise passes `ResumeSessionId` and the new prompt;
+read-only turns start fresh conversations. Studio does not reconstruct,
+trim, or resend assistant thinking blocks. Claude Code owns transcript replay.
+The backend uses the same configured rules file on continuation. A fixture test
+pins the Fable model, session ID, rules argument, and new-turn stdin transport.
+This verifies Studio's boundary; it does not claim a fixture exercises the live
+provider's HTTP prefix check.

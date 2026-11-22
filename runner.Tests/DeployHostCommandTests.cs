@@ -155,6 +155,74 @@ public sealed class DeployHostCommandTests
         finally { File.Delete(tokenFile); }
     }
 
+    [Fact]
+    public async Task Telemetry_job_gives_the_workload_the_otlp_endpoint_protocol_and_resolved_ingest_token()
+    {
+        var tokenFile = Path.GetTempFileName();
+        await File.WriteAllTextAsync(tokenFile, Guid.NewGuid().ToString("N"));
+        // Built at runtime: no credential-shaped literal in source.
+        var ingest = string.Join(".", "otl", Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"));
+        var artifact = "image@sha256:" + new string('a', 64);
+        var references = new List<string>();
+        string? payload = null;
+        var executor = new SshDeployExecutor((_, _, input, _) =>
+        {
+            payload = input;
+            return Task.FromResult(new ProcessResult(0, "", ""));
+        });
+        var step = new ProjectDeployStep("container", "app", "host", null, null, null, [], ["staging"])
+        { ComposeFile = "/srv/apps/demo/stage/compose.yml", Service = "demo" };
+        using var client = new HttpClient(new StubHandler(async request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/claim", StringComparison.Ordinal))
+                return new(HttpStatusCode.OK) { Content = JsonContent.Create(new
+                {
+                    id = "telemetry-job", project = "demo", environmentId = "stage", hostId = "host",
+                    artifact, template = "ssh-v2", destination = "1", healthUrl = (string?)null,
+                    secretRefs = Array.Empty<string>(), containerPort = 8080,
+                    previousArtifact = (string?)null, status = "claimed", leaseToken = "telemetry-lease",
+                    sshSteps = new[] { step }, variables = new[] { new ProjectVariableDefinition("LOG_LEVEL", "info", null, []) },
+                    secretBindings = new Dictionary<string, string>
+                        { [DeployTelemetryVocabulary.SecretName] = "secret://demo/stage/" + DeployTelemetryVocabulary.SecretName },
+                    missingSecretRefs = Array.Empty<object>(),
+                    telemetry = new
+                    {
+                        secretName = DeployTelemetryVocabulary.SecretName, protocol = "http/protobuf",
+                        endpoint = "https://studio.test/api/telemetry/otlp",
+                        resourceAttributes = "deployment.environment.name=stage,agent_studio.release.id=rel-1",
+                    },
+                }) };
+            if (path.EndsWith("/artifact", StringComparison.Ordinal)) return ProvenanceResponse(artifact);
+            if (path.EndsWith("/resolve", StringComparison.Ordinal))
+            {
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+                references.Add(body.RootElement.GetProperty("reference").GetString()!);
+                return new(HttpStatusCode.OK) { Content = JsonContent.Create(new { value = ingest }) };
+            }
+            return new(HttpStatusCode.NoContent);
+        })) { BaseAddress = new Uri("https://studio.test/") };
+        try
+        {
+            var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 17, 12, 0, 0, TimeSpan.Zero));
+            Assert.Equal(0, await DeployHostCommand.RunAsync(
+                [client.BaseAddress.ToString(), "host", tokenFile, "/unused"], CancellationToken.None,
+                client, executor, clock: clock));
+            Assert.Equal(["secret://demo/stage/" + DeployTelemetryVocabulary.SecretName], references);
+            using var command = JsonDocument.Parse(payload!);
+            var variables = command.RootElement.GetProperty("variables");
+            Assert.Equal("info", variables.GetProperty("LOG_LEVEL").GetString());
+            Assert.Equal("https://studio.test/api/telemetry/otlp", variables.GetProperty("OTEL_EXPORTER_OTLP_ENDPOINT").GetString());
+            Assert.Equal("http/protobuf", variables.GetProperty("OTEL_EXPORTER_OTLP_PROTOCOL").GetString());
+            Assert.Equal("Authorization=Bearer " + ingest, variables.GetProperty("OTEL_EXPORTER_OTLP_HEADERS").GetString());
+            Assert.Equal("deployment.environment.name=stage,agent_studio.release.id=rel-1",
+                variables.GetProperty("OTEL_RESOURCE_ATTRIBUTES").GetString());
+            Assert.Equal(DeployTelemetryVocabulary.Variables,
+                command.RootElement.GetProperty("inject").EnumerateArray().Select(item => item.GetString()));
+        }
+        finally { File.Delete(tokenFile); }
+    }
+
     private sealed class ClaimHandler(Queue<object> claims, List<string> reports) : HttpMessageHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -285,6 +353,38 @@ public sealed class DeployHostCommandTests
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             => respond(request);
+    }
+
+    [Fact]
+    public async Task Refused_claim_runs_no_step_and_exits_with_the_refusal()
+    {
+        // F6: a credential of another host is refused at claim time, before any step or secret.
+        var token = Path.GetTempFileName();
+        await File.WriteAllTextAsync(token, "deploy-test-token");
+        var calls = new List<string>();
+        var ssh = new List<string>();
+        using var client = new HttpClient(new RouteHandler(request =>
+        {
+            calls.Add(request.RequestUri!.AbsolutePath);
+            return new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = JsonContent.Create(new
+            {
+                error = "The deploy job belongs to host 'run-host-1', but the credential belongs to host 'runner_1'.",
+                code = "workload-identity-denied",
+            }) };
+        })) { BaseAddress = new Uri("https://studio.test/") };
+        var executor = new SshDeployExecutor((file, _, _, _) =>
+        {
+            ssh.Add(file);
+            return Task.FromResult(new ProcessResult(0, "", ""));
+        });
+        try
+        {
+            Assert.Equal(1, await DeployHostCommand.RunAsync(
+                ["https://studio.test", "run-host-1", token, Path.GetTempPath()], CancellationToken.None, client, executor));
+            Assert.Equal(["/api/deploy/jobs/claim"], calls);
+            Assert.Empty(ssh);
+        }
+        finally { File.Delete(token); }
     }
 
     [Fact]

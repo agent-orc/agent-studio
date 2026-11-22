@@ -48,7 +48,7 @@ public static partial class RemoteCommitAttributionGuard
     // name but the fenced result SHA the caller already verified against the
     // branch tip (InspectRemoteDeliveryCommitRange), so the task-key suffix
     // rule must not apply to them - it rejected EVERY envelope delivery and
-    // left canonical remote cards without attributed commits ("kein Branch"
+    // left canonical remote cards without attributed commits ("No branch"
     // on reviewed cards, AGT-2434/AGT-2445).
     [GeneratedRegex(@"(^|/)results/run_[0-9a-f]{32}/(?:fence-[1-9][0-9]*/)?[0-9a-f]{40}$",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
@@ -68,7 +68,10 @@ public static partial class RemoteCommitAttributionGuard
         string deliveryBranch,
         IReadOnlyList<GitCommitInfo> commits,
         string? repository = null,
-        IReadOnlyCollection<string>? referencedKeys = null)
+        IReadOnlyCollection<string>? referencedKeys = null,
+        IReadOnlyCollection<TaskCommitInfo>? previousCommits = null,
+        Func<string, bool>? mergeParentOnIntegration = null,
+        bool continuationRange = false)
     {
         var expected = taskKey.Trim();
         var normalizedBranch = TaskIntegrationBranch.Name(deliveryBranch);
@@ -85,9 +88,41 @@ public static partial class RemoteCommitAttributionGuard
                 $"Remote commit attribution rejected: branch '{deliveryBranch}' does not belong to task '{expected}'.");
         }
 
+        // A continuation may add only integration merges. Its earlier task
+        // commits remain in the fenced range, but must still be task-owned.
+        // Check the actual second parents, never a merge's editable subject.
+        var previousShas = previousCommits?.Select(commit => commit.Sha)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+        var newCommits = commits.Where(commit => !previousShas.Contains(commit.Sha)).ToList();
+        // AGT-3968: a continuationRange is the integration merge-base range of
+        // a round whose own pickup-base range was empty: the runner's develop
+        // merge is the pickup base, or the round delivered the previous SHA
+        // unchanged. It may add no new commit at all, and it may add only
+        // integration merges; a new non-merge commit is never accepted on it.
+        var mergeOnlyContinuation = previousShas.Count > 0
+            && newCommits.All(commit => commit.IsMerge)
+            && (newCommits.Count > 0 || continuationRange);
+        if (continuationRange && !mergeOnlyContinuation)
+            return Rejected($"Remote commit attribution rejected for '{expected}': the continuation range carries new commits that are not integration merges.");
+        if (mergeOnlyContinuation)
+        {
+            var missing = commits.Where(commit => !commit.IsMerge
+                && !IsOwnedFallbackCommit(commit, expected)
+                && !TaskKeyPattern().Matches(commit.Subject).Cast<Match>().Any(match =>
+                    string.Equals(match.Value, expected, StringComparison.OrdinalIgnoreCase)))
+                .Select(commit => $"{commit.ShortSha} ({commit.Subject})").ToList();
+            missing.AddRange(newCommits.Where(commit => commit.ParentShas.Count < 2
+                    || mergeParentOnIntegration is null
+                    || commit.ParentShas.Skip(1).Any(parent => !mergeParentOnIntegration(parent)))
+                .Select(commit => $"{commit.ShortSha} ({commit.Subject}; merge parent is not on the integration branch)"));
+            if (missing.Count > 0)
+                return Rejected($"Remote commit attribution rejected for '{expected}': commits lacking task attribution: {string.Join(", ", missing)}. The next round must publish task-owned commits without merging develop itself.");
+        }
+
         foreach (var commit in commits)
         {
             if (RunnerSalvageCommit.IsTeardownFor(commit.Body, expected)) continue;
+            if (mergeOnlyContinuation && commit.IsMerge) continue;
             if (ForeignKeyInSubject(commit.Subject, expected, referencedKeys) is { } foreign)
             {
                 return Rejected(
@@ -108,6 +143,25 @@ public static partial class RemoteCommitAttributionGuard
             Confidence = 1.0,
         }).ToList();
         return new RemoteCommitAttributionResult(true, attributed, null);
+    }
+
+    /// <summary>
+    /// AGT-3968: true when <paramref name="commits"/> records the result SHA
+    /// for this run attempt. A commit the attempt produced carries its run
+    /// attempt and result SHA. A delivery that re-delivers an earlier commit
+    /// (a round that changed nothing) keeps that commit's first producer, so
+    /// the result commit itself, recorded in this attempt's delivery
+    /// generation, also counts.
+    /// </summary>
+    public static bool CoversDelivery(
+        IEnumerable<TaskCommitInfo> commits, string? runAttemptId, string? resultSha)
+    {
+        if (string.IsNullOrWhiteSpace(runAttemptId) || string.IsNullOrWhiteSpace(resultSha)) return false;
+        return commits.Any(commit =>
+            string.Equals(commit.RunAttemptId, runAttemptId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(commit.ResultSha, resultSha, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(commit.DeliveryAttemptId, runAttemptId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(commit.Sha, resultSha, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

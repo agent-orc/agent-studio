@@ -73,6 +73,16 @@ public sealed record DeployEnvironment(string Id, string ProjectId, string Name,
 }
 
 /// <summary>
+/// A release attempt the release-candidate gate refused (F2): the reason the
+/// gate answered and the owner's next step, shown in the Deploy area.
+/// </summary>
+public sealed record ReleaseGateRefusal(string CommitSha, string Mode, string Reason, string? NextStep,
+    DateTimeOffset AtUtc);
+
+/// <summary>The Deploy area read: the standing refusal, or null when the last attempt was released.</summary>
+public sealed record ReleaseGateStatus(ReleaseGateRefusal? Refusal);
+
+/// <summary>
 /// Immutable snapshot of what was built. Written once by
 /// <see cref="DeployStore.AppendRelease"/> and never rewritten.
 /// </summary>
@@ -109,12 +119,62 @@ public sealed record EnvironmentStatus(
     InterventionSummary? Intervention = null)
 {
     public string? Tenant { get; init; }
+    /// <summary>The release a rollback runs now, or null when the environment has none.</summary>
+    public RollbackTarget? RollbackTarget { get; init; }
+    /// <summary>A failed run may have changed the host even though the last successful release remains the lifecycle baseline.</summary>
+    public bool ReleaseUncertain { get; init; }
+    /// <summary>Set only for the running Studio instance, the Production environment of its source project (AGT-3949).</summary>
+    public InstanceEnvironmentFacts? Instance { get; init; }
 }
+
+/// <summary>
+/// What the instance deploy records (AGT-3879) say about the running Studio
+/// instance, for the workspace dashboard (AGT-3949). The live release itself
+/// (version, commit) is <see cref="EnvironmentStatus.CurrentRelease"/>.
+/// </summary>
+/// <param name="LiveSinceUtc">When the live release went live; null while no release is live.</param>
+/// <param name="LastRun">The latest deploy run the operator scripts reported; null before the first report.</param>
+public sealed record InstanceEnvironmentFacts(DateTime? LiveSinceUtc, InstanceLastRun? LastRun);
+
+/// <param name="State">
+/// <c>running</c>, <c>succeeded</c>, <c>failed</c> or <c>stalled</c>. The generic
+/// <see cref="Deployment.State"/> of the same run reads a stalled run as failed.
+/// </param>
+/// <param name="Step">The failed step of a failed run, else the step that reported last.</param>
+/// <param name="AtUtc">When the run ended, or its last report while it is open.</param>
+public sealed record InstanceLastRun(string Id, string State, string Version, string CommitSha, DateTime StartedAtUtc,
+    DateTime AtUtc, string? Step);
+
+/// <summary>
+/// The release a rollback of one environment picks (F13): its last deploy
+/// there and its runtime health while it ran (<see cref="ReleaseRuntimeHealthPolicy"/>).
+/// <see cref="SkippedVersions"/> are newer older releases passed over because
+/// they had an incident while running. A target whose
+/// <see cref="RuntimeHealth"/> is <c>incident</c> runs only when the request
+/// accepts it explicitly.
+/// </summary>
+public sealed record RollbackTarget(Release Release, DateTime? DeployedAtUtc, string RuntimeHealth,
+    ReleaseRuntimeIncident? Incident, IReadOnlyList<string> SkippedVersions);
 
 public sealed record InterventionSummary(string DeploymentId, string FailedStep, DateTime? ExpiresAtUtc,
     string? Decision, string? DecidedBy);
 
 public sealed record ReleaseDetailResponse(Release Release, IReadOnlyList<Deployment> Deployments);
+
+public static class DeployActionKinds
+{
+    public const string Deploy = "deploy";
+    public const string Redeploy = "redeploy";
+}
+
+/// <summary>
+/// A deploy or redeploy a person may start in one environment, as the
+/// lifecycle decides it for the asking actor. <c>NeedsApproval</c> means the
+/// request waits for an Owner or Maintainer; otherwise it queues at once.
+/// A refused action carries the lifecycle's reason.
+/// </summary>
+public sealed record DeployActionOption(string EnvironmentId, string Action, string ReleaseId, string ReleaseVersion,
+    bool Allowed, bool NeedsApproval, string? Reason);
 
 public sealed record DeploymentLogLine(string Step, DateTime AtUtc, string Message);
 
@@ -132,24 +192,64 @@ public sealed record DeployAuditEntry(DateTime AtUtc, string Actor, string Actio
 public sealed record DeployMatrixRow(string ProjectId, IReadOnlyList<EnvironmentStatus> Statuses, string? Error)
 {
     public IReadOnlyList<EnvironmentStatus> TenantStatuses { get; init; } = [];
+
+    /// <summary>
+    /// False for a watched project whose repository declares no environment
+    /// under <c>docs/deployments/environments</c> (AGT-3949). Such a row has no
+    /// statuses, except the instance's Production for the source project.
+    /// </summary>
+    public bool EnvironmentsDeclared { get; init; } = true;
 }
 
-/// <summary>Workspace dashboard: projects as rows, environment kinds as columns.</summary>
+/// <summary>
+/// Workspace dashboard: one row per project this instance watches, environment
+/// kinds as columns. A project the workspace registers but this instance does
+/// not watch has no row.
+/// </summary>
 public sealed record DeployMatrixResponse(IReadOnlyList<string> EnvironmentKinds, IReadOnlyList<DeployMatrixRow> Projects);
 
 public sealed record DeploymentRequest(string EnvironmentId, bool Approve = false, bool? GuidedFailure = null)
 {
     public string? Tenant { get; init; }
+
+    /// <summary>F14: the approver saw the missing secret bindings and approves anyway.</summary>
+    public bool ConfirmMissingSecrets { get; init; }
 }
 
-public sealed record EnvironmentActionRequest(bool Approve = false, bool? GuidedFailure = null)
+/// <param name="AcceptIncidentTarget">A rollback may target a release that had an incident while running.</param>
+public sealed record EnvironmentActionRequest(bool Approve = false, bool? GuidedFailure = null,
+    bool AcceptIncidentTarget = false)
 {
     public string? Tenant { get; init; }
+
+    /// <summary>F14: the approver saw the missing secret bindings and approves anyway.</summary>
+    public bool ConfirmMissingSecrets { get; init; }
 }
 
 public sealed record InterventionDecisionRequest(string Action, string? Reason = null);
 
-public sealed record DeploymentApprovalRequest(bool? GuidedFailure = null);
+public sealed record DeploymentApprovalRequest(bool? GuidedFailure = null, bool ConfirmMissingSecrets = false);
+
+/// <summary>
+/// F14: the secret names one deploy of a release carries into one environment.
+/// <c>Declared</c> lists the names the current declaration declares, the only
+/// names an environment binding accepts.
+/// </summary>
+public sealed record EnvironmentSecretDemand(DeployEnvironment Environment, string DeclarationKind, string? ReleaseId,
+    IReadOnlyList<string> Names, IReadOnlyList<string> Declared);
+
+/// <summary>One secret a deploy would miss; <c>Bindable</c> when an environment binding can resolve it.</summary>
+public sealed record SecretReadinessItem(string Name, string Reference, string Reason, bool Bindable);
+
+/// <summary>F14: whether a deploy into the environment finds every secret it needs bound.</summary>
+public sealed record EnvironmentSecretReadiness(string EnvironmentId, string EnvironmentName, string Kind,
+    string? ReleaseId, bool RequiresApproval, IReadOnlyList<SecretReadinessItem> Missing)
+{
+    public bool Ready => Missing.Count == 0;
+}
+
+public sealed record SecretReadinessResponse(string Project, string? ReleaseId,
+    IReadOnlyList<EnvironmentSecretReadiness> Environments);
 
 /// <summary>Who asks, and whether they hold the Owner or Maintainer approval for the project.</summary>
 public sealed record DeployActor(string Id, bool IsApprover, string? ApprovalRole = null);

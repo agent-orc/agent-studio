@@ -41,6 +41,30 @@ export interface Deployment {
   tenant?: string | null;
 }
 
+/** State of an instance deploy run; `stalled` means no report for 30 minutes. */
+export type InstanceRunState = 'running' | 'succeeded' | 'failed' | 'stalled';
+
+export interface InstanceLastRun {
+  id: string;
+  state: InstanceRunState;
+  version: string;
+  commitSha: string;
+  startedAtUtc: string;
+  /** When the run ended, or its last report while it is open. */
+  atUtc: string;
+  /** The failed step of a failed run, else the step that reported last. */
+  step: string | null;
+}
+
+/**
+ * The running Studio instance behind a Production status (AGT-3949). The live
+ * release itself is `currentRelease`.
+ */
+export interface InstanceEnvironmentFacts {
+  liveSinceUtc: string | null;
+  lastRun: InstanceLastRun | null;
+}
+
 export interface EnvironmentStatus {
   environment: Environment;
   currentRelease: Release | null;
@@ -48,5 +72,7 @@ export interface EnvironmentStatus {
   newerRelease: Release | null;
   cardsSinceLastDeploy: string[];
   health: 'healthy' | 'unhealthy' | 'unknown';
+  releaseUncertain?: boolean;
   tenant?: string | null;
+  instance?: InstanceEnvironmentFacts | null;
 }

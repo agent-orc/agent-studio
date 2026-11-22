@@ -16,3 +16,43 @@ testSuites:
 cachePaths: [node_modules, dist]
 capabilities: [git, child-process]
 environment: {}
+
+# Schema 2 deployment section (commented out). Studio writes it for you:
+# Settings > Pipeline > "Preview schema 2 migration", then "Add deploy steps".
+# To write it by hand instead, change schemaVersion above to 2, uncomment every
+# line below the marker, and replace the project id, deploy host id (web-vm),
+# directories, and URLs with your own. Directories stay below /srv.
+# --- schema 2 deployment ---
+# project:
+#   id: static-web
+# artifacts:
+#   - name: site
+#     type: static
+#     path: dist
+# environments:
+#   - name: staging
+#     protected: false
+#   - name: production
+#     protected: true
+# lifecycles:
+#   standard:
+#     - phase: staging
+#       automatic: true
+#     - phase: production
+#       approval: [Owner, Maintainer]
+#       requires: staging
+# deploy:
+#   - step: static-site
+#     artifact: site
+#     target: web-vm
+#     directory: /srv/www/_staging/static-web
+#     healthUrl: https://example.com/_staging/static-web/
+#     healthTimeoutSeconds: 120
+#     environments: [staging]
+#   - step: static-site
+#     artifact: site
+#     target: web-vm
+#     directory: /srv/www/static-web
+#     healthUrl: https://example.com/static-web/
+#     healthTimeoutSeconds: 120
+#     environments: [production]

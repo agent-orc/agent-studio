@@ -61,6 +61,9 @@ public sealed class PostMergeAttributorTests
             const string failed = "dotnet test runner.Tests/Runner.Tests.csproj --no-build";
             Assert.True(map.CouldAffect(definition, ["backend/Changed.cs"], failed));
             Assert.False(map.CouldAffect(definition, ["other/Changed.cs"], failed));
+            Assert.False(map.CouldAffect(definition, ["docs/guide.md", "README.md"], failed));
+            Assert.False(new PostMergeProjectMap(root, []).CouldAffect(definition, ["docs/guide.html"], failed));
+            Assert.True(map.CouldAffect(definition, ["Directory.Build.props"], failed));
             Assert.True(map.CouldAffect(definition, ["other/Other.csproj"], failed));
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }

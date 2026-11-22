@@ -422,6 +422,36 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
         Assert.NotEqual(QuotaAdmissionOutcome.LaunchFallback, capped.Outcome);
     }
 
+    [Theory]
+    [InlineData("claude-fable-5-2", true)]
+    [InlineData("claude-fable-5-1", true)]
+    [InlineData("claude-opus-5-5", false)]
+    public void FableAllowance_BlocksOnlyFableRoutes(string model, bool blocked)
+    {
+        Snapshot("claude", ("Weekly (all models)", 10, Now.AddDays(3)), ("Weekly (Fable)", 100, Now.AddDays(4)));
+        var plan = QuotaAdmissionPlanner.Plan("claude", model, "high", null, _caps,
+            c => c == "claude" ? _snapshots["claude"] : null, Now, 0);
+        Assert.Equal(blocked, plan.Outcome == QuotaAdmissionOutcome.Wait);
+        Assert.Equal(model, plan.Model);
+    }
+
+    [Theory]
+    [InlineData("claude-fable-5-2", true)]
+    [InlineData("claude-opus-5-5", false)]
+    public void FableAllowance_IsCheckedForFallbackTargets(string model, bool blocked)
+    {
+        Snapshot("codex", ("Weekly", 100, Now.AddDays(3)));
+        Snapshot("claude", ("Weekly (all models)", 10, Now.AddDays(3)), ("Weekly (Fable)", 100, Now.AddDays(4)));
+        var fallback = Routing(new CliModelRouteProfile
+        {
+            CliType = "codex", PrimaryModel = "gpt-6-sol",
+            FallbackCliType = "claude", FallbackModel = model, FallbackThinkingLevel = "high",
+        });
+        var plan = Plan("codex", fallback, occupiedSlots: 0);
+        Assert.Equal(blocked, plan.Outcome == QuotaAdmissionOutcome.Wait);
+        Assert.Equal(!blocked, plan.Outcome == QuotaAdmissionOutcome.LaunchFallback);
+    }
+
     private QuotaAdmissionPlan Plan(
         string cli,
         CliQuotaFallbackService? fallback,

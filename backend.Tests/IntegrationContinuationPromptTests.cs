@@ -7,6 +7,18 @@ namespace AgentStudio.Tests;
 public sealed class IntegrationContinuationPromptTests
 {
     [Fact]
+    public void AttributionSteerLeavesDevelopMergeToRunner()
+    {
+        var prompt = IntegrationContinuationPrompt.Build("AGT-3947", "result-ref", "result-sha",
+            "develop", "merge-into-develop", "attribution ambiguous",
+            runnerMergesIntegration: true);
+
+        Assert.Contains("Do not merge develop yourself", prompt);
+        Assert.Contains("runner merges current develop at the start of the round", prompt);
+        Assert.DoesNotContain("merging 'origin/develop'", prompt);
+    }
+
+    [Fact]
     public void ConflictPromptCarriesBothSidesStagesAndFiles()
     {
         var report = new IntegrationConflictReport

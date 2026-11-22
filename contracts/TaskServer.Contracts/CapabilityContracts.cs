@@ -100,7 +100,11 @@ public sealed record AdvertisedCapabilityDto(
     long? ProbeSequence = null,
     DateTime? Since = null,
     int? HttpStatus = null,
-    string? Request = null)
+    string? Request = null,
+    // AGT-3948: provider-auth only. True while the CLI's own status command
+    // confirms an active session; Since then names when the outcome became
+    // indeterminate behind that session.
+    bool? StatusSessionActive = null)
 {
     // Keep the previous in-process constructor available during rolling
     // upgrades. Rich fields are negotiated on the HTTP wire separately.
@@ -173,7 +177,12 @@ public sealed record HostTelemetrySnapshotDto(
     IReadOnlyList<HostContainerSummaryDto>? Containers = null,
     ClaimLoadGateDto? ClaimLoadGate = null,
     OneShotClaimRouteConditionDto? OneShotClaimRoute = null,
-    IReadOnlyList<HostFilesystemUsageDto>? Filesystems = null);
+    IReadOnlyList<HostFilesystemUsageDto>? Filesystems = null,
+    // AGT-3954: optional structure facts. Older hosts omit them and still show, flat.
+    HostPlacementDto? Placement = null,
+    long? NetworkReceiveBytesPerSecond = null,
+    long? NetworkTransmitBytesPerSecond = null,
+    double? TaskServerRoundTripMs = null);
 
 /// <summary>
 /// The one-shot claim route as this runner observed it while it answered
@@ -214,7 +223,8 @@ public sealed record ClaimGateEventDto(
     long DurationSeconds,
     int ActiveSlots);
 
-public sealed record HostContainerSummaryDto(string Name, string? ImageDigest, string State);
+/// <param name="Id">Short container id, which is the default host name inside the container (AGT-3954).</param>
+public sealed record HostContainerSummaryDto(string Name, string? ImageDigest, string State, string? Id = null);
 
 /// <summary>
 /// The coding host's salvage store (AGT-2999): the tarball directory the
@@ -343,7 +353,8 @@ public sealed record CapabilityHealthDto(
     string? CredentialHealth = null,
     DateTime? Since = null,
     int? HttpStatus = null,
-    string? Request = null)
+    string? Request = null,
+    bool? StatusSessionActive = null)
 {
     [JsonConstructor]
     public CapabilityHealthDto(

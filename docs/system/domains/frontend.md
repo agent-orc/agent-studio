@@ -1,7 +1,22 @@
 # Frontend Domain Map
 
-Version: 2026-11-14
+Version: 2026-11-17
 Status: System-of-record map for frontend changes.
+
+Card delivery badges are shown for cards named by a release or with verified
+integration evidence. An unreleased integrated card can show pending delivery;
+an unintegrated or incident card has no badges. A failed
+deployment remains visible on the card after an environment rollback, with the
+failed release version and attempt date, until a later deployment of a release
+containing that card succeeds. A successful rollback after a failed attempt
+reads "Failed, rolled back"; a rollback that withdraws a previously successful
+card reads "Rolled back". State labels use product wording, and the badge text
+wraps so release versions and dates remain readable on narrow board cards.
+
+Needs you shows a review-host row when a differing release claims review work.
+The status-bar trigger shows a compact Review host cue while the row is open;
+the row opens the affected Execution Hosts detail and its Update review host
+panel.
 
 Concept cards and detail views show the dossier and review state without code
 delivery indicators. They omit build and test evidence, delivery integration,
@@ -41,19 +56,25 @@ toast opens the new card; on failure the draft remains available.
 ## Modal keyboard contract
 
 `ModalStackService` owns Escape ordering and the focus scope of registered true
-modals. A dialog registers its dialog element and the subtree that contains its
-backdrop. While it is open, Tab and Shift+Tab wrap within the dialog, outside
-focus is redirected inside, and the rest of the page is inert. A higher
-nonmodal entry handles Escape first but does not release the modal focus scope.
+modals. A modal that uses its focus scope registers its dialog element and the
+subtree that contains its backdrop. While it is open, Tab and Shift+Tab wrap
+within the dialog, outside focus is redirected inside, and the rest of the page
+is inert. A higher nonmodal entry handles Escape first but does not release the
+modal focus scope.
 A portaled child can register its interactive root with the stack so it stays
 focusable while the page remains inert. Tab traverses that root's controls and
 returns to the first dialog control at its edge; Shift+Tab returns to the last.
-This also contains menus whose rows use `tabindex="-1"`. The caller moves
-initial focus into the dialog after render and returns focus to its opener after
-closing. The batch gate panel, global search palette, and modal workspace
+This also contains menus whose rows use `tabindex="-1"`. Custom modal owners
+move initial focus into the dialog after render and return focus to its opener
+after closing. The batch gate panel, global search palette, and modal workspace
 settings view (including CLI Management) use this contract. Menus and popovers
 remain stack entries for Escape ordering without a modal focus scope; portaled
 menus also register their interactive root.
+
+The shared `app-dialog` registers its own Escape entry while mounted and uses
+`ModalFocusDirective` for focus containment. Its `closeRequest` lets the owner
+close it, then the directive returns focus to the opener. Owners with an
+existing entry set `stackManagedExternally` so one dialog has one Escape entry.
 
 ## Initial bundle budget
 
@@ -171,17 +192,31 @@ and keeps its other sources loaded. Marker card keys resolve by exact key
 through `GET /api/tasks/{key}/core`, so archived cards open too. A later card
 click or leaving the view cancels a pending lookup. Log search accepts any
 release ID, including releases whose marker predates the 30-day trend.
-The API derives DORA from production deploy runs and archive-inclusive card creation
+The API derives DORA from production deploy runs, completed production environment
+incidents, and archive-inclusive card creation
 times: successful change runs per week, median card-to-production time, failed
-or rolled-back changes divided by terminal change runs, and median time from a
-failed production run to the next successful run. Missing samples remain
+or rolled-back changes and changes followed by a production incident divided by
+terminal change runs, and median time from a failed production run to the next
+successful run or from a production incident opening to its recovery. Overlapping
+run and incident recoveries count once. Missing samples remain
 unavailable. `GET /api/projects/{project}/deploy/operations/logs` accepts
 environment, bounded time range, level, release, and text filters and returns
-at most 100 lines. `IOperationsTelemetryReader` is the integration boundary
-for the pending intake store; until it is connected, telemetry and logs show
-an explicit empty state while deploy markers and DORA remain live. The reader
-contract allows only aggregate usage without personal identifiers and requires
-secret masking before stored log lines are returned.
+100 lines per page with a cursor for later pages. `IOperationsTelemetryReader`
+projects the per-environment OTLP store into metrics and masked logs. The
+explicit empty state is reserved for a disabled store; read failures return a
+named error. Deploy markers and DORA remain live. Host restart counts and the
+last bounded crash output appear separately in Operations even without
+application telemetry. An active host crash incident takes precedence over an
+older healthy deploy status on the environment card. The reader contract allows
+only aggregate usage without personal identifiers and requires secret masking
+before stored log lines are returned. The metric mapping and histogram
+quantile fallback are documented in
+[app telemetry intake](../../operations/setup/app-telemetry-intake.md).
+The Deploy area's Telemetry tab
+(`ProjectTelemetryTokensComponent`, `?view=telemetry`) lists the ingest tokens of
+one environment with signals, last use, expiry and state, creates a token whose
+endpoint, protocol and headers it shows once, labels the deploy-managed token,
+and revokes a token after a confirming click.
 
 ## Workspace deployment dashboard
 
@@ -202,6 +237,11 @@ containers without requiring older hosts to upgrade. Health uses host
 heartbeats (90 seconds), each check's own
 interval, and gate heartbeats (two minutes). The role-named manifest example is in
 `deploy/connectivity/one-box.json`.
+
+Hosts that report without a declaration show as observed nodes with facts,
+and the open view follows `structureDelta` pushes on the Studio hub with an
+entity-tag read as fallback (AGT-3954). Response shape, ids, facts and the
+placement file: [structure-placement.md](../../operations/setup/structure-placement.md).
 
 The same view lists library registries declared in schema 2
 `structure.registries` (artifact, provider, package, optional repository and
@@ -244,6 +284,11 @@ and labels its values as sample data. The `Environment`, `Release`, `Deployment`
 The project Deploy area reads `/api/projects/{projectName}/deploy/status`,
 `/releases`, and `/deployments` when configured. Its Pipeline view reads the
 parsed project.yml diagram from `/api/projects/{projectName}/pipeline-definition`.
+For a registered URL project without a server checkout, Deploy shows one checkout
+state across its views and skips repository-backed reads. The explorer also
+skips its Dossier catalogue refresh until the checkout is available. Both
+resume when the shared checkout state reports a usable checkout. Project
+Settings also skips the developer checkout lag request until a checkout exists.
 The release view loads
 `/releases/{releaseId}/notes` from the included cards.
 The release response also projects current Quality verdicts from the included
@@ -492,6 +537,10 @@ A refused optimistic triage move restores the original task, lane-pager
 snapshot, route, and active task tab together. The detail shows the refusal
 beside the action with the next step. If an error dialog opens, closing it
 returns focus to the failed action.
+When a move empties the captured lane, the detail stays on the moved task and
+refreshes its new lane state. A first move to Ready is labelled "Queued";
+"Requeued" requires a recorded execution. Preparation's empty Activity view
+names Promote to Ready and Run now as the controls for starting work.
 
 Each Wiki/Dossier tab owns a history stack containing its current target and up
 to 49 earlier or forward targets. Normal link navigation truncates that tab's
@@ -691,6 +740,12 @@ occur. It is not a claim about tunnel transfer time.
   is not the status `currentRelease` resolves its release with one `limit=1`
   read. Runs named by `/status` open without being on a loaded page; any other
   run is read from `/deployments/<id>`. The unpaged routes remain for existing clients.
+  The Deploy card, Operations overview, and deployment tools resolve the
+  environment release through the same running-release projection. A failed
+  deploy or rollback makes the running release uncertain until a later
+  successful host report confirms an artifact. The last successful release
+  remains the lifecycle baseline for promotion and rollback decisions; it is
+  not presented as the running release while host state is uncertain.
   Each source has its own loading or error state, so a failed deploy route
   leaves declared environment cards visible. A route 404 without an error body
   means the route is unavailable; a 404 with `{ error }` is shown as a server
@@ -942,6 +997,10 @@ occur. It is not a claim about tunnel transfer time.
   decision-pending status or decision-ready phase opens that count; unsaved
   browser selections do not close it. An active Dossier with open decisions
   stays under `Needs a decision` until the recorded decision closes them.
+  A rework receipt remains visible after its source card's agent run finishes.
+  The viewer projects the run as updated, unchanged, or failed, links the card,
+  and restores decision actions even when the agent retained the receipt and
+  left the Dossier content unchanged.
   Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
   Lifecycle-group counts equal
   their visible leaves and zero counts stay hidden. The catalogue's
@@ -1002,9 +1061,19 @@ occur. It is not a claim about tunnel transfer time.
   `sourceTaskKeys`, `relatedTaskKeys`, and decision receipts retained as
   compatibility bridges. The compact viewer head shows every resolved card as
   a live lane dot. While a decision-pending or decided Workbench has at least
-  one reference beyond Ready and not every reference is terminal, it also shows
-  the derived `In implementation` summary marker. This is a live read-model
-  marker and does not add a descriptor lifecycle state.
+  one implementation card beyond Ready and not every implementation card is
+  terminal, it also shows the derived `In implementation` summary marker, and
+  the header status reads `In implementation`; otherwise a decided Dossier
+  reads `Decided`. Implementation cards are the resolved references plus the
+  Dossier's own member cards (`cards`), without the concept card that wrote it
+  (`sourceTaskKeys` and `revisionCard`), so a concept card in Human Review
+  does not mark the Dossier as in implementation (AGT-3649-D13). This is a
+  live read-model marker and does not add a descriptor lifecycle state. The
+  review tag and `Record relevance review` action name the operator's
+  relevance review; concept-fit reviews of the concept card are a separate
+  gate and do not set it. The promotion bar loads the slice plan when it
+  renders and states `n of m slices have cards`; a decision label never
+  repeats `(recommended)` that the authored option label already carries.
   Once every referenced card is in `6-completed` or `7-archive`, the catalogue
   projects a quiet `Ready to document` suggestion in the viewer header and list
   surfaces. `POST /api/projects/{projectName}/workbenches/{id}/document`

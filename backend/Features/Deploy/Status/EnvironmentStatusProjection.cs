@@ -16,7 +16,8 @@ public static class EnvironmentStatusProjection
         IReadOnlyList<DeployEnvironment> environments,
         IReadOnlyList<Release> releases,
         IReadOnlyList<Deployment> deployments,
-        IReadOnlyDictionary<string, string> hostHealth)
+        IReadOnlyDictionary<string, string> hostHealth,
+        IReadOnlyDictionary<string, DateTime>? confirmedHostReports = null)
     {
         var ordered = environments.OrderBy(item => item.Order).ToArray();
         var releaseById = releases.ToDictionary(item => item.Id, StringComparer.Ordinal);
@@ -51,10 +52,18 @@ public static class EnvironmentStatusProjection
                         ? runs.Where(item => item.InterventionDecision is "abort" or "timeout")
                             .OrderBy(item => item.CreatedAtUtc).ThenBy(item => item.Id, StringComparer.Ordinal)
                             .LastOrDefault() : null);
+            var lastSuccess = LastSucceeded(runs);
+            var lastFailure = runs.Where(item => item.State is DeploymentStates.Failed or DeploymentStates.WaitingForIntervention)
+                .OrderBy(item => item.CreatedAtUtc).ThenBy(item => item.Id, StringComparer.Ordinal).LastOrDefault();
+            var uncertain = lastFailure is not null
+                && (lastSuccess is null || lastFailure.CreatedAtUtc > lastSuccess.CreatedAtUtc)
+                && (confirmedHostReports is null
+                    || !confirmedHostReports.TryGetValue(environment.Id, out var confirmedAt)
+                    || confirmedAt <= (lastFailure.FinishedAtUtc ?? lastFailure.CreatedAtUtc));
             return new EnvironmentStatus(environment, current, latest, newer, cards, health,
                 intervention is null ? null : new(intervention.Id, intervention.FailedStep ?? "run",
                     intervention.InterventionExpiresAtUtc, intervention.InterventionDecision,
-                    intervention.InterventionDecidedBy));
+                    intervention.InterventionDecidedBy)) { ReleaseUncertain = uncertain };
         }).ToArray();
     }
 
@@ -96,7 +105,7 @@ public static class EnvironmentStatusProjection
         => deployments.Any(item => item.ReleaseId == releaseId && item.EnvironmentId == environmentId
             && DeployedSuccessfully(item));
 
-    private static bool DeployedSuccessfully(Deployment run)
+    public static bool DeployedSuccessfully(Deployment run)
         => run.State == DeploymentStates.Succeeded
             && (run.InterventionDecision != "skip" || run.FailedStep == DeployStepNames.Health);
 

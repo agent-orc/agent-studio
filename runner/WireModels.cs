@@ -239,7 +239,10 @@ public sealed record HostTelemetrySample(
     DateTime? TaskServerConnectionEscalatedAt = null,
     string? TaskServerConnectionLastError = null,
     DateTime? TaskServerConnectionLastRecoveredAt = null,
-    IReadOnlyList<AgentStudio.TaskServer.Contracts.HostFilesystemUsageDto>? Filesystems = null);
+    IReadOnlyList<AgentStudio.TaskServer.Contracts.HostFilesystemUsageDto>? Filesystems = null,
+    AgentStudio.TaskServer.Contracts.HostPlacementDto? Placement = null,
+    long? NetworkReceiveBytesPerSecond = null,
+    long? NetworkTransmitBytesPerSecond = null);
 
 public enum RunnerClaimStatus { Claimed, Empty, PreflightRequired, PreflightFailed, Invalid }
 

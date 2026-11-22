@@ -13,7 +13,8 @@ public sealed record RunTargetDesiredState(
     IReadOnlyList<RunTargetEnvironmentSpec> Environments,
     IReadOnlyList<RunTargetSkip>? Skipped = null,
     IReadOnlyList<RunTargetRemoval>? Removals = null,
-    IReadOnlyList<RunTargetDatabaseDeletion>? DatabaseDeletions = null);
+    IReadOnlyList<RunTargetDatabaseDeletion>? DatabaseDeletions = null,
+    IReadOnlyList<RunTargetDatabaseOperation>? DatabaseOperations = null);
 
 public sealed record RunTargetSkip(string Project, string Reason);
 
@@ -45,7 +46,24 @@ public sealed record RunTargetDatabaseSpec(
     string Size,
     RunTargetResources Resources,
     string Variable,
-    string PasswordRef);
+    string PasswordRef,
+    RunTargetBackupPolicy? Backup = null);
+
+/// <summary>Backup schedule and retention of one database (AGT-3878); without it the host uses <see cref="Default"/>.</summary>
+public sealed record RunTargetBackupPolicy(int IntervalHours, int RetentionDays, int MinimumKept)
+{
+    public static readonly RunTargetBackupPolicy Default = new(24, 7, 3);
+}
+
+/// <summary><c>backup</c>, <c>verify</c> (restore into a scratch database) or an approved <c>restore</c>.</summary>
+public sealed record RunTargetDatabaseOperation(string Id, string Project, string EnvironmentId, string Name,
+    string Kind, string? BackupId, string? TargetName);
+
+public sealed record RunTargetBackupRecord(string Id, DateTime TakenAt, long Bytes, string Kind,
+    DateTime? VerifiedAt = null, int? VerifiedTables = null);
+
+public sealed record RunTargetDatabaseOperationResult(string Id, string Project, string EnvironmentId, string Name,
+    string State, string? Message, DateTime FinishedAt, string? BackupId = null);
 
 public sealed record RunTargetDatabaseDeletion(string Project, string EnvironmentId, string Name);
 
@@ -56,10 +74,17 @@ public sealed record RunTargetDatabaseObservation(
     string State,
     string? Version,
     long? VolumeBytes,
-    DateTime ObservedAt);
+    DateTime ObservedAt,
+    bool? Ready = null,
+    int? Connections = null,
+    int? MaxConnections = null,
+    IReadOnlyList<RunTargetBackupRecord>? Backups = null,
+    DateTime? LastBackupAttemptAt = null,
+    string? LastBackupError = null);
 
 public sealed record RunTargetObservedReport(IReadOnlyList<RunTargetObservation> Environments,
-    IReadOnlyList<RunTargetDatabaseObservation>? Databases = null);
+    IReadOnlyList<RunTargetDatabaseObservation>? Databases = null,
+    IReadOnlyList<RunTargetDatabaseOperationResult>? DatabaseOperations = null);
 
 public sealed record RunTargetObservation(
     string Project,
@@ -69,7 +94,8 @@ public sealed record RunTargetObservation(
     string? PreviousArtifact,
     int Restarts,
     DateTime ObservedAt,
-    IReadOnlyList<RunTargetEvent> Events);
+    IReadOnlyList<RunTargetEvent> Events,
+    IReadOnlyList<string>? CrashOutput = null);
 
 public sealed record RunTargetEvent(DateTime At, string Kind, string? Artifact);
 

@@ -221,6 +221,8 @@ public static class RoutePermissionCatalog
         Add("GET", IamPermissions.WorkspaceOperate, "/api/v1/one-shot-jobs/{}");
         Add("R", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/desired-state");
         Add("POST", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/observed-state");
+        Add("GET", IamPermissions.RunnerService, "/api/deploy/hosts/{}/containers");
+        Add("POST", IamPermissions.RunnerService, "/api/deploy/hosts/{}/observed-state");
         Add("*", IamPermissions.RunnerService,
             "/api/v1/orchestration/**", "/api/v1/runners/**", "/api/v1/gates/**", "/api/v1/runs/**",
             "/api/runner/artifacts/**", "/api/runner/lease/**", "/api/pull-gates/**", "/api/gate-artifacts/**");
@@ -238,9 +240,10 @@ public static class RoutePermissionCatalog
             "/api/runner/project-chat/complete", "/api/runner/replay/events",
             "/api/runner/post-merge/projects/{}/runs",
             "/api/clients/{}/runner-git-capability", "/api/deploy/jobs/**", "/api/deploy/gate-releases");
-        Add("GET", IamPermissions.RunnerService, "/api/runner/post-merge/projects/{}");
+        Add("GET", IamPermissions.RunnerService, "/api/runner/post-merge/projects", "/api/runner/post-merge/projects/{}");
         Add("POST", IamPermissions.RunnerService,
-            "/api/runner/post-merge/projects/{}/escalation-check");
+            "/api/runner/post-merge/projects/{}/escalation-check",
+            "/api/runner/post-merge/projects/{}/window");
         Add("GET", IamPermissions.WorkspaceRead, "/api/develop-states");
         Add("GET", IamPermissions.RunnerService, "/api/runner/release-candidates/{}/{}");
         Add("PUT", IamPermissions.RunnerService, "/api/runner/release-suite-verdicts");
@@ -267,6 +270,7 @@ public static class RoutePermissionCatalog
         // rollback names an environment id the middleware resolves to the
         // kind of its declaration.
         Environment("POST", IamPermissions.EnvironmentDeploy, "/api/projects/{}/environments/releases", IamEnvironments.Stage);
+        Environment("POST", IamPermissions.EnvironmentDeploy, "/api/projects/{}/deploy/integration-release", IamEnvironments.Stage);
         Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
             "/api/projects/{}/environments/promotions/*", IamEnvironments.Production);
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
@@ -274,19 +278,31 @@ public static class RoutePermissionCatalog
         Environment("PUT", IamPermissions.EnvironmentProductionDeployApprove, "/api/tasks/{}/release",
             IamEnvironments.Production);
         Add("R", IamPermissions.WorkspaceRead, "/api/deploy/matrix", "/api/deploy/cards");
+        // Instance deploy records (AGT-3879): the report routes check their own
+        // deploy reporter token; issuing or revoking one is an Owner action.
+        Add("POST", IamPermissions.Anonymous, "/api/instance/deploy/runs", "/api/instance/deploy/runs/{}/finish");
+        Add("PUT", IamPermissions.Anonymous, "/api/instance/deploy/runs/{}/steps/{}");
+        Add("*", IamPermissions.WorkspaceAdminister, "/api/instance/deploy/reporter-tokens",
+            "/api/instance/deploy/reporter-tokens/{}");
+        // F4: run host reachability across projects, for the Hosts view.
+        Add("GET", IamPermissions.WorkspaceOperate, "/api/deploy/run-hosts");
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
             "/api/projects/{}/environments/{}/stop", null, "environmentId");
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
             "/api/projects/{}/environments/{}/run-target-removal/confirm", null, "environmentId");
         Add("R", IamPermissions.ProjectRead,
-            "/api/projects/{}/deploy/environments", "/api/projects/{}/deploy/status",
+            "/api/projects/{}/deploy/environments", "/api/projects/{}/deploy/status", "/api/projects/{}/deploy/instance",
             "/api/projects/{}/deploy/releases", "/api/projects/{}/deploy/releases/page",
             "/api/projects/{}/deploy/releases/{}",
+            "/api/projects/{}/deploy/actions", "/api/projects/{}/deploy/releases/{}/actions",
             "/api/projects/{}/deploy/deployments", "/api/projects/{}/deploy/deployments/page",
             "/api/projects/{}/deploy/deployments/{}",
             "/api/projects/{}/deploy/deployments/{}/log", "/api/projects/{}/deploy/audit",
+            "/api/projects/{}/deploy/release-gate", "/api/projects/{}/deploy/secret-readiness",
             "/api/projects/{}/deploy/runbooks", "/api/projects/{}/deploy/runbooks/runs",
             "/api/projects/{}/deploy/runbooks/runs/{}", "/api/projects/{}/deploy/runbooks/runs/{}/log");
+        // Release notes are product copy, written like project documentation.
+        Add("PUT", IamPermissions.ProjectDocsWrite, "/api/projects/{}/deploy/releases/{}/notes/{}");
         Environment("POST", IamPermissions.EnvironmentDeploy,
             "/api/projects/{}/deploy/environments/{}/runbooks/{}/runs", null, "environmentId");
         Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
@@ -321,7 +337,7 @@ public static class RoutePermissionCatalog
         // project access; issuing or revoking an ingest token changes project
         // configuration and is reserved to a project administrator.
         Add("POST", IamPermissions.Anonymous,
-            "/api/telemetry/otlp/v1/metrics", "/api/telemetry/otlp/v1/logs");
+            "/api/telemetry/otlp/v1/metrics", "/api/telemetry/otlp/v1/logs", "/api/telemetry/otlp/v1/traces");
         Add("R", IamPermissions.ProjectRead, "/api/projects/{}/environments/{}/telemetry/**");
         Add("W", IamPermissions.ProjectSettingsWrite,
             "/api/projects/{}/environments/{}/telemetry/tokens",
@@ -485,6 +501,9 @@ public static class RoutePermissionCatalog
         Add("PUT", IamPermissions.ProjectPipelineWrite, "/api/projects/{}/pipeline-step");
         // Only project settings writers may enable shadow package review.
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/review-package");
+        Add("GET", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/incident-webhook");
+        Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/incident-webhook");
+        Add("POST", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/incident-webhook/test");
         Add("W", IamPermissions.ProjectSettingsWrite, "/api/projects/{}");
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/*");
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/model-selection-overrides/{}");

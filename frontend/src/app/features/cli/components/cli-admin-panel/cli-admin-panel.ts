@@ -1,4 +1,5 @@
-import { browserTimeZone, formatZonedTime } from '../../../../services/usage-time.util';
+import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
+import { UsageCockpitService } from '../../../usage-cockpit/services/usage-cockpit.service';
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import type { CliType } from '../../../../models/task.model';
@@ -51,6 +52,7 @@ interface CapRow {
   changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class CliAdminPanelComponent implements OnInit, OnDestroy {
+  private readonly cockpit = inject(UsageCockpitService);
   private readonly quotaApi = inject(QuotaApiService);
 
   readonly loading = signal(false);
@@ -278,7 +280,7 @@ export class CliAdminPanelComponent implements OnInit, OnDestroy {
 
   formatReset(resetAt: string | null): string {
     if (!resetAt) return 'reset unknown';
-    return `resets ${formatZonedTime(resetAt, browserTimeZone()) ?? resetAt}`;
+    return `resets ${formatZonedWithUtc(resetAt, this.cockpit.snapshot()?.timeZone ?? browserTimeZone()) ?? resetAt}`;
   }
 
   barWidth(pct: number | null): number {

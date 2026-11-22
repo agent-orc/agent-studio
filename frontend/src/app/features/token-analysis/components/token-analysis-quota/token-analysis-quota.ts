@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
-import { DatePipe } from '@angular/common';
+import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { formatCompactTokens } from '../../../tokens/token-number-format.util';
 import type { TokenAnalysisQuotaWindow } from '../../models/token-analysis.model';
@@ -19,7 +19,7 @@ interface SegmentRow {
 @Component({
   selector: 'app-token-analysis-quota',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent],
+  imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './token-analysis-quota.html',
   styleUrl: './token-analysis-quota.scss',
@@ -31,6 +31,7 @@ export class TokenAnalysisQuotaComponent {
   readonly cli = input<string | null>(null);
 
   readonly fmt = formatCompactTokens;
+  readonly when = (at: string) => formatZonedWithUtc(at, browserTimeZone()) ?? at;
   readonly viewBox = computed(() => `0 0 ${Math.max(1, this.days())} 100`);
 
   readonly paths = computed(() => this.lines().map(line => ({

@@ -1,4 +1,4 @@
-import { formatInZone, formatZonedTime, formatZonedWithUtc, usageTimeZone } from '../../services/usage-time.util';
+import { formatInZone, formatZonedWithUtc, usageTimeZone } from '../../services/usage-time.util';
 import type {
   UsageCalendar,
   UsageCli,
@@ -45,7 +45,7 @@ export const UNKNOWN = 'Unknown';
 export type UsageDetailFocus = { kind: 'cli'; cliId: string } | { kind: 'capacity' } | { kind: 'cost' };
 
 export interface UsageInstantView {
-  /** `Mon 29 Sept, 09:00 Europe/Berlin`, in the workspace zone with its name. */
+  /** `Mon 29 Sept, 09:00`, in the workspace zone named by the table header. */
   local: string;
   /** `Mon 29 Sept, 07:00 UTC`. */
   utc: string;
@@ -62,7 +62,7 @@ export function instantView(iso: string | null | undefined, timeZone: string | n
   if (Number.isNaN(date.getTime())) return null;
   const zone = usageTimeZone(timeZone);
   return {
-    local: formatZonedTime(date, zone)!,
+    local: formatInZone(date, zone),
     utc: `${formatInZone(date, 'UTC')} UTC`,
     text: formatZonedWithUtc(date, zone)!,
     iso: date.toISOString(),
@@ -191,6 +191,8 @@ export interface UsageDetailWindowView {
   /** What is left of the window, `None left` at or above 100% used, or `N/A`. */
   remaining: string;
   reported: boolean;
+  start: UsageInstantView | null;
+  startEstimated: boolean;
   reset: UsageInstantView | null;
   /** Provider wording when no reset instant is reported. */
   resetLabel: string | null;
@@ -244,6 +246,10 @@ export function formatRemainingPct(usedPct: number | null | undefined): string |
 
 function windowDetail(window: UsageCliWindow, timeZone: string, now: number): UsageDetailWindowView {
   const pct = formatUsedPct(window.usedPct);
+  const weekly = /week|7\s*d/i.test(window.label);
+  const resetMs = window.resetAtUtc ? Date.parse(window.resetAtUtc) : NaN;
+  const startUtc = weekly && Number.isFinite(resetMs)
+    ? window.startAtUtc ?? new Date(resetMs - 7 * 86_400_000).toISOString() : null;
   return {
     id: window.id,
     label: window.label,
@@ -251,6 +257,8 @@ function windowDetail(window: UsageCliWindow, timeZone: string, now: number): Us
     remaining: formatRemainingPct(window.usedPct) ?? NOT_AVAILABLE,
     reported: pct != null,
     reset: instantView(window.resetAtUtc, timeZone),
+    start: instantView(startUtc, timeZone),
+    startEstimated: !!startUtc && !window.startAtUtc,
     resetLabel: window.resetAtUtc ? null : window.resetLabel,
     countdown: formatCountdown(window.resetAtUtc, now),
     suspiciousReason: window.suspiciousReason,
@@ -398,6 +406,7 @@ export interface UsageCostDetailView {
   latestReceipt: UsageInstantView | null;
   pricingVersion: string;
   projects: UsageProjectRowView[];
+  oneShotSources: { source: string; today: string; week: string }[];
   reconcile: UsageReconcileView;
   liveRuns: UsageLiveRunView[];
   slots: UsageSlotDetailView[];
@@ -465,7 +474,7 @@ export function buildCostDetailView(snapshot: UsageCockpitResponse, now: number)
     const status = p.coverage?.status;
     return {
       key: p.projectId ?? UNATTRIBUTED_KEY,
-      name: unattributed ? 'Unattributed' : p.name,
+      name: unattributed ? 'Unattributed one-shot jobs' : p.name,
       unattributed,
       today: formatUsdExact(p.todayUsd) ?? NOT_AVAILABLE,
       week: formatUsdExact(p.weekUsd) ?? NOT_AVAILABLE,
@@ -517,6 +526,10 @@ export function buildCostDetailView(snapshot: UsageCockpitResponse, now: number)
     latestReceipt: instantView(cost.latestReceiptAt, zone),
     pricingVersion: cost.pricingVersion,
     projects,
+    oneShotSources: (cost.oneShotSources ?? []).map(row => ({
+      source: row.source, today: usd(row.todayUsd) ?? NOT_AVAILABLE,
+      week: usd(row.weekUsd) ?? NOT_AVAILABLE,
+    })),
     reconcile: {
       todayRemainder: todayRemainder == null ? null : centsText(cents(todayRemainder)),
       weekRemainder: weekRemainder == null ? null : centsText(cents(weekRemainder)),

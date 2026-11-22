@@ -102,6 +102,15 @@ case "${PW_E2E_PROFILE:-standard}" in
       first_run_prepare
     fi
     ;;
+  # run-host: a fresh networked monolith over HTTPS whose Owner, with a
+  # sealed second factor, enrolls a run host from the Hosts wizard (F4).
+  run-host)
+    export Security__Profile=networked
+    export Security__TrustedProxyAddresses=127.0.0.1
+    export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
+    source "${REPO_ROOT}/scripts/networked-https-e2e-key.sh"
+    e2e_networked_https_key_prepare
+    ;;
   # networked-https: a networked monolith with a second project, so a Product
   # session bound to the first one proves it never sees the other (AGT-3668).
   networked-https)
@@ -195,6 +204,12 @@ case "${PW_E2E_PROFILE:-standard}" in
   first-run)
     source "${REPO_ROOT}/scripts/first-run-e2e-fixture.sh"
     first_run_prepare
+    ;;
+  # deploy-lifecycle: a project with Staging and Production declared and a
+  # release evidence root, so a spec drives releases through the real lifecycle.
+  deploy-lifecycle)
+    source "${REPO_ROOT}/scripts/deploy-lifecycle-e2e-fixture.sh"
+    deploy_lifecycle_prepare
     ;;
   concept-remote)
     source "${REPO_ROOT}/scripts/first-run-e2e-fixture.sh"

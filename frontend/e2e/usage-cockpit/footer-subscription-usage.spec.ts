@@ -33,9 +33,10 @@ function hosts(invalid: boolean) {
 
 function cockpit() {
   const snapshot = structuredClone(SNAPSHOT);
+  snapshot.cost.oneShotSources = [{ source: 'auto-tag', todayUsd: 0.01, weekUsd: 0.04 }];
   snapshot.clis = [...snapshot.clis, GEMINI_UNAVAILABLE].map(cli => cli.cliId === 'gemini' ? cli : ({
     ...cli,
-    windows: cli.windows.filter(window => window.id.includes('weekly')),
+    windows: cli.cliId === 'codex' ? cli.windows : cli.windows.filter(window => window.id.includes('weekly')),
     ...(cli.cliId === 'claude' ? {
       fetchedAt: new Date(FIXTURE_NOW - 3_600_000).toISOString(),
       availability: { ...cli.availability, status: 'stale' },
@@ -105,7 +106,7 @@ test('one footer entry per subscription, honest age, host problem, account and r
   const usageEntries = footer.locator('[data-usage-trigger]');
   await expect(usageEntries).toHaveCount(3);
   for (const entry of await usageEntries.all()) {
-    await expect(entry).toHaveJSProperty('tagName', 'BUTTON');
+    await expect(entry).toHaveJSProperty('tagName', await entry.getAttribute('data-usage-trigger') === 'cost' ? 'BUTTON' : 'A');
   }
   await expect(footer.locator('[data-testid^="footer-usage-claude"]')).toHaveCount(1);
   await expect(footer.locator('[data-testid^="footer-usage-codex"]')).toHaveCount(1);
@@ -122,11 +123,18 @@ test('one footer entry per subscription, honest age, host problem, account and r
   await page.keyboard.press('Escape');
   await expect(footer.getByText('Settings', { exact: true })).toHaveCount(0);
 
-  await footer.getByTestId('footer-usage-claude').click();
+  await footer.getByTestId('footer-usage-cost').click();
   await expect(page.getByTestId('usage-detail-surface')).toBeVisible();
   await expect(page.getByTestId('usage-detail-jump-gemini')).toBeVisible();
   await expect(page.getByTestId('usage-detail-windows-claude')).toContainText('N/A');
   await expect(page.getByTestId('usage-detail-chat-toggle')).toBeVisible();
+  await page.getByTestId('usage-detail-close').click();
+
+  await footer.getByTestId('footer-usage-cost').click();
+  await expect(page.getByTestId('usage-detail-one-shot-sources')).toContainText('auto-tag');
+  await page.getByTestId('usage-detail-one-shot-sources').screenshot({
+    path: join(shots, 'footer-one-shot-cost--mocked.png'),
+  });
   await page.getByTestId('usage-detail-close').click();
 
   for (const width of [1920, 1280, 390]) {
@@ -149,15 +157,19 @@ test('one footer entry per subscription, honest age, host problem, account and r
         rightEdgeGap: barBox.right - right.right,
         leftBeforeRight: bar.querySelector('[data-testid="status-bar-running"]')!
           .getBoundingClientRect().left < right.left,
+        leftAboveRight: bar.querySelector('[data-testid="status-bar-running"]')!
+          .getBoundingClientRect().bottom <= right.top,
       };
     });
     expect(layout.separatorBetweenGroups).toBe(true);
     expect(layout.entryGaps.every(gap => gap >= 7)).toBe(true);
-    expect(layout.leftBeforeRight).toBe(true);
+    expect(width === 390 ? layout.leftAboveRight : layout.leftBeforeRight).toBe(true);
     if (width >= 1280) expect(layout.rightEdgeGap).toBeLessThanOrEqual(16);
-    const titlebar = await page.getByTestId('studio-titlebar').boundingBox();
-    const body = await page.getByTestId('studio-body').boundingBox();
-    expect(titlebar && body && body.y - titlebar.y - titlebar.height).toBeLessThanOrEqual(48);
+    if (width >= 1280) {
+      const titlebar = await page.getByTestId('studio-titlebar').boundingBox();
+      const body = await page.getByTestId('studio-body').boundingBox();
+      expect(titlebar && body && body.y - titlebar.y - titlebar.height).toBeLessThanOrEqual(56);
+    }
     if (width === 390) {
       const usageTarget = await footer.getByTestId('footer-usage-claude').boundingBox();
       expect(usageTarget?.height).toBeGreaterThanOrEqual(44);
@@ -165,11 +177,33 @@ test('one footer entry per subscription, honest age, host problem, account and r
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);
+      if (width === 390) {
+        for (const id of ['footer-usage-claude', 'footer-usage-codex', 'footer-usage-cost']) {
+          const chip = footer.getByTestId(id);
+          const box = await chip.boundingBox();
+          expect(box && box.x >= 0 && box.x + box.width <= 390, `${id} visible at 390 px in ${theme}`).toBe(true);
+        }
+        await expect(footer.getByTestId('footer-usage-claude')).toContainText('WK 7%');
+        await expect(footer.getByTestId('footer-usage-codex')).toContainText('WK 15%');
+        await expect(footer.getByTestId('footer-usage-cost')).toContainText('$12.48');
+        await footer.getByTestId('footer-usage-cost').click();
+        const sheet = page.getByTestId('usage-detail-surface');
+        await expect(sheet).toHaveAttribute('data-mode', 'sheet');
+        await expect(sheet).toBeVisible();
+        const sheetBox = await sheet.boundingBox();
+        expect(sheetBox && sheetBox.y <= 1 && sheetBox.height >= 899, `full-height sheet in ${theme}`).toBe(true);
+        await expect(sheet.getByTestId('usage-detail-windows-codex')).toBeVisible();
+        await sheet.screenshot({ path: join(shots, `usage-sheet-390-${theme}.png`), animations: 'disabled' });
+        await sheet.getByTestId('usage-detail-jump-cost').click();
+        await expect(sheet.getByTestId('usage-detail-today')).toContainText('$12.48');
+        await sheet.screenshot({ path: join(shots, `usage-cost-390-${theme}.png`), animations: 'disabled' });
+        await page.getByTestId('usage-detail-close').click();
+      }
       await page.mouse.move(1, 1);
       await page.screenshot({ path: join(shots, `after-${width}-${theme}.png`), fullPage: false, animations: 'disabled' });
     }
     if (width === 390) {
-      await footer.getByTestId('footer-usage-claude').click();
+      await footer.getByTestId('footer-usage-cost').click();
       await expect(page.getByTestId('usage-detail-surface')).toHaveAttribute('data-mode', 'sheet');
       await page.getByTestId('usage-detail-close').click();
     }
@@ -237,7 +271,36 @@ test('legacy shell keeps usage in the footer and account actions in the header',
   await expect(page.getByTestId('studio-titlebar-account')).toContainText('Owner');
   await expect(page.getByTestId('footer-usage-claude')).toContainText('WK 7%', { timeout: 60_000 });
   await expect(page.locator('header [data-usage-trigger]')).toHaveCount(0);
-  await page.getByTestId('footer-usage-claude').click();
+  await page.getByTestId('footer-usage-cost').click();
   await expect(page.getByTestId('usage-detail-surface')).toBeVisible();
   await page.getByTestId('usage-detail-close').click();
+});
+
+
+test('Fable weekly allowance appears independently in the footer in both themes', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.clock.setFixedTime(FIXTURE_NOW);
+  await page.route('**/api/usage/cockpit**', route => {
+    const snapshot = cockpit();
+    const claude = snapshot.clis.find(cli => cli.cliId === 'claude')!;
+    claude.windows.push({ ...claude.windows[0], id: 'claude/weekly-fable', label: 'Weekly (Fable)', usedPct: 84 });
+    return route.fulfill({ json: snapshot });
+  });
+  await page.goto('/');
+  await dismissDevErrorDialog(page);
+  const footer = page.getByTestId('footer-usage-claude');
+  await expect(footer).toContainText('Fable 84%');
+  await expect(footer).toContainText('WK 7%');
+  await expect(footer).toHaveAttribute('aria-label', /Fable weekly 84 percent used/);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ['dark', 'light'] as const) {
+      await setTheme(page, theme);
+      await expect(footer).toContainText('Fable 84%');
+      const bounds = await footer.boundingBox();
+      expect(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width).toBe(true);
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);
+      await page.screenshot({ path: join(shots, `fable-weekly-${width}-${theme}--mocked.png`), animations: 'disabled' });
+    }
+  }
 });

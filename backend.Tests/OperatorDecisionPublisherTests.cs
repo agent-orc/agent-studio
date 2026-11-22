@@ -4,6 +4,7 @@ using AgentStudio.Runner;
 using AgentStudio.Security;
 using AgentStudio.Shared;
 using AgentStudio.Watcher;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -25,6 +26,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
     private readonly OperatorDecisionOptions _options = new(
         TimeSpan.FromSeconds(5), TimeSpan.FromHours(24), TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(15));
     private volatile TaskInfo[]? _tasks = [];
+    private volatile ReviewInfrastructureRetryDue[] _scheduledRetries = [];
 
     [Fact]
     public async Task Each_event_type_follows_its_fact_within_ten_seconds_and_only_once()
@@ -55,6 +57,9 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
                     : null),
                 new OperatorProviderLimitFactSource(limits),
                 new OperatorGateHostFactSource(gateHost, batches),
+                new OperatorReviewRetryFactSource(() => _scheduledRetries, () => false,
+                    new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+                        { ["Runner:ReviewInfrastructureRetry:Enabled"] = "false" }).Build()),
             ],
             _options, _clock, NullLogger<OperatorDecisionPublisher>.Instance);
 
@@ -68,11 +73,16 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
 
         var factTime = _clock.GetUtcNow().UtcDateTime;
         var expected = new Dictionary<string, DateTime>(StringComparer.Ordinal);
-        // Deploy completion has its own quota-backed source and a running batch
+        // Deploy completion, environment incidents, review-host drift and
+        // missing post-merge runs have their own sources. A running batch
         // without a live gate needs a stale snapshot; this fixture registers
-        // only the task, watcher, batch, push and provider sources.
+        // the remaining sources.
         var seededTypes = OperatorDecisionTypes.All
-            .Where(type => type != OperatorDecisionTypes.DeployCompleted && type != OperatorDecisionTypes.BatchRunningWithoutGate)
+            .Where(type => type != OperatorDecisionTypes.DeployCompleted
+                && type != OperatorDecisionTypes.EnvironmentIncidentOpen
+                && type != OperatorDecisionTypes.ReviewHostDrift
+                && type != OperatorDecisionTypes.PostMergeRunsMissing
+                && type != OperatorDecisionTypes.BatchRunningWithoutGate)
             .ToArray();
         foreach (var type in seededTypes) expected[type] = factTime;
         expected[OperatorDecisionTypes.PushPendingOverdue] = factTime.AddSeconds(2);
@@ -91,6 +101,8 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
             Card("A-6", TaskStates.Progress, factTime),
             Card("A-7", TaskStates.AutoReview, factTime),
         ];
+        _scheduledRetries = [new ReviewInfrastructureRetryDue(
+            "review-A-11", "A-11", 1, 3, "host unavailable", factTime.AddMinutes(1))];
         cases.Save(_root, Case("host-offline", factTime));
         cases.Save(_root, Case("idle-capacity", factTime));
         cases.Save(_root, Case("batch-gate-stuck", factTime));
@@ -118,6 +130,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
         }
         Assert.Equal("A-8", events.Single(item => item.Type == OperatorDecisionTypes.PushPendingOverdue).CardKey);
         Assert.Equal("A-7", events.Single(item => item.Type == OperatorDecisionTypes.PushBlocked).CardKey);
+        Assert.Equal(["A-11"], events.Single(item => item.Type == OperatorDecisionTypes.ReviewRetrySchedulerStalled).Cards);
         Assert.Equal(2, events.Count(item => item.Type == OperatorDecisionTypes.QuotaExhausted));
 
         // Facts that last are not published again by later sweeps.

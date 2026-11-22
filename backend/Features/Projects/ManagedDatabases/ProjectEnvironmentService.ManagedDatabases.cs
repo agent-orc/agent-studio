@@ -14,17 +14,129 @@ public sealed partial class ProjectEnvironmentService
     {
         var file = DeclarationFiles(project)?.FirstOrDefault(item => item.EnvironmentId == environmentId);
         if (file is null) return null;
+        var kind = file.Declaration?.Kind ?? "";
+        var policy = file.Declaration?.EffectiveDatabasePolicy ?? ManagedDatabaseEnvironmentPolicy.For(kind);
+        var now = _clock.GetUtcNow().UtcDateTime;
         lock (_gate)
         {
-            var records = (TryLoad(project)?.Databases ?? []).Where(item => item.EnvironmentId == environmentId).ToArray();
+            var state = TryLoad(project);
+            var records = (state?.Databases ?? []).Where(item => item.EnvironmentId == environmentId).ToArray();
+            var operations = state?.DatabaseOperations ?? [];
             var live = records.Where(item => item.DeletedAt is null).Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
             return records.OrderBy(item => item.DeletedAt is null ? 0 : 1).ThenBy(item => item.Name, StringComparer.Ordinal)
-                .Select(item => ManagedDatabasePolicy.View(project, item))
+                .Select(item => ManagedDatabasePolicy.View(project, item, kind, policy, operations, now))
                 .Concat((file.Declaration?.Databases ?? []).Where(item => !live.Contains(item.Name))
-                    .Select(item => ManagedDatabasePolicy.Pending(project, environmentId, item)))
+                    .Select(item => ManagedDatabasePolicy.Pending(project, file.Declaration!, item)))
                 .ToArray();
         }
     }
+
+    /// <summary>
+    /// Records a backup, verification or restore of a database (AGT-3878). A
+    /// production restore waits for an Owner's approval; everything else is
+    /// handed to the host on its next poll.
+    /// </summary>
+    public ManagedDatabaseOperationDecision RequestDatabaseOperation(string project, string environmentId, string name,
+        ManagedDatabaseOperationRequest request, string actor)
+    {
+        var declaration = IsWatched(project) ? Declarations(project)?.FirstOrDefault(item => item.Id == environmentId) : null;
+        if (declaration is null)
+            return ManagedDatabaseOperationDecision.Fail(ManagedDatabaseOperationOutcome.NotFound, "The environment is not declared.");
+        lock (_gate)
+        {
+            if (TryLoad(project) is not { } state)
+                return ManagedDatabaseOperationDecision.Fail(ManagedDatabaseOperationOutcome.Conflict, "The environment state is unreadable.");
+            var now = _clock.GetUtcNow().UtcDateTime;
+            var changed = ManagedDatabaseOperationPolicy.Expire(state.DatabaseOperations, now);
+            var decision = ManagedDatabaseOperationPolicy.Request(state.Databases, state.DatabaseOperations, environmentId,
+                declaration.Kind, name, request, actor, DeployOpen(state, environmentId), now);
+            if (decision.Operation is { } operation) state.DatabaseOperations.Add(operation);
+            if (changed || decision.Operation is not null) Save(project, state);
+            return decision;
+        }
+    }
+
+    /// <summary>An Owner's approval or rejection of a production restore.</summary>
+    public ManagedDatabaseOperationDecision DecideDatabaseOperation(string project, string environmentId, string name,
+        string operationId, bool approve, string actor)
+    {
+        if (!IsWatched(project))
+            return ManagedDatabaseOperationDecision.Fail(ManagedDatabaseOperationOutcome.NotFound, "The operation is not known.");
+        lock (_gate)
+        {
+            if (TryLoad(project) is not { } state)
+                return ManagedDatabaseOperationDecision.Fail(ManagedDatabaseOperationOutcome.NotFound, "The operation is not known.");
+            var now = _clock.GetUtcNow().UtcDateTime;
+            var changed = ManagedDatabaseOperationPolicy.Expire(state.DatabaseOperations, now);
+            var operation = state.DatabaseOperations.FirstOrDefault(item => item.Id == operationId
+                && item.EnvironmentId == environmentId && (item.SourceDatabase == name || item.TargetDatabase == name));
+            var decision = ManagedDatabaseOperationPolicy.Decide(operation, state.Databases, approve, actor,
+                DeployOpen(state, environmentId), now);
+            if (decision.Operation is { } decided) state.DatabaseOperations[state.DatabaseOperations.IndexOf(operation!)] = decided;
+            if (changed || decision.Operation is not null) Save(project, state);
+            return decision;
+        }
+    }
+
+    /// <summary>
+    /// The databases whose backups and volume Studio watches, with the
+    /// declaration of their environment (null when it is no longer declared),
+    /// plus any other record that still holds an open alert.
+    /// </summary>
+    public IReadOnlyList<(EnvironmentDeclaration? Environment, ManagedDatabaseRecord Record)> DatabasesToWatch(string project)
+    {
+        var declarations = DeclarationFiles(project)?.Select(item => item.Declaration).OfType<EnvironmentDeclaration>().ToArray() ?? [];
+        lock (_gate)
+        {
+            return (TryLoad(project)?.Databases ?? [])
+                .Where(item => item.Alerts.Any(alert => alert.ClosedAt is null) || item.DeletedAt is null && item.Declared)
+                .Select(item => (declarations.FirstOrDefault(environment => environment.Id == item.EnvironmentId), item))
+                .ToArray();
+        }
+    }
+
+    public void SetDatabaseAlerts(string project, string environmentId, string name, string hostId,
+        IReadOnlyList<ManagedDatabaseAlert> alerts)
+    {
+        lock (_gate)
+        {
+            if (TryLoad(project) is not { } state) return;
+            var index = state.Databases.FindLastIndex(item => item.EnvironmentId == environmentId && item.Name == name
+                && item.HostId == hostId);
+            if (index < 0 || state.Databases[index].Alerts.SequenceEqual(alerts)) return;
+            state.Databases[index] = state.Databases[index] with { Alerts = alerts };
+            Save(project, state);
+        }
+    }
+
+    /// <summary>
+    /// Liveness of a database as the control plane sees it (AGT-3878, the
+    /// AGT-3223 <c>database</c> check). The database publishes no port, so the
+    /// signal is the host's report: a database is up while the host reports it
+    /// ready, and down when the report says otherwise or stops arriving.
+    /// </summary>
+    public HealthSample DatabaseLivenessSample(string project, string environmentId, string name, DateTimeOffset now)
+    {
+        ManagedDatabaseRecord? record;
+        lock (_gate)
+        {
+            record = TryLoad(project)?.Databases.LastOrDefault(item => item.EnvironmentId == environmentId && item.Name == name
+                && item.DeletedAt is null);
+        }
+        if (record is null || !record.Declared || record.RunningSince is null && record.State == "provisioning")
+            return new(now, false, null, null, HealthSample.NotApplicable);
+        if (record.ObservedAt is not { } seen || now.UtcDateTime - seen > DatabaseReportStale)
+            return new(now, false, null, null, "database-report-stale");
+        if (record.State == "failed") return new(now, false, null, null, "database-failed");
+        if (record.State == "unhealthy" || record.Ready == false) return new(now, false, null, null, "database-not-ready");
+        return new(now, true, null, null, null);
+    }
+
+    /// <summary>The host reports every poll and Studio keeps an unchanged report at least every minute.</summary>
+    public static readonly TimeSpan DatabaseReportStale = TimeSpan.FromMinutes(3);
+
+    private static bool DeployOpen(State state, string environmentId)
+        => state.Jobs.Any(job => job.EnvironmentId == environmentId && job.Status is "queued" or "claimed");
 
     /// <summary>
     /// Records an owner's confirmed request to delete a database's data. Only a
@@ -185,13 +297,44 @@ public sealed partial class ProjectEnvironmentService
         => state.Databases.Where(item => item.HostId == hostId && item.DeletionRequestedAt is not null && item.DeletedAt is null)
             .Select(item => new RunTargetDatabaseDeletion(project, item.EnvironmentId, item.Name));
 
+    /// <summary>Queued operations of this host's databases; an operation past its time fails first.</summary>
+    private static IEnumerable<RunTargetDatabaseOperation> DatabaseOperations(string project, State state, string hostId,
+        IReadOnlyCollection<string> hosted, DateTime now)
+    {
+        ManagedDatabaseOperationPolicy.Expire(state.DatabaseOperations, now);
+        return state.DatabaseOperations.Where(item => item.State == "queued" && item.HostId == hostId && hosted.Contains(item.EnvironmentId))
+            .Select(item => ManagedDatabaseOperationPolicy.Wire(project, item)).ToArray();
+    }
+
+    /// <summary>Ends the queued operations the host answered.</summary>
+    private int RecordDatabaseOperationResults(string hostId, IReadOnlyList<RunTargetDatabaseOperationResult> results, DateTime now)
+    {
+        var accepted = 0;
+        foreach (var group in results.Where(item => item is not null).GroupBy(item => item.Project, StringComparer.Ordinal))
+        {
+            if (TryLoad(group.Key) is not { } state) continue;
+            var changed = false;
+            foreach (var result in group)
+            {
+                var index = state.DatabaseOperations.FindIndex(item => item.Id == result.Id);
+                if (index < 0 || ManagedDatabaseOperationPolicy.Complete(state.DatabaseOperations[index], result, hostId, now)
+                    is not { } completed) continue;
+                state.DatabaseOperations[index] = completed;
+                changed = true;
+                accepted++;
+            }
+            if (changed) Save(group.Key, state);
+        }
+        return accepted;
+    }
+
     /// <summary>
     /// Keeps the host's sanitized database reports. A report for a database
     /// Studio has no record of, on an environment placed on this host, creates a
     /// retained record, so data Studio lost track of stays visible and protected.
     /// </summary>
     private int RecordDatabaseObservations(string hostId, IReadOnlyList<RunTargetDatabaseObservation> observations,
-        DateTime now)
+        DateTime now, ICollection<(string Project, ManagedDatabaseRecord Record)>? measured)
     {
         var accepted = 0;
         foreach (var group in observations.GroupBy(item => item.Project, StringComparer.Ordinal))
@@ -217,6 +360,7 @@ public sealed partial class ProjectEnvironmentService
                 accepted++;
                 if (updated == state.Databases[index]) continue;
                 state.Databases[index] = updated;
+                measured?.Add((group.Key, updated));
                 changed = true;
             }
             if (changed) Save(group.Key, state);

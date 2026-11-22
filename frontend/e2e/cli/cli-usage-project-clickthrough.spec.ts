@@ -4,12 +4,10 @@ import * as path from 'path';
 import { api } from '../helpers/api';
 
 /**
- * CLI-Usage-Interaktion: a click on a per-project usage row in the
- * CLI-Management "Usage detail" surface opens that project's Settings
- * rail (`#/projects/<slug>/settings`), while hover keeps showing the
- * compact peek. Navigation is shell-coordinated (the row only emits an
- * output; the shell owns the route change), so this spec verifies the
- * end-to-end wiring lands on `project-shell-panel-settings`.
+ * CLI usage interaction: a click on a per-project usage row opens that
+ * project's Settings panel, while hover keeps showing the compact peek.
+ * The shell handles the row output, so this spec verifies the wiring
+ * lands on `project-shell-panel-settings`.
  *
  * The "By project" rows are driven by the workspace token aggregate
  * (`/api/runner/token-summary-aggregate`). We stub that endpoint with a
@@ -35,13 +33,13 @@ function slugFor(name: string): string {
 function aggregateFixture(project: string) {
   return {
     projects: 1,
-    orchestratorEntries: 3,
-    orchestratorLlmCalls: 128,
-    totalInputTokens: 120_000,
+    orchestratorEntries: 4,
+    orchestratorLlmCalls: 129,
+    totalInputTokens: 120_010,
     totalOutputTokens: 40_000,
     totalCacheReadTokens: 8_000,
     totalCacheCreationTokens: 2_000,
-    estimatedApiCostUsd: 4.56,
+    estimatedApiCostUsd: 4.57,
     allModelsPriced: true,
     byModel: [],
     byProject: [
@@ -53,6 +51,11 @@ function aggregateFixture(project: string) {
         cacheReadTokens: 8_000,
         cacheCreationTokens: 2_000,
         estimatedApiCostUsd: 4.56,
+      },
+      {
+        project: 'Unattributed one-shot jobs', orchestratorLlmCalls: 1,
+        inputTokens: 10, outputTokens: 0, cacheReadTokens: 0,
+        cacheCreationTokens: 0, estimatedApiCostUsd: 0.01,
       },
     ],
     fetchedAt: new Date().toISOString(),
@@ -66,6 +69,20 @@ test.beforeAll(async () => {
   expect(paths.length).toBeGreaterThanOrEqual(1);
   const preferred = paths.find(p => /agent.?task|software.?studio/i.test(p.name)) ?? paths[0];
   projectName = preferred.name;
+});
+
+test('unattributed one-shot usage is visible without a project settings action', async ({ page }) => {
+  await stubAggregate(page, projectName);
+  await page.goto('/');
+  await openUsageDetail(page);
+
+  const row = page.getByTestId('cli-usage-detail-project-unattributed-one-shot-jobs');
+  await expect(row).toBeVisible();
+  await expect(row).toBeDisabled();
+  await expect(row).toContainText('Unattributed one-shot jobs');
+  await page.getByTestId('cli-usage-detail-projects').screenshot({
+    path: path.join(SCREENSHOT_DIR, '04-unattributed-one-shot-row.png'),
+  });
 });
 
 /** Stub both the fresh + cached aggregate so the "By project" row is
@@ -107,12 +124,10 @@ test('clicking a project usage row opens that project Settings rail', async ({ p
 
   await row.click();
 
-  // The global workspace-settings overlay must close as we route into the
-  // project shell (shell-coordinated nav, not a leaf-side hash write).
+  // The project settings panel opens from the workspace token usage view.
   await expect(page.getByTestId('workspace-settings-overlay')).not.toBeVisible();
   await expect(page.getByTestId('project-shell-panel-settings')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId('project-settings-panel')).toBeVisible();
-  expect(page.url()).toContain(`/projects/${slug}/settings`);
 
   await page.screenshot({ path: path.join(SCREENSHOT_DIR, '02-project-settings.png'), fullPage: true });
 });
@@ -126,6 +141,7 @@ test('hovering a project usage row shows the compact peek without navigating', a
 
   const row = page.getByTestId(`cli-usage-detail-project-${slug}`);
   await expect(row).toBeVisible();
+  const usageUrl = page.url();
 
   await row.hover();
 
@@ -134,9 +150,10 @@ test('hovering a project usage row shows the compact peek without navigating', a
   await expect(tip).toBeVisible();
   await expect(tip).toContainText(projectName);
 
-  // Hover alone must not navigate: the usage detail (and its overlay) stay put.
+  // Hover alone keeps the token usage view in place.
   await expect(page.getByTestId('cli-usage-detail')).toBeVisible();
-  await expect(page.getByTestId('workspace-settings-overlay')).toBeVisible();
+  await expect(page.getByTestId('token-usage-section')).toBeVisible();
+  expect(page.url()).toBe(usageUrl);
 
   await page.screenshot({ path: path.join(SCREENSHOT_DIR, '03-hover-peek.png'), fullPage: true });
 });

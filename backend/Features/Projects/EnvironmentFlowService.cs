@@ -18,7 +18,8 @@ public sealed record EnvironmentFlowSnapshot(DateTime CapturedAt, EnvironmentDai
 /// <summary>Fleet flow from the archive-inclusive task index and append-only lane ledger.</summary>
 public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineLog timeline,
     TimeProvider clock, ILogger<EnvironmentFlowService> logger, BatchGateStore batchGates,
-    AutoReviewStatusSnapshot autoReview, PickupHoldSweep pickupHolds)
+    AutoReviewStatusSnapshot autoReview, PickupHoldSweep pickupHolds,
+    AgentStudio.Deploy.InstanceDeployService? instanceDeploy = null)
 {
     private readonly object _cacheGate = new();
     private EnvironmentFlowSnapshot? _cached;
@@ -66,13 +67,14 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
         return Aggregate(tasks, task => events.GetValueOrDefault(task.FolderPath) ?? [], now,
             batchGates.ListPending().Select(item => item.EnqueuedAtUtc).ToList(),
             autoReview.Read().ActiveJobs.Where(item => item.Step == AutoReviewActivitySteps.GateQueued)
-                .Select(item => item.StartedAt).ToList(), batchReleased);
+                .Select(item => item.StartedAt).ToList(), batchReleased,
+            instanceDeploy?.CardsWentLive(now.Date, now));
     }
 
     internal static EnvironmentFlowSnapshot Aggregate(IReadOnlyList<TaskInfo> tasks,
         Func<TaskInfo, IReadOnlyList<TimelineEvent>> readTimeline, DateTime nowUtc,
         IReadOnlyList<DateTimeOffset>? batchPending = null, IReadOnlyList<DateTime>? gateQueued = null,
-        int? batchReleasedLast24h = null)
+        int? batchReleasedLast24h = null, int? deployedToday = null)
     {
         tasks = tasks.Where(task => !RetiredContainerTask.IsRetired(task)).ToList();
         var now = nowUtc.ToUniversalTime();
@@ -174,7 +176,7 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
             .Take(6).ToList();
         return new EnvironmentFlowSnapshot(now,
             new EnvironmentDailyFlow(tasks.Count(t => t.CreatedAt >= dayStart && t.CreatedAt <= now), delivered, reviewed,
-                integrated, null, completed, Median(readyToIntegration)),
+                integrated, deployedToday, completed, Median(readyToIntegration)),
             lanes.Select(lane => new EnvironmentLaneFlow(lane, entered[lane], left[lane],
                 Median(dwell[lane]))).ToList(), queues, reasons);
 

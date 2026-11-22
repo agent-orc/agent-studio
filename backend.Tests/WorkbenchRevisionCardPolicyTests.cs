@@ -2,6 +2,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: the fixed timestamp is a pure round-ordering input, never compared with wall time.
+
 /// <summary>
 /// The card a Dossier rework request runs its revision on (AGT-3703). The
 /// rework form shows it before confirmation, and confirm refuses before any
@@ -137,6 +139,25 @@ public sealed class WorkbenchRevisionCardPolicyTests
         Assert.Contains("- d3: local-only", prompt);
         Assert.DoesNotContain("d4", prompt);
         Assert.Contains("Keep the pending rework receipt", prompt);
+    }
+
+    [Theory]
+    [InlineData(false, "completed", "unchanged")]
+    [InlineData(true, "completed", "updated")]
+    [InlineData(false, "failed", "failed")]
+    public void RoundOutcome_UsesFinishedRunEvenWhenDossierIsUnchanged(bool changed, string runStatus, string expected)
+    {
+        var confirmed = new DateTime(2026, 11, 15, 10, 0, 0, DateTimeKind.Utc);
+        var events = new List<TimelineEvent>
+        {
+            new() { Ts = confirmed.AddMinutes(-1), Kind = TimelineEventKinds.AgentRunFinished,
+                Details = new() { ["status"] = "completed" } },
+            new() { Ts = confirmed.AddMinutes(1), Kind = TimelineEventKinds.AgentRunFinished,
+                Details = new() { ["status"] = runStatus } },
+        };
+
+        Assert.Equal(expected, WorkbenchRevisionCardPolicy.RoundOutcome(
+            confirmed, changed ? "new" : "same", "same", events));
     }
 
     private static TaskInfo Task(string id, string key, string state, string project = "Project") => new()

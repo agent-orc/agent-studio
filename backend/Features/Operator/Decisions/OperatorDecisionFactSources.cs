@@ -4,6 +4,7 @@ using AgentStudio.Shared;
 using AgentStudio.Watcher;
 using AgentStudio.Quota;
 using AgentStudio.Registry;
+using AgentStudio.Projects;
 
 namespace AgentStudio.Operator;
 
@@ -15,6 +16,43 @@ public interface IOperatorDecisionFactSource
 
     /// <summary>The current facts, or null while the source has nothing to read yet; null keeps their published keys.</summary>
     IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc);
+}
+
+/// <summary>One installation-wide warning for scheduled review retries that have lost their driver.</summary>
+public sealed class OperatorReviewRetryFactSource(
+    Func<IReadOnlyList<ReviewInfrastructureRetryDue>> scheduled,
+    Func<bool> tickFailed,
+    IConfiguration configuration) : IOperatorDecisionFactSource
+{
+    private static readonly TimeSpan StartGrace =
+        TimeSpan.FromSeconds(2 * ReviewInfrastructureRetryScheduler.DefaultIntervalSeconds);
+
+    public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.ReviewRetrySchedulerStalled];
+
+    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+    {
+        var disabled = !configuration.GetValue("Runner:ReviewInfrastructureRetry:Enabled", true);
+        var failed = tickFailed();
+        var affected = scheduled()
+            .Where(retry => disabled || failed || nowUtc > retry.DueAtUtc + StartGrace)
+            .OrderBy(retry => retry.DueAtUtc)
+            .ToArray();
+        if (affected.Length == 0) return [];
+
+        var cards = affected.Select(retry => retry.TaskKey).Distinct(StringComparer.Ordinal).ToArray();
+        var state = disabled ? "disabled" : failed ? "failing" : "not starting overdue retries";
+        var parkLimit = AutoReviewStrandingWatchdog.RetryOverdueLimit(configuration);
+        var deadlines = affected.Select(retry =>
+            $"{retry.TaskKey} by {AutoReviewStrandingWatchdog.ParkOverdueRetryBy(retry.DueAtUtc, parkLimit):yyyy-MM-dd HH:mm} UTC");
+        return [new OperatorDecisionFact(
+            OperatorDecisionTypes.ReviewRetrySchedulerStalled,
+            $"{OperatorDecisionTypes.ReviewRetrySchedulerStalled}|installation",
+            null, null,
+            $"Review retry scheduler is {state}; {cards.Length} affected card(s): {string.Join(", ", cards)}. "
+            + $"The watchdog will park these cards for an operator decision: {string.Join("; ", deadlines)}.",
+            affected[0].DueAtUtc <= nowUtc ? affected[0].DueAtUtc : nowUtc,
+            [], cards, "Review retries are not starting")];
+    }
 }
 
 /// <summary>Completed deploys already metered by workspace quota, without a new event store.</summary>
@@ -31,6 +69,53 @@ public sealed class OperatorDeployFactSource(WorkspaceQuotaService quota, Projec
                 $"{OperatorDecisionTypes.DeployCompleted}|{deploy.ProjectId}|{deploy.JobId}|{deploy.CompletedAt:O}",
                 project?.DisplayName, deploy.JobId, "Deployment completed.", deploy.CompletedAt!.Value, []);
         }).ToArray();
+}
+
+/// <summary>
+/// Open environment incidents from the durable health state. Recovery clears the fact.
+/// <paramref name="cardKey"/> turns the incident card's folder slug into the key the board shows.
+/// </summary>
+public sealed class OperatorEnvironmentIncidentFactSource(HealthCheckStore store, Func<IEnumerable<string>> projects,
+    Func<string, string, string?>? cardKey = null)
+    : IOperatorDecisionFactSource
+{
+    public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.EnvironmentIncidentOpen];
+
+    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+    {
+        var facts = new List<OperatorDecisionFact>();
+        foreach (var project in projects().Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var state = store.Load(project);
+            foreach (var environment in state.Environments.Values)
+            {
+                if (environment.OpenIncident is not { EndedAt: null } incident) continue;
+                var failing = state.Checks.Values
+                    .Select(check => check.OpenIncident)
+                    .Where(check => check is { EndedAt: null } && check.EnvironmentId == incident.EnvironmentId)
+                    .Select(check => $"{check!.CheckId}: {check.FirstError}")
+                    .ToArray();
+                var signal = failing.Length > 0 ? string.Join("; ", failing) : "Health check failing";
+                var slug = System.Text.RegularExpressions.Regex.Replace(project.Trim().ToLowerInvariant(),
+                    "[^a-z0-9]+", "-").Trim('-');
+                var environmentUrl = "/#/projects/" + Uri.EscapeDataString(slug) + "/operations";
+                var evidence = new List<OperatorEvidenceLink>
+                {
+                    new("environment operations", environmentUrl),
+                };
+                var card = incident.CardId is { } cardId ? cardKey?.Invoke(project, cardId) ?? cardId : null;
+                if (card is not null)
+                    evidence.Add(new("incident card", "/#/tasks/" + Uri.EscapeDataString(card)));
+                facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.EnvironmentIncidentOpen,
+                    $"{OperatorDecisionTypes.EnvironmentIncidentOpen}|{project}|{incident.Id}",
+                    project, card,
+                    $"{incident.EnvironmentName} since {incident.StartedAt:yyyy-MM-dd HH:mm} UTC: {signal}",
+                    incident.StartedAt.UtcDateTime, evidence,
+                    Title: $"{project} · {incident.EnvironmentName} incident"));
+            }
+        }
+        return facts;
+    }
 }
 
 /// <summary>
@@ -197,4 +282,25 @@ public sealed class OperatorProviderLimitFactSource(ProviderLimitRegistry limits
 
     public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
         => OperatorDecisionFacts.FromProviderLimits(limits.Active(nowUtc));
+}
+
+/// <summary>
+/// AGT-3965: one fact per fast or balanced project whose develop moved
+/// without a post-merge run reported within six hours. The occurrence is the
+/// last reported tip, so a new report that leaves develop uncovered again is
+/// a new occurrence, and a report that covers develop clears it.
+/// </summary>
+public sealed class OperatorPostMergeCoverageFactSource(Func<IReadOnlyList<PostMergeCoverage>> missing)
+    : IOperatorDecisionFactSource
+{
+    public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.PostMergeRunsMissing];
+
+    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+        => missing().Select(coverage => new OperatorDecisionFact(
+            OperatorDecisionTypes.PostMergeRunsMissing,
+            $"{OperatorDecisionTypes.PostMergeRunsMissing}|{coverage.Project}|{coverage.LastReportedTipSha ?? "never"}",
+            coverage.Project, null, coverage.Message,
+            (coverage.LastReportedAtUtc + PostMergeCoveragePolicy.Limit)?.UtcDateTime ?? nowUtc,
+            [new OperatorEvidenceLink("testing", "/api/projects/" + Uri.EscapeDataString(coverage.Project) + "/testing")],
+            Title: "Post-merge runs missing")).ToArray();
 }

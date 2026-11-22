@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { NotificationStackComponent } from './notification-stack.component';
+import { NotificationStackComponent, toolbarDockTop } from './notification-stack.component';
 import { NotificationService } from '../../../services/notification.service';
 
 describe('NotificationStackComponent (smoke)', () => {
@@ -66,5 +66,58 @@ describe('NotificationStackComponent — position routing', () => {
     expect(bottom!.textContent).toContain('bottom toast');
     expect(bottom!.textContent).not.toContain('top toast');
     expect(bottom!.classList.contains('app-notify-stack--bottom-right')).toBe(true);
+  });
+});
+
+describe('NotificationStackComponent — below-toolbar dock (AGT-3873)', () => {
+  function rect(top: number, bottom: number): DOMRect {
+    return { top, bottom, height: bottom - top, left: 0, right: 100, width: 100, x: 0, y: top, toJSON: () => ({}) };
+  }
+
+  function root(bar: DOMRect | null, banner: DOMRect | null,
+    form: DOMRect | null = null, phone: DOMRect | null = null): ParentNode {
+    const element = (box: DOMRect | null) => box && { getBoundingClientRect: () => box };
+    return { querySelector: (selector: string) => selector.includes('studio-tabbar') ? element(bar)
+      : selector.includes('task-move-refusal') ? element(banner)
+        : selector.includes('app-mobile-lane-primary') ? element(phone)
+        : selector.includes('acceptance-refusal-form') ? element(form) : null } as unknown as ParentNode;
+  }
+
+  it('routes a below-toolbar toast into its own pile', () => {
+    TestBed.configureTestingModule({
+      imports: [NotificationStackComponent],
+      providers: [provideZonelessChangeDetection(), NotificationService],
+    });
+    const service = TestBed.inject(NotificationService);
+    const fixture = TestBed.createComponent(NotificationStackComponent);
+    service.notify({ kind: 'warning', message: 'Accept refused', position: 'below-toolbar' });
+    service.notify({ kind: 'info', message: 'other' });
+    fixture.detectChanges();
+
+    const component = fixture.componentInstance;
+    expect(component.belowToolbar().map(n => n.message)).toEqual(['Accept refused']);
+    expect(component.topRight().map(n => n.message)).toEqual(['other']);
+    const pile = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="notification-stack-below-toolbar"]');
+    expect(pile?.textContent).toContain('Accept refused');
+  });
+
+  it('docks below the tab bar, and below the refusal banner while it is on screen', () => {
+    expect(toolbarDockTop(root(rect(44, 80), null), 900)).toBe(88);
+    expect(toolbarDockTop(root(rect(44, 80), rect(88, 180)), 900)).toBe(188);
+    // A banner that leaves no room for the toast, or scrolled above the bar, is not chased.
+    expect(toolbarDockTop(root(rect(44, 80), rect(88, 750)), 900)).toBe(88);
+    expect(toolbarDockTop(root(rect(44, 80), rect(-200, -100)), 900)).toBe(88);
+    expect(toolbarDockTop(root(null, null), 900)).toBeNull();
+  });
+
+  it('docks below the open override form, which opens under the toolbar action', () => {
+    expect(toolbarDockTop(root(rect(44, 80), rect(88, 180), rect(84, 300)), 900)).toBe(308);
+    expect(toolbarDockTop(root(rect(44, 80), null, rect(84, 300)), 900)).toBe(308);
+    // A phone: the form under the wrapped toolbar reaches past half the screen.
+    expect(toolbarDockTop(root(rect(48, 140), rect(150, 360), rect(285, 525)), 844)).toBe(533);
+  });
+
+  it('docks below the phone refusal action as well as its banner', () => {
+    expect(toolbarDockTop(root(rect(48, 122), rect(130, 319), null, rect(329, 540)), 844)).toBe(548);
   });
 });

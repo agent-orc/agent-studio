@@ -410,7 +410,8 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
 
         var scanner = Scanner(config);
         var leases = new SecretWorkloadLeases(environments,
-            new RunLeaseService(NullLogger<RunLeaseService>.Instance, () => _clock.GetUtcNow().UtcDateTime), scanner, bindings);
+            new RunLeaseService(NullLogger<RunLeaseService>.Instance, () => _clock.GetUtcNow().UtcDateTime), scanner, bindings,
+            new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock));
         var claimed = leases.FindClaimedDeployJob(job.Project, job.Id, job.LeaseToken!)!;
         Assert.Equal(["DATABASE_URL"], claimed.SecretRefs);
         Assert.Equal(reference, claimed.SecretBindings!["DATABASE_URL"]);
@@ -634,7 +635,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
-    public void HostMove_RoutesClaimToCurrentHostWithoutChangingReleaseSshTarget()
+    public void HostMove_RoutesClaimAndSshTargetToCurrentHostWithSnapshotPaths()
     {
         var (service, repo, _) = Build();
         var snapshot = service.Declarations("demo")!.Single(item => item.Id == "stage") with
@@ -649,10 +650,12 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var queued = service.QueueDeployment("demo", snapshot, _artifact, "operator", rollback: false);
         Assert.NotNull(queued);
         Assert.Equal("new-host", queued.HostId);
-        Assert.Equal("stage-host", Assert.Single(queued.SshSteps).Target);
+        // The executor runs a step only when its target is the claiming host (F8).
+        Assert.Equal(("new-host", "/srv/apps/web/compose.yml", "web"),
+            (Assert.Single(queued.SshSteps).Target, queued.SshSteps[0].ComposeFile, queued.SshSteps[0].Service));
         Assert.Null(service.Claim("stage-host"));
         var claimed = service.Claim("new-host");
-        Assert.Equal("stage-host", Assert.Single(claimed!.SshSteps).Target);
+        Assert.Equal("new-host", Assert.Single(claimed!.SshSteps).Target);
     }
 
     [Fact]
@@ -1321,7 +1324,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     public void Stop_settles_an_abandoned_redeploy_before_the_host_claims_the_stop()
     {
         using var factory = QuotaFactory();
-        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (quota, _) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
         var (service, repo, watch) = Build(quota: quota);
         var commit = Git(repo, "rev-parse", "HEAD").Trim();
         IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
@@ -1340,13 +1343,15 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal("failed", lost.Status);
         Assert.Equal("host-lost", lost.Evidence);
         Assert.False(service.Report("demo", redeploy.Id, new(redeploy.LeaseToken!, true, "health-ok")));
-        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        // The slot ledger is authoritative here. The usage snapshot may still have a
+        // cached project inventory after the fake clock jumps across the host lease.
+        Assert.Equal([ProjectEnvironmentService.SlotKey("stage")], quota.ProjectEnvironmentIds("demo"));
 
         var stop = service.Claim("stage-host")!;
         Assert.True(stop.IsStop);
         Assert.True(service.Report("demo", stop.Id, new(stop.LeaseToken!, true, "stop-ok")));
         Assert.Equal("stopped", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
-        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Empty(quota.ProjectEnvironmentIds("demo"));
     }
 
     [Fact]

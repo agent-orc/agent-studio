@@ -1,0 +1,2743 @@
+{
+ "schema": "dispatch-replay-wave/1",
+ "id": "wave-2026-11-17-playthroughs",
+ "createdFrom": {
+  "repository": "agent-studio",
+  "develop": "d3c4eed65",
+  "method": "Real files: union of the files touched by each card's own commits on any ref (subject starts with the card key; develop syncs and merges excluded). Code files: backend/, frontend/, orchestration-decisions/, runner/, scripts/ without Markdown. Cited files: repository paths and unique file names cited in the source finding text (problem, cause, acceptance criteria) of the playthrough card lists AGT-3885, AGT-3886, AGT-3888. Forecast files: cited files plus files that changed together with a cited file in at least half of its commits between 15 September and 15 November 2026 (at least three commits, commits of more than 40 code files ignored). Keyword areas: IntakeRunner.DetectTaskAreas needles applied to the same source text. Develop sync commits: commits naming the card whose subject records a develop merge, an include of latest develop or a conflict resolution, rewritten copies included."
+ },
+ "hubFiles": [
+  "backend/Host/Program.cs",
+  "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+  "frontend/src/app/models/task.model.ts"
+ ],
+ "cards": [
+  {
+   "key": "AGT-3890",
+   "label": "X",
+   "group": "X",
+   "filesChanged": 5,
+   "codeFiles": [
+    "backend/Features/Pipeline/IntegrationVerification/IntegrationPublicationGatePolicy.cs",
+    "backend/Features/Tasks/TaskIntegrationStatusService.cs"
+   ],
+   "citedFiles": [],
+   "forecastFiles": [],
+   "keywordAreas": [],
+   "hasSourceText": false,
+   "developSyncCommits": 0,
+   "severity": "unknown",
+   "findings": 0
+  },
+  {
+   "key": "AGT-3891",
+   "label": "DP-1",
+   "group": "DP",
+   "filesChanged": 25,
+   "codeFiles": [
+    "backend/Features/Deploy/DeployEndpoints.cs",
+    "backend/Features/Deploy/IntegrationRelease/IntegrationReleaseService.cs",
+    "backend/Features/Deploy/Registry/ReleaseArtifactRegistry.cs",
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/settings/first-run-integration-release.spec.ts",
+    "frontend/playwright.config.ts",
+    "frontend/scripts/run-prebuilt-e2e.sh",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.scss",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.ts",
+    "frontend/src/app/features/project-detail/services/project-deploy-data.service.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts",
+    "scripts/first-run-e2e-fixture.sh"
+   ],
+   "citedFiles": [
+    "backend/Features/Deploy/Registry/ReleaseArtifactRegistry.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.html",
+    "scripts/release/promote-develop-to-main.sh"
+   ],
+   "forecastFiles": [
+    "backend/Features/Deploy/DeployContract.cs",
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/Registry/DeployJobReleaseBinding.cs",
+    "backend/Features/Deploy/Registry/ReleaseArtifactRegistry.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Features/Security/AccessSecurityMiddleware.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.scss",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.ts",
+    "frontend/src/app/features/project-detail/services/project-deploy-data.service.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts",
+    "runner/DeployHostCommand.cs",
+    "scripts/release/promote-develop-to-main.sh",
+    "scripts/release/promote-develop-to-main.test.sh"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 2,
+   "severity": "blocker",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3892",
+   "label": "DP-2",
+   "group": "DP",
+   "filesChanged": 20,
+   "codeFiles": [
+    "backend/Features/Deploy/DeployContract.cs",
+    "backend/Features/Deploy/DeployEndpoints.cs",
+    "backend/Features/Deploy/DeployStore.cs",
+    "backend/Features/Deploy/ReleaseCandidateEvidence.cs",
+    "backend/Features/Deploy/ReleaseCandidateGate.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+    "backend/Host/Program.cs",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.scss",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts",
+    "frontend/src/app/features/project-detail/services/project-deploy-data.service.spec.ts",
+    "frontend/src/app/features/project-detail/services/project-deploy-data.service.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts",
+    "scripts/release/promotion-full-gate.sh",
+    "scripts/release/promotion-full-gate.test.sh"
+   ],
+   "citedFiles": [
+    "backend/Features/Deploy/ReleaseCandidateGate.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Deploy/ReleaseCandidateGate.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "blocker",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3893",
+   "label": "DP-3",
+   "group": "DP",
+   "filesChanged": 20,
+   "codeFiles": [
+    "frontend/e2e/security/local-owner-production-approval.spec.ts",
+    "frontend/src/app/components/local-owner-dialog/local-owner-dialog.html",
+    "frontend/src/app/components/local-owner-dialog/local-owner-dialog.scss",
+    "frontend/src/app/components/local-owner-dialog/local-owner-dialog.ts",
+    "frontend/src/app/components/local-owner-sign-in/local-owner-sign-in.html",
+    "frontend/src/app/components/local-owner-sign-in/local-owner-sign-in.scss",
+    "frontend/src/app/components/local-owner-sign-in/local-owner-sign-in.spec.ts",
+    "frontend/src/app/components/local-owner-sign-in/local-owner-sign-in.ts",
+    "frontend/src/app/features/access/components/access-area/access-area.component.html",
+    "frontend/src/app/features/access/components/access-area/access-area.component.spec.ts",
+    "frontend/src/app/features/access/components/access-area/access-area.component.ts",
+    "frontend/src/app/features/access/services/access.service.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts",
+    "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.html",
+    "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.spec.ts",
+    "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.ts",
+    "frontend/src/app/services/local-owner-session.service.spec.ts",
+    "frontend/src/app/services/local-owner-session.service.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Deploy/Lifecycle/DeployApprovalAuthority.cs",
+    "backend/Features/Security/AccessSecurityEndpoints.cs",
+    "frontend/src/app/features/access/services/access.service.ts",
+    "frontend/src/app/services/auth.service.ts"
+   ],
+   "forecastFiles": [
+    "backend/Features/Deploy/DeployContract.cs",
+    "backend/Features/Deploy/DeployEndpoints.cs",
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/DeployStore.cs",
+    "backend/Features/Deploy/Lifecycle/DeployApprovalAuthority.cs",
+    "backend/Features/Deploy/Lifecycle/StandardLifecyclePolicy.cs",
+    "backend/Features/Deploy/Releases/ReleaseSnapshot.cs",
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Deploy/Runs/DeploymentRecord.cs",
+    "backend/Features/Deploy/Status/EnvironmentStatusProjection.cs",
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Features/Security/AccessSecurityEndpoints.cs",
+    "backend/Features/Security/AccessSecurityMiddleware.cs",
+    "backend/Features/Security/AccessSecurityModels.cs",
+    "backend/Features/Security/AccessSecurityStore.cs",
+    "frontend/e2e/settings/access-area.spec.ts",
+    "frontend/src/app/features/access/components/access-area/access-area.component.html",
+    "frontend/src/app/features/access/components/access-runners/access-runners.component.html",
+    "frontend/src/app/features/access/components/access-runners/access-runners.component.scss",
+    "frontend/src/app/features/access/components/access-runners/access-runners.component.spec.ts",
+    "frontend/src/app/features/access/components/access-runners/access-runners.component.ts",
+    "frontend/src/app/features/access/models/access.model.ts",
+    "frontend/src/app/features/access/services/access.service.spec.ts",
+    "frontend/src/app/features/access/services/access.service.ts",
+    "frontend/src/app/features/access/testing/access-fixtures.ts",
+    "frontend/src/app/services/auth.service.spec.ts",
+    "frontend/src/app/services/auth.service.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "blocker",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3894",
+   "label": "DP-4",
+   "group": "DP",
+   "filesChanged": 54,
+   "codeFiles": [
+    "backend/Features/Deploy/RunHostDirectory.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Features/Security/AccessSecurityEndpoints.cs",
+    "backend/Features/Security/AccessSecurityModels.cs",
+    "backend/Features/Security/AccessSecurityStore.cs",
+    "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/prebuilt-global-setup.ts",
+    "frontend/e2e/settings/run-host-enrollment.spec.ts",
+    "frontend/playwright.config.ts",
+    "frontend/scripts/run-prebuilt-e2e.sh",
+    "frontend/scripts/serve-prebuilt-frontend.mjs",
+    "frontend/src/app/features/access/components/access-runners/access-runners.component.html",
+    "frontend/src/app/features/access/components/access-runners/access-runners.component.scss",
+    "frontend/src/app/features/access/components/access-runners/access-runners.component.spec.ts",
+    "frontend/src/app/features/access/components/access-runners/access-runners.component.ts",
+    "frontend/src/app/features/access/index.ts",
+    "frontend/src/app/features/access/models/access.model.ts",
+    "frontend/src/app/features/access/services/access.service.spec.ts",
+    "frontend/src/app/features/access/services/access.service.ts",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.html",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.spec.ts",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.ts",
+    "frontend/src/app/features/project-detail/components/execution-assignment-card/execution-assignment-card.spec.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.spec.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts",
+    "frontend/src/app/features/remote-hosts/components/add-host-wizard/add-host-wizard.html",
+    "frontend/src/app/features/remote-hosts/components/add-host-wizard/add-host-wizard.scss",
+    "frontend/src/app/features/remote-hosts/components/add-host-wizard/add-host-wizard.ts",
+    "frontend/src/app/features/remote-hosts/components/environment-host-list/environment-host-list.html",
+    "frontend/src/app/features/remote-hosts/components/environment-host-list/environment-host-list.ts",
+    "frontend/src/app/features/remote-hosts/components/remote-host-card/remote-host-card.html",
+    "frontend/src/app/features/remote-hosts/components/remote-hosts-panel/remote-hosts-panel.html",
+    "frontend/src/app/features/remote-hosts/components/remote-hosts-panel/remote-hosts-panel.ts",
+    "frontend/src/app/features/remote-hosts/components/run-host-enrollment/run-host-enrollment.html",
+    "frontend/src/app/features/remote-hosts/components/run-host-enrollment/run-host-enrollment.scss",
+    "frontend/src/app/features/remote-hosts/components/run-host-enrollment/run-host-enrollment.spec.ts",
+    "frontend/src/app/features/remote-hosts/components/run-host-enrollment/run-host-enrollment.ts",
+    "frontend/src/app/features/remote-hosts/models/host-readiness.ts",
+    "frontend/src/app/features/remote-hosts/models/remote-host.model.ts",
+    "frontend/src/app/features/remote-hosts/models/run-host.spec.ts",
+    "frontend/src/app/features/remote-hosts/models/run-host.ts",
+    "frontend/src/app/features/remote-hosts/services/remote-hosts.service.spec.ts",
+    "frontend/src/app/features/remote-hosts/services/remote-hosts.service.ts",
+    "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.html",
+    "frontend/src/app/models/project-overview.model.ts",
+    "frontend/src/app/models/run-host.model.ts",
+    "scripts/serve-prebuilt-backend.sh"
+   ],
+   "citedFiles": [
+    "backend/Features/Security/AccessSecurityModels.cs",
+    "frontend/src/app/features/access/components/access-runners/access-runners.component.html"
+   ],
+   "forecastFiles": [
+    "backend/Features/Security/AccessSecurityMiddleware.cs",
+    "backend/Features/Security/AccessSecurityModels.cs",
+    "backend/Features/Security/AccessSecurityStore.cs",
+    "frontend/e2e/settings/access-area.spec.ts",
+    "frontend/src/app/features/access/components/access-area/access-area.component.html",
+    "frontend/src/app/features/access/components/access-runners/access-runners.component.html",
+    "frontend/src/app/features/access/components/access-runners/access-runners.component.scss",
+    "frontend/src/app/features/access/components/access-runners/access-runners.component.spec.ts",
+    "frontend/src/app/features/access/components/access-runners/access-runners.component.ts",
+    "frontend/src/app/features/access/models/access.model.ts",
+    "frontend/src/app/features/access/services/access.service.spec.ts",
+    "frontend/src/app/features/access/services/access.service.ts",
+    "frontend/src/app/features/access/testing/access-fixtures.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 2,
+   "severity": "blocker",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3895",
+   "label": "DP-5",
+   "group": "DP",
+   "filesChanged": 29,
+   "codeFiles": [
+    "backend/Features/Projects/PipelineDefinition/PipelineDeployStepsPolicy.cs",
+    "backend/Features/Projects/PipelineDefinition/ProjectPipelineDefinitionEndpoints.cs",
+    "backend/Features/Projects/PipelineDefinition/ProjectPipelineDefinitionService.cs",
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/e2e/project/project-pipeline-definition.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.scss",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-pipeline/project-deploy-pipeline.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-steps-form/project-deploy-steps-form.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-steps-form/project-deploy-steps-form.scss",
+    "frontend/src/app/features/project-detail/components/project-deploy-steps-form/project-deploy-steps-form.ts",
+    "frontend/src/app/features/project-detail/components/project-pipeline-definition/project-pipeline-definition.html",
+    "frontend/src/app/features/project-detail/components/project-pipeline-definition/project-pipeline-definition.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-pipeline-definition/project-pipeline-definition.ts",
+    "frontend/src/app/features/project-detail/services/project-pipeline-definition.service.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.spec.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Projects/PipelineDefinition/PipelineMigrationPolicy.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-pipeline/project-deploy-pipeline.html"
+   ],
+   "forecastFiles": [
+    "backend/Features/Projects/PipelineDefinition/PipelineMigrationPolicy.cs",
+    "backend/Features/Projects/PipelineDefinition/ProjectPipelineDefinitionEndpoints.cs",
+    "backend/Features/Projects/PipelineDefinition/ProjectPipelineDefinitionService.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "frontend/.stylelintrc.json",
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/scripts/disclosure-baseline.json",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.scss",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-pipeline/project-deploy-pipeline.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-pipeline/project-deploy-pipeline.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-pipeline/project-deploy-pipeline.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.ts",
+    "frontend/src/app/features/project-detail/services/project-deploy-data.service.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 3,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3896",
+   "label": "DP-6",
+   "group": "DP",
+   "filesChanged": 9,
+   "codeFiles": [
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Features/Secrets/DeployHostIdentity.cs",
+    "backend/Features/Secrets/SecretWorkloadBinding.cs",
+    "backend/Features/Security/AccessSecurityStore.cs",
+    "runner/DeployHostCommand.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Features/Secrets/SecretWorkloadBinding.cs",
+    "runner/SshDeployExecutor.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Deploy/DeployContract.cs",
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/Lifecycle/StandardLifecyclePolicy.cs",
+    "backend/Features/Deploy/Releases/ReleaseSnapshot.cs",
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Deploy/Runs/DeploymentRecord.cs",
+    "backend/Features/Projects/PipelineDefinition/ProjectPipelineDefinitionService.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Features/Secrets/ProjectSecretBindings.cs",
+    "backend/Features/Secrets/SecretAccessPolicy.cs",
+    "backend/Features/Secrets/SecretContracts.cs",
+    "backend/Features/Secrets/SecretEndpoints.cs",
+    "backend/Features/Secrets/SecretRecords.cs",
+    "backend/Features/Secrets/SecretReference.cs",
+    "backend/Features/Secrets/SecretWorkloadBinding.cs",
+    "backend/Host/Program.cs",
+    "frontend/.stylelintrc.json",
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts",
+    "frontend/src/app/features/secrets/project-secrets-page/project-secrets-page.component.html",
+    "frontend/src/app/features/secrets/project-secrets-page/project-secrets-page.component.scss",
+    "frontend/src/app/features/secrets/project-secrets-page/project-secrets-page.component.spec.ts",
+    "frontend/src/app/features/secrets/project-secrets-page/project-secrets-page.component.ts",
+    "frontend/src/app/features/secrets/secrets-panel/secrets-panel.component.html",
+    "frontend/src/app/features/secrets/secrets-panel/secrets-panel.component.ts",
+    "runner/DeployHostCommand.cs",
+    "runner/SshDeployExecutor.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3897",
+   "label": "DP-7",
+   "group": "DP",
+   "filesChanged": 34,
+   "codeFiles": [
+    "backend/Features/Deploy/DeployContract.cs",
+    "backend/Features/Deploy/DeployEndpoints.cs",
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+    "frontend/e2e/project/deploy-staging-retry-production-approval.spec.ts",
+    "frontend/playwright.config.ts",
+    "frontend/scripts/run-prebuilt-e2e.sh",
+    "frontend/src/app/features/project-detail/components/deploy-actions/deploy-actions.html",
+    "frontend/src/app/features/project-detail/components/deploy-actions/deploy-actions.scss",
+    "frontend/src/app/features/project-detail/components/deploy-actions/deploy-actions.ts",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.html",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.scss",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.scss",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.ts",
+    "frontend/src/app/features/project-detail/services/project-deploy-data.service.spec.ts",
+    "frontend/src/app/features/project-detail/services/project-deploy-data.service.ts",
+    "frontend/src/app/features/project-detail/state/deploy-actions.store.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts",
+    "scripts/deploy-lifecycle-e2e-fixture.sh",
+    "scripts/serve-prebuilt-backend.sh"
+   ],
+   "citedFiles": [
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.ts"
+   ],
+   "forecastFiles": [
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 9,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3898",
+   "label": "DP-8",
+   "group": "DP",
+   "filesChanged": 8,
+   "codeFiles": [
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/Registry/DeployJobReleaseBinding.cs",
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs"
+   ],
+   "citedFiles": [
+    "runner/SshDeployExecutor.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Deploy/DeployContract.cs",
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/Lifecycle/StandardLifecyclePolicy.cs",
+    "backend/Features/Deploy/Releases/ReleaseSnapshot.cs",
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Deploy/Runs/DeploymentRecord.cs",
+    "backend/Features/Projects/PipelineDefinition/ProjectPipelineDefinitionService.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "runner/DeployHostCommand.cs",
+    "runner/SshDeployExecutor.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3899",
+   "label": "DP-9",
+   "group": "DP",
+   "filesChanged": 22,
+   "codeFiles": [
+    "backend/Features/Deploy/DeployContract.cs",
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/Status/EnvironmentStatusProjection.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/src/app/features/deployments/components/workspace-deployment-dashboard/workspace-deployment-dashboard.html",
+    "frontend/src/app/features/deployments/components/workspace-deployment-dashboard/workspace-deployment-dashboard.spec.ts",
+    "frontend/src/app/features/deployments/components/workspace-deployment-dashboard/workspace-deployment-dashboard.ts",
+    "frontend/src/app/features/deployments/models/deployment.model.ts",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.html",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.html",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.ts",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.html",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.spec.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts",
+    "frontend/src/app/services/task.service.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Deploy/Status/EnvironmentStatusProjection.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts"
+   ],
+   "forecastFiles": [
+    "backend/Features/Deploy/DeployContract.cs",
+    "backend/Features/Deploy/DeployEndpoints.cs",
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/Lifecycle/DeployApprovalAuthority.cs",
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Deploy/Runs/DeploymentRecord.cs",
+    "backend/Features/Deploy/Status/EnvironmentStatusProjection.cs",
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.scss",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.spec.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3900",
+   "label": "DP-10",
+   "group": "DP",
+   "filesChanged": 11,
+   "codeFiles": [
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/Status/CardDeploymentProjection.cs",
+    "frontend/e2e/board/card-environments.spec.ts",
+    "frontend/src/app/features/deployments/components/card-environment-badges/card-environment-badges.html",
+    "frontend/src/app/features/deployments/components/card-environment-badges/card-environment-badges.scss",
+    "frontend/src/app/features/deployments/components/card-environment-badges/card-environment-badges.spec.ts",
+    "frontend/src/app/features/deployments/components/card-environment-badges/card-environment-badges.ts",
+    "frontend/src/app/features/deployments/models/card-deployment.model.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Deploy/Status/CardDeploymentProjection.cs",
+    "frontend/src/app/features/deployments/components/card-environment-badges/card-environment-badges.ts"
+   ],
+   "forecastFiles": [
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/Releases/ReleaseCardAttribution.cs",
+    "backend/Features/Deploy/Status/CardDeploymentProjection.cs",
+    "backend/Features/Git/GitService.cs",
+    "frontend/src/app/features/deployments/components/card-environment-badges/card-environment-badges.ts",
+    "frontend/src/app/features/deployments/services/card-deployment.service.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "header",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 2,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3901",
+   "label": "DP-11",
+   "group": "DP",
+   "filesChanged": 18,
+   "codeFiles": [
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.html",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.spec.ts",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.ts",
+    "frontend/src/app/features/project-detail/services/project-deploy-data.service.ts",
+    "frontend/src/app/features/project-detail/services/project-deploy-environment-actions.service.ts",
+    "frontend/src/app/features/project-detail/state/deploy-panel-utils.ts",
+    "frontend/src/app/models/project-overview.model.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Projects/HealthChecks/EnvironmentHealthService.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Projects/HealthChecks/EnvironmentHealthService.cs",
+    "backend/Features/Projects/HealthChecks/HealthAlerts.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckAddressPolicy.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckDefinition.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckProbe.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckStore.cs",
+    "backend/Features/Projects/HealthChecks/HealthIncidentPolicy.cs",
+    "backend/Features/Projects/HealthChecks/HealthSamples.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/project/project-environment-health.spec.ts",
+    "frontend/src/app/features/environment-health/components/environment-health-overview/environment-health-overview.component.html",
+    "frontend/src/app/features/environment-health/components/environment-health-overview/environment-health-overview.component.scss",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.html",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.scss",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.spec.ts",
+    "frontend/src/app/features/environment-health/models/environment-health.model.ts",
+    "frontend/src/testing/environment-health.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 4,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3902",
+   "label": "DP-12",
+   "group": "DP",
+   "filesChanged": 9,
+   "codeFiles": [
+    "backend/Features/Pipeline/GateFailureTriage/GateFailureRouter.cs",
+    "backend/Features/Pipeline/GateFailureTriage/GateFailureRoutingPolicy.cs",
+    "backend/Features/Pipeline/GateFailureTriage/GateFailureTriagePolicy.cs",
+    "backend/Features/Runner/CompletionGate.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Pipeline/GateFailureTriage/GateFailureRoutingPolicy.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Pipeline/GateEnvironmentRetry/GateEnvironmentRetryService.cs",
+    "backend/Features/Pipeline/GateFailureTriage/GateFailureRouter.cs",
+    "backend/Features/Pipeline/GateFailureTriage/GateFailureRoutingPolicy.cs",
+    "backend/Features/Pipeline/GateFailureTriage/GateFailureTriagePolicy.cs",
+    "backend/Features/Runner/ReviewDecisionOrchestrator.cs",
+    "backend/Host/Program.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3903",
+   "label": "DP-13",
+   "group": "DP",
+   "filesChanged": 8,
+   "codeFiles": [
+    "backend/Features/Deploy/DeployEndpoints.cs",
+    "backend/Features/Security/AccessSecurityEndpoints.cs",
+    "backend/Features/Security/AccessSecurityMiddleware.cs",
+    "frontend/e2e/project/project-deploy-area.spec.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Deploy/Lifecycle/DeployApprovalAuthority.cs",
+    "backend/Features/Security/AccessSecurityEndpoints.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Deploy/DeployContract.cs",
+    "backend/Features/Deploy/DeployEndpoints.cs",
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/DeployStore.cs",
+    "backend/Features/Deploy/Lifecycle/DeployApprovalAuthority.cs",
+    "backend/Features/Deploy/Lifecycle/StandardLifecyclePolicy.cs",
+    "backend/Features/Deploy/Releases/ReleaseSnapshot.cs",
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Deploy/Runs/DeploymentRecord.cs",
+    "backend/Features/Deploy/Status/EnvironmentStatusProjection.cs",
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Features/Security/AccessSecurityEndpoints.cs",
+    "backend/Features/Security/AccessSecurityMiddleware.cs",
+    "backend/Features/Security/AccessSecurityModels.cs",
+    "backend/Features/Security/AccessSecurityStore.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "header"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 2,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3904",
+   "label": "DP-14",
+   "group": "DP",
+   "filesChanged": 32,
+   "codeFiles": [
+    "backend/Features/Deploy/DeployContract.cs",
+    "backend/Features/Deploy/DeployEndpoints.cs",
+    "backend/Features/Deploy/DeploySecretReadiness.cs",
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+    "backend/Host/Program.cs",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.html",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.ts",
+    "frontend/src/app/features/project-detail/components/deploy-run-drawer/deploy-run-drawer.html",
+    "frontend/src/app/features/project-detail/components/deploy-run-drawer/deploy-run-drawer.ts",
+    "frontend/src/app/features/project-detail/components/deploy-secret-gaps/deploy-secret-gaps.html",
+    "frontend/src/app/features/project-detail/components/deploy-secret-gaps/deploy-secret-gaps.scss",
+    "frontend/src/app/features/project-detail/components/deploy-secret-gaps/deploy-secret-gaps.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/deploy-area-secrets.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.scss",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.ts",
+    "frontend/src/app/features/project-detail/services/project-deploy-data.service.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts",
+    "frontend/src/app/features/secrets/project-secrets-page/project-secrets-page.component.html",
+    "frontend/src/app/features/secrets/project-secrets-page/project-secrets-page.component.spec.ts",
+    "frontend/src/app/features/secrets/project-secrets-page/project-secrets-page.component.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 6,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3905",
+   "label": "DP-15",
+   "group": "DP",
+   "filesChanged": 4,
+   "codeFiles": [
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/Runs/ProductionFailureCard.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Deploy/DeployService.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 1,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3906",
+   "label": "DP-16",
+   "group": "DP",
+   "filesChanged": 16,
+   "codeFiles": [
+    "backend/Features/Projects/HealthChecks/EnvironmentHealthService.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckAddressPolicy.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.html",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.scss",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.spec.ts",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.spec.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts",
+    "frontend/src/app/features/project-detail/state/deploy-status-tone.spec.ts",
+    "frontend/src/app/features/project-detail/state/deploy-status-tone.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Projects/ProjectEnvironmentService.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Projects/ProjectEnvironmentService.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 2,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3907",
+   "label": "DP-17",
+   "group": "DP",
+   "filesChanged": 6,
+   "codeFiles": [
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/e2e/security/local-owner-production-approval.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area-reads.spec.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area-reads.ts"
+   ],
+   "citedFiles": [
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts"
+   ],
+   "forecastFiles": [
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts"
+   ],
+   "keywordAreas": [
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 1,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3908",
+   "label": "DP-18",
+   "group": "DP",
+   "filesChanged": 29,
+   "codeFiles": [
+    "backend/Features/Deploy/DeployEndpoints.cs",
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/DeployStore.cs",
+    "backend/Features/Deploy/Releases/ReleaseNotesProjection.cs",
+    "backend/Features/Deploy/Releases/ReleaseQualityProjection.cs",
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Deploy/Runs/DeploymentRecord.cs",
+    "backend/Features/Projects/ProjectDeploymentSummaryService.cs",
+    "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+    "frontend/src/app/features/project-detail/components/deploy-run-drawer/deploy-run-drawer.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-release-notes/project-deploy-release-notes.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-release-notes/project-deploy-release-notes.scss",
+    "frontend/src/app/features/project-detail/components/project-deploy-release-notes/project-deploy-release-notes.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-release-notes/project-deploy-release-notes.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.html",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.html",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.spec.ts",
+    "frontend/src/app/features/project-detail/services/project-deploy-data.service.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts",
+    "frontend/src/app/features/secrets/project-secrets-page/project-secrets-page.component.html",
+    "frontend/src/app/features/secrets/project-secrets-page/project-secrets-page.component.spec.ts",
+    "frontend/src/app/features/secrets/project-secrets-page/project-secrets-page.component.ts",
+    "frontend/src/app/features/secrets/secrets-panel/secrets-panel.component.html",
+    "frontend/src/app/features/secrets/secrets-panel/secrets-panel.component.ts",
+    "frontend/src/app/features/secrets/secrets.service.ts",
+    "frontend/src/app/models/project-overview.model.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Deploy/Releases/ReleaseNotesProjection.cs",
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Secrets/SecretEndpoints.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/Releases/ReleaseNotesProjection.cs",
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Features/Secrets/SecretAccessPolicy.cs",
+    "backend/Features/Secrets/SecretContracts.cs",
+    "backend/Features/Secrets/SecretEndpoints.cs",
+    "backend/Features/Secrets/SecretRecords.cs",
+    "backend/Features/Secrets/SecretReference.cs",
+    "backend/Features/Secrets/SecretWorkloadBinding.cs",
+    "backend/Host/Program.cs",
+    "frontend/src/app/features/secrets/secrets-panel/secrets-panel.component.html",
+    "frontend/src/app/features/secrets/secrets-panel/secrets-panel.component.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 1,
+   "severity": "low",
+   "findings": 3
+  },
+  {
+   "key": "AGT-3909",
+   "label": "IN-1",
+   "group": "IN",
+   "filesChanged": 24,
+   "codeFiles": [
+    "backend/Features/Deploy/DeployEndpoints.cs",
+    "backend/Features/Projects/Operations/OperationsTelemetry.cs",
+    "backend/Features/Projects/Operations/ProjectOperationsService.cs",
+    "backend/Features/Projects/Operations/StoreOperationsTelemetryReader.cs",
+    "backend/Features/Telemetry/Otlp/OtlpJsonDecoder.cs",
+    "backend/Features/Telemetry/Otlp/OtlpProtobufDecoder.cs",
+    "backend/Features/Telemetry/Otlp/OtlpRecordFactory.cs",
+    "backend/Features/Telemetry/Otlp/ProtoWireReader.cs",
+    "backend/Features/Telemetry/TelemetryServiceCollectionExtensions.cs",
+    "backend/Host/EndpointMapping.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.html",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.model.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Projects/Operations/OperationsTelemetry.cs",
+    "backend/Features/Telemetry/Query/TelemetryQueries.cs",
+    "backend/Host/Program.cs",
+    "frontend/AGENTS.md",
+    "runner/Program.cs",
+    "scripts/release/InstalledFakeCodex/Program.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Clients/ClientIdentityMiddleware.cs",
+    "backend/Features/Management/ManagementModeMiddleware.cs",
+    "backend/Features/Projects/Operations/OperationsTelemetry.cs",
+    "backend/Features/Security/AccessSecurityMiddleware.cs",
+    "backend/Features/Security/AccessSecurityModels.cs",
+    "backend/Features/Security/AccessSecurityStore.TelemetryIngest.cs",
+    "backend/Features/Security/AccessSecurityStore.cs",
+    "backend/Features/Security/CredentialRedactor.cs",
+    "backend/Features/Telemetry/Export/ITelemetryExportSink.cs",
+    "backend/Features/Telemetry/Intake/TelemetryAdmissionPolicy.cs",
+    "backend/Features/Telemetry/Intake/TelemetryIngestCredentials.cs",
+    "backend/Features/Telemetry/Intake/TelemetryIntakeQueue.cs",
+    "backend/Features/Telemetry/Intake/TelemetryIntakeService.cs",
+    "backend/Features/Telemetry/Intake/TelemetryWriter.cs",
+    "backend/Features/Telemetry/Otlp/OtlpAttributeBuilder.cs",
+    "backend/Features/Telemetry/Otlp/OtlpJsonDecoder.cs",
+    "backend/Features/Telemetry/Otlp/OtlpProtobufDecoder.cs",
+    "backend/Features/Telemetry/Otlp/OtlpRecordFactory.cs",
+    "backend/Features/Telemetry/Otlp/OtlpResponses.cs",
+    "backend/Features/Telemetry/Otlp/ProtoWireReader.cs",
+    "backend/Features/Telemetry/Query/TelemetryQueries.cs",
+    "backend/Features/Telemetry/Storage/MetricBucketPolicy.cs",
+    "backend/Features/Telemetry/Storage/TelemetryStore.Queries.cs",
+    "backend/Features/Telemetry/Storage/TelemetryStore.cs",
+    "backend/Features/Telemetry/TelemetryEndpoints.cs",
+    "backend/Features/Telemetry/TelemetryOptions.cs",
+    "backend/Features/Telemetry/TelemetryRecords.cs",
+    "backend/Features/Telemetry/TelemetryServiceCollectionExtensions.cs",
+    "backend/Host/EndpointMapping.cs",
+    "backend/Host/Program.cs",
+    "frontend/AGENTS.md",
+    "runner/Program.cs",
+    "scripts/release/InstalledFakeCodex/Program.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "blocker",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3910",
+   "label": "IN-2",
+   "group": "IN",
+   "filesChanged": 21,
+   "codeFiles": [
+    "backend/Features/Projects/HealthChecks/EnvironmentHealthService.cs",
+    "backend/Features/Projects/HealthChecks/HealthAlerts.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckDefinition.cs",
+    "backend/Features/Projects/HealthChecks/HealthSamples.cs",
+    "backend/Features/Projects/HealthChecks/TelemetryAlertPolicy.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/project/project-environment-health.spec.ts",
+    "frontend/src/app/features/environment-health/components/environment-health-overview/environment-health-overview.component.spec.ts",
+    "frontend/src/app/features/environment-health/components/environment-health-overview/environment-health-overview.component.ts",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.html",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.spec.ts",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.ts",
+    "frontend/src/app/features/environment-health/models/environment-health.model.ts",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.spec.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts",
+    "frontend/src/app/features/project-detail/state/deploy-status-tone.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Projects/HealthChecks/HealthIncidentPolicy.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Projects/HealthChecks/HealthIncidentPolicy.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "blocker",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3911",
+   "label": "IN-3",
+   "group": "IN",
+   "filesChanged": 11,
+   "codeFiles": [
+    "backend/Features/Security/CredentialRedactor.cs",
+    "backend/Features/Telemetry/Intake/TelemetryBatchJournal.cs",
+    "backend/Features/Telemetry/Intake/TelemetryIngestCredentials.cs",
+    "backend/Features/Telemetry/Intake/TelemetryIntakeQueue.cs",
+    "backend/Features/Telemetry/Intake/TelemetryIntakeService.cs",
+    "backend/Features/Telemetry/Intake/TelemetryWriter.cs",
+    "backend/Features/Telemetry/TelemetryRecords.cs",
+    "backend/Features/Telemetry/TelemetryServiceCollectionExtensions.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Secrets/SecretValueScrubber.cs",
+    "backend/Features/Security/CredentialRedactor.cs",
+    "backend/Features/Telemetry/Intake/TelemetryIngestCredentials.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Secrets/SecretValueScrubber.cs",
+    "backend/Features/Security/AccessSecurityMiddleware.cs",
+    "backend/Features/Security/AccessSecurityStore.TelemetryIngest.cs",
+    "backend/Features/Security/AccessSecurityStore.cs",
+    "backend/Features/Security/CredentialRedactor.cs",
+    "backend/Features/Telemetry/Intake/TelemetryIngestCredentials.cs",
+    "backend/Host/EndpointMapping.cs",
+    "backend/Host/Program.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3912",
+   "label": "IN-4",
+   "group": "IN",
+   "filesChanged": 14,
+   "codeFiles": [
+    "backend/Features/Operator/Decisions/OperatorAttention.cs",
+    "backend/Features/Operator/Decisions/OperatorDecisionContracts.cs",
+    "backend/Features/Operator/Decisions/OperatorDecisionFactSources.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/studio-shell/operator-attention-list.spec.ts",
+    "frontend/src/app/features/operator-attention/models/operator-attention.model.spec.ts",
+    "frontend/src/app/features/operator-attention/models/operator-attention.model.ts",
+    "frontend/src/app/features/studio-shell/components/attention-control/attention-control.html",
+    "frontend/src/app/features/studio-shell/components/attention-control/attention-control.scss",
+    "frontend/src/app/features/studio-shell/components/attention-control/attention-control.spec.ts",
+    "frontend/src/app/features/studio-shell/components/attention-control/attention-control.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Operator/Decisions/OperatorDecisionContracts.cs",
+    "backend/Features/Operator/Decisions/OperatorDecisionFactSources.cs",
+    "frontend/AGENTS.md"
+   ],
+   "forecastFiles": [
+    "backend/Features/Operator/Decisions/OperatorDecisionContracts.cs",
+    "backend/Features/Operator/Decisions/OperatorDecisionFactSources.cs",
+    "backend/Features/Operator/Decisions/OperatorDecisionFacts.cs",
+    "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs",
+    "backend/Host/Program.cs",
+    "frontend/AGENTS.md",
+    "frontend/e2e/studio-shell/operator-attention-list.spec.ts",
+    "frontend/src/app/features/operator-attention/models/operator-attention.model.spec.ts",
+    "frontend/src/app/features/operator-attention/models/operator-attention.model.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 2,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3913",
+   "label": "IN-5",
+   "group": "IN",
+   "filesChanged": 19,
+   "codeFiles": [
+    "backend/Features/Projects/HealthChecks/EnvironmentHealthEndpoints.cs",
+    "backend/Features/Projects/HealthChecks/EnvironmentHealthService.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckStore.cs",
+    "backend/Features/Projects/HealthChecks/IncidentWebhookService.cs",
+    "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/project/project-settings-panel.spec.ts",
+    "frontend/src/app/features/project-detail/components/incident-webhook-settings/incident-webhook-settings.component.html",
+    "frontend/src/app/features/project-detail/components/incident-webhook-settings/incident-webhook-settings.component.scss",
+    "frontend/src/app/features/project-detail/components/incident-webhook-settings/incident-webhook-settings.component.spec.ts",
+    "frontend/src/app/features/project-detail/components/incident-webhook-settings/incident-webhook-settings.component.ts",
+    "frontend/src/app/features/project-detail/components/project-settings-panel/project-settings-panel.component.html",
+    "frontend/src/app/features/project-detail/components/project-settings-panel/project-settings-panel.component.scss",
+    "frontend/src/app/features/project-detail/components/project-settings-panel/project-settings-panel.component.ts"
+   ],
+   "citedFiles": [],
+   "forecastFiles": [],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "git"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3914",
+   "label": "IN-6",
+   "group": "IN",
+   "filesChanged": 26,
+   "codeFiles": [
+    "backend/Features/Projects/HealthChecks/HealthAlerts.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckStore.cs",
+    "backend/Features/Projects/HealthChecks/HealthIncidentContext.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/task-detail/health-incident-card.spec.ts",
+    "frontend/src/app/app.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/linked-deploy-view.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.html",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.ts",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.html",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.ts",
+    "frontend/src/app/features/project-detail/components/project-overlays/project-overlays.component.ts",
+    "frontend/src/app/features/task-detail/components/health-incident-card/health-incident-card.component.html",
+    "frontend/src/app/features/task-detail/components/health-incident-card/health-incident-card.component.scss",
+    "frontend/src/app/features/task-detail/components/health-incident-card/health-incident-card.component.spec.ts",
+    "frontend/src/app/features/task-detail/components/health-incident-card/health-incident-card.component.ts",
+    "frontend/src/app/features/task-detail/task-detail.html",
+    "frontend/src/app/features/task-detail/task-detail.scss",
+    "frontend/src/app/features/task-detail/task-detail.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Projects/HealthChecks/HealthAlerts.cs",
+    "frontend/AGENTS.md"
+   ],
+   "forecastFiles": [
+    "backend/Features/Projects/HealthChecks/EnvironmentHealthService.cs",
+    "backend/Features/Projects/HealthChecks/HealthAlerts.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckAddressPolicy.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckDefinition.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckProbe.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckStore.cs",
+    "backend/Features/Projects/HealthChecks/HealthIncidentPolicy.cs",
+    "backend/Features/Projects/HealthChecks/HealthSamples.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Host/Program.cs",
+    "frontend/AGENTS.md",
+    "frontend/e2e/project/project-environment-health.spec.ts",
+    "frontend/src/app/features/environment-health/components/environment-health-overview/environment-health-overview.component.html",
+    "frontend/src/app/features/environment-health/components/environment-health-overview/environment-health-overview.component.scss",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.html",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.scss",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.spec.ts",
+    "frontend/src/app/features/environment-health/models/environment-health.model.ts",
+    "frontend/src/testing/environment-health.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "header",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 7,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3915",
+   "label": "IN-7",
+   "group": "IN",
+   "filesChanged": 37,
+   "codeFiles": [
+    "backend/Features/Projects/HealthChecks/EnvironmentHealthService.cs",
+    "backend/Features/Projects/Operations/ProjectOperationsService.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Features/Projects/RunTargets/ProjectEnvironmentService.RunTargets.cs",
+    "backend/Features/Projects/RunTargets/RunTargetContracts.cs",
+    "backend/Features/Projects/RunTargets/RunTargetDesiredStatePolicy.cs",
+    "backend/Features/Security/AccessSecurityMiddleware.cs",
+    "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.html",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.model.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.scss",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.spec.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts",
+    "frontend/src/app/features/project-detail/state/deploy-status-tone.ts",
+    "frontend/src/app/models/project-overview.model.ts",
+    "runner/DeployHostCommand.cs",
+    "runner/DeployHostContainerObserver.cs",
+    "runner/RunTargets/RunTargetCrashOutput.cs",
+    "runner/RunTargets/RunTargetDocker.cs",
+    "runner/RunTargets/RunTargetReconciler.cs",
+    "runner/RunTargets/RunTargetSecrets.cs",
+    "runner/RunTargets/RunTargetStateStore.cs",
+    "runner/RunTargets/RunTargetWire.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Projects/RunTargets/RunTargetContracts.cs",
+    "frontend/AGENTS.md",
+    "runner/DeployHostCommand.cs",
+    "runner/RunTargets/RunTargetReconciler.cs",
+    "runner/SshDeployExecutor.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Deploy/DeployContract.cs",
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/Lifecycle/StandardLifecyclePolicy.cs",
+    "backend/Features/Deploy/Releases/ReleaseSnapshot.cs",
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Deploy/Runs/DeploymentRecord.cs",
+    "backend/Features/Projects/PipelineDefinition/ProjectPipelineDefinitionService.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Features/Projects/ProjectSettingsService.cs",
+    "backend/Features/Projects/RunTargets/ProjectEnvironmentService.RunTargets.cs",
+    "backend/Features/Projects/RunTargets/RunTargetContracts.cs",
+    "backend/Features/Projects/RunTargets/RunTargetDesiredStatePolicy.cs",
+    "backend/Features/Projects/RunTargets/RunTargetHostingDeclaration.cs",
+    "backend/Features/Security/AccessSecurityMiddleware.cs",
+    "backend/Shared/Models/ProjectSettings.cs",
+    "frontend/AGENTS.md",
+    "runner/DeployHostCommand.cs",
+    "runner/Program.cs",
+    "runner/RunTargets/RunTargetCaddyfile.cs",
+    "runner/RunTargets/RunTargetClient.cs",
+    "runner/RunTargets/RunTargetComposeFile.cs",
+    "runner/RunTargets/RunTargetCrashPolicy.cs",
+    "runner/RunTargets/RunTargetDaemon.cs",
+    "runner/RunTargets/RunTargetDocker.cs",
+    "runner/RunTargets/RunTargetNames.cs",
+    "runner/RunTargets/RunTargetReconciler.cs",
+    "runner/RunTargets/RunTargetSecrets.cs",
+    "runner/RunTargets/RunTargetStateStore.cs",
+    "runner/RunTargets/RunTargetWire.cs",
+    "runner/RunnerOptions.cs",
+    "runner/SshDeployExecutor.cs",
+    "runner/TaskServerClient.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 6,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3916",
+   "label": "IN-8",
+   "group": "IN",
+   "filesChanged": 16,
+   "codeFiles": [
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/Runbooks/RunbookService.cs",
+    "backend/Features/Deploy/Runs/DeploymentRecord.cs",
+    "backend/Features/Projects/HealthChecks/EnvironmentHealthService.cs",
+    "backend/Features/Projects/HealthChecks/HealthAlerts.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckStore.cs",
+    "backend/Features/Projects/HealthChecks/IncidentActions.cs",
+    "backend/Features/Projects/Operations/DoraMetrics.cs",
+    "backend/Features/Projects/Operations/ProjectOperationsService.cs",
+    "backend/Host/Program.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Deploy/Runbooks/RunbookService.cs",
+    "backend/Features/Projects/HealthChecks/HealthAlerts.cs",
+    "backend/Features/Projects/Operations/DoraMetrics.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Deploy/DeployEndpoints.cs",
+    "backend/Features/Deploy/DeployStore.cs",
+    "backend/Features/Deploy/Runbooks/RunbookService.cs",
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Projects/HealthChecks/EnvironmentHealthService.cs",
+    "backend/Features/Projects/HealthChecks/HealthAlerts.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckAddressPolicy.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckDefinition.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckProbe.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckStore.cs",
+    "backend/Features/Projects/HealthChecks/HealthIncidentPolicy.cs",
+    "backend/Features/Projects/HealthChecks/HealthSamples.cs",
+    "backend/Features/Projects/Operations/DoraMetrics.cs",
+    "backend/Features/Projects/Operations/ProjectOperationsService.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/e2e/project/project-environment-health.spec.ts",
+    "frontend/e2e/project/project-runbooks.spec.ts",
+    "frontend/scripts/disclosure-baseline.json",
+    "frontend/src/app/features/environment-health/components/environment-health-overview/environment-health-overview.component.html",
+    "frontend/src/app/features/environment-health/components/environment-health-overview/environment-health-overview.component.scss",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.html",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.scss",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.spec.ts",
+    "frontend/src/app/features/environment-health/models/environment-health.model.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.ts",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.html",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.scss",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.html",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.ts",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.html",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.scss",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.ts",
+    "frontend/src/testing/environment-health.ts",
+    "runner/DeployHostCommand.cs",
+    "runner/RunbookHostExecutor.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 2,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3917",
+   "label": "IN-9",
+   "group": "IN",
+   "filesChanged": 2,
+   "codeFiles": [
+    "backend/Features/Projects/HealthChecks/EnvironmentHealthService.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Projects/HealthChecks/EnvironmentHealthService.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Projects/HealthChecks/EnvironmentHealthService.cs",
+    "backend/Features/Projects/HealthChecks/HealthAlerts.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckAddressPolicy.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckDefinition.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckProbe.cs",
+    "backend/Features/Projects/HealthChecks/HealthCheckStore.cs",
+    "backend/Features/Projects/HealthChecks/HealthIncidentPolicy.cs",
+    "backend/Features/Projects/HealthChecks/HealthSamples.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/project/project-environment-health.spec.ts",
+    "frontend/src/app/features/environment-health/components/environment-health-overview/environment-health-overview.component.html",
+    "frontend/src/app/features/environment-health/components/environment-health-overview/environment-health-overview.component.scss",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.html",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.scss",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.spec.ts",
+    "frontend/src/app/features/environment-health/models/environment-health.model.ts",
+    "frontend/src/testing/environment-health.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3918",
+   "label": "IN-10",
+   "group": "IN",
+   "filesChanged": 20,
+   "codeFiles": [
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.ts",
+    "frontend/src/app/features/project-detail/components/environment-state/environment-state.html",
+    "frontend/src/app/features/project-detail/components/environment-state/environment-state.scss",
+    "frontend/src/app/features/project-detail/components/environment-state/environment-state.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/deployment-status-tone.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/deployment-status-tone.ts",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.html",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.ts",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.html",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.scss",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.ts",
+    "frontend/src/app/features/project-detail/services/project-deploy-data.service.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.spec.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts",
+    "frontend/src/app/features/project-detail/state/deploy-status-tone.ts",
+    "frontend/src/app/features/project-detail/testing/deploy-fixtures.ts"
+   ],
+   "citedFiles": [
+    "frontend/AGENTS.md"
+   ],
+   "forecastFiles": [
+    "frontend/AGENTS.md"
+   ],
+   "keywordAreas": [
+    "runner",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 3,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3919",
+   "label": "IN-11",
+   "group": "IN",
+   "filesChanged": 37,
+   "codeFiles": [
+    "backend/Features/Deploy/DeployContract.cs",
+    "backend/Features/Deploy/DeployEndpoints.cs",
+    "backend/Features/Deploy/DeployService.cs",
+    "backend/Features/Deploy/DeployStore.cs",
+    "backend/Features/Deploy/Status/EnvironmentStatusProjection.cs",
+    "backend/Features/Deploy/Status/ReleaseRuntimeHealthPolicy.cs",
+    "frontend/.stylelintrc.json",
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.html",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.spec.ts",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.ts",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.html",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.ts",
+    "frontend/src/app/features/project-detail/components/deploy-run-drawer/deploy-run-drawer.html",
+    "frontend/src/app/features/project-detail/components/deploy-run-drawer/deploy-run-drawer.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.scss",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.ts",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.html",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.ts",
+    "frontend/src/app/features/project-detail/components/rollback-offer/rollback-offer.html",
+    "frontend/src/app/features/project-detail/components/rollback-offer/rollback-offer.scss",
+    "frontend/src/app/features/project-detail/components/rollback-offer/rollback-offer.ts",
+    "frontend/src/app/features/project-detail/services/project-deploy-data.service.ts",
+    "frontend/src/app/features/project-detail/state/deploy-area.model.ts",
+    "frontend/src/app/features/project-detail/state/deploy-rollback-flow.ts",
+    "frontend/src/app/features/project-detail/state/rollback-offer.model.spec.ts",
+    "frontend/src/app/features/project-detail/state/rollback-offer.model.ts",
+    "frontend/src/app/features/project-detail/testing/deploy-fixtures.ts",
+    "frontend/src/app/services/task.service.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "frontend/AGENTS.md"
+   ],
+   "forecastFiles": [
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "frontend/AGENTS.md"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 6,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3920",
+   "label": "IN-12",
+   "group": "IN",
+   "filesChanged": 23,
+   "codeFiles": [
+    "backend/Features/Deploy/Runbooks/RunbookService.cs",
+    "backend/Features/Deploy/Runbooks/RunbookVerifier.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Security/AccessSecurityStore.cs",
+    "backend/Features/Security/IUserDisplayNames.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/project/project-runbooks.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.html",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.scss",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.ts",
+    "runner/RunbookHostExecutor.cs"
+   ],
+   "citedFiles": [
+    "frontend/AGENTS.md",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.ts",
+    "runner/RunbookHostExecutor.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Deploy/DeployEndpoints.cs",
+    "backend/Features/Deploy/DeployStore.cs",
+    "backend/Features/Deploy/Runbooks/RunbookService.cs",
+    "backend/Features/Deploy/Runs/DeploymentReconciler.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Host/Program.cs",
+    "frontend/AGENTS.md",
+    "frontend/e2e/project/project-runbooks.spec.ts",
+    "frontend/scripts/disclosure-baseline.json",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.html",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.scss",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-environment-overview/project-environment-overview.component.ts",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.html",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.scss",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.ts",
+    "runner/DeployHostCommand.cs",
+    "runner/RunbookHostExecutor.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3921",
+   "label": "IN-13",
+   "group": "IN",
+   "filesChanged": 66,
+   "codeFiles": [
+    "backend/Features/Deploy/Registry/DeployJobReleaseBinding.cs",
+    "backend/Features/Projects/DeployTelemetry.cs",
+    "backend/Features/Projects/Operations/OperationsTelemetry.cs",
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Features/Secrets/ProjectSecretBindings.cs",
+    "backend/Features/Secrets/SecretWorkloadBinding.cs",
+    "backend/Features/Telemetry/Deploy/DeployTelemetryCredentials.cs",
+    "backend/Features/Telemetry/Query/TelemetryOperationsReader.cs",
+    "backend/Features/Telemetry/Storage/TelemetryStore.cs",
+    "backend/Features/Telemetry/TelemetryEndpoints.cs",
+    "backend/Features/Telemetry/TelemetryOptions.cs",
+    "backend/Features/Telemetry/TelemetryServiceCollectionExtensions.cs",
+    "backend/Host/Program.cs",
+    "backend/OrchestratorApi.csproj",
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.html",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.model.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-telemetry-tokens/project-telemetry-tokens.html",
+    "frontend/src/app/features/project-detail/components/project-telemetry-tokens/project-telemetry-tokens.model.ts",
+    "frontend/src/app/features/project-detail/components/project-telemetry-tokens/project-telemetry-tokens.scss",
+    "frontend/src/app/features/project-detail/components/project-telemetry-tokens/project-telemetry-tokens.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-telemetry-tokens/project-telemetry-tokens.ts",
+    "frontend/src/app/features/studio-shell/components/project-hub-view/project-hub-view.component.ts",
+    "runner/DeployHostCommand.cs",
+    "runner/SshDeployExecutor.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Telemetry/TelemetryEndpoints.cs",
+    "runner/DeployHostCommand.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Projects/ProjectEnvironmentService.cs",
+    "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs",
+    "backend/Features/Telemetry/TelemetryEndpoints.cs",
+    "runner/DeployHostCommand.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 6,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3922",
+   "label": "IN-14",
+   "group": "IN",
+   "filesChanged": 30,
+   "codeFiles": [
+    "backend/Features/Projects/Operations/OperationsTelemetry.cs",
+    "backend/Features/Security/AccessSecurityMiddleware.cs",
+    "backend/Features/Security/AccessSecurityModels.cs",
+    "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+    "backend/Features/Telemetry/Intake/TelemetryAdmissionPolicy.cs",
+    "backend/Features/Telemetry/Intake/TelemetryBatchJournal.cs",
+    "backend/Features/Telemetry/Intake/TelemetryIntakeService.cs",
+    "backend/Features/Telemetry/Intake/TelemetryWriter.cs",
+    "backend/Features/Telemetry/Otlp/OtlpJsonDecoder.cs",
+    "backend/Features/Telemetry/Otlp/OtlpProtobufDecoder.cs",
+    "backend/Features/Telemetry/Otlp/OtlpRecordFactory.cs",
+    "backend/Features/Telemetry/Otlp/OtlpResponses.cs",
+    "backend/Features/Telemetry/Query/TelemetryQueries.cs",
+    "backend/Features/Telemetry/Storage/TelemetryStore.Queries.cs",
+    "backend/Features/Telemetry/Storage/TelemetryStore.cs",
+    "backend/Features/Telemetry/TelemetryEndpoints.cs",
+    "backend/Features/Telemetry/TelemetryRecords.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.html",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.model.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.scss",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-operations/project-operations.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Telemetry/TelemetryEndpoints.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Telemetry/TelemetryEndpoints.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3923",
+   "label": "IN-15",
+   "group": "IN",
+   "filesChanged": 36,
+   "codeFiles": [
+    "backend/Features/Operator/Decisions/OperatorDecisionFactSources.cs",
+    "backend/Features/Projects/HealthChecks/EnvironmentHealthService.cs",
+    "backend/Features/Runner/OwnerActivityProjection.cs",
+    "backend/Features/Tasks/TaskMutationService.cs",
+    "backend/Host/Program.cs",
+    "backend/Shared/Models/TimelineEvent.cs",
+    "frontend/e2e/project/project-deploy-area.spec.ts",
+    "frontend/e2e/project/project-environment-health.spec.ts",
+    "frontend/e2e/task-detail/task-route-no-empty-band.spec.ts",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.html",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.scss",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.spec.ts",
+    "frontend/src/app/features/environment-health/components/environment-health-panel/environment-health-panel.component.ts",
+    "frontend/src/app/features/environment-health/models/environment-health.model.ts",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.html",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.spec.ts",
+    "frontend/src/app/features/project-detail/components/deploy-environment-card/deploy-environment-card.ts",
+    "frontend/src/app/features/project-detail/components/deploy-run-drawer/deploy-run-drawer.html",
+    "frontend/src/app/features/project-detail/components/deploy-run-drawer/deploy-run-drawer.spec.ts",
+    "frontend/src/app/features/project-detail/components/deploy-run-drawer/deploy-run-drawer.ts",
+    "frontend/src/app/features/project-detail/components/managed-database-backups/managed-database-backups.html",
+    "frontend/src/app/features/project-detail/components/managed-database-backups/managed-database-backups.ts",
+    "frontend/src/app/features/project-detail/components/managed-databases-panel/managed-databases-panel.html",
+    "frontend/src/app/features/project-detail/components/managed-databases-panel/managed-databases-panel.ts",
+    "frontend/src/app/features/project-detail/components/project-deploy-history/project-deploy-history.html",
+    "frontend/src/app/features/project-detail/components/project-deploy-history/project-deploy-history.ts",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.html",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-runbooks/project-runbooks.ts",
+    "frontend/src/app/features/studio-shell/_studio-shell-mobile-tabbar.scss",
+    "frontend/src/app/features/studio-shell/studio-shell.component.scss",
+    "frontend/src/app/pipes/principal-name.pipe.spec.ts",
+    "frontend/src/app/pipes/principal-name.pipe.ts"
+   ],
+   "citedFiles": [
+    "frontend/AGENTS.md"
+   ],
+   "forecastFiles": [
+    "frontend/AGENTS.md"
+   ],
+   "keywordAreas": [
+    "runner",
+    "frontend",
+    "header",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "low",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3924",
+   "label": "RV-1",
+   "group": "RV",
+   "filesChanged": 9,
+   "codeFiles": [
+    "frontend/e2e/task-detail/pipeline-workbench-states-evidence.spec.ts",
+    "frontend/src/app/components/app-dialog/confirm-dialog/confirm-dialog.component.html",
+    "frontend/src/app/components/dialog/dialog.component.ts",
+    "frontend/src/app/components/dialog/dialog.focus.spec.ts",
+    "frontend/src/app/components/error-dialog/error-dialog.component.html",
+    "frontend/src/app/components/info-button/info-button.component.html",
+    "frontend/src/app/features/shell/components/crash-recovery-prompt/crash-recovery-prompt.component.html",
+    "frontend/src/app/features/task-detail/components/prompt-pane/overview-pane/overview-step-token-modal/overview-step-token-modal.component.html"
+   ],
+   "citedFiles": [
+    "frontend/src/app/components/dialog/dialog.component.ts",
+    "frontend/src/app/directives/modal-focus.directive.ts",
+    "frontend/src/app/features/acceptance-readiness/components/acceptance-round-dialog/acceptance-round-dialog.html",
+    "frontend/src/app/features/task-detail/task-detail.ts",
+    "frontend/src/app/services/modal-stack.service.ts"
+   ],
+   "forecastFiles": [
+    "frontend/src/app/components/dialog/dialog.component.ts",
+    "frontend/src/app/components/menu/menu.component.ts",
+    "frontend/src/app/directives/modal-focus.directive.ts",
+    "frontend/src/app/features/acceptance-readiness/components/acceptance-round-dialog/acceptance-round-dialog.html",
+    "frontend/src/app/features/task-detail/task-detail.html",
+    "frontend/src/app/features/task-detail/task-detail.ts",
+    "frontend/src/app/services/modal-stack.service.spec.ts",
+    "frontend/src/app/services/modal-stack.service.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "header",
+    "git"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3925",
+   "label": "RV-2",
+   "group": "RV",
+   "filesChanged": 2,
+   "codeFiles": [
+    "frontend/e2e/studio-shell/shell-grid-rows.spec.ts",
+    "frontend/src/app/features/studio-shell/studio-shell.component.scss"
+   ],
+   "citedFiles": [
+    "frontend/src/app/features/studio-shell/studio-shell.component.html",
+    "frontend/src/app/features/studio-shell/studio-shell.component.scss"
+   ],
+   "forecastFiles": [
+    "frontend/src/app/features/studio-shell/studio-shell.component.html",
+    "frontend/src/app/features/studio-shell/studio-shell.component.scss",
+    "frontend/src/app/features/studio-shell/studio-shell.component.ts"
+   ],
+   "keywordAreas": [
+    "runner",
+    "frontend",
+    "git"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "high",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3926",
+   "label": "RV-3",
+   "group": "RV",
+   "filesChanged": 4,
+   "codeFiles": [
+    "frontend/e2e/task-detail/enter-keeps-native-activation.spec.ts",
+    "frontend/src/app/features/task-detail/task-detail-keyboard.util.spec.ts",
+    "frontend/src/app/features/task-detail/task-detail-keyboard.util.ts",
+    "frontend/src/app/features/task-detail/task-detail.spec.ts"
+   ],
+   "citedFiles": [
+    "frontend/src/app/features/shell/components/status-bar-usage-host/status-bar-usage-host.html",
+    "frontend/src/app/features/studio-shell/studio-shell.component.html",
+    "frontend/src/app/features/task-detail/task-detail-keyboard.util.ts",
+    "frontend/src/app/features/usage-cockpit/components/usage-detail-surface/usage-detail-surface.html"
+   ],
+   "forecastFiles": [
+    "frontend/src/app/features/shell/components/status-bar-usage-host/status-bar-usage-host.html",
+    "frontend/src/app/features/studio-shell/studio-shell.component.html",
+    "frontend/src/app/features/studio-shell/studio-shell.component.ts",
+    "frontend/src/app/features/task-detail/task-detail-keyboard.util.ts",
+    "frontend/src/app/features/usage-cockpit/components/usage-detail-surface/usage-detail-surface.html"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "header"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3927",
+   "label": "RV-4",
+   "group": "RV",
+   "filesChanged": 7,
+   "codeFiles": [
+    "backend/Features/Management/ManagementEndpoints.cs",
+    "backend/Features/Runner/HeldCapabilityProjection.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "backend/Features/Tasks/TaskLiveStatusProjection.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Management/ManagementEndpoints.cs",
+    "backend/Features/Runner/HeldCapabilityProjection.cs",
+    "backend/Features/Runner/ReviewClaimStagnation.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "backend/Features/Tasks/TaskLiveStatusProjection.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Management/ManagementEndpoints.cs",
+    "backend/Features/Runner/AttemptAuthorityService.cs",
+    "backend/Features/Runner/AutoReviewQueueWatchdog.cs",
+    "backend/Features/Runner/HeldCapabilityProjection.cs",
+    "backend/Features/Runner/ReviewClaimStagnation.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "backend/Features/Tasks/TaskLiveStatusProjection.cs",
+    "backend/Shared/Models/TaskInfo.cs",
+    "frontend/src/app/components/task-live-status/task-live-status.component.html",
+    "frontend/src/app/components/task-live-status/task-live-status.component.spec.ts",
+    "frontend/src/app/components/task-live-status/task-live-status.component.ts",
+    "frontend/src/app/models/task.model.ts",
+    "runner/RemoteReviewDaemon.cs",
+    "runner/RunnerCapabilityProbe.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3928",
+   "label": "RV-5",
+   "group": "RV",
+   "filesChanged": 2,
+   "codeFiles": [
+    "frontend/src/app/features/remote-hosts/services/remote-hosts.service.spec.ts",
+    "frontend/src/app/features/remote-hosts/services/remote-hosts.service.ts"
+   ],
+   "citedFiles": [
+    "frontend/src/app/features/remote-hosts/services/remote-hosts.service.ts"
+   ],
+   "forecastFiles": [
+    "frontend/e2e/settings/remote-hosts.spec.ts",
+    "frontend/src/app/features/remote-hosts/components/remote-host-card/remote-host-card.html",
+    "frontend/src/app/features/remote-hosts/components/remote-host-card/remote-host-card.ts",
+    "frontend/src/app/features/remote-hosts/components/remote-hosts-panel/remote-hosts-panel.ts",
+    "frontend/src/app/features/remote-hosts/models/remote-host.model.ts",
+    "frontend/src/app/features/remote-hosts/services/remote-hosts.service.spec.ts",
+    "frontend/src/app/features/remote-hosts/services/remote-hosts.service.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3929",
+   "label": "RV-6",
+   "group": "RV",
+   "filesChanged": 11,
+   "codeFiles": [
+    "frontend/e2e/workspace/token-analysis.spec.ts",
+    "frontend/src/app/features/board/components/task-card/task-card-view-model.ts",
+    "frontend/src/app/features/board/components/task-card/token-usage-popover/token-usage-popover.component.spec.ts",
+    "frontend/src/app/features/quota/quota-freshness.util.spec.ts",
+    "frontend/src/app/features/quota/quota-freshness.util.ts",
+    "frontend/src/app/features/token-analysis/components/card-token-drilldown/card-token-drilldown.html",
+    "frontend/src/app/features/token-analysis/components/card-token-drilldown/card-token-drilldown.spec.ts",
+    "frontend/src/app/features/token-analysis/components/card-token-drilldown/card-token-drilldown.ts",
+    "frontend/src/app/features/token-analysis/components/token-analysis-quota/token-analysis-quota.html",
+    "frontend/src/app/features/token-analysis/components/token-analysis-quota/token-analysis-quota.spec.ts",
+    "frontend/src/app/features/token-analysis/components/token-analysis-quota/token-analysis-quota.ts"
+   ],
+   "citedFiles": [
+    "frontend/src/app/features/board/components/task-card/task-card-view-model.ts",
+    "frontend/src/app/features/token-analysis/components/card-token-drilldown/card-token-drilldown.html",
+    "frontend/src/app/features/token-analysis/components/token-analysis-quota/token-analysis-quota.html"
+   ],
+   "forecastFiles": [
+    "frontend/src/app/features/board/components/task-card/task-card-view-model.ts",
+    "frontend/src/app/features/token-analysis/components/card-token-drilldown/card-token-drilldown.html",
+    "frontend/src/app/features/token-analysis/components/token-analysis-quota/token-analysis-quota.html",
+    "frontend/src/app/models/task.model.ts"
+   ],
+   "keywordAreas": [
+    "frontend",
+    "git"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3930",
+   "label": "RV-7",
+   "group": "RV",
+   "filesChanged": 8,
+   "codeFiles": [
+    "backend/Features/Clients/ClientEndpoints.cs",
+    "backend/Features/Clients/ClientIdentityStore.cs",
+    "backend/Features/Security/Iam/OperatorPolicy/OperatorOperationCatalog.cs",
+    "frontend/src/app/features/remote-hosts/components/review-host-update/review-host-update.spec.ts",
+    "frontend/src/app/features/remote-hosts/components/review-host-update/review-host-update.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Clients/ClientEndpoints.cs",
+    "backend/Features/Clients/ClientIdentityStore.cs",
+    "frontend/src/app/features/remote-hosts/components/review-host-update/review-host-update.ts",
+    "frontend/src/app/features/remote-hosts/models/review-host-update.ts"
+   ],
+   "forecastFiles": [
+    "backend/Features/Clients/ClientEndpoints.cs",
+    "backend/Features/Clients/ClientIdentityStore.cs",
+    "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs",
+    "backend/Features/Runner/AttemptAuthorityService.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "backend/Features/Security/Iam/OperatorPolicy/OperatorOperationCatalog.cs",
+    "frontend/e2e/settings/remote-hosts.spec.ts",
+    "frontend/src/app/features/remote-hosts/components/review-host-update/review-host-update.html",
+    "frontend/src/app/features/remote-hosts/components/review-host-update/review-host-update.scss",
+    "frontend/src/app/features/remote-hosts/components/review-host-update/review-host-update.spec.ts",
+    "frontend/src/app/features/remote-hosts/components/review-host-update/review-host-update.ts",
+    "frontend/src/app/features/remote-hosts/models/review-host-update.spec.ts",
+    "frontend/src/app/features/remote-hosts/models/review-host-update.ts",
+    "runner/RemoteReviewDaemon.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3931",
+   "label": "RV-8",
+   "group": "RV",
+   "filesChanged": 4,
+   "codeFiles": [
+    "scripts/workload-identity-navigation.test.mjs"
+   ],
+   "citedFiles": [],
+   "forecastFiles": [],
+   "keywordAreas": [
+    "runner",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3932",
+   "label": "RV-9",
+   "group": "RV",
+   "filesChanged": 8,
+   "codeFiles": [
+    "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs",
+    "backend/Features/Pipeline/BatchGate/BatchGateStore.FlakySuspects.cs",
+    "frontend/src/app/features/batch-gate/batch-panel/batch-panel.html",
+    "frontend/src/app/features/batch-gate/batch-panel/batch-panel.ts",
+    "frontend/src/app/models/batch-gate.model.spec.ts",
+    "frontend/src/app/models/batch-gate.model.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs",
+    "backend/Features/Pipeline/BatchGate/BatchGateStore.FlakySuspects.cs",
+    "frontend/src/app/models/batch-gate.model.ts"
+   ],
+   "forecastFiles": [
+    "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs",
+    "backend/Features/Pipeline/BatchGate/BatchGateStateSnapshotReader.cs",
+    "backend/Features/Pipeline/BatchGate/BatchGateStore.FlakySuspects.cs",
+    "frontend/e2e/batch-gate/batch-gate.spec.ts",
+    "frontend/src/app/features/batch-gate/batch-panel/batch-panel.html",
+    "frontend/src/app/models/batch-gate.model.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3933",
+   "label": "RV-10",
+   "group": "RV",
+   "filesChanged": 7,
+   "codeFiles": [
+    "backend/Features/Pipeline/VerifyDefinition/VerifyDefinitionPolicy.cs",
+    "frontend/e2e/settings/second-project-server-checkout.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-build-profile-notice/project-build-profile-notice.component.html",
+    "frontend/src/app/features/project-detail/components/project-build-profile-notice/project-build-profile-notice.component.ts",
+    "frontend/src/app/features/project-detail/components/project-settings-panel/project-settings-panel.component.html",
+    "frontend/src/app/features/project-detail/components/project-settings-panel/project-settings-panel.component.spec.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Pipeline/VerifyDefinition/VerifyDefinitionPolicy.cs",
+    "backend/Features/Registry/ProjectRegistry.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/ExecutionPreparation/ProjectDefinitionProposalService.cs",
+    "backend/Features/Pipeline/VerifyDefinition/VerifyDefinitionPolicy.cs",
+    "backend/Features/Projects/ProjectSettingsEndpoints.cs",
+    "backend/Features/Registry/ProjectRegistry.cs",
+    "backend/Features/Registry/RegistryEndpoints.cs",
+    "frontend/src/app/features/project-detail/components/project-build-profile-notice/project-build-profile-notice.component.html",
+    "frontend/src/app/features/project-detail/components/project-build-profile-notice/project-build-profile-notice.component.spec.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3934",
+   "label": "RV-11",
+   "group": "RV",
+   "filesChanged": 16,
+   "codeFiles": [
+    "backend/Features/Tasks/Acceptance/AcceptanceReadiness.cs",
+    "backend/Features/Tasks/Acceptance/AcceptanceReadinessService.cs",
+    "frontend/e2e/task-detail/triage-merge-status.spec.ts",
+    "frontend/src/app/features/acceptance-readiness/components/acceptance-next-steps/acceptance-next-steps.component.spec.ts",
+    "frontend/src/app/features/acceptance-readiness/components/acceptance-next-steps/acceptance-next-steps.component.ts",
+    "frontend/src/app/features/acceptance-readiness/models/acceptance-primary-reason.spec.ts",
+    "frontend/src/app/features/acceptance-readiness/models/acceptance-primary-reason.ts",
+    "frontend/src/app/features/acceptance-readiness/models/acceptance-readiness.model.ts",
+    "frontend/src/app/features/acceptance-readiness/testing/acceptance-readiness.fixtures.ts",
+    "frontend/src/app/features/task-detail/state/acceptance-refusal.model.spec.ts",
+    "frontend/src/app/features/task-detail/state/acceptance-refusal.model.ts",
+    "frontend/src/app/features/task-detail/state/triage-controller.service.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Tasks/TaskTransitionService.cs",
+    "frontend/src/app/features/acceptance-readiness/models/acceptance-readiness.model.ts",
+    "frontend/src/app/features/task-detail/state/acceptance-refusal.model.ts"
+   ],
+   "forecastFiles": [
+    "backend/Features/Tasks/TaskTransitionService.cs",
+    "frontend/e2e/task-detail/concept-accept-refusal.spec.ts",
+    "frontend/e2e/task-detail/triage-merge-status.spec.ts",
+    "frontend/scripts/disclosure-baseline.json",
+    "frontend/src/app/app.ts",
+    "frontend/src/app/features/acceptance-readiness/models/acceptance-readiness.model.ts",
+    "frontend/src/app/features/acceptance-readiness/state/acceptance-readiness.store.spec.ts",
+    "frontend/src/app/features/acceptance-readiness/state/acceptance-readiness.store.ts",
+    "frontend/src/app/features/studio-shell/components/acceptance-refusal/acceptance-refusal.component.html",
+    "frontend/src/app/features/studio-shell/components/acceptance-refusal/acceptance-refusal.component.scss",
+    "frontend/src/app/features/studio-shell/components/acceptance-refusal/acceptance-refusal.component.spec.ts",
+    "frontend/src/app/features/studio-shell/components/acceptance-refusal/acceptance-refusal.component.ts",
+    "frontend/src/app/features/studio-shell/components/studio-tab-actions/studio-tab-actions.component.html",
+    "frontend/src/app/features/studio-shell/components/studio-tab-actions/studio-tab-actions.component.ts",
+    "frontend/src/app/features/task-detail/components/delivery-claim-panel/delivery-claim-panel.component.html",
+    "frontend/src/app/features/task-detail/components/delivery-claim-panel/delivery-claim-panel.component.spec.ts",
+    "frontend/src/app/features/task-detail/components/delivery-claim-panel/delivery-claim-panel.component.ts",
+    "frontend/src/app/features/task-detail/state/acceptance-refusal.model.spec.ts",
+    "frontend/src/app/features/task-detail/state/acceptance-refusal.model.ts",
+    "frontend/src/app/features/task-detail/state/triage-controller.service.spec.ts",
+    "frontend/src/app/features/task-detail/state/triage-controller.service.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "header",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3935",
+   "label": "RV-12",
+   "group": "RV",
+   "filesChanged": 7,
+   "codeFiles": [
+    "frontend/src/app/app.ts",
+    "frontend/src/app/features/acceptance-readiness/components/acceptance-next-steps/acceptance-next-steps.component.spec.ts",
+    "frontend/src/app/features/acceptance-readiness/components/acceptance-next-steps/acceptance-next-steps.component.ts",
+    "frontend/src/app/features/acceptance-readiness/state/acceptance-readiness.store.ts",
+    "frontend/src/app/features/task-detail/components/detail-header/content-refusal.ts",
+    "frontend/src/app/features/task-detail/state/acceptance-refusal.model.spec.ts",
+    "frontend/src/app/features/task-detail/state/acceptance-refusal.model.ts"
+   ],
+   "citedFiles": [],
+   "forecastFiles": [],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "header",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3936",
+   "label": "RV-13",
+   "group": "RV",
+   "filesChanged": 6,
+   "codeFiles": [
+    "backend/Features/Tasks/TaskIntegrationStatusService.cs",
+    "frontend/e2e/task-detail/escalation-summary.spec.ts",
+    "frontend/src/app/features/task-detail/components/server-checkout-remedy/server-checkout-remedy.component.html",
+    "frontend/src/app/features/task-detail/components/server-checkout-remedy/server-checkout-remedy.component.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Git/IntegrationWorktreeProvider.cs",
+    "backend/Features/Tasks/TaskIntegrationStatusService.cs",
+    "frontend/src/app/features/task-detail/components/server-checkout-remedy/server-checkout-remedy.component.html"
+   ],
+   "forecastFiles": [
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Git/IntegrationWorktreeProvider.cs",
+    "backend/Features/Pipeline/MergeIntoDevelopRunner.cs",
+    "backend/Features/Tasks/TaskIntegrationStatusService.cs",
+    "frontend/src/app/features/task-detail/components/server-checkout-remedy/server-checkout-remedy.component.html"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3937",
+   "label": "RV-14",
+   "group": "RV",
+   "filesChanged": 4,
+   "codeFiles": [
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Git/IntegrationWorktreeProvider.cs",
+    "backend/Features/Tasks/TaskIntegrationStatusService.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Git/GitConfigSignature.cs",
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Git/GitStateIndexService.cs",
+    "backend/Features/Tasks/TaskIntegrationStatusService.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Git/GitConfigSignature.cs",
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Git/GitStateIndexService.cs",
+    "backend/Features/Tasks/TaskIntegrationStatusService.cs",
+    "backend/Features/Tasks/TaskListGitProjectionCache.cs",
+    "backend/Host/Program.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3938",
+   "label": "RV-15",
+   "group": "RV",
+   "filesChanged": 2,
+   "codeFiles": [
+    "backend/Features/Pipeline/WorkspaceArtifactCommitService.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Pipeline/WorkspaceArtifactCommitService.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Pipeline/WorkspaceArtifactCommitService.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3939",
+   "label": "RV-16",
+   "group": "RV",
+   "filesChanged": 3,
+   "codeFiles": [
+    "backend/Features/Runner/RemoteReviewPlanBuilder.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Runner/RemoteReviewPlanBuilder.cs",
+    "backend/Features/Runner/ReviewEvidenceContext.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Runner/ProjectRunner.cs",
+    "backend/Features/Runner/RemoteReviewPlanBuilder.cs",
+    "backend/Features/Runner/ReviewEvidenceContext.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3940",
+   "label": "RV-17",
+   "group": "RV",
+   "filesChanged": 5,
+   "codeFiles": [
+    "frontend/e2e/workspace/token-analysis.spec.ts",
+    "frontend/src/app/features/token-analysis/components/token-analysis-distribution/token-analysis-distribution.html",
+    "frontend/src/app/features/token-analysis/components/token-analysis-distribution/token-analysis-distribution.spec.ts",
+    "frontend/src/app/features/token-analysis/token-analysis.util.spec.ts",
+    "frontend/src/app/features/token-analysis/token-analysis.util.ts"
+   ],
+   "citedFiles": [
+    "frontend/src/app/features/token-analysis/components/token-analysis-distribution/token-analysis-distribution.html",
+    "frontend/src/app/features/token-analysis/components/token-analysis-view/token-analysis-view.ts",
+    "frontend/src/app/features/token-analysis/token-analysis.util.ts"
+   ],
+   "forecastFiles": [
+    "frontend/src/app/features/token-analysis/components/token-analysis-distribution/token-analysis-distribution.html",
+    "frontend/src/app/features/token-analysis/components/token-analysis-view/token-analysis-view.ts",
+    "frontend/src/app/features/token-analysis/token-analysis.util.ts"
+   ],
+   "keywordAreas": [
+    "frontend"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3941",
+   "label": "RV-18",
+   "group": "RV",
+   "filesChanged": 11,
+   "codeFiles": [
+    "backend/Features/Tokens/TokenPricingEndpoints.cs",
+    "backend/Features/Tokens/UsageCockpitEndpoints.cs",
+    "backend/Features/Tokens/UsageCockpitProjection.cs",
+    "backend/Features/Tokens/UsageCostInputReader.cs",
+    "frontend/e2e/tokens/owner-day-token-usage.spec.ts",
+    "frontend/src/app/features/tokens/components/token-usage-section/token-usage-section.component.html",
+    "frontend/src/app/features/tokens/components/unpriced-models/unpriced-models.component.html",
+    "frontend/src/app/features/tokens/components/unpriced-models/unpriced-models.component.spec.ts",
+    "frontend/src/app/features/tokens/components/unpriced-models/unpriced-models.component.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Tokens/Aggregation/ModelUsageFold.cs",
+    "backend/Features/Tokens/TokenAggregationService.cs",
+    "backend/Features/Tokens/TokenPricingEndpoints.cs",
+    "backend/Features/Tokens/UsageCockpitEndpoints.cs",
+    "backend/Features/Tokens/WorkspaceBusUsage.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Tokens/Aggregation/ModelUsageFold.cs",
+    "backend/Features/Tokens/ITokenAggregator.cs",
+    "backend/Features/Tokens/TokenAggregationService.cs",
+    "backend/Features/Tokens/TokenPricingEndpoints.cs",
+    "backend/Features/Tokens/UsageCockpitEndpoints.cs",
+    "backend/Features/Tokens/WorkspaceBusUsage.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3942",
+   "label": "RV-19",
+   "group": "RV",
+   "filesChanged": 17,
+   "codeFiles": [
+    "backend/Features/AdHoc/AdHocClaudeInvoker.cs",
+    "backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs",
+    "backend/Features/Cli/Routing/OneShot/CodexOneShot.cs",
+    "backend/Features/Cli/Routing/OneShot/RemoteCliOneShot.cs",
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Prompts/PromptEnhancementService.cs",
+    "backend/Features/Review/CodeReviewStepService.cs",
+    "backend/Features/Review/SummaryGenerationService.cs",
+    "backend/Features/Runner/AspectRunnerService.cs",
+    "backend/Features/Runner/PostAbortReviewStepService.cs",
+    "backend/Features/Runner/ReviewDecisionOrchestrator.cs",
+    "backend/Features/Supervisor/SoftReasoningHostedService.cs",
+    "backend/Features/Tasks/TitleGenerationService.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/AdHoc/AdHocClaudeInvoker.cs",
+    "backend/Features/Cli/Routing/OneShot/CodexOneShot.cs",
+    "backend/Features/Git/GitService.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/AdHoc/AdHocClaudeInvoker.cs",
+    "backend/Features/Cli/Execution/BackendCarExecution.cs",
+    "backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs",
+    "backend/Features/Cli/Routing/OneShot/CodexOneShot.cs",
+    "backend/Features/Cli/Routing/OneShot/HostOneShotIsolation.cs",
+    "backend/Features/Docs/ProjectDocsService.cs",
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Projects/ProjectSettingsEndpoints.cs",
+    "backend/Features/Prompts/PromptEnhancementService.cs",
+    "backend/Features/Review/SummaryGenerationService.cs",
+    "backend/Features/Runner/AspectRunnerService.cs",
+    "backend/Features/Runner/OrchestratorRunner.cs",
+    "backend/Features/Runner/ReviewDecisionOrchestrator.cs",
+    "backend/Features/Supervisor/SoftReasoningHostedService.cs",
+    "backend/Features/Tasks/TitleGenerationService.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3943",
+   "label": "RV-20",
+   "group": "RV",
+   "filesChanged": 20,
+   "codeFiles": [
+    "backend/Features/Management/ManagementEndpoints.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "backend/Features/Security/AccessSecurityEndpoints.cs",
+    "frontend/e2e/settings/quota-forecast.spec.ts",
+    "frontend/e2e/task-detail/pipeline-core-token-usage.spec.ts",
+    "frontend/e2e/usage-cockpit/usage-panel-navigation.spec.ts",
+    "frontend/src/app/features/cli/components/cli-admin-panel/cli-admin-panel.ts",
+    "frontend/src/app/features/cli/components/cli-models-panel/cli-models-panel.ts",
+    "frontend/src/app/features/cli/components/model-selection-view/model-selection-view.component.ts",
+    "frontend/src/app/features/quota/components/quota-curve/quota-curve.ts",
+    "frontend/src/app/features/quota/components/quota-forecast-panel/quota-forecast-panel.ts",
+    "frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.scss",
+    "frontend/src/app/features/usage-cockpit/components/usage-detail-panel/usage-detail-panel.html",
+    "frontend/src/app/features/usage-cockpit/usage-detail.util.spec.ts",
+    "frontend/src/app/features/usage-cockpit/usage-detail.util.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Management/ManagementEndpoints.cs",
+    "backend/Features/Runner/CapabilityReprobeDelivery.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "frontend/e2e/README.md",
+    "frontend/src/app/features/cli/components/cli-admin-panel/cli-admin-panel.ts",
+    "frontend/src/app/features/cli/components/cli-models-panel/cli-models-panel.ts",
+    "frontend/src/app/features/quota/components/quota-curve/quota-curve.ts",
+    "frontend/src/app/features/quota/components/quota-forecast-panel/quota-forecast-panel.ts",
+    "frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.scss",
+    "frontend/src/app/features/tokens/components/cli-window-analysis/cli-window-analysis.ts",
+    "frontend/src/app/features/usage-cockpit/components/usage-detail-panel/usage-detail-panel.html",
+    "frontend/src/app/features/usage-cockpit/usage-detail.util.ts",
+    "runner/RemoteReviewDaemon.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Cli/CliEndpoints.cs",
+    "backend/Features/Cli/Quota/CliQuotaFallbackService.cs",
+    "backend/Features/Cli/Selection/ModelSelectionService.cs",
+    "backend/Features/Management/ManagementEndpoints.cs",
+    "backend/Features/Runner/CapabilityReprobeDelivery.cs",
+    "backend/Features/Runner/ProjectRunner.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/README.md",
+    "frontend/e2e/cli/consumer-model-policy.spec.ts",
+    "frontend/e2e/task-detail/pipeline-core-token-usage.spec.ts",
+    "frontend/scripts/disclosure-baseline.json",
+    "frontend/src/app/features/cli/components/cli-admin-panel/cli-admin-panel.html",
+    "frontend/src/app/features/cli/components/cli-admin-panel/cli-admin-panel.ts",
+    "frontend/src/app/features/cli/components/cli-models-panel/cli-models-panel.html",
+    "frontend/src/app/features/cli/components/cli-models-panel/cli-models-panel.scss",
+    "frontend/src/app/features/cli/components/cli-models-panel/cli-models-panel.spec.ts",
+    "frontend/src/app/features/cli/components/cli-models-panel/cli-models-panel.ts",
+    "frontend/src/app/features/quota/components/quota-curve/quota-curve.ts",
+    "frontend/src/app/features/quota/components/quota-forecast-panel/quota-forecast-panel.ts",
+    "frontend/src/app/features/quota/index.ts",
+    "frontend/src/app/features/quota/services/quota-api.service.ts",
+    "frontend/src/app/features/task-detail/components/prompt-pane/overview-pane/overview-pane.component.scss",
+    "frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.html",
+    "frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.scss",
+    "frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.spec.ts",
+    "frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.ts",
+    "frontend/src/app/features/tokens/components/cli-window-analysis/cli-window-analysis.ts",
+    "frontend/src/app/features/tokens/components/token-usage-section/token-usage-section.component.html",
+    "frontend/src/app/features/tokens/components/token-usage-section/token-usage-section.component.spec.ts",
+    "frontend/src/app/features/tokens/components/token-usage-section/token-usage-section.component.ts",
+    "frontend/src/app/features/usage-cockpit/components/usage-capacity-detail/usage-capacity-detail.html",
+    "frontend/src/app/features/usage-cockpit/components/usage-cost-detail/usage-cost-detail.html",
+    "frontend/src/app/features/usage-cockpit/components/usage-cost-detail/usage-cost-detail.ts",
+    "frontend/src/app/features/usage-cockpit/components/usage-detail-panel/usage-detail-panel.html",
+    "frontend/src/app/features/usage-cockpit/components/usage-detail-panel/usage-detail-panel.ts",
+    "frontend/src/app/features/usage-cockpit/components/usage-detail-surface/usage-detail-surface.ts",
+    "frontend/src/app/features/usage-cockpit/usage-chip.util.ts",
+    "frontend/src/app/features/usage-cockpit/usage-detail.util.spec.ts",
+    "frontend/src/app/features/usage-cockpit/usage-detail.util.ts",
+    "runner/RemoteReviewDaemon.cs",
+    "runner/RemoteRunnerDaemon.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "header",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 2,
+   "severity": "low",
+   "findings": 7
+  },
+  {
+   "key": "AGT-3944",
+   "label": "RV-21",
+   "group": "RV",
+   "filesChanged": 19,
+   "codeFiles": [
+    "backend/Features/Docs/ProjectDocsEndpoints.cs",
+    "backend/Features/Docs/WorkbenchCatalogueService.cs",
+    "backend/Features/Docs/WorkbenchDecisionService.cs",
+    "frontend/e2e/task-detail/concept-accept-refusal.spec.ts",
+    "frontend/ngsw-config.json",
+    "frontend/scripts/ngsw-navigation-urls.test.mjs",
+    "frontend/src/app/features/acceptance-readiness/components/acceptance-next-steps/acceptance-next-steps.scss",
+    "frontend/src/app/features/project-detail/components/project-basics-card/project-basics-card.component.ts",
+    "frontend/src/app/features/project-detail/components/project-settings-panel/project-settings-panel.component.html",
+    "frontend/src/app/features/project-detail/components/project-settings-panel/project-settings-panel.component.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-settings-panel/project-settings-panel.component.ts",
+    "frontend/src/app/features/project-detail/components/workbench-decision-panel/workbench-decision-panel.spec.ts",
+    "frontend/src/app/features/studio-shell/components/acceptance-refusal/acceptance-refusal.component.html",
+    "frontend/src/app/features/studio-shell/components/acceptance-refusal/acceptance-refusal.component.spec.ts",
+    "frontend/src/app/features/studio-shell/components/acceptance-refusal/acceptance-refusal.component.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Docs/DossierCardsService.cs",
+    "backend/Features/Docs/ProjectDocsEndpoints.cs",
+    "backend/Features/Docs/WorkbenchCatalogueService.cs",
+    "backend/Features/Docs/WorkbenchDecisionService.cs",
+    "backend/Features/Runner/EngineReportReviewService.cs",
+    "backend/Features/Runner/TaskRunnerService.cs",
+    "backend/Features/Tasks/Acceptance/CompletionContractPolicy.cs",
+    "frontend/ngsw-config.json",
+    "frontend/src/app/features/acceptance-readiness/components/acceptance-next-steps/acceptance-next-steps.scss",
+    "frontend/src/app/features/project-detail/components/workbench-decision-panel/workbench-decision-panel.html",
+    "frontend/src/styles/_tokens-semantic.scss",
+    "orchestration-decisions/ReportReviewPolicy.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Docs/DossierCardsService.cs",
+    "backend/Features/Docs/ProjectDocsEndpoints.cs",
+    "backend/Features/Docs/WorkbenchCatalogueService.cs",
+    "backend/Features/Docs/WorkbenchDecisionService.cs",
+    "backend/Features/Runner/EngineReportReviewService.cs",
+    "backend/Features/Runner/TaskRunnerService.cs",
+    "backend/Features/Tasks/Acceptance/CompletionContractPolicy.cs",
+    "backend/Features/Tasks/TaskTransitionService.cs",
+    "backend/Host/Program.cs",
+    "backend/Shared/Models/TaskProvenance.cs",
+    "backend/Shared/Models/TimelineEvent.cs",
+    "frontend/e2e/project/workbench-details-panel.spec.ts",
+    "frontend/ngsw-config.json",
+    "frontend/src/app/features/acceptance-readiness/components/acceptance-next-steps/acceptance-next-steps.scss",
+    "frontend/src/app/features/board/components/task-column/task-column.scss",
+    "frontend/src/app/features/git/index.ts",
+    "frontend/src/app/features/git/models/git.model.ts",
+    "frontend/src/app/features/project-detail/components/workbench-decision-actions/workbench-decision-actions.component.html",
+    "frontend/src/app/features/project-detail/components/workbench-decision-actions/workbench-decision-actions.component.scss",
+    "frontend/src/app/features/project-detail/components/workbench-decision-actions/workbench-decision-actions.component.ts",
+    "frontend/src/app/features/project-detail/components/workbench-decision-panel/workbench-decision-panel.html",
+    "frontend/src/app/features/project-detail/components/workbench-decision-panel/workbench-decision-panel.spec.ts",
+    "frontend/src/app/features/project-detail/components/workbench-decision-panel/workbench-decision-panel.ts",
+    "frontend/src/app/features/project-detail/components/workbench-decision-panel/workbench-decision-panel.util.ts",
+    "frontend/src/app/features/project-detail/components/workbench-viewer/workbench-viewer.component.ts",
+    "frontend/src/app/features/task-detail/components/delivery-claim-panel/delivery-claim-panel.component.ts",
+    "frontend/src/app/features/task-detail/state/triage-actions.model.spec.ts",
+    "frontend/src/app/features/task-detail/state/triage-actions.model.ts",
+    "frontend/src/app/models/project-docs.model.ts",
+    "frontend/src/app/models/task.model.ts",
+    "frontend/src/styles/_tokens-semantic.scss",
+    "orchestration-decisions/ReportReviewPolicy.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "header",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "low",
+   "findings": 7
+  },
+  {
+   "key": "AGT-3945",
+   "label": "RV-22",
+   "group": "RV",
+   "filesChanged": 11,
+   "codeFiles": [
+    "backend/Features/Pipeline/WorkspaceArtifactCommitService.cs",
+    "backend/Features/Projects/WorkspaceEndpoints.cs",
+    "backend/Features/Runner/RemoteReviewPlanBuilder.cs",
+    "frontend/src/app/features/tokens/components/cli-window-analysis/cli-window-analysis.html",
+    "frontend/src/app/features/tokens/components/cli-window-analysis/cli-window-analysis.spec.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Pipeline/WorkspaceArtifactCommitService.cs",
+    "backend/Features/Projects/WorkspaceEndpoints.cs",
+    "backend/Features/Runner/AutoReviewStrandingWatchdog.cs",
+    "backend/Features/Runner/RemoteReviewPlanBuilder.cs",
+    "backend/Features/Tasks/TaskIntegrationRetryEndpoints.cs",
+    "frontend/e2e/task-detail/escalation-summary.spec.ts"
+   ],
+   "forecastFiles": [
+    "backend/Features/Pipeline/GateEnvironmentRetry/GateEnvironmentRetryService.cs",
+    "backend/Features/Pipeline/WorkspaceArtifactCommitService.cs",
+    "backend/Features/Projects/WorkspaceEndpoints.cs",
+    "backend/Features/Runner/AutoReviewStrandingWatchdog.cs",
+    "backend/Features/Runner/RemoteReviewPlanBuilder.cs",
+    "backend/Features/Tasks/TaskIntegrationRetryEndpoints.cs",
+    "backend/Features/Tokens/ITokenAggregator.cs",
+    "backend/Features/Tokens/TokenAggregationService.cs",
+    "frontend/e2e/task-detail/escalation-summary.spec.ts",
+    "frontend/src/app/features/task-detail/components/escalation-summary/escalation-summary.component.html",
+    "frontend/src/app/features/task-detail/components/escalation-summary/escalation-summary.component.spec.ts",
+    "frontend/src/app/features/task-detail/components/escalation-summary/escalation-summary.component.ts",
+    "frontend/src/app/services/task.service.ts",
+    "orchestration-decisions/AutoReviewStrandingPolicy.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git",
+    "filesystem",
+    "refactor"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 2,
+   "severity": "low",
+   "findings": 6
+  },
+  {
+   "key": "AGT-3946",
+   "label": "RV-23",
+   "group": "RV",
+   "filesChanged": 20,
+   "codeFiles": [
+    "backend/Features/Pipeline/BatchGate/BatchGatePilotService.QueueStalls.cs",
+    "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs",
+    "backend/Features/Pipeline/BatchGate/BatchGateStateSnapshotReader.cs",
+    "backend/Features/Pipeline/BatchGate/BatchGateStore.cs",
+    "backend/Features/Projects/ProjectSettingsEndpoints.cs",
+    "frontend/e2e/task-detail/escalation-summary.spec.ts",
+    "frontend/src/app/features/batch-gate/batch-panel/batch-infrastructure-retries/batch-infrastructure-retries.html",
+    "frontend/src/app/features/batch-gate/batch-panel/batch-infrastructure-retries/batch-infrastructure-retries.ts",
+    "frontend/src/app/features/batch-gate/batch-panel/batch-panel.html",
+    "frontend/src/app/features/batch-gate/batch-panel/batch-panel.ts",
+    "frontend/src/app/features/task-detail/components/escalation-summary/escalation-gate-actions.ts",
+    "frontend/src/app/features/task-detail/components/escalation-summary/escalation-summary.component.html",
+    "frontend/src/app/features/task-detail/components/escalation-summary/escalation-summary.component.spec.ts",
+    "frontend/src/app/features/task-detail/components/escalation-summary/escalation-summary.component.ts",
+    "frontend/src/app/features/task-detail/components/escalation-summary/gate-infrastructure-retry-status/gate-infrastructure-retry-status.html",
+    "frontend/src/app/features/task-detail/components/escalation-summary/gate-infrastructure-retry-status/gate-infrastructure-retry-status.ts",
+    "frontend/src/app/models/batch-gate.model.ts",
+    "frontend/src/app/services/batch-gate.service.ts"
+   ],
+   "citedFiles": [],
+   "forecastFiles": [],
+   "keywordAreas": [],
+   "hasSourceText": false,
+   "developSyncCommits": 0,
+   "severity": "unknown",
+   "findings": 0
+  }
+ ]
+}

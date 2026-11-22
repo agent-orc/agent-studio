@@ -84,12 +84,12 @@ export function formatLocalWithUtc(iso: string | null | undefined, timeZone: str
 
 // --------------------------------------------------------------- windows
 
-export type UsageWindowKind = 'weekly' | 'session';
+export type UsageWindowKind = 'weekly' | 'session' | 'fable';
 
 function isSecondaryModelWindow(label: string): boolean {
   // Codex reports separate Spark buckets next to the main ones; they are
   // model-level detail, not the CLI's weekly or session window.
-  return label.includes('spark');
+  return label.includes('spark') || label.includes('fable');
 }
 
 /** Provider wording for a five-hour window; decides both the session match and the `5H` tag. */
@@ -100,6 +100,7 @@ function isFiveHour(label: string): boolean {
 
 /** The provider window that plays the weekly or current-session role. */
 export function findWindow(windows: readonly UsageCliWindow[], kind: UsageWindowKind): UsageCliWindow | null {
+  if (kind === 'fable') return windows.find(w => w.label.toLowerCase().includes('fable')) ?? null;
   const candidates = windows.filter(w => !isSecondaryModelWindow(w.label.toLowerCase()));
   if (kind === 'weekly') {
     const weekly = candidates.filter(w => w.label.toLowerCase().includes('week'));
@@ -123,6 +124,7 @@ export interface UsageWindowView {
 
 /** Spoken window name: `weekly`, `current five-hour window` or `current session`. */
 export function windowSpokenName(window: UsageCliWindow | null, kind: UsageWindowKind): string {
+  if (kind === 'fable') return 'Fable weekly';
   if (kind === 'weekly') return 'weekly';
   return window && isFiveHour(window.label) ? 'current five-hour window' : 'current session';
 }
@@ -130,7 +132,7 @@ export function windowSpokenName(window: UsageCliWindow | null, kind: UsageWindo
 function windowView(window: UsageCliWindow | null, kind: UsageWindowKind, timeZone: string | null): UsageWindowView {
   const pct = formatUsedPct(window?.usedPct);
   const fiveHour = kind === 'session' && !!window && isFiveHour(window.label);
-  const tag = kind === 'weekly' ? 'WK' : fiveHour ? '5H' : 'Session';
+  const tag = kind === 'fable' ? 'Fable' : kind === 'weekly' ? 'WK' : fiveHour ? '5H' : 'Session';
   const spokenName = windowSpokenName(window, kind);
   const providerLabel = window?.label ?? (kind === 'weekly' ? 'Weekly' : 'Current session');
   if (pct == null) {
@@ -141,10 +143,13 @@ function windowView(window: UsageCliWindow | null, kind: UsageWindowKind, timeZo
     };
   }
   const reset = formatLocalWithUtc(window?.resetAtUtc, timeZone) ?? window?.resetLabel ?? null;
+  const resetMs = window?.resetAtUtc ? Date.parse(window.resetAtUtc) : NaN;
+  const weeklyStart = kind === 'weekly' && Number.isFinite(resetMs)
+    ? formatLocalWithUtc(window?.startAtUtc ?? new Date(resetMs - 7 * 86_400_000).toISOString(), timeZone) : null;
   return {
     kind, tag, value: pct, reported: true,
       spoken: `${spokenName} ${percentSpoken(pct)} used`,
-    detail: `${providerLabel}: ${pct} used${reset ? `, resets ${reset}` : ''}`,
+    detail: `${providerLabel}: ${pct} used${reset ? `, resets ${reset}` : ''}${weeklyStart ? `; provider week ${weeklyStart} to ${reset}` : ''}`,
   };
 }
 
@@ -223,6 +228,7 @@ export interface UsageCliChipView {
   alarmLabel: string | null;
   /** Worst alarm among CLIs whose chip is hidden; rendered as a nonnumeric mark. */
   hiddenAlarm: UsageChipAlarm | null;
+  fable: UsageWindowView;
   weekly: UsageWindowView;
   session: UsageWindowView;
   ariaLabel: string;
@@ -258,21 +264,23 @@ export function buildCliChipView(
     const empty = (kind: UsageWindowKind) => ({ ...windowView(null, kind, timeZone), value: '' });
     return {
       cliId, name, state: readFailed ? 'unknown' : 'loading', stateLabel: readFailed ? 'Unavailable' : 'Loading', alarm, alarmLabel, hiddenAlarm,
-      weekly: empty('weekly'), session: empty('session'),
+      fable: empty('fable'), weekly: empty('weekly'), session: empty('session'),
       ariaLabel: join(`${name}, usage ${readFailed ? 'unavailable' : 'loading'}.`, readFailed ? 'The usage cockpit could not be loaded.' : '', alarmText, hiddenText, 'Open usage.'),
       detail: [`${name}: usage ${readFailed ? 'unavailable' : 'loading'}`, readFailed ? 'The usage cockpit could not be loaded.' : '', ...alarms.map(a => a.label), hiddenText].filter(Boolean).join('\n'),
     };
   }
+  const fableWindow = findWindow(cli.windows, 'fable');
+  const fable = windowView(fableWindow, 'fable', timeZone);
   const weeklyWindow = findWindow(cli.windows, 'weekly');
   const sessionWindow = findWindow(cli.windows, 'session');
   const weekly = windowView(weeklyWindow, 'weekly', timeZone);
   const session = windowView(sessionWindow, 'session', timeZone);
   const status = cli.availability?.status;
   const suspicious = cli.suspicious || status === 'suspicious'
-    || !!weeklyWindow?.suspiciousReason || !!sessionWindow?.suspiciousReason;
+    || !!fableWindow?.suspiciousReason || !!weeklyWindow?.suspiciousReason || !!sessionWindow?.suspiciousReason;
   const stale = readFailed || status === 'stale' || !!cli.probeFailedAt
     || ageExceedsTtl(cli.fetchedAt, cli.ttlSeconds, now);
-  const unknown = status === 'unavailable' || !cli.fetchedAt || (!weekly.reported && !session.reported);
+  const unknown = status === 'unavailable' || !cli.fetchedAt || (!weekly.reported && !session.reported && !fable.reported);
   const state: UsageChipState = unknown ? 'unknown' : suspicious ? 'suspicious' : stale ? 'stale' : 'normal';
 
   const updated = formatLocalWithUtc(cli.fetchedAt, timeZone);
@@ -281,13 +289,14 @@ export function buildCliChipView(
   const stateClause = stateLabel && reason ? `${stateLabel}: ${sentence(reason)}` : '';
   const spokenWindows = state === 'unknown'
     ? 'usage unavailable'
-    : `${weekly.spoken}, ${session.spoken}`;
+    : `${weekly.spoken}, ${session.spoken}${fable.reported ? `, ${fable.spoken}` : ''}`;
   const updatedClause = state === 'stale' && updated ? ` Last updated ${updated}.` : '';
   const ariaLabel = join(`${name}, ${spokenWindows}.`, alarmText, stateClause, updatedClause.trim(), hiddenText, 'Open usage.');
   // Simultaneous causes stay visible together in the detail.
   const detail = [
     cli.plan ? `${name} (${cli.plan})` : name,
     ...alarms.map(a => a.label),
+    fable.reported ? fable.detail : null,
     weekly.detail,
     session.detail,
     updated ? `Updated ${updated}` : 'Never updated',
@@ -295,7 +304,7 @@ export function buildCliChipView(
     hiddenText || null,
   ].filter(Boolean).join('\n');
 
-  return { cliId, name, state, stateLabel, alarm, alarmLabel, hiddenAlarm, weekly, session, ariaLabel, detail };
+  return { cliId, name, state, stateLabel, alarm, alarmLabel, hiddenAlarm, fable, weekly, session, ariaLabel, detail };
 }
 
 /** Structured provider state explanation shared by chip text and detail. */

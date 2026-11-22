@@ -76,6 +76,9 @@ public static class TokenUsageKindPolicy
         "model-qualification",
         "qualification",
         "tagging",
+        "auto-tag",
+        "tag-maintenance",
+        "tag-classification-evaluation",
     };
 
     private static readonly HashSet<string> DecisionTopics = new(StringComparer.OrdinalIgnoreCase)

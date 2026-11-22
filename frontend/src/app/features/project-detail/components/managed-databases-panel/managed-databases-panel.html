@@ -19,16 +19,31 @@
             <div><dt>Engine</dt><dd>PostgreSQL {{ database.runningVersion ?? database.version }}
               @if (database.runningVersion && database.runningVersion !== database.version) { (declared {{ database.version }}) }</dd></div>
             <div><dt>Size</dt><dd>{{ database.size }} · {{ database.resources.cpus }} CPU · {{ database.resources.memoryMb }} MB</dd></div>
-            <div><dt>Volume</dt><dd>{{ database.state === 'deleted' ? 'Deleted' : bytes(database.volumeBytes) }}</dd></div>
+            <div><dt>Volume</dt><dd data-testid="managed-database-volume">@if (database.state === 'deleted') { Deleted } @else {
+              {{ bytes(database.volumeBytes) }} of {{ bytes(database.volumeAlertBytes) }} alert threshold }</dd></div>
             <div><dt>Connection</dt><dd><code>{{ database.variable }}_FILE</code> from <code>{{ database.credentialReference }}</code></dd></div>
+            @if (database.state !== 'deleted') {
+              <div><dt>Readiness</dt><dd><app-status-indicator [tone]="readiness(database.ready).tone" [label]="readiness(database.ready).label"
+                [compact]="true" testId="managed-database-ready" /></dd></div>
+              <div><dt>Connections</dt><dd data-testid="managed-database-connections">{{ connections(database) }}</dd></div>
+            }
           </dl>
           @if (database.message) { <p class="managed-databases__note">{{ database.message }}</p> }
-          @if (database.deletedAt) { <small>Deleted {{ database.deletedAt | date:'medium':'UTC' }} UTC, requested by {{ database.deletionRequestedBy }}</small> }
-          @else if (database.deletionRequestedAt) { <small>Deletion requested by {{ database.deletionRequestedBy }} {{ database.deletionRequestedAt | date:'medium':'UTC' }} UTC</small> }
+          @if (database.state !== 'deleted' && overAlert(database)) {
+            <p class="managed-databases__note" data-testid="managed-database-volume-alert">The volume uses {{ bytes(database.volumeBytes) }},
+              at or above its {{ bytes(database.volumeAlertBytes) }} alert threshold.</p>
+          }
+          @if (database.deletedAt) { <small>Deleted {{ database.deletedAt | date:'medium':'UTC' }} UTC, requested by {{ database.deletionRequestedBy | principalName }}</small> }
+          @else if (database.deletionRequestedAt) { <small>Deletion requested by {{ database.deletionRequestedBy | principalName }} {{ database.deletionRequestedAt | date:'medium':'UTC' }} UTC</small> }
+          @if (database.state !== 'deleted') {
+            <app-managed-database-backups [database]="database" [targets]="restoreTargets(environment, database)" [busy]="busy()"
+              (operate)="runOperation(database, $event)" />
+          }
           @if (database.state === 'retained') {
             @if (confirming() === key(database)) {
               <div class="managed-databases__confirm" data-testid="managed-database-confirm">
-                <label><span>Type <code>{{ database.name }}</code> to delete its data permanently</span>
+                <label><span>Deleting removes the volume and every backup of {{ database.name }}.
+                  Type <code>{{ database.name }}</code> to delete its data permanently</span>
                   <input type="text" autocomplete="off" [value]="typed()" (input)="type($event)" data-testid="managed-database-confirm-name" /></label>
                 <button type="button" class="managed-databases__danger" [disabled]="busy() || typed() !== database.name"
                   (click)="confirmDeletion(database)">Delete data permanently</button>

@@ -39,7 +39,8 @@ public sealed record AutoReviewStrandingFacts(
     bool InfrastructureRetryAvailable = false, bool InfrastructureRetryScheduled = false,
     bool HostCapacityHeld = false,
     bool HostCapabilityWait = false, bool HostCapabilityAvailable = false,
-    TimeSpan? ScheduledRetryOverdueLimit = null);
+    TimeSpan? ScheduledRetryOverdueLimit = null,
+    TimeSpan? SinceUndo = null);
 
 /// <summary>Per-card liveness decision for Auto Review. All ownership facts are read before acting.</summary>
 public static class AutoReviewStrandingPolicy
@@ -62,6 +63,10 @@ public static class AutoReviewStrandingPolicy
 
     public static AutoReviewStrandingAction Decide(AutoReviewStrandingFacts facts)
     {
+        // Undo is an explicit operator action. Give it a full threshold to
+        // restore an owner even when a scheduled retry was already overdue.
+        if (facts.SinceUndo is { } sinceUndo && sinceUndo <= facts.Threshold)
+            return AutoReviewStrandingAction.Leave;
         if (facts.ScheduledRetryOverdue is { } overdue && overdue > RetryOverdueLimit(facts))
             return AutoReviewStrandingAction.Escalate;
         if (facts.WithoutOwner <= facts.Threshold

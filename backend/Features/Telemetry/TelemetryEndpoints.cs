@@ -19,7 +19,7 @@ public sealed record TelemetryIngestTokenCreatedResponse(TelemetryIngestTokenRes
 
 /// <summary>
 /// OTLP/HTTP intake (IP-15) and the per-environment query and token API.
-/// Intake: <c>POST /api/telemetry/otlp/v1/metrics</c> and <c>/v1/logs</c>, so an
+/// Intake: <c>POST /api/telemetry/otlp/v1/metrics</c>, <c>/v1/logs</c>, and <c>/v1/traces</c>, so an
 /// SDK configured with <c>OTEL_EXPORTER_OTLP_ENDPOINT=&lt;studio&gt;/api/telemetry/otlp</c>
 /// reaches them. The intake authenticates its own ingest token in every
 /// security profile; the query and token routes are project routes and follow
@@ -35,6 +35,8 @@ public static class TelemetryEndpoints
             => Receive(context, intake, TelemetrySignals.Metrics));
         app.MapPost(OtlpBasePath + "/v1/logs", (HttpContext context, TelemetryIntakeService intake)
             => Receive(context, intake, TelemetrySignals.Logs));
+        app.MapPost(OtlpBasePath + "/v1/traces", (HttpContext context, TelemetryIntakeService intake)
+            => Receive(context, intake, TelemetrySignals.Traces));
 
         var environment = app.MapGroup("/api/projects/{projectName}/environments/{environmentId}/telemetry");
 
@@ -93,6 +95,25 @@ public static class TelemetryEndpoints
                 attributes, limit, cursor)));
         });
 
+        environment.MapGet("/traces", (HttpContext context, string projectName, string environmentId,
+            ITelemetryEnvironmentDirectory directory, TelemetryStore store, TimeProvider clock) =>
+        {
+            if (Resolve(projectName, environmentId, directory, requireDeclared: false) is not { } key) return NotFound();
+            var query = context.Request.Query;
+            if (TelemetryQueryParser.Range(query["from"], query["to"], clock.GetUtcNow(), out var error) is not { } range) return BadRequest(error!);
+            if (range.To - range.From > TimeSpan.FromDays(30)) return BadRequest("Trace range must be at most 30 days.");
+            if (TelemetryQueryParser.Limit(query["limit"], 100, 500) is not { } limit) return BadRequest("'limit' must be 1 to 500.");
+            return Results.Ok(store.QueryTraces(key, TelemetryAdmissionPolicy.UnixNanos(range.From),
+                TelemetryAdmissionPolicy.UnixNanos(range.To), limit));
+        });
+        environment.MapGet("/traces/{traceId}", (string projectName, string environmentId, string traceId,
+            ITelemetryEnvironmentDirectory directory, TelemetryStore store) =>
+        {
+            if (Resolve(projectName, environmentId, directory, requireDeclared: false) is not { } key) return NotFound();
+            if (traceId.Length != 32 || !traceId.All(char.IsAsciiHexDigit)) return BadRequest("Invalid trace id.");
+            return Results.Ok(store.QueryTrace(key, traceId.ToLowerInvariant()));
+        });
+
         environment.MapGet("/tokens", (string projectName, string environmentId,
             ITelemetryEnvironmentDirectory directory, ITelemetryIngestCredentials credentials) =>
             Resolve(projectName, environmentId, directory, requireDeclared: false) is { } key
@@ -101,7 +122,7 @@ public static class TelemetryEndpoints
 
         environment.MapPost("/tokens", (HttpContext context, string projectName, string environmentId,
             TelemetryIngestTokenRequest? request, ITelemetryEnvironmentDirectory directory,
-            ITelemetryIngestCredentials credentials) =>
+            ITelemetryIngestCredentials credentials, TelemetryOptions options) =>
         {
             if (Resolve(projectName, environmentId, directory, requireDeclared: true) is not { } key) return NotFound();
             try
@@ -109,7 +130,7 @@ public static class TelemetryEndpoints
                 var actor = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Id;
                 var (token, secret) = credentials.Create(key.Project, key.Environment, request?.Name, request?.Signals,
                     request?.ExpiresAt, actor);
-                var endpoint = $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{OtlpBasePath}";
+                var endpoint = options.PublicOtlpEndpoint ?? RequestEndpoint(context);
                 return Results.Ok(new TelemetryIngestTokenCreatedResponse(TelemetryIngestTokenResponse.From(token), secret,
                     endpoint, "Authorization=Bearer " + secret));
             }
@@ -125,6 +146,10 @@ public static class TelemetryEndpoints
             && credentials.Revoke(key.Project, key.Environment, tokenId)
                 ? Results.NoContent() : NotFound());
     }
+
+    /// <summary>The intake base URL under the address the caller reached Studio at.</summary>
+    public static string RequestEndpoint(HttpContext context)
+        => $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{OtlpBasePath}";
 
     private static async Task Receive(HttpContext context, TelemetryIntakeService intake, string signal)
     {

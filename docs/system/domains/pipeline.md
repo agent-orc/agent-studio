@@ -44,6 +44,22 @@ without a flight uses its recovery retry time, and other batches name the next
 pilot tick. These are observation deadlines, not a promise of publication.
 The batch panel shows these facts beside the flight queue and batch history.
 
+The state read also reports `laneIdle` (AGT-3857): how long a formed batch
+waited while the project ran no batch gate, by cause. `per-task-holder` means a
+direct integration held the project reservation, an approved per-task push was
+pending, or per-task gates held the gate slots. `restart-recovery` means the
+server restarted, or a previous process's flight claim or batch was still being
+recovered. `planner` means nothing held the lane and the planner had not
+started the batch yet. Each pilot tick observes the lane. The open interval is
+stored in the batch store, so a restarted process closes it at the last
+observation and records the downtime as `restart-recovery`. The response gives
+the current cause, minutes per cause for the last 24 hours and 7 days, and the
+20 latest intervals, each naming its cause. The batch panel shows the current
+cause and the 24-hour split. A flight claim owner records its process start
+time, so a server that comes back under the same process id (PID 1 in a
+container) expires the previous owner's claim on its first tick. It does not
+wait for the two-minute heartbeat.
+
 An interrupted deterministic red batch ends as `Paused` with reason
 `isolation interrupted` on the next pilot tick when unresolved members remain.
 The pilot derives any child findings, releases the parent members to planning,
@@ -64,7 +80,14 @@ records with the actor, card, reason, and time. The existing eject path returns
 the remaining members to planning; the operator move requests a close on the
 next planner tick.
 The batch panel lists pending cards that have not joined a formed or running
-batch. A run without a finish event counts as running only while its batch is
+batch.
+An operator gate infrastructure retry records a durable request for the card's current
+review attempt and returns its request id immediately. The next pilot tick checks the
+park and review again, then moves and enqueues under the tick lock. The state read
+reports pending, applied, and refused retry requests with any refusal reason. Clicks
+during a pending request return its id; a refused request may be submitted again after
+its cause is fixed.
+A run without a finish event counts as running only while its batch is
 in the running phase; after interruption, the panel uses `phaseAtUtc` to show
 the elapsed run time. Detached flights include their batch, detach time, and
 lease deadline in the state response and panel. The project's durable flight
@@ -152,12 +175,52 @@ integrated by a per-card gate). The project Flow health view reads them with the
 cycle-time rows, whose `reviewAspectSeconds` split review time per `aspect-*`
 step inside Post Processing.
 
+### Testing strategy (AGT-3965)
+
+`testing.strategy` is the one per-project test placement setting. It selects
+existing mechanisms and adds none; the model review aspects run before
+integration in every strategy. A project without a stored value resolves to
+`fast`. Before AGT-3965 a project without a testing section ran pre-merge with
+the full suite, so every such project changes behaviour with this release.
+
+| Strategy | Per card, before integration | Integration | After integration |
+|---|---|---|---|
+| `fast` (default) | Build and affected tests (`testing.perCard` = `affected`) | Right after the review passed, through the post-merge integration gate below (`testing.mode` = `post-merge`) | Merge window: the base suite and the affected routine suites. Nightly: the full routine suite. Production release: the release full suite (`delivery.fullSuite`) |
+| `balanced` | As fast | As fast | Merge window: the base suite and every routine suite. Nightly and release as fast |
+| `strict` | Build in review; full suite in the batch gate (`affected` off, `pre-merge`) | After a green batch | None (the behaviour before AGT-3965) |
+
+The Owner chooses the strategy on the project settings page or with
+`PUT /api/projects/{name}/testing` (`{"strategy":"balanced"}`). The route
+accepts only `strategy`; a body with only `perCard` or `mode` is refused with
+400. `GET /api/projects/{name}/testing`, `GET /api/projects/settings`
+(`testingStrategy`) and the project snapshot (`settings.testingStrategy`)
+return the strategy. `testingPerCard` and `testingMode` stay readable for one
+release and are derived from it; a stored legacy `perCard` or `mode` is
+ignored. The runner state route
+(`/api/runner/post-merge/projects/{project}`) carries `windowSuites`
+(`affected` or `routine`), and the merge-window run selects from it.
+
+In a post-merge strategy develop is checked only by the T3 runs below: the
+coding daemon's host scheduler (AGT-3967) discovers every fast and balanced
+project through `GET /api/runner/post-merge/projects`, and hand-installed
+timers remain a fallback. When
+develop has a first-parent commit that no reported T3 run covers, that commit
+is at least six hours old, and no run reported in the last six hours,
+`PostMergeCoverageService` reports the project as `missing`. The settings page
+and the project Operations view show the warning, and Needs you shows a
+`post-merge.missing` item. Any receipt counts, a skip or a red run included;
+a run on the current tip or a report within six hours clears it. The tip comes
+from the `origin/<branch>` ref file and the age from one `git rev-list -n 1
+--first-parent --before` per tip pair. Studio does not fall back to pre-merge
+on this warning; the red-develop fallback below is the only automatic one.
+
 ### Per-project integration test placement (AGT-3314)
 
-`testing.mode` defaults to `pre-merge`. That path retains the existing
-per-card integration gate and optional pre-merge batch gate. In `post-merge`
-the Remote Review runs the affected T1 plan, the batch route is disabled, and
-the integration gate compiles the exact merged tree. It repeats the affected
+`testing.mode` is derived from `testing.strategy` (AGT-3965): `strict` is
+`pre-merge`, `fast` and `balanced` are `post-merge`. The pre-merge path retains
+the existing per-card integration gate and optional pre-merge batch gate. In
+`post-merge` the Remote Review runs the affected T1 plan, the batch route is
+disabled, and the integration gate compiles the exact merged tree. It repeats the affected
 selection when develop moved over a path changed by the reviewed delivery,
 or when review and merge evidence cannot prove a disjoint merge. Merge and
 publication locks are keyed by project and integration branch; the aggregate
@@ -186,8 +249,9 @@ is classified by the `HumanReviewEscalation` funnel when its normal run path
 escalates it. The funnel records the card ID in the post-merge run state.
 While that card is in Escalated, or a red develop has lasted at least
 two hours, the project temporarily resolves to `pre-merge`. A green T3 receipt
-clears the recorded card ID. Agent Studio remains in `pre-merge` until its T1 replay
-median is at most ten minutes. The gate-economics seven-day view reports lead
+clears the recorded card ID. Agent Studio is no longer held in `pre-merge`
+(owner decision of 20 to 22 November 2026, AGT-3965); it follows its testing
+strategy like every project. The gate-economics seven-day view reports lead
 time and gate minutes per card for comparison after a project switches.
 
 ### Post-merge develop checks (T3, AGT-3311)
@@ -196,8 +260,11 @@ time and gate minutes per card for comparison after a project switches.
 runner unit. The window timer polls each minute; the pure close rule runs after
 six first-parent integration commits or 30 minutes from the oldest pending
 commit, whichever comes first. The worker fetches develop once and pins
-`FETCH_HEAD` before selecting the union of changed-path test projects. Unknown
-paths run every routine suite. The nightly timer runs at 02:15 and 04:15 in
+`FETCH_HEAD` before selecting the union of changed-path test projects. Every
+window runs the project's [base suite](#base-suite-agt-3966) first; a path
+outside every area selects the base suite alone. A project without a base suite
+keeps the earlier fallback: a path outside every area runs every routine
+suite. The nightly timer runs at 02:15 and 04:15 in
 the existing coverage slot window. It runs the routine full suite on the same
 exact-tip rule, using AGT-3232 class partitions across free local host slots.
 T3 treats a suite without `shards` as `auto`; a declared shard count still
@@ -223,6 +290,106 @@ alter integration transitions.
 The Dossier's recorded working decisions are D1 T-B, D2 A, D3 A, D4 A,
 D5 L-B, D6 A, D7 A-B, D8 A, D9 A, and D10 A. This card implements T3 under
 D1 T-B and retains D3 A as the before-delivery policy for its later card.
+
+### Base suite (AGT-3966)
+
+`testSuites[].category: base` in `.agent-studio/project.yml` marks a small
+fixed set that answers one question: does the product still start, and do its
+main paths work. Every merge-window run executes it after `commands.build`.
+Strategy `fast` adds the routine suites of the touched areas. Strategy
+`balanced` adds every routine suite. The nightly run keeps the full routine
+suite without the base suite, and a Production release still needs the
+release full suite on the candidate (`delivery.fullSuite`, AGT-3313).
+
+`PostMergeRunPlan.SelectAffected` maps paths to areas. `backend/` and
+`backend.Tests/` select `backend-routine`, `runner/` and `runner.Tests/` select
+`runner-routine`, `task-server/` and `task-server.Tests/` select
+`task-server-routine`, and `frontend/` selects `frontend-unit`. A shared .NET
+library (`contracts/`, `orchestration-decisions/`, `cli-hosting/`,
+`retention/`, `testsupport/`) selects the three .NET routine suites. Any other
+path, for example `docs/`, `scripts/` or `CHANGELOG.md`, selects no routine
+suite when a base suite exists.
+
+Three cases still select every routine suite, so a base suite never hides a
+code change from the window:
+
+- A repository-wide build input (`PostMergeRunPlan.IsGlobalInput`): any
+  `Directory.Build.*`, `Directory.Packages.props`, a root `global.json`,
+  `NuGet.config` or solution file, and anything under `.agent-studio/`. These
+  match the per-card global inputs (`GeneratedTestProjectMap.GlobalInput`).
+- A path in an area whose suite the project does not configure, for example
+  `task-server/` in a project without `task-server-routine`.
+- A project whose routine suites carry none of the ids above. The area map
+  describes Agent Studio's layout only, so such a project has no areas, and
+  every window runs its base suite plus every routine suite.
+
+How to choose base tests:
+
+- The set together must finish within about ten minutes on the run host,
+  after the window's build. Its summed `expectedDurationSeconds` stays at or
+  below 600; `PostMergeRunTests` pins this for Agent Studio.
+- Do not repeat `commands.build`: the window has already built the solution,
+  the release build check and the frontend. Reuse that output (`--no-build`,
+  the existing bundle).
+- Take one start of the real product with no mocked API, plus fast tests of
+  the main paths: architecture and guard tests, the transition boundary, and
+  one endpoint each for the task list and the release path. Leave out tests of
+  a single feature; the routine suite of the touched area covers them.
+- Keep it stable. A flaky base test makes every window red, whatever changed.
+
+Agent Studio's base suite (measured on 22 November 2026 on agent-runner-01, 376 s in total):
+
+| Suite | Command | Measured |
+|---|---|---|
+| `backend-base` | Backend tests filtered to `.Architecture.`, `Category=Guard`, `TransitionDecisionBoundaryTests`, `MonolithDecisionBoundaryTests`, `LocalStateStartupTests`, `TaskListProjectFilterEndpointTests` and `IntegrationReleaseServiceTests` (265 tests) | 55 s |
+| `frontend-unit-base` | `test:ci` with `--include` for the app, the studio shell, the task service, the core routes and task detail (5 files, 100 tests) | 198 s |
+| `product-start` | `scripts/base-product-start.sh`: publishes the Debug build without rebuilding, starts backend and frontend on isolated ports, and runs `e2e/system/base-product-start.spec.ts` (health, create a card through the API, the board shows it) | 123 s (78 s of it a frontend rebuild that a clean post-merge checkout skips) |
+
+#### Stage deploy after a green window
+
+`delivery.deployAfterGreenWindow: true` in project.yml opts a project in. A
+green merge-window run on the integration tip then counts as the release gate,
+and the integration release reconciler (AGT-3891) creates the tip's release and
+queues one Staging job for it. A red window blocks the release. Without the
+opt-in, a green window does not release. The tip waits with a reason that
+names the setting, and a green nightly run or a card verification on that
+commit releases it as before. The key sits under `delivery` because `deploy` is the
+schema 2 list of deploy steps and schema 1 forbids it. The opt-in only works
+where an integration release already works: Staging and Production declared,
+a static artifact, and no promotion train. Agent Studio declares no Stage
+environment (its Studio instance is its Production, AGT-3879), so it does not
+opt in.
+
+### Flaky tests after integration (AGT-3976)
+
+Every failed routine suite in a window or nightly run gets one same-tip repeat,
+including runner, task-server, frontend, and nightly shards. .NET failures use
+method names without theory display arguments and a focused filter that retains
+the original exclusions. Each failed method repeats once; a method that recovers
+is flaky and a method that fails twice remains red. Other suite kinds, or output
+that cannot form a safe focused filter, repeat the original suite command once.
+Build and prepare failures remain blocking. Active test quarantines retain their
+existing exemption.
+
+Receipts retain the original failure excerpt and record repeat attempts
+through `retried`, recovered names in `flakyTests`, and a distinct `flakyCount`.
+Recovered tests do not make develop red, including when other tests stay red.
+`/api/develop-states` exposes the latest terminal run's `flakyCount` and
+`mostFlakyTests14Days`, ordered by the number of distinct runs per test. Flaky
+occurrences are persisted for 14 days independently of the 512-receipt limit.
+Names are available for recognized .NET and Vitest console failures; an unnamed
+suite recovery is reported in the receipt reason without inventing a test name.
+Receipts also record the admission sample as `startLoadPerCore` and
+`startOccupiedSlots`, including on a red result. This is a start snapshot, not
+monitoring of load throughout execution.
+
+Attribution excludes paths under `docs/` and root Markdown documentation even
+when suite selection conservatively ran every suite. Source and build changes
+continue to use the test project's reference graph and conservative fallback.
+When no relevant merge remains, the receipt records `noRelevantMerges`; its
+repair card says no merge explains the failure and identifies an environmental
+or flaky suspect. Attribution errors remain unresolved rather than claiming a
+proof of independence.
 
 ### Red develop repair (AGT-3312)
 
@@ -295,7 +462,7 @@ record. Batch gate waiting and acquisition callbacks emit lane events for
 each gated member, including the holding project when one is known.
 
 Each row also carries the delivery-target `baseline` of the
-[pipeline Dossier](../../pipeline-delivery-target/index.html) section 07
+[pipeline Dossier](../../operations/pipeline-delivery-target/index.html) section 07
 (AGT-3309). These metrics only read evidence. They change no gate, review or
 board read. A missing input is null (Unknown), never zero.
 
@@ -631,6 +798,10 @@ is behind their current integration tip. They replay the final delivery tree's
 net change against the merge base as one commit on the tip. The gate and push
 use that exact commit, and the card maps each delivery commit absent from the
 tip to it. A tree conflict names its files and starts an agent round.
+When the per-task integration route creates a merge commit, its subject names
+the delivered card key and title. `MergeIntoDevelopRunner` supplies that identity
+to `GitService` for direct and mechanically recovered merges, so first-parent
+history and downstream changelogs identify the card.
 
 The merge route is the documented strategy for non-linear deliveries. It is
 the same `--no-ff` merge the per-task integration uses, so every delivery SHA,
@@ -666,12 +837,20 @@ its failing test names. The members the existing path would send to per-card
 suites are gated once more together as a child batch on the cohort's code
 (`sameCodeRerunOfRunId` names the red run; trigger
 `flaky-suspect-regate:<batch>`). A green re-gate publishes them and no
-per-card suite starts. A second red on the same code, or any other result,
-takes the existing per-card path; that re-gate records no proven-red finding.
-The mark is written once before the re-gate, so a restart or an isolation
-retry never re-gates the same red again. The batch state shows
-`flakySuspect` (red run, failing tests, `active`, and the re-gate's outcome
-`passed`, `reproduced` or `inconclusive` with its minutes) on the red batch.
+per-card suite starts. A re-gate the gate host could not run is recorded
+`requeued`: the red batch pauses and its members return to the batch pool,
+as any host-held flight does. A second red on the same code (`reproduced`), a
+green re-gate whose publication did not land (`unpublished`, with the reason),
+or any other result (`inconclusive`) takes the existing per-card path; that
+re-gate records no proven-red finding. The mark is written once before the
+re-gate, so a restart or an isolation retry never re-gates the same red again.
+When the red batch leaves isolation before the re-gate recorded a verdict
+(claim lost, cancellation, process death), the `isolation interrupted`
+recovery records the re-gate `interrupted` and sends the members per-card.
+The batch state shows `flakySuspect` (red run, failing tests, `active`, and
+the re-gate's outcome with its minutes and reason) on the red batch. A
+reproduced or interrupted mark is no longer active, so the failed-test
+ranking stops counting its run as a flaky suspect run.
 
 Assembly sorts a replay that is not a conflict into three outcomes
 (`BatchGatePolicy.ReplayDisposition`): a mapped success is admitted; a member
@@ -683,8 +862,35 @@ pauses the batch as before. An unattributable ejection does not count toward
 the conflict cascade guard and ends a run of consecutive conflicts; its replay
 record keeps the route it failed on (`merge` for a merge-parent mismatch).
 Conflicted members start a bounded agent merge round with the conflicted files
-named in the steer prompt. Cascade-deferred members stay in Auto Review for the
+and the other cards whose integrated commits touched them named in the steer
+prompt. Cascade-deferred members stay in Auto Review for the
 next batch plan; when no member was admitted, that plan is requested at once.
+
+Integration conflicts (AGT-3968). A merge conflict is an orchestration error
+first; an agent round is the last resort:
+
+- *Sibling deferral.* A member that conflicts with the candidate tip but
+  replays cleanly onto the batch base conflicts only with a sibling admitted
+  ahead of it. It is recorded with replay outcome `sibling-deferred`, the
+  conflicting files and the sibling keys, stays queued like a cascade-deferred
+  member, does not count toward the cascade guard and opens no agent round.
+  The card timeline gets `integration_sibling_deferred`. AGT-3897's
+  conflict-free round of 17 November was this case (sibling AGT-3891).
+- *Union of add/add hunks.* When the merge route conflicts and every hunk of
+  every conflicted file only adds lines on both sides relative to the merge
+  base (an empty base section in `git merge-file --diff3`), the replay keeps
+  both blocks, integration side first, and commits the merge. A rebase-route
+  conflict tries this merge route before it is reported. Any hunk that changes
+  or removes a merge-base line refuses the union for the whole member, which
+  then goes to the agent as before. The batch gate builds and tests the
+  candidate; a red gate isolates the member as usual. The admitted replay
+  record carries `unionResolvedHunks`, and the card timeline gets
+  `integration_union_resolved` naming each hunk (`path:line`, lines per side).
+- *Parking.* When the automatic round is refused (budget spent, continuations
+  disabled, no fenced ref), the card leaves the batch queue and is escalated
+  with the conflicting files and the other cards involved. Before AGT-3968 a
+  refused round only logged `batch-conflict-round-refused` and the card was
+  ejected by the same conflict in every later batch.
 Unattributable members return to per-task fallback after publication. Before
 scheduling a gate, the tick checks whether the integration branch already
 contains its result by ancestry or patch equivalence.
@@ -934,7 +1140,10 @@ card badge reads, for example, "Per-task fallback · batch-ejected · waits
 for engine decision". Across all review
 generations of the process, at most one gate slot fewer than the gate host has
 runs a per-task fallback gate at once (AGT-3466). The other fallbacks wait for a
-slot before they choose their merged candidate, so the batch slot stays free. A
+slot before they choose their merged candidate, so the batch slot stays free.
+While a batch gate runs, at most one other full suite starts on the gate host,
+and a per-card suite is not started for a card a batch gates anyway (AGT-3856,
+see [the batch gate delivery state](../../operations/gates/batch-gate.md)). A
 formed batch whose base moved before replay closes again with compatible members
 on the new base only when at least `minimumSize` remain. A batch that pauses (a second
 infrastructure red, flaky red, an unresolved cohort, a failed publication or an
@@ -1168,7 +1377,8 @@ credential and starts the release-pinned backend binary with
 `--pull-build-test-gate-worker <Studio API URL>`. Set `GATE_WORKER_TOKEN`
 on that host. Pull gate mutations authenticate this service bearer directly;
 they do not require a browser `X-Client-Id` header. The worker registers,
-claims from `/api/pull-gates`, downloads
+claims from `/api/pull-gates` (an empty claim answers `204 No Content`, which
+the worker treats as no work and polls again after 2 s; AGT-3649-D12), downloads
 the exact source bundle, heartbeats its lease, streams progress through those
 heartbeats, and uploads the result and files from its `artifacts/` run folder.
 The server refuses uploads after lease expiry or replacement. Completed
@@ -1524,6 +1734,11 @@ only what ran; the log owns the arithmetic.
     totals survive both review rounds and epochs.
   - The core run carries its accumulated tokens on its live row. Its earlier
     runs are counted but not priced a second time.
+- **Legacy OpenAI usage.** Current rows and `earlierRuns` retain
+  `inputIncludesCached` and `usageNormalization` provenance. Cost reads apply
+  the ledger's OpenAI cached-input rule to older rows with no provenance when
+  input is at least the positive cache-read count. This keeps card and project
+  pipeline costs aligned with ledger receipts without rewriting stored rows.
 - **Decision model.** `StepModelUsage` is built from the same one-shot or CLI
   receipt the token ledger records. `DecisionModelContext` carries it to the
   decision row and to `decidedByModel` on the bus decision message.
@@ -2111,9 +2326,11 @@ comparison before Quality Studio's verdict contract can decide a review.
   Model-based test selection is rejected by the Gates Dossier section 5.
 - `backend/Features/Pipeline/PerCardVerifyPlanner.cs`,
   `GeneratedTestProjectMap.cs` and `FastCheckPlanner.cs`: tier T1 of the
-  [pipeline Dossier](../../pipeline-delivery-target/index.html) (decision D1,
-  option T-B; AGT-3310). The project setting `testing.perCard` is `full` by
-  default, which keeps the Remote Review plan byte-identical. With `affected`,
+  [pipeline Dossier](../../operations/pipeline-delivery-target/index.html) (decision D1,
+  option T-B; AGT-3310). The project setting `testing.perCard` is derived from
+  `testing.strategy` (AGT-3965): `strict` is `full`, which keeps the Remote
+  Review plan byte-identical, and `fast` (the default) and `balanced` are
+  `affected`. With `affected`,
   the plan builds `folderToTestProjects` at plan time from the `.csproj`
   `ProjectReference` graph (every project directory maps to the test projects
   whose transitive closure contains it, process-level references included) and
@@ -2138,9 +2355,8 @@ comparison before Quality Studio's verdict contract can decide a review.
   work-package` in `review-verification.json`, and the integration gate then
   does not reuse it (`IntegrationGateReusePolicy`), so the integration gate
   keeps its own test stage until the project switches to post-merge checks
-  (Dossier P7). Operators switch the setting with `PUT
-  /api/projects/{name}/testing` (`{"perCard":"affected"}`); the settings page
-  shows it read-only.
+  (Dossier P7). The Owner picks the strategy on the project settings page or
+  with `PUT /api/projects/{name}/testing` (`{"strategy":"fast"}`).
 - `backend/Features/Pipeline/PreMainTestGate.cs`: fail-closed release boundary
   that forces the full test level before a configured merge can advance
   `main`, irrespective of lane settings, diff input, or history.
@@ -2847,6 +3063,27 @@ operator changes cause the step to fail before its writer runs.
   and timeline event remain the detailed evidence. Every merge `Error` names a
   typed code (AGT-2995); the code table and the Error sites are in
   [rebase-merge-and-integration-invariants.md](../../concepts/platform-architecture/rebase-merge-and-integration-invariants.md#typed-codes-of-an-error-outcome-agt-2995).
+- A merge-only continuation is attributed when its earlier non-merge delivery
+  commits name the card (or carry its runner attribution trailer) and each new
+  merge imports a parent already on the integration branch. The run result SHA
+  receives a `commits[]` entry with that run's attempt id. A passing review
+  escalated solely for missing attribution can be restored to Auto Review by
+  the integration-history repair sweep, then admitted to a batch without a new
+  review. Other missing attribution escalations name the affected commits and
+  the required next-round action.
+- AGT-3968: the runner reports the round's start head as the pickup base, and
+  that head already holds the runner's own develop merge. A round that adds no
+  commit of its own (it only got the runner's merge, or it re-delivered the
+  earlier SHA unchanged) therefore has an empty `base..result` range. The
+  completion then attributes the integration merge-base range under the same
+  continuation rule, with no new commit or only new integration merges allowed.
+  A re-delivered commit keeps its first producer, so the batch admission check
+  (`RemoteCommitAttributionGuard.CoversDelivery`) also accepts the result
+  commit recorded in this attempt's delivery generation (`deliveryAttemptId`).
+  The integration-history repair sweep (report
+  `integration-history-attribution-v3.json`, 14-day window) applies the same
+  rule to escalated passing reviews, so AGT-3820, AGT-3905 and AGT-3914 return
+  to Auto Review without a coding run.
 - `post-orchestrator-review` is an early completeness gate. It must never render
   as a final verdict.
 - `post-orchestrator-decision` is the single final orchestrator verdict.
@@ -3038,13 +3275,28 @@ operator changes cause the step to fail before its writer runs.
   merge, independent of `ReviewDecisionOrchestrator:Enabled`:
   - Before the merge, Dossier placement fetches the fenced result and requires
     its diff against the integration line to stay inside exactly one
-    `docs/<slug>/` directory. The Dossier at that commit must pass the
+    `docs/<slug>/` directory. The diff starts at the merge base of the result
+    with the whole integration line: the Studio lane, a freshly fetched
+    `origin/<branch>`, and the run's recorded base when that line carries it
+    (`GitService.ChangedPathsAgainstIntegrationLine`, AGT-3964). The runner
+    merges the integration branch into the concept branch at the start of
+    every round, and the lane only catches up with origin at the next merge,
+    so a diff against the lane alone counted develop's own files and Dossiers
+    as the concept's change (AGT-3951). The Dossier at that commit must pass the
     concept contract, and `results/deliverables.md` must name it. The
     backend-owned `status.md` keeps that reference, as summary generation
     does. A refused delivery merges nothing. Its merge row records failure
     code `concept-dossier-rejected` with `Dossier placement failed:
     <findings>`. The delivery-chain reconciler then escalates the
     integrating card with that reason.
+  - `concept-dossier-rejected` is replayable (`ReplayAvailable`): Retry
+    integration (`POST /api/tasks/{id}/integration/retry`) replays the same
+    reviewed delivery through `ConceptDeliveryPostSteps`, so placement runs
+    again without a new agent round and the passed review is reused. A
+    Dossier already on the integration branch at the delivered content merges
+    as a no-op and is recorded as placed. An Escalated card that integrates
+    this way returns to Human Review with its Dossier linked. The automatic
+    gate-environment ladder never replays it.
   - After the merge, placement writes `.metadata/concept-workbench.json` with
     the integrated commit. Concept review reruns on that commit. The step then
     writes the `concept-sight-review` marker. An integrated but incomplete
@@ -3578,8 +3830,12 @@ every gate path:
 - `GateFailureTriagePolicy` classifies a gate log whose reason carries the
   invalid-definition text as `product` with kind `definition`, before any
   environment marker. The failing items are the `path [code]` pairs. Routing
-  starts the one fix round with the issues and the rule above, never attaches
-  the card to a shared cause, and never spends the environment replay budget.
+  starts at most two automatic fix rounds per card and preparation fingerprint,
+  even when each round produces a new delivery SHA. The prompt carries the
+  reported issue codes, paths, lines, and messages without advice for a
+  different rule. A repeated failure then parks the card with that issue line.
+  Definition failures never attach the card to a shared cause or spend the
+  environment replay budget.
 - Review checks the file first. Right after the completion gate,
   `ProjectDefinitionGate` reads `project.yml` at the exact subject SHA through
   git and validates it, including the existence of every referenced file. An
@@ -3636,15 +3892,18 @@ in
   repository-relative. Their segments contain only letters, digits, `.`, `_`, and
   `-`; no segment is empty, `.`, or `..`, or starts with `-`. A lone `.` names
   the repository root only for a container build context.
-- `environments` are ordered and exactly Staging, then Production. Production
+- `environments` are ordered: Staging alone, or Staging then Production. Production
   must be `protected`: every deploy, redeploy, or rollback into it needs an
   Owner or Maintainer approval. Staging deploys automatically after
-  integration, so `protected: true` on Staging is refused as
+  integration (an integration release, see
+  [Deployment as a first-class citizen](../../concepts/deployment-first-class.md#releases-standard-lifecycle-and-deploy-runs-bd-1)), so `protected: true` on Staging is refused as
   `staging-protection-unsupported`. The shorthand `[staging, production]`
   protects Production. When the file describes a deployment but omits
-  `environments` or `lifecycles`, the default is Staging, protected Production,
-  and the standard lifecycle.
-- `lifecycles.standard`: Staging is automatic after integration; Production
+  `environments`, the default is Staging and protected Production. When
+  `lifecycles` is omitted, the standard lifecycle follows the declared
+  environments. Removing Production therefore also requires removing its
+  lifecycle phase and all Production-scoped steps and references.
+- `lifecycles.standard`: Staging is automatic after integration; when declared, Production
   requires successful Staging and approval by Owner or Maintainer.
 - `tenants` declare customer installations with a unique portable `name`,
   optional unique `tags`, and a nonempty list of participating `environments`.
@@ -3762,6 +4021,12 @@ pins one compose service to the release artifact digest before pulling and
 starting it. It resolves secret names under the claimed job lease, sends step
 log messages to the deployment log, and records each step
 result. A failed deployment queues the previous healthy artifact for rollback.
+The status projection keeps the last successful release as the lifecycle
+baseline, while `releaseUncertain` marks a later failed deploy or rollback
+whose host state a newer successful host report has not confirmed. Consumers
+must not label the baseline or failed rollback target as the running release
+while this flag is set. A refused rollback returns its specific server reason;
+the operator can redeploy a known release or fix forward.
 The deploy host needs OpenSSH and access to the artifact store; its SSH target
 needs Python 3, and container targets also need Docker Compose. The
 [deploy host API contract](../contracts/deploy-host-api.md) defines the claim,
@@ -3776,6 +4041,23 @@ refuses it by route identity. The project
 Settings page shows the diagram, the validation result with line and path, and
 the migration preview with its confirm button in the Pipeline section below
 Execution.
+
+A schema 2 file that declares environments but no artifacts or deploy steps
+(the migration's result without JSON declarations) gets `deployStepsAvailable`
+on the read. Settings > Pipeline and Deploy > Overview then offer the deploy-step
+form: one static or container artifact, and per environment the target host,
+the static directory or the compose file and service, the health URL and the
+health timeout. `POST .../deploy-steps/preview` returns the proposal in the
+migration's dry-run shape and writes nothing; it appends `artifacts` and
+`deploy` to the unchanged file and accepts only plain values, because the
+project.yml reader has no escapes. `POST .../deploy-steps` repeats the form with
+both preview digests and writes under the same precondition and `PostStep`
+classification as the migration. Until steps exist, Deploy > Overview shows
+each declared environment as "No deploy step yet"; the JSON declaration
+guidance appears only for schema 1 projects. The `static-web` template carries
+this section commented out below a `# --- schema 2 deployment ---` marker; the
+`container-service` template is schema 2 with its deploy steps, telemetry
+environments and runbooks already declared (M5).
 
 A static site over SSH and a compose service, each with a health check:
 

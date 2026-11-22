@@ -34,6 +34,22 @@ public sealed class RunTargetDatabaseState
     public string Status { get; set; } = "provisioning";
     public long? VolumeBytes { get; set; }
     public DateTime? MeasuredAt { get; set; }
+
+    /// <summary>Result of the last readiness check (AGT-3878); null before the first one.</summary>
+    public bool? Ready { get; set; }
+    public int? Connections { get; set; }
+    public int? MaxConnections { get; set; }
+    public DateTime? ConnectionsMeasuredAt { get; set; }
+
+    /// <summary>The schedule of the last spec; it keeps applying while Studio is unreachable.</summary>
+    public RunTargetBackupPolicy Backup { get; set; } = RunTargetBackupPolicy.Default;
+
+    /// <summary>Dumps in the backup directory, newest last. Only the host writes or prunes them.</summary>
+    public List<RunTargetBackupRecord> Backups { get; set; } = [];
+    public DateTime? LastBackupAttemptAt { get; set; }
+
+    /// <summary>Why the last attempt failed; cleared by the next successful dump.</summary>
+    public string? LastBackupError { get; set; }
 }
 
 /// <summary>Host-local state of one project environment. Holds no secret values.</summary>
@@ -53,6 +69,7 @@ public sealed class RunTargetAppState
     public DateTime? LastRestartAt { get; set; }
     public DateTime? NextRestartAt { get; set; }
     public int DockerRestarts { get; set; }
+    public int TotalDockerRestarts { get; set; }
 
     /// <summary>Restarts of the current revision inside the crash-rollback window.</summary>
     public List<DateTime> RecentRestarts { get; set; } = [];
@@ -63,6 +80,8 @@ public sealed class RunTargetAppState
     /// <summary>True while Studio sends no spec for the app and the host keeps it as it is.</summary>
     public bool Held { get; set; }
     public List<RunTargetEvent> Events { get; set; } = [];
+    /// <summary>Masked tail from the last crashed revision, retained across a rollback.</summary>
+    public List<string> CrashOutput { get; set; } = [];
 }
 
 public sealed class RunTargetHostState
@@ -80,6 +99,13 @@ public sealed class RunTargetHostState
 
     /// <summary>Managed databases by <see cref="RunTargetNames.DatabaseKey"/>.</summary>
     public Dictionary<string, RunTargetDatabaseState> Databases { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Finished database operations (AGT-3878). An operation id Studio sends
+    /// again is answered from here and never runs twice; the newest
+    /// <see cref="RunTargetDatabaseBackups.KeptResults"/> are kept.
+    /// </summary>
+    public List<RunTargetDatabaseOperationResult> OperationResults { get; set; } = [];
 }
 
 /// <summary>

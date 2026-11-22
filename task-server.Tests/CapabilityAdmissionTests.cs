@@ -5,15 +5,16 @@ using Xunit;
 
 namespace TaskServer.Tests;
 
-public sealed class CapabilityAdmissionTests
+public sealed class CapabilityAdmissionTests(InitializedStoreFixture fixture) : IClassFixture<InitializedStoreFixture>
 {
+    private readonly InitializedStoreFixture _fixture = fixture;
     private static readonly DateTimeOffset Start =
         new(2026, 7, 25, 10, 0, 0, TimeSpan.Zero);
 
     [Fact]
     public async Task Unverified_recovery_from_a_limit_can_claim_coding_work()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -45,7 +46,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Confirmed_incident_signal_blocks_a_ready_provider_capability()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -70,7 +71,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Review_claim_stops_on_confirmed_provider_incident()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -95,7 +96,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Incident_uses_one_durable_canary_and_requires_new_real_success()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -175,10 +176,53 @@ public sealed class CapabilityAdmissionTests
                 CredentialHealthVersion: 2), runner, default);
     }
 
+    /// <summary>
+    /// AGT-3948: the runner reserves once before its status command and again
+    /// right before its real request. The second reservation extends the
+    /// owner's window, so a success after the first 45 seconds still releases
+    /// the hold instead of leaving the binding indeterminate.
+    /// </summary>
+    [Fact]
+    public async Task Owner_reservation_extends_the_canary_window_for_the_real_request()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await SeedTasksAsync(store, 1);
+        var key = CapabilityProtocol.ProviderAuthentication("claude");
+        await RegisterAndAdvertiseAsync(store, clock, "runner-a", "instance-a", "host-a",
+            CapabilityProtocol.CodingExecutor, key);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await AdvertiseHealth(2, "indeterminate");
+        clock.Advance(TimeSpan.FromSeconds(70));
+        Assert.Equal("canary", (await store.ReserveProviderCanaryAsync("runner-a", "instance-a", "claude", default)).Reason);
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        Assert.Equal("canary", (await store.ReserveProviderCanaryAsync("runner-a", "instance-a", "claude", default)).Reason);
+        clock.Advance(TimeSpan.FromSeconds(25));
+        await AdvertiseHealth(3, "healthy", clock.GetUtcNow().UtcDateTime);
+
+        Assert.Equal("claimed", (await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a",
+            RequiredCapabilities: [CapabilityProtocol.CodingExecutor, key]), "runner-a", default)).Status);
+
+        async Task AdvertiseHealth(long generation, string outcome, DateTime? successAt = null)
+            => await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+                "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, generation,
+                [new AdvertisedCapabilityDto(CapabilityProtocol.CodingExecutor, "executor"),
+                 new AdvertisedCapabilityDto(key, "provider-auth", "ready",
+                     CredentialGeneration: "generation-a", CredentialObservedAt: clock.GetUtcNow().UtcDateTime,
+                     LastRealSuccessAt: successAt, EffectiveSource: "environment-file",
+                     HealthOutcome: outcome,
+                     ServiceAvailability: outcome == "healthy" ? "available" : "unknown",
+                     CredentialHealth: outcome == "healthy" ? "valid" : "unknown")],
+                CredentialHealthVersion: 2), "runner-a", default);
+    }
+
     [Fact]
     public async Task Invalid_shared_binding_creates_one_runbook_item_and_other_provider_can_claim()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -212,7 +256,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Indeterminate_requires_fifteen_minutes_before_one_diagnosis_item()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -240,7 +284,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Incident_failed_canaries_back_off_at_sixty_one_twenty_and_three_hundred_seconds()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -279,7 +323,7 @@ public sealed class CapabilityAdmissionTests
     public async Task Quota_and_network_keep_their_policy_owners_without_login_items(
         string outcome, string status)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -321,7 +365,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Repeated_codex_auth_failure_drains_only_codex_while_claude_and_review_continue()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -457,7 +501,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Missing_workflow_push_scope_is_visible_but_does_not_block_coding_claims()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -521,7 +565,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Provider_auth_probe_transitions_are_retained_across_advertisements_and_restart()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -605,7 +649,7 @@ public sealed class CapabilityAdmissionTests
     [InlineData(CapabilityProtocol.LeaseAuthority)]
     public async Task Shared_foundation_failure_drains_the_host_but_not_another_host(string capability)
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -649,7 +693,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Half_open_reserves_exactly_one_canary_and_failed_canary_returns_to_longer_cooldown()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -719,7 +763,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Capability_drain_does_not_revoke_running_work_and_restart_preserves_the_drain()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -757,7 +801,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Successful_provider_probe_clears_auth_drain_without_runner_restart()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -818,7 +862,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Advertisement_generation_and_failure_idempotency_reject_stale_writes()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -903,7 +947,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Credential_observation_v2_round_trips_and_old_observation_cannot_replace_it()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -932,7 +976,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Delayed_observation_cannot_advance_generation_over_newer_credential_metadata()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
@@ -972,7 +1016,7 @@ public sealed class CapabilityAdmissionTests
     [Fact]
     public async Task Restarted_instance_is_not_fenced_by_the_previous_instances_clock()
     {
-        using var temp = new TempDirectory();
+        using var temp = _fixture.CreateDirectory();
         var clock = new ManualTimeProvider(Start);
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();

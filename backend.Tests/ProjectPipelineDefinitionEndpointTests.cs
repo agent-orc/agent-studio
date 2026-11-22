@@ -85,10 +85,11 @@ public sealed class ProjectPipelineDefinitionEndpointTests : IAsyncLifetime
         var registry = new ProjectRegistry(configuration, NullLogger<ProjectRegistry>.Instance);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, configuration);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration);
+        var environments = new ProjectEnvironmentService(configuration, scanner, git, settings, new FakeTimeProvider());
         var service = new ProjectPipelineDefinitionService(
             scanner,
             registry,
-            new ProjectEnvironmentService(configuration, scanner, git, settings, new FakeTimeProvider()),
+            environments,
             new ManagedRepositoryMutationService(git, logger: NullLogger<ManagedRepositoryMutationService>.Instance),
             NullLogger<ProjectPipelineDefinitionService>.Instance);
 
@@ -96,6 +97,7 @@ public sealed class ProjectPipelineDefinitionEndpointTests : IAsyncLifetime
         builder.WebHost.UseTestServer();
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton(service);
+        builder.Services.AddSingleton(environments);
         _app = builder.Build();
         _app.MapProjectPipelineDefinitionEndpoints();
         await _app.StartAsync();
@@ -210,9 +212,12 @@ public sealed class ProjectPipelineDefinitionEndpointTests : IAsyncLifetime
             .Where(route => route.Path is not null)
             .ToArray();
 
-        var route = Assert.Single(classified);
-        Assert.Equal(("POST", "/api/projects/{projectName}/pipeline-definition/migration"), (route.Method, route.RawText));
-        Assert.Equal((ExecutionAdmissionPath.PostStep, ExecutionAdmissionPolicy.ExecutionDisabledCode), (route.Path, route.Expected));
+        Assert.Equal(
+            [("POST", "/api/projects/{projectName}/pipeline-definition/deploy-steps"),
+             ("POST", "/api/projects/{projectName}/pipeline-definition/migration")],
+            classified.Select(route => (route.Method, route.RawText!)).OrderBy(route => route.Item2, StringComparer.Ordinal));
+        Assert.All(classified, route => Assert.Equal(
+            (ExecutionAdmissionPath.PostStep, ExecutionAdmissionPolicy.ExecutionDisabledCode), (route.Path, route.Expected)));
     }
 
     [Fact]
@@ -308,6 +313,91 @@ public sealed class ProjectPipelineDefinitionEndpointTests : IAsyncLifetime
         Assert.True(definition.GetProperty("valid").GetBoolean());
         Assert.False(definition.GetProperty("migrationAvailable").GetBoolean());
     }
+
+    [Fact]
+    public async Task Deploy_step_form_writes_steps_so_schema_two_environments_become_deployable()
+    {
+        // F5: without JSON declarations the migration writes environments but no deploy steps.
+        Directory.Delete(Path.Combine(Repository, "docs", "deployments", "environments"), true);
+        Git("commit", "-q", "-am", "drop declarations");
+        await ConfirmMigration();
+        using (var migrated = await GetJson("/api/projects/Website/pipeline-definition"))
+            Assert.True(migrated.RootElement.GetProperty("deployStepsAvailable").GetBoolean());
+        Assert.Empty(Environments().DeclarationFiles(Project)!);
+        var form = new
+        {
+            artifactType = "static",
+            artifactPath = "dist",
+            environments = new[]
+            {
+                new { name = "staging", target = "web-vm", directory = "/srv/www/_staging/site", healthUrl = "https://example.test/_staging/", healthTimeoutSeconds = 60 },
+                new { name = "production", target = "web-vm", directory = "/srv/www/site", healthUrl = "https://example.test/", healthTimeoutSeconds = 120 },
+            },
+        };
+        var commits = Git("rev-list", "--count", "HEAD");
+
+        using var previewResponse = await _client!.PostAsJsonAsync("/api/projects/Website/pipeline-definition/deploy-steps/preview", form);
+        using var preview = JsonDocument.Parse(await previewResponse.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, previewResponse.StatusCode);
+        Assert.True(preview.RootElement.GetProperty("valid").GetBoolean(), preview.RootElement.ToString());
+        Assert.Equal(commits, Git("rev-list", "--count", "HEAD"));
+
+        using var response = await _client!.PostAsJsonAsync("/api/projects/Website/pipeline-definition/deploy-steps", new
+        {
+            form.artifactType, form.artifactPath, form.environments,
+            baseSha256 = preview.RootElement.GetProperty("baseSha256").GetString(),
+            proposalSha256 = preview.RootElement.GetProperty("proposalSha256").GetString(),
+        });
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(preview.RootElement.GetProperty("proposedYaml").GetString(), File.ReadAllText(DefinitionFile));
+        Assert.Equal(body.RootElement.GetProperty("commitSha").GetString(), Git("rev-parse", "HEAD"));
+        Assert.Equal(".agent-studio/project.yml", Git("show", "--name-only", "--format=", "HEAD"));
+        Assert.False(body.RootElement.GetProperty("definition").GetProperty("deployStepsAvailable").GetBoolean());
+        var environments = Environments().DeclarationFiles(Project)!;
+        Assert.Equal(["stage", "production"], environments.Select(file => file.Declaration!.Id));
+    }
+
+    [Fact]
+    public async Task Deploy_step_confirm_with_changed_form_is_refused_as_stale()
+    {
+        Directory.Delete(Path.Combine(Repository, "docs", "deployments", "environments"), true);
+        Git("commit", "-q", "-am", "drop declarations");
+        await ConfirmMigration();
+        var environments = new[]
+        {
+            new { name = "staging", target = "web-vm", directory = "/srv/www/_staging/site", healthUrl = "https://example.test/_staging/", healthTimeoutSeconds = 60 },
+            new { name = "production", target = "web-vm", directory = "/srv/www/site", healthUrl = "https://example.test/", healthTimeoutSeconds = 120 },
+        };
+        using var previewResponse = await _client!.PostAsJsonAsync("/api/projects/Website/pipeline-definition/deploy-steps/preview",
+            new { artifactType = "static", artifactPath = "dist", environments });
+        using var preview = JsonDocument.Parse(await previewResponse.Content.ReadAsStringAsync());
+        var before = File.ReadAllText(DefinitionFile);
+
+        using var response = await _client!.PostAsJsonAsync("/api/projects/Website/pipeline-definition/deploy-steps", new
+        {
+            artifactType = "static", artifactPath = "build", environments,
+            baseSha256 = preview.RootElement.GetProperty("baseSha256").GetString(),
+            proposalSha256 = preview.RootElement.GetProperty("proposalSha256").GetString(),
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(before, File.ReadAllText(DefinitionFile));
+    }
+
+    private async Task ConfirmMigration()
+    {
+        using var dryRun = await GetJson("/api/projects/Website/pipeline-definition/migration");
+        using var response = await _client!.PostAsJsonAsync("/api/projects/Website/pipeline-definition/migration", new
+        {
+            baseSha256 = dryRun.RootElement.GetProperty("baseSha256").GetString(),
+            proposalSha256 = dryRun.RootElement.GetProperty("proposalSha256").GetString(),
+        });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private ProjectEnvironmentService Environments() => _app!.Services.GetRequiredService<ProjectEnvironmentService>();
 
     [Fact]
     public async Task Unknown_project_is_not_found()

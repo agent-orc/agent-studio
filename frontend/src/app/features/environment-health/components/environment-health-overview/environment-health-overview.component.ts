@@ -13,6 +13,8 @@ export const HEALTH_STATUS_TONE: Readonly<Record<HealthStatus, StatusTone>> = {
   invalid: 'warning',
   down: 'danger',
   unknown: 'neutral',
+  'not-observed': 'neutral',
+  'not-deployed': 'neutral',
 };
 
 export function healthStatusTone(status: string): StatusTone {

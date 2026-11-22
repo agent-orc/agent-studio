@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.Runner;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Projects;
@@ -10,6 +11,51 @@ namespace AgentStudio.Projects;
 // confirms the pending removal or the repository holds a tombstone for it.
 public sealed partial class ProjectEnvironmentService
 {
+    /// <summary>Runtime incidents without a second declaration read, which may fail for an unrelated broken file.</summary>
+    public IReadOnlyDictionary<string, RuntimeIncident> RuntimeIncidents(string project)
+    {
+        lock (_gate)
+        {
+            return TryLoad(project)?.RuntimeIncidents
+                .GroupBy(row => row.EnvironmentId, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Last().Incident, StringComparer.Ordinal)
+                ?? new Dictionary<string, RuntimeIncident>(StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>Last successful container templates owned by one deploy host, including existing deployments.</summary>
+    public IReadOnlyList<DeployHostContainerTarget> ContainerTargets(string hostId)
+    {
+        lock (_gate)
+        {
+            if (!Identifier.IsMatch(hostId)) return [];
+            var targets = new List<DeployHostContainerTarget>();
+            foreach (var watch in _scanner.GetWatchPaths())
+            {
+                var (declarations, _, _) = ReadRunTargetDeclarations(watch.Name);
+                var state = TryLoad(watch.Name);
+                if (declarations is null || state is null) continue;
+                foreach (var environment in declarations.Where(item => item.TargetHostId == hostId
+                             && item.Template == "container" && item.Hosting is null && item.SshSteps.Count == 0))
+                foreach (var job in state.Jobs.Where(job => job.EnvironmentId == environment.Id && job.HostId == hostId
+                             && job.Template == "container" && job.Status == "healthy" && !job.IsStop)
+                             .GroupBy(job => job.Tenant, StringComparer.Ordinal)
+                             .Select(group => group.Last()))
+                    targets.Add(new(watch.Name, environment.Id, ContainerName(job), job.Artifact));
+            }
+            return targets;
+        }
+    }
+
+    private static string ContainerName(DeployJob job)
+    {
+        var project = job.Project.Length <= 64 && job.Project.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_')
+            ? job.Project
+            : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(job.Project)))[..16]
+                .ToLowerInvariant();
+        return "deploy-" + project + "-" + job.EnvironmentId + (job.Tenant is null ? "" : "-" + job.Tenant);
+    }
+
     /// <summary>
     /// Desired state of every edge-hosted environment placed on this host. An
     /// open deploy job is claimed, or its lease renewed, by the same read, so a
@@ -54,6 +100,7 @@ public sealed partial class ProjectEnvironmentService
             // or the last healthy job's snapshot, owns the running routes.
             var projected = new List<(RunTargetProjectRead Read, RunTargetEnvironmentSpec Spec)>();
             var databaseDeletions = new List<RunTargetDatabaseDeletion>();
+            var databaseOperations = new List<RunTargetDatabaseOperation>();
             foreach (var read in projects)
             {
                 var databases = new List<(string, IReadOnlyList<ProjectDatabaseDefinition>)>();
@@ -71,6 +118,8 @@ public sealed partial class ProjectEnvironmentService
                 }
                 TrackDatabases(read.State, hostId, databases);
                 databaseDeletions.AddRange(DatabaseDeletions(read.Project, read.State, hostId));
+                databaseOperations.AddRange(DatabaseOperations(read.Project, read.State, hostId,
+                    read.Hosted.Select(item => item.Id).ToArray(), now));
             }
 
             // An owner Studio does not see as hosted keeps its domains while the
@@ -110,7 +159,7 @@ public sealed partial class ProjectEnvironmentService
             var claimsText = JsonSerializer.Serialize(claims, _json);
             if (claimsText != (storedClaims ?? JsonSerializer.Serialize(new Dictionary<string, RunTargetDomainClaim>(), _json)))
                 WriteStoreFile(claimsPath, claimsText);
-            return new(hostId, now, environments, skipped, removals, databaseDeletions);
+            return new(hostId, now, environments, skipped, removals, databaseDeletions, databaseOperations);
         }
     }
 
@@ -120,7 +169,11 @@ public sealed partial class ProjectEnvironmentService
     /// decision and its actor), and queues a rollback when the host rolled back
     /// from a crash-looping release.
     /// </summary>
-    public int RecordObserved(string hostId, RunTargetObservedReport report)
+    public int RecordObserved(string hostId, RunTargetObservedReport report) => RecordObserved(hostId, report, null);
+
+    /// <param name="measured">Receives each database record the report changed, for the operations intake (AGT-3878).</param>
+    public int RecordObserved(string hostId, RunTargetObservedReport report,
+        ICollection<(string Project, ManagedDatabaseRecord Record)>? measured)
     {
         lock (_gate)
         {
@@ -141,6 +194,7 @@ public sealed partial class ProjectEnvironmentService
                         if (placement is null || !RunTargetDesiredStatePolicy.AcceptsRemoval(placement)) continue;
                         state.Placements.Remove(placement);
                         state.Observed.RemoveAll(row => row.EnvironmentId == observation.EnvironmentId);
+                        state.RuntimeIncidents.RemoveAll(row => row.EnvironmentId == observation.EnvironmentId);
                         state.RunTargetRemovals.Add(RunTargetDesiredStatePolicy.Removed(placement, now));
                         _quota?.SetProjectEnvironment(group.Key, SlotKey(observation.EnvironmentId), false);
                         if (state.RunTargetRemovals.Count > RunTargetDesiredStatePolicy.MaxRemovalRecords)
@@ -151,11 +205,36 @@ public sealed partial class ProjectEnvironmentService
                     }
                     // Without a valid declaration the host cannot be checked.
                     var declaration = declarations?.FirstOrDefault(item => item.Id == observation.EnvironmentId);
-                    if (declaration?.Hosting is null || declaration.TargetHostId != hostId) continue;
+                    if (declaration is null || declaration.TargetHostId != hostId
+                        || declaration.Hosting is null && (declaration.Template != "container" || declaration.SshSteps.Count > 0))
+                        continue;
                     var sanitized = RunTargetDesiredStatePolicy.Sanitize(observation, now);
                     if (sanitized is null) continue;
                     accepted++;
                     var stored = state.Observed.LastOrDefault(row => row.EnvironmentId == declaration.Id)?.Observation;
+                    if (sanitized.CrashOutput is { Count: 0 } && stored?.CrashOutput is { Count: > 0 }
+                        && sanitized.RunningArtifact == stored.RunningArtifact)
+                        sanitized = sanitized with { CrashOutput = stored.CrashOutput };
+                    var newRollback = sanitized.Events.Any(item => item.Kind == "crash-rollback"
+                        && !(stored?.Events ?? []).Contains(item));
+                    var crashKind = sanitized.State == "crash-loop" ? "crash-loop" : newRollback ? "crash-rollback" : null;
+                    var incidentRow = state.RuntimeIncidents.LastOrDefault(row => row.EnvironmentId == declaration.Id);
+                    if (crashKind is not null)
+                    {
+                        var prior = incidentRow?.Incident;
+                        var incident = prior is { EndedAt: null }
+                            ? prior with { Kind = crashKind, UpdatedAt = now, Restarts = sanitized.Restarts }
+                            : new RuntimeIncident($"{declaration.Id}/{now:yyyyMMddTHHmmssZ}", crashKind, now, now,
+                                sanitized.Restarts);
+                        state.RuntimeIncidents.RemoveAll(row => row.EnvironmentId == declaration.Id);
+                        state.RuntimeIncidents.Add(new(declaration.Id, incident));
+                    }
+                    else if (incidentRow?.Incident is { EndedAt: null } open
+                        && sanitized.State == "running" && stored is not null && sanitized.ObservedAt > stored.ObservedAt)
+                    {
+                        state.RuntimeIncidents.Remove(incidentRow);
+                        state.RuntimeIncidents.Add(new(declaration.Id, open with { EndedAt = now, UpdatedAt = now }));
+                    }
                     if (RunTargetDesiredStatePolicy.Supersedes(stored, sanitized))
                     {
                         state.Observed.RemoveAll(row => row.EnvironmentId == declaration.Id);
@@ -168,7 +247,66 @@ public sealed partial class ProjectEnvironmentService
                 }
                 if (JsonSerializer.Serialize(state, _json) != before) Save(group.Key, state);
             }
-            return accepted + RecordDatabaseObservations(hostId, report.Databases ?? [], now);
+            return accepted + RecordDatabaseObservations(hostId, report.Databases ?? [], now, measured)
+                + RecordDatabaseOperationResults(hostId, report.DatabaseOperations ?? [], now);
+        }
+    }
+
+    /// <summary>Publish durable incident transitions after an authenticated host observation was stored.</summary>
+    public int PublishRuntimeIncidentEvents(OrchestratorLog activity, IEnumerable<string>? projects = null)
+    {
+        lock (_gate)
+        {
+            var published = 0;
+            var requested = projects?.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var watch in _scanner.GetWatchPaths().Where(item => requested is null || requested.Contains(item.Name)))
+            {
+                if (TryLoad(watch.Name) is not { } state) continue;
+                var (declarations, _, _) = ReadRunTargetDeclarations(watch.Name);
+                var changed = false;
+                foreach (var row in state.RuntimeIncidents.ToArray())
+                {
+                    var incident = row.Incident;
+                    var name = declarations?.FirstOrDefault(item => item.Id == row.EnvironmentId)?.Name
+                        ?? row.EnvironmentId;
+                    if (!incident.OpenedEventRaised || incident.AlertedKind != incident.Kind)
+                    {
+                        var raised = activity.Append(watch.Path, new OrchestratorLogEntry
+                        {
+                            Ts = _clock.GetUtcNow().UtcDateTime,
+                            Kind = OrchestratorLogKinds.Alert,
+                            Topic = OrchestratorLogTopics.EnvironmentIncidentOpened,
+                            Summary = $"{watch.Name} {name}: {(incident.Kind == "crash-rollback" ? "Crash rollback" : "Crash loop")} after {incident.Restarts} restarts",
+                            Reasoning = $"Host observed container incident {incident.Id}.",
+                        });
+                        incident = incident with { OpenedEventRaised = incident.OpenedEventRaised || raised,
+                            AlertedKind = raised ? incident.Kind : incident.AlertedKind };
+                        changed |= raised;
+                        if (raised) published++;
+                    }
+                    if (incident.EndedAt is not null && incident.OpenedEventRaised && !incident.RecoveryEventRaised)
+                    {
+                        var raised = activity.Append(watch.Path, new OrchestratorLogEntry
+                        {
+                            Ts = _clock.GetUtcNow().UtcDateTime,
+                            Kind = OrchestratorLogKinds.Observation,
+                            Topic = OrchestratorLogTopics.EnvironmentIncidentRecovered,
+                            Summary = $"{watch.Name} {name}: container recovered after {incident.Restarts} restarts",
+                            Reasoning = $"Host observed container recovery for incident {incident.Id}.",
+                        });
+                        incident = incident with { RecoveryEventRaised = raised };
+                        changed |= raised;
+                        if (raised) published++;
+                    }
+                    if (changed)
+                    {
+                        state.RuntimeIncidents.Remove(row);
+                        state.RuntimeIncidents.Add(row with { Incident = incident });
+                    }
+                }
+                if (changed) Save(watch.Name, state);
+            }
+            return published;
         }
     }
 

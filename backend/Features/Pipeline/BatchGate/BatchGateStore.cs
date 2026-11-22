@@ -27,6 +27,10 @@ public sealed record BatchGateEjectRequest(string Project, string TaskKey,
     string Actor, string Reason, DateTimeOffset RequestedAtUtc,
     string Status = "pending", DateTimeOffset? ReleasedAtUtc = null);
 
+public sealed record BatchGateInfrastructureRetry(string RequestId, string Project, string TaskKey,
+    string ReviewAttemptId, string Actor, DateTimeOffset RequestedAtUtc,
+    string Status = "pending", string? Reason = null, DateTimeOffset? CompletedAtUtc = null);
+
 public sealed record BatchGateRunRecord(
     string BatchRunId, string BatchId, string MembershipDigest, string BaseSha,
     string CandidateSha, string GateProfile, string GateProfileDigest,
@@ -64,7 +68,31 @@ public sealed record BatchGateReplayRecord(
     string OriginalResultSha, string TipBeforeSha, string? TipAfterSha,
     IReadOnlyList<AgentStudio.Git.RebasedCommitReplacement> Replacements,
     IReadOnlyList<string> ConflictedFiles, string Outcome,
-    DateTimeOffset RecordedAtUtc, string? Strategy = null, string? Reason = null);
+    DateTimeOffset RecordedAtUtc, string? Strategy = null, string? Reason = null)
+{
+    /// <summary>AGT-3968: add/add hunks this admitted replay resolved by union.</summary>
+    public IReadOnlyList<AgentStudio.Git.UnionResolvedHunk>? UnionResolvedHunks { get; init; }
+
+    /// <summary>AGT-3968: admitted members ahead of a sibling-deferred member that touched its conflicting files.</summary>
+    public IReadOnlyList<string>? SiblingKeys { get; init; }
+}
+
+/// <summary>Replay outcomes that keep a member queued for a later batch.</summary>
+public static class BatchReplayOutcomes
+{
+    public const string CascadeDeferred = "cascade-deferred";
+
+    /// <summary>
+    /// AGT-3968: the member conflicts only with a sibling admitted ahead of it
+    /// in the same batch; it merges cleanly onto the batch base. No agent can
+    /// resolve a conflict with an unpublished sibling, so the member waits for
+    /// the sibling to publish instead of opening an agent round.
+    /// </summary>
+    public const string SiblingDeferred = "sibling-deferred";
+
+    public static bool IsDeferred(string? outcome)
+        => outcome is CascadeDeferred or SiblingDeferred;
+}
 
 public sealed record BatchGateMemberRecord(
     string TaskKey, string RunAttempt, long DeliveryEpoch, string OriginalResultSha,
@@ -383,6 +411,76 @@ public sealed partial class BatchGateStore
         if (File.Exists(path)) return;
         WriteOnce(path, new BatchGateEjectRequest(
             project, taskKey, actor, reason, DateTimeOffset.UtcNow));
+    }
+
+    private string InfrastructureRetryPath(string project, string reviewAttemptId)
+        => Path.Combine(_root, "requests", "infrastructure-retry", SafeName(project),
+            SafeName(reviewAttemptId) + ".json");
+
+    public BatchGateInfrastructureRetry RequestInfrastructureRetry(string project, string taskKey,
+        string reviewAttemptId, string actor, DateTimeOffset at)
+    {
+        var path = InfrastructureRetryPath(project, reviewAttemptId);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var request = new BatchGateInfrastructureRetry(Guid.NewGuid().ToString("N"), project,
+            taskKey, reviewAttemptId, actor, at);
+        // A small cross-process file lock makes two simultaneous clicks see the
+        // same pending request. A refused request may be tried again once its
+        // cause has been fixed, without changing the reviewed delivery.
+        var lockPath = path + ".lock";
+        FileStream? gate = null;
+        for (var attempt = 0; attempt < 100 && gate is null; attempt++)
+        {
+            try { gate = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException) when (attempt < 99) { Thread.Sleep(10); }
+        }
+        using (gate)
+        {
+            if (File.Exists(path))
+            {
+                var existing = Read<BatchGateInfrastructureRetry>(path);
+                if (existing.Status is "pending" or "applied") return existing;
+                var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    File.WriteAllText(temporary, JsonSerializer.Serialize(request, Json));
+                    File.Move(temporary, path, overwrite: true);
+                    BatchGateDurableWrites.Completed(path);
+                }
+                finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            }
+            else WriteOnce(path, request);
+            return Read<BatchGateInfrastructureRetry>(path);
+        }
+    }
+
+    public BatchGateInfrastructureRetry? ReadInfrastructureRetry(string project, string reviewAttemptId)
+    {
+        var path = InfrastructureRetryPath(project, reviewAttemptId);
+        return File.Exists(path) ? Read<BatchGateInfrastructureRetry>(path) : null;
+    }
+
+    public IReadOnlyList<BatchGateInfrastructureRetry> ListInfrastructureRetries(string project)
+    {
+        var folder = Path.Combine(_root, "requests", "infrastructure-retry", SafeName(project));
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json").Select(Read<BatchGateInfrastructureRetry>)
+                .OrderByDescending(request => request.RequestedAtUtc).ToArray()
+            : [];
+    }
+
+    public void CompleteInfrastructureRetry(BatchGateInfrastructureRetry request, string status, string? reason,
+        DateTimeOffset at)
+    {
+        var path = InfrastructureRetryPath(request.Project, request.ReviewAttemptId);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, JsonSerializer.Serialize(request with
+            { Status = status, Reason = reason, CompletedAtUtc = at }, Json));
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
     public BatchGateEjectRequest? ReadEject(string project, string taskKey)

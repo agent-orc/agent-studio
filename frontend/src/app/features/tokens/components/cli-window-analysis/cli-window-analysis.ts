@@ -7,6 +7,7 @@ import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-
 import { UsageCockpitService } from '../../../usage-cockpit/services/usage-cockpit.service';
 import { TokensApiService, type CliWindowAttribution } from '../../services/tokens-api.service';
 import type { QuotaWindow } from '../../../quota';
+import type { SubscriptionWeek } from '../../models/subscription-week.model';
 
 type AnalysisPeriod = '1h' | '24h' | '7d';
 
@@ -34,19 +35,40 @@ export class CliWindowAnalysisComponent {
   readonly openAnalysis = output<void>();
 
   readonly period = signal<AnalysisPeriod>('24h');
+  readonly selectedSubscriptionKey = signal<string | null>(null);
   readonly periods: readonly AnalysisPeriod[] = ['1h', '24h', '7d'];
   readonly segmentedPeriods = this.periods.map(value => ({ value, label: value, testid: 'cli-window-period-' + value }));
-  readonly row = computed(() => this.quotaRows().find(row => row.cliType === this.cliType()) ?? null);
+  readonly accounts = computed(() => this.quotaRows().filter(row => row.cliType === this.cliType()));
+  readonly row = computed<CliUsageQuotaRow | null>(() => {
+    const accounts = this.accounts();
+    if (accounts.length === 0) return null;
+    return accounts.find(row => row.subscriptionKey === this.selectedSubscriptionKey()) ?? accounts[0];
+  });
+  readonly subscriptionKey = computed(() => this.row()?.subscriptionKey ?? null);
+  readonly subscriptionWeek = signal<SubscriptionWeek | null>(null);
+  readonly subscriptionWeekError = signal(false);
+  private readonly loadWeek = effect(onCleanup => {
+    const cli = this.cliType();
+    const key = this.subscriptionKey();
+    this.subscriptionWeek.set(null);
+    this.subscriptionWeekError.set(false);
+    const request = this.tokensApi.getSubscriptionWeek(cli, key).subscribe({
+      next: value => this.subscriptionWeek.set(value),
+      error: () => this.subscriptionWeekError.set(true),
+    });
+    onCleanup(() => request.unsubscribe());
+  });
   readonly label = computed(() => this.cliType() === 'claude' ? 'Claude' : 'Codex');
   readonly attributions = signal<Record<string, CliWindowAttribution | null>>({});
-  private readonly windowRequestKey = computed(() => `${this.cliType()}:` +
+  private readonly windowRequestKey = computed(() => `${this.cliType()}:${this.accounts().length}:` +
     (this.row()?.windows ?? []).map(window => `${window.label}|${window.resetAt ?? ''}|${window.windowHours ?? ''}`).join(';'));
   private readonly fetchWindows = effect(onCleanup => {
     this.windowRequestKey();
     const row = untracked(() => this.row());
     const cli = untracked(() => this.cliType());
+    const sharedProvider = untracked(() => this.accounts().length > 1);
     this.attributions.set({});
-    const subscriptions = (row?.windows ?? []).filter(window => window.windowHours != null)
+    const subscriptions = (sharedProvider ? [] : row?.windows ?? []).filter(window => window.windowHours != null)
       .map(window => this.tokensApi.getCliWindowAttribution(cli, window.label, window.resetAt).subscribe({
         next: value => this.attributions.update(current => ({ ...current, [this.windowKey(window)]: value })),
         error: () => this.attributions.update(current => ({ ...current, [this.windowKey(window)]: null })),
@@ -100,12 +122,23 @@ export class CliWindowAnalysisComponent {
     const burn = this.windowBurn(window, durationHours);
     return burn == null || durationHours == null ? null : Math.min(999, burn * durationHours);
   }
+  windowPeriod(window: { label: string; resetAt: string | null; observedStartAt?: string | null }): string | null {
+    if (!/week|7\s*d/i.test(window.label) || !window.resetAt) return null;
+    const end = Date.parse(window.resetAt);
+    if (!Number.isFinite(end)) return null;
+    return `Provider week: ${window.observedStartAt ? 'start' : 'estimated start'} ${this.formatUtc(window.observedStartAt ?? new Date(end - 7 * 86_400_000).toISOString())}; reset ${this.formatUtc(window.resetAt)}.`;
+  }
   formatTokens(value: number): string {
     if (value < 1_000) return value.toLocaleString('en-US');
     if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}K`;
     return `${(value / 1_000_000).toFixed(2)}M`;
   }
   formatPct(value: number | null): string { return value == null ? 'Unknown' : `${value.toFixed(1)}% / h`; }
+  capturedShare(tokens: number, total: number): string { return total > 0 ? `${(tokens / total * 100).toFixed(1)}%` : '0%'; }
+  selectSubscription(event: Event): void {
+    this.selectedSubscriptionKey.set((event.target as HTMLSelectElement).value || null);
+  }
+  formatUtc(value: string | null): string { return value ? new Date(value).toLocaleString('en-GB', { timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'short' }) + ' UTC' : 'Unknown'; }
 
   private windowKey(window: QuotaWindow): string {
     return `${window.label}|${window.resetAt ?? ''}`;

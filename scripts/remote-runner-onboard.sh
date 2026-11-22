@@ -454,6 +454,13 @@ printf '[remote] kernel-limits file=%s max_user_instances=%s max_user_watches=%s
 REMOTE_KERNEL_LIMITS
 fi
 
+# Refresh privileged assets before activating a role. Re-running onboarding on
+# an existing host must not leave the previous helper or CLI allowlist in place.
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tar -C "$repo_root" -cf - scripts/upgrade-agent-runner-deploy.sh deploy/agent-host \
+  | "${ssh_base[@]}" -T "$host" \
+      'set -euo pipefail; upgrade_tmp="$(mktemp -d)"; trap '"'"'rm -rf -- "$upgrade_tmp"'"'"' EXIT; tar -xf - -C "$upgrade_tmp"; sudo bash "$upgrade_tmp/scripts/upgrade-agent-runner-deploy.sh" --apply'
+
 printf '[onboarding] phase=systemd Writing configuration and enabling the OS-owned service.\n'
 resource_governance_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent-host-resource-governance.sh"
 [[ -x "$resource_governance_script" ]] \

@@ -14,9 +14,13 @@ public sealed class ApiHostDiskService(IConfiguration configuration, HostTelemet
     public HostDiskPressureDecision Admission()
         => telemetry.DiskPressure("api-host", Measure(includeConsumers: false));
 
+    /// <summary>The file systems of the last sample; readers never trigger a measurement (AGT-3954).</summary>
+    public IReadOnlyList<HostFilesystemUsageDto>? Latest { get; private set; }
+
     public object Snapshot(bool record = false)
     {
         var disks = Measure(includeConsumers: true);
+        Latest = disks;
         var sample = new HostTelemetrySample(DateTime.UtcNow,
             null, null, null, null, null, null, null, null, null, null,
             Environment.ProcessorCount, 0, Filesystems: disks);

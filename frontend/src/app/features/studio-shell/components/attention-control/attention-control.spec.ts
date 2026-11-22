@@ -64,6 +64,52 @@ describe('AttentionControlComponent', () => {
     });
   }
 
+  it('shows the open incident and links to its card and project Operations', async () => {
+    const incident: OperatorAttentionItem = {
+      id: 'environment.incident-open|alpha|production', type: 'environment.incident-open',
+      project: 'alpha', cardKey: 'health-production-1', cards: ['health-production-1'],
+      title: 'alpha · Production incident', reason: 'Production since 2026-11-09 08:00 UTC: http: HTTP 503',
+      observedAt: '2026-11-09T08:00:00Z', suggestedOperations: [],
+    };
+    const { fixture, http, openReferenceOrNotify, openTab } = await setup('ok', 0, [incident]);
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="studio-attention-trigger"]')!.click();
+    http.expectOne('/api/operator/attention').flush({ items: [incident], count: 1 });
+    await fixture.whenStable();
+    const row = document.querySelector<HTMLElement>('[data-attention-type="environment.incident-open"]')!;
+    expect(row.textContent).toContain('HTTP 503');
+    expect(row.querySelector('[data-testid="attention-incident-status"]')?.textContent).toContain('Incident open');
+    row.querySelector<HTMLButtonElement>('[data-testid="attention-open-operations"]')!.click();
+    expect(openTab).toHaveBeenCalledWith({ kind: 'hub', projectName: 'alpha', section: 'operations' });
+
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="studio-attention-trigger"]')!.click();
+    http.expectOne('/api/operator/attention').flush({ items: [incident], count: 1 });
+    await fixture.whenStable();
+    document.querySelector<HTMLButtonElement>('[data-testid="attention-row-action"]')!.click();
+    expect(openReferenceOrNotify).toHaveBeenCalledWith('health-production-1', { focusDecision: false });
+  });
+
+  it('shows review host drift in the status bar and opens the affected host', async () => {
+    const originalUrl = window.location.href;
+    const drift: OperatorAttentionItem = {
+      id: 'review-host.drift|review-1', type: 'review-host.drift', project: null, cardKey: null,
+      cards: ['AGT-1'], title: 'Review host differs from Stable',
+      reason: 'Review host first-run-review graded AGT-1 on another commit.',
+      observedAt: '2026-11-09T09:00:00Z', suggestedOperations: [],
+      evidence: [{ label: 'Review host', href: '/workspace/settings/environment?host=first-run-review' }],
+    };
+    const { fixture, http, overlays } = await setup('ok', 0, [drift]);
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="review-host-drift-cue"]')?.textContent)
+      .toContain('Review host');
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="studio-attention-trigger"]')!.click();
+    http.expectOne('/api/operator/attention').flush({ items: [drift], count: 1 });
+    await fixture.whenStable();
+    expect(document.querySelector('[data-testid="attention-row"]')?.textContent).toContain('AGT-1');
+    document.querySelector<HTMLButtonElement>('[data-testid="attention-row-action"]')!.click();
+    expect(overlays.open).toHaveBeenCalledWith('remote-hosts');
+    expect(window.location.hash).toBe('#/workspace/settings/environment?host=first-run-review');
+    history.replaceState(null, '', originalUrl);
+  });
+
   it('shows completion readiness for each review card and updates the ready count after a decision', async () => {
     const reviewItems = [items[0], { ...items[0], id: 'h2', cardKey: 'AGT-4', cards: ['AGT-4'] }];
     const { fixture, http } = await setup('ok', 0, reviewItems);

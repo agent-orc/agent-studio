@@ -562,7 +562,7 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
             entry => entry.Kind == TimelineEventKinds.LaneChanged
                      && entry.Details?.GetValueOrDefault("to") == TaskStates.Escalated);
         Assert.StartsWith(
-            $"automatic recovery budget used: 1/1 for delivery {deliverySha[..12]}",
+            "automatic recovery budget used: 1/1 for this card",
             laneChange.Details!["reason"],
             StringComparison.Ordinal);
         Assert.Contains(

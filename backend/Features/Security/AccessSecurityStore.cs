@@ -14,7 +14,7 @@ namespace AgentStudio.Security;
 /// Role bindings, groups, and service accounts live in the same state file;
 /// see <c>Iam/AccessSecurityStore.Iam.cs</c>.
 /// </summary>
-public sealed partial class AccessSecurityStore
+public sealed partial class AccessSecurityStore : IUserDisplayNames
 {
     public const string SessionCookieName = "__Host-agentstudio-session";
     // Browsers reject __Host- cookies over local HTTP. Only the local profile
@@ -746,6 +746,15 @@ public sealed partial class AccessSecurityStore
         lock (_gate) return StateLocked().Users.OrderBy(x => x.Username).ToList();
     }
 
+    public string? DisplayNameOf(string userId)
+    {
+        lock (_gate)
+        {
+            var name = StateLocked().Users.FirstOrDefault(x => x.Id == userId)?.DisplayName;
+            return string.IsNullOrWhiteSpace(name) ? null : name;
+        }
+    }
+
     public (StudioUser User, string TemporaryPassword) CreateUser(CreateUserRequest request, string? actingUserId = null)
     {
         ValidateUsername(request.Username);
@@ -988,6 +997,23 @@ public sealed partial class AccessSecurityStore
         }
     }
 
+    /// <summary>
+    /// The enrolled runner a deploy host name addresses (F6): a live runner id,
+    /// else the one live runner enrolled under that owner-chosen name. Null when
+    /// no live runner, or more than one, carries the name.
+    /// </summary>
+    public string? DeployHostRunnerId(string? hostId)
+    {
+        if (string.IsNullOrWhiteSpace(hostId)) return null;
+        lock (_gate)
+        {
+            var live = StateLocked().Runners.Where(r => r.RevokedAt is null && r.RetiredAt is null).ToList();
+            if (live.Any(r => r.Id == hostId)) return hostId;
+            var named = live.Where(r => string.Equals(r.Name?.Trim(), hostId, StringComparison.Ordinal)).Take(2).ToList();
+            return named.Count == 1 ? named[0].Id : null;
+        }
+    }
+
     public RunnerPrincipal? AuthenticateRunner(string? bearer)
     {
         if (!TryTokenParts(bearer, "rnr", out var credentialId)) return null;
@@ -1070,6 +1096,33 @@ public sealed partial class AccessSecurityStore
             };
             state.Runners[state.Runners.IndexOf(runner)] = updated;
             SaveLocked(state);
+            return updated;
+        }
+    }
+
+    /// <summary>
+    /// A run host (runner.deploy) sends no claim heartbeat: its deploy claims,
+    /// reports and run-target polls are its contact. A poll stamps
+    /// <see cref="RunnerServiceIdentity.LastSeenAt"/> on the background flush
+    /// tick; a claimed job or a report is saved at once.
+    /// </summary>
+    public RunnerServiceIdentity? RecordDeployHostContact(string runnerId, DeployHostContact contact)
+    {
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var runner = state.Runners.FirstOrDefault(x => x.Id == runnerId);
+            if (runner is null) return null;
+            var now = Now;
+            var updated = runner with
+            {
+                LastSeenAt = now,
+                LastClaimAt = contact == DeployHostContact.Claim ? now : runner.LastClaimAt,
+                LastReportAt = contact == DeployHostContact.Report ? now : runner.LastReportAt,
+            };
+            state.Runners[state.Runners.IndexOf(runner)] = updated;
+            if (contact == DeployHostContact.Poll) _lastSeenDirty = true;
+            else SaveLocked(state);
             return updated;
         }
     }

@@ -366,7 +366,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(1, started.BudgetUsed);
         Assert.Equal(1, started.BudgetLimit);
         Assert.Equal(
-            $"automatic recovery budget used: 1/1 for delivery {deliverySha[..12]}",
+            "automatic recovery budget used: 1/1 for this card on develop. Conflicting files: budget-spent.txt.",
             started.Reason);
         Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
     }
@@ -1067,11 +1067,12 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             NullLogger<StallInterventionReceipts>.Instance);
         var escalation = new HumanReviewEscalation(deps.States, deps.Transitions,
             _tempDir, NullLogger.Instance, deps.Scanner);
+        var watchdogTime = new FakeTimeProvider(new DateTimeOffset(clock));
         var watchdog = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
             lifecycle, new BatchGateStore(_tempDir), null!, deps.Settings,
             deps.Pipeline, new AutoReviewPostProcessingQueue(), deps.Transitions,
             null!, escalation, records, receipts, deps.Configuration,
-            NullLogger<AutoReviewStrandingWatchdog>.Instance);
+            NullLogger<AutoReviewStrandingWatchdog>.Instance, time: watchdogTime);
 
         Assert.Equal(1, await watchdog.RunOnceAsync());
         var first = Assert.Single(records.All());
@@ -1093,6 +1094,10 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.True(undone.Undone, undone.Message);
         Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
         Assert.False((await watchdog.UndoParkAsync(first.Id, "operator")).Undone);
+
+        Assert.Equal(0, await watchdog.RunOnceAsync());
+        clock = clock.AddMinutes(31);
+        watchdogTime.Advance(TimeSpan.FromMinutes(31));
 
         // A second visit gets a distinct receipt, then Retry review mints a
         // successor from the same immutable run without a coding attempt.
@@ -2019,6 +2024,55 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Contains(factory.Services.GetRequiredService<TimelineLog>().ReadAll(
                 factory.Services.GetRequiredService<TaskScannerService>().FindJob(Slug, _watchPath)!.FolderPath),
             row => row.Kind == TimelineEventKinds.ContentReviewRequested);
+    }
+
+    [Fact]
+    public async Task FullScopeReview_RequestsEveryAspectAgainForTheSameDeliveryRun()
+    {
+        // AGT-3845: a card a non-Stable review host graded offers a fresh
+        // review on the current build, not only the brief-fit aspect.
+        var deliverySha = PublishDelivery("release-review.txt", "delivered result\n");
+        var deps = Build(deliverySha, backgroundIntegration: true, briefVersion: "brief-v1");
+        var run = deps.Authority.GetTaskProjection(TaskKey).CurrentRunAttempt!;
+
+        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _tempDir,
+                    ["WatchPaths:0:Name"] = Project,
+                    ["WatchPaths:0:Path"] = _watchPath,
+                    ["WatchPaths:0:RootPath"] = _repo,
+                    ["WatchPaths:0:RepositoryPath"] = _repo,
+                    ["DeliveryChain:Guarded"] = "false",
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IHostedService>();
+                services.RemoveAll<ProjectSettingsService>();
+                services.AddSingleton(deps.Settings);
+                services.RemoveAll<AttemptAuthorityService>();
+                services.AddSingleton(deps.Authority);
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var response = await client.PostAsJsonAsync(
+            $"/api/tasks/{Slug}/content-review?scope=full&watchPath={Uri.EscapeDataString(_watchPath)}", new { });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var review = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt;
+        Assert.NotNull(review);
+        Assert.Equal(run.AttemptId, review.SourceRunAttemptId);
+        Assert.Contains(review.Subject.Plan!.Commands, command => command.Aspect != "requirement-fit");
+        Assert.Null(review.Subject.Plan.VerifyReuseFromAttemptIds);
+        Assert.Equal(TaskStates.AutoReview, factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(Slug, _watchPath)!.State);
+        Assert.Contains(factory.Services.GetRequiredService<TimelineLog>().ReadAll(
+                factory.Services.GetRequiredService<TaskScannerService>().FindJob(Slug, _watchPath)!.FolderPath),
+            row => row.Kind == TimelineEventKinds.ContentReviewRequested
+                && row.Details?.GetValueOrDefault("scope") == "full");
     }
 
     /// <summary>
@@ -4318,7 +4372,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     private static void WriteBatchEvidence(BatchGateStore batches, string batchId,
-        string baseSha, string candidateSha)
+        string baseSha, string candidateSha, string? outcome = "pass", bool published = true)
     {
         var folder = batches.BatchDirectory(batchId);
         var runs = Path.Combine(folder, "runs");
@@ -4330,14 +4384,18 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         File.WriteAllText(Path.Combine(folder, "manifest.json"), JsonSerializer.Serialize(
             new BatchGateManifest(batchId, scope, baseSha, "membership", at, [], [], []), options));
-        File.WriteAllText(Path.Combine(folder, "publication.json"), JsonSerializer.Serialize(
-            new BatchGatePublication(batchId, "membership", "run", baseSha, candidateSha,
-                candidateSha, 1, 1, at), options));
-        var runFile = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("run")))
-            + ".verdict.json";
-        File.WriteAllText(Path.Combine(runs, runFile), JsonSerializer.Serialize(
-            new BatchGateRunVerdict("run", batchId, "membership", candidateSha, "digest",
-                "pass", "pass", evidence, at), options));
+        if (published)
+            File.WriteAllText(Path.Combine(folder, "publication.json"), JsonSerializer.Serialize(
+                new BatchGatePublication(batchId, "membership", "run", baseSha, candidateSha,
+                    candidateSha, 1, 1, at), options));
+        var runName = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("run")));
+        File.WriteAllText(Path.Combine(runs, runName + ".json"), JsonSerializer.Serialize(
+            new BatchGateRunRecord("run", batchId, "membership", baseSha, candidateSha,
+                "profile", "digest", "gate-host", 1, ["dotnet test"], at, evidence), options));
+        if (outcome is not null)
+            File.WriteAllText(Path.Combine(runs, runName + ".verdict.json"), JsonSerializer.Serialize(
+                new BatchGateRunVerdict("run", batchId, "membership", candidateSha, "digest",
+                    outcome, outcome, evidence, at), options));
     }
 
     private string PublishLaterCommit(string name, string? netChangeOf = null)

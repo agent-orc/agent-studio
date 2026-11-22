@@ -1321,6 +1321,7 @@ public static class LeaseEndpoints
                     var detail = urlsMatch
                         ? OneLine(req.ProjectPreflight.Detail)
                         : $"fetch and push URL must both match registered repository '{repository.RepositoryUrl}'";
+                    var previousPreflight = clients.FindRunnerProjectPreflight(clientId, repository.ProjectId);
                     clients.SetRunnerProjectPreflight(clientId, new RunnerProjectPreflight
                     {
                         ProjectId = repository.ProjectId,
@@ -1335,6 +1336,10 @@ public static class LeaseEndpoints
                         // Server receipt time is the cache authority. A host
                         // clock cannot make a stale proof live indefinitely.
                         CheckedAt = DateTime.UtcNow,
+                        FirstFailedAt = succeeded ? null : previousPreflight is { Status: "failed" }
+                            && string.Equals(previousPreflight.Detail, detail, StringComparison.Ordinal)
+                            ? previousPreflight.FirstFailedAt ?? previousPreflight.CheckedAt
+                            : DateTime.UtcNow,
                         CredentialGeneration = req.RepositoryCredentialGeneration,
                     });
                     logger.Log(succeeded ? LogLevel.Information : LogLevel.Warning,
@@ -1966,15 +1971,14 @@ public static class LeaseEndpoints
                 task,
                 attemptId,
                 req.RunnerId,
-                req.OutcomeDecision?.RawFacts.EffectiveModel);
+                req.OutcomeDecision?.RawFacts.EffectiveModel,
+                req.SessionContinuation);
             if (req.SessionContinuation is { } completedSession)
             {
                 AgentStudio.Runner.SessionContinuationLedgerStore.Append(
                     task.FolderPath,
                     AgentStudio.Runner.SessionContinuationLedgerStore.WithReceiptFallback(
                         completedSession, tokenReceipt.TotalTokens));
-                if (!string.IsNullOrWhiteSpace(completedSession.CapturedSessionId))
-                    sessions.BackfillLatestSessionEventCapturedId(task.Id, completedSession.CapturedSessionId, task.WatchPath);
             }
             if (!tokenReceipt.Persisted && !string.IsNullOrWhiteSpace(tokenReceipt.Warning))
             {
@@ -2153,12 +2157,34 @@ public static class LeaseEndpoints
                     }
                     else
                     {
+                        // AGT-3968: the runner reports the round's start head as
+                        // its base, and that head already holds the runner's
+                        // develop merge. A round that adds no commit of its own
+                        // (AGT-3905, AGT-3914) has an empty pickup range and its
+                        // result SHA would never be recorded for this attempt.
+                        var continuationRange = false;
+                        if (deliveryRange.Commits.Count == 0 && task.Commits.Count > 0)
+                        {
+                            var widened = git.InspectRemoteDeliveryCommitRange(
+                                repoRoot, deliveryBranch, resultSha, req.IntegrationBranch,
+                                expectedBaseSha: null, ct, taskKey: req.TaskKey);
+                            if (widened.Success && widened.Commits.Count > 0)
+                            {
+                                deliveryRange = widened;
+                                continuationRange = true;
+                            }
+                        }
+                        var integrationRefForParents = "refs/remotes/origin/"
+                            + TaskIntegrationBranch.Name(deliveryRange.IntegrationBranch);
                         remoteAttribution = RemoteCommitAttributionGuard.Attribute(
                             req.TaskKey,
                             deliveryBranch,
                             deliveryRange.Commits,
                             req.Repository,
-                            RemoteCommitAttributionGuard.CardReferencedKeys(task));
+                            RemoteCommitAttributionGuard.CardReferencedKeys(task),
+                            task.Commits,
+                            parent => git.IsAncestor(repoRoot, parent, integrationRefForParents),
+                            continuationRange);
                         attributionWarning = string.Join(" ", new[]
                             { deliveryRange.Warning, remoteAttribution.Warning }
                             .Where(value => !string.IsNullOrWhiteSpace(value)));

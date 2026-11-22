@@ -1,0 +1,34 @@
+@use '../../../../../styles/mixins' as m;
+
+:host { display: block; }
+.webhook { display: grid; gap: var(--studio-spacing-3); }
+.webhook__head { display: grid; gap: var(--studio-spacing-1); }
+.webhook__head h3 { margin: 0; color: var(--studio-fg-strong); font-size: 0.95rem; }
+.webhook p { margin: 0; color: var(--studio-fg-dim); font-size: 0.8rem; max-width: 64ch; }
+.webhook__panel { @include m.deck-panel; display: grid; gap: var(--studio-spacing-3); }
+.webhook__field { display: grid; gap: var(--studio-spacing-1); color: var(--studio-fg); font-size: 0.8rem; }
+.webhook__field input {
+  width: 100%;
+  min-width: 0;
+  padding: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-surface);
+  color: var(--studio-fg);
+  font: inherit;
+}
+.webhook__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-spacing-2); }
+.webhook__actions button {
+  border: 0;
+  border-radius: var(--studio-radius-sm);
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  font: inherit;
+  cursor: pointer;
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+}
+.webhook__primary {
+  background: color-mix(in srgb, var(--studio-accent) 14%, var(--studio-surface));
+  color: var(--studio-accent-strong);
+}
+.webhook__secondary { background: transparent; color: var(--studio-fg); }
+.webhook__secondary:hover:not(:disabled) { background: var(--studio-bg-hover); }

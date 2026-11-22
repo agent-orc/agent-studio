@@ -2,11 +2,10 @@ import type { StatusTone } from '../../../../components/status-indicator/status-
 
 /**
  * Status tones of the repository deployment views (AGT-3403). Raw wire values
- * that this build does not know fall back to neutral.
+ * that this build does not know fall back to neutral. Current environment
+ * health is not mapped here: it comes from `environmentHealthDisplay` over the
+ * shared environment state projection (M2).
  */
-
-/** `environments[].health` from the latest host report. */
-const ENVIRONMENT_HEALTH_TONE: Readonly<Record<string, StatusTone>> = { healthy: 'success', failed: 'danger', unknown: 'neutral' };
 
 /**
  * Host report statuses and deploy-stable run statuses in a history list: a
@@ -18,10 +17,6 @@ const HISTORY_STATUS_TONE: Readonly<Record<string, StatusTone>> = {
 
 function lookup(table: Readonly<Record<string, StatusTone>>, value: string | null | undefined): StatusTone {
   return value && Object.hasOwn(table, value) ? table[value] : 'neutral';
-}
-
-export function environmentHealthTone(health: string | null | undefined): StatusTone {
-  return lookup(ENVIRONMENT_HEALTH_TONE, health);
 }
 
 export function deploymentHistoryTone(status: string | null | undefined): StatusTone {

@@ -7,6 +7,13 @@ already applied the project's gate policy to that merge. The record must name
 the same project, branch, and first-parent SHA. Other uncovered commits still
 refuse acceptance. Their refusal names the source card when known, or the
 commit author, and omits batch diagnostics when the project has no batch gate.
+A passed full-suite gate on a later publication of the same branch also covers
+every earlier publication contained in its tested first-parent tree. Acceptance
+records the covering gate SHA and completion time in the card's completion
+evidence. A failed gate or a tested tree that does not contain the publication
+does not cover it. When a containing later batch gate is still running, the
+refusal says acceptance waits for that run. Otherwise the refusal explains the
+Owner or operator candidate-verification endpoint for the uncovered SHA.
 
 A server-authored document-key discovery commit is gate-neutral only when its
 first-parent diff changes existing `docs/**/workbench.json` descriptors solely
@@ -27,7 +34,7 @@ changed by the delivery before the gate tests the resulting tree. Catalogue
 discovery keeps its managed key mutation for descriptors outside a gated
 delivery.
 
-Version: 2026-11-14
+Version: 2026-11-22
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Target-branch plan and older deliveries (AGT-3743)
@@ -99,17 +106,54 @@ An unknown model is a `ModelConfigurationFault` first.
 The four stock Claude aspects freeze a common review-context prefix containing
 the brief, delivery acceptance scope, project and card context, diff summary,
 and results inventory. The review host inserts the authoritative merge-base diff
-at the end of that prefix, before aspect-specific instructions. The first
-Claude aspect completes before the remaining aspects start in parallel, so its
-cache write can serve their reads. Custom prompt overrides and Codex aspects
-retain their existing prompt layout and scheduling. The frozen prompt bytes
-version this layout for review-plan digests. Each grade report shows cache
-creation and read tokens by aspect and as a review total.
+at the end of that prefix, before aspect-specific instructions. That prefix is
+byte-identical for every aspect of one review; the aspect's own instructions,
+screenshots, Dossier excerpt and omission note follow it. Custom prompt
+overrides and Codex aspects retain their existing prompt layout and scheduling.
+The frozen prompt bytes version this layout for review-plan digests. Each grade
+report shows cache creation and read tokens by aspect and as a review total.
 
-If the first aspect reports neither cache creation nor cache read tokens, the
-runner logs `review-aspect-cache-unconfirmed` and runs the remaining aspects
-serially (parallelism 1) instead of in parallel, so they do not issue
-simultaneous cold cache writes.
+Coding aspects also carry the agent's `results/status.md` report as status text.
+The plan redacts credentials in that text and the generated summary before
+freezing the prompt. If `results/` or its `status.md` is a symbolic link, the
+plan withholds the agent report and says so in the status text. The review
+inventory excludes the report excerpt when the status text carries it.
+
+### Where the shared prefix reaches Claude (AGT-3971)
+
+Claude Code sets prompt-cache breakpoints only at the end of its system prompt
+and at the end of the conversation, and a cache read can only land where an
+earlier request wrote a breakpoint. A shared prefix inside the user message is
+therefore never read by a sibling aspect, and before AGT-3971 the default
+system prompt also named the memory directory below each aspect's own
+`CLAUDE_CONFIG_DIR`, so it differed between aspects as well. Siblings read only
+the account-wide static head of Claude Code's prompt (about 11,000 tokens).
+
+For a Claude aspect whose prompt carries the marker, the runner now writes the
+shared prefix to `shared-review-context.md` in the aspect's worker directory and
+starts the CLI with `--append-system-prompt-file <that file>` and
+`--exclude-dynamic-system-prompt-sections`. The second flag moves cwd, memory
+path and git status into the first user message. The system prompt is then
+identical for all aspects of the review and ends at a breakpoint; stdin carries
+only the aspect question. The runner uses this only on Linux review hosts whose
+`claude --help` lists both flags (probed once per process); otherwise the whole
+prompt goes to stdin as before and the aspects start together.
+
+Aspects stay separate CLI runs. The first aspect (the lead) starts alone. Its
+siblings on the same CLI and model start on the lead's first streamed assistant
+usage, when a provider cache entry becomes readable, or when the lead ends, or
+after 120 seconds, whichever comes first. An aspect on another model starts at
+once, because the provider cache is per model. The runner logs
+`review-aspect-cache-lead step=<id> leadSeconds=<s> cacheCreationTokens=<n>
+cacheReadTokens=<n>`, or `review-aspect-cache-unconfirmed` when the lead's
+first usage shows no cache activity. The siblings then still start in parallel;
+the serial fallback of AGT-3453 is gone. Review wall time grows by at most the
+lead, at most 120 seconds.
+
+Review statistics (`/api/projects/{project}/token-usage/reviews`) report
+`deliveryCacheReadTokens` and `deliveryCacheWriteTokens`: per delivery review,
+the cache tokens read and written, summed over its calls. The Review
+statistics panel shows them as two tiles.
 
 To measure the effect, open the grade report `remote-review-grade-<attempt>.md`
 in the card's job folder (also linked from the review timeline) for at least
@@ -129,7 +173,9 @@ the first aspect's creation size with only a small creation count of its own
 (its aspect instructions), so the review total of creation tokens drops to
 roughly one prefix plus four small suffixes. A later aspect that again creates
 about the full prefix, or a runner log line `review-aspect-cache-unconfirmed`,
-means the cache was not shared for that review.
+means the cache was not shared for that review. The baseline for AGT-3971 is
+the window of 17 and 18 November 2026: each Opus aspect wrote 47,000 to 80,000
+cache tokens and read about 10,700.
 
 Remote coding plans freeze a bounded `results/` evidence view beside the brief
 and diff context. It lists up to 40 active files with sizes, quotes heads of
@@ -527,6 +573,10 @@ On an unchanged parked card, `POST /api/tasks/{jobId}/review/retry` moves the
 same delivery back to Auto Review and mints a fresh ReviewAttempt. The card also
 links the intervention receipt. Its Undo restores Auto Review only while the
 park's lane entry, card write and attempt identities still match the receipt.
+Undo does not start a review. The receipt directs the operator to **Retry review**
+when the card remains without an owner. After Undo, the watchdog waits one full
+stranding threshold before another park, including when a scheduled retry is
+already overdue and its scheduler is disabled (AGT-3850).
 A passed review that ran its own build and tests (its frozen plan has
 `BuildTestDeferredToBatch: false`) never re-enters the batch gate: batch
 admission refuses it with `BuildTestNotDeferred` (AGT-3740).
@@ -550,6 +600,27 @@ verdict, it returns the card to Auto Review and requests a fresh review at
 once. A delivery conflict queues the existing integration recovery round,
 which steers the next coding attempt against `develop` and records the round
 on the timeline.
+
+
+### Review after a merge-only round (AGT-3968)
+
+After a passing review, a round whose new commits are only merges of the
+integration branch is reviewed on its resolution, not on the unchanged work.
+`RemoteReviewPlanBuilder` checks that the last passing review's result SHA is an
+ancestor of the new result, that `reviewed..result` without the integration
+branch holds no non-merge commit, and that every merge's second parent is on the
+integration branch. The resolution files are the paths of
+`git show --remerge-diff` for each merge: where the recorded merge differs from
+Git's own merge, which covers the conflicting files and what the round changed in
+them. The plan then runs `ScopedReviewPolicy` with those files as the delta.
+`code-quality` (or the first other agent aspect) reviews the resolution and gets
+a `## Merge resolution to review` brief with the files and the
+`git show --remerge-diff` commands; an aspect whose earlier evidence cites a
+resolved file also runs; every other aspect that passed is carried over.
+`visual-review` is never carried. Build, lint and the affected tests run as
+usual. The step honours `scopedReviewAfterFinding` and
+`scopedReviewMaximumDeltaFiles`: more resolved files than the maximum gives the
+full review. A clean merge with no resolution carries every aspect.
 
 ## Versioned review-library steps
 
@@ -927,6 +998,11 @@ budget.
   the key. The empty claim carries `unclaimable-plan-requirements`, names the
   key, and tells the operator which setting is missing. The attempt stays
   queued and no retry budget is spent.
+  Card live status and Execution Hosts show a refused capability only while the
+  same attempt is current and pending and the executor still cannot admit the
+  key. A recovered key restores the card's queue position. Execution Hosts
+  labels a refused key `not registered` only when the role's current
+  registration omits it; old refusals do not add waiting work to held keys.
 - **Plan-less attempts.** A lease-expiry successor and a settled-run recovery
   attempt carry no plan, and an attempt may carry no repository URL; the
   claim endpoint builds both at hand-out. Before selection it therefore
@@ -1820,6 +1896,12 @@ diff unchanged. The review retry scheduler and the settings-edit replan diff
 the Result-SHA against the integration ref directly, so all three freeze the
 same no-change decision. The replan no longer diffs the result ref, which
 usually exists only under `refs/remotes/origin` in the Studio checkout.
+
+The operator decision stream reports one installation-wide
+`review-retry.scheduler-stalled` fact when a scheduled retry is more than two
+default scheduler intervals overdue, or while the retry scheduler is disabled
+or its latest tick failed. Needs you lists the affected cards and their watchdog
+park deadlines. The fact clears when the retries start or their schedules end.
 
 ## Key code and tests
 

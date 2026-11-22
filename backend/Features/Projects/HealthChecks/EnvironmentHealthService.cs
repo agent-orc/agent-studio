@@ -11,7 +11,7 @@ public sealed record EnvironmentHealthCheckView(string Id, string Kind, string T
 public sealed record EnvironmentHealthView(string Project, string EnvironmentId, string Name, string Kind,
     string Address, string Status, double? Uptime24h, double? Uptime7d, double? Uptime30d, HealthLatency Latency24h,
     HealthIncident? CurrentIncident, HealthIncident? LastIncident, IReadOnlyList<EnvironmentHealthCheckView> Checks,
-    string? Error = null);
+    string? Error = null, string? IncidentCardKey = null);
 
 public sealed record ProjectEnvironmentHealthResponse(string Project, DateTimeOffset CapturedAt, string ProbeOrigin,
     IReadOnlyList<EnvironmentHealthView> Environments);
@@ -29,22 +29,33 @@ public sealed record HealthRunSummary(int Probed, int Opened, int Closed, int Ce
 /// (<see cref="EnvironmentIncidentPolicy"/>) and report their changes. Every project, and
 /// every environment within the reports, fails on its own: a broken declaration or a failing
 /// card write is logged and shown on its environment while the others keep being watched.
+/// Only a deployed environment is probed: before its first healthy deploy report and after a
+/// confirmed stop it reports <see cref="NotDeployed"/>, adds no samples and opens no incident.
 /// </summary>
 public sealed class EnvironmentHealthService(TaskScannerService scanner, ProjectEnvironmentService environments,
-    HealthCheckStore store, IHealthCheckProbe probe, HealthAlerts alerts, IConfiguration configuration,
-    TimeProvider clock, ILogger<EnvironmentHealthService> logger)
+    HealthCheckStore store, IHealthCheckProbe probe, HealthAlerts alerts, IncidentWebhookService webhooks, IConfiguration configuration,
+    TimeProvider clock, ILogger<EnvironmentHealthService> logger, TelemetryAlertReader? telemetry = null)
 {
     public const string ProbeOrigin = "control-plane";
     /// <summary>The environment id under which a project whose declarations cannot be listed reports.</summary>
     public const string DeclarationsId = "declarations";
+    /// <summary>The status of an environment and its checks while no deployment of it runs.</summary>
+    public const string NotDeployed = "not-deployed";
     private const string Removed = "check-removed";
     private readonly SemaphoreSlim _tick = new(1, 1);
 
     private sealed record DueCheck(string Project, EnvironmentDeclaration Environment, HealthCheckDefinition Check);
 
     /// <param name="Readable">False when the declaration directory itself failed; its incidents stay as they are.</param>
+    /// <param name="Running">The environments a host runs; null when the deploy state is unreadable, which keeps every declaration watched.</param>
     private sealed record ProjectEnvironments(string Project, IReadOnlyList<EnvironmentDeclaration> Valid,
-        IReadOnlyList<EnvironmentDeclarationFile> Broken, bool Readable);
+        IReadOnlyList<EnvironmentDeclarationFile> Broken, bool Readable, IReadOnlySet<string>? Running = null)
+    {
+        public bool Deployed(EnvironmentDeclaration environment) => Running?.Contains(environment.Id) != false;
+
+        /// <summary>The declared environments whose checks run.</summary>
+        public IEnumerable<EnvironmentDeclaration> Watched => Valid.Where(Deployed);
+    }
 
     public async Task<HealthRunSummary> RunDueAsync(CancellationToken cancellationToken = default)
     {
@@ -78,7 +89,29 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
                     }
                     store.Save(group.Key, state);
                 });
+            if (telemetry is not null)
+                foreach (var project in projects)
+                foreach (var environment in project.Watched.Where(item => item.Kind == "production"))
+                        foreach (var rule in environment.TelemetryAlerts.Rules)
+                        {
+                            Isolated(project.Project, "telemetry " + environment.Id + "/" + rule.Id, () =>
+                            {
+                                var state = store.Load(project.Project);
+                                var check = TelemetryCheck(rule);
+                                var observation = telemetry.Read(project.Project, environment.Id, rule,
+                                    environment.TelemetryAlerts.StorageReservationBytes, now);
+                                var sample = new HealthSample(now, observation.Value is not { } value
+                                    || !TelemetryAlertPolicy.Firing(rule, value), null, null,
+                                    observation.Value is null ? HealthSample.NotObserved
+                                        : TelemetryAlertPolicy.Describe(rule, observation));
+                                var action = Apply(new DueCheck(project.Project, environment, check), sample, state);
+                                if (action == HealthIncidentAction.Open) opened++;
+                                if (action == HealthIncidentAction.Close) closed++;
+                                store.Save(project.Project, state);
+                            });
+                        }
             foreach (var project in projects) Isolated(project.Project, "report", () => Reconcile(project, now));
+            await Task.WhenAll(projects.Select(project => NotifyDueAsync(project, cancellationToken)));
             foreach (var project in projects) Isolated(project.Project, "retention", () => RunRetention(project.Project, now));
             return new(due.Count, opened, closed, warnings);
         }
@@ -92,7 +125,7 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
     {
         var state = store.Load(project.Project);
         var due = new List<DueCheck>();
-        foreach (var environment in project.Valid)
+        foreach (var environment in project.Watched)
         foreach (var check in HealthCheckDeclarations.Effective(environment))
         {
             var last = state.Checks.GetValueOrDefault(HealthCheckStore.Key(environment.Id, check.Id))?.LastRunAt;
@@ -106,6 +139,9 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
     {
         try
         {
+            // A managed database publishes no port; its check reads the run host's reports (AGT-3878).
+            if (item.Check.Kind == "database")
+                return environments.DatabaseLivenessSample(item.Project, item.Environment.Id, item.Check.Host ?? "", clock.GetUtcNow());
             return await probe.ProbeAsync(item.Check, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -125,9 +161,12 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         // A refused address or a probe fault says nothing about the target: shown on the check, not counted.
         if (!sample.MeasuresAvailability) return HealthIncidentAction.None;
         store.Append(item.Project, item.Environment.Id, item.Check.Id, sample);
-        var step = HealthIncidentPolicy.Next(
-            new(state.ConsecutiveFailures, state.ConsecutiveSuccesses, state.OpenIncident is not null),
-            sample.Ok, item.Check.FailureThreshold, item.Check.RecoveryThreshold);
+        var streak = new HealthCheckStreak(state.ConsecutiveFailures, state.ConsecutiveSuccesses,
+            state.OpenIncident is not null);
+        var step = item.Check.Kind == "telemetry"
+            ? TelemetryAlertPolicy.Next(streak, !sample.Ok, item.Check.RecoveryThreshold)
+            : HealthIncidentPolicy.Next(streak, sample.Ok, item.Check.FailureThreshold,
+                item.Check.RecoveryThreshold);
         state.FailingSince = sample.Ok ? null : state.FailingSince ?? sample.At;
         state.ConsecutiveFailures = step.Streak.ConsecutiveFailures;
         state.ConsecutiveSuccesses = step.Streak.ConsecutiveSuccesses;
@@ -178,14 +217,17 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         var state = store.Load(project.Project);
         var declared = project.Valid.ToDictionary(item => item.Id, StringComparer.Ordinal);
         var broken = project.Broken.Select(item => item.EnvironmentId).ToHashSet(StringComparer.Ordinal);
-        var running = project.Valid.SelectMany(environment => HealthCheckDeclarations.Effective(environment)
+        var running = project.Watched.SelectMany(environment => EffectiveChecks(environment)
             .Select(check => HealthCheckStore.Key(environment.Id, check.Id))).ToHashSet(StringComparer.Ordinal);
         var changed = false;
         foreach (var (key, checkState) in state.Checks)
         {
             if (running.Contains(key) || broken.Contains(EnvironmentOf(key)) || checkState.OpenIncident is not { } open)
                 continue;
-            checkState.LastIncident = open with { EndedAt = now, EndReason = Removed };
+            // A stopped environment closes its incidents; a check gone from the declaration closes its own.
+            var reason = declared.TryGetValue(EnvironmentOf(key), out var environment) && !project.Deployed(environment)
+                ? NotDeployed : Removed;
+            checkState.LastIncident = open with { EndedAt = now, EndReason = reason };
             checkState.OpenIncident = null;
             checkState.ConsecutiveFailures = 0;
             changed = true;
@@ -235,13 +277,13 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         {
             var started = open[0].State.OpenIncident!.StartedAt;
             environmentState.OpenIncident = new($"{environmentId}/{started.UtcDateTime:yyyyMMddTHHmmssZ}", environmentId,
-                declaration?.Name ?? environmentId, started);
+                declaration?.Name ?? environmentId, started, EnvironmentKind: declaration?.Kind);
             changed = true;
         }
         if (action != EnvironmentIncidentAction.Close && environmentState.OpenIncident is { } incident)
         {
             var definitions = declaration is null ? new Dictionary<string, HealthCheckDefinition>()
-                : HealthCheckDeclarations.Effective(declaration).ToDictionary(check => check.Id, StringComparer.Ordinal);
+                : EffectiveChecks(declaration).ToDictionary(check => check.Id, StringComparer.Ordinal);
             FailingCheck? Failing((string CheckId, HealthCheckState State) item)
                 => definitions.GetValueOrDefault(item.CheckId) is { } check && item.State.OpenIncident is { } checkIncident
                     ? new(check, checkIncident, store.Samples(project, environmentId, item.CheckId,
@@ -284,12 +326,65 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
             changed = true;
         }
         if (environmentState.LastIncident is { } last
-            && (!last.RecoveryReported || last.RecoveryCommentReported == false))
+            && (!last.RecoveryReported || last.RecoveryCommentReported != true || !last.RecoveryMoveReported))
         {
             environmentState.LastIncident = alerts.ReportRecovered(project, last, Ended(checks, last));
             changed = true;
         }
+        if (environmentState.LastIncident is { EndedAt: not null } completed)
+        {
+            var index = environmentState.IncidentHistory.FindIndex(item => item.Id == completed.Id);
+            if (index < 0 || environmentState.IncidentHistory[index] != completed)
+            {
+                if (index < 0) environmentState.IncidentHistory.Add(completed);
+                else environmentState.IncidentHistory[index] = completed;
+                changed = true;
+            }
+        }
         return changed;
+    }
+
+    private async Task NotifyDueAsync(ProjectEnvironments project, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!webhooks.Get(project.Project).Configured) return;
+            var state = store.Load(project.Project);
+            foreach (var (environmentId, environmentState) in state.Environments)
+            {
+                var declaration = project.Valid.FirstOrDefault(item => item.Id == environmentId);
+                foreach (var (last, recovered) in new[]
+                {
+                    (false, false), (true, false), (true, true),
+                })
+                {
+                    var incident = last ? environmentState.LastIncident : environmentState.OpenIncident;
+                    if (incident is null || (incident.EnvironmentKind ?? declaration?.Kind) != "production"
+                        || (recovered && (incident.EndedAt is null || incident.RecoveryWebhookDelivered))
+                        || (!recovered && incident.OpenedWebhookDelivered)) continue;
+                    var signal = string.Join(", ", state.Checks
+                        .Where(item => item.Key.StartsWith(environmentId + "/", StringComparison.Ordinal)
+                            && (item.Value.OpenIncident?.StartedAt >= incident.StartedAt
+                                || item.Value.LastIncident?.StartedAt >= incident.StartedAt))
+                        .Select(item => item.Key[(environmentId.Length + 1)..])
+                        .OrderBy(item => item, StringComparer.Ordinal));
+                    if (string.IsNullOrEmpty(signal)) signal = "environment-health";
+                    if (!await webhooks.DeliverAsync(project.Project, recovered ? "recovered" : "opened",
+                        environmentId, incident.EnvironmentName, signal, incident.StartedAt, incident.CardId,
+                        cancellationToken)) continue;
+                    var delivered = recovered ? incident with { RecoveryWebhookDelivered = true }
+                        : incident with { OpenedWebhookDelivered = true };
+                    if (last) environmentState.LastIncident = delivered;
+                    else environmentState.OpenIncident = delivered;
+                    store.Save(project.Project, state);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "environment-health webhook reporting failed project={Project}; next tick retries",
+                project.Project);
+        }
     }
 
     /// <summary>The check incidents that ended within an environment incident.</summary>
@@ -309,6 +404,8 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         var folded = store.ApplyRetention(project, now);
         if (folded > 0)
             logger.LogInformation("environment-health retention project={Project} foldedDays={Folded}", project, folded);
+        foreach (var environment in state.Environments.Values)
+            environment.IncidentHistory.RemoveAll(item => item.EndedAt < now.AddDays(-31));
         state.LastRetentionAt = now;
         store.Save(project, state);
     }
@@ -347,7 +444,7 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         var now = clock.GetUtcNow();
         return new(now, ProbeOrigin, Projects()
             .SelectMany(item => Views(item, now))
-            .OrderBy(item => item.Status switch { "down" => 0, "invalid" => 1, "degraded" => 2, "unknown" => 3, _ => 4 })
+            .OrderBy(item => item.Status switch { "down" => 0, "invalid" => 1, "degraded" => 2, "unknown" => 3, NotDeployed => 4, _ => 5 })
             .ThenBy(item => item.Project, StringComparer.OrdinalIgnoreCase)
             .ThenBy(item => item.EnvironmentId, StringComparer.Ordinal).ToArray());
     }
@@ -357,7 +454,7 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         IReadOnlyList<EnvironmentHealthView> valid;
         try
         {
-            valid = View(project.Project, project.Valid, store.Load(project.Project), now);
+            valid = View(project, store.Load(project.Project), now);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -373,11 +470,17 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         string error)
         => new(project, id, name, kind, address, "invalid", null, null, null, new(null, null, null), null, null, [], error);
 
-    private IReadOnlyList<EnvironmentHealthView> View(string project, IReadOnlyList<EnvironmentDeclaration> declarations,
-        ProjectHealthState state, DateTimeOffset now)
-        => declarations.Select(environment =>
+    private IReadOnlyList<EnvironmentHealthView> View(ProjectEnvironments declarations, ProjectHealthState state,
+        DateTimeOffset now)
+    {
+        var project = declarations.Project;
+        var runtime = environments.RuntimeIncidents(project);
+        return declarations.Valid.Select(environment =>
         {
-            var checks = HealthCheckDeclarations.Effective(environment).Select(check =>
+            var deployed = declarations.Deployed(environment);
+            var hostIncident = runtime.GetValueOrDefault(environment.Id);
+            var definitions = EffectiveChecks(environment);
+            var checks = definitions.Select(check =>
             {
                 var checkState = state.Checks.GetValueOrDefault(HealthCheckStore.Key(environment.Id, check.Id));
                 // 24 hours come from raw samples; 7 and 30 days from the hourly aggregates plus the raw tail.
@@ -386,8 +489,10 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
                 var rawSince = new[] { aggregated, now - TimeSpan.FromHours(24) }.Min();
                 var samples = store.Samples(project, environment.Id, check.Id,
                     rawSince < now - HealthSeries.RawRetention ? now - HealthSeries.RawRetention : rawSince);
-                var status = checkState?.LastSample is not { } last ? "unknown"
+                var status = !deployed ? NotDeployed
+                    : checkState?.LastSample is not { } last ? check.Kind == "telemetry" ? "not-observed" : "unknown"
                     : checkState.OpenIncident is not null ? "down"
+                    : last.Error == HealthSample.NotObserved ? "not-observed"
                     : last.Error == HealthSample.AddressBlocked ? "invalid"
                     : !last.MeasuresAvailability ? "unknown"
                     : last.Ok ? "up" : "degraded";
@@ -404,18 +509,64 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
                 .OfType<HealthCheckState>().ToArray();
             // The environment is as available as its worst check; latency is the first HTTP check's.
             var primary = checks.FirstOrDefault(check => check.Kind == "http") ?? checks.FirstOrDefault();
-            var status = checks.Length == 0 || checks.All(check => check.Status == "unknown") ? "unknown"
-                : checks.Any(check => check.Status == "down") ? "down"
-                : checks.Any(check => check.Status == "invalid") ? "invalid"
-                : checks.Any(check => check.Status is "degraded" or "unknown") ? "degraded" : "up";
+            // A managed database before its first deploy has nothing to watch yet (AGT-3878).
+            var counted = checks.Where(check => check.LastSample?.Error != HealthSample.NotApplicable).ToArray();
+            var status = !deployed ? NotDeployed
+                : hostIncident is { EndedAt: null } ? "down"
+                : counted.Length == 0 || counted.All(check => check.Status == "unknown") ? "unknown"
+                : counted.Any(check => check.Status == "down") ? "down"
+                : counted.Any(check => check.Status == "invalid") ? "invalid"
+                : counted.Any(check => check.Status == "not-observed") ? "not-observed"
+                : counted.Any(check => check.Status is "degraded" or "unknown") ? "degraded" : "up";
+            var lastCheckIncident = states.Select(item => item.LastIncident).OfType<HealthIncident>()
+                .MaxBy(item => item.EndedAt);
+            var lastRuntimeIncident = hostIncident is { EndedAt: not null } endedHost
+                ? RuntimeHealthIncident(environment.Id, endedHost) : null;
+            var current = hostIncident is { EndedAt: null } open ? RuntimeHealthIncident(environment.Id, open)
+                : states.Select(item => item.OpenIncident).OfType<HealthIncident>().MinBy(item => item.StartedAt);
             return new EnvironmentHealthView(project, environment.Id, environment.Name, environment.Kind,
                 HealthTargets.Display(environment.Address), status, Worst(checks.Select(check => check.Uptime24h)),
                 Worst(checks.Select(check => check.Uptime7d)), Worst(checks.Select(check => check.Uptime30d)),
-                primary?.Latency24h ?? new(null, null, null),
-                states.Select(item => item.OpenIncident).OfType<HealthIncident>().MinBy(item => item.StartedAt),
-                states.Select(item => item.LastIncident).OfType<HealthIncident>().MaxBy(item => item.EndedAt),
-                checks);
+                primary?.Latency24h ?? new(null, null, null), current,
+                lastRuntimeIncident is not null && (lastCheckIncident is null
+                    || lastRuntimeIncident.EndedAt > lastCheckIncident.EndedAt) ? lastRuntimeIncident : lastCheckIncident,
+                checks, status == "invalid" ? AddressProblem(environment, definitions, checks) : null,
+                CardKey(project, current?.CardId));
         }).ToArray();
+    }
+
+    private static HealthIncident RuntimeHealthIncident(string environmentId, RuntimeIncident incident)
+        => new(incident.Id, environmentId, "container-runtime", new DateTimeOffset(incident.StartedAt),
+            $"{(incident.Kind == "crash-rollback" ? "Crash rollback" : "Crash loop")} after {incident.Restarts} restarts",
+            incident.Restarts, incident.EndedAt is { } ended ? new DateTimeOffset(ended) : null);
+
+    /// <summary>The key the board shows for an incident card (NS-2), not its folder slug.</summary>
+    public string? CardKey(string project, string? cardId)
+    {
+        if (cardId is null) return null;
+        var watchPath = scanner.GetWatchPaths().FirstOrDefault(item =>
+            string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase))?.Path;
+        return watchPath is null ? null : scanner.FindJob(cardId, watchPath)?.Key;
+    }
+
+    /// <summary>The fix for each refused target; the card shows it instead of a bare Misconfigured.</summary>
+    private static string? AddressProblem(EnvironmentDeclaration environment,
+        IReadOnlyList<HealthCheckDefinition> definitions, IReadOnlyList<EnvironmentHealthCheckView> checks)
+    {
+        var problems = definitions.Zip(checks)
+            .Where(pair => pair.Second.Status == "invalid" && pair.Second.LastSample?.Error == HealthSample.AddressBlocked)
+            .Select(pair => HealthAddressProblems.Describe(environment, pair.First)).ToArray();
+        return problems.Length == 0 ? null : string.Join(" ", problems);
+    }
+
+    private static IReadOnlyList<HealthCheckDefinition> EffectiveChecks(EnvironmentDeclaration environment)
+        => environment.Kind == "production"
+            ? [.. HealthCheckDeclarations.Effective(environment), .. environment.TelemetryAlerts.Rules.Select(TelemetryCheck)]
+            : HealthCheckDeclarations.Effective(environment);
+
+    private static HealthCheckDefinition TelemetryCheck(TelemetryAlertDefinition rule)
+        => new("telemetry-" + rule.Id, "telemetry", null, rule.Id, null, 0, null, 15, 0, 1,
+            rule.RecoveryEvaluations, Derived: true);
 
     private static double? Worst(IEnumerable<double?> values)
     {
@@ -435,8 +586,11 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         try
         {
             if (environments.DeclarationFiles(project) is not { } files) return null;
+            var running = environments.RunningEnvironments(project);
+            if (running is null)
+                logger.LogWarning("environment-health deploy state unreadable project={Project}; every declaration stays watched", project);
             return new(project, files.Select(item => item.Declaration).OfType<EnvironmentDeclaration>().ToArray(),
-                files.Where(item => item.Declaration is null).ToArray(), Readable: true);
+                files.Where(item => item.Declaration is null).ToArray(), Readable: true, running);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

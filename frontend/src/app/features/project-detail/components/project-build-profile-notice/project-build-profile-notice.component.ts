@@ -1,5 +1,6 @@
-import { ChangeDetectionStrategy, Component, DOCUMENT, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DOCUMENT, computed, inject, input } from '@angular/core';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { ServerCheckoutStore } from '../../../server-checkout';
 
 /** One command list where the central BuildProfile disagrees with the repository's own `.agent-studio/project.yml`. */
 export interface BuildProfileContradiction {
@@ -37,7 +38,17 @@ export interface BuildProfileGateSummary {
 })
 export class ProjectBuildProfileNoticeComponent {
   readonly summary = input.required<BuildProfileGateSummary>();
+  readonly projectName = input<string | null>(null);
   private readonly document = inject(DOCUMENT);
+  private readonly serverCheckout = inject(ServerCheckoutStore);
+
+  /**
+   * AGT-3933: while Project basics offers Create server checkout, that notice is
+   * the one remedy for a URL project without a checkout. The path field only
+   * accepts an existing clone, so the checkout-missing variant stays hidden.
+   */
+  readonly serverCheckoutOffered = computed(() => this.serverCheckout.viewFor(
+    this.serverCheckout.projectFor({ name: this.projectName() })) !== null);
 
   jumpToCheckout(event: Event): void {
     event.preventDefault();

@@ -112,6 +112,25 @@ public sealed class DeploymentReconcilerTests
         var run = Assert.Single(result.Deployments);
         Assert.Equal((DeploymentStates.Succeeded, DeploymentStates.Failed), (run.Steps[0].State, run.Steps[1].State));
         Assert.Contains(result.Log, line => line.Step == DeployStepNames.Health && line.Message.Contains("failed"));
+        Assert.DoesNotContain(result.Log, line => line.Message.Contains("completed", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Ssh_step_run_files_template_step_lines_under_its_own_steps()
+    {
+        var run = new DeploymentRecord
+        {
+            Id = "job", ReleaseId = "r1", EnvironmentId = "stage", State = DeploymentStates.Failed,
+            Trigger = DeploymentTriggers.Deploy, DeployStep = DeployStepNames.StartContainer, CreatedAtUtc = T0,
+            SshStepNames = ["deploy[0]:container", "deploy[1]:container"],
+            StepResults = [new("deploy[0]:container", true), new("deploy[1]:container", false)],
+        };
+        Assert.Equal("deploy[1]:container", DeploymentStepPlan.LogStepFor(run, DeployStepNames.StartContainer));
+        Assert.Equal(DeployStepNames.Health, DeploymentStepPlan.LogStepFor(run, DeployStepNames.Health));
+        Assert.Equal(DeployStepNames.StartContainer,
+            DeploymentStepPlan.LogStepFor(run with { SshStepNames = [], StepResults = [] }, DeployStepNames.StartContainer));
+        Assert.Equal("deploy[0]:container",
+            DeploymentStepPlan.LogStepFor(run with { StepResults = [] }, DeployStepNames.StartContainer));
     }
 
     [Fact]
@@ -202,6 +221,21 @@ public sealed class DeploymentReconcilerTests
         Assert.Equal(new DeploymentStepRecord(DeployStepNames.Approval, DeploymentStates.Succeeded, stageHealthy,
             T0.AddMinutes(5)), run.Steps[0]);
         Assert.Equal("deployment-approved", Assert.Single(linked.Audit).Action);
+    }
+
+    [Fact]
+    public void PendingPromotion_NamingItsRelease_AsksApprovalForThatRelease_NotANewerOneWithTheSameDigest()
+    {
+        var r2 = R1 with { Id = "r2", Version = "2026.10.16.2", CreatedAtUtc = T0.AddMinutes(1) };
+        var stageHealthy = T0.AddMinutes(3);
+        var promotion = new EnvironmentPromotion(Artifact, "stage", "production", stageHealthy, "pending",
+            ExpiresAt: stageHealthy.AddHours(24)) { ReleaseId = "r1" };
+        var declarations = new[] { Declaration("stage", "container"), Declaration("production", "container") };
+        var result = DeploymentReconciler.Reconcile(new([Staging, Production],
+            [new ReleaseRecord(R1, declarations), new ReleaseRecord(r2, declarations)], [], [], [promotion]));
+
+        var run = Assert.Single(result.Deployments);
+        Assert.Equal(("r1", DeploymentStates.AwaitingApproval), (run.ReleaseId, run.State));
     }
 
     [Theory]

@@ -41,6 +41,7 @@ import { EnvironmentAttentionComponent } from '../environment-attention/environm
 import { buildEnvironmentAttention } from '../../models/environment-attention';
 import { OrchestratorFeedStore } from '../../../orchestrator/state/orchestrator-feed.store';
 import { summarizeHostRows } from '../../models/host-summary';
+import { OffStableGradesComponent } from '../off-stable-grades/off-stable-grades';
 import { ClaimGateHistoryComponent } from '../claim-gate-history/claim-gate-history';
 import { CredentialInventoryService } from '../../../credentials/credential-inventory.service';
 import { buildEnvironmentMap, type EnvironmentSnapshot } from '../../models/environment-map';
@@ -69,6 +70,7 @@ import { buildEnvironmentMap, type EnvironmentSnapshot } from '../../models/envi
     EnvironmentHostListComponent,
     EnvironmentAttentionComponent,
     ClaimGateHistoryComponent,
+    OffStableGradesComponent,
   ],
   templateUrl: './remote-hosts-panel.html',
   styleUrl: './remote-hosts-panel.scss',
@@ -366,6 +368,11 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   onSetupTaskCreated(task: VisibleCliTaskCreated): void {
     this.setupHost.set(null);
     this.openTask.emit(task);
+  }
+
+  runHostEnrolled(): void {
+    this.wizardOpen.set(false);
+    this.service.reload();
   }
 
   completeWizard(host: ProvisionedHostDraft): void {

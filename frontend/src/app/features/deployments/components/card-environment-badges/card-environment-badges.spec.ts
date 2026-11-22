@@ -21,16 +21,55 @@ describe('CardEnvironmentBadgesComponent', () => {
     fixture.detectChanges();
     const host = fixture.nativeElement as HTMLElement;
     expect(host.querySelector('[data-testid="card-environment-staging"]')?.textContent?.replace(/\s+/g, ' '))
-      .toContain('Staging · rolled back · 1.0 · 2026-10-16');
+      .toContain('Staging · Rolled back · 1.0 · 2026-10-16');
     expect(host.querySelector('[data-testid="card-environment-production"]')?.textContent)
       .toContain('Not yet in Production');
     expect(host.querySelector<HTMLElement>('[data-testid="card-environment-staging"]')?.dataset['tone']).toBe('warning');
     expect(host.querySelector<HTMLElement>('[data-testid="card-environment-production"]')?.dataset['tone']).toBe('neutral');
   });
 
+  it('says since when a card is live in the Studio instance release', async () => {
+    await TestBed.configureTestingModule({ imports: [CardEnvironmentBadgesComponent], providers: [
+      provideZonelessChangeDetection(),
+      { provide: CardDeploymentService, useValue: { observe: () => undefined, badges: () => [
+        { environmentId: 'studio-instance', environmentName: 'Production', kind: 'production', state: 'succeeded',
+          releaseId: 'instance-1', releaseVersion: '0.9.5-5faca674a', atUtc: '2026-11-16T03:35:00Z' },
+      ] } },
+    ] }).compileComponents();
+    const fixture = TestBed.createComponent(CardEnvironmentBadgesComponent);
+    fixture.componentRef.setInput('task', { id: 'agt-1', key: 'AGT-1', projectName: 'Agent Studio' } as TaskInfo);
+    fixture.detectChanges();
+    const badge = (fixture.nativeElement as HTMLElement).querySelector<HTMLElement>('[data-testid="card-environment-production"]');
+    expect(badge?.textContent?.replace(/\s+/g, ' ')).toContain('Production · live since 2026-11-16 03:35 UTC · 0.9.5-5faca674a');
+    expect(badge?.dataset['tone']).toBe('success');
+  });
+
+  it('uses product wording and keeps the full date visible for every deployment state', async () => {
+    const states = [
+      ['failed-rolled-back', 'Failed, rolled back'], ['failed', 'Failed'],
+      ['awaiting-approval', 'Approval pending'], ['running', 'Deploying'],
+      ['queued', 'Queued'], ['cancelled', 'Cancelled'], ['succeeded', 'Live'],
+    ] as const;
+    await TestBed.configureTestingModule({ imports: [CardEnvironmentBadgesComponent], providers: [
+      provideZonelessChangeDetection(),
+      { provide: CardDeploymentService, useValue: { observe: () => undefined, badges: () => states.map(([state], index) => ({
+        environmentId: `env-${index}`, environmentName: 'Staging', kind: `stage-${index}`, state,
+        releaseId: 'r1', releaseVersion: '2026.11.16.1', atUtc: '2026-11-16T12:00:00Z',
+      })) } },
+    ] }).compileComponents();
+    const fixture = TestBed.createComponent(CardEnvironmentBadgesComponent);
+    fixture.componentRef.setInput('task', { id: 'web-1', key: 'WEB-1', projectName: 'Website' } as TaskInfo);
+    fixture.detectChanges();
+    const badges = fixture.nativeElement.querySelectorAll('[data-testid^="card-environment-"]') as NodeListOf<HTMLElement>;
+    states.forEach(([, label], index) => {
+      expect(badges[index].textContent).toContain(`Staging · ${label} · 2026.11.16.1 · 2026-11-16`);
+      expect(badges[index].classList.contains('status-indicator--wrap')).toBe(true);
+    });
+  });
+
   it('maps every card environment state onto a tone', () => {
     const matrix: Record<string, string> = {
-      succeeded: 'success', failed: 'danger', 'rolled-back': 'warning', 'awaiting-approval': 'warning',
+      succeeded: 'success', failed: 'danger', 'failed-rolled-back': 'danger', 'rolled-back': 'warning', 'awaiting-approval': 'warning',
       running: 'running', queued: 'neutral', cancelled: 'neutral', 'not-deployed': 'neutral', later: 'neutral',
     };
     for (const [state, tone] of Object.entries(matrix)) expect(cardEnvironmentTone(state)).toBe(tone);

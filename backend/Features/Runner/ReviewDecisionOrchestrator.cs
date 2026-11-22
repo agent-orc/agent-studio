@@ -1500,6 +1500,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 callUsage,
                 sw.ElapsedMilliseconds,
                 ok: true,
+                cliType: CliTypes.Claude,
                 project: entry.Name,
                 jobId: pending.Job.Id);
             response = parsedText;
@@ -1847,6 +1848,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     callUsage,
                     sw.ElapsedMilliseconds,
                     ok: true,
+                    cliType: CliTypes.Claude,
                     project: entry.Name,
                     jobId: pending.Job.Id);
                 RecordRateLimitedCall();

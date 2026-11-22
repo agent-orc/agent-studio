@@ -741,33 +741,39 @@ public sealed class ProjectSettingsServiceTests : IDisposable
     }
 
     [Fact]
-    public void SetTesting_PersistsAffectedAndClearsTheSectionForFull()
+    public void SetTestingStrategy_StoresTheChoiceAndClearsBackToTheFastDefault()
     {
         var svc = Build();
-        Assert.Equal(PerCardTestModes.Full, PerCardTestModes.Resolve(svc.Get("runbook")));
+        Assert.Null(svc.Get("runbook").Testing);
+        Assert.Equal(TestingStrategies.Fast, TestingStrategies.Resolve(svc.Get("runbook")));
 
-        svc.SetTesting("runbook", new ProjectTestingSettings { PerCard = " Affected " });
+        svc.SetTestingStrategy("runbook", " Strict ");
         var stored = Build().Get("runbook");
-        Assert.Equal(PerCardTestModes.Affected, stored.Testing?.PerCard);
-        Assert.Equal(PerCardTestModes.Affected, PerCardTestModes.Resolve(stored));
+        Assert.Equal(TestingStrategies.Strict, stored.Testing?.Strategy);
+        Assert.Equal(PerCardTestModes.Full, PerCardTestModes.Resolve(stored));
+        Assert.Equal(IntegrationTestModes.PreMerge, IntegrationTestModes.Resolve(stored));
 
-        svc.SetTesting("runbook", new ProjectTestingSettings { PerCard = "full" });
+        // An explicit fast stays stored, so a later default change cannot move it.
+        svc.SetTestingStrategy("runbook", "fast");
+        Assert.Equal(TestingStrategies.Fast, Build().Get("runbook").Testing?.Strategy);
+
+        svc.SetTestingStrategy("runbook", null);
         Assert.Null(Build().Get("runbook").Testing);
+        Assert.Throws<ArgumentException>(() => svc.SetTestingStrategy("runbook", "post-merge"));
     }
 
     [Fact]
-    public void SetTesting_PostMergeForcesAffectedAndPersistsMode()
+    public void StoredLegacyPerCardAndModeAreIgnoredAndTheProjectResolvesToFast()
     {
-        var svc = Build();
-        svc.SetTesting("runbook", new ProjectTestingSettings { Mode = "post-merge" });
-        var stored = Build().Get("runbook");
-        Assert.Equal(IntegrationTestModes.PostMerge, IntegrationTestModes.Resolve(stored));
-        Assert.Equal(PerCardTestModes.Affected, PerCardTestModes.Resolve(stored));
+        File.WriteAllText(StorePath(),
+            "{\"runbook\":{\"Testing\":{\"PerCard\":\"full\",\"Mode\":\"pre-merge\"}}}");
 
-        svc.SetTesting("runbook", new ProjectTestingSettings { PerCard = "full" });
-        Assert.Equal(IntegrationTestModes.PostMerge, IntegrationTestModes.Resolve(Build().Get("runbook")));
-        svc.SetTesting("runbook", new ProjectTestingSettings { Mode = "pre-merge", PerCard = "full" });
-        Assert.Null(Build().Get("runbook").Testing);
+        var stored = Build().Get("runbook");
+
+        Assert.Null(stored.Testing?.Strategy);
+        Assert.Equal(TestingStrategies.Fast, TestingStrategies.Resolve(stored));
+        Assert.Equal(PerCardTestModes.Affected, PerCardTestModes.Resolve(stored));
+        Assert.Equal(IntegrationTestModes.PostMerge, IntegrationTestModes.Resolve(stored));
     }
 
     [Fact]

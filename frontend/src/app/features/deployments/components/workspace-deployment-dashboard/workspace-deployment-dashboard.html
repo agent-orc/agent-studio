@@ -36,35 +36,50 @@
         @for (row of rows(); track row.id) {
           <tr [attr.data-testid]="'deployment-project-' + row.id">
             <th scope="row"><button type="button" class="deployment-dashboard__project" (click)="openDeployment.emit(row.name)">{{ row.name }} @if (row.tenant) { <span>· {{ row.tenant }}</span> }</button><a [href]="'#/projects/' + projectSlug(row.name) + '/operations/structure'" [attr.data-testid]="'deployment-structure-' + row.id">Structure</a></th>
-            @for (environment of visibleEnvironments(); track environment.id) {
-              <td>
-                @if (statusFor(row, environment.id); as status) {
-                  <button type="button" class="deployment-dashboard__cell"
-                          [attr.data-state]="status.currentDeployment?.state ?? 'unknown'"
-                          [attr.aria-label]="cellLabel(row, environment.name)"
-                          (click)="openDeployment.emit(row.name)">
-                    <span class="deployment-dashboard__cell-head">
-                      <strong>Release {{ status.currentRelease?.version ?? 'None' }}{{ status.currentRelease?.channel ? ' · ' + status.currentRelease?.channel : '' }}</strong>
-                      <app-status-indicator [tone]="stateTone(status.currentDeployment?.state)" [label]="stateLabel(status.currentDeployment?.state)" [compact]="true" testId="deployment-dashboard-state" />
-                    </span>
-                    <span class="deployment-dashboard__cell-detail">
-                      <span>{{ age(status) }}</span>
-                      <app-status-indicator [tone]="healthTone(status.health)" [label]="healthLabel(status.health)" [compact]="true" testId="deployment-dashboard-health" />
-                    </span>
-                    @if (status.currentDeployment?.state === 'awaiting-approval') { <app-status-indicator tone="warning" label="Approval pending" [compact]="true" testId="deployment-dashboard-approval" /> }
-                    @if (status.newerRelease; as newer) { <app-status-indicator tone="info" [label]="'Newer release ' + newer.version + ' · ' + newer.channel" [compact]="true" testId="deployment-dashboard-newer-release" /> }
-                  </button>
-                }
+            @if (row.error) {
+              <td [attr.colspan]="visibleEnvironments().length" class="deployment-dashboard__note" [attr.data-testid]="'deployment-declaration-error-' + row.id">
+                <strong>Environment declarations could not be read</strong>
+                <span>{{ row.error }}</span>
               </td>
+            } @else if (!row.declared && !row.statuses.length) {
+              <td [attr.colspan]="visibleEnvironments().length" class="deployment-dashboard__note" [attr.data-testid]="'deployment-undeclared-' + row.id">
+                <strong>No environments declared</strong>
+                <span>Add one JSON file per environment under <code>docs/deployments/environments</code> in the project repository. <a [href]="declarationDocs" target="_blank" rel="noopener noreferrer">How to declare environments</a></span>
+              </td>
+            } @else {
+              @for (environment of visibleEnvironments(); track environment.id) {
+                <td>
+                  @if (statusFor(row, environment.id); as status) {
+                    <button type="button" class="deployment-dashboard__cell"
+                            [attr.data-state]="cellState(status) ?? 'unknown'"
+                            [attr.aria-label]="cellLabel(row, environment.name)"
+                            (click)="openDeployment.emit(row.name)">
+                      <span class="deployment-dashboard__cell-head">
+                        <strong>@if (status.releaseUncertain) { Running release uncertain. A failed release may be running. } @else { Release {{ status.currentRelease?.version ?? 'None' }}{{ status.currentRelease?.channel ? ' · ' + status.currentRelease?.channel : '' }} }</strong>
+                        <app-status-indicator [tone]="stateTone(cellState(status))" [label]="stateLabel(cellState(status))" [compact]="true" testId="deployment-dashboard-state" />
+                      </span>
+                      <span class="deployment-dashboard__cell-detail">
+                        <span>{{ age(status) }}</span>
+                        <app-status-indicator [tone]="healthTone(status.health)" [label]="healthLabel(status.health)" [compact]="true" testId="deployment-dashboard-health" />
+                      </span>
+                      @if (status.instance) { <span class="deployment-dashboard__instance" data-testid="deployment-dashboard-instance">{{ instanceNote(status) }}</span> }
+                      @if (status.currentDeployment?.state === 'awaiting-approval') { <app-status-indicator tone="warning" label="Approval pending" [compact]="true" testId="deployment-dashboard-approval" /> }
+                      @if (!status.releaseUncertain && status.newerRelease; as newer) { <app-status-indicator tone="info" [label]="'Newer release ' + newer.version + ' · ' + newer.channel" [compact]="true" testId="deployment-dashboard-newer-release" /> }
+                    </button>
+                  } @else {
+                    <p class="deployment-dashboard__absent">No {{ environment.name.toLowerCase() }} environment</p>
+                  }
+                </td>
+              }
             }
           </tr>
         } @empty {
-          <tr><td [attr.colspan]="visibleEnvironments().length + 1" class="deployment-dashboard__empty">No deployments for this selection.</td></tr>
+          <tr><td [attr.colspan]="visibleEnvironments().length + 1" class="deployment-dashboard__empty" data-testid="deployment-empty" role="status">{{ emptyReason() }}</td></tr>
         }
       </tbody>
     </table>
   </div>
-  @for (project of projectNames(); track project) {
+  @for (project of watchedProjects(); track project) {
     <app-delivery-lanes [project]="project" [heading]="project + ' delivery'"
       (openDeployment)="openDeployment.emit($event)" (openCard)="openCard.emit($event)" />
   }

@@ -21,6 +21,14 @@ background warm when it is missing. It never folds the ledger on the request.
 
 The writers are `ProjectRunner.MirrorAgentTurnUsageToBus` for local coding calls, `RemoteTokenReceiptService` for remote coding completion, `RemotePipelineReviewEvidenceProjector` for remote review, and `OrchestratorChatService.RecordChatUsageAsync` for chat. Chat fallback receipts are written when the bus append fails. The merged ledger retains participant, host, CLI, model, timestamp, and token dimensions.
 
+Remote coding completion also records `sessionMode` on each usage call: `resumed`
+when the worker launched with a prior session ID, otherwise `fresh`. The fenced
+continuation evidence supplies this value, and receipt reads preserve it in the
+merged ledger. Missing provenance stays null for historical calls. Compare it
+with input/captured session IDs in `session-continuation-ledger.jsonl` when
+investigating provider acceptance or a fresh fallback. Codex raw input includes
+cached input; do not add raw input and cached input when comparing session costs.
+
 `TokenAggregationService.WorkspaceTimeline` filters to the requested UTC window before pricing entries. The fold applies the same half-open interval `[start, end)` and builds project, model, host, and bucket rows from the selected entries. `WorkspaceTimelineRange` reads bus rows for its exact calendar interval. Both preserve the recorded timestamp for historical pricing.
 
 ## Model identity and cost
@@ -38,6 +46,8 @@ The CLI account page reads `QuotaWindow.WindowHours` from the shared backend quo
 `GET /api/workspace/tokens/analysis?days=&project=` and `GET /api/projects/{p}/token-usage/analysis/cards/{jobId}` serve the card-centric analysis view. `TokenAnalysisService` loads the merged ledger, the pipeline execution log of every card, and the workspace ad-hoc rows attributed to the project; the pure `TokenAnalysisFold` counts each token once. Agent ledger calls price the coding run they fall into, and that run's logged counters become duration and result only. An orchestrator or supporting call that equals a measured decision, aspect, drift, or analysis execution is priced by the execution (`ProjectPipelineCostService.ReconcileReceipts`). `TokenUsageKindPolicy` assigns one usage kind per token: coding, fix round (every coding execution after the first), review aspect, review grade, deep review, gate, orchestrator decision, chat, enrichment, or other. Each card ships as a cube of slices (kind, model, level, CLI, host, UTC day), so frontend filters keep the sum invariant. Cards in `3-progress` or `4-auto-review`, or with a running step, are in flight; the view marks their days incomplete.
 
 `QuotaEfficiencyFold` splits each `.runtime/quota-history` window series at resets and divides the CLI's workspace tokens inside a window by the percentage points it consumed. The quota chart shares the time axis with the token chart and never its y axis.
+
+The CLI account's current provider week is `GET /api/workspace/tokens/subscription-week?cli=&subscriptionKey=`. The quota snapshot supplies the used percentage, observed cycle start and reset. `SubscriptionWeekFold` filters the reconciled analysis items to that half-open interval and reports captured receipts and pipeline measurements by card, usage kind and model. The provider percentage is in account quota units; captured tokens cannot be converted to a share of that percentage. When several sign-ins use one CLI, receipts have no subscription key, so the endpoint withholds account-specific receipt attribution. The cockpit `UsageCliWindow.startAtUtc` carries the observed start to the footer tooltip; when absent, the displayed start is seven days before reset. Workspace cost weeks and admission weeks retain their own documented calendars.
 
 Workspace-scope ad-hoc rows used to land in the cockpit's "Unattributed" bucket even when the call knew its project. `TokenUsageAttribution` now resolves a row by its bus project, then the `project:<name>` tag that `AdHocUsageRecorder` writes, then the project that owns its job id. Rows stay in the workspace scope, so `BusAdHocUsageReader` is unchanged. Bus rows and task receipts also carry `reasoningOutput` / `ReasoningTokens` when the CLI reports it (Codex `reasoning_output_tokens`); it is a subset of output and null means not reported.
 
@@ -59,7 +69,7 @@ for recording and attribution rules.
 |---|---|
 | Read | `Ledger/ProjectTokenLedger.cs`, `Ledger/ProjectTokenReceiptReader.cs`, `Ledger/BusTokenEntryConverter.cs`, `Ledger/BusAdHocUsageReader.cs`, `Ledger/ChatUsageFallbackReceipts.cs` |
 | Identity | `Identity/ModelIdentity.cs`, `Identity/TokenParticipants.cs`, `Identity/TokenUsageHost.cs`, `Identity/TokenUsageAttribution.cs` |
-| Card analysis | `Analysis/TokenAnalysisService.cs`, `Analysis/TokenAnalysisFold.cs`, `Analysis/TokenUsageKindPolicy.cs`, `Analysis/QuotaEfficiencyFold.cs`, `Analysis/TokenAnalysisEndpoints.cs` |
+| Card analysis | `Analysis/TokenAnalysisService.cs`, `Analysis/TokenAnalysisFold.cs`, `Analysis/TokenUsageKindPolicy.cs`, `Analysis/QuotaEfficiencyFold.cs`, `Analysis/SubscriptionWeekFold.cs`, `Analysis/TokenAnalysisEndpoints.cs` |
 | Price | `Pricing/TokenPricing.cs`, `Pricing/TokenEconomyPriceProvider.cs`, `Pricing/RunModelPricing.cs`, `Pricing/PricedTokenEntry.cs` |
 | Aggregate | `Aggregation/ModelUsageFold.cs`, `Aggregation/TokenSummaryFold.cs`, `Aggregation/ProjectTokenUsageFold.cs`, `Aggregation/ProjectTokenJobFold.cs`, `Aggregation/WorkspaceTimelineFold.cs`, `Aggregation/AdHocUsageFold.cs`, `Aggregation/CliWindowAttributionFold.cs` |
 | Project | `TokenAggregationService.cs`, `ITokenAggregator.cs`, token endpoints and cache stores |

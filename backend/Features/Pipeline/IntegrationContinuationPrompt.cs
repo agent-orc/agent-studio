@@ -40,7 +40,9 @@ public static class IntegrationContinuationPrompt
         IReadOnlyList<string>? conflictedFiles = null,
         string? integrationTip = null,
         string? evidenceRef = null,
-        string? gateEvidence = null)
+        string? gateEvidence = null,
+        bool runnerMergesIntegration = false,
+        IReadOnlyList<string>? involvedCards = null)
     {
         var stages = conflict?.Stages.Count > 0
             ? string.Join("; ", conflict.Stages.Select(item =>
@@ -60,6 +62,10 @@ public static class IntegrationContinuationPrompt
         var taskDirection = isReview
             ? "Resolve the recorded review findings on this same task. " + VerificationScope
               + "Then publish the corrected delivery. "
+            : isConflict && runnerMergesIntegration
+                ? "Continue on the existing delivery branch. Do not merge develop yourself; the runner merges current develop at the start of the round. "
+                  + "Retain a one-to-one delivery commit mapping: do not squash, split, drop, or combine delivery commits. "
+                  + VerificationScope + "Then publish a new delivery. "
             : isConflict
                 ? $"Continue on the existing delivery branch, merging the latest integration branch by merging 'origin/{integrationBranch}' into it when needed. "
                   + "Retain a one-to-one delivery commit mapping: do not squash, split, drop, or combine delivery commits. "
@@ -73,6 +79,9 @@ public static class IntegrationContinuationPrompt
             + $"Integration branch: {integrationBranch}; tip: {conflict?.IntegrationTipSha ?? integrationTip ?? "not recorded"}.\n"
             + $"Delivery side: {deliveryRef ?? "not recorded"} at {deliverySha ?? conflict?.DeliverySha ?? "not recorded"}.\n"
             + $"Attempted stages: {stages}. Conflicted files: {files}.\n"
+            + (involvedCards is { Count: > 0 }
+                ? $"Other cards whose integrated commits touched these files: {string.Join(", ", involvedCards)}.\n"
+                : "")
             + (string.IsNullOrWhiteSpace(evidenceRef) ? "" : $"Failure evidence ref: {evidenceRef}.\n")
             + (string.IsNullOrWhiteSpace(evidence) ? ""
                 : evidence.Contains('\n') ? $"Gate or review evidence:\n{evidence.TrimEnd()}\n"
