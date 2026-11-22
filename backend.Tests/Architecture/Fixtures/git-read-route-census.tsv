@@ -280,6 +280,7 @@
 /api/projects/{projectName}/steering/read-analytics	free	-	-	-
 /api/projects/{projectName}/style-guides	free	-	-	-
 /api/projects/{projectName}/tags	free	-	-	-
+/api/projects/{projectName}/testing	free	-	-	-
 /api/projects/{projectName}/throughput	free	-	-	-
 /api/projects/{projectName}/token-usage/analysis/cards/{jobId}	free	-	-	-
 /api/projects/{projectName}/token-usage/expensive	free	-	-	-

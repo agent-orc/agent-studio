@@ -11,13 +11,15 @@ public sealed class PostMergeModeTests
     private const string Sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     [Theory]
-    [InlineData(null, IntegrationTestModes.PreMerge)]
-    [InlineData("pre-merge", IntegrationTestModes.PreMerge)]
-    [InlineData(" POST-MERGE ", IntegrationTestModes.PostMerge)]
-    public void ModeDefaultsToPreMerge(string? stored, string expected)
+    [InlineData(null, IntegrationTestModes.PostMerge)]
+    [InlineData("fast", IntegrationTestModes.PostMerge)]
+    [InlineData(" BALANCED ", IntegrationTestModes.PostMerge)]
+    [InlineData("strict", IntegrationTestModes.PreMerge)]
+    [InlineData("pre-merge", IntegrationTestModes.PostMerge)]
+    public void ModeIsDerivedFromTheStrategyAndDefaultsToPostMerge(string? stored, string expected)
         => Assert.Equal(expected, IntegrationTestModes.Resolve(new ProjectSettings
         {
-            Testing = new ProjectTestingSettings { Mode = stored },
+            Testing = new ProjectTestingSettings { Strategy = stored },
         }));
 
     [Theory]

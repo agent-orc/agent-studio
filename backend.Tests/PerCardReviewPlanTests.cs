@@ -13,10 +13,11 @@ using Contract = AgentStudio.TaskServer.Contracts;
 namespace AgentStudio.Tests;
 
 /// <summary>
-/// AGT-3310: <c>testing.perCard</c> on the Remote Review plan. <c>full</c>
-/// (the default) and every T1 fallback keep the plan byte-identical;
-/// <c>affected</c> runs build, lint, the touched-area fast checks and the
-/// tests the generated project map selects.
+/// AGT-3310: <c>testing.perCard</c> on the Remote Review plan, derived from
+/// <c>testing.strategy</c> since AGT-3965. Strict (full) and every T1 fallback
+/// keep the plan byte-identical; fast and balanced (affected, the default) run
+/// build, lint, the touched-area fast checks and the tests the generated
+/// project map selects.
 /// </summary>
 public sealed class PerCardReviewPlanTests : IDisposable
 {
@@ -49,15 +50,32 @@ public sealed class PerCardReviewPlanTests : IDisposable
     [Theory]
     [InlineData("backend/FooService.cs")]
     [InlineData("global.json")]
-    public void FullAndEveryFallbackKeepThePlanByteIdentical(string changed)
+    public void StrictAndEveryFallbackKeepThePlanByteIdentical(string changed)
     {
         var resultSha = Commit(changed);
-        var today = Json(Build(new ProjectSettings(), resultSha, changed));
+        // AGT-3965: the plan before testing.strategy existed is the plan
+        // without per-card selection; strict reproduces it byte for byte.
+        var today = Json(Build(null, resultSha, changed));
 
-        Assert.Equal(today, Json(Build(Settings(PerCardTestModes.Full), resultSha, changed)));
-        Assert.Equal(today, Json(Build(Settings("unknown"), resultSha, changed)));
+        Assert.Equal(today, Json(Build(Settings(TestingStrategies.Strict), resultSha, changed)));
         if (changed == "global.json")
-            Assert.Equal(today, Json(Build(Settings(PerCardTestModes.Affected), resultSha, changed)));
+        {
+            Assert.Equal(today, Json(Build(Settings(TestingStrategies.Fast), resultSha, changed)));
+            Assert.Equal(today, Json(Build(new ProjectSettings(), resultSha, changed)));
+        }
+        else
+            Assert.NotEqual(today, Json(Build(new ProjectSettings(), resultSha, changed)));
+    }
+
+    [Fact]
+    public void FastAndBalancedShareTheAffectedPerCardPlan()
+    {
+        var resultSha = Commit("backend/FooService.cs");
+
+        var fast = Json(Build(Settings(TestingStrategies.Fast), resultSha, "backend/FooService.cs"));
+
+        Assert.Equal(fast, Json(Build(Settings(TestingStrategies.Balanced), resultSha, "backend/FooService.cs")));
+        Assert.Equal(fast, Json(Build(new ProjectSettings(), resultSha, "backend/FooService.cs")));
     }
 
     [Fact]
@@ -65,7 +83,7 @@ public sealed class PerCardReviewPlanTests : IDisposable
     {
         var resultSha = Commit("backend/FooService.cs");
 
-        var plan = Build(Settings(PerCardTestModes.Affected), resultSha, "backend/FooService.cs");
+        var plan = Build(Settings(TestingStrategies.Fast), resultSha, "backend/FooService.cs");
 
         var shells = plan.Commands.Where(command => command.Arguments.Count == 2)
             .Select(command => command.Arguments[1]).ToList();
@@ -97,7 +115,7 @@ public sealed class PerCardReviewPlanTests : IDisposable
         var sha = Git("rev-parse", "HEAD").Trim();
         Git("switch", "-q", "develop");
 
-        var affected = Build(Settings(PerCardTestModes.Affected), sha, project);
+        var affected = Build(Settings(TestingStrategies.Fast), sha, project);
         var batch = Build(new ProjectSettings
         {
             BatchGate = new(Enabled: true, Scope: "code", ReviewTestLevel: "build-only"),
@@ -245,7 +263,7 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Git("commit", "-qm", "focused test baseline");
         var sha = Commit("backend.Tests/Delivery/FocusedTests.cs");
 
-        var plan = Build(Settings(PerCardTestModes.Affected), sha,
+        var plan = Build(Settings(TestingStrategies.Fast), sha,
             "backend.Tests/Delivery/FocusedTests.cs");
 
         Assert.Contains(plan.Commands, command => command.Aspect == "build-tests"
@@ -263,7 +281,7 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Git("commit", "-qm", "shared test fixture");
         var sha = Commit("backend.Tests/SharedFixtureTests.cs");
 
-        var plan = Build(Settings(PerCardTestModes.Affected), sha,
+        var plan = Build(Settings(TestingStrategies.Fast), sha,
             "backend.Tests/SharedFixtureTests.cs");
 
         Assert.Contains(plan.Commands, command => command.Arguments.Contains(BackendTest));
@@ -290,7 +308,7 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Git("commit", "-qm", "token economy project definition");
         var sha = Commit(changed);
 
-        var plan = Build(Settings(PerCardTestModes.Affected), sha, changed);
+        var plan = Build(Settings(TestingStrategies.Fast), sha, changed);
 
         Assert.Contains(plan.Commands, command => command.Arguments.Any(argument =>
             argument.Contains("dotnet test tests/TokenEconomy.Tests/TokenEconomy.Tests.csproj", StringComparison.Ordinal)));
@@ -306,7 +324,7 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Git("commit", "-qm", "documentation baseline");
         var sha = Commit("docs/notes.md");
 
-        var plan = Build(Settings(PerCardTestModes.Affected), sha, "docs/notes.md");
+        var plan = Build(Settings(TestingStrategies.Fast), sha, "docs/notes.md");
 
         Assert.DoesNotContain(plan.Commands, command => command.Arguments.Any(argument =>
             argument.StartsWith("dotnet build", StringComparison.Ordinal)));
@@ -317,7 +335,7 @@ public sealed class PerCardReviewPlanTests : IDisposable
     {
         var resultSha = Commit("frontend/src/app.ts");
 
-        var plan = Build(Settings(PerCardTestModes.Affected), resultSha, "frontend/src/app.ts");
+        var plan = Build(Settings(TestingStrategies.Fast), resultSha, "frontend/src/app.ts");
 
         var typecheck = Assert.Single(plan.Commands, command =>
             command.Arguments.Contains("bash scripts/npm-frontend.sh run typecheck"));
@@ -355,15 +373,15 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Assert.All(web.Commands, item => Assert.Equal("web", item.WorkingSubdir));
     }
 
-    private Contract.ReviewPlanDto Build(ProjectSettings settings, string resultSha, string changed)
+    private Contract.ReviewPlanDto Build(ProjectSettings? settings, string resultSha, string changed)
         => Builder().Build(new TaskInfo
         {
             Id = "task", TaskKey = "task", ProjectName = "project",
             WatchPath = _repo, FolderPath = _folder, State = TaskStates.AutoReview,
         }, _repo, settings, "develop", resultSha, [changed], ResultRef);
 
-    private static ProjectSettings Settings(string perCard)
-        => new() { Testing = new ProjectTestingSettings { PerCard = perCard } };
+    private static ProjectSettings Settings(string strategy)
+        => new() { Testing = new ProjectTestingSettings { Strategy = strategy } };
 
     // The deep-review receipt names its own attempt; the rest of the plan is
     // the byte-identity subject.

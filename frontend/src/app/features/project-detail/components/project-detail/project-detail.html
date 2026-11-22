@@ -197,15 +197,38 @@
       </p>
     </section>
 
-    <section class="proj-detail__group" data-testid="project-detail-per-card-tests">
-      <h3>Per-card tests</h3>
+    <section class="proj-detail__group" data-testid="project-detail-testing-strategy">
+      <h3>Testing strategy</h3>
+      <app-segmented-control data-testid="project-detail-testing-strategy-control"
+                             [options]="segmentedTestingStrategyOptions()"
+                             [value]="testingStrategyDraft()"
+                             [disabled]="testingStrategySaving()"
+                             ariaLabel="Testing strategy"
+                             (valueChange)="setTestingStrategy($event)" />
+      <ul class="proj-detail__strategy-list">
+        @for (option of testingStrategies(); track option.id) {
+          <li [attr.data-testid]="'project-detail-testing-strategy-sentence-' + option.id"
+              [class.proj-detail__strategy-list__item--active]="option.id === settings()?.testingStrategy">
+            <strong>{{ testingStrategyLabel(option.id) }}</strong>{{ option.sentence ? ': ' + option.sentence : '' }}
+          </li>
+        }
+      </ul>
       <p class="proj-detail__hint">
-        <code>testing.perCard</code>:
-        <strong data-testid="project-detail-per-card-tests-value">{{ settings()?.testingPerCard === 'affected' ? 'Affected tests' : 'Full suite' }}</strong>
-        ({{ settings()?.testingPerCard ?? 'full' }}).
-        Affected runs the build, the fast checks of the touched areas, and the tests the generated project map selects.
-        Read-only here; change it with <code>PUT /api/projects/{{ projectName() }}/testing</code>.
+        The model review aspects run before integration in every strategy. Owner only.
       </p>
+      @if (testingStrategyError(); as message) {
+        <p class="proj-detail__hint" role="alert" data-testid="project-detail-testing-strategy-error">{{ message }}</p>
+      }
+      @if (settings()?.postMergeCoverage; as coverage) {
+        @if (coverage.missing) {
+          <div class="proj-detail__coverage-warning" role="alert" data-testid="project-detail-post-merge-warning">
+            <strong>Post-merge runs missing</strong>
+            <p>{{ coverage.message }}</p>
+          </div>
+        } @else if (coverage.state === 'unknown') {
+          <p class="proj-detail__hint" role="status" data-testid="project-detail-post-merge-unknown">{{ coverage.message }}</p>
+        }
+      }
     </section>
 
     <section class="proj-detail__group">

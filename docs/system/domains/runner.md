@@ -3078,8 +3078,9 @@ seam.
 
 ## Automatic post-merge checks
 
-The coding daemon owns `PostMergeHostScheduler`, discovering explicit
-`testing.mode: post-merge` projects through Studio's Runner-scoped
+The coding daemon owns `PostMergeHostScheduler`, discovering the projects
+whose testing strategy is `fast` or `balanced` (derived `testingMode`
+`post-merge`, AGT-3965) through Studio's Runner-scoped
 `GET /api/runner/post-merge/projects`. Registry repository URLs and configured
 integration branches are authoritative. Window facts are posted to
 `POST /api/runner/post-merge/projects/{project}/window` with the existing Runner

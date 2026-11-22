@@ -33,6 +33,8 @@ release yet.
 
 ### Added
 
+- A project on `fast` or `balanced` whose develop moved without a post-merge run reported in six hours shows "Post-merge runs missing" on its settings page and Operations view and in Needs you (`post-merge.missing`). The item clears when a run reports. The coding daemon's host scheduler (AGT-3967) discovers every such project and runs its post-merge checks; hand-installed timers remain a fallback (`docs/operations/setup/linux-runner-host.md`) (AGT-3965).
+- `balanced` makes the merge-window run execute every routine suite; `fast` keeps the affected selection (AGT-3965).
 - A ReviewInfra successor reuses the build, test and lint results that passed in the failed attempt when the Result-SHA, command line and toolchain are unchanged, and executes only what failed or did not run; aspects run again, and the grade and card review projection cite `verify result reused from attempt <id> (<age>)` (AGT-2841).
 - Legacy-plane completion contract test: claim over `/api/runner/claim`, the production slot, continuation evidence and completion request, accepted by `POST /api/runner/completion`; it fails on the 0.9.3 runner code (AGT-2985).
 - The deployment regression scenario runs the coding attempt on both runner planes: a new smoke step boots the backend monolith, a second real runner and a smart-HTTP fixture repository for the legacy plane the fleet uses (AGT-2985).
@@ -40,6 +42,8 @@ release yet.
 
 ### Changed
 
+- **Behaviour change for every project without a stored testing setting.** One setting, `testing.strategy`, now places the tests: `fast` (the default), `balanced` or `strict`. A project without a stored value resolves to `fast`. It runs build and affected tests per card, integrates right after the review passed, and then relies on the post-merge merge-window and nightly runs, plus the release full suite before Production. Before this release such a project ran pre-merge with the full suite. In post-merge mode the pre-merge batch gate is off, and a release candidate for a required `delivery.fullSuite` must be the green post-merge tip. Choose `strict` on the project settings page to keep the earlier behaviour exactly. The model review aspects still run before integration in every strategy (AGT-3965).
+- `testing.perCard` and `testing.mode` are derived from the strategy and stay readable through the API for one release. `PUT /api/projects/{name}/testing` accepts only `{"strategy": "fast" | "balanced" | "strict"}` and refuses a body with only the old fields (AGT-3965).
 - Short gates no longer queue behind hour-long ones. With several remote gate slots, one slot serves projects whose recent gates are short, a short gate may take any free slot, and a long gate may use the short slot after 45 minutes of waiting. The Pipeline page shows which slot runs what and why a gate waits (AGT-3423).
 - A failed merge gate is classified (environment, product, integration branch, undecidable) and routed by the orchestrator: environment failures replay, product failures get one fix round, a fingerprint shared by two cards opens one cause card, and only undecidable failures park for a person (AGT-3009).
 

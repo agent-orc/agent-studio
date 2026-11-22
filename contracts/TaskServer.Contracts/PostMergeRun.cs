@@ -36,6 +36,13 @@ public sealed record PostMergeProjectState(
     public int? WindowMaxMerges { get; init; }
     public int? WindowMinutes { get; init; }
     public PostMergeWindowObservation? PendingWindow { get; init; }
+    /// <summary>
+    /// What a merge-window run selects, from the project's testing strategy
+    /// (AGT-3965): <see cref="PostMergeWindowSuiteModes.Affected"/> (fast) or
+    /// <see cref="PostMergeWindowSuiteModes.Routine"/> (balanced). Null keeps
+    /// the affected selection.
+    /// </summary>
+    public string? WindowSuites { get; init; }
     public static PostMergeProjectState Empty(string project) => new(project, "green", null, null, null, [], []);
 }
 
@@ -59,4 +66,13 @@ public sealed record PostMergeWindowObservation(string TipSha, DateTimeOffset? O
 {
     public bool Starved => OpenedAtUtc is { } opened && AdmissionReason is not null
         && (ObservedAtUtc - opened).TotalMinutes > WindowMinutes;
+}
+
+/// <summary>Values of <see cref="PostMergeProjectState.WindowSuites"/>.</summary>
+public static class PostMergeWindowSuiteModes
+{
+    /// <summary>The routine suites the window's changed paths select; an unknown path selects every routine suite.</summary>
+    public const string Affected = "affected";
+    /// <summary>Every routine suite.</summary>
+    public const string Routine = "routine";
 }
