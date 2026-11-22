@@ -76,6 +76,28 @@ public sealed class PostMergeRunStoreTests : IDisposable
         Assert.Null(store.Read(Project).PendingWindow);
     }
 
+    [Fact]
+    public void FlakyNamesSurviveRestartAreDeduplicatedAndExpireAfterFourteenDays()
+    {
+        var store = new PostMergeRunStore(_root);
+        var run = Run("flaky", First, "window");
+        store.Record(Project, run);
+        var receipt = run with { Status = "green", FinishedAtUtc = Now,
+            Verdicts = [new("dotnet test", 0, false, FlakyTests: ["Runner.One", "Runner.One"], Retried: true)] };
+        var state = store.Record(Project, receipt)!;
+        Assert.Equal(1, receipt.FlakyCount);
+        Assert.Equal(["Runner.One"], receipt.FlakyTests);
+        Assert.Equal(1, state.FlakyCount);
+        Assert.Single(new PostMergeRunStore(_root).Read(Project).FlakyHistory!);
+        store.Record(Project, receipt);
+        Assert.Single(store.Read(Project).FlakyHistory!);
+        var next = Run("next", Second, "window") with { StartedAtUtc = Now.AddDays(15) };
+        store.Record(Project, next);
+        store.Record(Project, next with { Status = "green", FinishedAtUtc = Now.AddDays(15),
+            Verdicts = [new("dotnet test", 0, false)] });
+        Assert.Empty(store.Read(Project).FlakyHistory!);
+    }
+
     private static PostMergeRunRecord Run(string id, string tip, string kind) =>
         new(id, "Agent Studio", kind, tip, null, Now, Now, 1, ["dotnet test"], [], "running", Now, null);
 

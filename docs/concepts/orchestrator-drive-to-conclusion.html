@@ -799,6 +799,13 @@
             regression fixture proves a root <code>.slnx</code> with nested-only projects executes at the repository root.
           </td>
         </tr>
+        <tr id="case-post-merge-theory-false-red">
+          <td>2026-11-22</td>
+          <td><code>AGT-3976</code><br><span class="small">post-merge-theory-false-red</span></td>
+          <td>No coding CLI crashed. The reported first T3 run on <code>d3c4eed65</code> reached red after a runner theory could not start its fake Docker script, creating repair card AGT-3975.</td>
+          <td>The failure parser retained theory arguments that the focused-filter builder rejected. The common retry loop then skipped that failure. The attribution path treated unowned documentation paths as affecting every suite.</td>
+          <td>T3 now strips theory arguments, repeats failures in every suite kind once, records recovered test names as flaky, and keeps a fail-twice result red. Docs-only changes are excluded from suspects; no relevant merge produces an environmental or flaky suspect repair prompt. Admission load and occupied slots are retained in the receipt. Focused regression fixtures pin both terminal outcomes.</td>
+        </tr>
         <tr id="case-codex-integration-fresh-session-rework">
           <td>2026-11-22</td>
           <td><code>AGT-3970</code><br><span class="small">codex-integration-fresh-session-rework</span></td>

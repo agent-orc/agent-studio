@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using AgentRunner;
 using AgentStudio.TaskServer.Contracts;
@@ -99,6 +100,88 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         Assert.Equal(2, escalationChecks);
         Assert.Equal(second, received[^1].TipSha);
         Assert.Equal(first, File.ReadAllText(Path.Combine(checkout, "tested.sha")).Trim());
+    }
+
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DocsOnlyWindowRepeatsRunnerFailureAndNeverBlamesTheDocsMerge(bool recovers)
+    {
+        Directory.CreateDirectory(_root);
+        var seed = Path.Combine(_root, "seed");
+        var checkout = Path.Combine(_root, "checkout");
+        await Git(_root, "init", "--quiet", "-b", "develop", seed);
+        await Git(seed, "config", "user.name", "Test");
+        await Git(seed, "config", "user.email", "test@example.invalid");
+        Directory.CreateDirectory(Path.Combine(seed, ".agent-studio"));
+        Directory.CreateDirectory(Path.Combine(seed, "runner.Tests"));
+        File.WriteAllText(Path.Combine(seed, "runner.Tests", "Runner.Tests.csproj"), "<Project />");
+        File.WriteAllText(Path.Combine(seed, ".agent-studio", "project.yml"), """
+            schemaVersion: 1
+            stack: [custom]
+            toolVersions:
+            commands:
+              prepare: .agent-studio/prepare
+              build:
+                - "true"
+              test:
+                - "sh suite.sh dotnet test runner.Tests/Runner.Tests.csproj --no-build"
+              lint:
+            testSuites:
+              - id: runner-routine
+                category: routine
+                expectedDurationSeconds: 5
+                command: "sh suite.sh dotnet test runner.Tests/Runner.Tests.csproj --no-build"
+            cachePaths:
+            capabilities: [git]
+            """);
+        var prepare = Path.Combine(seed, ".agent-studio", "prepare");
+        File.WriteAllText(prepare, "#!/bin/sh\ntrue\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(prepare, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        // Exercise real command dispatch while keeping the fixture independent of an SDK invocation.
+        File.WriteAllText(Path.Combine(seed, "suite.sh"),
+            "#!/bin/sh\necho attempt >> attempts\n"
+            + (recovers ? "if [ -f repeated ]; then exit 0; fi\n" : "")
+            + "touch repeated\necho '  Failed Runner.Tests.NetworkRemoval(listCommand: \"exit 1\") [1 ms]'\nexit 1\n");
+        await Git(seed, "add", ".");
+        await Git(seed, "commit", "--quiet", "-m", "base");
+        var green = (await Git(seed, "rev-parse", "HEAD")).Trim();
+        Directory.CreateDirectory(Path.Combine(seed, "docs"));
+        File.WriteAllText(Path.Combine(seed, "docs", "guide.md"), "Documentation only");
+        await Git(seed, "add", ".");
+        await Git(seed, "commit", "--quiet", "-m", "Integrate docs-only");
+        await Git(_root, "clone", "--quiet", "--branch", "develop", seed, checkout);
+        var receipts = new List<PostMergeRunRecord>();
+        using var http = new HttpClient(new Handler(async request =>
+        {
+            if (request.Method == HttpMethod.Get)
+                return Json(PostMergeProjectState.Empty("PROJ-002") with
+                    { LastGreenSha = green, LastWindowTipSha = green });
+            if (request.RequestUri!.AbsolutePath.EndsWith("/runs", StringComparison.Ordinal))
+                receipts.Add((await request.Content!.ReadFromJsonAsync<PostMergeRunRecord>())!);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        })) { BaseAddress = new Uri("http://test/") };
+        var options = new PostMergeRunOptions("demo", checkout, "http://test/", "develop", "origin", "unused",
+            "window", 1, TimeSpan.Zero, 8, [], false);
+        var output = new StringWriter();
+        var exit = await new PostMergeRunCommand(options, output, new FixedClock(), http, () => new(0.4, 6))
+            .ExecuteAsync(CancellationToken.None);
+        Assert.True(exit == (recovers ? 0 : 1), output.ToString());
+        Assert.Equal(2, File.ReadAllLines(Path.Combine(checkout, "attempts")).Length);
+        var terminal = receipts[^1];
+        Assert.Equal(recovers ? "green" : "red", terminal.Status);
+        Assert.Equal(recovers ? 1 : 0, terminal.FlakyCount);
+        Assert.Equal(0.4, terminal.StartLoadPerCore);
+        Assert.Equal(6, terminal.StartOccupiedSlots);
+        if (!recovers)
+        {
+            Assert.NotNull(terminal.Failure);
+            Assert.Empty(terminal.Failure.SuspectMerges);
+            Assert.Null(terminal.Failure.AttributedMerge);
+            Assert.True(terminal.Failure.NoRelevantMerges);
+        }
     }
 
     private static HttpResponseMessage Json(object value) => new(HttpStatusCode.OK)

@@ -238,12 +238,14 @@ public sealed class PostMergeRunCommand
         var commands = PostMergeRunPlan.Build(definition, _options.Mode, changed);
         var opened = merges.Count == 0 ? (DateTimeOffset?)null : merges.Min(merge => merge.At);
         var started = new PostMergeRunRecord(id, _options.Project, _options.Mode, tip,
-            from, opened, now, merges.Count, commands, [], "running", now, null);
+            from, opened, now, merges.Count, commands, [], "running", now, null,
+            StartLoadPerCore: host.LoadPerCore, StartOccupiedSlots: host.ActiveSlots);
         await Post(started, ct);
         var verdicts = new List<PostMergeCommandVerdict>();
         var quarantinedFailures = 0;
         foreach (var command in commands)
         {
+            var verdictStart = verdicts.Count;
             var suite = definition.TestSuites.FirstOrDefault(item => item.Command == command);
             if (_options.Mode == "nightly" && suite is not null
                 && freeSlots > 1 && command.Contains("dotnet test ", StringComparison.Ordinal)
@@ -271,23 +273,18 @@ public sealed class PostMergeRunCommand
                     result.ExitCode == 0 ? null : PostMergeAttributor.Excerpt(result.Output),
                     result.ExitCode == 0 ? null : PostMergeAttributor.FailedTests(result.Output)));
             }
-            foreach (var failingVerdict in verdicts.Where(verdict => verdict.ExitCode != 0).ToArray())
+            if (suite is not null)
             {
-                if (!definition.TestSuites.Any(suite => failingVerdict.Command == suite.Command
-                        || failingVerdict.Command.StartsWith(suite.Command + " ", StringComparison.Ordinal)
-                        || suite.Command.Contains("dotnet test ", StringComparison.Ordinal)
-                        && failingVerdict.Command.Contains(suite.Command.Split(" --filter", StringSplitOptions.None)[0],
-                            StringComparison.Ordinal)))
-                    continue;
-                var observed = failingVerdict.FailedTests ?? PostMergeAttributor.FailedTests(failingVerdict.OutputTail ?? "");
-                var blocking = PostMergeAttributor.BlockingTests(_options.Checkout, observed, _clock.GetUtcNow());
-                var focused = PostMergeAttributor.FocusedCommand(failingVerdict.Command, blocking);
-                var knownFlake = observed.Count > 0 && blocking.Count == 0;
-                if (!knownFlake && focused is not null)
-                    knownFlake = (await RunCommand(focused, definition.Environment, ct)).ExitCode == 0;
-                if (!knownFlake) continue;
-                verdicts[verdicts.IndexOf(failingVerdict)] = failingVerdict with { ExitCode = 0 };
-                quarantinedFailures++;
+                // Retry only this suite's new verdicts, including shards. Build and prepare failures
+                // are not test failures and must remain blocking.
+                for (var index = verdictStart; index < verdicts.Count; index++)
+                {
+                    if (verdicts[index].ExitCode == 0) continue;
+                    verdicts[index] = await PostMergeTestRetry.RepeatAsync(verdicts[index],
+                        tests => PostMergeAttributor.BlockingTests(_options.Checkout, tests, _clock.GetUtcNow()),
+                        retry => RunCommand(retry, definition.Environment, ct));
+                    if (verdicts[index].ExitCode == 0) quarantinedFailures++;
+                }
             }
             if (verdicts.Any(verdict => verdict.ExitCode != 0)) break;
         }
@@ -422,7 +419,7 @@ public sealed class PostMergeRunCommand
         return new(fingerprint, blocking, excerpt, failingPaths,
             candidates.Select(candidate => candidate.Sha).TakeLast(512).ToArray(),
             attributed, clean, laterDepends,
-            AttributedTaskId: attributedTaskId);
+            AttributedTaskId: attributedTaskId, NoRelevantMerges: candidates.Count == 0);
     }
 
     private FileStream? ClaimCheckout()

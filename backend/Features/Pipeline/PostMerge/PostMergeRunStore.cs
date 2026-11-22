@@ -94,6 +94,10 @@ public sealed class PostMergeRunStore
                     LastWindowTipSha = run.Kind == "window" || run.Status == "green"
                         ? run.TipSha : state.LastWindowTipSha,
                     ActiveRun = null,
+                    FlakyHistory = [.. (state.FlakyHistory ?? [])
+                        .Where(item => item.AtUtc >= run.FinishedAtUtc.Value.AddDays(-14)),
+                        .. run.FlakyTests.Select(test => new PostMergeFlakyOccurrence(test, run.Id,
+                            run.FinishedAtUtc.Value))],
                     Runs = [.. state.Runs.TakeLast(511), run],
                 };
             }
