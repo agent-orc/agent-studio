@@ -1,3 +1,4 @@
+# Optional user unit: install under ~/.config/systemd/user.
 [Unit]
 Description=Agent Studio nightly develop full suite for %i
 After=network-online.target
@@ -5,10 +6,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=agent-runner
-Group=agent-runner
-WorkingDirectory=/var/lib/agent-runner
-EnvironmentFile=/etc/agent-runner/post-merge-%i.env
+WorkingDirectory=%h
+EnvironmentFile=%h/.config/agent-studio/post-merge-%i.env
 ExecStart=/opt/agent-host/current/agent-host post-merge-run --mode nightly
 Nice=19
 CPUSchedulingPolicy=batch
@@ -18,4 +17,4 @@ KillMode=control-group
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=/var/lib/agent-runner /home/agent-runner
+ReadWritePaths=%h

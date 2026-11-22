@@ -28,6 +28,7 @@ describe('ProjectOperationsComponent', () => {
     fixture.componentRef.setInput('projectName', 'demo');
     fixture.detectChanges();
     const requests = TestBed.inject(HttpTestingController);
+    requests.match('/api/develop-states').forEach(request => request.flush([]));
     requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
     await fixture.whenStable();
     fixture.componentInstance.searchTraces();
@@ -55,10 +56,26 @@ describe('ProjectOperationsComponent', () => {
     expect(host.textContent).toContain('inventory HTTP');
   });
 
+  it('shows the overdue post-merge window with its admission reason', async () => {
+    const fixture = TestBed.createComponent(ProjectOperationsComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    const requests = TestBed.inject(HttpTestingController);
+    requests.expectOne('/api/develop-states').flush([{ project: 'demo', pendingWindow: {
+      starved: true, openedAtUtc: '2026-11-22T00:00:00Z', admissionReason: '2 occupied slots',
+    } }]);
+    requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
+    await fixture.whenStable();
+    const alert = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="operations-starved-window"]');
+    expect(alert?.textContent).toContain('Post-merge tests overdue');
+    expect(alert?.textContent).toContain('2 occupied slots');
+  });
+
   it('shows unavailable telemetry without invented numbers and links a rollback to release and card', async () => {
     const fixture = TestBed.createComponent(ProjectOperationsComponent);
     fixture.componentRef.setInput('projectName', 'demo');
     fixture.detectChanges();
+    TestBed.inject(HttpTestingController).match('/api/develop-states').forEach(request => request.flush([]));
     TestBed.inject(HttpTestingController).expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
     await fixture.whenStable();
     const host = fixture.nativeElement as HTMLElement;
@@ -82,6 +99,7 @@ describe('ProjectOperationsComponent', () => {
     fixture.componentRef.setInput('projectName', 'demo');
     fixture.detectChanges();
     const requests = TestBed.inject(HttpTestingController);
+    requests.match('/api/develop-states').forEach(request => request.flush([]));
     requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
     await fixture.whenStable();
     const view = fixture.componentInstance;
@@ -105,6 +123,7 @@ describe('ProjectOperationsComponent', () => {
     fixture.componentRef.setInput('projectName', 'demo');
     fixture.detectChanges();
     const requests = TestBed.inject(HttpTestingController);
+    requests.match('/api/develop-states').forEach(request => request.flush([]));
     requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
     await fixture.whenStable();
     const view = fixture.componentInstance;
@@ -134,6 +153,7 @@ describe('ProjectOperationsComponent', () => {
     fixture.componentRef.setInput('projectName', 'demo');
     fixture.detectChanges();
     const requests = TestBed.inject(HttpTestingController);
+    requests.match('/api/develop-states').forEach(request => request.flush([]));
     requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
     await fixture.whenStable();
     const release = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>('[data-testid="operations-log-release"]')!;
@@ -155,6 +175,7 @@ describe('ProjectOperationsComponent', () => {
     fixture.componentRef.setInput('projectName', 'demo');
     fixture.detectChanges();
     const requests = TestBed.inject(HttpTestingController);
+    requests.match('/api/develop-states').forEach(request => request.flush([]));
     requests.expectOne('/api/projects/demo/deploy/operations').flush({ ...snapshot, environments: [
       ...snapshot.environments, { ...snapshot.environments[0], environment: { id: 'stage', name: 'Staging', kind: 'staging' } },
     ] });
@@ -204,6 +225,7 @@ describe('ProjectOperationsComponent', () => {
       samples: [{ at: '2026-10-19T00:00:00Z', responseP95Ms: 80, errorRate: 0.02,
         requests: 500, cpuCores: 1, memoryBytes: 1024, diskBytes: 4096 }],
     };
+    TestBed.inject(HttpTestingController).match('/api/develop-states').forEach(request => request.flush([]));
     TestBed.inject(HttpTestingController).expectOne('/api/projects/demo/deploy/operations')
       .flush({ ...snapshot, environments: [{ ...snapshot.environments[0], telemetryAvailable: true, metrics }] });
     await fixture.whenStable();

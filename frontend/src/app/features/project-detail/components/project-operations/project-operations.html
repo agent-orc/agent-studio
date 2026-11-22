@@ -5,6 +5,11 @@
     <div><p>Operations</p><h2 id="project-operations-title">Monitoring, usage and load</h2><p>Last 30 days by application environment.</p></div>
     <button type="button" [appPendingButton]="loading()" pendingLabel="Refreshing…" (click)="load(projectName())">Refresh</button>
   </header>
+  @if (pendingWindow(); as window) {
+    @if (window.starved) {
+      <p role="alert" data-testid="operations-starved-window">Post-merge tests overdue. Integration branch waiting since {{ window.openedAtUtc | date:'medium':'UTC' }} UTC. Host admission: {{ window.admissionReason }}.</p>
+    }
+  }
   @if (error(); as message) { <p role="alert">{{ message }}</p> }
   @if (snapshot(); as state) {
     @if (!state.environments.length) { <p>No application environments are configured.</p> }

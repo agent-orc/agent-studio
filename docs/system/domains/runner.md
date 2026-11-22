@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-11-02
+Version: 2026-11-22
 Status: System-of-record map for runner-side changes.
 
 Review role release drift becomes operator attention as soon as that role has
@@ -3062,3 +3062,18 @@ seam.
   tests around `ProjectRunner` or the service that owns the transition.
 - Prompt-template changes under `prompts/runtime/` require the matching live CLI
   probe, not only rendered-string tests.
+
+## Automatic post-merge checks
+
+The coding daemon owns `PostMergeHostScheduler`, discovering explicit
+`testing.mode: post-merge` projects through Studio's Runner-scoped
+`GET /api/runner/post-merge/projects`. Registry repository URLs and configured
+integration branches are authoritative. Window facts are posted to
+`POST /api/runner/post-merge/projects/{project}/window` with the existing Runner
+completion scope. It maintains dedicated clones under
+its state root, observes every eligible window before and during sequential execution,
+and reuses the existing Runner credential. Window observations are durable
+facts in `PostMergeRunStore`, independent of green/red receipts, and flow to
+`/api/develop-states` and the project Operations alert. Nightly routine checks
+are retried between 02:15 and 06:15 UTC and deduplicated by terminal receipts
+for the UTC day. See [host setup and legacy timer retirement](../../operations/setup/linux-runner-host.md#post-merge-develop-checks).

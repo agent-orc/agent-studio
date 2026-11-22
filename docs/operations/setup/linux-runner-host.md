@@ -1741,30 +1741,98 @@ stale once the checkout's HEAD moves past it.
 
 ### Post-merge develop checks
 
-The project-scoped T3 worker uses a separate dedicated clone and the Studio
-Runner service credential. Install one pair of template timers per project;
-the instance name selects `/etc/agent-runner/post-merge-<instance>.env`.
-The window timer polls each minute, and the nightly timer tries at 02:15 and
-04:15 between the coverage timer's 01:15, 03:15 and 05:15 starts. Host slot and
-load admission yield when the runner is occupied. Configure the branch, Studio
-URL, token file, checkout, and project display name in the environment file.
+The coding Runner automatically polls registered projects whose `testing.mode`
+is `post-merge`. No project environment file or timer is needed. The project
+registry supplies the repository URL, and its integration branch setting supplies
+the branch. `pre-merge` projects (the strict strategy) are excluded. The current
+settings default remains `pre-merge`; this host feature does not migrate project
+policy or change model review placement.
+
+The host uses its existing Runner service credential, registered client identity,
+and TLS settings. When
+`RUNNER_SERVER_URL` addresses Task Server directly, set the existing
+`RUNNER_POST_MERGE_STATE_URL` to Studio. Dedicated checkouts live below
+`RUNNER_STATE_DIR/post-merge/<project-id>`; each poll updates the registered
+origin and fetches the configured branch. The host restores tracked changes left
+by previous test commands in its owned clone; cached and untracked build outputs
+remain available. Manual checkouts retain their dirty-tree refusal. No card
+checkout is used. Repository
+access uses the service account's existing Git credential setup.
+
+Every minute, the host observes all eligible projects, including while another
+project's suite is executing. A locked active checkout is observed through a
+separate Git ref (`refs/agent-studio/post-merge-observed`) using
+`--no-write-fetch-head`; neither the tested worktree nor
+its pinned `FETCH_HEAD` changes. Its one sequential post-merge executor also counts
+as occupied admission for other queued projects. The host discovers local sibling
+state roots and reuses `COVERAGE_RUN_STATE_DIRS` when already configured, so coding,
+review and gate claims keep their existing admission effect. Window sizing comes from the project's look-ahead minutes and maximum batch
+size. Admission retains the occupied-slot and load-per-core limits; observation
+and fetching continue while tests wait. `/api/develop-states` includes
+`pendingWindow` with the fetched tip, opening and observation timestamps,
+window minutes, admission reason, and `starved`. Operations shows an alert when
+admission kept a changed branch waiting longer than its window. An admitted
+window clears its pending observation. These facts do not change a test verdict
+or create a repair card.
+
+Nightly routine checks are eligible from 02:15 until 06:15 UTC, retried each
+minute until admitted. A terminal nightly receipt for that UTC date prevents a
+second run, including after host restart. Nightly checks run even if an affected
+window already made the tip green. Release suite policy is separate. Test runs
+remain sequential within the host scheduler; all windows precede nightly work.
+Observation has a two-minute deadline per project; execution retains the legacy
+three-hour window and twelve-hour nightly service limits.
+The server's existing exact-tip run fencing prevents competing hosts or legacy
+timers from executing the same project concurrently.
+
+#### Retiring hand-installed timers
+
+Existing system units, environment files and dedicated clones continue to work.
+After deploying the updated coding Runner, verify a host-owned window receipt
+and its checkout path in the Runner log. Then disable the legacy timers, wait
+for any already-running services to finish, and remove only their project files:
 
 ```bash
-sudo install -m 0640 -o root -g agent-runner deploy/systemd/agent-post-merge.env.example \
-  /etc/agent-runner/post-merge-agent-studio.env
-sudo install -m 0644 deploy/systemd/agent-post-merge-{window,nightly}@.{service,timer} \
-  /etc/systemd/system/
+instance=agent-studio # the installed project's instance name
+sudo systemctl disable --now "agent-post-merge-window@$instance.timer" \
+  "agent-post-merge-nightly@$instance.timer"
+systemctl is-active "agent-post-merge-window@$instance.service" \
+  "agent-post-merge-nightly@$instance.service"
+# Once both services are inactive:
+sudo rm "/etc/agent-runner/post-merge-$instance.env"
 sudo systemctl daemon-reload
-sudo systemctl enable --now agent-post-merge-window@agent-studio.timer \
-  agent-post-merge-nightly@agent-studio.timer
-sudo -u agent-runner bash -c 'set -a; . /etc/agent-runner/post-merge-agent-studio.env; \
-  set +a; /opt/agent-host/current/agent-host post-merge-run --dry-run --mode window'
 ```
 
-Create and own the checkout as `agent-runner` before enabling the timers. The
-worker posts receipts to `/api/runner/post-merge/projects/{project}/runs` and
-does not read or mutate card folders. The board reads the compact
-`/api/develop-states` route; gate economics reads the same durable receipts.
+Keep the Runner credential: automatic scheduling reuses it. A legacy checkout
+may be removed after confirming it is dedicated to these retired services and
+no process uses it. Do not remove shared unit templates while other projects
+still use them. Neither migration nor this feature updates a live installation
+by itself.
+
+#### Optional manual fallback without a fixed user name
+
+The repository templates are user units. Run these commands as the actual host
+service account; `%h` resolves its home, regardless of its user name. Existing
+system-installed copies are unchanged until explicitly replaced. Do not copy
+these user templates into `/etc/systemd/system` without a `User=` override.
+
+```bash
+install -d -m 0700 "$HOME/.config/agent-studio" "$HOME/.config/systemd/user"
+install -m 0600 deploy/systemd/agent-post-merge.env.example \
+  "$HOME/.config/agent-studio/post-merge-agent-studio.env"
+install -m 0644 deploy/systemd/agent-post-merge-{window,nightly}@.{service,timer} \
+  "$HOME/.config/systemd/user/"
+# Edit the environment file with absolute checkout, credential and state paths.
+# Create a dedicated clone owned by this account first.
+systemctl --user daemon-reload
+systemctl --user enable --now agent-post-merge-window@agent-studio.timer \
+  agent-post-merge-nightly@agent-studio.timer
+```
+
+User timers need a persistent user manager (for example, an administrator can
+enable lingering for the service account). Manual nightly timers retain their
+02:15 and 04:15 local-time attempts. The worker posts receipts to
+`/api/runner/post-merge/projects/{project}/runs`; it never mutates card folders.
 
 ### Salvage store retention
 

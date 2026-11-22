@@ -35,6 +35,7 @@ public sealed record PostMergeProjectState(
     /// <summary>Post-merge window sizing derived from the project's look-ahead settings.</summary>
     public int? WindowMaxMerges { get; init; }
     public int? WindowMinutes { get; init; }
+    public PostMergeWindowObservation? PendingWindow { get; init; }
     public static PostMergeProjectState Empty(string project) => new(project, "green", null, null, null, [], []);
 }
 
@@ -47,4 +48,15 @@ public sealed record PostMergeIncident(string Fingerprint, string RepairCardId, 
 {
     public double? RedMinutes => ResolvedAtUtc is { } resolved
         ? Math.Max(0, (resolved - FirstRedAtUtc).TotalMinutes) : null;
+}
+
+/// <summary>Registry-derived execution target for the host-owned T3 scheduler.</summary>
+public sealed record PostMergeProjectTarget(string ProjectId, string Project, string RepositoryUrl, string Branch);
+
+/// <summary>Fetched branch facts, reported even when execution admission is closed.</summary>
+public sealed record PostMergeWindowObservation(string TipSha, DateTimeOffset? OpenedAtUtc,
+    DateTimeOffset ObservedAtUtc, int WindowMinutes, string? AdmissionReason)
+{
+    public bool Starved => OpenedAtUtc is { } opened && AdmissionReason is not null
+        && (ObservedAtUtc - opened).TotalMinutes > WindowMinutes;
 }

@@ -412,6 +412,9 @@ public sealed class RemoteRunnerDaemon
             : null;
         using var auxiliaryStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
         var salvageSweep = salvage?.RunAsync(auxiliaryStop.Token) ?? Task.CompletedTask;
+        var postMergePoll = _options.Role == "coding"
+            ? PostMergeHostScheduler.RunForHostAsync(_options, _client.ClientId, _log, auxiliaryStop.Token)
+            : Task.CompletedTask;
         HostTelemetrySample? latestTelemetry = telemetry.SampleIfDue(
             active.Count,
             connectivity.Snapshot);
@@ -1053,6 +1056,7 @@ public sealed class RemoteRunnerDaemon
         await sourceFactsPoll;
         await quotaPoll;
         await salvageSweep;
+        await postMergePoll;
         try { await interactiveChat.DrainAsync(); }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
         catch (Exception ex) { _log($"interactive chat drain ended with error: {ex.Message}"); }
