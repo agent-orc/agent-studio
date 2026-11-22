@@ -766,7 +766,8 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         Assert.Single(fixture.Cards());
         var state = fixture.Store.Load(Project);
         Assert.Null(state.Environments["stage"].OpenIncident);
-        Assert.Equal(EnvironmentHealthService.NotDeployed, state.Checks.Values.Single().LastIncident!.EndReason);
+        Assert.Empty(state.Checks);
+        Assert.NotNull(Assert.Single(state.Environments["stage"].IncidentHistory).EndedAt);
     }
 
     [Fact]
