@@ -3,15 +3,19 @@ import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { catchError, forkJoin, map, of, switchMap, timer } from 'rxjs';
 import { BoardFiltersService, flattenGrouped } from '../../../board';
+import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 
 interface DeliveryCard { key: string; title: string; releaseVersion: string | null; deployedAtUtc: string | null }
 interface DeliveryLane { environmentId: string | null; name: string; order: number; cards: DeliveryCard[] }
 interface DeliveryProject { projectId: string; lanes: DeliveryLane[] }
 
+/** Cards a column shows before its "Show all" control (AGT-3949). */
+export const DELIVERY_LANE_PREVIEW = 12;
+
 @Component({
   selector: 'app-delivery-lanes',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, DisclosureMarkerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './delivery-lanes.html',
   styleUrl: './delivery-lanes.scss',
@@ -34,16 +38,25 @@ export class DeliveryLanesComponent {
     return new Set(flattenGrouped(this.filters.filteredGrouped())
       .map(task => (task.displayKey ?? task.taskKey).toLowerCase()));
   });
+  /** Columns the reader opened in full, as `project/environment` keys. */
+  private readonly expanded = signal<ReadonlySet<string>>(new Set());
+  /**
+   * Per column: `cards` are all cards that pass the filters (the header
+   * counts them), `shown` the ones rendered. A long column renders its first
+   * {@link DELIVERY_LANE_PREVIEW} cards until the reader asks for all of them.
+   */
   readonly rows = computed(() => this.data().map(project => ({
     ...project,
-    lanes: project.lanes.map(lane => ({
-      ...lane,
-      cards: lane.cards.filter(card => {
-        const keys = this.visibleKeys() ?? this.filteredKeys();
-        return keys === null || keys.has(card.key.toLowerCase());
-      }),
-    })),
+    lanes: project.lanes.map(lane => {
+      const keys = this.visibleKeys() ?? this.filteredKeys();
+      const cards = lane.cards.filter(card => keys === null || keys.has(card.key.toLowerCase()));
+      const id = `${project.projectId}/${lane.environmentId ?? 'waiting'}`;
+      const long = cards.length > DELIVERY_LANE_PREVIEW;
+      const open = long && this.expanded().has(id);
+      return { ...lane, id, cards, long, open, shown: long && !open ? cards.slice(0, DELIVERY_LANE_PREVIEW) : cards };
+    }),
   })));
+  readonly preview = DELIVERY_LANE_PREVIEW;
 
   constructor() {
     effect(onCleanup => {
@@ -65,6 +78,14 @@ export class DeliveryLanesComponent {
         this.loading.set(false);
       });
       onCleanup(() => subscription.unsubscribe());
+    });
+  }
+
+  toggleLane(id: string): void {
+    this.expanded.update(current => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
     });
   }
 

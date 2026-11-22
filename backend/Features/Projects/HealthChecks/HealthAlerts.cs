@@ -110,7 +110,9 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
         if (watchPath is null) return incident;
         var duration = Duration(ended - incident.StartedAt);
         var removed = checks.Count > 0 && checks.All(check => check.EndReason == "check-removed");
-        var how = removed ? "closed because its failing checks were removed from the declaration" : "recovered";
+        var stopped = checks.Count > 0 && checks.All(check => check.EndReason == "not-deployed");
+        var how = removed ? "closed because its failing checks were removed from the declaration"
+            : stopped ? "closed because the environment was stopped" : "recovered";
         var probes = checks.Sum(check => check.FailedProbes);
         var deployments = deployStore.ReadDeployments(project);
         var linkedDeployments = deployments.Where(run => run.IncidentId == incident.Id).ToArray();
@@ -245,6 +247,8 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
     private static string Ended(HealthIncident check)
         => check.EndReason == "check-removed"
             ? $"Check {check.CheckId} was removed from the declaration; its incident closed {Stamp(check.EndedAt ?? check.StartedAt)}."
+            : check.EndReason == "not-deployed"
+            ? $"The environment was stopped; check {check.CheckId} stopped probing and its incident closed {Stamp(check.EndedAt ?? check.StartedAt)}."
             : $"Check {check.CheckId} recovered {Stamp(check.EndedAt ?? check.StartedAt)} after {check.FailedProbes} "
                 + (check.CheckId.StartsWith("telemetry-", StringComparison.Ordinal) ? "firing evaluations." : "failed probes.");
 

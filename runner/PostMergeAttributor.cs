@@ -10,14 +10,20 @@ namespace AgentRunner;
 /// <summary>Collects evidence on the runner checkout. The server decides how to repair it.</summary>
 public static partial class PostMergeAttributor
 {
-    [GeneratedRegex(@"^\s*Failed\s+(?<name>[^\s\[]+)", RegexOptions.Multiline)]
+    [GeneratedRegex(@"^\s*Failed\s+(?<name>[^\s\[(]+)", RegexOptions.Multiline)]
     private static partial Regex FailedDotNetTest();
+    [GeneratedRegex(@"^\s*FAIL\s+(?<name>[^\r\n]+)", RegexOptions.Multiline)]
+    private static partial Regex FailedOtherTest();
     [GeneratedRegex(@"\bIntegrate\s+(?<id>[A-Za-z0-9_-]+)\b", RegexOptions.IgnoreCase)]
     private static partial Regex IntegrationTaskId();
 
-    public static IReadOnlyList<string> FailedTests(string output) => FailedDotNetTest().Matches(output)
-        .Select(match => match.Groups["name"].Value).Where(name => name.Length <= 256)
+    public static IReadOnlyList<string> FailedTests(string output)
+    {
+        var clean = Regex.Replace(output, @"\x1B\[[0-?]*[ -/]*[@-~]", "");
+        return FailedDotNetTest().Matches(clean).Concat(FailedOtherTest().Matches(clean))
+        .Select(match => match.Groups["name"].Value.Trim()).Where(name => name.Length <= 256)
         .Distinct(StringComparer.Ordinal).Take(64).ToArray();
+    }
 
     public static string? TaskIdFromMergeMessage(string message)
     {
@@ -124,6 +130,9 @@ public sealed class PostMergeProjectMap
     public bool CouldAffect(ProjectExecutionDefinition definition, IReadOnlyList<string> changedPaths,
         string failedCommand)
     {
+        // Documentation cannot change a test project, even when the project graph is incomplete.
+        changedPaths = changedPaths.Where(path => !IsDocumentation(path)).ToArray();
+        if (changedPaths.Count == 0) return false;
         var match = Regex.Match(failedCommand,
             @"\bdotnet\s+test\s+['"" ]?(?<project>[^\s'""]+\.csproj)", RegexOptions.IgnoreCase);
         if (!match.Success)
@@ -153,6 +162,13 @@ public sealed class PostMergeProjectMap
             else if (closure.Contains(owner)) return true;
         }
         return false;
+    }
+
+    private static bool IsDocumentation(string path)
+    {
+        var normalized = Normalize(path);
+        return normalized.StartsWith("docs/", StringComparison.OrdinalIgnoreCase)
+            || !normalized.Contains('/') && normalized.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string Normalize(string path)

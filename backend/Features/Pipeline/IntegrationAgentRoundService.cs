@@ -38,38 +38,42 @@ public sealed record IntegrationRecoveryBudgetUsage(
     int MatchingRounds,
     int LegacyRounds)
 {
+    /// <summary>The integration target the rounds were counted for, when known.</summary>
+    public string? IntegrationBranch { get; init; }
+
     public int Used => MatchingRounds + LegacyRounds;
 
     public string ExhaustedReason(int maximumRounds)
     {
         var limit = Math.Max(1, maximumRounds);
         var used = Math.Min(Used, limit);
-        var delivery = string.IsNullOrWhiteSpace(DeliverySha)
-            ? ""
-            : $" for delivery {ShortSha(DeliverySha)}";
+        var target = string.IsNullOrWhiteSpace(IntegrationBranch)
+            ? " for this card"
+            : $" for this card on {AgentStudio.Tasks.TaskIntegrationBranch.Name(IntegrationBranch)}";
         var legacy = LegacyRounds == 0
             ? ""
             : $" (includes {LegacyRounds} legacy automatic recovery {RoundWord(LegacyRounds)} without a delivery identifier)";
-        return $"automatic recovery budget used: {used}/{limit}{delivery}{legacy}";
+        return $"automatic recovery budget used: {used}/{limit}{target}{legacy}";
     }
-
-    private static string ShortSha(string sha)
-        => sha.Length > 12 ? sha[..12] : sha;
 
     private static string RoundWord(int count)
         => count == 1 ? "round" : "rounds";
 }
 
 /// <summary>
-/// Counts the shared integration-recovery budget for one immutable delivery.
-/// The result ref and delivered SHA form the durable delivery-chain identity,
-/// so another review of the same delivery shares its budget while a new fenced
-/// delivery starts a new one. Identifier-less historical rows are counted
-/// conservatively because they cannot be assigned safely to another delivery.
+/// Counts the shared integration-recovery budget of one card for one
+/// integration target. AGT-3968: the budget no longer restarts with every
+/// delivery. Each automatic round publishes a new delivery SHA, so a budget
+/// keyed by the delivery chain (result ref and SHA) let AGT-3897 take eight
+/// rounds under a limit of one. Every automatic round of the card counts,
+/// whichever delivery it started from; a round recorded for another
+/// integration branch does not. Rows without a delivery identifier still
+/// count and stay named in the park reason.
 /// </summary>
 public static class IntegrationRecoveryBudget
 {
     public const string DeliveryChainIdKey = "deliveryChainId";
+    public const string IntegrationBranchKey = "integrationBranch";
 
     public static string DeliveryChainId(ReviewSubjectRecord subject)
     {
@@ -80,10 +84,14 @@ public static class IntegrationRecoveryBudget
 
     public static IntegrationRecoveryBudgetUsage Count(
         IEnumerable<TimelineEvent> entries,
-        ReviewSubjectRecord? subject)
+        ReviewSubjectRecord? subject,
+        string? integrationBranch = null)
     {
         ArgumentNullException.ThrowIfNull(entries);
         var deliveryChainId = subject is null ? null : DeliveryChainId(subject);
+        var target = string.IsNullOrWhiteSpace(integrationBranch)
+            ? null
+            : AgentStudio.Tasks.TaskIntegrationBranch.Name(integrationBranch);
         var matching = 0;
         var legacy = 0;
         foreach (var entry in entries)
@@ -99,24 +107,26 @@ public static class IntegrationRecoveryBudget
                                 StringComparison.Ordinal);
             if (!automatic) continue;
 
-            var recordedChainId = details?.GetValueOrDefault(DeliveryChainIdKey);
-            if (string.IsNullOrWhiteSpace(recordedChainId))
-            {
-                legacy++;
+            var recordedBranch = details?.GetValueOrDefault(IntegrationBranchKey);
+            if (target is not null && !string.IsNullOrWhiteSpace(recordedBranch)
+                && !string.Equals(AgentStudio.Tasks.TaskIntegrationBranch.Name(recordedBranch), target,
+                    StringComparison.Ordinal))
                 continue;
-            }
-            if (deliveryChainId is not null
-                && string.Equals(recordedChainId, deliveryChainId, StringComparison.Ordinal))
-            {
+
+            if (string.IsNullOrWhiteSpace(details?.GetValueOrDefault(DeliveryChainIdKey)))
+                legacy++;
+            else
                 matching++;
-            }
         }
 
         return new IntegrationRecoveryBudgetUsage(
             deliveryChainId,
             subject?.ResultSha,
             matching,
-            legacy);
+            legacy)
+        {
+            IntegrationBranch = target,
+        };
     }
 }
 
@@ -171,7 +181,23 @@ public sealed class IntegrationAgentRoundService
     public Task<IntegrationAgentRoundStartResult> TryStartAsync(
         RemoteDeliveryIntegrationRequest request,
         MergeIntoIntegrationResult result)
+        => TryStartAsync(request, result, involvedCards: []);
+
+    /// <summary>
+    /// AGT-3968: one sentence that names the conflicting files and the other
+    /// cards whose integrated commits touched them, for a park reason.
+    /// </summary>
+    public static string ConflictSummary(IReadOnlyList<string> conflictedFiles, IReadOnlyList<string> involvedCards)
+        => (conflictedFiles.Count == 0 ? "" : $" Conflicting files: {string.Join(", ", conflictedFiles)}.")
+           + (involvedCards.Count == 0 ? "" : $" Other cards involved: {string.Join(", ", involvedCards)}.");
+
+    public Task<IntegrationAgentRoundStartResult> TryStartAsync(
+        RemoteDeliveryIntegrationRequest request,
+        MergeIntoIntegrationResult result,
+        IReadOnlyList<string> involvedCards)
     {
+        var conflictedFiles = result.ConflictReport?.ConflictedFiles is { Count: > 0 } reported
+            ? reported : result.ConflictedFiles;
         var job = _scanner.FindJob(request.JobId, request.WatchPath);
         if (job is null)
             return Task.FromResult(Failed("The task disappeared before its automatic integration recovery round could start."));
@@ -199,15 +225,18 @@ public sealed class IntegrationAgentRoundService
 
         var budget = IntegrationRecoveryBudget.Count(
             _timeline.ReadAll(job.FolderPath),
-            subject);
+            subject,
+            request.IntegrationBranch);
         var action = RemoteIntegrationContinuationPolicy.Decide(
             result.Outcome,
             budget.Used,
             _maximumRecoveryRounds);
         if (action == RemoteIntegrationContinuationAction.LeaveForHumanReview)
         {
-            var reason = budget.ExhaustedReason(_maximumRecoveryRounds);
-            RecordFailure(job.FolderPath, request, result, reason, epoch, subject, budget);
+            var reason = budget.ExhaustedReason(_maximumRecoveryRounds)
+                + "." + ConflictSummary(conflictedFiles, involvedCards);
+            RecordFailure(job.FolderPath, request, result, reason, epoch, subject, budget,
+                conflictedFiles, involvedCards);
             return Task.FromResult(Failed(
                 reason,
                 budgetUsed: Math.Min(budget.Used, _maximumRecoveryRounds),
@@ -222,7 +251,7 @@ public sealed class IntegrationAgentRoundService
             return Task.FromResult(Failed(reason));
         }
 
-        var prompt = BuildPrompt(job, subject, request, result);
+        var prompt = BuildPrompt(job, subject, request, result, involvedCards);
         var intent = _mutations.SavePendingIntent(
             job.Id,
             ContinueModes.Steer,
@@ -247,6 +276,23 @@ public sealed class IntegrationAgentRoundService
             RecordFailure(job.FolderPath, request, result, reason, epoch);
             return Task.FromResult(Failed(reason));
         }
+
+        // Ready is immediately claimable. Persist both the route and typed
+        // lineage first, just like acceptance-rail integration recovery.
+        var route = TaskIntegrationRecoveryService.SelectRecoveryRoute(job, new ModelRoutingPolicyRegistry());
+        if (route.Selected != route.Previous)
+        {
+            var level = route.Selected[(route.Selected.LastIndexOf('/') + 1)..];
+            if (!_mutations.SetRecoveryThinkingLevel(job.Id, level, job.WatchPath))
+                return Task.FromResult(Failed("The integration recovery reasoning route could not be persisted."));
+        }
+        SessionContinuationLedgerStore.SaveDelta(job.FolderPath, new AgentStudio.TaskServer.Contracts.MechanicalRoundDelta(
+            result.ConflictReport?.IntegrationTipSha ?? result.PreviousIntegrationSha ?? string.Empty,
+            subject.ImmutableResultRef ?? subject.ResultRef!,
+            subject.ResultSha,
+            result.ConflictReport?.ConflictedFiles ?? result.ConflictedFiles,
+            prompt,
+            IntegrationContinuationPrompt.VerificationScope.Trim()));
 
         var position = _states.PromoteToReadyTop(
             job.Id, job.WatchPath,
@@ -277,9 +323,15 @@ public sealed class IntegrationAgentRoundService
                 ["mode"] = ContinueModes.Steer,
                 ["reason"] = AttributionAmbiguousReason,
                 ["supersededCommits"] = Invariant(supersession.MarkedCommits),
+                ["conflictedFiles"] = string.Join(", ", conflictedFiles),
+                ["involvedCards"] = string.Join(", ", involvedCards),
                 ["budgetUsed"] = Invariant(budget.Used + 1),
                 ["budgetLimit"] = Invariant(_maximumRecoveryRounds),
                 ["legacyRecoveryRoundsCounted"] = Invariant(budget.LegacyRounds),
+                ["previousRoute"] = route.Previous,
+                ["selectedRoute"] = route.Selected,
+                ["routeReason"] = route.Reason,
+                ["policyVersion"] = route.PolicyVersion,
             });
         _logger.LogInformation(
             "integration-agent-round-started project={Project} job={JobId} deliveryChain={DeliveryChain} epoch={Epoch} position={Position} supersededCommits={SupersededCommits}",
@@ -303,7 +355,9 @@ public sealed class IntegrationAgentRoundService
         string reason,
         int epoch,
         ReviewSubjectRecord? subject = null,
-        IntegrationRecoveryBudgetUsage? budget = null)
+        IntegrationRecoveryBudgetUsage? budget = null,
+        IReadOnlyList<string>? conflictedFiles = null,
+        IReadOnlyList<string>? involvedCards = null)
     {
         var details = new Dictionary<string, string>
         {
@@ -322,6 +376,10 @@ public sealed class IntegrationAgentRoundService
         }
         if (budget is not null)
             details["legacyRecoveryRoundsCounted"] = Invariant(budget.LegacyRounds);
+        if (conflictedFiles is { Count: > 0 })
+            details["conflictedFiles"] = string.Join(", ", conflictedFiles);
+        if (involvedCards is { Count: > 0 })
+            details["involvedCards"] = string.Join(", ", involvedCards);
 
         _timeline.Append(
             folderPath,
@@ -335,13 +393,15 @@ public sealed class IntegrationAgentRoundService
         TaskInfo job,
         ReviewSubjectRecord subject,
         RemoteDeliveryIntegrationRequest request,
-        MergeIntoIntegrationResult result)
+        MergeIntoIntegrationResult result,
+        IReadOnlyList<string> involvedCards)
     {
         return IntegrationContinuationPrompt.Build(
             job.Key ?? job.Id, subject.ImmutableResultRef ?? subject.ResultRef, subject.ResultSha,
             request.IntegrationBranch, "merge-into-develop",
             result.Error ?? "Delivery attribution needs a new agent round.", result.ConflictReport,
-            conflictedFiles: result.ConflictedFiles, runnerMergesIntegration: true);
+            conflictedFiles: result.ConflictedFiles, runnerMergesIntegration: true,
+            involvedCards: involvedCards);
     }
 
     private static IntegrationAgentRoundStartResult Failed(

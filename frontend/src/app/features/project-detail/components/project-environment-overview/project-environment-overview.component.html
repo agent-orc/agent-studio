@@ -4,7 +4,7 @@
     <p>{{ heading() === 'Runbooks' ? 'Runbooks and their history by environment.' : 'Application health by environment and project activity.' }}</p>
   </header>
   @if (loading()) {
-    <p role="status">Loading environments…</p>
+    <app-loading-surface kind="list" label="Loading environments…" />
   } @else if (failed()) {
     <p role="alert">Environment inventory could not be loaded. Try opening this view again.</p>
   } @else if (environments().length === 0) {
@@ -17,15 +17,13 @@
     <section aria-label="Environments">
       <h2>Environments</h2>
       <div class="project-environments__grid">
-        @for (environment of environments(); track environment.declaration.id) {
-          <article class="project-environments__card" [attr.data-testid]="'project-environment-' + environment.declaration.id">
-            <h3>{{ environment.declaration.name }}</h3>
-            <app-status-indicator [tone]="healthTone(environment.health)" [label]="healthLabel(environment.health)" testId="project-environment-health" />
-            <p>{{ releaseLabel(environment) }}</p>
-            @if (environment.declaration.kind === 'stage' || environment.declaration.kind === 'production') {
+        @for (environment of environments(); track environment.state.id) {
+          <article class="project-environments__card" [attr.data-testid]="'project-environment-' + environment.state.id">
+            <h3>{{ environment.state.name }}</h3>
+            <app-environment-state [environment]="environment.state" [now]="now()" />
+            @if (environment.runbookKind; as kind) {
               @defer (on immediate) {
-                <app-project-runbooks [projectName]="projectName()" [environmentId]="environment.declaration.id"
-                  [environmentKind]="environment.declaration.kind === 'stage' ? 'staging' : 'production'" />
+                <app-project-runbooks [projectName]="projectName()" [environmentId]="environment.state.id" [environmentKind]="kind" />
               }
             }
           </article>

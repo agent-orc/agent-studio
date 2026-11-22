@@ -453,7 +453,7 @@ public static class BatchGateStateSnapshotReader
                     item.TaskKey == member.TaskKey && cause?.ReviewAttemptId == item.ReviewAttemptId) : null;
                 members[member.TaskKey] = new
                 {
-                    status = replay is { Outcome: "cascade-deferred" } || requeued ? "pending"
+                    status = BatchReplayOutcomes.IsDeferred(replay?.Outcome) || requeued ? "pending"
                         : released ? "published"
                         : left ? "fallback"
                         : phase == BatchPhase.Unknown ? "unknown" : "in-batch",
@@ -461,7 +461,9 @@ public static class BatchGateStateSnapshotReader
                     phase = phase.ToString().ToLowerInvariant(),
                     position = (int?)(index + 1),
                     size = (int?)manifest.Members.Count,
-                    reason = baseMoveReason ?? (ejected ? replay!.Outcome : requeued ? "requeued" : cause?.Rule),
+                    reason = baseMoveReason ?? (ejected ? replay!.Outcome
+                        : replay?.Outcome == BatchReplayOutcomes.SiblingDeferred ? replay.Outcome
+                        : requeued ? "requeued" : cause?.Rule),
                     reasonDetail = ejected ? EjectionDetail(replay!)
                         : baseMoveReason is not null ? StateOf(store, manifest).Reason
                         : requeued ? StateOf(store, manifest).Reason : cause?.Event,

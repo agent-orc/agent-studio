@@ -125,7 +125,7 @@ public sealed class TaskIntegrationRecoveryService
         RecoveryRouteSelection? route = null;
         if (source == AcceptanceRailSource)
         {
-            route = SelectRecoveryRoute(current);
+            route = SelectRecoveryRoute(current, _routing);
             // The obligation is the write-ahead receipt for the task route.
             // Replay can encounter either the old route or the selected route.
             if (automaticObligation is { PreviousRoute: not null, SelectedRoute: not null,
@@ -276,28 +276,29 @@ public sealed class TaskIntegrationRecoveryService
             RetryNumber: retryNumber);
     }
 
-    private RecoveryRouteSelection SelectRecoveryRoute(TaskInfo job)
+    internal static RecoveryRouteSelection SelectRecoveryRoute(TaskInfo job, ModelRoutingPolicyRegistry routing)
     {
         var previous = $"{job.Model ?? "default"}/{job.ThinkingLevel ?? "default"}";
         var pinned = job.ModelExplicit || job.ThinkingLevelExplicit;
-        var policyVersion = _routing.Policy.Version;
+        var policyVersion = routing.Policy.Version;
         var prompt = File.Exists(Path.Combine(job.FolderPath, "prompt.md"))
             ? File.ReadAllText(Path.Combine(job.FolderPath, "prompt.md"))
             : string.Empty;
-        var floor = _routing.CorrectnessFloor(job.TaskType, job.Title, prompt);
+        var floor = routing.CorrectnessFloor(job.TaskType, job.Title, prompt);
         if (pinned || string.IsNullOrWhiteSpace(job.Model))
             return new(previous, previous, pinned ? "operator pin retained" : "no concrete model route", policyVersion, pinned);
 
-        var candidate = "low";
-        var lowTier = _routing.Policy.Tiers.Single(tier => tier.Id == "sonnet-low");
-        var knownLowRoute = string.Equals(job.Model, lowTier.Model, StringComparison.OrdinalIgnoreCase)
-            || lowTier.VendorOverrides.Values.Any(route => string.Equals(
-                job.Model, route.Model, StringComparison.OrdinalIgnoreCase));
-        if (!knownLowRoute)
+        var lowTier = routing.Policy.Tiers.Single(tier => tier.Id == "sonnet-low");
+        if (!routing.RouteMeetsFloor(job.Model, "low", lowTier))
             return new(previous, previous, "model has no policy low route", policyVersion, false);
-        if (!_routing.RouteMeetsFloor(job.Model, candidate, floor))
+        // Select within the original task's correctness floor, keeping the same
+        // model. A bug may need medium even when low is a supported route.
+        var candidate = new[] { "low", "medium" }
+            .FirstOrDefault(level => routing.RouteMeetsFloor(job.Model, level, floor));
+        if (candidate is null)
             return new(previous, previous, $"policy floor {floor?.Id ?? "none"} retained", policyVersion, false);
-        if (string.Equals(job.ThinkingLevel, candidate, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(job.ThinkingLevel, "low", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(job.ThinkingLevel, candidate, StringComparison.OrdinalIgnoreCase))
             return new(previous, previous, "already at safe thinking level", policyVersion, false);
         return new(previous, $"{job.Model}/{candidate}", "mechanical recovery within policy floor", policyVersion, false);
     }

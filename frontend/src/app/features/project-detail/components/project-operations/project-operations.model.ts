@@ -1,3 +1,5 @@
+import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+
 export interface OperationsMarker {
   deploymentId: string; releaseId: string; version: string; atUtc: string;
   trigger: string; state: string; cardKeys: string[];
@@ -16,6 +18,25 @@ export interface OperationsMetrics {
 export interface EnvironmentOperations {
   environment: { id: string; name: string; kind: string };
   telemetryAvailable: boolean; metrics: OperationsMetrics | null; markers: OperationsMarker[];
+  observed?: { state: string; restarts: number; crashOutput?: string[] | null } | null;
+  runtimeIncident?: { id: string; kind: string; endedAt: string | null; restarts: number } | null;
+}
+
+export function hostState(row: EnvironmentOperations): string {
+  return row.runtimeIncident && !row.runtimeIncident.endedAt ? row.runtimeIncident.kind : row.observed?.state ?? 'unknown';
+}
+export function hostStateTone(row: EnvironmentOperations): StatusTone {
+  switch (hostState(row)) {
+    case 'running': return 'success';
+    case 'starting': return 'running';
+    case 'crash-loop': case 'crash-rollback': case 'failed': case 'unhealthy': return 'danger';
+    default: return 'neutral';
+  }
+}
+export function hostStateLabel(row: EnvironmentOperations): string {
+  const state = hostState(row);
+  return state === 'crash-loop' ? 'Crash loop' : state === 'crash-rollback' ? 'Crash rollback'
+    : state.charAt(0).toUpperCase() + state.slice(1);
 }
 export interface DoraSummary {
   successfulProductionDeploys: number; deploysPerWeek: number | null;

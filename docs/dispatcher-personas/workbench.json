@@ -7,11 +7,12 @@
   "status": "decision-pending",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-22T11:30:00Z",
+  "updatedAt": "2026-11-22T13:00:00Z",
   "sourceTaskKeys": [
     "AGT-3974"
   ],
   "relatedTaskKeys": [
+    "AGT-3977",
     "AGT-3573",
     "AGT-3885",
     "AGT-3886",

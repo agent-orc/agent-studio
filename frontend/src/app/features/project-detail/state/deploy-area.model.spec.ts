@@ -10,6 +10,7 @@ import {
   declaredEnvironments,
   carriesArtifact,
   environmentNames,
+  environmentReleaseDisplay,
   filterDeployRuns,
   formatAge,
   formatDuration,
@@ -30,6 +31,9 @@ import {
   RELEASE_2,
   RELEASE_3,
   deployDeploymentsFixture,
+  observedHealthFixture,
+  openIncidentFixture,
+  productionDownHealthFixture,
   deployEnvironmentsFixture,
   deployRunsFixture,
   deploySourcesFixture,
@@ -359,6 +363,18 @@ describe('deploy area model', () => {
       expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'healthy' });
     });
 
+    it('shows an active container incident ahead of stale healthy status', () => {
+      const sources = deploySourcesFixture();
+      sources.environments!.environments[0].runtimeIncident = { id: 'stage/crash', kind: 'crash-loop',
+        startedAt: '2026-10-19T12:00:00Z', updatedAt: '2026-10-19T12:01:00Z', restarts: 102, endedAt: null };
+      sources.environments!.environments[0].observed = { state: 'crash-loop', restarts: 102,
+        crashOutput: ['FATAL: startup failed'] };
+      expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'crash-loop' });
+      sources.environments!.environments[0].runtimeIncident.endedAt = '2026-10-19T12:02:00Z';
+      sources.environments!.environments[0].observed.state = 'running';
+      expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'healthy' });
+    });
+
     it('reads "no checks" only for an unknown health without a declared health URL', () => {
       const host = hostOnlySourcesFixture();
       host.environments!.environments[0].health = 'unknown';
@@ -368,6 +384,37 @@ describe('deploy area model', () => {
       expect(buildEnvironmentCards(host)[0].health).toEqual({ status: 'no-checks' });
       host.environments!.environments[0].health = 'healthy';
       expect(buildEnvironmentCards(host)[0].health).toEqual({ status: 'no-checks' });
+    });
+
+    it('reads an open incident first, then control-plane health, then the last report (M2)', () => {
+      const sources = deploySourcesFixture();
+      // Every deploy report says healthy; the control plane has Production down with an open incident.
+      sources.health = productionDownHealthFixture();
+      const [staging, production] = buildEnvironmentCards(sources);
+      expect(staging.health).toEqual({ status: 'reported', state: 'up' });
+      expect(production.health).toEqual({ status: 'reported', state: 'down' });
+
+      // An open incident wins even while no check has reported a state yet.
+      const incidentOnly = deploySourcesFixture();
+      incidentOnly.health = { capturedAt: '', probeOrigin: '', environments: [
+        { ...observedHealthFixture('production', 'unknown', openIncidentFixture('production')), checks: [] },
+      ] };
+      expect(buildEnvironmentCards(incidentOnly)[1].health).toEqual({ status: 'reported', state: 'down' });
+
+      // Checks without data yet leave the last report in charge.
+      const noData = deploySourcesFixture();
+      noData.health = { capturedAt: '', probeOrigin: '', environments: [observedHealthFixture('production', 'unknown')] };
+      expect(buildEnvironmentCards(noData)[1].health).toEqual({ status: 'reported', state: 'healthy' });
+    });
+
+    it('shows the release version and its age first and keeps the digest as detail (M2)', () => {
+      const [staging] = buildEnvironmentCards(deploySourcesFixture());
+      expect(environmentReleaseDisplay(staging, DEPLOY_FIXTURE_NOW)).toEqual({
+        version: '2026.10.19.2', digest: 'website@sha256:cccccccccccc', artifact: ARTIFACT_C,
+        deployedAt: '2026-10-19T11:48:00Z', age: '12 min ago', uncertain: false,
+      });
+      const [hostOnly] = buildEnvironmentCards(hostOnlySourcesFixture());
+      expect(environmentReleaseDisplay(hostOnly, DEPLOY_FIXTURE_NOW)).toMatchObject({ version: null, digest: 'website@sha256:cccccccccccc' });
     });
 
     it('reads observed health and retains an unmatched host promotion', () => {

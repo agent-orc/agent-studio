@@ -5,12 +5,38 @@
     <div><p>Operations</p><h2 id="project-operations-title">Monitoring, usage and load</h2><p>Last 30 days by application environment.</p></div>
     <button type="button" [appPendingButton]="loading()" pendingLabel="Refreshing…" (click)="load(projectName())">Refresh</button>
   </header>
+  @if (pendingWindow(); as window) {
+    @if (window.starved) {
+      <p role="alert" data-testid="operations-starved-window">Post-merge tests overdue. Integration branch waiting since {{ window.openedAtUtc | date:'medium':'UTC' }} UTC. Host admission: {{ window.admissionReason }}.</p>
+    }
+  }
+  @if (postMergeCoverage(); as coverage) {
+    @if (coverage.missing) {
+      <div class="project-operations__coverage-warning" role="alert" data-testid="operations-post-merge-warning">
+        <strong>Post-merge runs missing</strong>
+        <p>{{ coverage.message }}</p>
+        <a [href]="'#/projects/' + projectSlug() + '/settings'">Testing strategy in project settings</a>
+      </div>
+    }
+  }
   @if (error(); as message) { <p role="alert">{{ message }}</p> }
   @if (snapshot(); as state) {
     @if (!state.environments.length) { <p>No application environments are configured.</p> }
     @for (row of state.environments; track row.environment.id) {
       <article class="project-operations__environment" [attr.data-testid]="'operations-' + row.environment.id">
         <h3>{{ row.environment.name }} <small>{{ row.environment.kind }}</small></h3>
+        @if (row.observed; as observed) {
+          <dl class="project-operations__host">
+            <div><dt>Restarts</dt><dd data-testid="operations-host-restarts">{{ metric(observed.restarts) }}</dd></div>
+            <div><dt>Container state</dt><dd><app-status-indicator [tone]="hostStateTone(row)" [label]="hostStateLabel(row)" testId="operations-host-state" /></dd></div>
+          </dl>
+          @if (observed.crashOutput?.length) {
+            <section class="project-operations__crash" data-testid="operations-crash-output" aria-label="Last crash output">
+              <h4>Last crash output</h4>
+              <pre>{{ observed.crashOutput?.join('\n') }}</pre>
+            </section>
+          }
+        }
         @if (row.metrics; as m) {
           @if (m.samples.length) {
             <div class="project-operations__trends">
@@ -26,7 +52,7 @@
             <div><dt>Response median</dt><dd>{{ metric(m.responseP50Ms, ' ms') }}</dd></div>
             <div><dt>Response p95</dt><dd>{{ metric(m.responseP95Ms, ' ms') }}</dd></div>
             <div><dt>Error rate</dt><dd>{{ m.errorRate === null ? 'No data' : metric(m.errorRate * 100, '%') }}</dd></div>
-            <div><dt>Restarts</dt><dd>{{ metric(m.restarts) }}</dd></div>
+            @if (!row.observed) { <div><dt>Restarts</dt><dd>{{ metric(m.restarts) }}</dd></div> }
             <div><dt>Requests</dt><dd>{{ metric(m.requests) }}</dd></div>
             <div><dt>Sessions</dt><dd>{{ metric(m.sessions) }}</dd></div>
             <div><dt>Active users per day</dt><dd>{{ metric(m.activeUsers) }}</dd></div>

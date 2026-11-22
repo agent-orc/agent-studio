@@ -25,6 +25,8 @@ public static class OperatorDecisionTypes
     public const string ReviewHostDrift = "review-host.drift";
     public const string ReviewRetrySchedulerStalled = "review-retry.scheduler-stalled";
     public const string EnvironmentIncidentOpen = "environment.incident-open";
+    /// <summary>AGT-3965: a fast or balanced project whose develop moved without a post-merge run.</summary>
+    public const string PostMergeRunsMissing = "post-merge.missing";
     public const string DeployCompleted = "deploy.completed";
     public const string WatcherHeartbeat = "watcher.heartbeat";
 
@@ -32,7 +34,8 @@ public static class OperatorDecisionTypes
     [
         EscalationOpened, HumanReviewReady, DecisionCardOpened, BackendStalled, BatchGateStuck, ProgressIdleWithReady,
         BatchRed, BatchIsolating, BatchRecordUnreadable, BatchRunningWithoutGate, PushPendingOverdue, PushBlocked, QuotaExhausted, QuotaFallbackActive,
-        GateHostUnreachable, ReviewHostDrift, ReviewRetrySchedulerStalled, EnvironmentIncidentOpen, DeployCompleted, WatcherHeartbeat,
+        GateHostUnreachable, ReviewHostDrift, ReviewRetrySchedulerStalled, EnvironmentIncidentOpen, PostMergeRunsMissing,
+        DeployCompleted, WatcherHeartbeat,
     ];
 
     /// <summary>The type a fact key names: every key starts with its type and a <c>|</c>.</summary>
@@ -88,6 +91,8 @@ public static class OperatorOperations
         OperatorDecisionTypes.ReviewHostDrift => [StallsInspect],
         OperatorDecisionTypes.ReviewRetrySchedulerStalled => [StallsInspect, CardInspect],
         OperatorDecisionTypes.EnvironmentIncidentOpen => [CardInspect],
+        // The repair is the post-merge timers on a host, or the strategy, both the owner's (AGT-3965).
+        OperatorDecisionTypes.PostMergeRunsMissing => [OwnerDecide],
         OperatorDecisionTypes.DeployCompleted => [CardInspect],
         OperatorDecisionTypes.WatcherHeartbeat => [WatcherStatus],
         _ => [],

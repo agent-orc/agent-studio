@@ -145,7 +145,7 @@ describe('EnvironmentHealthPanelComponent', () => {
   });
 
   it('maps every health status onto a tone', () => {
-    const matrix: Record<string, string> = { up: 'success', degraded: 'warning', invalid: 'warning', down: 'danger', unknown: 'neutral', 'not-observed': 'neutral', later: 'neutral' };
+    const matrix: Record<string, string> = { up: 'success', degraded: 'warning', invalid: 'warning', down: 'danger', unknown: 'neutral', 'not-observed': 'neutral', 'not-deployed': 'neutral', later: 'neutral' };
     for (const [status, tone] of Object.entries(matrix)) expect(healthStatusTone(status)).toBe(tone);
   });
 });

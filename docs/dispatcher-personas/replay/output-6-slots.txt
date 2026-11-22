@@ -53,7 +53,7 @@ pair detection {
 {"name": "Historian", "runs": 57, "makespan": 52.1, "slotUse": 0.34, "exposedPairs": 28, "cardsNeedingSync": 13, "overlapsInsidePackages": 0, "conflictsPer100": 22.8, "roundsPerCard": 1.23, "reworkShare": 0.19, "forecastF1": 0.56, "parallelism": 1.0, "scores": {"conflicts": 58, "tokens": 57, "rework": 46, "forecast": 56, "parallelism": 100, "lead": 59}, "valuePlain": 61, "value": 61}
 {"name": "Packer", "runs": 51, "makespan": 48.3, "slotUse": 0.36, "exposedPairs": 27, "cardsNeedingSync": 16, "overlapsInsidePackages": 2, "conflictsPer100": 28.1, "roundsPerCard": 1.18, "reworkShare": 0.24, "forecastF1": 0.56, "parallelism": 1.0, "scores": {"conflicts": 48, "tokens": 67, "rework": 31, "forecast": 56, "parallelism": 100, "lead": 63}, "valuePlain": 59, "value": 59}
 
-size prior (median real code files per source): {'X': 2, 'RV': 5, 'DP': 17, 'IN': 17}
+size prior (median real code files per source): {'DP': 17, 'IN': 17, 'RV': 5, 'X': 2}
 size signal: correlation of real code files with forecast files, cited files over 55 cards with source text: 0.1 0.04
 
 packages: [['RV-22', 'RV-18'], ['RV-21', 'RV-11'], ['RV-20', 'RV-4', 'RV-7'], ['RV-14', 'RV-13'], ['RV-3', 'RV-2']]

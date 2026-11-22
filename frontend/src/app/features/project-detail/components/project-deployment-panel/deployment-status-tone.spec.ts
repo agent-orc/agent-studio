@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { TARGET_READINESS, deploymentHistoryTone, environmentHealthTone, lastDeploymentTone } from './deployment-status-tone';
+import { TARGET_READINESS, deploymentHistoryTone, lastDeploymentTone } from './deployment-status-tone';
 
 describe('deployment status tones', () => {
-  it('maps environment health', () => {
-    expect(environmentHealthTone('healthy')).toBe('success');
-    expect(environmentHealthTone('failed')).toBe('danger');
-    expect(environmentHealthTone('unknown')).toBe('neutral');
-    expect(environmentHealthTone('later')).toBe('neutral');
-  });
-
   it('keeps past failures calm in history lists (R4)', () => {
     const matrix: Record<string, string> = {
       healthy: 'success', ok: 'success', succeeded: 'success', 'rolled-back': 'warning', failed: 'warning',

@@ -21,6 +21,14 @@ background warm when it is missing. It never folds the ledger on the request.
 
 The writers are `ProjectRunner.MirrorAgentTurnUsageToBus` for local coding calls, `RemoteTokenReceiptService` for remote coding completion, `RemotePipelineReviewEvidenceProjector` for remote review, and `OrchestratorChatService.RecordChatUsageAsync` for chat. Chat fallback receipts are written when the bus append fails. The merged ledger retains participant, host, CLI, model, timestamp, and token dimensions.
 
+Remote coding completion also records `sessionMode` on each usage call: `resumed`
+when the worker launched with a prior session ID, otherwise `fresh`. The fenced
+continuation evidence supplies this value, and receipt reads preserve it in the
+merged ledger. Missing provenance stays null for historical calls. Compare it
+with input/captured session IDs in `session-continuation-ledger.jsonl` when
+investigating provider acceptance or a fresh fallback. Codex raw input includes
+cached input; do not add raw input and cached input when comparing session costs.
+
 `TokenAggregationService.WorkspaceTimeline` filters to the requested UTC window before pricing entries. The fold applies the same half-open interval `[start, end)` and builds project, model, host, and bucket rows from the selected entries. `WorkspaceTimelineRange` reads bus rows for its exact calendar interval. Both preserve the recorded timestamp for historical pricing.
 
 ## Model identity and cost

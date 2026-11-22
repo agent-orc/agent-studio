@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-11-02
+Version: 2026-11-22
 Status: System-of-record map for runner-side changes.
 
 Review role release drift becomes operator attention as soon as that role has
@@ -507,7 +507,10 @@ It then reports each answered AGT-3176 deploy job on
 `POST /api/deploy/jobs/{project}/{jobId}/report`, and the observed state and
 events on `POST /api/deploy/run-targets/{hostId}/observed-state`. All routes
 require `runner.deploy`, and in the networked profile the caller's Runner ID
-must equal `hostId`. The desired-state read claims the open deploy job, or
+must equal `hostId`. The host also sends a bounded, masked tail of Docker stdout
+and stderr after a restart. Studio keeps that tail with the restart count, opens
+or updates a runtime incident for a crash loop or crash rollback, and writes an
+Activity alert. The desired-state read claims the open deploy job, or
 renews its lease. A run target holds one job for at most 30 minutes from its
 first claim; after that Studio records it as `deploy-step-failed` and queues
 the usual automatic rollback. Without an open job, an environment keeps its
@@ -1193,6 +1196,19 @@ unreported claim expires with its lease and is queued again.
   1,211,213-token observation threshold. Semantic conflicts and invalid
   sessions return to Ready for a policy-qualified fresh claim. The original
   task prompt is never resent on the resume path.
+  Both automatic integration recovery (`IntegrationAgentRoundService`, including
+  batch replay conflicts) and acceptance-rail recovery persist that delta before
+  promoting a card to Ready. Saving only a follow-up prompt does not authorize
+  resume. Automatic recovery uses the lowest supported low/medium reasoning
+  route that clears the existing correctness floor; explicit operator pins are
+  retained. Claim admission still applies its mechanical recovery floor and can
+  raise a queued low selection to medium. A missing session, changed worktree or changed lineage still starts
+  fresh with the recorded rejection reason.
+  Completion evidence carries `sessionMode` (`resumed` or `fresh`), which also
+  travels into the remote coding token receipt and merged usage ledger. It
+  describes the worker's launch choice; captured session IDs provide the
+  independent provider evidence. Historical rows without that evidence remain
+  unknown.
   On the standalone Task Server plane, both direct claims and accepted host
   permits carry a policy-qualified route with the mechanical delta. A resumed
   fallback completes as typed `MechanicalFallback`, records its reason with the
@@ -3062,3 +3078,19 @@ seam.
   tests around `ProjectRunner` or the service that owns the transition.
 - Prompt-template changes under `prompts/runtime/` require the matching live CLI
   probe, not only rendered-string tests.
+
+## Automatic post-merge checks
+
+The coding daemon owns `PostMergeHostScheduler`, discovering the projects
+whose testing strategy is `fast` or `balanced` (derived `testingMode`
+`post-merge`, AGT-3965) through Studio's Runner-scoped
+`GET /api/runner/post-merge/projects`. Registry repository URLs and configured
+integration branches are authoritative. Window facts are posted to
+`POST /api/runner/post-merge/projects/{project}/window` with the existing Runner
+completion scope. It maintains dedicated clones under
+its state root, observes every eligible window before and during sequential execution,
+and reuses the existing Runner credential. Window observations are durable
+facts in `PostMergeRunStore`, independent of green/red receipts, and flow to
+`/api/develop-states` and the project Operations alert. Nightly routine checks
+are retried between 02:15 and 06:15 UTC and deduplicated by terminal receipts
+for the UTC day. See [host setup and legacy timer retirement](../../operations/setup/linux-runner-host.md#post-merge-develop-checks).

@@ -7,7 +7,8 @@ public sealed record OperationsMarker(string DeploymentId, string ReleaseId, str
     DateTime AtUtc, string Trigger, string State, IReadOnlyList<string> CardKeys);
 
 public sealed record EnvironmentOperationsView(DeployEnvironment Environment, bool TelemetryAvailable,
-    OperationsMetrics? Metrics, IReadOnlyList<OperationsMarker> Markers);
+    OperationsMetrics? Metrics, IReadOnlyList<OperationsMarker> Markers,
+    RunTargetObservation? Observed = null, RuntimeIncident? RuntimeIncident = null);
 
 public sealed record ProjectOperationsView(string Project, DateTimeOffset Since, DateTimeOffset Until,
     IReadOnlyList<EnvironmentOperationsView> Environments, DoraSummary Dora);
@@ -15,7 +16,8 @@ public sealed record ProjectOperationsView(string Project, DateTimeOffset Since,
 public sealed record OperationsLogResult(bool TelemetryAvailable, IReadOnlyList<OperationsLogLine> Lines, string? NextCursor);
 
 public sealed class ProjectOperationsService(DeployService deploy, TaskScannerService scanner,
-    IOperationsTelemetryReader telemetry, TimeProvider clock, HealthCheckStore health)
+    ProjectEnvironmentService hostEnvironments, IOperationsTelemetryReader telemetry, TimeProvider clock,
+    HealthCheckStore health)
 {
     public ProjectOperationsView? Read(string project)
     {
@@ -25,6 +27,7 @@ public sealed class ProjectOperationsService(DeployService deploy, TaskScannerSe
         if (environments is null || releases is null || deployments is null) return null;
         var until = clock.GetUtcNow();
         var since = until.AddDays(-30);
+        var hostViews = hostEnvironments.Read(project)?.Environments ?? [];
         var releaseById = releases.ToDictionary(item => item.Id, StringComparer.Ordinal);
         var cards = scanner.ScanAllJobsWithArchive()
             .Where(item => string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase))
@@ -33,8 +36,10 @@ public sealed class ProjectOperationsService(DeployService deploy, TaskScannerSe
         var rows = environments.Select(environment =>
         {
             var metrics = telemetry.ReadMetrics(project, environment.Id, since, until);
+            var host = hostViews.FirstOrDefault(item => item.Declaration.Id == environment.Id);
             return new EnvironmentOperationsView(environment, metrics is not null, metrics,
-                CompletedMarkers(environment.Id, deployments, releaseById, since, until));
+                CompletedMarkers(environment.Id, deployments, releaseById, since, until),
+                host?.Observed, host?.RuntimeIncident);
         }).ToArray();
         return new(project, since, until, rows,
             DoraMetrics.Calculate(environments, releases, deployments, cards, since, until,

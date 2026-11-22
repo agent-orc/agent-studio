@@ -17,6 +17,23 @@ commands:
   lint:
     - bash scripts/npm-frontend.sh run lint
 testSuites:
+  # Base suite (AGT-3966): every merge-window run executes these after
+  # commands.build (solution build, release build check, frontend build); a
+  # path outside every area selects them alone. Together they must finish
+  # within about ten minutes on the run host. How to choose them: see
+  # "Base suite" in docs/system/domains/pipeline.md.
+  - id: backend-base
+    category: base
+    expectedDurationSeconds: 90
+    command: dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter "(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard|FullyQualifiedName~TransitionDecisionBoundaryTests|FullyQualifiedName~MonolithDecisionBoundaryTests|FullyQualifiedName~LocalStateStartupTests|FullyQualifiedName~TaskListProjectFilterEndpointTests|FullyQualifiedName~IntegrationReleaseServiceTests)"
+  - id: frontend-unit-base
+    category: base
+    expectedDurationSeconds: 210
+    command: bash scripts/npm-frontend.sh run test:ci -- --include src/app/app.spec.ts --include src/app/features/studio-shell/studio-shell.component.spec.ts --include src/app/services/task.service.spec.ts --include src/app/services/core-attach-routes.spec.ts --include src/app/features/task-detail/task-detail.spec.ts
+  - id: product-start
+    category: base
+    expectedDurationSeconds: 300
+    command: bash scripts/base-product-start.sh
   - id: backend-routine
     category: routine
     expectedDurationSeconds: 1440

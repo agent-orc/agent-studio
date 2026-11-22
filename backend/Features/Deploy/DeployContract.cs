@@ -123,7 +123,27 @@ public sealed record EnvironmentStatus(
     public RollbackTarget? RollbackTarget { get; init; }
     /// <summary>A failed run may have changed the host even though the last successful release remains the lifecycle baseline.</summary>
     public bool ReleaseUncertain { get; init; }
+    /// <summary>Set only for the running Studio instance, the Production environment of its source project (AGT-3949).</summary>
+    public InstanceEnvironmentFacts? Instance { get; init; }
 }
+
+/// <summary>
+/// What the instance deploy records (AGT-3879) say about the running Studio
+/// instance, for the workspace dashboard (AGT-3949). The live release itself
+/// (version, commit) is <see cref="EnvironmentStatus.CurrentRelease"/>.
+/// </summary>
+/// <param name="LiveSinceUtc">When the live release went live; null while no release is live.</param>
+/// <param name="LastRun">The latest deploy run the operator scripts reported; null before the first report.</param>
+public sealed record InstanceEnvironmentFacts(DateTime? LiveSinceUtc, InstanceLastRun? LastRun);
+
+/// <param name="State">
+/// <c>running</c>, <c>succeeded</c>, <c>failed</c> or <c>stalled</c>. The generic
+/// <see cref="Deployment.State"/> of the same run reads a stalled run as failed.
+/// </param>
+/// <param name="Step">The failed step of a failed run, else the step that reported last.</param>
+/// <param name="AtUtc">When the run ended, or its last report while it is open.</param>
+public sealed record InstanceLastRun(string Id, string State, string Version, string CommitSha, DateTime StartedAtUtc,
+    DateTime AtUtc, string? Step);
 
 /// <summary>
 /// The release a rollback of one environment picks (F13): its last deploy
@@ -172,9 +192,20 @@ public sealed record DeployAuditEntry(DateTime AtUtc, string Actor, string Actio
 public sealed record DeployMatrixRow(string ProjectId, IReadOnlyList<EnvironmentStatus> Statuses, string? Error)
 {
     public IReadOnlyList<EnvironmentStatus> TenantStatuses { get; init; } = [];
+
+    /// <summary>
+    /// False for a watched project whose repository declares no environment
+    /// under <c>docs/deployments/environments</c> (AGT-3949). Such a row has no
+    /// statuses, except the instance's Production for the source project.
+    /// </summary>
+    public bool EnvironmentsDeclared { get; init; } = true;
 }
 
-/// <summary>Workspace dashboard: projects as rows, environment kinds as columns.</summary>
+/// <summary>
+/// Workspace dashboard: one row per project this instance watches, environment
+/// kinds as columns. A project the workspace registers but this instance does
+/// not watch has no row.
+/// </summary>
 public sealed record DeployMatrixResponse(IReadOnlyList<string> EnvironmentKinds, IReadOnlyList<DeployMatrixRow> Projects);
 
 public sealed record DeploymentRequest(string EnvironmentId, bool Approve = false, bool? GuidedFailure = null)

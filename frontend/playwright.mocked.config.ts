@@ -27,6 +27,7 @@ export default defineConfig({
       '**/system/semantic-contrast.spec.ts',
       '**/project/project-deploy-area.spec.ts',
       '**/project/operations-security.spec.ts',
+      '**/project/testing-strategy.spec.ts',
       '**/workspace/deployment-dashboard.spec.ts',
       '**/workspace/structure-view.spec.ts',
       '**/persona-team/team-page.spec.ts',

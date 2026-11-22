@@ -1,0 +1,7 @@
+@if (panel(); as panel) {
+  @if (panel.status === 'error') {
+    <p class="instance-deploy-section__notice" role="status" data-testid="instance-deploy-notice">This Studio: {{ panel.message }}</p>
+  } @else {
+    <app-project-instance-deploy [panel]="panel" [now]="now()" (openCard)="openCard.emit($event)" />
+  }
+}

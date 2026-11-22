@@ -175,12 +175,52 @@ integrated by a per-card gate). The project Flow health view reads them with the
 cycle-time rows, whose `reviewAspectSeconds` split review time per `aspect-*`
 step inside Post Processing.
 
+### Testing strategy (AGT-3965)
+
+`testing.strategy` is the one per-project test placement setting. It selects
+existing mechanisms and adds none; the model review aspects run before
+integration in every strategy. A project without a stored value resolves to
+`fast`. Before AGT-3965 a project without a testing section ran pre-merge with
+the full suite, so every such project changes behaviour with this release.
+
+| Strategy | Per card, before integration | Integration | After integration |
+|---|---|---|---|
+| `fast` (default) | Build and affected tests (`testing.perCard` = `affected`) | Right after the review passed, through the post-merge integration gate below (`testing.mode` = `post-merge`) | Merge window: the base suite and the affected routine suites. Nightly: the full routine suite. Production release: the release full suite (`delivery.fullSuite`) |
+| `balanced` | As fast | As fast | Merge window: the base suite and every routine suite. Nightly and release as fast |
+| `strict` | Build in review; full suite in the batch gate (`affected` off, `pre-merge`) | After a green batch | None (the behaviour before AGT-3965) |
+
+The Owner chooses the strategy on the project settings page or with
+`PUT /api/projects/{name}/testing` (`{"strategy":"balanced"}`). The route
+accepts only `strategy`; a body with only `perCard` or `mode` is refused with
+400. `GET /api/projects/{name}/testing`, `GET /api/projects/settings`
+(`testingStrategy`) and the project snapshot (`settings.testingStrategy`)
+return the strategy. `testingPerCard` and `testingMode` stay readable for one
+release and are derived from it; a stored legacy `perCard` or `mode` is
+ignored. The runner state route
+(`/api/runner/post-merge/projects/{project}`) carries `windowSuites`
+(`affected` or `routine`), and the merge-window run selects from it.
+
+In a post-merge strategy develop is checked only by the T3 runs below: the
+coding daemon's host scheduler (AGT-3967) discovers every fast and balanced
+project through `GET /api/runner/post-merge/projects`, and hand-installed
+timers remain a fallback. When
+develop has a first-parent commit that no reported T3 run covers, that commit
+is at least six hours old, and no run reported in the last six hours,
+`PostMergeCoverageService` reports the project as `missing`. The settings page
+and the project Operations view show the warning, and Needs you shows a
+`post-merge.missing` item. Any receipt counts, a skip or a red run included;
+a run on the current tip or a report within six hours clears it. The tip comes
+from the `origin/<branch>` ref file and the age from one `git rev-list -n 1
+--first-parent --before` per tip pair. Studio does not fall back to pre-merge
+on this warning; the red-develop fallback below is the only automatic one.
+
 ### Per-project integration test placement (AGT-3314)
 
-`testing.mode` defaults to `pre-merge`. That path retains the existing
-per-card integration gate and optional pre-merge batch gate. In `post-merge`
-the Remote Review runs the affected T1 plan, the batch route is disabled, and
-the integration gate compiles the exact merged tree. It repeats the affected
+`testing.mode` is derived from `testing.strategy` (AGT-3965): `strict` is
+`pre-merge`, `fast` and `balanced` are `post-merge`. The pre-merge path retains
+the existing per-card integration gate and optional pre-merge batch gate. In
+`post-merge` the Remote Review runs the affected T1 plan, the batch route is
+disabled, and the integration gate compiles the exact merged tree. It repeats the affected
 selection when develop moved over a path changed by the reviewed delivery,
 or when review and merge evidence cannot prove a disjoint merge. Merge and
 publication locks are keyed by project and integration branch; the aggregate
@@ -209,8 +249,9 @@ is classified by the `HumanReviewEscalation` funnel when its normal run path
 escalates it. The funnel records the card ID in the post-merge run state.
 While that card is in Escalated, or a red develop has lasted at least
 two hours, the project temporarily resolves to `pre-merge`. A green T3 receipt
-clears the recorded card ID. Agent Studio remains in `pre-merge` until its T1 replay
-median is at most ten minutes. The gate-economics seven-day view reports lead
+clears the recorded card ID. Agent Studio is no longer held in `pre-merge`
+(owner decision of 20 to 22 November 2026, AGT-3965); it follows its testing
+strategy like every project. The gate-economics seven-day view reports lead
 time and gate minutes per card for comparison after a project switches.
 
 ### Post-merge develop checks (T3, AGT-3311)
@@ -219,8 +260,11 @@ time and gate minutes per card for comparison after a project switches.
 runner unit. The window timer polls each minute; the pure close rule runs after
 six first-parent integration commits or 30 minutes from the oldest pending
 commit, whichever comes first. The worker fetches develop once and pins
-`FETCH_HEAD` before selecting the union of changed-path test projects. Unknown
-paths run every routine suite. The nightly timer runs at 02:15 and 04:15 in
+`FETCH_HEAD` before selecting the union of changed-path test projects. Every
+window runs the project's [base suite](#base-suite-agt-3966) first; a path
+outside every area selects the base suite alone. A project without a base suite
+keeps the earlier fallback: a path outside every area runs every routine
+suite. The nightly timer runs at 02:15 and 04:15 in
 the existing coverage slot window. It runs the routine full suite on the same
 exact-tip rule, using AGT-3232 class partitions across free local host slots.
 T3 treats a suite without `shards` as `auto`; a declared shard count still
@@ -246,6 +290,106 @@ alter integration transitions.
 The Dossier's recorded working decisions are D1 T-B, D2 A, D3 A, D4 A,
 D5 L-B, D6 A, D7 A-B, D8 A, D9 A, and D10 A. This card implements T3 under
 D1 T-B and retains D3 A as the before-delivery policy for its later card.
+
+### Base suite (AGT-3966)
+
+`testSuites[].category: base` in `.agent-studio/project.yml` marks a small
+fixed set that answers one question: does the product still start, and do its
+main paths work. Every merge-window run executes it after `commands.build`.
+Strategy `fast` adds the routine suites of the touched areas. Strategy
+`balanced` adds every routine suite. The nightly run keeps the full routine
+suite without the base suite, and a Production release still needs the
+release full suite on the candidate (`delivery.fullSuite`, AGT-3313).
+
+`PostMergeRunPlan.SelectAffected` maps paths to areas. `backend/` and
+`backend.Tests/` select `backend-routine`, `runner/` and `runner.Tests/` select
+`runner-routine`, `task-server/` and `task-server.Tests/` select
+`task-server-routine`, and `frontend/` selects `frontend-unit`. A shared .NET
+library (`contracts/`, `orchestration-decisions/`, `cli-hosting/`,
+`retention/`, `testsupport/`) selects the three .NET routine suites. Any other
+path, for example `docs/`, `scripts/` or `CHANGELOG.md`, selects no routine
+suite when a base suite exists.
+
+Three cases still select every routine suite, so a base suite never hides a
+code change from the window:
+
+- A repository-wide build input (`PostMergeRunPlan.IsGlobalInput`): any
+  `Directory.Build.*`, `Directory.Packages.props`, a root `global.json`,
+  `NuGet.config` or solution file, and anything under `.agent-studio/`. These
+  match the per-card global inputs (`GeneratedTestProjectMap.GlobalInput`).
+- A path in an area whose suite the project does not configure, for example
+  `task-server/` in a project without `task-server-routine`.
+- A project whose routine suites carry none of the ids above. The area map
+  describes Agent Studio's layout only, so such a project has no areas, and
+  every window runs its base suite plus every routine suite.
+
+How to choose base tests:
+
+- The set together must finish within about ten minutes on the run host,
+  after the window's build. Its summed `expectedDurationSeconds` stays at or
+  below 600; `PostMergeRunTests` pins this for Agent Studio.
+- Do not repeat `commands.build`: the window has already built the solution,
+  the release build check and the frontend. Reuse that output (`--no-build`,
+  the existing bundle).
+- Take one start of the real product with no mocked API, plus fast tests of
+  the main paths: architecture and guard tests, the transition boundary, and
+  one endpoint each for the task list and the release path. Leave out tests of
+  a single feature; the routine suite of the touched area covers them.
+- Keep it stable. A flaky base test makes every window red, whatever changed.
+
+Agent Studio's base suite (measured on 22 November 2026 on agent-runner-01, 376 s in total):
+
+| Suite | Command | Measured |
+|---|---|---|
+| `backend-base` | Backend tests filtered to `.Architecture.`, `Category=Guard`, `TransitionDecisionBoundaryTests`, `MonolithDecisionBoundaryTests`, `LocalStateStartupTests`, `TaskListProjectFilterEndpointTests` and `IntegrationReleaseServiceTests` (265 tests) | 55 s |
+| `frontend-unit-base` | `test:ci` with `--include` for the app, the studio shell, the task service, the core routes and task detail (5 files, 100 tests) | 198 s |
+| `product-start` | `scripts/base-product-start.sh`: publishes the Debug build without rebuilding, starts backend and frontend on isolated ports, and runs `e2e/system/base-product-start.spec.ts` (health, create a card through the API, the board shows it) | 123 s (78 s of it a frontend rebuild that a clean post-merge checkout skips) |
+
+#### Stage deploy after a green window
+
+`delivery.deployAfterGreenWindow: true` in project.yml opts a project in. A
+green merge-window run on the integration tip then counts as the release gate,
+and the integration release reconciler (AGT-3891) creates the tip's release and
+queues one Staging job for it. A red window blocks the release. Without the
+opt-in, a green window does not release. The tip waits with a reason that
+names the setting, and a green nightly run or a card verification on that
+commit releases it as before. The key sits under `delivery` because `deploy` is the
+schema 2 list of deploy steps and schema 1 forbids it. The opt-in only works
+where an integration release already works: Staging and Production declared,
+a static artifact, and no promotion train. Agent Studio declares no Stage
+environment (its Studio instance is its Production, AGT-3879), so it does not
+opt in.
+
+### Flaky tests after integration (AGT-3976)
+
+Every failed routine suite in a window or nightly run gets one same-tip repeat,
+including runner, task-server, frontend, and nightly shards. .NET failures use
+method names without theory display arguments and a focused filter that retains
+the original exclusions. Each failed method repeats once; a method that recovers
+is flaky and a method that fails twice remains red. Other suite kinds, or output
+that cannot form a safe focused filter, repeat the original suite command once.
+Build and prepare failures remain blocking. Active test quarantines retain their
+existing exemption.
+
+Receipts retain the original failure excerpt and record repeat attempts
+through `retried`, recovered names in `flakyTests`, and a distinct `flakyCount`.
+Recovered tests do not make develop red, including when other tests stay red.
+`/api/develop-states` exposes the latest terminal run's `flakyCount` and
+`mostFlakyTests14Days`, ordered by the number of distinct runs per test. Flaky
+occurrences are persisted for 14 days independently of the 512-receipt limit.
+Names are available for recognized .NET and Vitest console failures; an unnamed
+suite recovery is reported in the receipt reason without inventing a test name.
+Receipts also record the admission sample as `startLoadPerCore` and
+`startOccupiedSlots`, including on a red result. This is a start snapshot, not
+monitoring of load throughout execution.
+
+Attribution excludes paths under `docs/` and root Markdown documentation even
+when suite selection conservatively ran every suite. Source and build changes
+continue to use the test project's reference graph and conservative fallback.
+When no relevant merge remains, the receipt records `noRelevantMerges`; its
+repair card says no merge explains the failure and identifies an environmental
+or flaky suspect. Attribution errors remain unresolved rather than claiming a
+proof of independence.
 
 ### Red develop repair (AGT-3312)
 
@@ -318,7 +462,7 @@ record. Batch gate waiting and acquisition callbacks emit lane events for
 each gated member, including the holding project when one is known.
 
 Each row also carries the delivery-target `baseline` of the
-[pipeline Dossier](../../pipeline-delivery-target/index.html) section 07
+[pipeline Dossier](../../operations/pipeline-delivery-target/index.html) section 07
 (AGT-3309). These metrics only read evidence. They change no gate, review or
 board read. A missing input is null (Unknown), never zero.
 
@@ -718,8 +862,35 @@ pauses the batch as before. An unattributable ejection does not count toward
 the conflict cascade guard and ends a run of consecutive conflicts; its replay
 record keeps the route it failed on (`merge` for a merge-parent mismatch).
 Conflicted members start a bounded agent merge round with the conflicted files
-named in the steer prompt. Cascade-deferred members stay in Auto Review for the
+and the other cards whose integrated commits touched them named in the steer
+prompt. Cascade-deferred members stay in Auto Review for the
 next batch plan; when no member was admitted, that plan is requested at once.
+
+Integration conflicts (AGT-3968). A merge conflict is an orchestration error
+first; an agent round is the last resort:
+
+- *Sibling deferral.* A member that conflicts with the candidate tip but
+  replays cleanly onto the batch base conflicts only with a sibling admitted
+  ahead of it. It is recorded with replay outcome `sibling-deferred`, the
+  conflicting files and the sibling keys, stays queued like a cascade-deferred
+  member, does not count toward the cascade guard and opens no agent round.
+  The card timeline gets `integration_sibling_deferred`. AGT-3897's
+  conflict-free round of 17 November was this case (sibling AGT-3891).
+- *Union of add/add hunks.* When the merge route conflicts and every hunk of
+  every conflicted file only adds lines on both sides relative to the merge
+  base (an empty base section in `git merge-file --diff3`), the replay keeps
+  both blocks, integration side first, and commits the merge. A rebase-route
+  conflict tries this merge route before it is reported. Any hunk that changes
+  or removes a merge-base line refuses the union for the whole member, which
+  then goes to the agent as before. The batch gate builds and tests the
+  candidate; a red gate isolates the member as usual. The admitted replay
+  record carries `unionResolvedHunks`, and the card timeline gets
+  `integration_union_resolved` naming each hunk (`path:line`, lines per side).
+- *Parking.* When the automatic round is refused (budget spent, continuations
+  disabled, no fenced ref), the card leaves the batch queue and is escalated
+  with the conflicting files and the other cards involved. Before AGT-3968 a
+  refused round only logged `batch-conflict-round-refused` and the card was
+  ejected by the same conflict in every later batch.
 Unattributable members return to per-task fallback after publication. Before
 scheduling a gate, the tick checks whether the integration branch already
 contains its result by ancestry or patch equivalence.
@@ -2156,9 +2327,11 @@ comparison before Quality Studio's verdict contract can decide a review.
   Model-based test selection is rejected by the Gates Dossier section 5.
 - `backend/Features/Pipeline/PerCardVerifyPlanner.cs`,
   `GeneratedTestProjectMap.cs` and `FastCheckPlanner.cs`: tier T1 of the
-  [pipeline Dossier](../../pipeline-delivery-target/index.html) (decision D1,
-  option T-B; AGT-3310). The project setting `testing.perCard` is `full` by
-  default, which keeps the Remote Review plan byte-identical. With `affected`,
+  [pipeline Dossier](../../operations/pipeline-delivery-target/index.html) (decision D1,
+  option T-B; AGT-3310). The project setting `testing.perCard` is derived from
+  `testing.strategy` (AGT-3965): `strict` is `full`, which keeps the Remote
+  Review plan byte-identical, and `fast` (the default) and `balanced` are
+  `affected`. With `affected`,
   the plan builds `folderToTestProjects` at plan time from the `.csproj`
   `ProjectReference` graph (every project directory maps to the test projects
   whose transitive closure contains it, process-level references included) and
@@ -2183,9 +2356,8 @@ comparison before Quality Studio's verdict contract can decide a review.
   work-package` in `review-verification.json`, and the integration gate then
   does not reuse it (`IntegrationGateReusePolicy`), so the integration gate
   keeps its own test stage until the project switches to post-merge checks
-  (Dossier P7). Operators switch the setting with `PUT
-  /api/projects/{name}/testing` (`{"perCard":"affected"}`); the settings page
-  shows it read-only.
+  (Dossier P7). The Owner picks the strategy on the project settings page or
+  with `PUT /api/projects/{name}/testing` (`{"strategy":"fast"}`).
 - `backend/Features/Pipeline/PreMainTestGate.cs`: fail-closed release boundary
   that forces the full test level before a configured merge can advance
   `main`, irrespective of lane settings, diff input, or history.
@@ -2900,6 +3072,19 @@ operator changes cause the step to fail before its writer runs.
   the integration-history repair sweep, then admitted to a batch without a new
   review. Other missing attribution escalations name the affected commits and
   the required next-round action.
+- AGT-3968: the runner reports the round's start head as the pickup base, and
+  that head already holds the runner's own develop merge. A round that adds no
+  commit of its own (it only got the runner's merge, or it re-delivered the
+  earlier SHA unchanged) therefore has an empty `base..result` range. The
+  completion then attributes the integration merge-base range under the same
+  continuation rule, with no new commit or only new integration merges allowed.
+  A re-delivered commit keeps its first producer, so the batch admission check
+  (`RemoteCommitAttributionGuard.CoversDelivery`) also accepts the result
+  commit recorded in this attempt's delivery generation (`deliveryAttemptId`).
+  The integration-history repair sweep (report
+  `integration-history-attribution-v3.json`, 14-day window) applies the same
+  rule to escalated passing reviews, so AGT-3820, AGT-3905 and AGT-3914 return
+  to Auto Review without a coding run.
 - `post-orchestrator-review` is an early completeness gate. It must never render
   as a final verdict.
 - `post-orchestrator-decision` is the single final orchestrator verdict.

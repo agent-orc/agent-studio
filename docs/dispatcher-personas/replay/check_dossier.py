@@ -3,7 +3,8 @@
 
 1. Mirrors ConceptWorkbenchContract: required descriptor keys, bounded-slice acceptance
    scopes, open-ended prompt phrases, dependsOn ids (known, earlier, not self, unique),
-   and the four concept sections plus house-style CSS in index.html.
+   and the four concept sections plus house-style CSS in index.html; every relative link
+   of index.html names an existing file and anchor inside this Dossier.
 2. Applies today's pick-gate scope rule (ProjectRunner.ScopePathRegex, parent directory,
    prefix overlap) to the promoted prompts of the DS slices and of PT-13 to PT-20 of
    docs/persona-team, and prints which pairs that rule keeps apart. A promoted prompt is
@@ -14,12 +15,14 @@
 4. Runs replay.py (4 slots, unit durations) and compares every cell of the replay
    results table in index.html with the script output, so the published figures
    cannot drift from the evidence.
+5. Runs review_input.py: every Dossier file reaches the concept review whole.
 
 Usage: python3 -I check_dossier.py [repository root]
 """
 import json
 import os
 import re
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -66,6 +69,17 @@ for section in ("alternatives", "recommendation", "evidence", "open-decisions"):
 for d in w.get("openDecisions", []):
     if f'data-decision-id="{d["id"]}"' not in html:
         failures.append(f"decision {d['id']} not in index.html")
+anchors = set(re.findall(r' id="([^"]+)"', html))
+for href in re.findall(r'href="([^"]+)"', html):
+    target, _, anchor = href.replace("&amp;", "&").partition("#")
+    if ":" in href or target.startswith("/"):
+        continue
+    if target and not os.path.abspath(os.path.join(DOSSIER, target)).startswith(os.path.abspath(DOSSIER) + os.sep):
+        failures.append(f"index.html: link {href} leaves the Dossier; name other Dossiers by path")
+    elif target and not os.path.isfile(os.path.join(DOSSIER, target)):
+        failures.append(f"index.html: link {href} has no file")
+    elif not target and anchor not in anchors:
+        failures.append(f"index.html: link {href} has no anchor")
 print("contract:", "ok" if not failures else failures)
 
 # --- 2. today's scope rule on promoted prompts -------------------------------------
@@ -148,7 +162,6 @@ if unordered:
     failures.append("same-area slices unordered")
 
 # 4. Replay table against replay.py output.
-import subprocess
 out = subprocess.run([sys.executable, "-I", os.path.join(HERE, "replay.py")],
                      capture_output=True, text=True, check=True).stdout
 section = out.split("== durations: unit", 1)[1].split("== durations: size", 1)[0]
@@ -172,5 +185,16 @@ for name, cells in replayed.items():
 print("\nreplay table vs replay.py:", "match for %d personas" % len(replayed) if not drift else drift)
 if drift or len(replayed) != 6:
     failures.append("replay table drifts from replay.py")
+# 5. Review input: every file reaches the concept review whole.
+review = subprocess.run([sys.executable, "-I", os.path.join(DOSSIER, "review_input.py")],
+                        capture_output=True, text=True)
+problems = [line for line in review.stdout.splitlines() if line.startswith("PROBLEM ")]
+summary = next((line for line in review.stdout.splitlines() if line.startswith("review input:")), "review input: no output")
+print("\n" + summary)
+for line in problems:
+    print("  " + line)
+if review.returncode != 0:
+    failures.append("review input has problems")
+
 print("\nresult:", "PASS" if not failures else "FAIL " + "; ".join(failures))
 sys.exit(1 if failures else 0)

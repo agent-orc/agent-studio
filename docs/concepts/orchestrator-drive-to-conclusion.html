@@ -386,6 +386,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-integration-round-loop-and-unattributed-merge-rounds">
+          <td>2026-11-22</td>
+          <td><code>AGT-3897</code>, <code>AGT-3914</code><br><span class="small">integration-round-loop and unattributed merge-only rounds (fix <code>AGT-3968</code>)</span></td>
+          <td>No CLI crashed. AGT-3897 took eight "include latest develop" rounds on 17 and 18 November, each a full coding run and a full review that passed, under an automatic round limit of one. The first of them (17 November 22:39 local) had no conflict with develop. AGT-3914, AGT-3905 and AGT-3820 passed review and were escalated with "Commit attribution is missing for this reviewed delivery". Terminal: Escalated.</td>
+          <td>The batch replay ejected AGT-3897 as a conflict when it only conflicted with the sibling AGT-3891 admitted ahead of it; an agent cannot resolve that. The recovery budget was keyed by result ref and SHA, and every round publishes a new one. A refused batch conflict round only logged a warning and left the card queued. The runner reports its start head, which already holds its develop merge, as the pickup base, so a round without a commit of its own had an empty attribution range; the repair sweep skipped empty ranges and then recorded no unresolved row, so it never ran again.</td>
+          <td>Sibling-only conflicts are deferred to the next batch; the budget counts per card and integration target; a refused round parks the card naming the files and the other cards; add/add hunks are kept by union in the batch replay; a merge-only round is reviewed on its resolution; an empty pickup range is attributed through the integration merge-base range, and sweep v3 restores the parked cards without a coding run.</td>
+        </tr>
         <tr id="case-document-key-amend-push-blocked">
           <td>2026-11-10</td>
           <td><code>AGT-3649</code> playthrough<br><span class="small">document-key-amend-push-blocked (fix <code>AGT-3695</code>)</span></td>
@@ -798,6 +805,20 @@
             every command cwd from that absolute root. Each command now records its repository and working directory, and a
             regression fixture proves a root <code>.slnx</code> with nested-only projects executes at the repository root.
           </td>
+        </tr>
+        <tr id="case-post-merge-theory-false-red">
+          <td>2026-11-22</td>
+          <td><code>AGT-3976</code><br><span class="small">post-merge-theory-false-red</span></td>
+          <td>No coding CLI crashed. The reported first T3 run on <code>d3c4eed65</code> reached red after a runner theory could not start its fake Docker script, creating repair card AGT-3975.</td>
+          <td>The failure parser retained theory arguments that the focused-filter builder rejected. The common retry loop then skipped that failure. The attribution path treated unowned documentation paths as affecting every suite.</td>
+          <td>T3 now strips theory arguments, repeats failures in every suite kind once, records recovered test names as flaky, and keeps a fail-twice result red. Docs-only changes are excluded from suspects; no relevant merge produces an environmental or flaky suspect repair prompt. Admission load and occupied slots are retained in the receipt. Focused regression fixtures pin both terminal outcomes.</td>
+        </tr>
+        <tr id="case-codex-integration-fresh-session-rework">
+          <td>2026-11-22</td>
+          <td><code>AGT-3970</code><br><span class="small">codex-integration-fresh-session-rework</span></td>
+          <td>No CLI crashed. Retained 17 and 18 November sessions for AGT-3914, AGT-3915 and AGT-3901 show new Codex UUIDs in the same worktrees for integration follow-ups, all at high reasoning. Claude comparison rounds also started fresh.</td>
+          <td>The automatic integration-round queue persisted a steer without the mechanical delta required by the remote runner's guarded resume path. Each fresh launch received the original task and accumulated continuation notes.</td>
+          <td>The observed path repeatedly returned delivered work to review and then integration recovery. The queue now saves the delta and qualified reasoning route before Ready, retains the existing bounded resume and fresh fallback, and records resumed/fresh provenance in the usage ledger.</td>
         </tr>
         <tr>
           <td>2026-07-11</td>
@@ -2185,8 +2206,8 @@
           <td>
             <span class="pill ok">fixed in dev</span> the merge step now persists one structured report for direct merge,
             mechanical merge, and rebase fallback, including capped conflict files and both tips. Passed-review conflicts
-            enter the same two-round per-delivery recovery budget even with a generic decision marker. Exhaustion parks with
-            a reason such as <em>automatic recovery budget used: 2/2 for delivery 5cd6b1d4bc07</em>, and the steer prompt prefers resolving a merge of the integration
+            enter the same recovery budget even with a generic decision marker; since AGT-3968 it counts per card and integration target, not per delivery. Exhaustion parks with
+            a reason such as <em>automatic recovery budget used: 1/1 for this card on develop</em>, and the steer prompt prefers resolving a merge of the integration
             branch into the delivery branch over rewriting history. Each round now records an immutable-result-ref and
             delivered-SHA chain identifier. Re-reviewing that delivery shares its budget across review epochs, while a new
             delivery starts a fresh budget. Identifier-less legacy rounds count conservatively and are named in the exhausted
@@ -3368,6 +3389,12 @@
        <span class="filelist"><code>backend/Features/Runner/CauseBreaker/</code></span></p>
 
     <h3>Session-resume preference</h3>
+    <p><strong>Integration continuation provenance (AGT-3970).</strong> Automatic integration rounds
+      save their typed recovery delta before Ready becomes claimable. This routes a valid same-worktree
+      continuation through the existing bounded clean-home session resume. The worker's launch choice
+      is recorded as <code>sessionMode=resumed|fresh</code> in continuation evidence and remote token
+      receipts. Explicit pins and correctness floors govern any reasoning reduction.</p>
+
     <p>Remote integration-recovery rounds use a separate, single-use continuation rule. A task ledger preserves session and usage evidence; the next claim carries only a compact rebase delta. Task, provider, clean-context, repository, worktree and delivery-lineage mismatches select a typed fresh run. The resumed worker is bounded at 1,211,213 observed tokens and 300 seconds. A semantic conflict or invalid session returns to Ready for a policy-qualified fresh claim without resetting the ordinary infrastructure retry budget.</p>
     <p>Each retry uses <code>RunIntent.UserContinue</code> + <code>ContinueModes.Continue</code> so it <strong>resumes the live
        session first</strong> (the <code>RunPlanner</code> resume path) and only falls back to recovery-from-job-folder when the

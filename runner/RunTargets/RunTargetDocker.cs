@@ -26,6 +26,7 @@ public interface IRunTargetDocker
     Task<RunTargetDockerResult> ComposeStopAsync(string project, string composeFile, CancellationToken ct);
     Task<RunTargetDockerResult> ComposeDownAsync(string project, string composeFile, CancellationToken ct);
     Task<RunTargetContainerStatus> InspectAsync(string container, CancellationToken ct);
+    Task<RunTargetDockerResult> LogsAsync(string container, CancellationToken ct);
 
     /// <summary>HTTP GET from inside the edge container, the same path public traffic takes.</summary>
     Task<bool> ProbeAsync(string url, CancellationToken ct);
@@ -130,6 +131,24 @@ public sealed class DockerCliRunTarget(string docker = "docker") : IRunTargetDoc
             "restarting" => RunTargetContainerState.Restarting,
             _ => RunTargetContainerState.Exited,
         }, restarts);
+    }
+
+    public async Task<RunTargetDockerResult> LogsAsync(string container, CancellationToken ct)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(15));
+        var lines = new Queue<string>();
+        void Capture(string line)
+        {
+            lock (lines)
+            {
+                lines.Enqueue(line);
+                if (lines.Count > RunTargetCrashOutput.MaxLines) lines.Dequeue();
+            }
+        }
+        var result = await ProcessRunner.RunAsync(docker, ["logs", "--tail", "20", container],
+            onStdOut: Capture, onStdErr: Capture, ct: deadline.Token);
+        return result.Success ? new(true, string.Join('\n', lines)) : new(false, "docker logs failed");
     }
 
     public async Task<bool> ProbeAsync(string url, CancellationToken ct)

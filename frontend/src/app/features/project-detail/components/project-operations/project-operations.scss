@@ -8,6 +8,10 @@
   display: grid; gap: var(--studio-spacing-3); padding-block: var(--studio-spacing-4);
 }
 .project-operations__metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--studio-spacing-3); margin: 0; }
+.project-operations__host { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-4); margin: 0; font-variant-numeric: tabular-nums; }
+.project-operations__host > div { display: grid; gap: var(--studio-spacing-1); }
+.project-operations__crash { display: grid; gap: var(--studio-spacing-2); min-width: 0; }
+.project-operations__crash pre { margin: 0; padding: var(--studio-spacing-3); overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--studio-text-primary); background: var(--studio-bg-hover); }
 .project-operations__trends { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--studio-spacing-3); }
 .project-operations__table-wrap { overflow-x: auto; }
 .project-operations table { border-collapse: collapse; width: 100%; }
@@ -34,3 +38,12 @@
 @media (max-width: 750px) {
   .project-operations__markers li, .project-operations__log-lines li { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
+// AGT-3965: missing post-merge runs; warning tint, no edge bar.
+.project-operations__coverage-warning {
+  display: grid; gap: var(--studio-spacing-1); padding: var(--studio-spacing-3);
+  border: 1px solid color-mix(in srgb, var(--studio-status-warning) 55%, var(--studio-card-border));
+  border-radius: var(--studio-card-radius);
+  background: color-mix(in srgb, var(--studio-status-warning) 8%, var(--studio-card-bg));
+  color: var(--studio-fg-strong);
+}
+.project-operations__coverage-warning strong { color: var(--studio-status-warning); }

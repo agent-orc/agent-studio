@@ -185,6 +185,8 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("POST", "/api/runner/{projectName}/orchestrator-chat", IamPermissions.ProjectChatWrite)]
     [InlineData("POST", "/api/runner/claim", IamPermissions.RunnerService)]
     [InlineData("GET", "/api/develop-states", IamPermissions.WorkspaceRead)]
+    [InlineData("GET", "/api/runner/post-merge/projects", IamPermissions.RunnerService)]
+    [InlineData("POST", "/api/runner/post-merge/projects/{project}/window", IamPermissions.RunnerService)]
     [InlineData("POST", "/api/runner/post-merge/projects/{project}/escalation-check", IamPermissions.RunnerService)]
     [InlineData("POST", "/api/projects/{project}/operator-candidate-verifications", IamPermissions.WorkspaceOperate)]
     [InlineData("POST", "/api/projects/{projectName}/batch-gate/queue-stalls/release", IamPermissions.ProjectRunsOperate)]

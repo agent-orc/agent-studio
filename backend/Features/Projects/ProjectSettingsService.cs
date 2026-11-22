@@ -1827,36 +1827,27 @@ public class ProjectSettingsService
     }
 
     /// <summary>
-    /// AGT-3310: stores <c>testing.perCard</c>. Null or <c>full</c> clears the
-    /// section, so the default plan stays byte-identical to a project that
-    /// never set it.
+    /// AGT-3965: stores <c>testing.strategy</c>. A known strategy is stored as
+    /// chosen, fast included, so a later default change does not move it. Null
+    /// clears the section, and the project resolves to the default again. The
+    /// former <c>perCard</c> and <c>mode</c> values are derived, never stored.
     /// </summary>
-    public void SetTesting(string projectName, ProjectTestingSettings? testing)
+    public void SetTestingStrategy(string projectName, string? strategy)
     {
+        var normalized = strategy is null ? null : TestingStrategies.Normalize(strategy)
+            ?? throw new ArgumentException($"Unknown testing strategy '{strategy}'.", nameof(strategy));
         EnsureLoaded();
         lock (_lock)
         {
             var key = ResolveAliasLocked(projectName);
             var current = _cache.TryGetValue(key, out var settings) ? settings : new ProjectSettings();
-            var mode = IntegrationTestModes.Normalize(
-                testing is null ? null : testing.Mode ?? current.Testing?.Mode);
-            var perCard = mode == IntegrationTestModes.PostMerge
-                ? PerCardTestModes.Affected
-                : PerCardTestModes.Normalize(testing is null
-                    ? null : testing.PerCard ?? current.Testing?.PerCard);
             _cache[key] = current with
             {
-                Testing = perCard == PerCardTestModes.Affected || mode == IntegrationTestModes.PostMerge
-                    ? new ProjectTestingSettings
-                    {
-                        PerCard = perCard == PerCardTestModes.Affected ? perCard : null,
-                        Mode = mode == IntegrationTestModes.PostMerge ? mode : null,
-                    }
-                    : null,
+                Testing = normalized is null ? null : new ProjectTestingSettings { Strategy = normalized },
             };
             Persist();
-            _logger.LogInformation("Testing set to {PerCard} and {Mode} for project {Project}",
-                perCard, mode, projectName);
+            _logger.LogInformation("Testing strategy set to {Strategy} for project {Project}",
+                normalized ?? $"default ({TestingStrategies.Default})", projectName);
         }
     }
 

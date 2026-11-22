@@ -16,8 +16,10 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
     private static readonly DateTimeOffset Now = new(2026, 10, 27, 12, 0, 0, TimeSpan.Zero);
     private const string Tip = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
-    [Fact]
-    public void IdenticalRedReceiptsCreateOneCardAndGreenRecordsRedTime()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void IdenticalRedReceiptsCreateOneCardAndGreenRecordsRedTime(bool noRelevantMerges)
     {
         var projectPath = Path.Combine(_root, "projects", "demo");
         Directory.CreateDirectory(projectPath);
@@ -51,7 +53,8 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         var service = new PostMergeIncidentService(store, mutations, scanner, states, escalation, clock,
             NullLogger<PostMergeIncidentService>.Instance);
         var failure = new PostMergeFailureEvidence("fingerprint", ["Demo.Tests.Fails"], "Failed Demo.Tests.Fails",
-            ["backend/Foo.cs"], [Tip], null, false, false);
+            noRelevantMerges ? [] : ["backend/Foo.cs"], noRelevantMerges ? [] : [Tip], null, false, false,
+            NoRelevantMerges: noRelevantMerges);
         var red = new PostMergeRunRecord("red", "demo", "window", Tip, null, Now, Now, 1,
             ["dotnet test"], [new("dotnet test", 1, false)], "red", Now, Now, Failure: failure);
         store.Record(project.Id, red with { Status = "running", Verdicts = [], FinishedAtUtc = null });
@@ -66,6 +69,15 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         Assert.Single(scanner.ScanAllJobs(), card => card.Id == opened.RepairCardId);
         Assert.Equal(TaskStates.Preparation, scanner.FindJob(opened.RepairCardId, projectPath)!.State);
         Assert.Null(opened.RedMinutes);
+        if (noRelevantMerges)
+        {
+            var repair = scanner.FindJob(opened.RepairCardId, projectPath)!;
+            var prompt = File.ReadAllText(Path.Combine(repair.FolderPath, "prompt.md"));
+            Assert.Contains("environmental or flaky suspect", prompt);
+            Assert.Contains("No merge is blamed", prompt);
+            Assert.Contains("Attributed merge: unresolved", prompt);
+            Assert.DoesNotContain("Suspects: " + Tip, prompt);
+        }
 
         clock.Advance(TimeSpan.FromHours(2));
         service.EscalateOverdue(project);
