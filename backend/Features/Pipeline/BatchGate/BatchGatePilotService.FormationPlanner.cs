@@ -544,6 +544,8 @@ public sealed partial class BatchGatePilotService
                 actions.Add((item, null, BatchExclusionReason.AlreadyIntegrated));
                 continue;
             }
+            using var conflictCapture = IntegrationConflictCapture.Begin(subject.Project, subject.TaskKey,
+                subject.IntegrationBranch, subject.ResultSha, reviewedAt: subject.ReviewCompletedAtUtc);
             var replay = _git.ReplayBatchMember(candidate.RepositoryPath,
                 subject.ResultRef, subject.ResultSha, tip);
             var replayVerdict = BatchGatePolicy.AdmissionReplay(replay);

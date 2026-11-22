@@ -38,8 +38,14 @@ public sealed class BatchGateAssembler
     public BatchGateAssembler(BatchGateStore store, GitService git, string repositoryPath,
         TimeProvider? time = null)
         : this(store,
-            (member, tip) => git.ReplayBatchMember(
-                repositoryPath, member.ResultRef, member.ResultSha, tip),
+            (member, tip) =>
+            {
+                using var capture = IntegrationConflictCapture.Begin(member.Project, member.TaskKey,
+                    member.IntegrationBranch, member.ResultSha, reviewedAt: member.ReviewCompletedAtUtc);
+                var result = git.ReplayBatchMember(repositoryPath, member.ResultRef, member.ResultSha, tip);
+                IntegrationConflictCapture.Resolve(result.Success ? "mechanical" : "parked");
+                return result;
+            },
             (candidateRef, next, old) => git.UpdateBatchCandidateRef(
                 repositoryPath, candidateRef, next, old),
             time,
@@ -101,6 +107,8 @@ public sealed class BatchGateAssembler
                 {
                     SiblingKeys = siblings,
                 });
+                IntegrationConflictLedger.Default.Resolve(member.Project, member.TaskKey,
+                    member.ResultSha, member.IntegrationBranch, "deferred");
                 siblingDeferred.Add(member.TaskKey);
                 _store.AppendState(new BatchGateState(
                     batchId, manifest.MembershipDigest, BatchPhase.Assembling,
