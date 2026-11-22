@@ -185,8 +185,8 @@ the full suite, so every such project changes behaviour with this release.
 
 | Strategy | Per card, before integration | Integration | After integration |
 |---|---|---|---|
-| `fast` (default) | Build and affected tests (`testing.perCard` = `affected`) | Right after the review passed, through the post-merge integration gate below (`testing.mode` = `post-merge`) | Merge window: the affected routine suites. Nightly: the full routine suite. Production release: the release full suite (`delivery.fullSuite`) |
-| `balanced` | As fast | As fast | Merge window: every routine suite. Nightly and release as fast |
+| `fast` (default) | Build and affected tests (`testing.perCard` = `affected`) | Right after the review passed, through the post-merge integration gate below (`testing.mode` = `post-merge`) | Merge window: the base suite and the affected routine suites. Nightly: the full routine suite. Production release: the release full suite (`delivery.fullSuite`) |
+| `balanced` | As fast | As fast | Merge window: the base suite and every routine suite. Nightly and release as fast |
 | `strict` | Build in review; full suite in the batch gate (`affected` off, `pre-merge`) | After a green batch | None (the behaviour before AGT-3965) |
 
 The Owner chooses the strategy on the project settings page or with
@@ -260,8 +260,11 @@ time and gate minutes per card for comparison after a project switches.
 runner unit. The window timer polls each minute; the pure close rule runs after
 six first-parent integration commits or 30 minutes from the oldest pending
 commit, whichever comes first. The worker fetches develop once and pins
-`FETCH_HEAD` before selecting the union of changed-path test projects. Unknown
-paths run every routine suite. The nightly timer runs at 02:15 and 04:15 in
+`FETCH_HEAD` before selecting the union of changed-path test projects. Every
+window runs the project's [base suite](#base-suite-agt-3966) first; a path
+outside every area selects the base suite alone. A project without a base suite
+keeps the earlier fallback: a path outside every area runs every routine
+suite. The nightly timer runs at 02:15 and 04:15 in
 the existing coverage slot window. It runs the routine full suite on the same
 exact-tip rule, using AGT-3232 class partitions across free local host slots.
 T3 treats a suite without `shards` as `auto`; a declared shard count still
@@ -287,6 +290,62 @@ alter integration transitions.
 The Dossier's recorded working decisions are D1 T-B, D2 A, D3 A, D4 A,
 D5 L-B, D6 A, D7 A-B, D8 A, D9 A, and D10 A. This card implements T3 under
 D1 T-B and retains D3 A as the before-delivery policy for its later card.
+
+### Base suite (AGT-3966)
+
+`testSuites[].category: base` in `.agent-studio/project.yml` marks a small
+fixed set that answers one question: does the product still start, and do its
+main paths work. Every merge-window run executes it after `commands.build`.
+Strategy `fast` adds the routine suites of the touched areas. Strategy
+`balanced` adds every routine suite. The nightly run keeps the full routine
+suite without the base suite, and a Production release still needs the
+release full suite on the candidate (`delivery.fullSuite`, AGT-3313).
+
+`PostMergeRunPlan.SelectAffected` maps paths to areas. `backend/` and
+`backend.Tests/` select `backend-routine`, `runner/` and `runner.Tests/` select
+`runner-routine`, `task-server/` and `task-server.Tests/` select
+`task-server-routine`, and `frontend/` selects `frontend-unit`. A shared .NET
+library (`contracts/`, `orchestration-decisions/`, `cli-hosting/`,
+`retention/`, `testsupport/`) selects the three .NET routine suites. Any other
+path, for example `docs/`, `scripts/` or `CHANGELOG.md`, selects no routine
+suite when a base suite exists.
+
+How to choose base tests:
+
+- The set together must finish within about ten minutes on the run host,
+  after the window's build. Its summed `expectedDurationSeconds` stays at or
+  below 600; `PostMergeRunTests` pins this for Agent Studio.
+- Do not repeat `commands.build`: the window has already built the solution,
+  the release build check and the frontend. Reuse that output (`--no-build`,
+  the existing bundle).
+- Take one start of the real product with no mocked API, plus fast tests of
+  the main paths: architecture and guard tests, the transition boundary, and
+  one endpoint each for the task list and the release path. Leave out tests of
+  a single feature; the routine suite of the touched area covers them.
+- Keep it stable. A flaky base test makes every window red, whatever changed.
+
+Agent Studio's base suite (measured on 22 November 2026 on agent-runner-01, 376 s in total):
+
+| Suite | Command | Measured |
+|---|---|---|
+| `backend-base` | Backend tests filtered to `.Architecture.`, `Category=Guard`, `TransitionDecisionBoundaryTests`, `MonolithDecisionBoundaryTests`, `LocalStateStartupTests`, `TaskListProjectFilterEndpointTests` and `IntegrationReleaseServiceTests` (265 tests) | 55 s |
+| `frontend-unit-base` | `test:ci` with `--include` for the app, the studio shell, the task service, the core routes and task detail (5 files, 100 tests) | 198 s |
+| `product-start` | `scripts/base-product-start.sh`: publishes the Debug build without rebuilding, starts backend and frontend on isolated ports, and runs `e2e/system/base-product-start.spec.ts` (health, create a card through the API, the board shows it) | 123 s (78 s of it a frontend rebuild that a clean post-merge checkout skips) |
+
+#### Stage deploy after a green window
+
+`delivery.deployAfterGreenWindow: true` in project.yml opts a project in. A
+green merge-window run on the integration tip then counts as the release gate,
+and the integration release reconciler (AGT-3891) creates the tip's release and
+queues one Staging job for it. A red window blocks the release. Without the
+opt-in, a green window does not release. The tip waits with a reason that
+names the setting, and a green nightly run or a card verification on that
+commit releases it as before. The key sits under `delivery` because `deploy` is the
+schema 2 list of deploy steps and schema 1 forbids it. The opt-in only works
+where an integration release already works: Staging and Production declared,
+a static artifact, and no promotion train. Agent Studio declares no Stage
+environment (its Studio instance is its Production, AGT-3879), so it does not
+opt in.
 
 ### Flaky tests after integration (AGT-3976)
 

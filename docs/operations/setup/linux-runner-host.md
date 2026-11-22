@@ -1844,6 +1844,8 @@ settings page and Operations view and a `post-merge.missing` item in Needs
 you until a receipt arrives. A project that cannot get T3 runs yet chooses
 `strict` on its settings page. The window run reads `windowSuites` from the
 state route: `affected` for fast, `routine` (every routine suite) for balanced.
+Both run the project's `base` suites first (AGT-3966); a docs-only window runs
+the base suite alone.
 
 ### Salvage store retention
 

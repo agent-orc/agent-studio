@@ -178,6 +178,10 @@ stays the only executor; releases and runs describe and steer it.
   without a green full-suite verdict blocks the release with its reason. A
   repository that contains `scripts/release/promote-develop-to-main.sh` keeps
   releasing through the train; Studio creates no integration release for it.
+  A green merge-window run counts as the gate only when project.yml sets
+  `delivery.deployAfterGreenWindow: true` (AGT-3966); a window runs only the
+  base suite and the affected routine suites, while a nightly run counts
+  without the opt-in.
 - **Release.** A green gate release (`POST /api/deploy/gate-releases`, or the
   operator route `POST /api/projects/{project}/environments/releases`) records an
   immutable release: version `yyyy.MM.dd.N`, commit, artifact digests, a process

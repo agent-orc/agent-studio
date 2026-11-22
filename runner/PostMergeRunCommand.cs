@@ -97,13 +97,13 @@ public sealed class PostMergeRunCommand
             _output.WriteLine($"post-merge dry-run project={_options.Project} mode={_options.Mode} checkout={_options.Checkout}");
             _output.WriteLine($"Would fetch {_options.Remote}/{_options.Branch}, pin FETCH_HEAD, and read the project state.");
             _output.WriteLine(_options.Mode == "window"
-                ? $"Would close after {_options.MaxMerges} merges or {_options.Window.TotalMinutes:0} minutes; run the affected-test union."
+                ? $"Would close after {_options.MaxMerges} merges or {_options.Window.TotalMinutes:0} minutes; run the base suite and the affected-test union."
                 : "Would run the full routine suite on the fetched tip across free slots.");
             var read = ProjectDefinitionReader.ReadWorkspace(_options.Checkout);
             if (read.Definition is null) return 1;
-            _output.WriteLine("Window test commands are resolved from each fetched merge; this is the full fallback plan.");
-            foreach (var command in PostMergeRunPlan.Build(read.Definition, _options.Mode,
-                         _options.Mode == "window" ? [".agent-studio/project.yml"] : []))
+            _output.WriteLine("Window test commands are resolved from each fetched merge; this is the widest plan.");
+            foreach (var command in PostMergeRunPlan.Build(read.Definition, _options.Mode, [],
+                         _options.Mode == "window" ? PostMergeWindowSuiteModes.Routine : null))
                 _output.WriteLine($"Would run: {command}");
             return 0;
         }
