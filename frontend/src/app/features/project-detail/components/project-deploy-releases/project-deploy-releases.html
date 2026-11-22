@@ -1,7 +1,7 @@
 <section class="releases" data-testid="deploy-releases" aria-labelledby="deploy-releases-title">
   <header class="releases__head">
     <h2 id="deploy-releases-title">Releases</h2>
-    <p>Immutable snapshots from green integration builds.</p>
+    <p>Deployable artifacts from green integration builds. Package releases use the Deck publishing actions and the project release command.</p>
   </header>
   @if (nextRelease(); as next) {
     <section class="releases__next" data-testid="deploy-next-release" [attr.data-state]="next.state" aria-label="Next release">

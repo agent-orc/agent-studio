@@ -2538,6 +2538,8 @@ export interface ProjectTesting {
  * null when no baseline could be derived from git (see `referenceKind === 'none'`).
  */
 export interface PublishTarget {
+  releaseCommand?: string | null;
+  releaseBranch?: string | null;
   /** Stable id: 'package:npm', 'package:nuget', or 'website'. */
   id: string;
   /** Wire value is the camelCase enum name (JsonStringEnumConverter). */

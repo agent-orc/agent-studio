@@ -49,6 +49,23 @@ public class PublishTargetServiceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Declared_release_command_derives_package_without_GitHub_workflow()
+    {
+        var (repoRoot, watchPath) = SetupRepo();
+        File.WriteAllText(Path.Combine(repoRoot, "package.json"), "{\"name\":\"fixture\",\"version\":\"1.0.0\"}");
+        Directory.CreateDirectory(Path.Combine(repoRoot, ".agent-studio"));
+        File.WriteAllText(Path.Combine(repoRoot, ".agent-studio", "project.yml"),
+            "schemaVersion: 2\nproject:\n  id: example-project\nstack: [node]\ncommands:\n  prepare: echo ready\nrelease:\n  command: bash scripts/release.sh\n  branch: main\n");
+        RunGit(repoRoot, "add", "-A");
+        RunGit(repoRoot, "commit", "-qm", "seed");
+        var service = BuildService(repoRoot, watchPath);
+        var target = Assert.Single(service.GetProjectPublishStatus("Demo").Targets);
+        Assert.Equal("package:npm", target.Id);
+        Assert.Equal("main", target.ReleaseBranch);
+    }
+
+    [Fact]
     public void Derive_NuGetPlusWebsite_TaggedRepo_ReportsVersionAndPendingDeltas()
     {
         var (repoRoot, watchPath) = SetupRepo();

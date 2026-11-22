@@ -90,7 +90,7 @@ public record PublishWorkflowRun
     public string? Error { get; init; }
 }
 
-public record PublishPackageRequest(string TargetId, string Version);
+public record PublishPackageRequest(string TargetId, string Version, bool DryRun = false);
 public record DeployWebsiteRequest(string TargetId = "website");
 public record SetPublishAutomationRequest(string TargetId, string Mode);
 
@@ -102,6 +102,8 @@ public record SetPublishAutomationRequest(string TargetId, string Mode);
 /// </summary>
 public record PublishTarget
 {
+    public string? ReleaseCommand { get; init; }
+    public string? ReleaseBranch { get; init; }
     /// <summary>Stable id: <c>package:npm</c>, <c>package:nuget</c>, or <c>website</c>. Used as the badge key and the task-chip token.</summary>
     public string Id { get; init; } = "";
 
