@@ -813,6 +813,13 @@ The repository URL is stored as the well-known `repo` project URL. New projects
 never place task data in the product checkout; legacy in-repository stores stay
 in place until an explicit migration.
 
+Archiving a registry project removes its storage path from live watch-path
+discovery even when a legacy `WatchPaths` entry still names that store. The
+project then leaves the board, Explorer, picker, and operator attention list.
+Open task tabs retain their task identity and show an archived-project notice;
+Workspace Settings owns Restore. Restoring the project makes its registry path
+eligible for scanning again.
+
 The same basic values remain editable after creation in Project Settings.
 `PUT /api/projects/{PROJ-NNN}` is the canonical update mutation for display
 name, short code, workspace, colour, repository checkout, working directory,

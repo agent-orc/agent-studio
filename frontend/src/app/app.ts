@@ -395,8 +395,9 @@ export class App implements OnInit, OnDestroy {
    * the "+ Add workspace" affordance fires.
    */
   readonly workspaceManager = inject(WorkspaceManagerService);
-  private readonly projectRegistryChangedFx = effect(() => {
-    if (this.workspaceManager.registryChanged() > 0) this.loadWatchPaths();
+  private readonly registryWatchPathRefresh = effect(() => {
+    if (this.workspaceManager.registryChanged() === 0) return;
+    untracked(() => this.loadWatchPaths());
   });
   readonly workspaceTokensOpen = this.workspaceOverlays.tokensOpen;
   readonly workspaceScreenshotsOpen = this.workspaceOverlays.screenshotsOpen;
@@ -1952,6 +1953,12 @@ export class App implements OnInit, OnDestroy {
     const projectName = 'projectSlug' in route && route.projectSlug
       ? this.watchPaths().find(entry => studioProjectSlug(entry.name) === route.projectSlug)?.name ?? null : null;
     if ('projectSlug' in route && route.projectSlug && !projectName) {
+      if (this.watchPathsLoaded()) {
+        this.studioTabState.activateAllProjectsBoard();
+        this.notifications.info('This project is unavailable or archived. Restore an archived project in Workspace Settings.',
+          'Project unavailable');
+        this.studioRouteReady.set(true);
+      }
       return true;
     }
 

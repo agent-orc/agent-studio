@@ -175,6 +175,17 @@ describe('AttentionControlComponent', () => {
     expect(rows()).toHaveLength(0);
   });
 
+  it('removes archived project facts and Dossiers from Needs you immediately', async () => {
+    const { fixture } = await setup('ok', 1);
+    const attention = fixture.componentInstance.attention;
+    attention.setArchivedProjects(['alpha']);
+    fixture.detectChanges();
+
+    expect(attention.items().map(item => item.id)).toEqual(['s1']);
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="studio-attention-count"]')?.textContent?.trim())
+      .toBe('1');
+  });
+
   it('adds backup and credential warnings to the visible installation group', async () => {
     const { fixture, http, overlays } = await setup('disabled');
     TestBed.inject(CredentialInventoryService).inventory.set({

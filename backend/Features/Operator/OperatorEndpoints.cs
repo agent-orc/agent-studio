@@ -41,7 +41,12 @@ public static class OperatorEndpoints
         // in the reader's project scope, as one current list instead of events.
         group.MapGet("/attention", async (HttpContext context, OperatorDecisionPublisher publisher,
             ProjectRegistry projects, CancellationToken ct) =>
-            Results.Ok(OperatorAttention.Project(await publisher.CurrentFactsAsync(ct), ReaderFor(context, projects))));
+        {
+            var archivedNames = projects.List().Where(project => project.Archived)
+                .Select(project => project.DisplayName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return Results.Ok(OperatorAttention.Project(await publisher.CurrentFactsAsync(ct),
+                ReaderFor(context, projects), project => !archivedNames.Contains(project)));
+        });
 
         group.MapGet("/decisions/stream", async (HttpContext context, OperatorDecisionLog log,
             OperatorDecisionOptions options, ProjectRegistry projects, IOptions<JsonOptions> json,
