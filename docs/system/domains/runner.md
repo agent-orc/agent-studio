@@ -1193,6 +1193,19 @@ unreported claim expires with its lease and is queued again.
   1,211,213-token observation threshold. Semantic conflicts and invalid
   sessions return to Ready for a policy-qualified fresh claim. The original
   task prompt is never resent on the resume path.
+  Both automatic integration recovery (`IntegrationAgentRoundService`, including
+  batch replay conflicts) and acceptance-rail recovery persist that delta before
+  promoting a card to Ready. Saving only a follow-up prompt does not authorize
+  resume. Automatic recovery uses the lowest supported low/medium reasoning
+  route that clears the existing correctness floor; explicit operator pins are
+  retained. Claim admission still applies its mechanical recovery floor and can
+  raise a queued low selection to medium. A missing session, changed worktree or changed lineage still starts
+  fresh with the recorded rejection reason.
+  Completion evidence carries `sessionMode` (`resumed` or `fresh`), which also
+  travels into the remote coding token receipt and merged usage ledger. It
+  describes the worker's launch choice; captured session IDs provide the
+  independent provider evidence. Historical rows without that evidence remain
+  unknown.
   On the standalone Task Server plane, both direct claims and accepted host
   permits carry a policy-qualified route with the mechanical delta. A resumed
   fallback completes as typed `MechanicalFallback`, records its reason with the

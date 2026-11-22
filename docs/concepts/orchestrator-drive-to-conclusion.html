@@ -799,6 +799,13 @@
             regression fixture proves a root <code>.slnx</code> with nested-only projects executes at the repository root.
           </td>
         </tr>
+        <tr id="case-codex-integration-fresh-session-rework">
+          <td>2026-11-22</td>
+          <td><code>AGT-3970</code><br><span class="small">codex-integration-fresh-session-rework</span></td>
+          <td>No CLI crashed. Retained 17 and 18 November sessions for AGT-3914, AGT-3915 and AGT-3901 show new Codex UUIDs in the same worktrees for integration follow-ups, all at high reasoning. Claude comparison rounds also started fresh.</td>
+          <td>The automatic integration-round queue persisted a steer without the mechanical delta required by the remote runner's guarded resume path. Each fresh launch received the original task and accumulated continuation notes.</td>
+          <td>The observed path repeatedly returned delivered work to review and then integration recovery. The queue now saves the delta and qualified reasoning route before Ready, retains the existing bounded resume and fresh fallback, and records resumed/fresh provenance in the usage ledger.</td>
+        </tr>
         <tr>
           <td>2026-07-11</td>
           <td><code>AGT-2143</code><br><span class="small">Codex clean-context resume spiral<br>(observed on <code>CAR-5</code>)</span></td>
@@ -3368,6 +3375,12 @@
        <span class="filelist"><code>backend/Features/Runner/CauseBreaker/</code></span></p>
 
     <h3>Session-resume preference</h3>
+    <p><strong>Integration continuation provenance (AGT-3970).</strong> Automatic integration rounds
+      save their typed recovery delta before Ready becomes claimable. This routes a valid same-worktree
+      continuation through the existing bounded clean-home session resume. The worker's launch choice
+      is recorded as <code>sessionMode=resumed|fresh</code> in continuation evidence and remote token
+      receipts. Explicit pins and correctness floors govern any reasoning reduction.</p>
+
     <p>Remote integration-recovery rounds use a separate, single-use continuation rule. A task ledger preserves session and usage evidence; the next claim carries only a compact rebase delta. Task, provider, clean-context, repository, worktree and delivery-lineage mismatches select a typed fresh run. The resumed worker is bounded at 1,211,213 observed tokens and 300 seconds. A semantic conflict or invalid session returns to Ready for a policy-qualified fresh claim without resetting the ordinary infrastructure retry budget.</p>
     <p>Each retry uses <code>RunIntent.UserContinue</code> + <code>ContinueModes.Continue</code> so it <strong>resumes the live
        session first</strong> (the <code>RunPlanner</code> resume path) and only falls back to recovery-from-job-folder when the
