@@ -4284,17 +4284,13 @@ public partial class GitService
     /// </summary>
     public IReadOnlyList<string> ListUnmergedFiles(string worktreePath)
     {
-        if (string.IsNullOrWhiteSpace(worktreePath) || !Directory.Exists(worktreePath))
-            return Array.Empty<string>();
-
-        var (output, _, code) = RunGitArgs(worktreePath, "diff", "--name-only", "--diff-filter=U");
-        if (code != 0 || string.IsNullOrWhiteSpace(output))
-            return Array.Empty<string>();
-
-        return output.Replace("\r\n", "\n")
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        if (string.IsNullOrWhiteSpace(worktreePath) || !Directory.Exists(worktreePath)) return [];
+        var (output, _, code) = RunGitArgs(worktreePath, "diff", "--name-only", "--diff-filter=U", "-z");
+        if (code != 0 || string.IsNullOrEmpty(output)) return [];
+        var files = output.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Distinct(StringComparer.Ordinal).ToArray();
+        CaptureIntegrationConflict(worktreePath, files);
+        return files;
     }
 
     /// <summary>
@@ -6557,7 +6553,15 @@ public partial class GitService
         string? mergeSubject = null)
     {
         var tipBeforeMerge = GetBranchTip(repoRoot, IntegrationLineAt(repoRoot, integrationBranch));
+        var deliveryBeforeMerge = GetBranchTip(repoRoot, sourceRef);
         var merged = MergeRefIntoIntegrationCore(repoRoot, sourceRef, integrationBranch, mergeSubject);
+        // Finalize the exact target before a multi-line release flow changes its target again.
+        if (IntegrationConflictCapture.Active is { } capture && tipBeforeMerge is not null
+            && deliveryBeforeMerge is not null
+            && (merged.ConflictsResolved || merged.Outcome != MergeIntoIntegrationOutcome.Merged))
+            capture.Ledger.Resolve(capture.Project, capture.CardKey, deliveryBeforeMerge,
+                integrationBranch, merged.Outcome.IsSuccessfulIntegration() ? "mechanical" : "parked",
+                preserveUnion: merged.Outcome.IsSuccessfulIntegration(), integrationTip: tipBeforeMerge);
         if (merged.Outcome is not (MergeIntoIntegrationOutcome.Merged or MergeIntoIntegrationOutcome.MergedAfterRebase))
             return merged;
 
@@ -6615,6 +6619,8 @@ public partial class GitService
                 MergeIntoIntegrationOutcome.Error,
                 error: $"Could not resolve the exact delivery tip of '{sourceRef}'.");
         }
+
+        using var conflictTarget = IntegrationConflictCapture.Pin(deliveryTip, integrationTip, integrationBranch);
 
         // Merge rounds can put integration commits inside the delivery range.
         // Replay its final tree as one change while the current tip is pinned;
@@ -6857,6 +6863,7 @@ public partial class GitService
     {
         if (ResolveImmutableResult(repoRoot, immutableResultRef, expectedResultSha) is { } unresolved)
             return unresolved;
+        using var conflictTarget = IntegrationConflictCapture.Pin(expectedResultSha, batchTip);
         var (_, _, containedCode) = RunGitArgs(
             repoRoot, "merge-base", "--is-ancestor", expectedResultSha, batchTip);
         var (_, _, descendantCode) = RunGitArgs(
@@ -7035,6 +7042,7 @@ public partial class GitService
     private BatchReplayResult MergeInWorktree(
         string worktreePath, string immutableResultRef, string resultSha, string batchTip)
     {
+        using var conflictTarget = IntegrationConflictCapture.Pin(resultSha, batchTip);
         var (_, mergeError, mergeCode) = RunGitArgs(
             worktreePath,
             "-c", "rerere.enabled=false",

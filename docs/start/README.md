@@ -63,6 +63,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
 | Runner | [domains/runner.md](../system/domains/runner.md) |
 | Pipeline | [domains/pipeline.md](../system/domains/pipeline.md) |
+| Integration conflict history, record version 1, rates and selection evidence (AGT-3969) | [contract](../system/contracts/integration-conflicts.md) |
 | Orchestrator | [domains/orchestrator.md](../system/domains/orchestrator.md) |
 | Orchestration decision library, action vocabulary and architecture guard | [contracts/orchestration-decisions.md](../system/contracts/orchestration-decisions.md) |
 | Monolith hosted services: decide / apply-recover inventory, the per-transition switch that selects who decides, AI Operator deciders and the monolith decision guard (AGT-3060) | [architecture/monolith-hosted-services.md](../system/architecture/monolith-hosted-services.md) |

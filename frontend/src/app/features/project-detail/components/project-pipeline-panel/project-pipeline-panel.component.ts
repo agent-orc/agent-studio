@@ -1,3 +1,4 @@
+import { IntegrationConflictsComponent } from '../integration-conflicts/integration-conflicts';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { concatMap, finalize, from, tap, type Observable } from 'rxjs';
@@ -43,7 +44,7 @@ type StepPatch = Partial<{ enabled: boolean; economyModel: boolean; cliType: str
 /** Per-type project pipeline editor for ordering, activation, agents, prompts, gates, and usage. */
 @Component({
   selector: 'app-project-pipeline-panel', standalone: true,
-  imports: [FormsModule, CliModelSelectorComponent, TooltipDirective, PipelineHealthBlockComponent, GateSlotBoardComponent,
+  imports: [IntegrationConflictsComponent, FormsModule, CliModelSelectorComponent, TooltipDirective, PipelineHealthBlockComponent, GateSlotBoardComponent,
     PipelineStepExecutionComponent, PipelineTypePickerComponent, PipelineStepRowStateComponent, ModelMigrationBadgeComponent,
     PipelineStepEffectiveRouteComponent, AspectModelBulkApplyComponent, StatusIndicatorComponent],
   hostDirectives: [{ directive: PipelineStepFocusDirective, inputs: ['focusStepId'] }],
