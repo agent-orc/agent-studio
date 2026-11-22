@@ -39,7 +39,11 @@ public sealed record SessionContinuationLedgerEntry(
     long? TotalTokens,
     double? DurationSeconds,
     DateTime RecordedAtUtc,
-    string? FallbackReason = null);
+    string? FallbackReason = null)
+{
+    /// <summary>The worker's launch choice, independent of token-cache hit rates.</summary>
+    public string SessionMode => InputSessionId is null ? "fresh" : "resumed";
+}
 
 /// <summary>Pure admission decision. An unknown lineage or session always starts fresh.</summary>
 public static class MechanicalSessionResumePolicy

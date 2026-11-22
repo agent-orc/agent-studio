@@ -3290,8 +3290,21 @@
           <td>The pilot's disk admission measured the real file system behind <code>TaskRepository</code>; the test factories pointed it at a temp folder on the gate host, so every pilot tick returned early once the suite's own writes crossed 5 % free. Neither the verdict nor the parked reason named the disk, and nothing on the gate host pruned the compile cache that Angular CLI, Vite and ESLint enable.</td>
           <td>Observed terminal: <span class="lane">5e-escalated</span> (<code>gate-infrastructure</code>) for the three members. Disk consumers now measure through <code>IHostFilesystemProbe</code>; every test project pins it to a fixed healthy probe at module load and <code>DiskProbeIsolationGuardTests</code> keeps it so. A gate that fails under critical disk on the gate host or the API host is <code>DiskFull</code> with verdict <code>disk-pressure</code>, and its pause and parked reason name the path, free bytes and percent. The gate worker prunes the Node compile cache and gate workspaces older than <code>RemoteGate:CachePruneAgeHours</code>.</td>
         </tr>
+        <tr id="case-codex-integration-fresh-session-rework">
+          <td>2026-11-22</td>
+          <td><code>AGT-3970</code><br><span class="small">codex-integration-fresh-session-rework</span></td>
+          <td>No CLI crashed. Retained 17 and 18 November sessions for AGT-3914, AGT-3915 and AGT-3901 show new Codex UUIDs in the same worktrees for integration follow-ups, all at high reasoning. Claude comparison rounds also started fresh.</td>
+          <td>The automatic integration-round queue persisted a steer without the mechanical delta required by the remote runner's guarded resume path. Each fresh launch received the original task and accumulated continuation notes.</td>
+          <td>The observed path repeatedly returned delivered work to review and then integration recovery. The queue now saves the delta and qualified reasoning route before Ready, retains the existing bounded resume and fresh fallback, and records resumed/fresh provenance in the usage ledger.</td>
+        </tr>
       </tbody>
     </table>
+
+    <p><strong>Integration continuation provenance (AGT-3970).</strong> Automatic integration rounds
+      save their typed recovery delta before Ready becomes claimable. This routes a valid same-worktree
+      continuation through the existing bounded clean-home session resume. The worker's launch choice
+      is recorded as <code>sessionMode=resumed|fresh</code> in continuation evidence and remote token
+      receipts. Explicit pins and correctness floors govern any reasoning reduction.</p>
 
     <p class="note-append"><strong>Append future CLI-crash / drive-to-conclusion cases here.</strong> One row per incident:
        date, task key + slug, what happened, root cause, and which terminal it reached. Keep this log running so the model
