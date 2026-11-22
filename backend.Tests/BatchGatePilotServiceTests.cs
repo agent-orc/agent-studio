@@ -4474,6 +4474,10 @@ public abstract partial class BatchGatePilotServiceTests
             if (testServices is not null) builder.ConfigureTestServices(testServices);
         });
         factory.Services.GetRequiredService<BatchGatePilotService>().WaitForFlightsInTick = true;
+        // AGT-3965: these tests pin the pre-merge batch gate, which only strict keeps;
+        // a project without a stored strategy is fast and integrates post-merge.
+        factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetTestingStrategy(ProjectName, TestingStrategies.Strict);
         return factory;
     }
 

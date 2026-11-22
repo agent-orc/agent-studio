@@ -3923,8 +3923,7 @@ public sealed partial class BatchGatePilotService
     {
         var settings = _settings.Get(project);
         return settings.BatchGate.Enabled
-            && (_postMergeMode?.Resolve(project, settings)
-                ?? IntegrationTestModes.Resolve(settings)) != IntegrationTestModes.PostMerge;
+            && PostMergeModeService.Effective(_postMergeMode, project, settings) != IntegrationTestModes.PostMerge;
     }
 
     /// <summary>

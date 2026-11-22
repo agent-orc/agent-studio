@@ -48,7 +48,8 @@ public static class ProjectSnapshotEndpoints
             PublishTargetService publish,
             AgentStudio.Registry.ProjectRegistry projectRegistry,
             AgentStudio.Git.GitService git,
-            IConfiguration configuration) =>
+            IConfiguration configuration,
+            AgentStudio.Pipeline.PostMergeCoverageService postMergeCoverage) =>
         {
             // Resolve the watch path once. Every per-project field below
             // either filters from cached state or reads a single
@@ -147,9 +148,19 @@ public static class ProjectSnapshotEndpoints
                     requireDifferentReviewHost = settings.RequireDifferentReviewHost,
                     scopedReviewAfterFinding = settings.ScopedReviewAfterFinding,
                     scopedReviewMaximumDeltaFiles = settings.ScopedReviewMaximumDeltaFiles,
-                    // AGT-3310: effective testing.perCard, shown read-only.
+                    // AGT-3965: the testing strategy and whether develop gets
+                    // the post-merge runs it relies on. perCard and mode are
+                    // derived from it and stay readable for one release.
+                    testingStrategy = TestingStrategies.Resolve(settings),
+                    testingStrategies = TestingStrategies.All.Select(id => new
+                    {
+                        id,
+                        sentence = TestingStrategies.Sentence(id),
+                        isDefault = id == TestingStrategies.Default,
+                    }).ToArray(),
                     testingPerCard = PerCardTestModes.Resolve(settings),
                     testingMode = IntegrationTestModes.Resolve(settings),
+                    postMergeCoverage = registryRecord is null ? null : postMergeCoverage.Read(registryRecord.DisplayName),
                     // F35: every lane resolved to its effective strategy.
                     // The kanban renders the lane-header icon and the
                     // drag-disabled hint from this map.

@@ -175,12 +175,52 @@ integrated by a per-card gate). The project Flow health view reads them with the
 cycle-time rows, whose `reviewAspectSeconds` split review time per `aspect-*`
 step inside Post Processing.
 
+### Testing strategy (AGT-3965)
+
+`testing.strategy` is the one per-project test placement setting. It selects
+existing mechanisms and adds none; the model review aspects run before
+integration in every strategy. A project without a stored value resolves to
+`fast`. Before AGT-3965 a project without a testing section ran pre-merge with
+the full suite, so every such project changes behaviour with this release.
+
+| Strategy | Per card, before integration | Integration | After integration |
+|---|---|---|---|
+| `fast` (default) | Build and affected tests (`testing.perCard` = `affected`) | Right after the review passed, through the post-merge integration gate below (`testing.mode` = `post-merge`) | Merge window: the affected routine suites. Nightly: the full routine suite. Production release: the release full suite (`delivery.fullSuite`) |
+| `balanced` | As fast | As fast | Merge window: every routine suite. Nightly and release as fast |
+| `strict` | Build in review; full suite in the batch gate (`affected` off, `pre-merge`) | After a green batch | None (the behaviour before AGT-3965) |
+
+The Owner chooses the strategy on the project settings page or with
+`PUT /api/projects/{name}/testing` (`{"strategy":"balanced"}`). The route
+accepts only `strategy`; a body with only `perCard` or `mode` is refused with
+400. `GET /api/projects/{name}/testing`, `GET /api/projects/settings`
+(`testingStrategy`) and the project snapshot (`settings.testingStrategy`)
+return the strategy. `testingPerCard` and `testingMode` stay readable for one
+release and are derived from it; a stored legacy `perCard` or `mode` is
+ignored. The runner state route
+(`/api/runner/post-merge/projects/{project}`) carries `windowSuites`
+(`affected` or `routine`), and the merge-window run selects from it.
+
+In a post-merge strategy develop is checked only by the T3 runs below: the
+coding daemon's host scheduler (AGT-3967) discovers every fast and balanced
+project through `GET /api/runner/post-merge/projects`, and hand-installed
+timers remain a fallback. When
+develop has a first-parent commit that no reported T3 run covers, that commit
+is at least six hours old, and no run reported in the last six hours,
+`PostMergeCoverageService` reports the project as `missing`. The settings page
+and the project Operations view show the warning, and Needs you shows a
+`post-merge.missing` item. Any receipt counts, a skip or a red run included;
+a run on the current tip or a report within six hours clears it. The tip comes
+from the `origin/<branch>` ref file and the age from one `git rev-list -n 1
+--first-parent --before` per tip pair. Studio does not fall back to pre-merge
+on this warning; the red-develop fallback below is the only automatic one.
+
 ### Per-project integration test placement (AGT-3314)
 
-`testing.mode` defaults to `pre-merge`. That path retains the existing
-per-card integration gate and optional pre-merge batch gate. In `post-merge`
-the Remote Review runs the affected T1 plan, the batch route is disabled, and
-the integration gate compiles the exact merged tree. It repeats the affected
+`testing.mode` is derived from `testing.strategy` (AGT-3965): `strict` is
+`pre-merge`, `fast` and `balanced` are `post-merge`. The pre-merge path retains
+the existing per-card integration gate and optional pre-merge batch gate. In
+`post-merge` the Remote Review runs the affected T1 plan, the batch route is
+disabled, and the integration gate compiles the exact merged tree. It repeats the affected
 selection when develop moved over a path changed by the reviewed delivery,
 or when review and merge evidence cannot prove a disjoint merge. Merge and
 publication locks are keyed by project and integration branch; the aggregate
@@ -209,8 +249,9 @@ is classified by the `HumanReviewEscalation` funnel when its normal run path
 escalates it. The funnel records the card ID in the post-merge run state.
 While that card is in Escalated, or a red develop has lasted at least
 two hours, the project temporarily resolves to `pre-merge`. A green T3 receipt
-clears the recorded card ID. Agent Studio remains in `pre-merge` until its T1 replay
-median is at most ten minutes. The gate-economics seven-day view reports lead
+clears the recorded card ID. Agent Studio is no longer held in `pre-merge`
+(owner decision of 20 to 22 November 2026, AGT-3965); it follows its testing
+strategy like every project. The gate-economics seven-day view reports lead
 time and gate minutes per card for comparison after a project switches.
 
 ### Post-merge develop checks (T3, AGT-3311)
@@ -349,7 +390,7 @@ record. Batch gate waiting and acquisition callbacks emit lane events for
 each gated member, including the holding project when one is known.
 
 Each row also carries the delivery-target `baseline` of the
-[pipeline Dossier](../../pipeline-delivery-target/index.html) section 07
+[pipeline Dossier](../../operations/pipeline-delivery-target/index.html) section 07
 (AGT-3309). These metrics only read evidence. They change no gate, review or
 board read. A missing input is null (Unknown), never zero.
 
@@ -2186,9 +2227,11 @@ comparison before Quality Studio's verdict contract can decide a review.
   Model-based test selection is rejected by the Gates Dossier section 5.
 - `backend/Features/Pipeline/PerCardVerifyPlanner.cs`,
   `GeneratedTestProjectMap.cs` and `FastCheckPlanner.cs`: tier T1 of the
-  [pipeline Dossier](../../pipeline-delivery-target/index.html) (decision D1,
-  option T-B; AGT-3310). The project setting `testing.perCard` is `full` by
-  default, which keeps the Remote Review plan byte-identical. With `affected`,
+  [pipeline Dossier](../../operations/pipeline-delivery-target/index.html) (decision D1,
+  option T-B; AGT-3310). The project setting `testing.perCard` is derived from
+  `testing.strategy` (AGT-3965): `strict` is `full`, which keeps the Remote
+  Review plan byte-identical, and `fast` (the default) and `balanced` are
+  `affected`. With `affected`,
   the plan builds `folderToTestProjects` at plan time from the `.csproj`
   `ProjectReference` graph (every project directory maps to the test projects
   whose transitive closure contains it, process-level references included) and
@@ -2213,9 +2256,8 @@ comparison before Quality Studio's verdict contract can decide a review.
   work-package` in `review-verification.json`, and the integration gate then
   does not reuse it (`IntegrationGateReusePolicy`), so the integration gate
   keeps its own test stage until the project switches to post-merge checks
-  (Dossier P7). Operators switch the setting with `PUT
-  /api/projects/{name}/testing` (`{"perCard":"affected"}`); the settings page
-  shows it read-only.
+  (Dossier P7). The Owner picks the strategy on the project settings page or
+  with `PUT /api/projects/{name}/testing` (`{"strategy":"fast"}`).
 - `backend/Features/Pipeline/PreMainTestGate.cs`: fail-closed release boundary
   that forces the full test level before a configured merge can advance
   `main`, irrespective of lane settings, diff input, or history.

@@ -39,8 +39,9 @@ public sealed class PostMergeHostEndpointsTests : IDisposable
         var registry = factory.Services.GetRequiredService<ProjectRegistry>();
         var settings = factory.Services.GetRequiredService<ProjectSettingsService>();
         var registered = new List<ProjectRecord>();
-        foreach (var (name, branch, mode) in new[] { ("one", "develop", "post-merge"),
-                     ("two", "trunk", "post-merge"), ("strict", "main", "pre-merge") })
+        // AGT-3965: fast and balanced integrate first and need T3 runs; strict does not.
+        foreach (var (name, branch, strategy) in new[] { ("one", "develop", TestingStrategies.Fast),
+                     ("two", "trunk", TestingStrategies.Balanced), ("strict", "main", TestingStrategies.Strict) })
         {
             var path = Path.Combine(_root, name);
             Directory.CreateDirectory(path);
@@ -48,7 +49,7 @@ public sealed class PostMergeHostEndpointsTests : IDisposable
             registry.Update(project.Id, new UpdateProjectRequest { RepositoryUrl = $"https://example.invalid/{name}.git" },
                 factory.Services.GetRequiredService<WorkspaceRegistry>());
             settings.SetIntegrationBranch(name, branch);
-            settings.SetTesting(name, new ProjectTestingSettings { Mode = mode });
+            settings.SetTestingStrategy(name, strategy);
             registered.Add(project);
         }
         var targets = await client.GetFromJsonAsync<PostMergeProjectTarget[]>("/api/runner/post-merge/projects");

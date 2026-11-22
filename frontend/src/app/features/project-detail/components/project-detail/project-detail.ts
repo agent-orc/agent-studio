@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { TaskService } from '../../../../services/task.service';
 import { TASK_REFERENCE_CHAT_PROVIDER } from '../../../../services/task-reference-chat.provider';
 import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from '../../../../utils/visible-interval';
-import type { ProjectQueueHealth, RunnerStatus } from '../../../../models/task.model';
+import type { PostMergeCoverage, ProjectQueueHealth, RunnerStatus, TestingStrategy, TestingStrategyOption } from '../../../../models/task.model';
 import { CLI_TYPES, type CliType } from '../../../../models/task.model';
 import { cliTypeLabel, cliTypeIcon } from '../../../../services/format.util';
 import type { OrchestratorLogEntry, OrchestratorSession } from '../../../../features/orchestrator';
@@ -49,8 +49,17 @@ interface ProjectSettingsRow {
   maxReviewConcernRounds: number;
   scopedReviewAfterFinding: boolean;
   scopedReviewMaximumDeltaFiles: number;
-  /** AGT-3310: effective testing.perCard; changed through the API only. */
-  testingPerCard: 'affected' | 'full';
+  /** AGT-3965: effective testing.strategy; a project without a stored value is fast. */
+  testingStrategy: TestingStrategy;
+  /** AGT-3965: whether develop gets the post-merge runs fast and balanced rely on. */
+  postMergeCoverage: PostMergeCoverage | null;
+}
+
+/** AGT-3965: shown until the snapshot names the strategies; the backend owns the sentences. */
+const TESTING_STRATEGY_IDS: readonly TestingStrategy[] = ['fast', 'balanced', 'strict'];
+
+function testingStrategyLabel(id: TestingStrategy): string {
+  return id === 'fast' ? 'Fast' : id === 'balanced' ? 'Balanced' : 'Strict';
 }
 
 /** Bound value of the integration-gate reuse select. */
@@ -282,6 +291,20 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
     }
   ];
   readonly segmentedModes = this.modes.map(m => ({ value: m.id, label: m.label, tooltip: m.tooltip, testid: 'project-detail-mode-' + m.id }));
+  /** AGT-3965: the strategies and their sentences, from the snapshot. */
+  readonly testingStrategies = signal<readonly TestingStrategyOption[]>(
+    TESTING_STRATEGY_IDS.map(id => ({ id, sentence: '', isDefault: id === 'fast' })));
+  readonly testingStrategyDraft = signal<TestingStrategy>('fast');
+  readonly testingStrategySaving = signal(false);
+  readonly testingStrategyError = signal<string | null>(null);
+  readonly segmentedTestingStrategyOptions = computed(() => this.testingStrategies().map(option => ({
+    value: option.id,
+    label: testingStrategyLabel(option.id) + (option.isDefault ? ' (default)' : ''),
+    tooltip: option.sentence || undefined,
+    testid: 'project-detail-testing-strategy-' + option.id,
+  })));
+  readonly testingStrategyLabel = testingStrategyLabel;
+
   readonly segmentedAutoPushOptions = this.autoPushOptions.map(opt => ({ value: opt.id, label: opt.label + (opt.isDefault ? ' (default)' : ''), tooltip: opt.tooltip, testid: 'project-detail-auto-push-' + opt.id }));
 
   readonly effectiveMode = computed(() => {
@@ -376,8 +399,11 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
           maxReviewConcernRounds: snap.settings.maxReviewConcernRounds ?? 1,
           scopedReviewAfterFinding: snap.settings.scopedReviewAfterFinding ?? true,
           scopedReviewMaximumDeltaFiles: snap.settings.scopedReviewMaximumDeltaFiles ?? 20,
-          testingPerCard: snap.settings.testingPerCard ?? 'full',
+          testingStrategy: snap.settings.testingStrategy ?? 'fast',
+          postMergeCoverage: snap.settings.postMergeCoverage ?? null,
         };
+        if (snap.settings.testingStrategies?.length) this.testingStrategies.set(snap.settings.testingStrategies);
+        if (!this.testingStrategySaving()) this.testingStrategyDraft.set(row.testingStrategy);
         this.settings.set(row);
         if (this.autoCommitDraft !== row.autoCommit) this.autoCommitDraft = row.autoCommit;
         if (this.crashRecoveryDraft !== row.crashRecoveryEnabled) this.crashRecoveryDraft = row.crashRecoveryEnabled;
@@ -515,6 +541,27 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
     this.jobService.setProjectIntegrationGateReviewReuse(this.projectName(), enabled).subscribe({
       next: () => this.refreshAll(true),
       error: () => this.refreshAll(true),
+    });
+  }
+
+  /** AGT-3965: Owner only; the server refuses other roles and the error names why. */
+  setTestingStrategy(strategy: TestingStrategy): void {
+    if (strategy === this.settings()?.testingStrategy && !this.testingStrategyError()) return;
+    this.testingStrategyDraft.set(strategy);
+    this.testingStrategySaving.set(true);
+    this.testingStrategyError.set(null);
+    this.jobService.setProjectTestingStrategy(this.projectName(), strategy).subscribe({
+      next: () => {
+        this.testingStrategySaving.set(false);
+        this.refreshAll(true);
+      },
+      error: (err) => {
+        this.testingStrategySaving.set(false);
+        this.testingStrategyDraft.set(this.settings()?.testingStrategy ?? 'fast');
+        this.testingStrategyError.set(err?.status === 403
+          ? 'Only the Owner can change the testing strategy.'
+          : err?.error?.error || 'The testing strategy could not be saved.');
+      },
     });
   }
 

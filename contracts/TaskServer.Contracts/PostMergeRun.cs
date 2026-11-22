@@ -48,6 +48,13 @@ public sealed record PostMergeProjectState(
     public int? WindowMaxMerges { get; init; }
     public int? WindowMinutes { get; init; }
     public PostMergeWindowObservation? PendingWindow { get; init; }
+    /// <summary>
+    /// What a merge-window run selects, from the project's testing strategy
+    /// (AGT-3965): <see cref="PostMergeWindowSuiteModes.Affected"/> (fast) or
+    /// <see cref="PostMergeWindowSuiteModes.Routine"/> (balanced). Null keeps
+    /// the affected selection.
+    /// </summary>
+    public string? WindowSuites { get; init; }
     public static PostMergeProjectState Empty(string project) => new(project, "green", null, null, null, [], []);
 }
 
