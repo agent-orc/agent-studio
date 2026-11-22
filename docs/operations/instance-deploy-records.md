@@ -16,6 +16,21 @@ area of the Studio's own source project shows:
   shows **failed at <step>**; a run that reports nothing for 30 minutes shows
   **stalled after <step>**.
 
+The workspace deployment dashboard (Workspace / Deployments) shows the same
+instance as the Production cell of the source project's row (AGT-3949): live
+release and commit, live since, the state of the last run (succeeded, failed,
+stalled or running, with the step for the last three) and health. The row has
+no Staging cell, because the Studio has no staging environment. After a run
+that failed or stalled, the cell names the live release as long as the server
+switch decides it: a run that failed before its switch left the previous
+release live, one that failed after it took its own release live. Only a run
+whose switch was reported but did not succeed leaves the running release open.
+The delivery lanes below the table follow the same records: the Production
+lane of the source project lists the cards the live commit contains, the newest
+live release first, and "Waiting for release" lists the cards integrated after
+the live commit. Cards integrated before the first recorded deploy therefore
+count as delivered, not as waiting.
+
 Card badges of the source project's cards then read
 `Production · live since <UTC time> · <version>`; badges of declared
 environments keep `<Environment> · Live · <version> · <date>`. The flow counter

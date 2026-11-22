@@ -368,6 +368,24 @@ matching `tenantStatuses` and drops rows without one; project access filtering
 still applies. The workspace dashboard uses these statuses to show each
 tenant's current release, deployment age, state and health.
 
+The matrix has one row per project this instance watches (AGT-3949). A project
+whose repository declares no environment has `environmentsDeclared: false` and
+no statuses; the dashboard lists it as "No environments declared" with the way
+to declare them. A project the workspace registers but this instance does not
+watch has no row, and the dashboard requests delivery lanes only for the rows
+it received. The source project of the running Studio carries the instance as
+a Production status even without declarations (see
+[instance deploy records](../operations/instance-deploy-records.md)). That
+status has `instance: {liveSinceUtc, lastRun}`; `lastRun` is `{id, state,
+version, commitSha, startedAtUtc, atUtc, step}` with `state` `running`,
+`succeeded`, `failed` or `stalled`. The generic `currentDeployment.state` of
+the same run reads a stalled run as `failed`. `instance` is null for every
+declared environment. `GET /api/projects/{project}/deploy/delivery-lanes` of
+the source project places cards by the live commit: the instance lane holds the
+cards that commit contains, "Waiting for release" the cards integrated after
+it. The dashboard renders the first twelve cards of a lane and a "Show all"
+control for the rest.
+
 Routes, under `/api/projects/{project}/deploy`: `GET environments`, `status`
 (one EnvironmentStatus per environment), `releases`, `releases/{id}`,
 `releases/{id}/notes`, `cards`, `deployments[?environmentId=]`,
