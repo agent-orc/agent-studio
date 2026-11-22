@@ -14,7 +14,13 @@ internal static class ReviewAspectInputBudget
     private const int MaximumScreenshotCharacters = 24_000;
     private const int OmissionReserveCharacters = 21_000;
 
-    internal sealed record Result(string Prompt, string Report);
+    /// <summary>
+    /// <paramref name="SharedPrefixLength"/> is the length of the leading part that
+    /// every aspect of one review shares byte for byte (the review context and the
+    /// authoritative diff, ending where the authored marker stood); 0 when the
+    /// authored prompt has no marker. The rest is the aspect's own question.
+    /// </summary>
+    internal sealed record Result(string Prompt, string Report, int SharedPrefixLength = 0);
 
     internal static Result Compose(string authored, string material, string screenshotSection)
         => Compose(authored, material, screenshotSection, string.Empty, 0);
@@ -42,8 +48,8 @@ internal static class ReviewAspectInputBudget
         var fences = Regex.Matches(material, @"^```diff\r?\n(?<body>[\s\S]*?)^```\r?$", RegexOptions.Multiline);
         if (fences.Count == 0)
         {
-            var promptWithoutDiff = Join(context, material, screenshotSection, dossierSection, report);
-            return Finish(promptWithoutDiff, report, dossierSection);
+            var (promptWithoutDiff, sharedWithoutDiff) = Join(context, material, screenshotSection, dossierSection, report);
+            return Finish(promptWithoutDiff, report, dossierSection, sharedWithoutDiff);
         }
         var byFence = new List<List<(int Id, string Text, string File)>>();
         var all = new List<(int Id, string Text, string File)>();
@@ -110,8 +116,8 @@ internal static class ReviewAspectInputBudget
         }
         bounded.Append(material, cursor, material.Length - cursor);
         var boundedMaterial = bounded.ToString();
-        return Finish(Join(context, boundedMaterial, screenshotSection, dossierSection, report), report,
-            dossierSection);
+        var (joined, shared) = Join(context, boundedMaterial, screenshotSection, dossierSection, report);
+        return Finish(joined, report, dossierSection, shared);
     }
 
     /// <summary>
@@ -140,7 +146,7 @@ internal static class ReviewAspectInputBudget
             + authored[^39_000..];
     }
 
-    private static Result Finish(string prompt, StringBuilder report, string dossier)
+    private static Result Finish(string prompt, StringBuilder report, string dossier, int shared)
     {
         if (prompt.Length > MaximumCharacters)
         {
@@ -156,7 +162,8 @@ internal static class ReviewAspectInputBudget
         var note = "\n\n## Review input omissions\n" + summary;
         if (prompt.Length + note.Length > MaximumCharacters)
             prompt = TrimKeepingDossier(prompt, MaximumCharacters - note.Length, dossier);
-        return new Result(prompt + note, summary);
+        // A trim that reached into the shared part leaves no reliable boundary.
+        return new Result(prompt + note, summary, shared <= prompt.Length ? shared : 0);
     }
 
     private static string TrimKeepingDossier(string prompt, int limit, string dossier)
@@ -165,7 +172,8 @@ internal static class ReviewAspectInputBudget
             ? prompt[..(limit - dossier.Length)] + dossier
             : prompt[..limit];
 
-    private static string Join(string context, string material, string screenshots, string dossier, StringBuilder report)
+    private static (string Prompt, int SharedPrefixLength) Join(
+        string context, string material, string screenshots, string dossier, StringBuilder report)
     {
         if (screenshots.Length > MaximumScreenshotCharacters)
         {
@@ -174,9 +182,13 @@ internal static class ReviewAspectInputBudget
         }
         var marker = RemoteReviewWorkspace.SharedMaterialMarker;
         var at = context.IndexOf(marker, StringComparison.Ordinal);
-        return at < 0
-            ? context.TrimEnd() + "\n\n" + material + screenshots + dossier
-            : context[..at] + material + "\n\n" + context[(at + marker.Length)..].TrimStart() + screenshots + dossier;
+        if (at < 0)
+            return (context.TrimEnd() + "\n\n" + material + screenshots + dossier, 0);
+        // Everything before the marker plus the material is common to the aspects
+        // of one review; the aspect instructions, screenshots and Dossier follow.
+        var shared = context[..at] + material;
+        return (shared + "\n\n" + context[(at + marker.Length)..].TrimStart() + screenshots + dossier,
+            shared.Length);
     }
 
     private static string FileName(string section)
