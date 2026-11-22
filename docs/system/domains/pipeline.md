@@ -790,8 +790,35 @@ pauses the batch as before. An unattributable ejection does not count toward
 the conflict cascade guard and ends a run of consecutive conflicts; its replay
 record keeps the route it failed on (`merge` for a merge-parent mismatch).
 Conflicted members start a bounded agent merge round with the conflicted files
-named in the steer prompt. Cascade-deferred members stay in Auto Review for the
+and the other cards whose integrated commits touched them named in the steer
+prompt. Cascade-deferred members stay in Auto Review for the
 next batch plan; when no member was admitted, that plan is requested at once.
+
+Integration conflicts (AGT-3968). A merge conflict is an orchestration error
+first; an agent round is the last resort:
+
+- *Sibling deferral.* A member that conflicts with the candidate tip but
+  replays cleanly onto the batch base conflicts only with a sibling admitted
+  ahead of it. It is recorded with replay outcome `sibling-deferred`, the
+  conflicting files and the sibling keys, stays queued like a cascade-deferred
+  member, does not count toward the cascade guard and opens no agent round.
+  The card timeline gets `integration_sibling_deferred`. AGT-3897's
+  conflict-free round of 17 November was this case (sibling AGT-3891).
+- *Union of add/add hunks.* When the merge route conflicts and every hunk of
+  every conflicted file only adds lines on both sides relative to the merge
+  base (an empty base section in `git merge-file --diff3`), the replay keeps
+  both blocks, integration side first, and commits the merge. A rebase-route
+  conflict tries this merge route before it is reported. Any hunk that changes
+  or removes a merge-base line refuses the union for the whole member, which
+  then goes to the agent as before. The batch gate builds and tests the
+  candidate; a red gate isolates the member as usual. The admitted replay
+  record carries `unionResolvedHunks`, and the card timeline gets
+  `integration_union_resolved` naming each hunk (`path:line`, lines per side).
+- *Parking.* When the automatic round is refused (budget spent, continuations
+  disabled, no fenced ref), the card leaves the batch queue and is escalated
+  with the conflicting files and the other cards involved. Before AGT-3968 a
+  refused round only logged `batch-conflict-round-refused` and the card was
+  ejected by the same conflict in every later batch.
 Unattributable members return to per-task fallback after publication. Before
 scheduling a gate, the tick checks whether the integration branch already
 contains its result by ancestry or patch equivalence.
@@ -2972,6 +2999,19 @@ operator changes cause the step to fail before its writer runs.
   the integration-history repair sweep, then admitted to a batch without a new
   review. Other missing attribution escalations name the affected commits and
   the required next-round action.
+- AGT-3968: the runner reports the round's start head as the pickup base, and
+  that head already holds the runner's own develop merge. A round that adds no
+  commit of its own (it only got the runner's merge, or it re-delivered the
+  earlier SHA unchanged) therefore has an empty `base..result` range. The
+  completion then attributes the integration merge-base range under the same
+  continuation rule, with no new commit or only new integration merges allowed.
+  A re-delivered commit keeps its first producer, so the batch admission check
+  (`RemoteCommitAttributionGuard.CoversDelivery`) also accepts the result
+  commit recorded in this attempt's delivery generation (`deliveryAttemptId`).
+  The integration-history repair sweep (report
+  `integration-history-attribution-v3.json`, 14-day window) applies the same
+  rule to escalated passing reviews, so AGT-3820, AGT-3905 and AGT-3914 return
+  to Auto Review without a coding run.
 - `post-orchestrator-review` is an early completeness gate. It must never render
   as a final verdict.
 - `post-orchestrator-decision` is the single final orchestrator verdict.

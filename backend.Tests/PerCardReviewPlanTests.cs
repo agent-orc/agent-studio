@@ -233,6 +233,74 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Assert.Contains(plan.Commands, command => command.Aspect == "build-tests");
     }
 
+    /// <summary>
+    /// AGT-3968: after a passing review, a round whose new commits are only a
+    /// merge of develop plus its conflict resolution reviews the resolution.
+    /// One aspect reviews the resolved files; the aspects that passed on the
+    /// unchanged work are carried over; build and tests still run.
+    /// </summary>
+    [Fact]
+    public void MergeOnlyRoundAfterAPassReviewsOnlyTheResolution()
+    {
+        var previousSha = Commit("backend/FooService.cs");
+        var previousBase = Git("merge-base", "develop", previousSha).Trim();
+        RecordPassedReview(previousSha, previousBase);
+
+        File.AppendAllText(Path.Combine(_repo, "backend/FooService.cs"), "// develop line\n");
+        Write("backend/Unrelated.cs", "namespace AgentStudio; public class Unrelated { }\n");
+        Git("add", ".");
+        Git("commit", "-qm", "integration change in the same place");
+        Git("switch", "-q", "agent-studio/results/task");
+        var merge = Process.Start(new ProcessStartInfo("git", ["merge", "-q", "develop"])
+        {
+            WorkingDirectory = _repo, RedirectStandardOutput = true, RedirectStandardError = true,
+        })!;
+        merge.WaitForExit();
+        Assert.NotEqual(0, merge.ExitCode);
+        var resolved = File.ReadAllLines(Path.Combine(_repo, "backend/FooService.cs"))
+            .Where(line => !line.StartsWith("<<<<<<<", StringComparison.Ordinal)
+                && !line.StartsWith("=======", StringComparison.Ordinal)
+                && !line.StartsWith(">>>>>>>", StringComparison.Ordinal))
+            .Select(line => line == "// changed" ? "// changed, kept next to develop" : line);
+        File.WriteAllLines(Path.Combine(_repo, "backend/FooService.cs"), resolved);
+        Git("add", ".");
+        Git("commit", "-qm", "merge develop and resolve");
+        var resultSha = Git("rev-parse", "HEAD").Trim();
+        Git("switch", "-q", "develop");
+
+        var plan = Builder().Build(new TaskInfo
+        {
+            Id = "task", TaskKey = "task", ProjectName = "project",
+            WatchPath = _repo, FolderPath = _folder, State = TaskStates.AutoReview,
+        }, _repo, new ProjectSettings(), "develop", resultSha, null, ResultRef);
+
+        var agent = Assert.Single(plan.Commands, command =>
+            Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind));
+        Assert.Equal(RemoteReviewPlanBuilder.MergeResolutionAspect, agent.Aspect);
+        Assert.Contains("## Merge resolution to review", agent.Prompt);
+        Assert.Contains("backend/FooService.cs", agent.Prompt);
+        Assert.DoesNotContain("backend/Unrelated.cs", agent.Prompt![agent.Prompt.IndexOf("## Merge resolution", StringComparison.Ordinal)..]);
+        Assert.Equal(["documentation-impact", "requirement-fit", "tests-and-evidence"],
+            plan.CarriedVerdicts!.Select(verdict => verdict.Aspect).Order(StringComparer.Ordinal).ToArray());
+        Assert.All(plan.CarriedVerdicts!, verdict => Assert.Equal("review-1", verdict.CarriedOverFrom));
+        Assert.Contains(plan.Commands, command => command.Aspect == "build-tests");
+
+        // The same delivery with an own commit after the merge is reviewed in full.
+        Git("switch", "-q", "agent-studio/results/task");
+        Write("backend/Other.cs", "namespace AgentStudio; public class Other { }\n");
+        Git("add", ".");
+        Git("commit", "-qm", "more card work");
+        var withWork = Git("rev-parse", "HEAD").Trim();
+        Git("switch", "-q", "develop");
+        var full = Builder().Build(new TaskInfo
+        {
+            Id = "task", TaskKey = "task", ProjectName = "project",
+            WatchPath = _repo, FolderPath = _folder, State = TaskStates.AutoReview,
+        }, _repo, new ProjectSettings(), "develop", withWork, null, ResultRef);
+        Assert.Equal(4, full.Commands.Count(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)));
+        Assert.Empty(full.CarriedVerdicts ?? []);
+    }
+
     private void RecordPassedReview(string resultSha, string mergeBase)
     {
         var report = new Contract.ReviewReportRequest(
