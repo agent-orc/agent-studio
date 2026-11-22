@@ -288,6 +288,14 @@ public sealed record ProjectExecutionDefinition(
     public ProjectDeploymentDefinition? Deployment { get; init; }
     public ProjectStructureDefinition? Structure { get; init; }
     public string? DeliveryFullSuite { get; init; }
+
+    /// <summary>
+    /// <c>delivery.deployAfterGreenWindow</c> (AGT-3966): a green merge-window
+    /// run on the integration tip releases that tip to the declared Stage
+    /// environment. Off by default; nightly runs and card verifications gate a
+    /// release either way.
+    /// </summary>
+    public bool DeliveryDeployAfterGreenWindow { get; init; }
 }
 
 /// <summary>One definition problem. <paramref name="Line"/> is the 1-based project.yml line when the path resolves to one.</summary>
@@ -390,12 +398,16 @@ public static partial class ProjectDefinitionReader
         var quality = Quality(lines, issues);
         var deliveryLines = Section(lines, "delivery");
         foreach (var line in deliveryLines.Where(line => line.Indent == 2))
-            if (KeyValue(line.Text).Key != "fullSuite")
+            if (KeyValue(line.Text).Key is not ("fullSuite" or "deployAfterGreenWindow"))
                 issues.Add(new("delivery", "unknown-field", "Delivery contains an unsupported field."));
         var fullSuite = NestedScalar(lines, "delivery", "fullSuite");
         if (fullSuite is not null && fullSuite is not ("required" or "optional" or "off"))
             issues.Add(new("delivery.fullSuite", "delivery-full-suite-invalid",
                 "delivery.fullSuite must be required, optional, or off."));
+        var deployAfterGreenWindow = NestedScalar(lines, "delivery", "deployAfterGreenWindow");
+        if (deployAfterGreenWindow is not null && deployAfterGreenWindow is not ("true" or "false"))
+            issues.Add(new("delivery.deployAfterGreenWindow", "delivery-deploy-after-green-window-invalid",
+                "delivery.deployAfterGreenWindow must be true or false."));
 
         if (!int.TryParse(schemaVersion, out var version)) version = 0;
         var structure = lines.Any(line => line.Indent == 0 && KeyValue(line.Text).Key == "structure")
@@ -408,6 +420,7 @@ public static partial class ProjectDefinitionReader
             Deployment = ParseDeployment(lines, issues, structure ?? ProjectStructureDefinition.Empty),
             Structure = structure,
             DeliveryFullSuite = fullSuite,
+            DeliveryDeployAfterGreenWindow = deployAfterGreenWindow == "true",
         };
         issues.AddRange(ProjectDefinitionValidator.Validate(definition, repositoryFileExists, hosts));
         issues = LocateIssues(lines, issues);

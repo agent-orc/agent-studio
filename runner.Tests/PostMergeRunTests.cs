@@ -1,5 +1,6 @@
 using AgentRunner;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TestSupport;
 using Xunit;
 
 namespace AgentRunner.Tests;
@@ -51,6 +52,109 @@ public sealed class PostMergeRunTests
             PostMergeRunPlan.Build(definition, "window", changed, null));
         Assert.Equal(["prepare", "build", "backend tests", "runner tests"],
             PostMergeRunPlan.Build(definition, "window", changed, PostMergeWindowSuiteModes.Routine));
+    }
+
+    private static ProjectExecutionDefinition WithBase() => new(1, [],
+        new Dictionary<string, string>(), new("prepare", ["build"], [], []),
+        [new("backend-base", "base", 60, "backend smoke"),
+         new("product-start", "base", 120, "product start"),
+         new("backend-routine", "routine", 10, "backend tests"),
+         new("runner-routine", "routine", 10, "runner tests"),
+         new("task-server-routine", "routine", 10, "task-server tests"),
+         new("frontend-unit", "routine", 10, "frontend tests"),
+         new("backend-coverage", "release", 10, "backend coverage")],
+        [], [], new Dictionary<string, string>(), null, null, null, null, null);
+
+    [Fact]
+    public void DocsOnlyWindowRunsTheBaseSuiteOnly()
+    {
+        // AGT-3966: a path that maps to no area selects the base suite, not every routine suite.
+        Assert.Equal(["prepare", "build", "backend smoke", "product start"],
+            PostMergeRunPlan.Build(WithBase(), "window", ["docs/start/README.md", "CHANGELOG.md"],
+                PostMergeWindowSuiteModes.Affected));
+    }
+
+    [Fact]
+    public void BackendWindowRunsTheBaseSuiteAndTheBackendRoutineSuite()
+    {
+        string[] expected = ["prepare", "build", "backend smoke", "product start", "backend tests"];
+        Assert.Equal(expected, PostMergeRunPlan.Build(WithBase(), "window",
+            ["backend/Foo.cs", "docs/system/domains/pipeline.md"], PostMergeWindowSuiteModes.Affected));
+        // A test project selects its own area's suite instead of every routine suite.
+        Assert.Equal(expected, PostMergeRunPlan.Build(WithBase(), "window",
+            ["backend.Tests/FooTests.cs"], null));
+    }
+
+    [Fact]
+    public void SharedLibrarySelectsEveryDotnetRoutineSuite()
+    {
+        Assert.Equal(["backend tests", "runner tests", "task-server tests"],
+            PostMergeRunPlan.SelectAffected(WithBase(), ["contracts/TaskServer.Contracts/PostMergeRun.cs"]));
+        Assert.Equal(["runner tests", "frontend tests"],
+            PostMergeRunPlan.SelectAffected(WithBase(), ["runner.Tests/A.cs", "frontend/src/a.ts", "scripts/x.sh"]));
+    }
+
+    [Fact]
+    public void NightlyKeepsTheFullRoutineSuiteAndBalancedAddsTheBaseSuite()
+    {
+        Assert.Equal(["prepare", "build", "backend tests", "runner tests", "task-server tests", "frontend tests"],
+            PostMergeRunPlan.Build(WithBase(), "nightly", ["docs/a.md"]));
+        Assert.Equal(["prepare", "build", "backend smoke", "product start",
+                "backend tests", "runner tests", "task-server tests", "frontend tests"],
+            PostMergeRunPlan.Build(WithBase(), "window", ["docs/a.md"], PostMergeWindowSuiteModes.Routine));
+    }
+
+    [Fact]
+    public void RepositoryBaseSuiteFitsTheTenMinuteBudgetAndRunsAloneForDocs()
+    {
+        var read = ProjectDefinitionReader.ReadWorkspace(RepositoryRoot.Find());
+        Assert.True(read.IsValid, string.Join("; ", read.Issues.Select(issue => $"{issue.Path}: {issue.Message}")));
+        var definition = read.Definition!;
+        var baseSuites = definition.TestSuites.Where(suite => suite.Category == ProjectTestSuiteCategories.Base).ToArray();
+        Assert.NotEmpty(baseSuites);
+        Assert.True(baseSuites.Sum(suite => suite.ExpectedDurationSeconds) <= 600,
+            "The base suite must finish within about ten minutes on the run host.");
+        var docsOnly = PostMergeRunPlan.Build(definition, "window", ["docs/start/README.md"],
+            PostMergeWindowSuiteModes.Affected);
+        Assert.Equal(baseSuites.Select(suite => suite.Command),
+            docsOnly.Skip(1 + definition.Commands.Build.Count));
+        var backend = PostMergeRunPlan.Build(definition, "window", ["backend/Host/Program.cs"],
+            PostMergeWindowSuiteModes.Affected);
+        Assert.Equal([.. baseSuites.Select(suite => suite.Command),
+                definition.TestSuites.Single(suite => suite.Id == "backend-routine").Command],
+            backend.Skip(1 + definition.Commands.Build.Count));
+    }
+
+    [Theory]
+    [InlineData("true", true, true)]
+    [InlineData("false", false, true)]
+    [InlineData("yes", false, false)]
+    public void DeliveryDeployAfterGreenWindowAcceptsOnlyTrueOrFalse(string value, bool expected, bool valid)
+    {
+        var read = ProjectDefinitionReader.Parse($$"""
+            schemaVersion: 1
+            stack: [custom]
+            toolVersions:
+            commands:
+              prepare: .agent-studio/prepare
+              build:
+                - "true"
+              test:
+                - "true"
+              lint:
+            testSuites:
+              - id: smoke
+                category: base
+                expectedDurationSeconds: 5
+                command: "true"
+            cachePaths:
+            capabilities: [git]
+            delivery:
+              deployAfterGreenWindow: {{value}}
+            """);
+        Assert.Equal(valid, read.IsValid);
+        Assert.Equal(expected, read.Parsed!.DeliveryDeployAfterGreenWindow);
+        if (!valid) Assert.Contains(read.Issues, issue => issue.Path == "delivery.deployAfterGreenWindow");
     }
 
     [Fact]
