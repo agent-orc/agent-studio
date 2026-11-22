@@ -41,7 +41,8 @@ public static class IntegrationContinuationPrompt
         string? integrationTip = null,
         string? evidenceRef = null,
         string? gateEvidence = null,
-        bool runnerMergesIntegration = false)
+        bool runnerMergesIntegration = false,
+        IReadOnlyList<string>? involvedCards = null)
     {
         var stages = conflict?.Stages.Count > 0
             ? string.Join("; ", conflict.Stages.Select(item =>
@@ -78,6 +79,9 @@ public static class IntegrationContinuationPrompt
             + $"Integration branch: {integrationBranch}; tip: {conflict?.IntegrationTipSha ?? integrationTip ?? "not recorded"}.\n"
             + $"Delivery side: {deliveryRef ?? "not recorded"} at {deliverySha ?? conflict?.DeliverySha ?? "not recorded"}.\n"
             + $"Attempted stages: {stages}. Conflicted files: {files}.\n"
+            + (involvedCards is { Count: > 0 }
+                ? $"Other cards whose integrated commits touched these files: {string.Join(", ", involvedCards)}.\n"
+                : "")
             + (string.IsNullOrWhiteSpace(evidenceRef) ? "" : $"Failure evidence ref: {evidenceRef}.\n")
             + (string.IsNullOrWhiteSpace(evidence) ? ""
                 : evidence.Contains('\n') ? $"Gate or review evidence:\n{evidence.TrimEnd()}\n"

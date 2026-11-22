@@ -22,7 +22,7 @@ namespace AgentStudio.Runner;
 /// admission and the final lane decision. The runner receives only immutable
 /// commands for the exact result SHA covered by the ReviewAttempt lease.
 /// </summary>
-public sealed class RemoteReviewPlanBuilder
+public sealed partial class RemoteReviewPlanBuilder
 {
     private static readonly string[] DefaultAspectIds =
     [
@@ -649,6 +649,8 @@ public sealed class RemoteReviewPlanBuilder
                 expectedResultSha,
                 requireFullReview);
         plan = ApplyEquivalentDeliveryReview(plan, task, repositoryPath, integrationRef, resultSha);
+        plan = ApplyMergeOnlyRoundReview(plan, task, repositoryPath, projectSettings, integrationRef,
+            resultSha, requireFullReview);
         // A scoped review drops carried-over agent commands. A no-change plan
         // has no tool command left to keep it non-empty, so it falls back to
         // the completion-only command the Task Server can admit.
@@ -675,18 +677,7 @@ public sealed class RemoteReviewPlanBuilder
             || string.IsNullOrWhiteSpace(plan.BriefSha256))
             return plan;
 
-        var logs = TaskPaths.LogsDir(task.FolderPath);
-        if (!Directory.Exists(logs)) return plan;
-        var previous = Directory.EnumerateFiles(logs, "remote-review-settlement-*.json")
-            .Select(path => Path.GetFileNameWithoutExtension(path)["remote-review-settlement-".Length..])
-            .Select(id => RemoteReviewSettlementJournal.Read(task.FolderPath, id).Entry)
-            .Where(entry => entry is not null
-                && string.Equals(entry.Report.Outcome, "Pass", StringComparison.OrdinalIgnoreCase)
-                && string.Equals(entry.Report.BriefSha256, plan.BriefSha256, StringComparison.OrdinalIgnoreCase)
-                && ReviewSubjectStore.IsValidResultSha(entry.Report.Workspace.ExpectedResultSha)
-                && ReviewSubjectStore.IsValidResultSha(entry.Report.Workspace.MergeBaseSha))
-            .OrderByDescending(entry => entry!.ReceivedAtUtc)
-            .FirstOrDefault();
+        var previous = LatestPassedSettlement(task, plan.BriefSha256);
         if (previous is null) return plan;
 
         var currentBase = Git(repositoryPath, "merge-base", integrationRef, resultSha!);

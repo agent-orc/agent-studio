@@ -213,9 +213,8 @@ public sealed partial class BatchGatePilotService
     }
 
     private static bool HasAttributedCurrentDelivery(TaskInfo task, RunAttemptDto sourceRun)
-        => sourceRun.ResultEnvelope is { } envelope && task.Commits.Any(commit =>
-            string.Equals(commit.RunAttemptId, sourceRun.AttemptId, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(commit.ResultSha, envelope.ResultSha, StringComparison.OrdinalIgnoreCase));
+        => sourceRun.ResultEnvelope is { } envelope
+           && RemoteCommitAttributionGuard.CoversDelivery(task.Commits, sourceRun.AttemptId, envelope.ResultSha);
 
     private string MissingAttributionMessage(TaskInfo task, RunAttemptDto sourceRun)
     {
@@ -235,8 +234,9 @@ public sealed partial class BatchGatePilotService
             if (range.Success)
                 missing.AddRange(range.Commits.Where(commit => !task.Commits.Any(recorded =>
                         string.Equals(recorded.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(recorded.RunAttemptId, sourceRun.AttemptId, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(recorded.ResultSha, resultSha, StringComparison.OrdinalIgnoreCase)))
+                        && (string.Equals(recorded.RunAttemptId, sourceRun.AttemptId, StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(recorded.ResultSha, resultSha, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(recorded.DeliveryAttemptId, sourceRun.AttemptId, StringComparison.OrdinalIgnoreCase))))
                     .Select(commit => $"{commit.ShortSha} ({commit.Subject})"));
         }
         if (missing.Count == 0 && !string.IsNullOrWhiteSpace(resultSha))
@@ -1700,8 +1700,8 @@ public sealed partial class BatchGatePilotService
             {
                 BatchGateOwnershipStore.Write(task.FolderPath,
                     new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
-                        CascadeDeferred: _store.TryReadReplay(manifest.BatchId,
-                            member.TaskKey)?.Outcome == "cascade-deferred"));
+                        CascadeDeferred: BatchReplayOutcomes.IsDeferred(_store.TryReadReplay(manifest.BatchId,
+                            member.TaskKey)?.Outcome)));
                 Lane(pending, "requeued", reason: $"batch:{manifest.BatchId}");
                 released.Add(pending);
             }
@@ -1867,6 +1867,47 @@ public sealed partial class BatchGatePilotService
             if (assembly.CascadeStopped)
                 _logger.LogWarning("batch-conflict-cascade batch={BatchId} deferred={Members}",
                     manifest.BatchId, string.Join(',', assembly.DeferredKeys));
+            foreach (var key in assembly.SiblingDeferredKeys)
+            {
+                // AGT-3968: the replay record names the sibling and the files.
+                deferredKeys.Add(key);
+                var replay = _store.TryReadReplay(manifest.BatchId, key);
+                var task = _scanner.FindJob(key, pending[key].WatchPath);
+                if (task is null) continue;
+                BatchGateOwnershipStore.Write(task.FolderPath,
+                    new BatchGateOwnership(pending[key].ReviewAttemptId,
+                        pending[key].Subject, CascadeDeferred: true));
+                _logger.LogInformation("batch-member-sibling-deferred batch={BatchId} task={TaskKey} siblings={Siblings}",
+                    manifest.BatchId, key, string.Join(',', replay?.SiblingKeys ?? []));
+                _timeline?.Append(task.FolderPath, TimelineEventKinds.IntegrationSiblingDeferred,
+                    TimelineActors.System, replay?.Reason
+                        ?? "Conflicts only with a card admitted ahead in this batch; waits for the next batch.",
+                    details: new Dictionary<string, string>
+                    {
+                        ["batchId"] = manifest.BatchId,
+                        ["conflictedFiles"] = string.Join(", ", replay?.ConflictedFiles ?? []),
+                        ["involvedCards"] = string.Join(", ", replay?.SiblingKeys ?? []),
+                    });
+            }
+            foreach (var key in assembly.AdmittedKeys)
+            {
+                if (_store.TryReadReplay(manifest.BatchId, key)?.UnionResolvedHunks is not { Count: > 0 } hunks)
+                    continue;
+                var task = _scanner.FindJob(key, pending[key].WatchPath);
+                if (task is null) continue;
+                _timeline?.Append(task.FolderPath, TimelineEventKinds.IntegrationUnionResolved,
+                    TimelineActors.System,
+                    $"Resolved {hunks.Count} add/add conflict {(hunks.Count == 1 ? "hunk" : "hunks")} by keeping both sides; "
+                    + "the batch gate builds and tests the result.",
+                    details: new Dictionary<string, string>
+                    {
+                        ["batchId"] = manifest.BatchId,
+                        ["candidateSha"] = assembly.CandidateSha,
+                        ["files"] = string.Join(", ", hunks.Select(hunk => hunk.Path).Distinct(StringComparer.Ordinal)),
+                        ["hunks"] = string.Join("; ", hunks.Select(hunk =>
+                            $"{hunk.Path}:{hunk.Line} (+{hunk.OursLines} integration, +{hunk.TheirsLines} delivery)")),
+                    });
+            }
             foreach (var key in assembly.DeferredKeys)
             {
                 deferredKeys.Add(key);
@@ -2176,11 +2217,26 @@ public sealed partial class BatchGatePilotService
             pending.Subject.ResultSha);
         var result = AgentStudio.Git.MergeIntoIntegrationResult.Conflicted(
             replay.ConflictedFiles, "Batch replay conflicted with the integration branch.");
-        var round = await _agentRounds.TryStartAsync(request, result).ConfigureAwait(false);
+        // AGT-3968: name the other cards whose integrated commits touched the
+        // conflicting files, for the agent and for a parked card.
+        var involved = _git.CardsTouchingPaths(pending.RepositoryPath, pending.Subject.ResultSha,
+            replay.TipBeforeSha, replay.ConflictedFiles, pending.Subject.TaskKey);
+        var round = await _agentRounds.TryStartAsync(request, result, involved).ConfigureAwait(false);
         if (!round.Started)
         {
             _logger.LogWarning("batch-conflict-round-refused task={TaskKey} reason={Reason}",
                 task.Id, round.Reason);
+            // AGT-3968: a refused round parks the card. Left queued, the same
+            // conflict ejected it from every later batch without end.
+            var current = _scanner.FindJob(task.Id, task.WatchPath);
+            if (current?.State != TaskStates.AutoReview) return;
+            var summary = IntegrationAgentRoundService.ConflictSummary(replay.ConflictedFiles, involved);
+            var reason = round.BudgetExhausted
+                ? $"Integration conflict parked: {round.Reason}"
+                : $"Integration conflict parked: the automatic agent round was not started ({round.Reason.TrimEnd('.')}).{summary}";
+            await EscalateFallbackAsync(current, pending, reason, infrastructure: false,
+                recordInStore: true, CancellationToken.None, laneOutcome: "Conflict",
+                resolution: "batch-conflict-parked").ConfigureAwait(false);
             return;
         }
         _store.ResolvePending(pending.ReviewAttemptId, "batch-conflict-agent-round");

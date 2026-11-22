@@ -386,6 +386,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-integration-round-loop-and-unattributed-merge-rounds">
+          <td>2026-11-22</td>
+          <td><code>AGT-3897</code>, <code>AGT-3914</code><br><span class="small">integration-round-loop and unattributed merge-only rounds (fix <code>AGT-3968</code>)</span></td>
+          <td>No CLI crashed. AGT-3897 took eight "include latest develop" rounds on 17 and 18 November, each a full coding run and a full review that passed, under an automatic round limit of one. The first of them (17 November 22:39 local) had no conflict with develop. AGT-3914, AGT-3905 and AGT-3820 passed review and were escalated with "Commit attribution is missing for this reviewed delivery". Terminal: Escalated.</td>
+          <td>The batch replay ejected AGT-3897 as a conflict when it only conflicted with the sibling AGT-3891 admitted ahead of it; an agent cannot resolve that. The recovery budget was keyed by result ref and SHA, and every round publishes a new one. A refused batch conflict round only logged a warning and left the card queued. The runner reports its start head, which already holds its develop merge, as the pickup base, so a round without a commit of its own had an empty attribution range; the repair sweep skipped empty ranges and then recorded no unresolved row, so it never ran again.</td>
+          <td>Sibling-only conflicts are deferred to the next batch; the budget counts per card and integration target; a refused round parks the card naming the files and the other cards; add/add hunks are kept by union in the batch replay; a merge-only round is reviewed on its resolution; an empty pickup range is attributed through the integration merge-base range, and sweep v3 restores the parked cards without a coding run.</td>
+        </tr>
         <tr id="case-document-key-amend-push-blocked">
           <td>2026-11-10</td>
           <td><code>AGT-3649</code> playthrough<br><span class="small">document-key-amend-push-blocked (fix <code>AGT-3695</code>)</span></td>
@@ -2199,8 +2206,8 @@
           <td>
             <span class="pill ok">fixed in dev</span> the merge step now persists one structured report for direct merge,
             mechanical merge, and rebase fallback, including capped conflict files and both tips. Passed-review conflicts
-            enter the same two-round per-delivery recovery budget even with a generic decision marker. Exhaustion parks with
-            a reason such as <em>automatic recovery budget used: 2/2 for delivery 5cd6b1d4bc07</em>, and the steer prompt prefers resolving a merge of the integration
+            enter the same recovery budget even with a generic decision marker; since AGT-3968 it counts per card and integration target, not per delivery. Exhaustion parks with
+            a reason such as <em>automatic recovery budget used: 1/1 for this card on develop</em>, and the steer prompt prefers resolving a merge of the integration
             branch into the delivery branch over rewriting history. Each round now records an immutable-result-ref and
             delivered-SHA chain identifier. Re-reviewing that delivery shares its budget across review epochs, while a new
             delivery starts a fresh budget. Identifier-less legacy rounds count conservatively and are named in the exhausted

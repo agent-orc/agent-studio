@@ -601,6 +601,27 @@ once. A delivery conflict queues the existing integration recovery round,
 which steers the next coding attempt against `develop` and records the round
 on the timeline.
 
+
+### Review after a merge-only round (AGT-3968)
+
+After a passing review, a round whose new commits are only merges of the
+integration branch is reviewed on its resolution, not on the unchanged work.
+`RemoteReviewPlanBuilder` checks that the last passing review's result SHA is an
+ancestor of the new result, that `reviewed..result` without the integration
+branch holds no non-merge commit, and that every merge's second parent is on the
+integration branch. The resolution files are the paths of
+`git show --remerge-diff` for each merge: where the recorded merge differs from
+Git's own merge, which covers the conflicting files and what the round changed in
+them. The plan then runs `ScopedReviewPolicy` with those files as the delta.
+`code-quality` (or the first other agent aspect) reviews the resolution and gets
+a `## Merge resolution to review` brief with the files and the
+`git show --remerge-diff` commands; an aspect whose earlier evidence cites a
+resolved file also runs; every other aspect that passed is carried over.
+`visual-review` is never carried. Build, lint and the affected tests run as
+usual. The step honours `scopedReviewAfterFinding` and
+`scopedReviewMaximumDeltaFiles`: more resolved files than the maximum gives the
+full review. A clean merge with no resolution carries every aspect.
+
 ## Versioned review-library steps
 
 Concept cards on the remote plane receive one semantic `concept-fit` aspect.
