@@ -11,7 +11,7 @@ public sealed record EnvironmentHealthCheckView(string Id, string Kind, string T
 public sealed record EnvironmentHealthView(string Project, string EnvironmentId, string Name, string Kind,
     string Address, string Status, double? Uptime24h, double? Uptime7d, double? Uptime30d, HealthLatency Latency24h,
     HealthIncident? CurrentIncident, HealthIncident? LastIncident, IReadOnlyList<EnvironmentHealthCheckView> Checks,
-    string? Error = null);
+    string? Error = null, string? IncidentCardKey = null);
 
 public sealed record ProjectEnvironmentHealthResponse(string Project, DateTimeOffset CapturedAt, string ProbeOrigin,
     IReadOnlyList<EnvironmentHealthView> Environments);
@@ -504,15 +504,16 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
                 .MaxBy(item => item.EndedAt);
             var lastRuntimeIncident = hostIncident is { EndedAt: not null } endedHost
                 ? RuntimeHealthIncident(environment.Id, endedHost) : null;
+            var current = hostIncident is { EndedAt: null } open ? RuntimeHealthIncident(environment.Id, open)
+                : states.Select(item => item.OpenIncident).OfType<HealthIncident>().MinBy(item => item.StartedAt);
             return new EnvironmentHealthView(project, environment.Id, environment.Name, environment.Kind,
                 HealthTargets.Display(environment.Address), status, Worst(checks.Select(check => check.Uptime24h)),
                 Worst(checks.Select(check => check.Uptime7d)), Worst(checks.Select(check => check.Uptime30d)),
-                primary?.Latency24h ?? new(null, null, null),
-                hostIncident is { EndedAt: null } open ? RuntimeHealthIncident(environment.Id, open)
-                    : states.Select(item => item.OpenIncident).OfType<HealthIncident>().MinBy(item => item.StartedAt),
+                primary?.Latency24h ?? new(null, null, null), current,
                 lastRuntimeIncident is not null && (lastCheckIncident is null
                     || lastRuntimeIncident.EndedAt > lastCheckIncident.EndedAt) ? lastRuntimeIncident : lastCheckIncident,
-                checks, status == "invalid" ? AddressProblem(environment, definitions, checks) : null);
+                checks, status == "invalid" ? AddressProblem(environment, definitions, checks) : null,
+                CardKey(project, current?.CardId));
         }).ToArray();
     }
 
@@ -520,6 +521,15 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
         => new(incident.Id, environmentId, "container-runtime", new DateTimeOffset(incident.StartedAt),
             $"{(incident.Kind == "crash-rollback" ? "Crash rollback" : "Crash loop")} after {incident.Restarts} restarts",
             incident.Restarts, incident.EndedAt is { } ended ? new DateTimeOffset(ended) : null);
+
+    /// <summary>The key the board shows for an incident card (NS-2), not its folder slug.</summary>
+    public string? CardKey(string project, string? cardId)
+    {
+        if (cardId is null) return null;
+        var watchPath = scanner.GetWatchPaths().FirstOrDefault(item =>
+            string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase))?.Path;
+        return watchPath is null ? null : scanner.FindJob(cardId, watchPath)?.Key;
+    }
 
     /// <summary>The fix for each refused target; the card shows it instead of a bare Misconfigured.</summary>
     private static string? AddressProblem(EnvironmentDeclaration environment,

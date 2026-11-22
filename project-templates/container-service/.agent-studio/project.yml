@@ -1,4 +1,4 @@
-schemaVersion: 1
+schemaVersion: 2
 stack: [node]
 toolVersions: {}
 commands:
@@ -14,48 +14,64 @@ testSuites:
     expectedDurationSeconds: 30
     command: npm test
 cachePaths: [node_modules]
-capabilities: [git, child-process]
+capabilities: [git, child-process, loopback-network]
 environment: {}
-
-# Schema 2 deployment section (commented out). Studio writes it for you:
-# Settings > Pipeline > "Preview schema 2 migration", then "Add deploy steps".
-# To write it by hand instead, change schemaVersion above to 2, uncomment every
-# line below the marker, and replace the project id, deploy host id (app-vm),
-# compose files, service, and URLs with your own. Compose files stay below /srv.
-# The container listens on port 3000 and answers /health.
-# --- schema 2 deployment ---
-# project:
-#   id: container-service
-# artifacts:
-#   - name: app
-#     type: container
-#     dockerfile: Dockerfile
-# environments:
-#   - name: staging
-#     protected: false
-#   - name: production
-#     protected: true
-# lifecycles:
-#   standard:
-#     - phase: staging
-#       automatic: true
-#     - phase: production
-#       approval: [Owner, Maintainer]
-#       requires: staging
-# deploy:
-#   - step: container
-#     artifact: app
-#     target: app-vm
-#     composeFile: /srv/apps/container-service/staging/compose.yml
-#     service: container-service
-#     healthUrl: https://staging.example.com/health
-#     healthTimeoutSeconds: 120
-#     environments: [staging]
-#   - step: container
-#     artifact: app
-#     target: app-vm
-#     composeFile: /srv/apps/container-service/production/compose.yml
-#     service: container-service
-#     healthUrl: https://example.com/health
-#     healthTimeoutSeconds: 120
-#     environments: [production]
+# Rename the id to your project's identifier.
+project:
+  id: container-service
+artifacts:
+  - name: service
+    type: container
+    path: .
+    dockerfile: Dockerfile
+# Studio sets OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL and
+# OTEL_EXPORTER_OTLP_HEADERS with an ingest token for environments with
+# telemetry: true, so their metrics and logs reach Operations.
+environments:
+  - name: staging
+    protected: false
+    telemetry: true
+  - name: production
+    protected: true
+    telemetry: true
+lifecycles:
+  standard:
+    - phase: staging
+      automatic: true
+    - phase: production
+      approval: [Owner, Maintainer]
+      requires: staging
+# Replace app-host with the id of your deploy host and the health URLs with the
+# addresses your proxy serves; see docs/deployments/README.md.
+deploy:
+  - step: container
+    artifact: service
+    target: app-host
+    composeFile: /srv/apps/container-service/staging/compose.yml
+    service: app
+    healthUrl: https://staging.service.example.com/health
+    healthTimeoutSeconds: 120
+    environments: [staging]
+  - step: container
+    artifact: service
+    target: app-host
+    composeFile: /srv/apps/container-service/production/compose.yml
+    service: app
+    healthUrl: https://service.example.com/health
+    healthTimeoutSeconds: 120
+    environments: [production]
+variables:
+  - name: LOG_LEVEL
+    value: info
+  # The runbook scripts restart this compose service; see docs/runbooks/README.md.
+  - name: RUNBOOK_SERVICE
+    value: app
+# Each step runs deploy/runbooks/<step>.sh after the operator installs it on the
+# deploy host; see docs/deployments/README.md. Each verifies the http health check.
+runbooks:
+  - name: restart
+    steps: [restart]
+    verify: health:http
+  - name: disk-cleanup
+    steps: [disk-cleanup]
+    verify: health:http

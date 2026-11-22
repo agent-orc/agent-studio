@@ -105,7 +105,7 @@ public static class EnvironmentStatusProjection
         => deployments.Any(item => item.ReleaseId == releaseId && item.EnvironmentId == environmentId
             && DeployedSuccessfully(item));
 
-    private static bool DeployedSuccessfully(Deployment run)
+    public static bool DeployedSuccessfully(Deployment run)
         => run.State == DeploymentStates.Succeeded
             && (run.InterventionDecision != "skip" || run.FailedStep == DeployStepNames.Health);
 

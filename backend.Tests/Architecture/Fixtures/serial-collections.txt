@@ -57,3 +57,6 @@ environment-baseline backend.Tests/PtySessionEnvironmentTests.cs 4
 
 collection PersistedBoardRestartCollection unrestricted parallel runs still timed out on the restored read after hosted index waits were removed; the timeout stack showed no product worker waiting on the held scan and the test-host endpoint warmup still waits synchronously (AGT-3340).
 member PersistedBoardRestartCollection PersistedBoardReadTests
+
+collection OperationsTelemetryApiCollection its HTTP test temporarily uses the production Git read warning mode for Deploy's existing declaration reader, which changes a process-wide guard setting.
+member OperationsTelemetryApiCollection OperationsTelemetryApiTests

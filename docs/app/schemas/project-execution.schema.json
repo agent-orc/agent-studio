@@ -305,7 +305,7 @@
       }
     },
     "environments": {
-      "description": "Ordered deployment environments. Defaults to staging, then protected production, when omitted. The shorthand list protects production.",
+      "description": "Ordered deployment environments. Staging alone or staging followed by protected production. Omission defaults to both.",
       "oneOf": [
         {
           "type": "array",
@@ -317,12 +317,12 @@
               "const": "production"
             }
           ],
-          "minItems": 2,
+          "minItems": 1,
           "maxItems": 2
         },
         {
           "type": "array",
-          "minItems": 2,
+          "minItems": 1,
           "maxItems": 2,
           "prefixItems": [
             {
@@ -339,6 +339,9 @@
                   "description": "P1 Staging deploys automatically after integration and cannot be protected.",
                   "const": false,
                   "default": false
+                },
+                "telemetry": {
+                  "$ref": "#/$defs/environmentTelemetry"
                 },
                 "healthChecksAllowPrivateNetwork": {
                   "description": "Lets the control plane's health checks reach RFC 1918, shared (100.64.0.0/10) and IPv6 unique-local addresses, for an environment hosted on a LAN or VPN. Loopback, link-local and cloud metadata addresses stay refused.",
@@ -360,6 +363,9 @@
                 "protected": {
                   "const": true,
                   "default": true
+                },
+                "telemetry": {
+                  "$ref": "#/$defs/environmentTelemetry"
                 },
                 "healthChecksAllowPrivateNetwork": {
                   "description": "Lets the control plane's health checks reach RFC 1918, shared (100.64.0.0/10) and IPv6 unique-local addresses, for an environment hosted on a LAN or VPN. Loopback, link-local and cloud metadata addresses stay refused.",
@@ -463,7 +469,7 @@
               "additionalProperties": false
             }
           ],
-          "minItems": 2,
+          "minItems": 1,
           "maxItems": 2
         }
       },
@@ -748,6 +754,11 @@
           },
           "environments": {
             "$ref": "#/$defs/environmentScope"
+          },
+          "verify": {
+            "description": "What must pass after the steps before the run succeeds: health:<health check id> of the environment, or alert:<telemetry alert rule id> that must not fire.",
+            "type": "string",
+            "pattern": "^(health|alert):[a-z0-9][a-z0-9._-]{0,63}$"
           }
         }
       }
@@ -1194,6 +1205,11 @@
       "description": "Repository-relative artifact path with the remotePath segment alphabet; '.' alone is the repository root.",
       "type": "string",
       "pattern": "^(?:\\.|(?!\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*(?:/(?!\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*)*)$"
+    },
+    "environmentTelemetry": {
+      "description": "Connect container deploys of this environment to the Studio OTLP intake: the deploy sets OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL and OTEL_EXPORTER_OTLP_HEADERS with an ingest token scoped to the environment.",
+      "type": "boolean",
+      "default": false
     },
     "environmentScope": {
       "description": "Environments the entry applies to; omitted means every environment.",

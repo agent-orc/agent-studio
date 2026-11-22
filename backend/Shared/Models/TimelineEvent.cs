@@ -226,6 +226,20 @@ public static class TimelineActors
         => actor?.Trim().StartsWith(PersonaPrefix, StringComparison.Ordinal) == true;
 
     /// <summary>
+    /// The automated actor a card's <c>createdBy</c> names (<c>system</c>,
+    /// <c>pipeline</c>, <c>orchestrator</c>), or null when it names a person or
+    /// is empty. Health, database, and follow-up cards carry the project
+    /// owner's client id, but they were not created by that person.
+    /// </summary>
+    public static string? ForAutomatedCreator(string? createdBy)
+        => createdBy?.Trim().ToLowerInvariant() switch
+        {
+            System or "pipeline" => System,
+            Orchestrator => Orchestrator,
+            _ => null,
+        };
+
+    /// <summary>
     /// True when an actor or lane-change cause names a person rather than an
     /// automated path. Used where a guard must stop an operator but must not
     /// break a runner, sweep, or orchestrator transition.

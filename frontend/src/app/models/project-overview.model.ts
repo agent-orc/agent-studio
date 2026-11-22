@@ -68,6 +68,12 @@ export interface ProjectEnvironmentHistory {
 
 export interface ProjectEnvironments {
   project: string;
+  runTargetRemovals?: {
+    environmentId: string;
+    hostId: string;
+    kind: string | null;
+    status: string;
+  }[];
   environments: {
     declaration: ProjectEnvironmentDeclaration;
     deployedArtifact: string | null;

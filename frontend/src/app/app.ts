@@ -1346,7 +1346,7 @@ export class App implements OnInit, OnDestroy {
   readonly studioAcceptanceRefusal = computed(() => {
     const info = this.selectedJob()?.info;
     if (!info || this.studioTriagePrimary()?.id !== 'mark-done' || this.studioPrimaryDecisionRefusal()) return null;
-    return acceptanceRefusalFor(info, this.acceptanceRefusals.forTask(info.taskKey),
+    return acceptanceRefusalFor(info, this.acceptanceRefusals.forCard(info),
       this.studioPrimaryAwaitingGit(), this.acceptanceReadiness.itemFor(info));
   });
   /** AGT-2795: the decision lane guard's refusal for the studio primary move. */

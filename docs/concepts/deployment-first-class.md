@@ -159,6 +159,25 @@ Stage P1 of the [deployment Dossier](../operations/bereitstellung/index.html)
 adds a release layer in `backend/Features/Deploy/`. The host deploy queue above
 stays the only executor; releases and runs describe and steer it.
 
+- **Integration release (AGT-3891).** A project without the promotion train
+  needs no shell and no `runner.release` credential. After a card is integrated
+  and the project's own gate is green on the integration branch tip (a
+  `integrated-verified` integration record naming the tip, or a green
+  post-merge run on it), Studio packs the tip's committed tree (or the
+  declared static artifact `path`) into a `release-package@sha256:` package,
+  registers it in the artifact registry with builder `studio-integration`,
+  and creates the release, which queues the automatic Staging run. A
+  reconciler checks every project each 15 seconds; a refused attempt for the
+  same commit repeats after 5 minutes. The Releases tab reads
+  `GET /api/projects/{project}/deploy/integration-release` (state, reason and
+  next step) and offers `POST` on the same route as "Create release" when
+  the tip is ready or a refusal can be retried. The POST needs the
+  environment deploy permission for Staging. Studio packs committed files
+  only: a container environment, an artifact path that is build output, a
+  symbolic link in the package, or an explicit `delivery.fullSuite: required`
+  without a green full-suite verdict blocks the release with its reason. A
+  repository that contains `scripts/release/promote-develop-to-main.sh` keeps
+  releasing through the train; Studio creates no integration release for it.
 - **Release.** A green gate release (`POST /api/deploy/gate-releases`, or the
   operator route `POST /api/projects/{project}/environments/releases`) records an
   immutable release: version `yyyy.MM.dd.N`, commit, artifact digests, a process
@@ -260,6 +279,11 @@ stays the only executor; releases and runs describe and steer it.
   invalid, with their pending promotions: an approved release supersedes waiting
   deploys of older releases and waiting redeploys and rollbacks. The AGT-3176
   promotion and rollback routes answer through the same rules.
+- **Staging started by a person.** A Staging deploy or redeploy that a person
+  starts opens the same Production promotion as the automatic Staging run,
+  unless one is already open for the artifact or Production already runs this
+  release or a newer one. Its success therefore asks for the same Production
+  approval, with the same 24-hour window.
 - **Deploy run.** Each run of a release in an environment has the state
   `queued`, `running`, `succeeded`, `failed`, `cancelled` or `awaiting-approval`,
   and the steps `approval` (when protected), the ordered schema 2
@@ -273,8 +297,26 @@ stays the only executor; releases and runs describe and steer it.
   failed deploy gets no automatic rollback when a newer job already waits for
   the environment, so the rollback cannot replace that newer release.
 - **Redeploy and rollback.** Redeploy runs the environment's current release
-  again. Rollback runs the latest successful release older than the current one.
-  Both follow the same approval rule. When the environment's first release has
+  again. Rollback runs the latest successful release older than the current one
+  that had no incident while it ran in that environment; the releases it skips
+  are named. The runtime health ledger (`release-runtime-health.json`, written
+  by `ReleaseRuntimeHealthPolicy`) records a release as `incident` when a
+  health-check incident started while it was current, or when the host
+  reported a crash loop or crash rollback of its artifact, and as `healthy`
+  after a passing probe. The deploy-time health step alone never marks a
+  release healthy. When every older release had an incident, the target is
+  the release before the current one, marked as such, and the rollback runs
+  only with `acceptIncidentTarget`; the UI asks the owner to type its version.
+  `GET /deploy/status` names the target per environment (`rollbackTarget`).
+  The UI offers the rollback on the environment card, in the run drawer, on an
+  open health incident and in deployment tools, always through the lifecycle
+  route after a confirmation that names current and target release. For
+  Production the confirmation is the Owner or Maintainer approval
+  (`approve: true`). Both follow the same approval rule. While
+  `releaseUncertain` is set, the confirmation does not name the lifecycle
+  baseline as the current release, and the run drawer offers no rollback. A
+  refused rollback shows the server reason and the choice to redeploy a known
+  release or fix forward. When the environment's first release has
   no older release to return to, the AGT-3176 rollback route falls back to the
   artifact history (the artifact deployed before releases existed), only while
   the environment is idle and only when the history target belongs to no
@@ -329,10 +371,20 @@ tenant's current release, deployment age, state and health.
 Routes, under `/api/projects/{project}/deploy`: `GET environments`, `status`
 (one EnvironmentStatus per environment), `releases`, `releases/{id}`,
 `releases/{id}/notes`, `cards`, `deployments[?environmentId=]`,
-`deployments/{id}`, `deployments/{id}/log[?step=]` and `audit`;
+`deployments/{id}`, `deployments/{id}/log[?step=]`, `audit`, `actions` and
+`releases/{id}/actions`;
 `POST releases/{id}/deployments` (`{environmentId, approve, tenant?, guidedFailure?}`),
 `deployments/{id}/approve`, `deployments/{id}/reject`, `deployments/{id}/cancel`,
 `environments/{id}/redeploy` and `environments/{id}/rollback` (`{approve, tenant?, guidedFailure?}`).
+`actions` returns, per environment, the deploy of the next release and the
+redeploy of the current one; `releases/{id}/actions` returns, per environment,
+the deploy of that release or its redeploy where it is current. Each
+`DeployActionOption` has `environmentId`, `action` (`deploy` or `redeploy`),
+`releaseId`, `releaseVersion`, `allowed`, `needsApproval` and `reason`, as the
+lifecycle decides them for the caller: `needsApproval` means the request waits
+for an Owner or Maintainer, and a refused action carries the lifecycle's
+reason. The Deploy overview cards and the release detail render these options
+as Deploy to, Request approval and Redeploy buttons.
 `GET /api/deploy/matrix` returns the workspace dashboard rows, filtered to the
 caller's projects. `GET /api/deploy/cards` returns card environment badges across
 the caller's projects. The project-scoped `cards` route returns the same badges

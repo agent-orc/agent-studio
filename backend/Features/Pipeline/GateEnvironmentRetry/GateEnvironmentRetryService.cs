@@ -58,7 +58,17 @@ public sealed record GateEnvironmentRetryResult(
     MergeIntoIntegrationOutcome? Outcome = null,
     string? Code = null,
     string? ComparedDeliverySha = null,
-    GateEnvironmentReviewAttempt? LatestAttempt = null);
+    GateEnvironmentReviewAttempt? LatestAttempt = null,
+    string? PostStepParkReason = null)
+{
+    /// <summary>
+    /// The replay landed the delivery and no post-step (a concept card's
+    /// Dossier placement or concept review) parked it.
+    /// </summary>
+    public bool Integrated => Status == GateEnvironmentRetryStatus.Replayed
+        && Outcome?.IsSuccessfulIntegration() == true
+        && string.IsNullOrWhiteSpace(PostStepParkReason);
+}
 
 public sealed record GateEnvironmentReviewAttempt(
     string Id,
@@ -114,6 +124,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
     private readonly AgentStudio.Runner.AiOperatorDecisionGateway _decisions;
     private readonly TaskTransitionService? _transitions;
     private readonly GateHostOutageMonitor? _hostHealth;
+    private readonly ConceptDeliveryPostSteps? _conceptDelivery;
 
     // One replay per card at a time. A sweep rung and the operator action run
     // the same merge against the same branch, so letting both in would spend two
@@ -136,7 +147,8 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         TaskRunnerService? continuations = null,
         AgentStudio.Runner.AiOperatorDecisionGateway? decisions = null,
         TaskTransitionService? transitions = null,
-        GateHostOutageMonitor? hostHealth = null)
+        GateHostOutageMonitor? hostHealth = null,
+        ConceptDeliveryPostSteps? conceptDelivery = null)
     {
         _scanner = scanner;
         _settings = settings;
@@ -153,6 +165,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         _decisions = decisions ?? AgentStudio.Runner.AiOperatorDecisionGateway.ForTestHost(configuration);
         _transitions = transitions;
         _hostHealth = hostHealth;
+        _conceptDelivery = conceptDelivery;
     }
 
     public string Decider => AiOperatorDeciders.GateEnvironmentRetry;
@@ -687,7 +700,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         MergeIntoIntegrationResult result;
         try
         {
-            result = await _runner.RunAsync(
+            Task<MergeIntoIntegrationResult> Merge() => _runner.RunAsync(
                 job.ProjectName,
                 job.Id,
                 job.FolderPath,
@@ -695,7 +708,18 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
                 evaluation.IntegrationBranch,
                 ct,
                 evaluation.IntegrationStrategy,
-                PipelineTypes.Resolve(job)).ConfigureAwait(false);
+                PipelineTypes.Resolve(job));
+            // AGT-3964: a concept card integrates bracketed by its Dossier
+            // placement, exactly as the Remote delivery does, so a replay
+            // re-checks the Dossier and writes its placement record and
+            // sight-review marker instead of merging around them.
+            var conceptRequest = new RemoteDeliveryIntegrationRequest(
+                job.ProjectName, job.Id, job.FolderPath, job.WatchPath,
+                evaluation.IntegrationBranch, evaluation.IntegrationStrategy, PipelineTypes.Resolve(job),
+                now, ReviewedResultSha: deliverySha);
+            result = await (_conceptDelivery?.ConceptCard(conceptRequest) is { } conceptCard
+                ? _conceptDelivery.IntegrateAsync(conceptCard, conceptRequest, Merge)
+                : Merge()).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -711,13 +735,16 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         RecordOutcome(job, evaluation, result, rung, maximum, source);
         return new GateEnvironmentRetryResult(
             GateEnvironmentRetryStatus.Replayed,
-            result.Outcome.IsSuccessfulIntegration()
+            result.PostStepParkReason is { Length: > 0 } parked
+                ? parked
+                : result.Outcome.IsSuccessfulIntegration()
                 ? "The delivery integrated without a new review round."
                 : $"The replayed integration ended with {result.Outcome}.",
             deliverySha,
             evaluation.IntegrationBranch,
             rung,
-            result.Outcome);
+            result.Outcome,
+            PostStepParkReason: result.PostStepParkReason);
     }
 
     private void RecordOutcome(

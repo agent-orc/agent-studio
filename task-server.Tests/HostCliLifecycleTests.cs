@@ -133,13 +133,108 @@ public sealed class HostCliLifecycleTests
         Assert.Contains(modelEvents, payload => payload.Contains("host has 2.1.202", StringComparison.Ordinal));
         Assert.DoesNotContain(publisher.Messages, item => item.Kind == "host.cli-drift.alarm");
 
-        clock.Advance(TimeSpan.FromHours(24));
+        clock.Advance(TimeSpan.FromMinutes(58));
         await AdvertiseAsync(store, clock, activeSlots: 0, generation: 3);
-        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.DoesNotContain(publisher.Messages, item => item.Kind == "host.cli-drift.alarm");
+        var before = Assert.Single(await store.ListRunnerCapabilitySnapshotsAsync(default));
+        Assert.All(before.Capabilities.Where(item => item.Category == "cli-execution"),
+            item => Assert.Equal("healthy", item.HealthState));
+
+        clock.Advance(TimeSpan.FromMinutes(2));
         await AdvertiseAsync(store, clock, activeSlots: 0, generation: 4);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await AdvertiseAsync(store, clock, activeSlots: 0, generation: 5);
 
         Assert.Equal(2, publisher.Messages.Count(item => item.Kind == "host.cli-drift.alarm"));
         Assert.Equal(6, publisher.Messages.Count(item => item.Kind == "host.model-cli-version.blocked"));
+        var overdue = Assert.Single(await store.ListRunnerCapabilitySnapshotsAsync(default));
+        Assert.Equal(2, overdue.Capabilities.Count(item => item.Key.StartsWith("host-upgrade:cli:", StringComparison.Ordinal)));
+        Assert.All(overdue.Capabilities.Where(item => item.Key.StartsWith("host-upgrade:cli:", StringComparison.Ordinal)), item =>
+        {
+            Assert.Equal("suspect", item.HealthState);
+            Assert.Contains("host-a", item.Reason);
+            Assert.Contains("sudo /usr/local/sbin/agent-runner-deploy update-clis 0.154.0 2.1.269", item.Reason);
+        });
+        Assert.Equal("open", overdue.HostAdmission.AdmissionState);
+        Assert.All(publisher.Messages.Where(item => item.Kind == "host.cli-drift.alarm"), item =>
+            Assert.Contains("update-clis 0.154.0 2.1.269", JsonSerializer.Serialize(item.Payload)));
+
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await AdvertiseAsync(store, clock, activeSlots: 0, generation: 6, current: true);
+        var recovered = Assert.Single(await store.ListRunnerCapabilitySnapshotsAsync(default));
+        Assert.DoesNotContain(recovered.Capabilities, item => item.Key.StartsWith("host-upgrade:cli:", StringComparison.Ordinal));
+        Assert.All(recovered.Capabilities.Where(item => item.Category == "cli-execution"),
+            item => Assert.Equal("healthy", item.HealthState));
+    }
+
+    [Fact]
+    public async Task Persisted_drift_becomes_visible_after_restart_without_another_advertisement()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var original = Store(temp.Path, clock);
+        await original.InitializeAsync();
+        await AdvertiseAsync(original, clock, activeSlots: 0);
+        clock.Advance(TimeSpan.FromMinutes(61));
+
+        var restarted = Store(temp.Path, clock);
+        await restarted.InitializeAsync();
+        var snapshot = Assert.Single(await restarted.ListRunnerCapabilitySnapshotsAsync(default));
+        var attention = snapshot.Capabilities.Where(item => item.Key.StartsWith("host-upgrade:cli:", StringComparison.Ordinal)).ToList();
+        Assert.Equal(2, attention.Count);
+        Assert.All(attention, item => Assert.Equal(Start.UtcDateTime, item.FirstFailureAt));
+        Assert.All(snapshot.Capabilities.Where(item => item.Category == "cli-execution"),
+            item => Assert.Equal("healthy", item.HealthState));
+    }
+
+    [Fact]
+    public async Task New_target_starts_another_hour_of_grace_and_can_alarm_again()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var publisher = new RecordingEventPublisher();
+        var original = Store(temp.Path, clock, publisher);
+        await original.InitializeAsync();
+        await AdvertiseAsync(original, clock, activeSlots: 0);
+        clock.Advance(TimeSpan.FromMinutes(61));
+        await AdvertiseAsync(original, clock, activeSlots: 0, generation: 2);
+        Assert.Equal(2, publisher.Messages.Count(item => item.Kind == "host.cli-drift.alarm"));
+
+        var changed = new TaskServerStore(Options.Create(new TaskServerOptions
+        {
+            DataDirectory = temp.Path,
+            CodexCliTargetVersion = "0.167.0",
+            ClaudeCliTargetVersion = "2.1.306",
+        }), clock, new ApplicationResultFinalizationSummaryGenerator(), publisher, null);
+        await changed.InitializeAsync();
+        var initial = Assert.Single(await changed.ListRunnerCapabilitySnapshotsAsync(default));
+        Assert.DoesNotContain(initial.Capabilities, item => item.Key.StartsWith("host-upgrade:cli:", StringComparison.Ordinal));
+        await AdvertiseAsync(changed, clock, activeSlots: 0, generation: 3);
+        Assert.Equal(2, publisher.Messages.Count(item => item.Kind == "host.cli-drift.alarm"));
+        clock.Advance(TimeSpan.FromMinutes(61));
+        await AdvertiseAsync(changed, clock, activeSlots: 0, generation: 4);
+        Assert.Equal(4, publisher.Messages.Count(item => item.Kind == "host.cli-drift.alarm"));
+    }
+
+    [Fact]
+    public async Task Current_identity_does_not_clear_drift_of_another_identity_on_the_same_host()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var publisher = new RecordingEventPublisher();
+        var store = Store(temp.Path, clock, publisher);
+        await store.InitializeAsync();
+        await AdvertiseAsync(store, clock, activeSlots: 0);
+        await AdvertiseAsync(store, clock, activeSlots: 0, current: true, runnerId: "runner-b");
+        clock.Advance(TimeSpan.FromMinutes(61));
+        await AdvertiseAsync(store, clock, activeSlots: 0, generation: 2, current: true, runnerId: "runner-b");
+
+        Assert.Equal(2, publisher.Messages.Count(item => item.Kind == "host.cli-drift.alarm"));
+        var snapshots = await store.ListRunnerCapabilitySnapshotsAsync(default);
+        var outdated = Assert.Single(snapshots, item => item.RunnerId == "runner-a");
+        Assert.Equal(2, outdated.Capabilities.Count(item => item.Key.StartsWith("host-upgrade:cli:", StringComparison.Ordinal)));
+        var current = Assert.Single(snapshots, item => item.RunnerId == "runner-b");
+        Assert.DoesNotContain(current.Capabilities, item => item.Key.StartsWith("host-upgrade:cli:", StringComparison.Ordinal));
     }
 
     private static TaskServerStore Store(string path, TimeProvider clock)
@@ -165,20 +260,23 @@ public sealed class HostCliLifecycleTests
         TaskServerStore store,
         ManualTimeProvider clock,
         int activeSlots,
-        long generation = 1)
+        long generation = 1,
+        bool current = false,
+        string runnerId = "runner-a")
     {
+        var instanceId = runnerId == "runner-a" ? "instance-a" : "instance-b";
         if (generation == 1)
-            await store.RegisterRunnerAsync("runner-a", new RegisterRunnerRequest(
-                "runner-a", "host-a", "instance-a", "1.0", TaskServerProtocol.Current,
+            await store.RegisterRunnerAsync(runnerId, new RegisterRunnerRequest(
+                runnerId, "host-a", instanceId, "1.0", TaskServerProtocol.Current,
                 [ReviewCapabilities.CodingExecutor]), "runner-a", default);
         var now = clock.GetUtcNow().UtcDateTime;
         await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
-            "runner-a", "instance-a", CapabilityProtocol.CurrentSchemaVersion,
+            runnerId, instanceId, CapabilityProtocol.CurrentSchemaVersion,
             now, 300, generation,
             [
                 new(CapabilityProtocol.CodingExecutor, "executor"),
-                new(CapabilityProtocol.CliExecution("codex"), "cli-execution", Version: "0.144.1", Identity: "/usr/local/bin/codex"),
-                new(CapabilityProtocol.CliExecution("claude"), "cli-execution", Version: "2.1.202", Identity: "/usr/local/bin/claude"),
+                new(CapabilityProtocol.CliExecution("codex"), "cli-execution", Version: current ? "0.166.0" : "0.144.1", Identity: "/usr/local/bin/codex"),
+                new(CapabilityProtocol.CliExecution("claude"), "cli-execution", Version: current ? "2.1.305" : "2.1.202", Identity: "/usr/local/bin/claude"),
             ],
             new HostTelemetrySnapshotDto(now, 10, 0, 0, 0, 1, 2, 0, 0, 0, 0, 4, activeSlots)),
             "runner-a", default);

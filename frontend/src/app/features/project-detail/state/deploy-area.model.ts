@@ -3,6 +3,7 @@ import type { ProjectEnvironments } from '../../../models/project-overview.model
 import type { RunHostState } from '../../../models/run-host.model';
 import type { EnvironmentHealthResponse } from '../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../services/project-pipeline-definition.service';
+import type { RollbackTarget } from './rollback-offer.model';
 
 // BD-1 wire contract served by AGT-3201 under /api/projects/{project}/deploy
 // (backend/Features/Deploy/DeployContract.cs). States, triggers and health
@@ -17,6 +18,20 @@ export interface DeployEnvironment {
   kind: string;
 }
 
+/**
+ * AGT-3891: what creates the next release of the project and what blocks it
+ * now (GET /api/projects/{p}/deploy/integration-release).
+ */
+export interface IntegrationReleaseStatus {
+  project: string;
+  state: 'unconfigured' | 'promotion-train' | 'waiting-for-gate' | 'ready' | 'released' | 'blocked';
+  message: string;
+  nextStep: string | null;
+  commit: string | null;
+  releaseId: string | null;
+  canCreate: boolean;
+}
+
 /** F2: the last release attempt the release-candidate gate refused, until a release is created. */
 export interface ReleaseGateRefusal {
   commitSha: string;
@@ -27,6 +42,34 @@ export interface ReleaseGateRefusal {
 }
 
 export interface ReleaseGateStatus { refusal: ReleaseGateRefusal | null }
+
+/** F14: one secret a deploy would miss; `bindable` when an environment binding resolves it. */
+export interface SecretReadinessItem { name: string; reference: string; reason: string; bindable: boolean }
+/** F14: whether a deploy of the release into the environment finds every secret bound. */
+export interface EnvironmentSecretReadiness {
+  environmentId: string;
+  environmentName: string;
+  kind: string;
+  releaseId: string | null;
+  requiresApproval: boolean;
+  ready: boolean;
+  missing: SecretReadinessItem[];
+}
+export interface SecretReadinessResponse { project: string; releaseId: string | null; environments: EnvironmentSecretReadiness[] }
+
+const SECRET_REASON: Readonly<Record<string, string>> = {
+  'not-bound': 'not bound to this environment',
+  'approval-required': 'binding waits for Production approval',
+  'not-found': 'bound, but no secret is stored under the reference',
+  revoked: 'the bound secret version is revoked',
+  unreadable: 'the secret store cannot read it',
+  'preflight-unavailable': 'the binding check is unavailable',
+};
+/** Plain words for a missing-secret reason; an unbindable `not-bound` name needs a declaration first. */
+export function secretReasonLabel(item: SecretReadinessItem): string {
+  if (item.reason === 'not-bound' && !item.bindable) return 'not declared for this environment in project.yml';
+  return Object.hasOwn(SECRET_REASON, item.reason) ? SECRET_REASON[item.reason] : item.reason;
+}
 
 export interface Release {
   id: string;
@@ -95,6 +138,8 @@ export interface EnvironmentStatus {
   releaseUncertain?: boolean;
   intervention?: { deploymentId: string; failedStep: string; expiresAtUtc: string | null;
     decision: string | null; decidedBy: string | null } | null;
+  /** F13: the release a rollback runs now; absent on servers before it. */
+  rollbackTarget?: RollbackTarget | null;
 }
 
 export interface DeploymentLogLine {
@@ -178,6 +223,39 @@ export function runActions(state: RunState): DeployRunAction[] {
 }
 
 /**
+ * A deploy or redeploy a person may start in one environment, as the server's
+ * lifecycle decided it for the signed-in actor (`GET /deploy/actions`,
+ * `GET /deploy/releases/{id}/actions`). `needsApproval` means the request waits
+ * for an Owner or Maintainer; a refused action carries the lifecycle's reason.
+ */
+export interface DeployActionOption {
+  environmentId: string;
+  action: 'deploy' | 'redeploy';
+  releaseId: string;
+  releaseVersion: string;
+  allowed: boolean;
+  needsApproval: boolean;
+  reason: string | null;
+}
+
+/** Busy and failed start requests, keyed by {@link deployActionKey}. */
+export interface DeployActionState {
+  busy: string | null;
+  error: { key: string; message: string } | null;
+}
+
+export function deployActionKey(option: Pick<DeployActionOption, 'action' | 'environmentId' | 'releaseId'>): string {
+  return `${option.action}:${option.environmentId}:${option.releaseId}`;
+}
+
+/** "Deploy to Staging", "Request Production approval", "Redeploy Production", "Request Production redeploy". */
+export function deployActionLabel(option: Pick<DeployActionOption, 'action' | 'needsApproval'>, environmentName: string): string {
+  if (option.action === 'redeploy')
+    return option.needsApproval ? `Request ${environmentName} redeploy` : `Redeploy ${environmentName}`;
+  return option.needsApproval ? `Request ${environmentName} approval` : `Deploy to ${environmentName}`;
+}
+
+/**
  * One panel's data. `unavailable` means the route is not on this server yet
  * (AGT-3201 before it ships); it is not an error.
  */
@@ -256,6 +334,8 @@ export interface EnvironmentCardView {
   lastRun: CardRun | null;
   awaitingApproval: CardApproval | null;
   intervention?: EnvironmentStatus['intervention'];
+  /** F14: secrets the next deploy into this environment would miss. */
+  secrets?: EnvironmentSecretReadiness | null;
   /** The run host that serves the environment (F4); null when the environment list is unavailable. */
   host?: EnvironmentHostView | null;
 }

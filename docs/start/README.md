@@ -54,6 +54,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
 | Managed PostgreSQL databases for hosted apps: project.yml `databases`, run-zone provisioning, generated credentials, retention and owner deletion (IP-D5 option B, AGT-3877); backups, restore runbook, liveness, size and connection metrics (AGT-3878) | [operations/managed-databases/](../operations/managed-databases/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
+| [CLI rollout](../operations/cli-rollout.md) | German operator runbook for CLI rollout, legacy launcher adoption, KORI image pins, drift alerts, and rollback. |
 | Server-first networked deploy, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
 | Deploy without lost work: host drain, quiet point, server then hosts one by one, resume; review relaunch and gate refund across restarts (AGT-3647) | [operations/deploy-drain-procedure.md](../operations/deploy-drain-procedure.md) |
 | Studio website scheduled encrypted backups, off-host copy (SFTP, S3, mounted directory), Operations page state, backup and secret store key escrow, restore onto a new host (AGT-3574), and the host-level timer (AGT-3365) | [operations/setup/studio-backup-restore.md](../operations/setup/studio-backup-restore.md) |
@@ -233,10 +234,11 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Operator API reference: routes for the operator agent, cross-project batch triage and next safe member operation (AGT-3462 OP-4) | [operations/operator-api.md](../operations/operator-api.md) |
 | studio-op operator CLI: installation, Owner token file setup, commands and their routes, watcher lock and lease, accept check, stable exit codes (AGT-3462 OP-8) | [operations/setup/studio-op.md](../operations/setup/studio-op.md) |
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
+| Structure view: observed hosts without a manifest, placement file apart from connectivity, facts per node and link, live deltas (AGT-3954) | [operations/setup/structure-placement.md](../operations/setup/structure-placement.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
 | Update Service operations: loopback bind, owner-only trigger token file, allowed Studio origins, forced triggers (AGT-3713) | [operations/setup/update-service.md](../operations/setup/update-service.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |
-| Application telemetry intake: OTLP metrics and logs per project environment, ingest tokens, retention, query API (IP-15) | [operations/setup/app-telemetry-intake.md](../operations/setup/app-telemetry-intake.md) |
+| Application telemetry intake: OTLP metrics and logs per project environment, ingest tokens and the Telemetry tab, deploy injection with `telemetry: true`, the Operations reader, retention, query API (IP-15, M5) | [operations/setup/app-telemetry-intake.md](../operations/setup/app-telemetry-intake.md) |
 | Project definition v2 proposal (inactive; shared AGT/QS/Voice properties, quality applicability and rollout) | [plan](../operations/docker-ausfuehrungswelt-migration/project-definition-v2-plan.md) · [draft schema](../operations/docker-ausfuehrungswelt-migration/project-execution.v2.draft.schema.json) |
 | GitHub repository metadata recommendations | [repo-metadata.md](../repo-metadata.md) |
 | Setup | [operations/setup/README.md](../operations/setup/README.md) |

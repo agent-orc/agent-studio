@@ -8,6 +8,16 @@ first_run_prepare() {
   /usr/bin/git init --quiet --bare "${origin}"
   /usr/bin/git -C "${seed}" init --quiet -b main
   printf 'First-run demo\n' > "${seed}/README.md"
+  # AGT-3891: Staging and Production of the demo site, so an integrated card
+  # becomes an integration release with an automatic Staging run.
+  mkdir -p "${seed}/docs/deployments/environments"
+  local environment
+  for environment in stage production; do
+    printf '{"id":"%s","name":"%s","kind":"%s","targetHostId":"first-run-%s-host","address":"http://127.0.0.1/%s","template":"static","destination":"%s","healthUrl":"http://127.0.0.1:%s/healthz","approval":"person","secretRefs":[]}\n' \
+      "${environment}" "$([[ "${environment}" == stage ]] && echo Staging || echo Production)" "${environment}" \
+      "${environment}" "${environment}" "${PW_E2E_WORKSPACE}/sites/${environment}" "${PW_E2E_BACKEND_PORT}" \
+      > "${seed}/docs/deployments/environments/${environment}.json"
+  done
   /usr/bin/git -C "${seed}" -c user.name='First Run E2E' \
     -c user.email='first-run@example.invalid' add .
   /usr/bin/git -C "${seed}" -c user.name='First Run E2E' \

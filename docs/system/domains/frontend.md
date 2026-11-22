@@ -201,14 +201,22 @@ successful run or from a production incident opening to its recovery. Overlappin
 run and incident recoveries count once. Missing samples remain
 unavailable. `GET /api/projects/{project}/deploy/operations/logs` accepts
 environment, bounded time range, level, release, and text filters and returns
-at most 100 lines. `IOperationsTelemetryReader` is the integration boundary
-for the pending intake store; until it is connected, telemetry and logs show
-an explicit empty state while deploy markers and DORA remain live. Host restart
-counts and the last bounded crash output appear separately in Operations even
-without application telemetry. An active host crash incident takes precedence
-over an older healthy deploy status on the environment card. The reader
-contract allows only aggregate usage without personal identifiers and requires
-secret masking before stored log lines are returned.
+100 lines per page with a cursor for later pages. `IOperationsTelemetryReader`
+projects the per-environment OTLP store into metrics and masked logs. The
+explicit empty state is reserved for a disabled store; read failures return a
+named error. Deploy markers and DORA remain live. Host restart counts and the
+last bounded crash output appear separately in Operations even without
+application telemetry. An active host crash incident takes precedence over an
+older healthy deploy status on the environment card. The reader contract allows
+only aggregate usage without personal identifiers and requires secret masking
+before stored log lines are returned. The metric mapping and histogram
+quantile fallback are documented in
+[app telemetry intake](../../operations/setup/app-telemetry-intake.md).
+The Deploy area's Telemetry tab
+(`ProjectTelemetryTokensComponent`, `?view=telemetry`) lists the ingest tokens of
+one environment with signals, last use, expiry and state, creates a token whose
+endpoint, protocol and headers it shows once, labels the deploy-managed token,
+and revokes a token after a confirming click.
 
 ## Workspace deployment dashboard
 
@@ -229,6 +237,11 @@ containers without requiring older hosts to upgrade. Health uses host
 heartbeats (90 seconds), each check's own
 interval, and gate heartbeats (two minutes). The role-named manifest example is in
 `deploy/connectivity/one-box.json`.
+
+Hosts that report without a declaration show as observed nodes with facts,
+and the open view follows `structureDelta` pushes on the Studio hub with an
+entity-tag read as fallback (AGT-3954). Response shape, ids, facts and the
+placement file: [structure-placement.md](../../operations/setup/structure-placement.md).
 
 The same view lists library registries declared in schema 2
 `structure.registries` (artifact, provider, package, optional repository and

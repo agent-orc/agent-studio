@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en" data-document-pattern="concept">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live structure canvas | Agent Studio Dossier</title>
+<!--g:STYLE--><style data-article-template="v2">/* docs/app/templates/article-document-v2.html, minified by build.mjs */:root{color-scheme:light;--article-paper: #fcfcfb;--article-surface: #f2f1ee;--article-surface-strong: #e9e8e3;--article-ink: #151515;--article-muted: #5f5e59;--article-faint: #696762;--article-line: #d8d6cf;--article-link: #1f67b2;--article-link-soft: #eaf1fb;--article-good: #18753a;--article-good-soft: #eaf4ea;--article-warn: #8b6100;--article-warn-soft: #f8f0dd;--article-bad: #b72f2f;--article-bad-soft: #fbecec;--article-serif: Georgia, "Times New Roman", serif;--article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;--article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace}@media(prefers-color-scheme:dark){:root{color-scheme:dark;--article-paper: #1a1a19;--article-surface: #232322;--article-surface-strong: #2c2c2a;--article-ink: #f7f7f4;--article-muted: #c3c2b7;--article-faint: #9d9c94;--article-line: #3d3d3a;--article-link: #78aef0;--article-link-soft: #1e2a3a;--article-good: #67b867;--article-good-soft: #1f2f1f;--article-warn: #d9a63f;--article-warn-soft: #33301e;--article-bad: #e66767;--article-bad-soft: #382222}}*{box-sizing:border-box}html{background:var(--article-paper)}body{margin:0;background:var(--article-paper);color:var(--article-ink);font:17px/1.75 var(--article-serif);text-rendering:optimizeLegibility}main,.article{width:min(70ch,calc(100% - 48px));margin:0 auto;padding:0 0 80px}header.page{margin-bottom:12px;padding:48px 0 28px;border-bottom:1px solid var(--article-line)}h1,h2,h3,h4,.kicker,.meta,.number,nav,table,figcaption,.box,.callout,.evidence-figure,.variant-grid,.evidence-list{font-family:var(--article-sans)}h1{margin:0 0 14px;font-size:clamp(2.2rem,6vw,3.4rem);line-height:1.08;letter-spacing:-.025em}h2{margin:56px 0 10px;font-size:1.55rem;line-height:1.25}h3{margin:34px 0 8px;font-size:1.08rem;line-height:1.35}h4{margin:0 0 8px;font-size:.94rem}p{margin:0 0 18px}p:last-child{margin-bottom:0}.kicker,.number{margin:0 0 12px;color:var(--article-faint);font-size:.75rem;font-weight:700;letter-spacing:.12em;line-height:1;text-transform:uppercase}.lede{margin:0;color:var(--article-muted);font-size:1.18rem;line-height:1.6}.meta{display:flex;flex-wrap:wrap;gap:10px 18px;margin-top:20px;color:var(--article-faint);font-size:.78rem}.meta b{color:var(--article-muted);font-weight:650}a{color:var(--article-link);text-underline-offset:.16em}a:focus-visible{outline:2px solid var(--article-link);outline-offset:3px;border-radius:2px}code{padding:.08em .34em;border-radius:4px;background:var(--article-surface-strong);font:.84em/1.5 var(--article-mono);overflow-wrap:anywhere}pre{overflow-x:auto;margin:24px 0;padding:16px 18px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface)}pre code{padding:0;background:transparent}ul,ol{margin:0 0 18px;padding-left:24px}li+li{margin-top:6px}table{width:100%;margin:24px 0;border-collapse:collapse;font-size:.88rem;line-height:1.5}th,td{padding:10px 12px;border-bottom:1px solid var(--article-line);text-align:left;vertical-align:top}th{color:var(--article-faint);font-size:.74rem;letter-spacing:.06em;text-transform:uppercase}.box,.callout{margin:24px 0;padding:18px 22px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface);font-size:.92rem;line-height:1.65}.box.accent,.callout[data-tone=accent]{border-color:color-mix(in srgb,var(--article-link) 30%,var(--article-line));background:var(--article-link-soft)}.box.good,.callout[data-tone=good]{border-color:color-mix(in srgb,var(--article-good) 30%,var(--article-line));background:var(--article-good-soft)}.box.warn,.callout[data-tone=warn]{border-color:color-mix(in srgb,var(--article-warn) 35%,var(--article-line));background:var(--article-warn-soft)}.box.bad,.callout[data-tone=bad]{border-color:color-mix(in srgb,var(--article-bad) 30%,var(--article-line));background:var(--article-bad-soft)}figure{margin:30px 0}figure>img,figure>svg{display:block;width:100%;height:auto;border:1px solid var(--article-line);border-radius:10px;background:var(--article-paper)}figcaption{margin-top:10px;color:var(--article-muted);font-size:.8rem;line-height:1.5}.evidence-figure{margin-top:38px;margin-bottom:38px}.evidence-captures{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:12px}.evidence-capture{position:relative;min-width:0;overflow:hidden;border:1px solid var(--article-line);border-radius:10px;background:var(--article-paper)}.evidence-capture>img{display:block;width:100%;height:auto}.capture-theme,.figure-annotation{position:absolute;z-index:1;border:1px solid var(--article-line);border-radius:999px;background:var(--article-surface);color:var(--article-muted);font-size:.68rem;font-weight:750;letter-spacing:.04em;line-height:1.35}.capture-theme{top:10px;left:10px;padding:3px 8px;text-transform:uppercase}.figure-annotation{right:12px;bottom:12px;max-width:min(28ch,calc(100% - 24px));padding:5px 10px;border-color:color-mix(in srgb,var(--article-link) 45%,var(--article-line));background:var(--article-link-soft);color:var(--article-link);letter-spacing:0;text-transform:none}.figure-claim{display:block;color:var(--article-ink);font-size:.84rem}.figure-as-of{display:flex;flex-wrap:wrap;gap:2px 14px;margin-top:6px;color:var(--article-faint);font-size:.72rem}.breakout,.media-breakout{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%)}.variant-grid{display:grid;grid-template-columns:1fr;gap:14px;margin:24px 0}.variant{min-width:0;padding:16px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface)}.variant h3{margin:0 0 8px}.variant img,.variant svg{display:block;width:100%;height:auto;margin-top:12px}[data-document-pattern=ui] .variant-grid{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%);grid-template-columns:repeat(2,minmax(0,1fr))}[data-document-pattern=ui] .mockup{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%)}.evidence-list{display:grid;gap:10px;margin:24px 0}.evidence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px 14px;align-items:start;padding:14px;border:1px solid var(--article-line);border-radius:9px;background:var(--article-surface);color:var(--article-ink);text-decoration:none}.evidence:hover{border-color:var(--article-link);background:var(--article-link-soft)}.evidence-class{display:inline-flex;align-items:center;min-height:22px;padding:2px 8px;border-radius:999px;background:var(--article-surface-strong);color:var(--article-muted);font-size:.68rem;font-weight:750;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}[data-document-pattern=concept] .evidence-class[data-evidence-class=observed]{background:var(--article-good-soft);color:var(--article-good)}[data-document-pattern=concept] .evidence-class[data-evidence-class=inferred]{background:var(--article-warn-soft);color:var(--article-warn)}[data-document-pattern=concept] .evidence-class[data-evidence-class=proposed]{background:var(--article-link-soft);color:var(--article-link)}.evidence b{display:block;margin-bottom:2px;font-size:.88rem}.evidence small{display:block;color:var(--article-muted);font-size:.78rem;line-height:1.45}.dim{color:var(--article-muted)}@media(max-width:760px){main,.article{width:min(100% - 28px,70ch);padding-bottom:52px}header.page{padding-top:32px}.breakout,.media-breakout,[data-document-pattern=ui] .variant-grid,[data-document-pattern=ui] .mockup{width:calc(100vw - 20px)}[data-document-pattern=ui] .variant-grid,.evidence,.evidence-captures{grid-template-columns:1fr}table{display:block;overflow-x:auto}}@media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition-duration:0s!important;animation-duration:0s!important}}</style>
+<style data-dossier="live-structure-canvas">nav.chapters{margin:20px 0 32px;font:.82rem/1.7 var(--article-sans)}nav.chapters ol{display:flex;flex-wrap:wrap;gap:4px 18px;margin:0;padding:0;list-style:none}nav.chapters [aria-current]{color:var(--article-ink);font-weight:650;text-decoration:none}.tablewrap{overflow-x:auto}table code{overflow-wrap:anywhere}.decision{margin:18px 0;padding:14px 20px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface);font:.9rem/1.55 var(--article-sans)}.decision h3{margin:0 0 4px}.decision p{margin:4px 0}.decision label{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:start;margin:6px 0;cursor:pointer}.decision label input{margin-top:5px}.decision textarea{width:100%;min-height:54px;margin-top:6px;padding:8px;border:1px solid var(--article-line);border-radius:8px;background:var(--article-paper);color:var(--article-ink);font:inherit}.rec{display:inline-block;margin-left:6px;padding:0 7px;border-radius:99px;background:var(--article-link-soft);color:var(--article-link);font-size:.7rem;font-weight:700}</style><!--/g-->
+</head>
+<body>
+<main class="article">
+<header class="page">
+  <p class="kicker">Concept Dossier · AGT-3955</p>
+  <h1>Live structure canvas</h1>
+  <p class="lede">One zoomable canvas for hosts, VMs, containers and links, with combinable layers for performance and network, storage, backup, construction sites, health, version and drift. Motion only where something happens; persona assessments on top of plain facts. This Dossier also decides the visual stack of the hosting area: one canvas renderer and one chart library, both lazy, both measured.</p>
+  <div class="meta"><span><b>Status</b> decision-pending</span><span><b>Phase</b> decision-ready</span><span><b>Source</b> AGT-3955</span><span><b>Updated</b> <!--g:UPDATED-->20 November 2026<!--/g--></span><span><b>Family</b> AGT-3879, AGT-3949, AGT-3950, AGT-3954, AGT-3955</span></div>
+</header>
+<!--g:NAV--><nav class="chapters" aria-label="Pages of this Dossier"><ol><li><a href="index.html" aria-current="page">Decision page</a></li><li><a href="context.html">Context and canvas</a></li><li><a href="layers.html">Layers, backup and warnings</a></li><li><a href="live.html">Live updates and assessments</a></li><li><a href="stack.html">Renderer, charts, data and budget</a></li><li><a href="prototype.html">Live prototype</a></li></ol></nav><!--/g-->
+
+<section id="summary">
+<h2>Summary</h2>
+<p>On 17 November 2026 the owner asked for a modern, dynamic, best-in-class view of hosts and containers on a canvas: zoom in, see many kinds of data in layers, see movement and live updates, have fun. The same evening: views and assessments may be made by LLM calls authored by personas, the system works toward goals such as backup, every place without a backup is visible, and construction sites belong in the system view.</p>
+<p>This page holds what the owner decides: the alternatives, the recommendation, the evidence, <!--g:DECISION_COUNT-->11<!--/g--> open decisions and <!--g:SLICE_COUNT-->10<!--/g--> implementation slices. Four chapters carry the detail, and <a href="prototype.html">the live prototype</a> can be tried. It builds on the deployment structure view (AGT-3349, AGT-3389), Bereitstellung, the persona team and the Nordstern. None of the sibling cards AGT-3879, AGT-3949, AGT-3950 and AGT-3954 is on develop, so the prototype uses the response shape this Dossier documents for AGT-3954; where that card chooses differently, its shape wins (<a href="context.html#position">Position</a>).</p>
+<figure class="evidence-figure media-breakout">
+  <div class="evidence-captures">
+    <div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/layer-backup-light-1440.png" alt="Backup layer at level 3: every node that holds state carries a shield, the git mirror is a green copy link, and a red dashed link leads to a ghost node named Off-host backup target: not configured." loading="lazy"><span class="figure-annotation">No off-host target</span></div>
+    <div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/layer-backup-dark-1440.png" alt="The same Backup layer in the dark theme." loading="lazy"></div>
+  </div>
+  <figcaption><span class="figure-claim"><b>Prototype.</b> The Backup layer marks every location without a copy and draws the missing backup job as a broken link to a target that is not configured; the goal stands at 1 of 6.</span>
+  <span class="figure-as-of"><span>Captured <!--g:PROTO_TIME--><time datetime="2026-11-20">20 November 2026</time><!--/g--> from this Dossier's prototype by <code>capture.mjs</code>, 1440 px, only this layer on.</span></span></figcaption>
+</figure>
+</section>
+
+<section id="answers">
+<h2>Answers to the brief</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>Asked</th><th>Answer</th><th>Detail</th></tr></thead>
+<tbody>
+<tr><td>Best in class, stated</td><td>Seven kinds of leading topology maps studied. This view keeps the physical nesting, makes storage, backup and open problems layers, animates only causes and keeps a text outline.</td><td><a href="context.html#study">Best in class</a></td></tr>
+<tr><td>Canvas and semantic zoom</td><td>One infinite canvas with wheel, pinch, keyboard, minimap, fit and search to focus. Four levels open by on-screen size and cross-fade: sites, machines with VM nesting, containers, inside a service.</td><td><a href="context.html#zoom">Semantic zoom</a></td></tr>
+<tr><td>Layers</td><td>Seven combinable layers, each with data, encoding and legend: Performance and network, Storage, Backup, Construction sites and warnings, Health, Version, Drift.</td><td><a href="layers.html">Layers</a></td></tr>
+<tr><td>Backup inventory, verified against the code</td><td>Every stateful location classified with its copies and recovery point. The git mirror covers only the committed part: five of six must-keep locations have no off-host copy.</td><td><a href="layers.html#backup">Backup</a></td></tr>
+<tr><td>Motion and live updates</td><td>Seven causes, each with one motion and a still equivalent. Deltas are batched to one visual update a second; a 44-second recording replays.</td><td><a href="live.html#motion">Motion</a></td></tr>
+<tr><td>Playful, not noisy; 2D, 2.5D or 3D</td><td>Calm base, colour only for states and moving work, palette checked with the dataviz validator. 2D and 2.5D prototyped on one engine.</td><td><a href="context.html#dimension">2D and 2.5D</a></td></tr>
+<tr><td>Renderer and chart library, measured</td><td>Three renderers on 500 nodes and 2,000 links, three chart libraries on one dashboard: chunk size, frames, idle CPU, memory, licence.</td><td><a href="stack.html#renderer">Renderer</a>, <a href="stack.html#charts">charts</a></td></tr>
+<tr><td>Performance budget</td><td>No growth of the initial bundle, lazy chunks with limits, no frame when idle or hidden, one update a second, animation off with reduced motion.</td><td><a href="stack.html#budget">Budget</a></td></tr>
+<tr><td>Data the structure endpoint does not deliver</td><td>Traffic and latency per link, volumes and growth, copies and recovery point, key escrow: source, API shape and cost of each.</td><td><a href="stack.html#data">Data</a></td></tr>
+<tr><td>Facts and assessments apart, authored by personas, safe</td><td>The operations warden and the reliability engineer of the persona team return a schema-validated view specification; a generic renderer draws it; invalid or missing output falls back to facts. Author, time, model, confidence and facts used are shown.</td><td><a href="live.html#assessments">Assessments</a></td></tr>
+<tr><td>The system works toward goals</td><td>The persona proposes the next step until every must-keep location has a verified off-host copy; the canvas shows the progress.</td><td><a href="layers.html#backup">Backup</a></td></tr>
+<tr><td>Construction sites and warnings</td><td>Seven kinds of open problems from existing APIs, pinned to their node with what is wrong, what it blocks and the next step.</td><td><a href="layers.html#warnings">Warnings</a></td></tr>
+<tr><td>Cost and freshness</td><td>About 5,000 input and 800 output tokens an assessment, 6 to 12 calls a day for two personas, about $0.15 a day; on change and every 12 hours.</td><td><a href="live.html#assessments">Refresh and cost</a></td></tr>
+<tr><td>Screenshots and recording</td><td>Each layer in light and dark at 1440 px and 390 px, the four levels, both views, the replay recorded and as stills.</td><td><a href="layers.html">Layers</a>, <a href="live.html#captures">Captures</a></td></tr>
+</tbody></table></div>
+</section>
+
+<section id="alternatives" data-concept-section="alternatives">
+<h2>Alternatives</h2>
+<h3>Canvas renderer</h3>
+<p>Three candidates suited to an animated, zoomable topology with nested groups drew the same synthetic scene of 500 nodes and 2,000 links under the same scripted pan and zoom. Medians of three runs on the task runner, which has no GPU:</p>
+<!--g:BENCH_BRIEF--><div class="tablewrap"><table><thead><tr><th>Candidate</th><th>Chunk, gzip</th><th>Pan and zoom, frames a second</th><th>Idle CPU</th><th>Flow CPU</th></tr></thead><tbody>
+<tr><td>A · Own Canvas 2D engine</td><td>17.6 kB</td><td>51</td><td>0.0 %</td><td>33 %</td></tr>
+<tr><td>A · same, semantic zoom on</td><td>17.6 kB</td><td>40</td><td>0.0 %</td><td>11 %</td></tr>
+<tr><td>B · PixiJS 8 (WebGL 2D)</td><td>167.7 kB</td><td>1</td><td>2.6 %</td><td>117 %</td></tr>
+<tr><td>C · Cytoscape.js 3 (compound graph)</td><td>140.3 kB</td><td>50</td><td>3.0 %</td><td>64 %</td></tr>
+</tbody></table></div><!--/g-->
+<p><b>A, the prototype's own engine</b>, has no dependency: nested layout, semantic zoom, link bundling, a cached static layer, particles and tokens, render on demand. <b>B</b> is a GPU scene graph without graph semantics; with WebGL in software it rendered below one frame a second here and would likely be the fastest on a real GPU. <b>C</b> brings compound nodes and a stylesheet but no particles: it animates by restyling every edge, which costs more than half a core. None exposes canvas content to assistive technology, so the outline and keyboard focus are ours in every case. B and C are MIT.</p>
+<h3>Dimension</h3>
+<p><b>2D</b> is the most readable at every level and the cheapest. <b>2.5D isometric</b> is playful and lets height carry a metric at levels 1 to 3, but labels float and hit areas shrink when zoomed in; it is one projection parameter of the same engine. <b>3D</b> adds orbit controls, occlusion and <!--g:THREE_GZ-->130.2<!--/g--> kB (three.js, gzip) for no fact that 2.5D cannot show.</p>
+<h3>Chart library for the hosting area</h3>
+<p>One dashboard of three charts, then twenty live updates:</p>
+<!--g:CHART_BRIEF--><div class="tablewrap"><table><thead><tr><th>Library</th><th>Chunk, gzip</th><th>First render</th><th>Live update</th><th>Licence</th></tr></thead><tbody>
+<tr><td>uPlot 1</td><td>23.3 kB</td><td>126 ms</td><td>2.5 ms</td><td>MIT</td></tr>
+<tr><td>Apache ECharts 6</td><td>186.1 kB</td><td>581 ms</td><td>57.6 ms</td><td>Apache-2.0</td></tr>
+<tr><td>Chart.js 4</td><td>61.5 kB</td><td>261 ms</td><td>13.6 ms</td><td>MIT</td></tr>
+</tbody></table></div><!--/g-->
+<p><b>uPlot</b> draws time series, bands and bars and nothing else. <b>ECharts</b> has the broadest set of forms and an aria module at about eight times the chunk. <b>Chart.js</b> sits between. None has accessibility built in that replaces a table view.</p>
+<h3>How much the model composes</h3>
+<p><b>Facts only</b>: deterministic and free, no judgement. <b>Assessment on top of facts</b>: the model adds callouts, emphasis, ranking, goals and a judgement; facts and layout stay deterministic. <b>Model-composed view</b>: the model also chooses grouping, order and default layers; most adaptive, hardest to compare from day to day.</p>
+<p class="dim">Full tables, the measuring method and the reading of the numbers: <a href="stack.html">Renderer, charts, data and budget</a>.</p>
+</section>
+
+<section id="recommendation" data-concept-section="recommendation">
+<h2>Recommendation</h2>
+<div class="callout" data-tone="accent"><h3>Recommended default</h3>
+<p><b>Renderer: A, the own Canvas 2D engine</b>, ported to a lazy Angular component. It meets the frame budget on CPU raster where the WebGL candidate cannot be measured, its particles and tokens stay cheap, and it costs <!--g:OWN_GZ-->17.6<!--/g--> kB gzip instead of 140 to 170. If the first slice's re-run on real hardware misses 50 frames a second, PixiJS replaces the draw layer behind the same scene, layer and hook interfaces. <b>Chart library: uPlot</b>, lazy, for every time-series and bar chart of the hosting area (AGT-3950), with a table view; a form uPlot cannot draw becomes a small SVG component, not a second library.</p>
+<p><b>2D by default with a 2.5D overview switch.</b> <b>Default layers</b> Performance and network, Health, and Construction sites, remembered per user; missing backups always marked. <b>Motion</b> Lively, off with reduced motion. <b>The canvas replaces the Structure view</b> once it reaches parity. <b>Backup target</b>: SFTP to the home lab's storage, checked by the Backup layer through <code>/api/operator/backups</code>; the backup key and the secret store key escrowed apart. <b>Assessments</b> by the operations warden and the reliability engineer, on change and every 12 hours, on top of facts, never instead of them.</p></div>
+<p>First slice: the canvas with machines and containers, semantic zoom and the Performance and network layer on live data (LSC-1). Every recommendation is the working decision until the owner records another option.</p>
+</section>
+
+<section id="evidence" data-concept-section="evidence">
+<h2>Evidence</h2>
+<div class="evidence-list">
+  <a class="evidence" href="stack.html#renderer"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Renderer and chart measurements</b><small><code>bench/run.mjs</code>, three runs each in headless Chromium in two raster modes; raw data in <code>bench/results.json</code>.</small></span></a>
+  <a class="evidence" href="layers.html#backup"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Backup inventory against the code</b><small><code>SecurityStorePathPolicy</code>, <code>KeyEncryptionKeySource</code>, <code>BackupCipher</code>, <code>BackupCheckouts</code> and the workspace lifecycle.</small></span></a>
+  <a class="evidence" href="context.html#today"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Today's Structure view</b><small>Captured from the prebuilt frontend with a role-named API fixture, light and dark.</small></span></a>
+  <a class="evidence" href="stack.html#budget"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Prototype within its budget</b><small><code>verify.mjs</code>, <!--g:REAL_DATE-->20 November 2026<!--/g-->: <!--g:REAL_IDLE-->0 frames in 3 seconds idle; 0 frames in 3 seconds with the tab hidden<!--/g-->; <!--g:REAL_DELTAS-->53 deltas over the 45-second replay produced 12 visual updates<!--/g-->.</small></span></a>
+  <a class="evidence" href="layers.html"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Layers in light and dark</b><small>28 captures of the seven layers at 1440 px and 390 px; palette checked with the dataviz validator.</small></span></a>
+  <a class="evidence" href="prototype.html"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Prototype and replay</b><small>Synthetic recording modelled on the installation; real facts marked in <code>src/model.js</code>.</small></span></a>
+  <a class="evidence" href="live.html#assessments"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Cost of assessments</b><small>Token counts estimated from the prototype's specifications and a facts digest.</small></span></a>
+</div>
+<figure class="evidence-figure media-breakout">
+  <img src="assets/replay-filmstrip-light-1440.png" alt="Six frames of the replay with their replay second: a coding token labelled card 101 leaving runner daemon A; the gate host running a batch while a deploy arc circles the web container; the web container restarting; a gate token on its way to review host 2; the tunnel broken in red; a review token returning over the restored tunnel." loading="lazy">
+  <figcaption><span class="figure-claim"><b>Prototype.</b> Six moments of the live replay: each motion has its cause written next to it, and the token carries the card and the step as text.</span>
+  <span class="figure-as-of"><span>Captured <!--g:FILMSTRIP_TIME--><time datetime="2026-11-20">20 November 2026</time><!--/g--> from this Dossier's prototype by <code>capture.mjs</code> during a replay at speed 1, light theme, 1440 px. The recording is <code>assets/replay-recording.webm</code>.</span></span></figcaption>
+</figure>
+</section>
+
+<section id="open-decisions" data-concept-section="open-decisions">
+<h2>Open decisions</h2>
+<p>Each decision has a recommended working option; it stands until the owner records another.</p>
+<!--g:DECISIONS--><div class="decision" id="D1" data-decision-id="lsc-renderer" data-decision-kind="single">
+<h3>D1 · Canvas renderer</h3><p>Which renderer draws the structure canvas, and every canvas of the Studio?</p>
+<label data-option-id="lsc-renderer-a"><input type="radio" name="D1"><span><b>A</b> · Own Canvas 2D engine, ported to a lazy Angular component<span class="rec">Recommended</span></span></label>
+<label data-option-id="lsc-renderer-b"><input type="radio" name="D1"><span><b>B</b> · PixiJS 8 (WebGL 2D)</span></label>
+<label data-option-id="lsc-renderer-c"><input type="radio" name="D1"><span><b>C</b> · Cytoscape.js 3</span></label>
+<p class="dim">Meets the frame budget on CPU raster, cheapest particles and tokens, smallest chunk; PixiJS stays the measured fallback behind the same interfaces.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D2" data-decision-id="lsc-charts" data-decision-kind="single">
+<h3>D2 · Chart library</h3><p>Which single chart library draws the hosting area's charts (AGT-3950)?</p>
+<label data-option-id="lsc-charts-a"><input type="radio" name="D2"><span><b>A</b> · uPlot<span class="rec">Recommended</span></span></label>
+<label data-option-id="lsc-charts-b"><input type="radio" name="D2"><span><b>B</b> · Apache ECharts</span></label>
+<label data-option-id="lsc-charts-c"><input type="radio" name="D2"><span><b>C</b> · Chart.js</span></label>
+<p class="dim">Smallest chunk and fastest live update for time series and bars; other forms as small SVG components, not a second library.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D3" data-decision-id="lsc-dimension" data-decision-kind="single">
+<h3>D3 · 2D, 2.5D or 3D</h3><p>Which projection does the canvas use?</p>
+<label data-option-id="lsc-dimension-a"><input type="radio" name="D3"><span><b>A</b> · 2D by default with a 2.5D overview switch<span class="rec">Recommended</span></span></label>
+<label data-option-id="lsc-dimension-b"><input type="radio" name="D3"><span><b>B</b> · 2D only</span></label>
+<label data-option-id="lsc-dimension-c"><input type="radio" name="D3"><span><b>C</b> · 3D</span></label>
+<p class="dim">2D reads best at every level; 2.5D is the playful overview on the same engine at little cost; 3D adds cost and no fact.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D4" data-decision-id="lsc-default-layer" data-decision-kind="single">
+<h3>D4 · Default layers</h3><p>Which layers are on when a user opens the canvas for the first time?</p>
+<label data-option-id="lsc-default-layer-a"><input type="radio" name="D4"><span><b>A</b> · Performance and network, Health, Construction sites; remembered per user<span class="rec">Recommended</span></span></label>
+<label data-option-id="lsc-default-layer-b"><input type="radio" name="D4"><span><b>B</b> · Health only</span></label>
+<label data-option-id="lsc-default-layer-c"><input type="radio" name="D4"><span><b>C</b> · The layers the selected persona suggests</span></label>
+<p class="dim">Answers 'is it live and is anything broken' at once; missing backups are marked in every combination anyway.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D5" data-decision-id="lsc-motion" data-decision-kind="single">
+<h3>D5 · Motion level</h3><p>How much moves by default?</p>
+<label data-option-id="lsc-motion-a"><input type="radio" name="D5"><span><b>A</b> · Lively: flow particles and event motion while visible, Off with reduced motion<span class="rec">Recommended</span></span></label>
+<label data-option-id="lsc-motion-b"><input type="radio" name="D5"><span><b>B</b> · Calm: event motion only, flow as width</span></label>
+<label data-option-id="lsc-motion-c"><input type="radio" name="D5"><span><b>C</b> · Off</span></label>
+<p class="dim">The owner asked for movement; every motion has a cause, runs at most at 30 fps and stops when hidden.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D6" data-decision-id="lsc-replace" data-decision-kind="single">
+<h3>D6 · Replace the Structure view</h3><p>Does the canvas replace the current Structure view?</p>
+<label data-option-id="lsc-replace-a"><input type="radio" name="D6"><span><b>A</b> · Yes, after parity (outline, deep links, project scope, Version, Drift); classic view one more release<span class="rec">Recommended</span></span></label>
+<label data-option-id="lsc-replace-b"><input type="radio" name="D6"><span><b>B</b> · Both side by side</span></label>
+<label data-option-id="lsc-replace-c"><input type="radio" name="D6"><span><b>C</b> · Keep the current view; canvas as a separate Live tab</span></label>
+<p class="dim">Two drawings of the same machines drift apart; parity first keeps every link working.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D7" data-decision-id="lsc-backup-target" data-decision-kind="single">
+<h3>D7 · Backup target the Backup layer checks</h3><p>Which off-host target should the backup job use and the Backup layer check against?</p>
+<label data-option-id="lsc-backup-target-a"><input type="radio" name="D7"><span><b>A</b> · SFTP to the home lab's storage, a second site the owner controls<span class="rec">Recommended</span></span></label>
+<label data-option-id="lsc-backup-target-b"><input type="radio" name="D7"><span><b>B</b> · S3-compatible bucket at another provider, with versioning</span></label>
+<label data-option-id="lsc-backup-target-c"><input type="radio" name="D7"><span><b>C</b> · Mounted directory share</span></label>
+<label data-option-id="lsc-backup-target-d"><input type="radio" name="D7"><span><b>D</b> · Git remote only, as today</span></label>
+<p class="dim">Off-host and off-site with no new account; supported by the backup feature; a bucket can follow as a second copy.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D8" data-decision-id="lsc-key-custody" data-decision-kind="single">
+<h3>D8 · Key custody</h3><p>Where are the backup key and the secret store key escrowed?</p>
+<label data-option-id="lsc-key-custody-a"><input type="radio" name="D8"><span><b>A</b> · Two separate password manager entries, attested by fingerprint<span class="rec">Recommended</span></span></label>
+<label data-option-id="lsc-key-custody-b"><input type="radio" name="D8"><span><b>B</b> · Printed and stored offline</span></label>
+<label data-option-id="lsc-key-custody-c"><input type="radio" name="D8"><span><b>C</b> · Next to the backups</span></label>
+<p class="dim">The restore runbook requires the keys apart from the backups and from each other; attestation lets the view show the date.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D9" data-decision-id="lsc-roles" data-decision-kind="single">
+<h3>D9 · Roles that assess</h3><p>Which personas assess the installation for the canvas?</p>
+<label data-option-id="lsc-roles-a"><input type="radio" name="D9"><span><b>A</b> · Operations warden and reliability engineer<span class="rec">Recommended</span></span></label>
+<label data-option-id="lsc-roles-b"><input type="radio" name="D9"><span><b>B</b> · Operations warden only</span></label>
+<label data-option-id="lsc-roles-c"><input type="radio" name="D9"><span><b>C</b> · Every aspect persona</span></label>
+<p class="dim">Backup, credentials and escrow belong to the warden; hosts, links and capacity to the reliability engineer; both exist in the catalogue.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D10" data-decision-id="lsc-cadence" data-decision-kind="single">
+<h3>D10 · Refresh cadence</h3><p>When do the personas reassess?</p>
+<label data-option-id="lsc-cadence-a"><input type="radio" name="D10"><span><b>A</b> · On relevant fact changes, coalesced, plus every 12 hours, within budget<span class="rec">Recommended</span></span></label>
+<label data-option-id="lsc-cadence-b"><input type="radio" name="D10"><span><b>B</b> · Every hour</span></label>
+<label data-option-id="lsc-cadence-c"><input type="radio" name="D10"><span><b>C</b> · Only on demand</span></label>
+<p class="dim">Fresh after a change, cheap otherwise: about $0.15 a day for two personas, within their weekly allowances.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D11" data-decision-id="lsc-composition" data-decision-kind="single">
+<h3>D11 · How much the model composes</h3><p>How much of the view may be LLM-composed?</p>
+<label data-option-id="lsc-composition-a"><input type="radio" name="D11"><span><b>A</b> · Facts only</span></label>
+<label data-option-id="lsc-composition-b"><input type="radio" name="D11"><span><b>B</b> · Assessment on top of facts: callouts, emphasis, ranking, goals, judgement, layer suggestions<span class="rec">Recommended</span></span></label>
+<label data-option-id="lsc-composition-c"><input type="radio" name="D11"><span><b>C</b> · Model-composed view including grouping, order and default layers</span></label>
+<p class="dim">Keeps facts deterministic and comparable while the persona says what matters and what to do next.</p><div data-comment="Note (optional)"></div>
+</div><!--/g-->
+</section>
+
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation">
+<h2>Implementation</h2>
+<p>The slices are in <code>workbench.json</code> in delivery order, each with its prompt and acceptance criteria. Facts and deltas are covered by AGT-3954, deploy records by AGT-3879, dashboard charts by AGT-3950. No product code is changed here.</p>
+<!--g:SLICES--><div class="tablewrap"><table><thead><tr><th>Slice</th><th>Delivers</th><th>After</th></tr></thead><tbody>
+<tr><td><b>LSC-1</b> Live structure canvas: machines, containers, semantic zoom, Performance and network layer</td><td>Lazy canvas with semantic zoom, minimap, search, keyboard and outline; Performance and network and Health layers on live structure data; budget and accessibility checks; GPU re-run of the renderer benchmark.</td><td>none</td></tr>
+<tr><td><b>LSC-2</b> Traffic and latency per link</td><td>Per-link bytes per second and latency from existing reports and heartbeats, attached to structure links.</td><td>none</td></tr>
+<tr><td><b>LSC-3</b> Live deltas, motion with causes and replay</td><td>Delta batching to one update a second, cause-bound animations, event log, replay of recorded deltas.</td><td>LSC-1</td></tr>
+<tr><td><b>LSC-4</b> Version and Drift layers; the canvas replaces the Structure view</td><td>Version and Drift layers, parity with the current Structure view, canvas becomes the default.</td><td>LSC-1</td></tr>
+<tr><td><b>LSC-5</b> Storage facts and Storage layer</td><td>Volumes, mounts and growth as facts; the Storage layer with pressure and days until full.</td><td>LSC-1</td></tr>
+<tr><td><b>LSC-6</b> Backup layer, escrow attestations and the backup goal</td><td>Backup coverage per data location, escrow attestations, copy links, goal progress, missing backup always visible.</td><td>LSC-1</td></tr>
+<tr><td><b>LSC-7</b> Construction sites and warnings layer</td><td>Every open problem pinned to its node with what it blocks and the next step.</td><td>LSC-1</td></tr>
+<tr><td><b>LSC-8</b> Persona view specifications for the structure canvas</td><td>Persona-authored, schema-validated, cached view specifications drawn on top of the facts.</td><td>LSC-6, LSC-7</td></tr>
+<tr><td><b>LSC-9</b> 2.5D overview mode</td><td>Isometric overview mode on the same engine and data; block height by CPU and by mount size.</td><td>LSC-1, LSC-5</td></tr>
+<tr><td><b>LSC-10</b> Register the live structure canvas Dossier in the Nordstern map and add forward links</td><td>One entry in the Nordstern map and one forward link each in the deployment structure view and Bereitstellung Dossiers; no recorded decision changes.</td><td>none</td></tr>
+</tbody></table></div><!--/g-->
+<ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+</ol>
+</section>
+<!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

@@ -12,19 +12,22 @@ public class TaskHub : Hub
     private readonly TaskScannerService _scanner;
     private readonly AgentStudio.Registry.ProjectRegistry _projects;
     private readonly PublicDemoViewerSessionStore _viewerSessions;
+    private readonly AgentStudio.Management.StructureSnapshotService? _structure;
 
     public TaskHub(
         IConfiguration configuration,
         AccessSecurityStore security,
         TaskScannerService scanner,
         AgentStudio.Registry.ProjectRegistry projects,
-        PublicDemoViewerSessionStore viewerSessions)
+        PublicDemoViewerSessionStore viewerSessions,
+        AgentStudio.Management.StructureSnapshotService? structure = null)
     {
         _configuration = configuration;
         _security = security;
         _scanner = scanner;
         _projects = projects;
         _viewerSessions = viewerSessions;
+        _structure = structure;
     }
 
     public override async Task OnConnectedAsync()
@@ -117,6 +120,50 @@ public class TaskHub : Hub
     public Task UnsubscribeFromConversation(string jobId)
         => Groups.RemoveFromGroupAsync(Context.ConnectionId, ConversationProjector.GroupName(jobId));
 
+    // AGT-3954:
+    // - structureDelta(StructureDelta)                       → changed nodes and links of one structure scope
+
+    /// <summary>
+    /// Join the group that receives <c>structureDelta</c> for one scope of
+    /// <c>GET /api/v1/operations/structure</c>. The route needs installation-wide
+    /// operate permission, and so does the subscription. Returns the scope as
+    /// deltas name it and the revision the server holds, so the caller can
+    /// tell whether its copy is current.
+    /// </summary>
+    public async Task<StructureSubscription> SubscribeToStructure(string? scope, string? environment)
+    {
+        var (projectId, filter) = StructureScope(scope, environment);
+        await Groups.AddToGroupAsync(Context.ConnectionId,
+            AgentStudio.Management.StructureSnapshotService.GroupName(projectId, filter));
+        // Deltas name the scope by project id; the caller may have asked by display name.
+        return new(AgentStudio.Management.StructureSnapshotService.ScopeName(projectId), filter,
+            _structure!.Touch(projectId, filter));
+    }
+
+    public Task UnsubscribeFromStructure(string? scope, string? environment)
+    {
+        var (projectId, filter) = StructureScope(scope, environment);
+        return Groups.RemoveFromGroupAsync(Context.ConnectionId,
+            AgentStudio.Management.StructureSnapshotService.GroupName(projectId, filter));
+    }
+
+    private (string? ProjectId, string? Environment) StructureScope(string? scope, string? environment)
+    {
+        if (_structure is null || SecurityProfiles.IsPublicDemo(_configuration))
+            throw new HubException("Structure updates are not available.");
+        var principal = LivePrincipal();
+        if (principal is not null && !_security.AuthorizeUser(principal.User.Id, IamPermissions.WorkspaceOperate,
+                PermissionTarget.WorkspaceWide).Allowed)
+            throw new HubException("Structure access denied.");
+        string? projectId = null;
+        if (scope is not null && scope != "workspace")
+        {
+            if (!scope.StartsWith("project:", StringComparison.Ordinal)) throw new HubException("Unknown structure scope.");
+            projectId = _projects.FindByIdOrDisplayName(scope[8..])?.Id ?? throw new HubException("Project not found.");
+        }
+        return (projectId, string.IsNullOrWhiteSpace(environment) ? null : environment);
+    }
+
     internal static string ProjectGroup(string projectHandle, AgentStudio.Registry.ProjectRegistry projects)
     {
         var project = projects.FindByIdOrDisplayName(projectHandle)
@@ -155,3 +202,6 @@ public class TaskHub : Hub
         return principal;
     }
 }
+
+/// <summary>Answer of <see cref="TaskHub.SubscribeToStructure"/> (AGT-3954).</summary>
+public sealed record StructureSubscription(string Scope, string? Environment, long Revision);

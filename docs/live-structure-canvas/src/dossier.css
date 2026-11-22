@@ -1,0 +1,38 @@
+/* Document-specific styles of the Dossier pages, on the article tokens.
+   build.mjs puts a part into a page when the page contains the part's marker. */
+/* @part always */
+nav.chapters { margin: 20px 0 32px; font: 0.82rem/1.7 var(--article-sans); }
+nav.chapters ol { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 0; padding: 0; list-style: none; }
+nav.chapters [aria-current] { color: var(--article-ink); font-weight: 650; text-decoration: none; }
+.tablewrap { overflow-x: auto; }
+table code { overflow-wrap: anywhere; }
+/* @part class="bench" */
+table.bench td, table.bench th { white-space: nowrap; }
+/* @part class="st- */
+table td.st-gap { color: var(--article-bad); font-weight: 650; }
+table td.st-local { color: var(--article-warn); font-weight: 650; }
+table td.st-ok { color: var(--article-good); }
+/* @part class="decision" */
+.decision { margin: 18px 0; padding: 14px 20px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font: 0.9rem/1.55 var(--article-sans); }
+.decision h3 { margin: 0 0 4px; }
+.decision p { margin: 4px 0; }
+.decision label { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: start; margin: 6px 0; cursor: pointer; }
+.decision label input { margin-top: 5px; }
+.decision textarea { width: 100%; min-height: 54px; margin-top: 6px; padding: 8px; border: 1px solid var(--article-line); border-radius: 8px; background: var(--article-paper); color: var(--article-ink); font: inherit; }
+.rec { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 99px; background: var(--article-link-soft); color: var(--article-link); font-size: 0.7rem; font-weight: 700; }
+/* @part class="gallery" */
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(170px, 100%), 1fr)); gap: 10px; }
+.gallery figure { margin: 0; }
+.gallery img { display: block; width: 100%; height: auto; border: 1px solid var(--article-line); border-radius: 8px; }
+.gallery figcaption { margin-top: 4px; font-size: 0.72rem; }
+/* @part class="diagram */
+.diagram { overflow-x: auto; }
+.diagram svg { min-width: 760px; font-family: var(--article-sans); }
+.diagram .bx { fill: var(--article-surface); stroke: var(--article-line); }
+.diagram .bx.accent { fill: var(--article-link-soft); stroke: color-mix(in srgb, var(--article-link) 40%, var(--article-line)); }
+.diagram .bx.warn { fill: var(--article-warn-soft); stroke: color-mix(in srgb, var(--article-warn) 40%, var(--article-line)); }
+.diagram text { fill: var(--article-ink); font-size: 12px; }
+.diagram text.s { fill: var(--article-muted); font-size: 10.5px; }
+.diagram .ln { stroke: var(--article-muted); stroke-width: 1.4; fill: none; marker-end: url(#lsc-arrow); }
+.diagram .ln.fb { stroke: var(--article-warn); stroke-dasharray: 5 4; }
+.diagram .ah { fill: var(--article-muted); }

@@ -119,14 +119,42 @@ public sealed record EnvironmentStatus(
     InterventionSummary? Intervention = null)
 {
     public string? Tenant { get; init; }
+    /// <summary>The release a rollback runs now, or null when the environment has none.</summary>
+    public RollbackTarget? RollbackTarget { get; init; }
     /// <summary>A failed run may have changed the host even though the last successful release remains the lifecycle baseline.</summary>
     public bool ReleaseUncertain { get; init; }
 }
+
+/// <summary>
+/// The release a rollback of one environment picks (F13): its last deploy
+/// there and its runtime health while it ran (<see cref="ReleaseRuntimeHealthPolicy"/>).
+/// <see cref="SkippedVersions"/> are newer older releases passed over because
+/// they had an incident while running. A target whose
+/// <see cref="RuntimeHealth"/> is <c>incident</c> runs only when the request
+/// accepts it explicitly.
+/// </summary>
+public sealed record RollbackTarget(Release Release, DateTime? DeployedAtUtc, string RuntimeHealth,
+    ReleaseRuntimeIncident? Incident, IReadOnlyList<string> SkippedVersions);
 
 public sealed record InterventionSummary(string DeploymentId, string FailedStep, DateTime? ExpiresAtUtc,
     string? Decision, string? DecidedBy);
 
 public sealed record ReleaseDetailResponse(Release Release, IReadOnlyList<Deployment> Deployments);
+
+public static class DeployActionKinds
+{
+    public const string Deploy = "deploy";
+    public const string Redeploy = "redeploy";
+}
+
+/// <summary>
+/// A deploy or redeploy a person may start in one environment, as the
+/// lifecycle decides it for the asking actor. <c>NeedsApproval</c> means the
+/// request waits for an Owner or Maintainer; otherwise it queues at once.
+/// A refused action carries the lifecycle's reason.
+/// </summary>
+public sealed record DeployActionOption(string EnvironmentId, string Action, string ReleaseId, string ReleaseVersion,
+    bool Allowed, bool NeedsApproval, string? Reason);
 
 public sealed record DeploymentLogLine(string Step, DateTime AtUtc, string Message);
 
@@ -152,16 +180,45 @@ public sealed record DeployMatrixResponse(IReadOnlyList<string> EnvironmentKinds
 public sealed record DeploymentRequest(string EnvironmentId, bool Approve = false, bool? GuidedFailure = null)
 {
     public string? Tenant { get; init; }
+
+    /// <summary>F14: the approver saw the missing secret bindings and approves anyway.</summary>
+    public bool ConfirmMissingSecrets { get; init; }
 }
 
-public sealed record EnvironmentActionRequest(bool Approve = false, bool? GuidedFailure = null)
+/// <param name="AcceptIncidentTarget">A rollback may target a release that had an incident while running.</param>
+public sealed record EnvironmentActionRequest(bool Approve = false, bool? GuidedFailure = null,
+    bool AcceptIncidentTarget = false)
 {
     public string? Tenant { get; init; }
+
+    /// <summary>F14: the approver saw the missing secret bindings and approves anyway.</summary>
+    public bool ConfirmMissingSecrets { get; init; }
 }
 
 public sealed record InterventionDecisionRequest(string Action, string? Reason = null);
 
-public sealed record DeploymentApprovalRequest(bool? GuidedFailure = null);
+public sealed record DeploymentApprovalRequest(bool? GuidedFailure = null, bool ConfirmMissingSecrets = false);
+
+/// <summary>
+/// F14: the secret names one deploy of a release carries into one environment.
+/// <c>Declared</c> lists the names the current declaration declares, the only
+/// names an environment binding accepts.
+/// </summary>
+public sealed record EnvironmentSecretDemand(DeployEnvironment Environment, string DeclarationKind, string? ReleaseId,
+    IReadOnlyList<string> Names, IReadOnlyList<string> Declared);
+
+/// <summary>One secret a deploy would miss; <c>Bindable</c> when an environment binding can resolve it.</summary>
+public sealed record SecretReadinessItem(string Name, string Reference, string Reason, bool Bindable);
+
+/// <summary>F14: whether a deploy into the environment finds every secret it needs bound.</summary>
+public sealed record EnvironmentSecretReadiness(string EnvironmentId, string EnvironmentName, string Kind,
+    string? ReleaseId, bool RequiresApproval, IReadOnlyList<SecretReadinessItem> Missing)
+{
+    public bool Ready => Missing.Count == 0;
+}
+
+public sealed record SecretReadinessResponse(string Project, string? ReleaseId,
+    IReadOnlyList<EnvironmentSecretReadiness> Environments);
 
 /// <summary>Who asks, and whether they hold the Owner or Maintainer approval for the project.</summary>
 public sealed record DeployActor(string Id, bool IsApprover, string? ApprovalRole = null);

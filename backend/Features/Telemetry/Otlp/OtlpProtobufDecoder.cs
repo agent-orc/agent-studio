@@ -206,6 +206,24 @@ internal static class OtlpProtobufDecoder
             else if (field == layout.Sum && type == ProtoWireType.Fixed64) point.Sum = reader.ReadDouble();
             else if (field == layout.Min && type == ProtoWireType.Fixed64) point.Min = reader.ReadDouble();
             else if (field == layout.Max && type == ProtoWireType.Fixed64) point.Max = reader.ReadDouble();
+            else if (kind == MetricKind.Histogram && field == 6 && type == ProtoWireType.Varint)
+            {
+                if (point.BucketCounts.Count < 129) point.BucketCounts.Add(reader.ReadVarint()); else reader.Skip(type);
+            }
+            else if (kind == MetricKind.Histogram && field == 6 && type == ProtoWireType.LengthDelimited)
+            {
+                var packed = new ProtoWireReader(reader.ReadBytes());
+                while (packed.HasRemaining && point.BucketCounts.Count < 129) point.BucketCounts.Add(packed.ReadVarint());
+            }
+            else if (kind == MetricKind.Histogram && field == 7 && type == ProtoWireType.Fixed64)
+            {
+                if (point.ExplicitBounds.Count < 128) point.ExplicitBounds.Add(reader.ReadDouble()); else reader.Skip(type);
+            }
+            else if (kind == MetricKind.Histogram && field == 7 && type == ProtoWireType.LengthDelimited)
+            {
+                var packed = new ProtoWireReader(reader.ReadBytes());
+                while (packed.HasRemaining && point.ExplicitBounds.Count < 128) point.ExplicitBounds.Add(packed.ReadDouble());
+            }
             else if (field == layout.Flags && type == ProtoWireType.Varint) point.Flags = (uint)reader.ReadVarint();
             else reader.Skip(type);
         }

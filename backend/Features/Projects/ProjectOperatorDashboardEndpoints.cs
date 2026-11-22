@@ -1,6 +1,7 @@
 using AgentStudio.Deploy;
 using AgentStudio.Security;
 using AgentStudio.Secrets;
+using AgentStudio.Telemetry;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Management;
 using AgentStudio.Registry;
@@ -16,14 +17,11 @@ public static class ProjectOperatorDashboardEndpoints
 {
     public static void MapProjectOperatorDashboardEndpoints(this WebApplication app)
     {
+        // AGT-3954: the projection is cached and refreshed in the background by
+        // StructureSnapshotService. A request reads the cache; it never rebuilds
+        // the structure per client and never asks a host.
         app.MapGet("/api/v1/operations/structure", async Task<IResult> (HttpContext context, string? scope, string? environment,
-            IConfiguration configuration, ProjectRegistry projects, WorkspaceRegistry workspaces, ProjectEnvironmentService environments,
-            GitService git, AgentStudio.Runner.V1ReviewExecutorRegistry hosts,
-            LinkSupervisor links, EnvironmentHealthService health,
-            AgentStudio.Runner.HostReleaseDriftWatchdog releases,
-            AgentStudio.Runner.OrchestrationEngineReadiness engine,
-            AgentStudio.Pipeline.PullGateStore gates, TimeProvider clock,
-            IHttpClientFactory clients, CancellationToken cancellationToken) =>
+            ProjectRegistry projects, StructureSnapshotService structure, CancellationToken cancellationToken) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (scope is not null && scope != "workspace" && !scope.StartsWith("project:", StringComparison.Ordinal))
@@ -35,45 +33,16 @@ public static class ProjectOperatorDashboardEndpoints
                 if (project is null) return Results.NotFound();
                 projectId = project.Id;
             }
-            InstallationConnectivityManifest? manifest = null;
-            var path = configuration[ConnectivityManifestLoader.ManifestPathKey];
-            if (!string.IsNullOrWhiteSpace(path))
-            {
-                try { manifest = InstallationConnectivityManifest.Parse(File.ReadAllText(Path.GetFullPath(path))); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-                { return Results.Problem("Connectivity manifest is unavailable.", statusCode: 503); }
-            }
-            var selected = projects.List().Where(p => !p.Archived).ToArray();
-            var declared = StructureProjection.Build(manifest, selected,
-                environments.DeclarationFiles, projectId, environment,
-                project => git.ResolveRepoRootForProject(project.DisplayName),
-                workspaces.List().Where(workspace => projectId is null ||
-                    projects.FindById(projectId)?.WorkspaceId == workspace.Id)
-                    .SelectMany(workspace => workspace.Systems).ToArray(),
-                ManagedServiceProbes(health));
-            var deploymentFacts = selected.SelectMany(project =>
-                environments.Read(project.DisplayName)?.Environments.Select(view =>
-                    new StructureDeploymentFact(project.Id, view)) ?? []).ToArray();
-            var healthFacts = health.Overview().Environments.Join(selected,
-                view => view.Project, project => project.DisplayName,
-                (view, project) => new StructureHealthFact(project.Id, view)).ToArray();
-            IReadOnlyList<RunnerCapabilitySnapshotDto> hostFacts = hosts.ListCapabilitySnapshots();
-            if (TaskServerPlaneProxy.IsConfigured(configuration))
-            {
-                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                deadline.CancelAfter(TimeSpan.FromSeconds(5));
-                try
-                {
-                    hostFacts = await clients.CreateClient(TaskServerPlaneProxy.ClientName)
-                        .GetFromJsonAsync<RunnerCapabilitySnapshotDto[]>("/api/v1/management/remote-hosts",
-                            deadline.Token) ?? [];
-                }
-                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
-                { SilentCatch.Warn(ex, "StructureProjection: remote host reports unavailable"); }
-            }
-            return Results.Ok(ObservedStructureProjection.Apply(declared, hostFacts,
-                links.Snapshot(), deploymentFacts, healthFacts, releases.Current,
-                engine.State, clock.GetUtcNow().UtcDateTime, gates.Hosts()));
+            var read = await structure.ReadAsync(projectId, string.IsNullOrWhiteSpace(environment) ? null : environment,
+                cancellationToken);
+            if (read.Response is not { } response)
+                return Results.Problem(read.Error ?? "Structure is unavailable.", statusCode: 503);
+            // The revision is the entity tag: a view that already holds it gets 304 and keeps its nodes.
+            var tag = $"\"{response.Revision}\"";
+            context.Response.Headers.ETag = tag;
+            return context.Request.Headers.IfNoneMatch.ToString() == tag
+                ? Results.StatusCode(StatusCodes.Status304NotModified)
+                : Results.Ok(response);
         });
 
         app.MapGet("/api/v1/operations/structure/library", async (StructureLibraryService library,
@@ -169,9 +138,16 @@ public static class ProjectOperatorDashboardEndpoints
 
         // The access boundary admits scoped human Approvers; DeployService
         // decides each production approval again in the standard lifecycle.
-        app.MapPost("/api/projects/{projectName}/environments/promotions/approve", (
-            HttpContext context, string projectName, PromotionDecisionRequest request, DeployService deploy) =>
-            DeployEndpoints.QuotaRefusable(() => DecidePromotion(context, projectName, request, approve: true, deploy)))
+        app.MapPost("/api/projects/{projectName}/environments/promotions/approve", async (
+            HttpContext context, string projectName, PromotionDecisionRequest request, DeployService deploy,
+            DeploySecretReadiness readiness, CancellationToken ct) =>
+            await DeployEndpoints.WithSecretPreflight(readiness, projectName,
+                DeployEndpoints.Actor(context, projectName).IsApprover
+                    && deploy.PendingPromotionRunId(projectName, request.Artifact) is { } runId
+                    ? deploy.SecretDemandForRun(projectName, runId) : null,
+                request.ConfirmMissingSecrets,
+                missing => DeployEndpoints.QuotaRefusable(() => DecidePromotion(context, projectName, request,
+                    approve: true, deploy, missing)), ct))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/projects/{projectName}/environments/promotions/reject", (
@@ -226,8 +202,8 @@ public static class ProjectOperatorDashboardEndpoints
 
         app.MapPost("/api/deploy/jobs/claim", async (HttpContext context, DeployClaimRequest request,
             ProjectEnvironmentService environments, DeployService deploy, RunbookService runbooks,
-            ProjectSecretBindings bindings, AccessSecurityStore security, RunHostDirectory runHosts,
-            ProjectRegistry projects, IConfiguration configuration, CancellationToken ct) =>
+            ProjectSecretBindings bindings, AccessSecurityStore security, DeployTelemetryCredentials telemetry,
+            RunHostDirectory runHosts, ProjectRegistry projects, IConfiguration configuration, CancellationToken ct) =>
         {
             // F6: the credential must belong to the claimed host on every profile, before
             // a lease exists, so a mismatch cannot surface only at secret resolution.
@@ -237,11 +213,12 @@ public static class ProjectOperatorDashboardEndpoints
                 project => RunnerProjectBinding.Allows(context, project, projects));
             runHosts.RecordContact(RunnerCredential(context, configuration, security),
                 job is null ? DeployHostContact.Poll : DeployHostContact.Claim);
+            var endpoint = TelemetryEndpoints.RequestEndpoint(context);
             return await CompleteClaimAsync(job, project =>
             {
                 deploy.SyncAfterHostCall(project);
                 runbooks.SyncAfterHostCall(project);
-            }, bindings, ct);
+            }, bindings, ct, (claimed, token) => telemetry.PrepareClaimAsync(claimed, endpoint, token));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         app.MapPost("/api/deploy/jobs/{project}/{jobId}/report", (HttpContext context, string project, string jobId,
@@ -406,16 +383,25 @@ public static class ProjectOperatorDashboardEndpoints
         });
     }
 
+    /// <param name="telemetry">
+    /// Mints the environment's deploy ingest token and adds the intake endpoint
+    /// to a job whose environment enables telemetry (M5). The token then goes
+    /// through the same secret preflight as the declared references.
+    /// </param>
     internal static async Task<IResult> CompleteClaimAsync(DeployJob? job, Action<string> sync,
-        ProjectSecretBindings bindings, CancellationToken ct)
+        ProjectSecretBindings bindings, CancellationToken ct,
+        Func<DeployJob, CancellationToken, Task<DeployJob>>? telemetry = null)
     {
         if (job is null) return Results.Ok(job);
         try
         {
             sync(job.Project);
-            if (job.SecretRefs.Count == 0 || job.RetryStep == "health" || job.RunbookName is not null
+            if (job.RetryStep == "health" || job.RunbookName is not null
                 || job.Kind is "preview" or "preview-remove") return Results.Ok(job);
-            var check = await bindings.CheckAsync(job.Project, job.EnvironmentId, job.SecretRefs,
+            if (job.Telemetry is not null && telemetry is not null) job = await telemetry(job, ct);
+            var names = PreflightNames(job);
+            if (names.Count == 0) return Results.Ok(job);
+            var check = await bindings.CheckAsync(job.Project, job.EnvironmentId, names,
                 job.EnvironmentKind ?? "production", ct);
             return Results.Ok(job with
             {
@@ -427,7 +413,8 @@ public static class ProjectOperatorDashboardEndpoints
         {
             // The lease is already claimed. Return a reportable, unusable job
             // without exposing provider or storage exception text to the host.
-            var names = job.SecretRefs.Count == 0 ? ["deploy-preflight"] : job.SecretRefs;
+            var declared = PreflightNames(job);
+            var names = declared.Count == 0 ? ["deploy-preflight"] : declared;
             return Results.Ok(job with
             {
                 SecretBindings = null,
@@ -437,6 +424,11 @@ public static class ProjectOperatorDashboardEndpoints
             });
         }
     }
+
+    private static IReadOnlyList<string> PreflightNames(DeployJob job)
+        => job.Telemetry is { } telemetry
+            ? [.. job.SecretRefs.Append(telemetry.SecretName).Distinct(StringComparer.Ordinal)]
+            : job.SecretRefs;
 
     // Results.Forbid() needs an authentication scheme; Runner credentials are
     // checked by AccessSecurityMiddleware, so answer 403 directly.
@@ -492,35 +484,17 @@ public static class ProjectOperatorDashboardEndpoints
     };
 
     private static IResult DecidePromotion(HttpContext context, string project, PromotionDecisionRequest request,
-        bool approve, DeployService deploy)
+        bool approve, DeployService deploy, IReadOnlyList<string>? confirmedMissingSecrets = null)
     {
         var actor = DeployEndpoints.Actor(context, project);
         if (!actor.IsApprover) return ApprovalRequired();
-        return deploy.DecidePromotion(project, request.Artifact, approve, actor) switch
+        return deploy.DecidePromotion(project, request.Artifact, approve, actor, confirmedMissingSecrets) switch
         {
             { Kind: DeployOutcomeKind.Ok } => Results.Ok(),
             { Kind: DeployOutcomeKind.NotFound } => Results.Conflict(new { error = "Promotion is not pending." }),
             { Kind: DeployOutcomeKind.Forbidden } refused => Results.Json(new { error = refused.Error },
                 statusCode: StatusCodes.Status403Forbidden),
             var refused => Results.Conflict(new { error = refused.Error }),
-        };
-    }
-
-    /// <summary>
-    /// A managed service is observed through the environment health check it
-    /// names; the control-plane worker already probes those checks. One health
-    /// read per project and request.
-    /// </summary>
-    private static Func<ProjectRecord, string, string, StructureProbe?> ManagedServiceProbes(EnvironmentHealthService health)
-    {
-        var read = new Dictionary<string, ProjectEnvironmentHealthResponse?>(StringComparer.OrdinalIgnoreCase);
-        return (project, environment, checkId) =>
-        {
-            if (!read.TryGetValue(project.DisplayName, out var response))
-                read[project.DisplayName] = response = health.Read(project.DisplayName);
-            var check = response?.Environments.FirstOrDefault(item => item.EnvironmentId == environment)?
-                .Checks.FirstOrDefault(item => item.Id == checkId);
-            return check is null ? null : new StructureProbe(check.Kind, check.Status);
         };
     }
 

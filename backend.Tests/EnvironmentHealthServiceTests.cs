@@ -266,6 +266,23 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task IncidentCard_IsCreatedBySystem_AndStaysOutOfOwnerActivity()
+    {
+        var fixture = Build();
+        await Sequence(fixture, false, false, false);
+        var card = Assert.Single(fixture.Cards());
+
+        var created = Assert.Single(fixture.Timeline.ReadAll(card.FolderPath),
+            item => item.Kind == TimelineEventKinds.PromptCreated);
+        Assert.Equal(TimelineActors.System, created.Actor);
+        Assert.Empty(OwnerActivityProjection.FromTimeline(card, fixture.Timeline.ReadAll(card.FolderPath)));
+
+        var environment = Assert.Single(fixture.Service.Read(Project)!.Environments);
+        Assert.NotNull(card.Key);
+        Assert.Equal(card.Key, environment.IncidentCardKey);
+    }
+
+    [Fact]
     public async Task Recovery_ClosesTheIncident_CommentsOnTheCard_AndRaisesAnEvent()
     {
         var fixture = Build();
