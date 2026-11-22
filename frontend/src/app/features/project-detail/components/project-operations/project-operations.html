@@ -16,6 +16,18 @@
     @for (row of state.environments; track row.environment.id) {
       <article class="project-operations__environment" [attr.data-testid]="'operations-' + row.environment.id">
         <h3>{{ row.environment.name }} <small>{{ row.environment.kind }}</small></h3>
+        @if (row.observed; as observed) {
+          <dl class="project-operations__host">
+            <div><dt>Restarts</dt><dd data-testid="operations-host-restarts">{{ metric(observed.restarts) }}</dd></div>
+            <div><dt>Container state</dt><dd><app-status-indicator [tone]="hostStateTone(row)" [label]="hostStateLabel(row)" testId="operations-host-state" /></dd></div>
+          </dl>
+          @if (observed.crashOutput?.length) {
+            <section class="project-operations__crash" data-testid="operations-crash-output" aria-label="Last crash output">
+              <h4>Last crash output</h4>
+              <pre>{{ observed.crashOutput?.join('\n') }}</pre>
+            </section>
+          }
+        }
         @if (row.metrics; as m) {
           @if (m.samples.length) {
             <div class="project-operations__trends">
@@ -31,7 +43,7 @@
             <div><dt>Response median</dt><dd>{{ metric(m.responseP50Ms, ' ms') }}</dd></div>
             <div><dt>Response p95</dt><dd>{{ metric(m.responseP95Ms, ' ms') }}</dd></div>
             <div><dt>Error rate</dt><dd>{{ m.errorRate === null ? 'No data' : metric(m.errorRate * 100, '%') }}</dd></div>
-            <div><dt>Restarts</dt><dd>{{ metric(m.restarts) }}</dd></div>
+            @if (!row.observed) { <div><dt>Restarts</dt><dd>{{ metric(m.restarts) }}</dd></div> }
             <div><dt>Requests</dt><dd>{{ metric(m.requests) }}</dd></div>
             <div><dt>Sessions</dt><dd>{{ metric(m.sessions) }}</dd></div>
             <div><dt>Active users per day</dt><dd>{{ metric(m.activeUsers) }}</dd></div>

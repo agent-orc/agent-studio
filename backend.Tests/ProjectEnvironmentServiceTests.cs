@@ -1324,7 +1324,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     public void Stop_settles_an_abandoned_redeploy_before_the_host_claims_the_stop()
     {
         using var factory = QuotaFactory();
-        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (quota, _) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
         var (service, repo, watch) = Build(quota: quota);
         var commit = Git(repo, "rev-parse", "HEAD").Trim();
         IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
@@ -1343,13 +1343,15 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal("failed", lost.Status);
         Assert.Equal("host-lost", lost.Evidence);
         Assert.False(service.Report("demo", redeploy.Id, new(redeploy.LeaseToken!, true, "health-ok")));
-        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        // The slot ledger is authoritative here. The usage snapshot may still have a
+        // cached project inventory after the fake clock jumps across the host lease.
+        Assert.Equal([ProjectEnvironmentService.SlotKey("stage")], quota.ProjectEnvironmentIds("demo"));
 
         var stop = service.Claim("stage-host")!;
         Assert.True(stop.IsStop);
         Assert.True(service.Report("demo", stop.Id, new(stop.LeaseToken!, true, "stop-ok")));
         Assert.Equal("stopped", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
-        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Empty(quota.ProjectEnvironmentIds("demo"));
     }
 
     [Fact]

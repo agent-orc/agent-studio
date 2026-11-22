@@ -221,6 +221,8 @@ public static class RoutePermissionCatalog
         Add("GET", IamPermissions.WorkspaceOperate, "/api/v1/one-shot-jobs/{}");
         Add("R", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/desired-state");
         Add("POST", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/observed-state");
+        Add("GET", IamPermissions.RunnerService, "/api/deploy/hosts/{}/containers");
+        Add("POST", IamPermissions.RunnerService, "/api/deploy/hosts/{}/observed-state");
         Add("*", IamPermissions.RunnerService,
             "/api/v1/orchestration/**", "/api/v1/runners/**", "/api/v1/gates/**", "/api/v1/runs/**",
             "/api/runner/artifacts/**", "/api/runner/lease/**", "/api/pull-gates/**", "/api/gate-artifacts/**");

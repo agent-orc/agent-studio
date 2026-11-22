@@ -204,7 +204,10 @@ environment, bounded time range, level, release, and text filters and returns
 100 lines per page with a cursor for later pages. `IOperationsTelemetryReader`
 projects the per-environment OTLP store into metrics and masked logs. The
 explicit empty state is reserved for a disabled store; read failures return a
-named error. Deploy markers and DORA remain live. The reader contract allows
+named error. Deploy markers and DORA remain live. Host restart counts and the
+last bounded crash output appear separately in Operations even without
+application telemetry. An active host crash incident takes precedence over an
+older healthy deploy status on the environment card. The reader contract allows
 only aggregate usage without personal identifiers and requires secret masking
 before stored log lines are returned. The metric mapping and histogram
 quantile fallback are documented in

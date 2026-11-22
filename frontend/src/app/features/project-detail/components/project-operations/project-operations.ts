@@ -4,7 +4,7 @@ import { DatePipe } from '@angular/common';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, type WritableSignal } from '@angular/core';
 import { take } from 'rxjs';
-import { metric, ratio, type OperationsLogResult, type OperationsTrace, type OperationsSpan, type ProjectOperations } from './project-operations.model';
+import { hostStateLabel, hostStateTone, metric, ratio, type OperationsLogResult, type OperationsTrace, type OperationsSpan, type ProjectOperations } from './project-operations.model';
 import { OperationsTrendComponent } from '../operations-trend/operations-trend';
 import { LoadingSurfaceComponent, PendingButtonDirective } from '../../../../components/async-feedback';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
@@ -43,6 +43,8 @@ export class ProjectOperationsComponent {
   readonly telemetryAvailable = computed(() => this.snapshot()?.environments.some(row => row.telemetryAvailable) ?? false);
   readonly metric = metric;
   readonly ratio = ratio;
+  readonly hostStateLabel = hostStateLabel;
+  readonly hostStateTone = hostStateTone;
   readonly projectSlug = computed(() => studioProjectSlug(this.projectName()));
 
   constructor() { effect(() => this.load(this.projectName())); }
