@@ -3,6 +3,12 @@
 Version: 2026-11-02
 Status: System-of-record map for runner-side changes.
 
+Review role release drift becomes operator attention as soon as that role has
+claimed a review. The attention fact names its claimed and graded cards and
+compares the role's commit and image with Stable. An idle role still uses the
+host release watchdog's grace period. A fresh heartbeat reporting the expected
+commit and image clears the attention fact.
+
 ## Persona occurrences, PT-4
 
 PT-D4, PT-D5 and PT-D8 use the Dossier's recommended option B. The Watcher
@@ -533,6 +539,15 @@ sends it in `removals` only on a decision:
   (optional body `{ "hostId": ... }`). The actor is recorded.
 - `grace`: kind `other` only, after 10 minutes missing.
 
+The Deploy overview offers Stop for a deployed app and Remove for a declared
+environment. Stop queues a host stop and keeps the declaration. Remove queues a
+card to delete the repository declaration and its `project.yml` references.
+The overview then shows the pending placement with a separate host removal
+confirmation. Each confirmation explains that deploy history, health samples,
+and environment secrets stay stored. Open health incidents
+close as `check-removed` when their checks disappear. The host app is deleted only
+after the second confirmation and the host's next poll.
+
 Deleting, renaming, or retargeting a `production` or `stage` declaration
 therefore removes nothing by itself. It stays `pending-confirmation`, and
 placements recorded before kinds were kept are treated the same way. A
@@ -796,6 +811,10 @@ unreported claim expires with its lease and is queued again.
   this cache policy and log `provider-auth recovered provider=... after=...`
   once per recovery. A live same-provider run is
   counter-evidence and makes the conflicting state claimable but degraded.
+- The management re-probe API accepts only a key registered or held by the
+  runner role. It keeps at most 32 distinct keys per runner, rejects another
+  key with HTTP 429, and discards queued keys when the runner is revoked or a
+  new daemon instance registers the same identity.
 - `backend/Features/Management/RunnerLinks/LinkSupervisor.cs`: Task Server-owned
   SSH reverse-link lifecycle, heartbeat subscription, functional route probe,
   remote listener cleanup, bounded retry ladder, silent child process and
@@ -1200,7 +1219,9 @@ unreported claim expires with its lease and is queued again.
   completions clear it. A rebase conflict at
   integration ends in the existing AGT-2909 dead-end exit
   (`AgentRoundRequired`, `delivery-attribution-ambiguous`). The prompt states
-  the base in one sentence and names no SHA.
+  the base in one sentence and names no SHA. This steer tells the agent to
+  leave the develop merge to the runner, which merges current develop at the
+  start of the round.
 - Operator continue, steer and extend rounds carry the result ref (AGT-3483,
   [operator-agent-level Dossier](../../operator-agent-level/index.html) OP-3).
   A round queued for a runner claim on a card with a recorded result ref saves
@@ -2952,7 +2973,20 @@ execution admission as deployment mutations. Production approval and rejection
 require an Owner or Maintainer. `GET /audit` under the same prefix includes
 runbook request, approval, rejection and completion events. A run response
 includes its `id`, `environmentId`, `state`, `steps` and `definitionCommit`;
-each step has a `logRef` for its filtered log.
+each step has a `logRef` for its filtered log. `requestedByName` and
+`approvedByName` carry the Studio display name of the stored user id, and the
+log lines name people the same way.
+
+A runbook may set `verify: health:<check id>` (an environment health check) or
+`verify: alert:<rule id>` (a telemetry alert rule). The request is refused when
+the environment declares no such check or rule. The run then carries a final
+`verification` step: after the host reports success the run stays `running`
+while the control plane probes the check (up to `Runbooks:VerifyAttempts`,
+default 6, every `Runbooks:VerifyIntervalSeconds`, default 10) or evaluates
+the rule, which must be observed and not firing. Only a passing check makes the
+run `succeeded`; otherwise it is `failed`. The run's `verifies` names the
+target, and `verification` holds the target, the result and one sentence of
+what was observed, which the `verification` step log repeats.
 
 The target host keeps operator-owned scripts at
 `/etc/agent-host/runbooks/<project>/<step>.sh`. The host runs each script with
@@ -2964,8 +2998,14 @@ steer the loader or shell (`LD_*`, `DYLD_*`, `BASH_FUNC_*`, `PATH`, `IFS`,
 `ENV`, `BASH_ENV` and the libc loading variables) are rejected by the
 `project.yml` validator as `variable-name-reserved` and again by the host
 before any script starts. Scripts must exit zero to advance; failure stops the
-remaining steps. The host drains output locally and reports only step success
-or failure, so logs do not expose secret values. A step times out after nine
+remaining steps. The host keeps the last 200 lines of each step's stdout and
+stderr, masks every secret value it passed to the script (and each line of a
+multi-line one) before cutting a line to 400 characters, and reports that tail
+with the step result. A non-zero exit, a timeout and a missing script add a
+line that says so; a missing script names the path the host looked for. The
+control plane applies the credential patterns of `CredentialRedactor` and the
+same bounds again and writes the lines to the step's log before its
+`Operation succeeded.` or `Operation failed.` line. A step times out after nine
 minutes, and the whole run after ten. On Linux, `setsid` gives each script its
 own process group; timeout or host cancellation also applies while draining
 output after the script exits and kills that group. Descendants that start a

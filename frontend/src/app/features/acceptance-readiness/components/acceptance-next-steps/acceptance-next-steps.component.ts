@@ -90,7 +90,7 @@ export class AcceptanceNextStepsComponent {
   readonly show = computed(() => !!this.briefGap() || !!this.item() || !!this.contentGap());
   readonly tone = computed(() => readinessPresentation(this.item()?.readiness ?? 'blocked').tone);
   readonly canReviewAgain = computed(() => !!this.briefGap() || !!this.contentGap() || this.item()?.stage === 'content');
-  readonly canAcceptWithReason = computed(() => acceptanceOverrideAllowed(this.item()?.refusal));
+  readonly canAcceptWithReason = computed(() => acceptanceOverrideAllowed(this.item()));
   readonly roundDraft = computed(() => {
     const draft = this.store.draftFor('detail');
     return draft && draft.job.id === this.job().id ? draft : null;
@@ -128,6 +128,7 @@ export class AcceptanceNextStepsComponent {
     this.tasks.reviewContentAgainstCurrentBrief(this.job().id, this.job().watchPath).subscribe({
       next: () => {
         this.busy.set(false);
+        this.store.markAddressed(this.job());
         this.notifications.success('Content review requested for the current brief.');
         this.tasks.refresh(true);
       },

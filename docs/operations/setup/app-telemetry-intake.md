@@ -1,23 +1,69 @@
 # Application telemetry intake (OTLP)
 
-Agent Studio accepts OpenTelemetry metrics and logs from the applications it
+Agent Studio accepts OpenTelemetry metrics, logs, and traces from the applications it
 deploys and keeps them in a built-in store, one store per project environment.
 This implements Dossier
 [integrierte-plattform](../integrierte-plattform/index.html) section 8.3 (IP-15)
 with decision IP-D14 option A: a built-in store, with export hooks for external
-systems. No exporter ships yet. The Studio views over this data are a separate
-card (IP-16).
+systems. No exporter ships yet. Deploy, Operations reads its trends and log
+search from this store, and Deploy, Telemetry manages the ingest tokens.
 
 ## Connect an application
 
-1. Declare the environment in the project repository under
-   `docs/deployments/environments/<id>.json`. Tokens are issued only for
+### Through a deploy (recommended)
+
+Enable telemetry for the environment in schema 2 `.agent-studio/project.yml`:
+
+```yaml
+environments:
+  - name: staging
+    telemetry: true
+  - name: production
+    protected: true
+    telemetry: true
+```
+
+A legacy declaration under `docs/deployments/environments/<id>.json` accepts
+`"telemetry": true` as well. Every container deploy of such an environment then
+sets these variables on the workload:
+
+| Variable | Value |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `Telemetry:PublicOtlpEndpoint`, or `<studio>/api/telemetry/otlp` under the URL the deploy host reached Studio at |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | `Authorization=Bearer <ingest token>` |
+| `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment.name=<environment>,agent_studio.release.id=<release>` |
+
+At the deploy claim Studio mints an ingest token for metrics and logs scoped to
+the environment (name "Studio deploy", created by `studio:deploy`). It stores
+the token through the secret provider as `studio-telemetry-ingest` in the
+environment's scope and binds it there. The deploy host resolves it like any
+other workload secret, so Studio never shows or logs it. Revoking that token
+under Deploy, Telemetry stops the running workload at once; the next deploy
+mints a new token and revokes earlier deploy tokens. SSH container steps pass
+the variables into the compose service even when the compose file does not map
+them. A project must not declare these variables itself for such an
+environment. Static sites and run-zone (edge) environments get no telemetry
+variables. Set `Telemetry:PublicOtlpEndpoint` when workloads reach Studio at
+another address than the deploy host does, for example from a container network.
+
+The `container-service` project template ships the OpenTelemetry Node SDK
+configured for this.
+
+### By hand
+
+1. Declare the environment (schema 2 `project.yml`, or
+   `docs/deployments/environments/<id>.json`). Tokens are issued only for
    declared environments.
-2. Create an ingest token (owner or operator; the plaintext is shown once):
+2. Open Deploy, Telemetry, choose the environment and create a token (owner or
+   operator). Studio shows the endpoint, protocol and headers once; copy them.
+   The page lists every token with its signals, creation, last use (updated at
+   most every five minutes) and expiry, and revokes a token after a confirming
+   click. The same operations are available on the API:
 
    ```http
    POST /api/projects/{project}/environments/{environment}/telemetry/tokens
-   {"name": "shop-api", "signals": ["metrics", "logs"], "expiresAt": null}
+   {"name": "shop-api", "signals": ["metrics", "logs", "traces"], "expiresAt": null}
    ```
 
    The response carries `secret`, `otlpEndpoint`, and `otlpHeaders`.
@@ -29,7 +75,7 @@ card (IP-16).
    OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <secret>"
    ```
 
-   The SDK appends `/v1/metrics` and `/v1/logs`. Traces are not accepted yet.
+   The SDK appends `/v1/metrics`, `/v1/logs`, or `/v1/traces`.
 
 List tokens with `GET .../telemetry/tokens` and revoke one with
 `DELETE .../telemetry/tokens/{tokenId}`. A revoked or expired token gets
@@ -109,11 +155,30 @@ of the body read until the request is queued or refused.
 Configure collectors to send at most 20,000 points or records per request (for
 the batch processor, `send_batch_max_size`).
 
-Points older than the hourly retention, log records older than the log
+Points older than the hourly retention, log records and spans older than the log
 retention, and anything more than 10 minutes in the future count as rejected.
-Log bodies, event names, severity text, and the attribute values of logs and metrics pass through the
-credential redactor before durable staging, storage, queries, or export. Values held by the secret provider (AGT-3222) will
-be masked once that provider exists.
+Log bodies, event names, severity text, span names, and attribute names and values of logs, metrics, and spans pass through the
+credential redactor before durable staging, storage, queries, or export. For each
+batch, intake also reads the active secret values in the project's environment,
+project, and inherited workspace scopes from the secret store. It masks those
+exact values even if no workload has resolved them recently. A secret-store read
+failure makes intake return 503 instead of staging an unverified batch. The
+writer repeats masking before SQLite storage and export.
+
+### Purge telemetry stored before provider-value masking
+
+The new masking rule does not rewrite existing SQLite rows or pending journal
+files. For each affected environment, stop Studio, remove
+`<StoreRoot>/<project>/<environment>.sqlite` and its `-wal` and `-shm` files,
+then restart Studio. The default `StoreRoot` is
+`<TaskRepository>/telemetry`. This discards that environment's logs, spans, and metric
+history. Before restarting, remove every file from
+`<StoreRoot>/pending/`, including temporary and completed journal files, since
+old journal files may contain unmasked values and their file names do not identify
+the environment. This discards queued batches
+for all environments. Purge copies of those files in backups and any exported
+telemetry through the relevant storage retention process. Do not inspect or
+print the old rows to look for a secret.
 
 ## Storage and retention
 
@@ -126,6 +191,7 @@ with `Telemetry:StoreRoot`.
 | Metrics at one-minute resolution | 14 days | `Telemetry:MetricMinuteRetentionDays` |
 | Hourly metric aggregates | 90 days | `Telemetry:MetricHourRetentionDays` |
 | Logs | 7 days, at most 256 MiB of record payload per environment | `Telemetry:LogRetentionDays`, `Telemetry:LogMaxBytesPerEnvironment` |
+| Spans | 7 days, at most 256 MiB of record payload per environment | `Telemetry:LogRetentionDays`, `Telemetry:LogMaxBytesPerEnvironment` |
 | Series per environment | 10,000 series and 32 MiB of estimated series cache (2 bytes per character of name and attribute JSON plus 192 bytes per series); intake refuses a request that would exceed either cap before returning 200 | `Telemetry:MaxSeriesPerEnvironment`, `Telemetry:MaxSeriesBytesPerEnvironment` |
 | Minute buckets of all environments together | about 2 GiB (96 bytes estimated per bucket) | `Telemetry:MaxMinuteBucketBytes` |
 | Hour buckets of all environments together | about 1 GiB (96 bytes estimated per bucket) | `Telemetry:MaxHourBucketBytes` |
@@ -166,9 +232,57 @@ and follow the Studio session and project-membership rules.
   newest first. `minSeverity` is 1 to 24 or a level name. `text` is a
   case-insensitive substring of the body. Pass the returned `nextCursor` to
   read the next page.
+- `GET /traces?from=&to=&limit=`: failed traces and traces lasting at least
+  500 ms in a window of at most 30 days, ordered by failure and duration.
+  The response includes trace IDs, duration, span count, and root name.
+- `GET /traces/{traceId}`: spans ordered by start time, including parent IDs,
+  duration, failure state, and masked attributes for the Operations waterfall.
 
 Attribute values are compared as text. Resource attributes, record
 attributes, and the instrumentation scope name (`otel.scope.name`) are merged.
+
+## Project Operations mapping
+
+The project Deploy > Operations tab reads the built-in per-environment store.
+Set `Telemetry:Enabled=false` only when deliberately disabling that store; in
+that case the tab shows the unavailable state. A store read failure returns a
+named `Operations telemetry store read failed.` error instead of an empty state.
+
+The 30-day view reads hourly buckets. Request count is the observation count of
+`http.server.request.duration` (or `http.server.duration`); when neither is
+present, it uses `http.server.request.count` or `http.server.requests`. Error
+rate counts requests whose `http.response.status_code` is 500 or greater
+(`http.status_code` is accepted for older senders). A missing status is not
+treated as an error. Duration units `s` and `ms` are rendered in milliseconds.
+For newly ingested `http.server.request.duration` histograms, intake also keeps
+each explicit OTLP bucket as an internal `.bucket` series with an
+`otel.histogram.bound` attribute. The displayed p50 and p95 interpolate within
+those bucket boundaries, both over the window and per hour for the trend. Old
+data without bucket series falls back to the count-weighted mean for p50 and
+the observed maximum for p95; the store cannot recover exact quantiles from
+old count, sum, minimum, and maximum alone. Routes in top endpoints come only
+from `http.route` and omit any query string.
+
+CPU selects the first present convention among `process.cpu.utilization`,
+`container.cpu.utilization`, `system.cpu.utilization`, `process.cpu.time`, and
+`container.cpu.usage`. Utilization is shown in cores. CPU time and usage are
+cumulative counters of CPU seconds: the CPU seconds spent in each hour are
+divided by the time that hour covers (the current hour so far, at least a
+minute), summed over processes and states, so the summary shows the cores used
+in the latest hour. A CPU time or usage series sent as a gauge carries a running
+total and is ignored. Memory selects `process.memory.usage`,
+`container.memory.usage`, then `system.memory.usage`. Disk selects
+`system.filesystem.usage`, then `container.filesystem.usage`. Used-state gauge
+series are summed within the latest bucket. `system.network.io`,
+`container.network.io`, or `process.network.io` supplies network bytes when
+present. Unreported reserved capacity, sessions, active users, and restarts
+remain absent.
+
+Log search reads the environment's stored, masked records newest first. Time,
+exact severity group, release (`agent_studio.release.id`, which a Studio deploy
+sets, then `service.version` or `release.id`), and body text
+can be combined. `nextCursor` lets the tab request the next page beyond 100
+lines; changing a filter starts a new search.
 
 ## Export hooks
 

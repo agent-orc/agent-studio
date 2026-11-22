@@ -1,10 +1,23 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
+import { Subscription } from 'rxjs';
 import { QualityStudioService } from '../../../../services/quality-studio.service';
 import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { ProjectDeployReleaseNotesComponent } from '../project-deploy-release-notes/project-deploy-release-notes';
-import { formatAge, type DeployPanel, type EnvironmentCardView, type Release } from '../../state/deploy-area.model';
+import { DeployActionsComponent } from '../deploy-actions/deploy-actions';
+import {
+  formatAge,
+  type DeployActionOption,
+  type DeployActionState,
+  type DeployPanel,
+  type EnvironmentCardView,
+  type IntegrationReleaseStatus,
+  type Release,
+  type SecretReadinessResponse,
+} from '../../state/deploy-area.model';
+import { ProjectDeployDataService, serverMessage } from '../../services/project-deploy-data.service';
+import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 /** Pre-delivery full-suite verdict (raw wire value) onto the shared tones; anything else stays neutral. */
@@ -13,17 +26,29 @@ export function verdictTone(status: string): StatusTone {
   return Object.hasOwn(VERDICT_TONE, status) ? VERDICT_TONE[status] : 'neutral';
 }
 
-/** Release list with the selected release's cards, artifacts, and where it runs. */
+/** Next-release state onto the shared tones and a short label (AGT-3891). */
+const NEXT_RELEASE: Readonly<Record<IntegrationReleaseStatus['state'], { tone: StatusTone; label: string }>> = {
+  unconfigured: { tone: 'neutral', label: 'No environments' },
+  'promotion-train': { tone: 'info', label: 'Promotion train' },
+  'waiting-for-gate': { tone: 'running', label: 'Waiting for the gate' },
+  ready: { tone: 'info', label: 'Ready to release' },
+  released: { tone: 'success', label: 'Tip released' },
+  blocked: { tone: 'warning', label: 'Blocked' },
+};
+
+/** Release list with the selected release's cards, artifacts, where it runs, and where it may deploy next. */
 @Component({
   selector: 'app-project-deploy-releases',
   standalone: true,
-  imports: [DatePipe, EmptyStateComponent, LoadingSurfaceComponent, ProjectDeployReleaseNotesComponent, StatusIndicatorComponent],
+  imports: [DatePipe, EmptyStateComponent, LoadingSurfaceComponent, ProjectDeployReleaseNotesComponent, StatusIndicatorComponent,
+    DeployActionsComponent, DeploySecretGapsComponent],
   templateUrl: './project-deploy-releases.html',
   styleUrl: './project-deploy-releases.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ProjectDeployReleasesComponent {
   private readonly qualityStudio = inject(QualityStudioService);
+  private readonly data = inject(ProjectDeployDataService);
   readonly projectName = input.required<string>();
   readonly panel = input.required<DeployPanel<Release[]>>();
   readonly environments = input.required<readonly EnvironmentCardView[]>();
@@ -31,11 +56,85 @@ export class ProjectDeployReleasesComponent {
   readonly total = input<number>(0);
   readonly offset = input<number>(0);
   readonly highlightedReleaseId = input<string | null>(null);
+  /** Deploy options of the selected release; the parent loads them for {@link selectedRelease}. */
+  readonly actions = input<DeployPanel<DeployActionOption[]>>({ status: 'loading' });
+  readonly actionState = input<DeployActionState>({ busy: null, error: null });
   readonly pageChange = output<number>();
+  readonly selectedRelease = output<string | null>();
+  readonly startAction = output<DeployActionOption>();
+  /** A release was created from this tab; the Deploy area reloads releases and runs. */
+  readonly released = output<void>();
+  /** F14: open the binding panel on an environment the selected release misses secrets in. */
+  readonly openSecrets = output<string>();
   readonly selectedId = signal<string | null>(null);
   protected readonly verdictTone = verdictTone;
 
-  constructor() { effect(() => this.selectedId.set(this.highlightedReleaseId())); }
+  /** F14: secret readiness of the selected release, keyed so a late answer for another release never shows. */
+  private readonly secretPanel = signal<{ key: string; panel: DeployPanel<SecretReadinessResponse> } | null>(null);
+
+  readonly next = signal<DeployPanel<IntegrationReleaseStatus>>({ status: 'loading' });
+  readonly creating = signal(false);
+  readonly createError = signal<string | null>(null);
+  private nextRead = new Subscription();
+
+  constructor() {
+    effect(() => this.selectedId.set(this.highlightedReleaseId()));
+    effect(() => {
+      const id = this.selected()?.id ?? null;
+      untracked(() => this.selectedRelease.emit(id));
+    });
+    // Read again whenever the release list is read again (load, refresh, page change).
+    effect(() => {
+      const project = this.projectName();
+      if (this.panel().status === 'loading') return;
+      untracked(() => this.loadNext(project));
+    });
+    inject(DestroyRef).onDestroy(() => this.nextRead.unsubscribe());
+    effect(onCleanup => {
+      const project = this.projectName();
+      const releaseId = this.selected()?.id;
+      if (!releaseId) return;
+      const key = `${project}\n${releaseId}`;
+      const subscription = this.data.secretReadiness(project, releaseId)
+        .subscribe(panel => this.secretPanel.set({ key, panel }));
+      onCleanup(() => subscription.unsubscribe());
+    });
+  }
+
+  /** What creates the next release; null while loading or on a server without the route. */
+  readonly nextRelease = computed(() => {
+    const next = this.next();
+    return next.status === 'ready' ? next.value : null;
+  });
+  readonly nextTone = computed(() => {
+    const next = this.nextRelease();
+    return next ? NEXT_RELEASE[next.state] ?? { tone: 'neutral' as const, label: next.state } : null;
+  });
+
+  create(): void {
+    if (this.creating()) return;
+    this.creating.set(true);
+    this.createError.set(null);
+    this.data.createIntegrationRelease(this.projectName()).subscribe({
+      next: status => {
+        this.creating.set(false);
+        this.next.set({ status: 'ready', value: status });
+        if (status.state === 'released') this.released.emit();
+      },
+      error: (error: unknown) => {
+        this.creating.set(false);
+        this.createError.set(serverMessage(error) ?? 'The release could not be created. Try again.');
+      },
+    });
+  }
+
+  private loadNext(project: string): void {
+    this.nextRead.unsubscribe();
+    this.nextRead = this.data.integrationRelease(project).subscribe(panel => {
+      // Keep the shown status while it reloads, so the tab does not flicker on refresh.
+      if (panel.status !== 'loading' || this.next().status !== 'ready') this.next.set(panel);
+    });
+  }
 
   readonly releases = computed(() => {
     const panel = this.panel();
@@ -55,6 +154,30 @@ export class ProjectDeployReleasesComponent {
       ? this.environments().filter(env => env.releaseVersion === release.version).map(env => env.name)
       : [];
   });
+
+  readonly environmentNames = computed<ReadonlyMap<string, string>>(() =>
+    new Map(this.environments().map(env => [env.id, env.name])));
+  /** Options for the shown release only, so a late answer for another release never shows here. */
+  readonly releaseActions = computed(() => {
+    const panel = this.actions();
+    const id = this.selected()?.id;
+    return panel.status === 'ready' ? panel.value.filter(item => item.releaseId === id) : [];
+  });
+
+  readonly actionsError = computed(() => {
+    const panel = this.actions();
+    return panel.status === 'error' ? panel.message : '';
+  });
+
+  readonly secrets = computed(() => {
+    const release = this.selected();
+    const state = this.secretPanel();
+    if (!release || state?.key !== `${this.projectName()}\n${release.id}`) return { status: 'loading' as const, environments: [], message: null };
+    const panel = state.panel;
+    if (panel.status !== 'ready') return { status: panel.status, environments: [], message: panel.status === 'error' ? panel.message : null };
+    return { status: 'ready' as const, environments: panel.value.environments, message: null };
+  });
+  readonly secretGaps = computed(() => this.secrets().environments.filter(item => !item.ready));
 
   select(id: string): void { this.selectedId.set(id); }
   age(iso: string): string | null { return formatAge(iso, this.now()); }

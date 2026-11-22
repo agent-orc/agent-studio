@@ -13,6 +13,7 @@
     widthTier="lg"
     [portalToBody]="true"
     [testid]="'info-button-modal-' + topic()"
+    [stackManagedExternally]="true"
     (closeRequest)="close()"
     (backdropClick)="close()">
     <div class="info-btn__body"

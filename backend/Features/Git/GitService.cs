@@ -359,7 +359,10 @@ public record GitCommitInfo(
     int Added,
     int Removed,
     string? Body = null,
-    bool IsMerge = false);
+    bool IsMerge = false)
+{
+    public IReadOnlyList<string> ParentShas { get; init; } = [];
+}
 
 public sealed record RemoteDeliveryCommitRange(
     bool Success,
@@ -2397,6 +2400,14 @@ public partial class GitService
         => FindWatchPathEntry(watchPath) is { } entry
            && !string.IsNullOrWhiteSpace(ResolveConfiguredRepositoryPath(entry));
 
+    /// <summary>
+    /// Reads only filesystem facts to check whether the configured path can be
+    /// used as a server checkout for integration.
+    /// </summary>
+    public bool HasUsableConfiguredRepository(string? watchPath)
+        => FindWatchPathEntry(watchPath) is { } entry
+           && IntegrationWorktreeProvider.HasUsableCheckout(ResolveConfiguredRepositoryPath(entry));
+
     private WatchPathEntry? FindWatchPathEntry(string? watchPath)
     {
         var entries = _scanner.GetWatchPaths();
@@ -3147,12 +3158,12 @@ public partial class GitService
             sw.Stop();
             if (p.ExitCode != 0)
             {
-                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: false, jobId: jobId);
+                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: false, cliType: CliTypes.Codex, jobId: jobId);
                 return new GenerateMessageResult(null, $"codex exited {p.ExitCode}: {stderr.Trim()}");
             }
 
             var text = ParseCodexAgentMessage(stdout);
-            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: true, jobId: jobId);
+            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: true, cliType: CliTypes.Codex, jobId: jobId);
 
             var (msg, suspicious) = ParseCommitReview(text);
             if (!string.IsNullOrWhiteSpace(suspicious))
@@ -5177,16 +5188,19 @@ public partial class GitService
                     .Select(path => path.Trim()).Where(path => path.Length > 0).Distinct().ToArray()
                 : [];
             var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
-                "--format=%H%x1f%h%x1f%aI%x1f%aN%x1f%s", sha);
+                "--format=%H%x1f%h%x1f%aI%x1f%aN%x1f%s%x1f%P", sha);
             if (metadataCode != 0) continue;
             var parts = metadata.Trim().Split('\x1f');
-            if (parts.Length < 5 || !DateTime.TryParse(parts[2],
+            if (parts.Length < 6 || !DateTime.TryParse(parts[2],
                     System.Globalization.CultureInfo.InvariantCulture,
                     System.Globalization.DateTimeStyles.AssumeUniversal
                     | System.Globalization.DateTimeStyles.AdjustToUniversal, out var at)) continue;
             commits.Add(new GitCommitInfo(parts[0], parts[1],
                 DateTime.SpecifyKind(at, DateTimeKind.Utc), parts[3], parts[4],
-                changed.Length, 0, 0, IsMerge: true));
+                changed.Length, 0, 0, IsMerge: true)
+            {
+                ParentShas = parts[5].Split(' ', StringSplitOptions.RemoveEmptyEntries),
+            });
         }
         if (commits.Count == 0) return commits;
         string[] orderArgs = ["rev-list", revisions, .. exclusion, RevisionsOnly];
@@ -9157,6 +9171,26 @@ public partial class GitService
             .Where(parts => parts.Length == 2 && parts[0].Split(' ') is [_, "blob", _])
             .Select(parts => parts[1])
             .ToArray();
+    }
+
+    /// <summary>
+    /// Writes the uncompressed <c>git archive</c> of a full commit SHA to
+    /// <paramref name="outputFile"/>, limited to <paramref name="path"/> when
+    /// given. An integration release packs the gated tree this way. False when
+    /// git cannot read the commit or the path.
+    /// </summary>
+    public bool ArchiveCommit(string repoRoot, string sha, string? path, string outputFile)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Regex.IsMatch(sha, @"\A[0-9a-f]{40}\z")
+            || path is not null && !Regex.IsMatch(path,
+                AgentStudio.TaskServer.Contracts.ProjectDeploymentVocabulary.ArtifactPathPattern)) return false;
+        var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
+        if (!Directory.Exists(root)) return false;
+        string[] args = path is null or "."
+            ? ["archive", "--format=tar", "-o", outputFile, sha]
+            : ["archive", "--format=tar", "-o", outputFile, sha, path];
+        var (_, _, code) = RunGitArgs(root, args);
+        return code == 0 && File.Exists(outputFile);
     }
 
     /// <summary>

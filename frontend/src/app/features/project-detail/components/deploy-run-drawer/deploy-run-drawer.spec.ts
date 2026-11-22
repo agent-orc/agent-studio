@@ -1,7 +1,10 @@
+import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { DeployRunDrawerComponent, type DeployRunActionState } from './deploy-run-drawer';
 import { ModalStackService } from '../../../../services/modal-stack.service';
+import { ClientService } from '../../../../services/client.service';
 import type { DeployPanel, DeployRun, DeploymentLogLine } from '../../state/deploy-area.model';
 import { deployRunsFixture, deploymentLogFixture } from '../../testing/deploy-fixtures';
 
@@ -25,7 +28,7 @@ describe('DeployRunDrawerComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [DeployRunDrawerComponent],
-      providers: [provideZonelessChangeDetection()],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
     }).compileComponents();
     fixture = TestBed.createComponent(DeployRunDrawerComponent);
     document.body.appendChild(host());
@@ -70,6 +73,15 @@ describe('DeployRunDrawerComponent', () => {
     expect(text('deploy-run-approval')).toBe('Approved by local.owner');
     expect(byTestId('deploy-run-approval-state')!.dataset['tone']).toBe('success');
     expect(byTestId('deploy-run-approve')).toBeNull();
+  });
+
+  it('names the approver and requester by display name, not by user id', async () => {
+    TestBed.inject(ClientService).humanNames.set({ usr_ecaff70110: 'Ada Owner', usr_0b1d2c3e4f: 'Sam Maintainer' });
+    await render({ ...run('run-a-production'), approvedBy: 'usr_ecaff70110', requestedBy: 'usr_0b1d2c3e4f' });
+
+    expect(text('deploy-run-approval')).toBe('Approved by Ada Owner');
+    expect(host().textContent).toContain('Sam Maintainer');
+    expect(host().textContent).not.toContain('usr_');
   });
 
   it('offers approve, reject, and cancel while a run awaits approval, and emits the choice', async () => {

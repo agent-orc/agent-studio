@@ -99,6 +99,22 @@ public sealed class TelemetryAttributes
         return mapped is null ? this : new(mapped, IsShared);
     }
 
+    /// <summary>Masks both names and values before telemetry reaches durable storage.</summary>
+    public TelemetryAttributes MapText(Func<string, string> map)
+    {
+        KeyValuePair<string, string>[]? mapped = null;
+        for (var index = 0; index < _items.Length; index++)
+        {
+            var (key, value) = _items[index];
+            var maskedKey = map(key);
+            var maskedValue = map(value);
+            if (mapped is null && maskedKey == key && maskedValue == value) continue;
+            mapped ??= (KeyValuePair<string, string>[])_items.Clone();
+            mapped[index] = KeyValuePair.Create(maskedKey, maskedValue);
+        }
+        return mapped is null ? this : From(mapped, IsShared);
+    }
+
     private string Render()
     {
         var buffer = new ArrayBufferWriter<byte>();
@@ -146,6 +162,14 @@ public sealed record TelemetryLogRecord(
            + (TraceId?.Length ?? 0) + (SpanId?.Length ?? 0) + Encoding.UTF8.GetByteCount(EventName ?? "");
 }
 
+public sealed record TelemetrySpanRecord(string TraceId, string SpanId, string? ParentSpanId, string Name,
+    string Kind, long StartUnixNano, long EndUnixNano, bool Failed, TelemetryAttributes Attributes)
+{
+    public long StoredBytes(long attributesJsonBytes) => 96 + TraceId.Length + SpanId.Length
+        + (ParentSpanId?.Length ?? 0) + Encoding.UTF8.GetByteCount(Name) + Encoding.UTF8.GetByteCount(Kind)
+        + attributesJsonBytes;
+}
+
 /// <summary>
 /// What one OTLP request produced: accepted items, a count of rejected ones,
 /// the estimated memory the items hold, and the bytes the writer will store
@@ -159,7 +183,8 @@ public sealed record TelemetryIngestBatch(
     TelemetryEnvironmentKey Environment, IReadOnlyList<MetricSample> Metrics, IReadOnlyList<TelemetryLogRecord> Logs,
     long EstimatedBytes, long StoredBytes = 0, string? StageId = null)
 {
-    public int RecordCount => Metrics.Count + Logs.Count;
+    public IReadOnlyList<TelemetrySpanRecord> Spans { get; init; } = [];
+    public int RecordCount => Metrics.Count + Logs.Count + Spans.Count;
 }
 
 /// <summary>OTLP severity numbers 1 to 24 grouped in six ranges of four.</summary>

@@ -2928,13 +2928,14 @@ export class TaskService {
     return this.http.get<ProjectEnvironments>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments`);
   }
 
+  getProjectEnvironmentReleaseStatuses(projectName: string) {
+    return this.http.get<import('../features/project-detail/state/deploy-area.model').EnvironmentStatus[]>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/deploy/status`);
+  }
+
   decideProjectPromotion(projectName: string, artifact: string, approve: boolean) {
     const action = approve ? 'approve' : 'reject';
     return this.http.post<void>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments/promotions/${action}`, { artifact });
-  }
-
-  rollbackProjectEnvironment(projectName: string, environmentId: string) {
-    return this.http.post<void>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments/${encodeURIComponent(environmentId)}/rollback`, {});
   }
 
   /** Project-wide planned/running/completed test-run pipeline with derived card attachments. */

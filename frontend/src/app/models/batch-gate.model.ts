@@ -59,6 +59,7 @@ export interface BatchGateState {
   flightClaim?: { batchId: string; stage: string; stageDeadlineUtc: string; end?: unknown | null } | null;
   ejectRequests?: { project: string; taskKey: string; actor: string; reason: string;
     requestedAtUtc: string; status: 'pending' | 'released'; releasedAtUtc?: string | null }[];
+  infrastructureRetries?: InfrastructureRetryRequest[];
   perTaskGates?: { taskKey: string; reviewAttemptId: string; position: number; total: number;
     batchId?: string | null; reason: string; running: boolean; host?: string | null;
     startedAtUtc?: string | null; slotCapacity?: number;
@@ -139,27 +140,46 @@ export interface BatchGateState {
   quarantined?: BatchQuarantinedRecord[];
 }
 
+export interface InfrastructureRetryRequest {
+  requestId: string; project: string; taskKey: string; reviewAttemptId: string;
+  actor: string; requestedAtUtc: string; status: 'pending' | 'applied' | 'refused';
+  reason?: string | null; completedAtUtc?: string | null;
+}
+
 /** AGT-3858: a red batch run no isolation child reproduced, and its one same-code re-gate. */
 export interface BatchFlakySuspect {
   redRunId: string;
   failedTests: string[];
   markedAtUtc: string;
-  /** False once the re-gate reproduced the red. */
+  /** False once the re-gate reproduced the red or was interrupted. */
   active: boolean;
-  regate?: { regateBatchId: string; memberKeys: string[]; outcome: 'passed' | 'reproduced' | 'inconclusive' | string;
-    minutes: number; recordedAtUtc: string } | null;
+  regate?: { regateBatchId: string; memberKeys: string[];
+    outcome: 'passed' | 'reproduced' | 'unpublished' | 'requeued' | 'interrupted' | 'inconclusive' | string;
+    minutes: number; recordedAtUtc: string; reason?: string | null } | null;
 }
 
-/** AGT-3858: what the batch article says about a red no isolation child reproduced. */
-export function batchFlakySuspectLabel(suspect: BatchFlakySuspect): string {
+/**
+ * AGT-3858: what the batch article says about a red no isolation child reproduced.
+ * `leftIsolation` is true once the red batch is no longer red; a mark without a
+ * re-gate record then never gets one.
+ */
+export function batchFlakySuspectLabel(suspect: BatchFlakySuspect, leftIsolation = false): string {
   const tests = suspect.failedTests.length ? ` Failing tests: ${suspect.failedTests.join(', ')}.` : '';
   const regate = suspect.regate;
   const minutes = regate ? ` (${regate.minutes.toFixed(1)} min)` : '';
+  if (regate?.outcome === 'interrupted' || (!regate && leftIsolation))
+    return `Re-gate interrupted: no isolation child reproduced this red, and the same-code re-gate ended before it recorded a verdict. Its members continue through their own gates.${tests}`;
   if (!regate) return `Flaky suspect: no isolation child reproduced this red. The cohort is re-gated once on the same code.${tests}`;
   if (regate.outcome === 'passed')
     return `Flaky suspect: no isolation child reproduced this red, and the same-code re-gate passed${minutes}. No per-card suite ran.${tests}`;
   if (regate.outcome === 'reproduced')
     return `Not flaky: the same-code re-gate reproduced this red${minutes}. Its members continue through their own gates.${tests}`;
+  if (regate.outcome === 'unpublished') {
+    const why = regate.reason ? `: ${regate.reason}` : '';
+    return `Flaky suspect: the same-code re-gate passed${minutes}, but its publication did not land${why}. Its members continue through their own gates.${tests}`;
+  }
+  if (regate.outcome === 'requeued')
+    return `Flaky suspect: the same-code re-gate could not reach the gate host${minutes}. Its members were requeued to the batch pool.${tests}`;
   return `Flaky suspect: the same-code re-gate gave no test verdict${minutes}. Its members continue through their own gates.${tests}`;
 }
 

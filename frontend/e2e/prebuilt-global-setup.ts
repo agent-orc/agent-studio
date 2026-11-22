@@ -27,7 +27,7 @@ export default async function globalSetup(): Promise<void> {
     await authRequest.dispose();
     if (!auth.ok() || status.profile !== 'networked' || status.bootstrapRequired !== true)
       throw new Error('Prebuilt backend is not a fresh networked monolith.');
-  } else if (process.env.PW_E2E_PROFILE === 'networked-https') {
+  } else if (process.env.PW_E2E_PROFILE === 'networked-https' || process.env.PW_E2E_PROFILE === 'run-host') {
     // The throwaway certificate is self-signed; only this check trusts it.
     const tls = await request.newContext({ ignoreHTTPSErrors: true });
     const auth = await tls.get(`${process.env.PW_BASE_URL}/api/auth/status`);

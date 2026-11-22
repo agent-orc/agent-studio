@@ -3,7 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ProjectOperationsComponent } from './project-operations';
-import type { ProjectOperations } from './project-operations.model';
+import { ratio, type ProjectOperations } from './project-operations.model';
 
 const snapshot: ProjectOperations = {
   project: 'demo', since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
@@ -23,6 +23,38 @@ describe('ProjectOperationsComponent', () => {
     }).compileComponents();
   });
 
+  it('shows slow traces, their span waterfall, and a log link to the same trace', async () => {
+    const fixture = TestBed.createComponent(ProjectOperationsComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    const requests = TestBed.inject(HttpTestingController);
+    requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
+    await fixture.whenStable();
+    fixture.componentInstance.searchTraces();
+    requests.expectOne(req => req.url.endsWith('/environments/prod/telemetry/traces')).flush([
+      { traceId: '11111111111111111111111111111111', startedAt: '2026-10-20T00:00:00Z',
+        durationMs: 900, failed: true, name: 'GET /checkout', spanCount: 2 },
+    ]);
+    await fixture.whenStable();
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('GET /checkout');
+    fixture.componentInstance.search();
+    requests.expectOne(req => req.url.endsWith('/deploy/operations/logs')).flush({ telemetryAvailable: true,
+      lines: [{ at: '2026-10-20T00:00:00Z', level: 'ERROR', message: 'Timeout', releaseId: null,
+        traceId: '11111111111111111111111111111111' }] });
+    await fixture.whenStable();
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="operations-log-trace"]')!.click();
+    requests.expectOne(req => req.url.endsWith('/traces/11111111111111111111111111111111')).flush([
+      { spanId: '2222222222222222', parentSpanId: null, name: 'GET /checkout', kind: 'SERVER',
+        startedAt: '2026-10-20T00:00:00Z', durationMs: 900, failed: true, attributes: {} },
+      { spanId: '3333333333333333', parentSpanId: '2222222222222222', name: 'inventory HTTP', kind: 'CLIENT',
+        startedAt: '2026-10-20T00:00:00.100Z', durationMs: 780, failed: true, attributes: {} },
+    ]);
+    await fixture.whenStable();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelectorAll('[data-testid="operations-span-waterfall"] li')).toHaveLength(2);
+    expect(host.textContent).toContain('inventory HTTP');
+  });
+
   it('shows unavailable telemetry without invented numbers and links a rollback to release and card', async () => {
     const fixture = TestBed.createComponent(ProjectOperationsComponent);
     fixture.componentRef.setInput('projectName', 'demo');
@@ -30,7 +62,7 @@ describe('ProjectOperationsComponent', () => {
     TestBed.inject(HttpTestingController).expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
     await fixture.whenStable();
     const host = fixture.nativeElement as HTMLElement;
-    expect(host.textContent).toContain('Telemetry is not available yet');
+    expect(host.textContent).toContain('Telemetry is turned off in this Studio');
     expect(host.textContent).toContain('rollback · succeeded');
     expect(host.querySelector<HTMLElement>('[data-testid="operations-marker-state"]')?.dataset['tone']).toBe('success');
     expect(host.textContent).toContain('0.5 per week');
@@ -66,6 +98,35 @@ describe('ProjectOperationsComponent', () => {
     request.flush({ telemetryAvailable: false, lines: [] });
     await fixture.whenStable();
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="operations-logs-empty"]')).not.toBeNull();
+  });
+
+  it('loads another log page without losing the first page and names a failed store read', async () => {
+    const fixture = TestBed.createComponent(ProjectOperationsComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    const requests = TestBed.inject(HttpTestingController);
+    requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
+    await fixture.whenStable();
+    const view = fixture.componentInstance;
+    view.search();
+    requests.expectOne(req => req.url.endsWith('/deploy/operations/logs')).flush({
+      telemetryAvailable: true, nextCursor: 'page-2',
+      lines: [{ at: '2026-10-20T10:00:00Z', level: 'ERROR', message: 'First error', releaseId: null }],
+    });
+    await fixture.whenStable();
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="operations-more-logs"]')!.click();
+    const next = requests.expectOne(req => req.url.endsWith('/deploy/operations/logs'));
+    expect(next.request.params.get('cursor')).toBe('page-2');
+    next.flush({ telemetryAvailable: true, nextCursor: null,
+      lines: [{ at: '2026-10-20T09:00:00Z', level: 'ERROR', message: 'Second error', releaseId: null }] });
+    await fixture.whenStable();
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('First error');
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Second error');
+    view.search();
+    requests.expectOne(req => req.url.endsWith('/deploy/operations/logs')).flush(
+      { error: 'Operations telemetry store read failed.' }, { status: 503, statusText: 'Service Unavailable' });
+    await fixture.whenStable();
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Operations telemetry store read failed.');
   });
 
   it('searches logs for a long-running release whose arrival predates the trend window', async () => {
@@ -157,5 +218,11 @@ describe('ProjectOperationsComponent', () => {
     fixture.componentInstance.openRelease.subscribe(id => releases.push(id));
     host.querySelector<SVGGElement>('.trend__marker-link')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(releases).toEqual(['rel-1']);
+  });
+
+  it('shows used CPU and memory when the intake reports no reservation', () => {
+    expect(ratio(0.25, null, ' cores')).toBe('0.3 cores');
+    expect(ratio(null, 2, ' cores')).toBe('No data');
+    expect(ratio(1, 2, ' cores')).toBe('1 cores / 2 cores');
   });
 });

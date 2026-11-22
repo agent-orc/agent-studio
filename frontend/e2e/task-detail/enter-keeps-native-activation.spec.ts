@@ -152,7 +152,7 @@ test.describe('Enter keeps native activation while a card detail is open (AGT-38
         await expectNoMove(page, moves, 'Previous results');
 
         // The footer usage chip opens the usage detail.
-        const usageChip = page.getByTestId('status-bar').locator('[data-usage-trigger]').first();
+        const usageChip = page.getByTestId('footer-usage-cost');
         await expect(usageChip).toBeVisible({ timeout: 30_000 });
         await pressEnterOn(usageChip);
         await expect(page.getByTestId('usage-detail-surface')).toBeVisible();
@@ -203,6 +203,23 @@ test.describe('Enter keeps native activation while a card detail is open (AGT-38
         await surface.focus();
         await expect(surface).toBeFocused({ timeout: 500 });
       }).toPass({ timeout: 10_000 });
+
+      // The deferred usage surface remains mounted after its native dialog closes.
+      const usageChip = page.getByTestId('footer-usage-cost');
+      await expect(usageChip).toBeVisible({ timeout: 30_000 });
+      await usageChip.click();
+      const usage = page.getByTestId('usage-detail-surface');
+      await expect(usage).toHaveAttribute('open', '');
+      // Focusing outside the desktop popover closes it, so dispatch the card
+      // event without changing focus while the dialog still owns the keyboard.
+      await surface.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter', bubbles: true, cancelable: true,
+      })));
+      await expect(usage).toHaveAttribute('open', '');
+      await expectNoMove(page, moves, 'the card surface with usage open');
+      await page.getByTestId('usage-detail-close').click();
+      await expect(usage).not.toHaveAttribute('open', '');
+      await expect(usage).toHaveCount(1);
 
       // An open menu owns Enter even after focus returns to the card surface.
       await page.getByTestId('studio-triage-overflow-btn').click();

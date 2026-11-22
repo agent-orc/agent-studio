@@ -6,6 +6,12 @@
 .studio {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
+  // Keep shell tracks stable when a projected or keyboard-entry child enters
+  // the grid. The skip links stay first in DOM order for keyboard navigation.
+  > .studio-titlebar { grid-row: 1; }
+  > app-workspace-quota-banner { grid-row: 2; }
+  > .studio-body { grid-row: 3; }
+  > .studio-statusbar { grid-row: 4; }
   // Single-column track, but explicit minmax(0, 1fr) so the column does
   // NOT grow to the intrinsic min-content of its children. Without
   // this, the implicit `auto` single-column expanded to the
@@ -1558,7 +1564,12 @@
     // the tab list shrinks (overflow-x: auto), the actions don't.
     white-space: nowrap;
 
-    &:empty {
+    // The projected `[studioTabActions]` wrapper is always present, so the
+    // strip is empty when the actions component inside it rendered nothing
+    // (a task route before its card resolves). An empty strip on a phone
+    // stacked into a blank band under the tab bar (the playthrough).
+    &:empty,
+    &:not(:has(> * > :not(:empty))) {
       display: none;
     }
   }

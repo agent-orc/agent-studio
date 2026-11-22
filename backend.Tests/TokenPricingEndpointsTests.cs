@@ -1,4 +1,5 @@
 using Xunit;
+using AgentStudio.Runner;
 
 // clock-independent: catalog prices at an explicit recordedAt.
 namespace AgentStudio.Tests;
@@ -10,9 +11,23 @@ namespace AgentStudio.Tests;
 /// </summary>
 public class TokenPricingEndpointsTests
 {
-    private static TokenSummaryByModel Model(string label, int calls, long input, long output, bool inCatalog)
-        => new(label, calls, input, output, 0, 0, inCatalog ? 1.23m : 0m, inCatalog, inCatalog);
+    [Fact]
+    public void Workspace_one_shot_without_price_appears_in_footer_and_week_list()
+    {
+        var now = new DateTime(2026, 11, 16, 12, 0, 0, DateTimeKind.Utc);
+        var calendar = UsageCockpitProjection.Calendar(now, "Etc/UTC", DayOfWeek.Monday);
+        var receiptAt = DateTime.SpecifyKind(new DateTime(2026, 11, 16, 0, 30, 0), DateTimeKind.Unspecified);
+        var receipt = new OrchestratorLogEntry { Ts = receiptAt, JobId = "one-shot", TokenUsage =
+            new OrchestratorTokenUsage { Model = "future-one-shot", InputTokens = 37, OutputTokens = 5 } };
+        var sources = new[] { new UsageCostInput(null, "Unattributed one-shot jobs", [receipt],
+            new ProjectTokenDataFreshness { Status = "complete" }) };
 
+        Assert.Equal(1, UsageCockpitProjection.Cost(TokenTestServices.Pricing(), calendar, sources, now).UnpricedWeekRuns);
+        var row = Assert.Single(TokenPricingEndpoints.SelectUnpricedModels(TokenTestServices.Pricing(), calendar, sources));
+        Assert.Equal("future-one-shot", row.Model);
+        Assert.Equal(1, row.Calls);
+        Assert.Equal(42, row.TotalTokens);
+    }
     [Fact]
     public void CalculateItems_LabelsIdsAndBareAliasesUseTheSameCatalogPrices()
     {
@@ -32,42 +47,50 @@ public class TokenPricingEndpointsTests
     }
 
     [Fact]
-    public void SelectUnpricedModels_ReturnsRowsWithoutHistoricalPrices()
+    public void Week_list_excludes_old_calls_and_priced_calls_of_the_same_model()
     {
-        var aggregate = TokenSummaryFold.ForWorkspace([
-            ("proj-a", new TokenSummary(
-                "proj-a", 4, 4, 1_150, 115, 0, 0, 1.23m, AllModelsPriced: false, UnknownModelCount: 1,
-                ByModel: [
-                    Model("claude-opus-4-7", calls: 1, input: 1_000, output: 100, inCatalog: true),
-                    Model("Future Model", calls: 1, input: 100, output: 10, inCatalog: false)
-                        with { ModelId = "some-future-model" },
-                    Model("Dated Model", calls: 2, input: 50, output: 5, inCatalog: true)
-                        with { ModelId = "dated-model", ModelPriced = false, EstimatedApiCostUsd = 0m },
-                ],
-                FirstActivity: null, LastActivity: null, Disclaimer: TokenCostDisclaimer.Text)),
-        ]);
-
-        var unpriced = TokenPricingEndpoints.SelectUnpricedModels(aggregate);
-
-        Assert.Equal(2, unpriced.Count);
-        var row = unpriced[0];
-        Assert.Equal("some-future-model", row.Model);
+        var now = new DateTime(2026, 11, 18, 12, 0, 0, DateTimeKind.Utc);
+        var calendar = UsageCockpitProjection.Calendar(now, "Etc/UTC", DayOfWeek.Monday);
+        var sources = new[] { new UsageCostInput("P1", "One", [
+            Receipt("mixed-model", now.AddDays(-8), 100),
+            Receipt("mixed-model", now.AddDays(-1), 20),
+            Receipt("mixed-model", now, 5),
+        ], new ProjectTokenDataFreshness { Status = "complete" }) };
+        var rows = TokenPricingEndpoints.SelectUnpricedModels(new DatePricing(now), calendar, sources);
+        var row = Assert.Single(rows);
+        Assert.Equal("mixed-model", row.Model);
         Assert.Equal(1, row.Calls);
-        Assert.Equal(110L, row.TotalTokens);
-        Assert.Equal(0m, row.RecordedCostUsd);
-        Assert.Equal("dated-model", unpriced[1].Model);
+        Assert.Equal(20, row.TotalTokens);
     }
 
     [Fact]
-    public void SelectUnpricedModels_EveryModelKnown_ReturnsEmpty()
+    public void Workspace_bus_attribution_keeps_unpriced_one_shot_in_project_row()
     {
-        var aggregate = TokenSummaryFold.ForWorkspace([
-            ("proj-a", new TokenSummary(
-                "proj-a", 1, 1, 1_000, 100, 0, 0, 1.23m, AllModelsPriced: true, UnknownModelCount: 0,
-                ByModel: [Model("claude-opus-4-7", calls: 1, input: 1_000, output: 100, inCatalog: true)],
-                FirstActivity: null, LastActivity: null, Disclaimer: TokenCostDisclaimer.Text)),
-        ]);
+        var now = new DateTime(2026, 11, 18, 12, 0, 0, DateTimeKind.Utc);
+        var calendar = UsageCockpitProjection.Calendar(now, "Etc/UTC", DayOfWeek.Monday);
+        var bus = new WorkspaceBusUsage(new Dictionary<string, IReadOnlyList<OrchestratorLogEntry>>
+        { ["P1"] = [Receipt("future-bus-model", now, 17)] }, []);
+        var sources = new[] { new UsageCostInput("P1", "One", bus.MergeInto("P1", []),
+            new ProjectTokenDataFreshness { Status = "complete" }) };
+        Assert.Equal(1, UsageCockpitProjection.Cost(TokenTestServices.Pricing(), calendar, sources, now).UnpricedWeekRuns);
+        Assert.Equal(17, Assert.Single(TokenPricingEndpoints.SelectUnpricedModels(
+            TokenTestServices.Pricing(), calendar, sources)).TotalTokens);
+    }
 
-        Assert.Empty(TokenPricingEndpoints.SelectUnpricedModels(aggregate));
+    private static OrchestratorLogEntry Receipt(string model, DateTime at, int input)
+        => new() { Ts = at, TokenUsage = new OrchestratorTokenUsage { Model = model, InputTokens = input } };
+
+    private sealed class DatePricing(DateTime pricedAt) : ITokenPricing
+    {
+        private readonly ITokenPricing _base = TokenTestServices.Pricing();
+        public TokenCostEstimate Estimate(string? modelId, long inputTokens, long outputTokens,
+            long cacheReadTokens, long cacheCreationTokens, DateTime? recordedAt = null)
+            => _base.Estimate("gpt-5.6-sol", inputTokens, outputTokens, cacheReadTokens,
+                cacheCreationTokens, recordedAt) with { ModelKnown = recordedAt >= pricedAt };
+
+        public IReadOnlyList<PricedTokenEntry> Price(IReadOnlyList<OrchestratorLogEntry> ledger)
+            => ledger.Select(entry => new PricedTokenEntry(entry, entry.TokenUsage is { } usage
+                ? Estimate(usage.Model, usage.InputTokens, usage.OutputTokens,
+                    usage.CacheReadTokens, usage.CacheCreationTokens, entry.Ts) : null)).ToList();
     }
 }

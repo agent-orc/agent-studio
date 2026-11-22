@@ -14,6 +14,8 @@ public sealed record DeploymentRecord
     public required string ReleaseId { get; init; }
     public required string EnvironmentId { get; init; }
     public string? Tenant { get; init; }
+    public string? IncidentId { get; init; }
+    public string? IncidentCardId { get; init; }
     public required string State { get; init; }
     public required string Trigger { get; init; }
     /// <summary><c>publish-static</c> or <c>start-container</c>, from the environment template.</summary>
@@ -138,5 +140,17 @@ public static class DeploymentStepPlan
         var healthAt = healthState is DeploymentStates.Succeeded or DeploymentStates.Failed ? run.FinishedAtUtc : null;
         steps.Add(new(DeployStepNames.Health, healthState, healthAt, healthAt));
         return steps;
+    }
+
+    /// <summary>
+    /// Run-level lines are written under the template step (<c>start-container</c>).
+    /// A schema 2 run has no such step, so its lines belong to the step that
+    /// failed, else to its first declared step (F18).
+    /// </summary>
+    public static string LogStepFor(DeploymentRecord run, string step)
+    {
+        if (run.SshStepNames.Count == 0 || step != run.DeployStep || run.SshStepNames.Contains(step)) return step;
+        var failed = run.StepResults.FirstOrDefault(item => !item.Succeeded)?.Name;
+        return failed is not null && run.SshStepNames.Contains(failed) ? failed : run.SshStepNames[0];
     }
 }

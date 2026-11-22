@@ -91,20 +91,19 @@ test('a second URL project creates its server checkout from the UI and integrate
   expect(branch.ok(), await branch.text()).toBeTruthy();
 
   // Settings: one actionable notice before the first card runs.
+  const verifyGate = page.waitForResponse(response => response.url().endsWith('/build-profile'));
   await page.goto(`/#/projects/${encodeURIComponent(name.toLowerCase().replaceAll(' ', '-'))}/settings`);
   const basics = page.getByTestId('project-basics-card');
   const settingsNotice = basics.getByTestId('server-checkout-notice');
   await expect(settingsNotice).toHaveAttribute('data-state', 'missing', { timeout: 30_000 });
   await expect(settingsNotice).toContainText(FIRST_RUN_ORIGIN);
   await capture(page, settingsNotice, 'settings-notice');
-  const verifyNotice = page.getByTestId('project-settings-no-verify-commands').first();
-  await expect(verifyNotice).toContainText('repository checkout is missing');
-  await expect(verifyNotice).not.toContainText('cannot be derived');
-  await expect(verifyNotice.getByTestId('project-settings-verify-example')).toHaveCount(0);
-  await expect(verifyNotice.getByRole('link', { name: 'Set the repository checkout path' }))
-    .toHaveAttribute('href', '#project-basics-repository-path');
-  await expect(page.locator('#project-basics-repository-path')).toBeVisible();
-  await capture(page, verifyNotice, 'settings-verify-without-checkout');
+  expect(await (await verifyGate).json()).toMatchObject({ verifyDefinition: { state: 'checkout-missing' } });
+  // The verify notice would repeat the cause and point at the path field, which needs an existing checkout.
+  await expect(page.getByTestId('server-checkout-create')).toHaveCount(1);
+  await expect(page.getByTestId('project-settings-no-verify-commands')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Set the repository checkout path' })).toHaveCount(0);
+  await capture(page, page.getByRole('region', { name: 'Project basics' }), 'settings-basics-without-checkout');
 
   // Board and Ready card show the same notice.
   await page.goto('/');

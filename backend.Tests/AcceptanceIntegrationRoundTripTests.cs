@@ -1067,11 +1067,12 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             NullLogger<StallInterventionReceipts>.Instance);
         var escalation = new HumanReviewEscalation(deps.States, deps.Transitions,
             _tempDir, NullLogger.Instance, deps.Scanner);
+        var watchdogTime = new FakeTimeProvider(new DateTimeOffset(clock));
         var watchdog = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
             lifecycle, new BatchGateStore(_tempDir), null!, deps.Settings,
             deps.Pipeline, new AutoReviewPostProcessingQueue(), deps.Transitions,
             null!, escalation, records, receipts, deps.Configuration,
-            NullLogger<AutoReviewStrandingWatchdog>.Instance);
+            NullLogger<AutoReviewStrandingWatchdog>.Instance, time: watchdogTime);
 
         Assert.Equal(1, await watchdog.RunOnceAsync());
         var first = Assert.Single(records.All());
@@ -1093,6 +1094,10 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.True(undone.Undone, undone.Message);
         Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
         Assert.False((await watchdog.UndoParkAsync(first.Id, "operator")).Undone);
+
+        Assert.Equal(0, await watchdog.RunOnceAsync());
+        clock = clock.AddMinutes(31);
+        watchdogTime.Advance(TimeSpan.FromMinutes(31));
 
         // A second visit gets a distinct receipt, then Retry review mints a
         // successor from the same immutable run without a coding attempt.
@@ -4367,7 +4372,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     private static void WriteBatchEvidence(BatchGateStore batches, string batchId,
-        string baseSha, string candidateSha)
+        string baseSha, string candidateSha, string? outcome = "pass", bool published = true)
     {
         var folder = batches.BatchDirectory(batchId);
         var runs = Path.Combine(folder, "runs");
@@ -4379,14 +4384,18 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         File.WriteAllText(Path.Combine(folder, "manifest.json"), JsonSerializer.Serialize(
             new BatchGateManifest(batchId, scope, baseSha, "membership", at, [], [], []), options));
-        File.WriteAllText(Path.Combine(folder, "publication.json"), JsonSerializer.Serialize(
-            new BatchGatePublication(batchId, "membership", "run", baseSha, candidateSha,
-                candidateSha, 1, 1, at), options));
-        var runFile = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("run")))
-            + ".verdict.json";
-        File.WriteAllText(Path.Combine(runs, runFile), JsonSerializer.Serialize(
-            new BatchGateRunVerdict("run", batchId, "membership", candidateSha, "digest",
-                "pass", "pass", evidence, at), options));
+        if (published)
+            File.WriteAllText(Path.Combine(folder, "publication.json"), JsonSerializer.Serialize(
+                new BatchGatePublication(batchId, "membership", "run", baseSha, candidateSha,
+                    candidateSha, 1, 1, at), options));
+        var runName = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("run")));
+        File.WriteAllText(Path.Combine(runs, runName + ".json"), JsonSerializer.Serialize(
+            new BatchGateRunRecord("run", batchId, "membership", baseSha, candidateSha,
+                "profile", "digest", "gate-host", 1, ["dotnet test"], at, evidence), options));
+        if (outcome is not null)
+            File.WriteAllText(Path.Combine(runs, runName + ".verdict.json"), JsonSerializer.Serialize(
+                new BatchGateRunVerdict("run", batchId, "membership", candidateSha, "digest",
+                    outcome, outcome, evidence, at), options));
     }
 
     private string PublishLaterCommit(string name, string? netChangeOf = null)

@@ -14,6 +14,16 @@ function ready(capability: RemoteHostCapabilityHealth): boolean {
 
 /** A host role's observable progression; project eligibility also needs H2 origin proof. */
 export function hostReadiness(host: RemoteHost, now: number): HostReadiness {
+  // F4: a run host has no Task Server host identity; its deploy claims and reports are its connection.
+  if (host.serviceRole === 'deploy') return host.status === 'online' ? {
+    state: 'capability-ready', reason: 'The run host claimed or reported within the last two minutes.',
+    action: 'Name its id as the targetHostId of each environment it serves.',
+  } : {
+    state: 'enrolled', reason: host.lastHeartbeatAt
+      ? 'The run host has not claimed or reported for over two minutes.'
+      : 'The run host is enrolled but has not claimed yet.',
+    action: 'Start agent-runner-deploy.service on the host and check its journal.',
+  };
   if (!host.runnerInstanceId || !host.capacityHostId) return {
     state: 'not-enrolled', reason: 'No Task Server host identity and daemon instance reported.',
     action: 'Enrol this host and wait for its first capability advertisement.',

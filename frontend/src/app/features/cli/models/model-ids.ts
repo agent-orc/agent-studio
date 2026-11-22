@@ -2,6 +2,7 @@
 // server catalog/defaults load. Selectable model lists still come from /api/cli.
 export const MODEL_IDS = {
   claudeOpus5: 'claude-opus-5',
+  claudeFable52: 'claude-fable-5-2',
   claudeFable51: 'claude-fable-5-1',
   claudeSonnet5: 'claude-sonnet-5',
   claudeOpus47: 'claude-opus-4-7',

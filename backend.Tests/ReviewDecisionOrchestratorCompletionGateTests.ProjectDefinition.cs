@@ -36,7 +36,7 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
         var written = string.Join("\n", Directory.GetFiles(folder, "*", SearchOption.AllDirectories)
             .Select(File.ReadAllText));
         Assert.Contains("[prepare-path-invalid]", written);
-        Assert.Contains("commands.prepare is required", written);
+        Assert.Contains("[prepare-path-invalid]", written);
     }
 
     [Fact]

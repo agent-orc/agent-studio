@@ -76,9 +76,7 @@ public sealed class IntegrationWorktreeProvider
         string? integrationBranch,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
-            || !Directory.Exists(Path.Combine(repoRoot, ".git"))
-                && !File.Exists(Path.Combine(repoRoot, ".git")))
+        if (!HasUsableCheckout(repoRoot))
             return IntegrationWorktreeResolution.MissingCheckout(
                 "This project needs a server checkout before delivery can integrate. Integration worktree preparation cannot continue. Open Project Settings, configure a checkout on the Studio server, then retry integration.");
         if (cancellationToken.IsCancellationRequested)
@@ -140,6 +138,11 @@ public sealed class IntegrationWorktreeProvider
             "No integration worktree could be prepared for this project"
             + (string.IsNullOrWhiteSpace(lastError) ? "." : $": {lastError}"));
     }
+
+    internal static bool HasUsableCheckout(string? repoRoot)
+        => !string.IsNullOrWhiteSpace(repoRoot) && Directory.Exists(repoRoot)
+           && (Directory.Exists(Path.Combine(repoRoot, ".git"))
+               || File.Exists(Path.Combine(repoRoot, ".git")));
 
     private static IntegrationWorktreeState Observe(
         string repoRoot,

@@ -65,9 +65,9 @@ coding and review host processes as the first-run profile. Its fake coding CLI
 authors a contract-valid Dossier in the claimed worktree. The spec enrolls a
 throwaway pull gate worker against the isolated backend, records the initial
 run and a follow-up, and checks Dossier publication, owner choices, promotion,
-Promotion, the first slice start and the concept's acceptance go through the
-Studio controls. Promotion leaves the concept in Human Review; only Accept
-completes it. Before the concept starts, the spec samples both hosts through
+the first slice start, and completion through Accept in the Studio controls.
+Promotion leaves the concept in Human Review; only Accept completes it.
+Before the concept starts, the spec samples both hosts through
 two provider-auth probe cycles (about seven idle minutes) and requires
 `provider-auth:codex` to stay ready. The concept wrapper is installed as
 `bin/concept/codex` for the coding host only, because the runner names the
@@ -75,6 +75,18 @@ provider after the CLI file name. It then runs one promoted coding slice
 through a batch gate executed by the pull worker.
 The profile does not contact an SSH host or use a real provider
 credential. Screenshots go to `JOB_RESULTS_DIR` when set.
+
+### Deploy lifecycle on a real backend
+
+Run `npm --prefix frontend run e2e -- e2e/project/deploy-staging-retry-production-approval.spec.ts`.
+The `deploy-lifecycle` profile (`scripts/deploy-lifecycle-e2e-fixture.sh`)
+adds a "Deploy Fixture" project whose `develop` branch declares Staging and
+Production with `.invalid` health URLs and `delivery.fullSuite: off`, and sets
+`Deploy:ReleaseEvidenceRoot` inside the disposable workspace. The spec writes
+the gate's release evidence, posts the gate release with a `runner.release`
+credential and plays the deploy host over the claim and report routes; every
+person's step (Staging retry, Production approval) goes through the Deploy
+area. Screenshots go to `JOB_RESULTS_DIR` when set.
 
 Run `npm --prefix frontend run e2e -- e2e/settings/second-project-server-checkout.spec.ts`
 for the AGT-3809 journey on the `first-run` profile. It verifies Git access
@@ -136,6 +148,17 @@ a project by URL, creates its first card, and verifies the integrated file on
 the origin. The spec makes no direct application API calls.
 With `JOB_RESULTS_DIR` set, it writes light, dark and 390 px checkout screenshots
 and an integration screenshot to `networked-project-checkout/`.
+
+### Run host enrollment (F4)
+
+Run `npm --prefix frontend run e2e -- e2e/settings/run-host-enrollment.spec.ts`.
+The `run-host` profile is a fresh networked monolith over HTTPS with a private
+encryption key, so the Owner can seal a second factor. The browser issues a
+run host code from Hosts > Add host > Run host (deploy). The test enrolls with
+that code and makes one deploy claim with the run host credential. Hosts must
+then list the run host online, with no "Not enrolled" tag. With
+`JOB_RESULTS_DIR` set, it writes light and dark wizard and Hosts screenshots to
+`run-host-enrollment/`.
 
 ### Product card detail check
 

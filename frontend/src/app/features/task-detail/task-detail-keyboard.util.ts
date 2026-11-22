@@ -4,9 +4,21 @@ const TASK_NAVIGATION_SELECTOR =
 /** The focusable card surfaces (`DetailKeyboardSurfaceDirective` hosts). */
 const CARD_SURFACE_SELECTOR = '[data-detail-keyboard-surface]';
 
-/** Overlays that own the keyboard while they are rendered. */
+/** Overlays that can own the keyboard while open or rendered. */
 const OPEN_OVERLAY_SELECTOR =
   'dialog[open], [role="dialog"], [role="alertdialog"], [aria-modal="true"], [role="menu"]';
+
+function overlayOwnsKeyboard(element: Element): boolean {
+  // A native dialog retains its role after close(), including the usage
+  // surface kept alive by @defer in both shell hosts.
+  if (element instanceof HTMLDialogElement) return element.open;
+  for (let node: Element | null = element; node; node = node.parentElement) {
+    if (node.hasAttribute('hidden') || node.getAttribute('aria-hidden') === 'true') return false;
+    const style = getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+  }
+  return true;
+}
 
 /** The card primary action's `aria-keyshortcuts` value and accessible description. */
 export const TASK_DETAIL_PRIMARY_SHORTCUT = {
@@ -37,7 +49,7 @@ export function taskDetailPrimaryShortcutAllowed(event: KeyboardEvent): boolean 
   if (!taskDetailShortcutTargetAllowed(event)) return false;
   const target = event.target;
   if (!(target instanceof HTMLElement) || !target.matches(CARD_SURFACE_SELECTOR)) return false;
-  return target.ownerDocument.querySelector(OPEN_OVERLAY_SELECTOR) === null;
+  return !Array.from(target.ownerDocument.querySelectorAll(OPEN_OVERLAY_SELECTOR)).some(overlayOwnsKeyboard);
 }
 
 export function taskNavigationOwnsFocus(event: KeyboardEvent): boolean {

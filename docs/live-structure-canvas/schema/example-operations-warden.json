@@ -1,0 +1,137 @@
+{
+  "schemaVersion": "structure-view-spec/v1",
+  "id": "ows-2026-11-17-2130",
+  "revision": 3,
+  "persona": {
+    "id": "operations-warden",
+    "role": "operations",
+    "title": "Operations warden"
+  },
+  "createdAt": "2026-11-17T21:30:00Z",
+  "model": {
+    "capabilityClass": "balanced",
+    "id": "claude-sonnet-5-5"
+  },
+  "confidence": 0.86,
+  "tokens": {
+    "input": 9400,
+    "output": 1100
+  },
+  "factsUsed": [
+    "backups.overview@2026-11-17T21:30Z",
+    "structure.dataLocations@seq1838",
+    "structure.volumes@seq1838",
+    "capabilities.credentials@2026-11-17T21:25Z"
+  ],
+  "headline": "One of six locations that must survive a disk loss has an off-host copy.",
+  "judgement": "Only the committed part of the workspace leaves the server, through its git remote. The workspace local state, the application state, the CLI logins and both keys have no off-host copy; the application state's only copy is an 8-day-old snapshot on the same RAID pair. RAID 1 survives one failed disk, not deletion, corruption or the loss of the server.",
+  "layers": {
+    "enable": [
+      "backup",
+      "warnings"
+    ],
+    "emphasise": "backup"
+  },
+  "emphasis": [
+    {
+      "node": "c-api",
+      "weight": "strong"
+    },
+    {
+      "node": "m-studio",
+      "weight": "strong"
+    },
+    {
+      "node": "tgt-offhost",
+      "weight": "normal"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "a1",
+      "node": "c-api",
+      "tone": "bad",
+      "title": "No backup here",
+      "text": "Workspace local state and application state have no off-host copy.",
+      "factRefs": [
+        "dl-workspace-local",
+        "dl-appstate"
+      ]
+    },
+    {
+      "id": "a2",
+      "node": "m-studio",
+      "tone": "bad",
+      "title": "Secret store key not escrowed",
+      "text": "Without a copy, sealed secrets cannot be opened after a rebuild.",
+      "factRefs": [
+        "dl-secrets-key"
+      ]
+    },
+    {
+      "id": "a3",
+      "node": "tgt-offhost",
+      "tone": "warn",
+      "title": "No off-host target",
+      "text": "Choose one; the backup job needs it and a backup key.",
+      "factRefs": [
+        "backups.offHost"
+      ]
+    },
+    {
+      "id": "a4",
+      "node": "m-studio",
+      "tone": "warn",
+      "title": "Disk fills in about 21 days",
+      "text": "84 % used, about 0.9 GB a day.",
+      "factRefs": [
+        "v-root"
+      ]
+    }
+  ],
+  "ranking": [
+    "w-backup-workspace-local",
+    "w-secrets-key",
+    "w-backup-appstate",
+    "w-disk",
+    "w-cred",
+    "w-toolchain",
+    "w-release",
+    "w-parked",
+    "w-drift"
+  ],
+  "goals": [
+    {
+      "id": "backup-coverage",
+      "title": "Every must-keep location has a verified off-host copy",
+      "done": 1,
+      "total": 6,
+      "steps": [
+        {
+          "kind": "owner-decision",
+          "title": "Choose the off-host target",
+          "detail": "Decision D9 of this Dossier; SFTP to a second site is recommended.",
+          "state": "open"
+        },
+        {
+          "kind": "owner-decision",
+          "title": "Decide key custody",
+          "detail": "Backup key and secret store key escrowed apart, as two password manager entries.",
+          "state": "open"
+        },
+        {
+          "kind": "card",
+          "title": "Configure the Studio backup and verify one restore",
+          "detail": "Backup:KeyFile, Backup:Target, sources workspace, home, stack; first verified archive.",
+          "state": "proposed"
+        },
+        {
+          "kind": "card",
+          "title": "Record escrow attestations",
+          "detail": "Owner attests both key copies by fingerprint; the view shows the date.",
+          "state": "proposed"
+        }
+      ]
+    }
+  ]
+}

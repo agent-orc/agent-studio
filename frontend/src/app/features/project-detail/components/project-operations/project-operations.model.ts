@@ -25,12 +25,17 @@ export interface DoraSummary {
 export interface ProjectOperations {
   project: string; since: string; until: string; environments: EnvironmentOperations[]; dora: DoraSummary;
 }
-export interface OperationsLogLine { at: string; level: string; message: string; releaseId: string | null }
-export interface OperationsLogResult { telemetryAvailable: boolean; lines: OperationsLogLine[] }
+export interface OperationsLogLine { at: string; level: string; message: string; releaseId: string | null; traceId?: string | null }
+export interface OperationsLogResult { telemetryAvailable: boolean; lines: OperationsLogLine[]; nextCursor?: string | null }
+export interface OperationsTrace { traceId: string; startedAt: string; durationMs: number; failed: boolean; name: string; spanCount: number }
+export interface OperationsSpan { spanId: string; parentSpanId: string | null; name: string; kind: string;
+  startedAt: string; durationMs: number; failed: boolean; attributes: Record<string, string> }
 
 export function metric(value: number | null | undefined, unit = ''): string {
   return value === null || value === undefined ? 'No data' : `${Number(value.toFixed(1)).toLocaleString('en-US')}${unit}`;
 }
+/** Used against reserved; without a reservation the used value still shows. */
 export function ratio(used: number | null, reserved: number | null, unit: string): string {
-  return used === null || reserved === null ? 'No data' : `${metric(used, unit)} / ${metric(reserved, unit)}`;
+  if (used === null) return 'No data';
+  return reserved === null ? metric(used, unit) : `${metric(used, unit)} / ${metric(reserved, unit)}`;
 }

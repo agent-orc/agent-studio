@@ -166,7 +166,7 @@ public sealed partial class BatchGatePilotService
     {
         if (!HasAttributedCurrentDelivery(task, sourceRun))
             throw new InvalidOperationException(
-                "Commit attribution is missing for this reviewed delivery. The card cannot enter a batch.");
+                MissingAttributionMessage(task, sourceRun));
         var priorOwnership = BatchGateOwnershipStore.Read(task.FolderPath);
         if (task.State == TaskStates.AutoReview
             && priorOwnership?.ReviewAttemptId == review.AttemptId
@@ -201,7 +201,7 @@ public sealed partial class BatchGatePilotService
         if (!HasAttributedCurrentDelivery(task, sourceRun))
         {
             await EscalateFallbackAsync(task, pending,
-                "Commit attribution is missing for this reviewed delivery. Check the run completion warning before retrying the batch.",
+                MissingAttributionMessage(task, sourceRun),
                 infrastructure: false, recordInStore: false, ct,
                 resolution: "release-unattributed").ConfigureAwait(false);
             return;
@@ -216,6 +216,38 @@ public sealed partial class BatchGatePilotService
         => sourceRun.ResultEnvelope is { } envelope && task.Commits.Any(commit =>
             string.Equals(commit.RunAttemptId, sourceRun.AttemptId, StringComparison.OrdinalIgnoreCase)
             && string.Equals(commit.ResultSha, envelope.ResultSha, StringComparison.OrdinalIgnoreCase));
+
+    private string MissingAttributionMessage(TaskInfo task, RunAttemptDto sourceRun)
+    {
+        var subject = ReviewSubjectStore.Read(task.FolderPath);
+        var envelope = sourceRun.ResultEnvelope;
+        var repo = _git.ResolveRepoRootForWatchPath(task.WatchPath);
+        var deliveryRef = subject?.ImmutableResultRef ?? subject?.ResultRef
+            ?? envelope?.ImmutableRemoteRef;
+        var resultSha = envelope?.ResultSha ?? subject?.ResultSha;
+        var missing = new List<string>();
+        if (!string.IsNullOrWhiteSpace(repo) && !string.IsNullOrWhiteSpace(deliveryRef)
+            && !string.IsNullOrWhiteSpace(resultSha))
+        {
+            var range = _git.InspectRemoteDeliveryCommitRange(repo, deliveryRef, resultSha,
+                subject?.IntegrationBranch ?? task.IntegrationBranch,
+                subject?.BaseSha, taskKey: task.Key ?? task.Id);
+            if (range.Success)
+                missing.AddRange(range.Commits.Where(commit => !task.Commits.Any(recorded =>
+                        string.Equals(recorded.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(recorded.RunAttemptId, sourceRun.AttemptId, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(recorded.ResultSha, resultSha, StringComparison.OrdinalIgnoreCase)))
+                    .Select(commit => $"{commit.ShortSha} ({commit.Subject})"));
+        }
+        if (missing.Count == 0 && !string.IsNullOrWhiteSpace(resultSha))
+            missing.Add(resultSha[..Math.Min(12, resultSha.Length)]);
+        if (missing.Count == 0)
+            missing.Add("result SHA unavailable");
+        return "Commit attribution is missing for this reviewed delivery. "
+            + $"Commits missing this delivery's attribution: {string.Join(", ", missing)}. "
+            + "The next round must publish task-owned commits that name this card and leave merging develop to the runner. "
+            + "The card cannot enter a batch until the result SHA has a commit entry for its run attempt.";
+    }
 
     public void ReportAdmissionFailure(TaskInfo task, ReviewAttemptDto review, string reason)
         => _healthAlerts?.BatchAdmissionFailed(task.ProjectName, task.WatchPath,
@@ -525,6 +557,7 @@ public sealed partial class BatchGatePilotService
             if (DuringTickForTesting is { } hold) await hold().ConfigureAwait(false);
             // AGT-3755: a tick that waited for the lock across host stop ends here.
             _shutdown.Token.ThrowIfCancellationRequested();
+            await ProcessInfrastructureRetriesAsync(ct).ConfigureAwait(false);
             // AGT-3563: every later step reads each manifest's phase record.
             ReconcilePhaseRecords();
             // AGT-3568: an intent a dead host left open owns its generations
@@ -974,6 +1007,7 @@ public sealed partial class BatchGatePilotService
                 ReturnToPending(parent);
                 State(parent, BatchPhase.Paused, _store.LatestState(parent.BatchId).CandidateSha,
                     recovery.Fence, "isolation interrupted");
+                EndInterruptedFlakySuspect(parent);
             }
             finally { _leases.Release(recovery); }
         }
@@ -1313,6 +1347,7 @@ public sealed partial class BatchGatePilotService
             // unresolved member through its own gate, as any pause does.
             if (_store.LatestState(manifest.BatchId).Reason == "isolation interrupted")
             {
+                EndInterruptedFlakySuspect(manifest);
                 ReturnToPending(manifest);
                 var cause = new PerTaskFallbackCause(PerTaskFallbackRules.BatchPaused,
                     $"batch {manifest.BatchId} paused: isolation interrupted", manifest.BatchId);
@@ -2503,25 +2538,42 @@ public sealed partial class BatchGatePilotService
                     && manifest.SameCodeRerunOfRunId == redRun.BatchRunId)
                 .MaxBy(manifest => manifest.ClosedAtUtc);
             var published = false;
-            if (regate.Classification == BatchGateFailureClass.Pass
-                && green.TryGetValue(regate.TestedSha, out var regated)
-                && cohort.All(member => Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
+            string? unpublished = null;
+            if (regate.Classification == BatchGateFailureClass.Pass)
             {
-                await PublishGreenAsync(regated.Manifest, regated.Assembly, regated.Run, regated.Verdict,
-                    lease, pending, repo, fallbackKeys, ct).ConfigureAwait(false);
-                published = _store.LatestState(regated.Manifest.BatchId).Phase == BatchPhase.Published;
+                var superseded = cohort.Where(member =>
+                    !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration).ToArray();
+                if (superseded.Length > 0)
+                    unpublished = "superseded by a newer run: "
+                        + string.Join(", ", superseded.Select(member => member.TaskKey));
+                else if (!green.TryGetValue(regate.TestedSha, out var regated))
+                    unpublished = "its green candidate was not ready to publish";
+                else
+                {
+                    await PublishGreenAsync(regated.Manifest, regated.Assembly, regated.Run, regated.Verdict,
+                        lease, pending, repo, fallbackKeys, ct).ConfigureAwait(false);
+                    var landed = _store.LatestState(regated.Manifest.BatchId);
+                    published = landed.Phase == BatchPhase.Published;
+                    if (!published)
+                        unpublished = $"publication ended {landed.Phase.ToString().ToLowerInvariant()}"
+                            + (string.IsNullOrWhiteSpace(landed.Reason) ? string.Empty : ": " + landed.Reason);
+                }
             }
+            var heldByHost = regate.Classification == BatchGateFailureClass.InfrastructureRed && hostUnavailable;
             _store.RecordFlakySuspectRegate(project, new BatchFlakySuspectRegate(failedManifest.BatchId,
                 regateBatch?.BatchId ?? string.Empty, cohort.Select(member => member.TaskKey).ToArray(),
-                published ? "passed"
-                : regate.Classification == BatchGateFailureClass.DeterministicSuiteRed ? "reproduced"
-                : "inconclusive",
+                published ? BatchFlakySuspectRegate.Passed
+                : unpublished is not null ? BatchFlakySuspectRegate.Unpublished
+                : regate.Classification == BatchGateFailureClass.DeterministicSuiteRed
+                    ? BatchFlakySuspectRegate.Reproduced
+                : heldByHost ? BatchFlakySuspectRegate.Requeued
+                : BatchFlakySuspectRegate.Inconclusive,
                 _store.ListExecutions(project).Where(execution => regateBatch is not null
                         && execution.BatchId == regateBatch.BatchId)
                     .Sum(execution => execution.DurationMs is { } duration
                         ? duration / 60000d
                         : Math.Max(0, (execution.CompletedAtUtc - execution.StartedAtUtc).TotalMinutes)),
-                _time.GetUtcNow()));
+                _time.GetUtcNow(), unpublished));
             foreach (var member in cohort.Where(member =>
                          !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
                 ResolveSuperseded(pending[member.TaskKey], "superseded");
@@ -2538,7 +2590,7 @@ public sealed partial class BatchGatePilotService
                         fallbackKeys.Add(key);
                 return true;
             }
-            if (regate.Classification == BatchGateFailureClass.InfrastructureRed && hostUnavailable)
+            if (heldByHost)
             {
                 var waiting = _hostOutage.Current?.WaitingReason ?? "gate host transport failed; waiting";
                 State(failedManifest, BatchPhase.Paused, failedAssembly.CandidateSha,
@@ -2550,6 +2602,24 @@ public sealed partial class BatchGatePilotService
             }
             return false;
         }
+    }
+
+    // A flaky suspect whose parent left isolation before its re-gate recorded
+    // a verdict (claim lost, cancellation, process death) ends as interrupted:
+    // its members take the per-card path and no re-gate follows.
+    private void EndInterruptedFlakySuspect(BatchGateManifest parent)
+    {
+        var project = parent.Scope.Project;
+        if (_store.ReadFlakySuspect(project, parent.BatchId) is not { Regate: null } suspect) return;
+        var regateBatch = _store.ListManifests()
+            .Where(manifest => manifest.ParentBatchId == parent.BatchId
+                && manifest.SameCodeRerunOfRunId == suspect.Mark.RedRunId)
+            .MaxBy(manifest => manifest.ClosedAtUtc);
+        _store.RecordFlakySuspectRegate(project, new BatchFlakySuspectRegate(parent.BatchId,
+            regateBatch?.BatchId ?? string.Empty,
+            regateBatch?.Members.Select(member => member.TaskKey).ToArray() ?? [],
+            BatchFlakySuspectRegate.Interrupted, 0,
+            _time.GetUtcNow(), "isolation interrupted"));
     }
 
     private async Task HeartbeatAsync(BatchCoordinatorLease lease, CancellationTokenSource cancellation)

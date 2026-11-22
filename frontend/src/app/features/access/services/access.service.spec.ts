@@ -111,6 +111,17 @@ describe('AccessService', () => {
     await disabling;
   });
 
+  it('issues a run host code with only runner.deploy and its projects', async () => {
+    const creating = service.createEnrollment('run-host-1', 'deploy', ['PROJ-001']);
+    const request = http.expectOne('/api/auth/runner-enrollments');
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toEqual({ name: 'run-host-1', scopes: ['runner.deploy'], projects: ['PROJ-001'] });
+    request.flush({ enrollmentCode: 'enr.x.y' });
+    await Promise.resolve();
+    await flushLoad();
+    expect(await creating).toEqual({ enrollmentCode: 'enr.x.y' });
+  });
+
   it('keeps the server message when a mutation is refused', async () => {
     const adding = service.addBinding('user', 'usr_owner', 'owner', { kind: 'project', project: 'PROJ-001' });
     http.expectOne('/api/auth/iam/bindings').flush(

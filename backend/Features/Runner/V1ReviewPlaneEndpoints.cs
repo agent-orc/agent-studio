@@ -3797,6 +3797,7 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
         new(StringComparer.Ordinal);
     private readonly List<Contract.ClaimGateEventDto> _claimGateEvents = [];
     private readonly Dictionary<string, HashSet<string>> _reprobeRequests = new(StringComparer.Ordinal);
+    private const int MaxQueuedReprobesPerRunner = 32;
     private long _claimGateSequence;
     private readonly object _gate = new();
     private readonly TimeProvider _time;
@@ -3900,6 +3901,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     if (existingReview != reviewExecutor || existingGate != gateExecutor)
                         throw new InvalidOperationException(
                             "A coding or review identity cannot change its executor role.");
+                    if (!string.Equals(existing.InstanceId, request.InstanceId, StringComparison.Ordinal))
+                        previousInstanceId = existing.InstanceId;
                     if (reviewExecutor
                         && !string.Equals(
                             existing.InstanceId,
@@ -3907,7 +3910,6 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                             StringComparison.Ordinal))
                     {
                         reviewRestartedAt = now;
-                        previousInstanceId = existing.InstanceId;
                         _reviewRestarts[runnerId] = new ReviewRestartStatus(
                             now,
                             request.InstanceId,
@@ -3948,6 +3950,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
             {
                 _capabilityStates.Remove(runnerId);
             }
+            if (previousInstanceId is not null)
+                _reprobeRequests.Remove(runnerId);
             // A registration re-declares this identity's health, so a restarted
             // executor is never born paused by a previous instance's failures.
             ClearCapabilityFailures(runnerId);
@@ -4067,7 +4071,9 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     CredentialObservedAt: capability.CredentialObservedAt,
                     HealthOutcome: request.CredentialHealthVersion == 2 ? capability.HealthOutcome : null,
                     ServiceAvailability: request.CredentialHealthVersion == 2 ? capability.ServiceAvailability : null,
-                    CredentialHealth: request.CredentialHealthVersion == 2 ? capability.CredentialHealth : null);
+                    CredentialHealth: request.CredentialHealthVersion == 2 ? capability.CredentialHealth : null,
+                    Since: capability.Since,
+                    StatusSessionActive: capability.StatusSessionActive);
             })
             .GroupBy(capability => capability.Key, StringComparer.Ordinal)
             .Select(group => group.Last())
@@ -4626,6 +4632,24 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
         }
     }
 
+    /// <summary>The keys this review role registered, including keys currently held by a probe.</summary>
+    public IReadOnlySet<string> RegisteredReviewCapabilities(string runnerId, string instanceId)
+    {
+        lock (_gate)
+        {
+            return _registrations.TryGetValue(runnerId, out var registration)
+                && registration.InstanceId == instanceId
+                ? registration.Capabilities.ToHashSet(StringComparer.Ordinal)
+                : new HashSet<string>(StringComparer.Ordinal);
+        }
+    }
+
+    public string? InstanceIdOf(string runnerId)
+    {
+        lock (_gate)
+            return _registrations.TryGetValue(runnerId, out var registration) ? registration.InstanceId : null;
+    }
+
     /// <summary>
     /// AGT-3840: the keys <see cref="AdmittedReviewCapabilities"/> withholds
     /// from this identity, each with its cause and the probe's own detail.
@@ -4646,17 +4670,30 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
     /// receives it on its next claim answer and refreshes that probe before
     /// it advertises again. False for an unknown identity.
     /// </summary>
-    public bool RequestReprobe(string runnerId, string capability)
+    public ReprobeRequestResult RequestReprobe(string runnerId, string capability)
     {
         lock (_gate)
         {
-            if (!_registrations.ContainsKey(runnerId)) return false;
+            if (!_registrations.TryGetValue(runnerId, out var registration)) return ReprobeRequestResult.RunnerNotRegistered;
+            if (!registration.Capabilities.Contains(capability)
+                && !CapabilityHoldsLocked(runnerId, registration, _time.GetUtcNow().UtcDateTime)
+                    .Any(hold => string.Equals(hold.Key, capability, StringComparison.Ordinal)))
+                return ReprobeRequestResult.UnknownCapability;
             if (!_reprobeRequests.TryGetValue(runnerId, out var keys))
                 _reprobeRequests[runnerId] = keys = new HashSet<string>(StringComparer.Ordinal);
+            if (!keys.Contains(capability) && keys.Count >= MaxQueuedReprobesPerRunner)
+                return ReprobeRequestResult.QueueFull;
             keys.Add(capability);
-            return true;
+            return ReprobeRequestResult.Queued;
         }
     }
+
+    public void ClearReprobeRequests(string runnerId)
+    {
+        lock (_gate) _reprobeRequests.Remove(runnerId);
+    }
+
+    public enum ReprobeRequestResult { Queued, RunnerNotRegistered, UnknownCapability, QueueFull }
 
     /// <summary>Hands out and forgets the re-probe requests queued for this identity.</summary>
     public IReadOnlyList<string>? TakeReprobeRequests(string runnerId)

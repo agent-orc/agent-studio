@@ -149,6 +149,8 @@ public static class DeploymentReconciler
             log.Add(new(run.Id, run.DeployStep, job.CreatedAt, trigger == DeploymentTriggers.AutomaticRollback
                 ? $"Automatic rollback to release {release.Version} queued after a failed deployment."
                 : $"Release {release.Version} queued for {environment.Name} by {actor}."));
+            if (record is not null && DeployService.HostChange(record, environment.Id, job) is { } moved)
+                log.Add(new(run.Id, run.DeployStep, job.CreatedAt, moved));
             audit.Add(new(job.CreatedAt, actor, trigger == DeploymentTriggers.Deploy ? "deployment-queued" : "rollback-queued",
                 release.Id, run.Id, environment.Id, $"Release {release.Version} queued for {environment.Name}."));
         }
@@ -161,8 +163,10 @@ public static class DeploymentReconciler
         foreach (var promotion in input.Promotions.Where(item => item.Status == "pending"))
         {
             if (!environments.TryGetValue(promotion.ProductionId, out var environment)) continue;
+            // A digest can belong to several releases; the promotion names its release when it can.
             var record = input.Releases.Where(item => item.Release.ArtifactDigests.Contains(promotion.Artifact, StringComparer.Ordinal)
-                    && item.Release.CreatedAtUtc <= promotion.StageHealthyAt)
+                    && item.Release.CreatedAtUtc <= promotion.StageHealthyAt
+                    && (promotion.ReleaseId is null || item.Release.Id == promotion.ReleaseId))
                 .OrderBy(item => item.Release.CreatedAtUtc).ThenBy(item => item.Release.Id, StringComparer.Ordinal)
                 .LastOrDefault();
             if (record is null || record.Lifecycle.Count == 0
@@ -329,7 +333,7 @@ public static class DeploymentReconciler
                 log.Add(new(run.Id, DeployStepNames.Health, at, "Skipped because the deploy host was lost."));
                 break;
             case DeploymentStates.Failed when run.Evidence == DeployEvidence.HealthFailed:
-                log.Add(new(run.Id, run.DeployStep, at, "Deploy host completed the step."));
+                log.Add(new(run.Id, run.DeployStep, at, "Deploy host ran the step; the release did not pass its health check."));
                 log.Add(new(run.Id, DeployStepNames.Health, at, $"Health check failed ({DeployEvidence.HealthFailed})."));
                 break;
             case DeploymentStates.Failed:

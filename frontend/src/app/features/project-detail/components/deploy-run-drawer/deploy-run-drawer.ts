@@ -14,9 +14,15 @@ import {
   type DeployRun,
   type DeployRunAction,
   type DeploymentLogLine,
+  type EnvironmentSecretReadiness,
 } from '../../state/deploy-area.model';
+import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { runStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
+import type { RollbackOffer } from '../../state/rollback-offer.model';
+import { PrincipalNamePipe, principalName } from '../../../../pipes/principal-name.pipe';
+import { ClientService } from '../../../../services/client.service';
 
 export interface DeployRunActionState {
   busy: DeployRunAction | null;
@@ -31,28 +37,37 @@ const ACTION_LABEL: Record<DeployRunAction, string> = {
 @Component({
   selector: 'app-deploy-run-drawer',
   standalone: true,
-  imports: [DatePipe, SidesheetComponent, StatusIndicatorComponent],
+  imports: [PrincipalNamePipe, DatePipe, SidesheetComponent, StatusIndicatorComponent, RollbackOfferComponent, DeploySecretGapsComponent],
   templateUrl: './deploy-run-drawer.html',
   styleUrl: './deploy-run-drawer.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class DeployRunDrawerComponent {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly clients = inject(ClientService);
   private lastRunId: string | null = null;
   readonly run = input.required<DeployRun>();
   readonly log = input.required<DeployPanel<DeploymentLogLine[]>>();
   readonly action = input<DeployRunActionState>({ busy: null, error: null });
+  /** F14: secrets this run's release misses in its environment; null while unknown. */
+  readonly secrets = input<EnvironmentSecretReadiness | null>(null);
+  readonly openSecrets = output<string>();
   readonly act = output<DeployRunAction>();
   readonly skip = output<string>();
   readonly skipReason = signal('');
   readonly closeRequest = output<void>();
+  /** F13: the rollback of the run's environment, offered while the run's release is current there. */
+  readonly rollbackOffer = input<RollbackOffer | null>(null);
+  readonly rollbackBusy = input(false);
+  readonly now = input<number>(Date.now());
+  readonly rollback = output<string>();
 
   readonly title = computed(() => `${triggerLabel(this.run().trigger)} to ${this.run().environmentName}`);
   readonly subtitle = computed(() => this.run().releaseVersion ? `Release ${this.run().releaseVersion}` : this.run().releaseId);
   readonly duration = computed(() => formatDuration(this.run().startedAt, this.run().finishedAt));
   readonly approval = computed<{ tone: StatusTone; label: string }>(() => {
     const run = this.run();
-    if (run.approvedBy) return { tone: 'success', label: `Approved by ${run.approvedBy}` };
+    if (run.approvedBy) return { tone: 'success', label: `Approved by ${principalName(this.clients, run.approvedBy)}` };
     if (run.state === 'awaiting-approval') return { tone: 'warning', label: 'Waiting for an Owner or Maintainer' };
     return { tone: 'neutral', label: run.steps.some(step => step.name === 'approval') ? 'Not approved' : 'Not required' };
   });

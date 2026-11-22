@@ -53,6 +53,14 @@ describe('ProjectDeployDataService', () => {
     expect(log.at(-1)).toEqual({ status: 'ready', value: deploymentLogFixture('run-b-stage') });
   });
 
+  it('reads the standing release gate refusal (F2)', () => {
+    const gate = collect(service.releaseGate('Web Site'));
+    const refusal = { commitSha: 'a'.repeat(40), mode: 'optional', reason: 'The candidate full suite is red.',
+      nextStep: 'Fix the failing tests and release a newer commit.', atUtc: '2026-11-16T10:00:00Z' };
+    http.expectOne(`${DEPLOY}/release-gate`).flush({ refusal });
+    expect(gate.at(-1)).toEqual({ status: 'ready', value: { refusal } });
+  });
+
   it('reads product-language release notes for the included cards', () => {
     const notes = collect(service.releaseNotes('Web Site', 'release one'));
     const response = { releaseId: 'release one', version: '1', preview: true,
@@ -146,6 +154,28 @@ describe('ProjectDeployDataService', () => {
       request.flush(deployDeploymentsFixture()[1]);
       expect(answered).toBe(true);
     }
+  });
+
+  it('reads deploy actions and starts them through the lifecycle deploy and redeploy routes', () => {
+    const cards = collect(service.deployActions('Web Site'));
+    const detail = collect(service.releaseDeployActions('Web Site', 'release one'));
+    const deploy = { environmentId: 'production', action: 'deploy' as const, releaseId: 'release one',
+      releaseVersion: '1', allowed: true, needsApproval: true, reason: null };
+    http.expectOne(`${DEPLOY}/actions`).flush([deploy]);
+    http.expectOne(`${DEPLOY}/releases/release%20one/actions`).flush([]);
+    expect(cards.at(-1)).toEqual({ status: 'ready', value: [deploy] });
+    expect(detail.at(-1)).toEqual({ status: 'ready', value: [] });
+
+    service.start('Web Site', deploy).subscribe();
+    const request = http.expectOne(`${DEPLOY}/releases/release%20one/deployments`);
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toEqual({ environmentId: 'production', approve: false });
+    request.flush({});
+
+    service.start('Web Site', { ...deploy, environmentId: 'stage', action: 'redeploy', needsApproval: false }).subscribe();
+    const redeploy = http.expectOne(`${DEPLOY}/environments/stage/redeploy`);
+    expect(redeploy.request.body).toEqual({ approve: true });
+    redeploy.flush({});
   });
 
   it('treats a missing environments project as an error, not as unavailable', () => {

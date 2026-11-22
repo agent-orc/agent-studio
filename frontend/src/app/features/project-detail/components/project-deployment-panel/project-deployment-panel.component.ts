@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
@@ -9,11 +9,16 @@ import type { WatchPathEntry } from '../../../../models/task.model';
 import { DeploymentDefinitionEditorComponent } from '../deployment-definition-editor/deployment-definition-editor';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { TARGET_READINESS, deploymentHistoryTone, environmentHealthTone, type TargetReadiness } from './deployment-status-tone';
+import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
+import type { RollbackOffer } from '../../state/rollback-offer.model';
+import { catchError, forkJoin, of } from 'rxjs';
+import { runningReleaseLabel, type EnvironmentStatus } from '../../state/deploy-area.model';
 
 @Component({
   selector: 'app-project-deployment-panel',
   standalone: true,
-  imports: [DatePipe, DecimalPipe, FormsModule, PendingButtonDirective, DeploymentDefinitionEditorComponent, StatusIndicatorComponent],
+  imports: [DatePipe, DecimalPipe, FormsModule, PendingButtonDirective, DeploymentDefinitionEditorComponent, StatusIndicatorComponent,
+    RollbackOfferComponent],
   templateUrl: './project-deployment-panel.component.html',
   styleUrl: './project-deployment-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -23,8 +28,18 @@ export class ProjectDeploymentPanelComponent {
   private readonly cliTasks = inject(VisibleCliTaskService);
 
   readonly projectName = input.required<string>();
+  /**
+   * F13: rollback runs only through the lifecycle offer of the Deploy area,
+   * which names the target and asks first; this panel has no rollback call.
+   */
+  readonly rollbackOffers = input<readonly RollbackOffer[]>([]);
+  readonly rollbackBusy = input<string | null>(null);
+  readonly now = input<number>(Date.now());
+  readonly rollback = output<string>();
+  readonly offers = computed(() => new Map(this.rollbackOffers().map(offer => [offer.environmentId, offer])));
   readonly summary = signal<ProjectDeploymentSummary | null>(null);
   readonly environments = signal<ProjectEnvironments | null>(null);
+  readonly releaseStatuses = signal<readonly EnvironmentStatus[]>([]);
   readonly environmentError = signal<string | null>(null);
   readonly loading = signal(true);
   readonly requestFailed = signal(false);
@@ -51,14 +66,6 @@ export class ProjectDeploymentPanelComponent {
     this.tasks.decideProjectPromotion(this.projectName(), artifact, approve).subscribe({
       next: () => this.loadEnvironments(this.projectName()),
       error: () => this.environmentError.set('Promotion could not be updated.'),
-    });
-  }
-
-  rollbackEnvironment(id: string): void {
-    this.environmentError.set(null);
-    this.tasks.rollbackProjectEnvironment(this.projectName(), id).subscribe({
-      next: () => this.loadEnvironments(this.projectName()),
-      error: () => this.environmentError.set('Rollback could not be queued.'),
     });
   }
 
@@ -112,6 +119,10 @@ export class ProjectDeploymentPanelComponent {
 
   readonly environmentHealthTone = environmentHealthTone;
   readonly historyTone = deploymentHistoryTone;
+
+  releaseLabel(view: ProjectEnvironments['environments'][number]): string {
+    return runningReleaseLabel(view, this.releaseStatuses().find(item => item.environment.id === view.declaration.id) ?? null);
+  }
 
   targetReadiness(target: ProjectDeploymentTarget): { tone: StatusTone; label: string } {
     let readiness: TargetReadiness;
@@ -217,8 +228,14 @@ export class ProjectDeploymentPanelComponent {
   }
 
   private loadEnvironments(projectName: string): void {
-    this.tasks.getProjectEnvironments(projectName).subscribe({
-      next: value => this.environments.set(value),
+    forkJoin({
+      environments: this.tasks.getProjectEnvironments(projectName),
+      statuses: this.tasks.getProjectEnvironmentReleaseStatuses(projectName).pipe(catchError(() => of([] as EnvironmentStatus[]))),
+    }).subscribe({
+      next: value => {
+        this.environments.set(value.environments);
+        this.releaseStatuses.set(value.statuses);
+      },
       error: () => this.environmentError.set('Environments could not be loaded.'),
     });
   }

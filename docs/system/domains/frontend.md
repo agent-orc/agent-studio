@@ -1,7 +1,22 @@
 # Frontend Domain Map
 
-Version: 2026-11-14
+Version: 2026-11-17
 Status: System-of-record map for frontend changes.
+
+Card delivery badges are shown for cards named by a release or with verified
+integration evidence. An unreleased integrated card can show pending delivery;
+an unintegrated or incident card has no badges. A failed
+deployment remains visible on the card after an environment rollback, with the
+failed release version and attempt date, until a later deployment of a release
+containing that card succeeds. A successful rollback after a failed attempt
+reads "Failed, rolled back"; a rollback that withdraws a previously successful
+card reads "Rolled back". State labels use product wording, and the badge text
+wraps so release versions and dates remain readable on narrow board cards.
+
+Needs you shows a review-host row when a differing release claims review work.
+The status-bar trigger shows a compact Review host cue while the row is open;
+the row opens the affected Execution Hosts detail and its Update review host
+panel.
 
 Concept cards and detail views show the dossier and review state without code
 delivery indicators. They omit build and test evidence, delivery integration,
@@ -41,19 +56,25 @@ toast opens the new card; on failure the draft remains available.
 ## Modal keyboard contract
 
 `ModalStackService` owns Escape ordering and the focus scope of registered true
-modals. A dialog registers its dialog element and the subtree that contains its
-backdrop. While it is open, Tab and Shift+Tab wrap within the dialog, outside
-focus is redirected inside, and the rest of the page is inert. A higher
-nonmodal entry handles Escape first but does not release the modal focus scope.
+modals. A modal that uses its focus scope registers its dialog element and the
+subtree that contains its backdrop. While it is open, Tab and Shift+Tab wrap
+within the dialog, outside focus is redirected inside, and the rest of the page
+is inert. A higher nonmodal entry handles Escape first but does not release the
+modal focus scope.
 A portaled child can register its interactive root with the stack so it stays
 focusable while the page remains inert. Tab traverses that root's controls and
 returns to the first dialog control at its edge; Shift+Tab returns to the last.
-This also contains menus whose rows use `tabindex="-1"`. The caller moves
-initial focus into the dialog after render and returns focus to its opener after
-closing. The batch gate panel, global search palette, and modal workspace
+This also contains menus whose rows use `tabindex="-1"`. Custom modal owners
+move initial focus into the dialog after render and return focus to its opener
+after closing. The batch gate panel, global search palette, and modal workspace
 settings view (including CLI Management) use this contract. Menus and popovers
 remain stack entries for Escape ordering without a modal focus scope; portaled
 menus also register their interactive root.
+
+The shared `app-dialog` registers its own Escape entry while mounted and uses
+`ModalFocusDirective` for focus containment. Its `closeRequest` lets the owner
+close it, then the directive returns focus to the opener. Owners with an
+existing entry set `stackManagedExternally` so one dialog has one Escape entry.
 
 ## Initial bundle budget
 
@@ -171,17 +192,28 @@ and keeps its other sources loaded. Marker card keys resolve by exact key
 through `GET /api/tasks/{key}/core`, so archived cards open too. A later card
 click or leaving the view cancels a pending lookup. Log search accepts any
 release ID, including releases whose marker predates the 30-day trend.
-The API derives DORA from production deploy runs and archive-inclusive card creation
+The API derives DORA from production deploy runs, completed production environment
+incidents, and archive-inclusive card creation
 times: successful change runs per week, median card-to-production time, failed
-or rolled-back changes divided by terminal change runs, and median time from a
-failed production run to the next successful run. Missing samples remain
+or rolled-back changes and changes followed by a production incident divided by
+terminal change runs, and median time from a failed production run to the next
+successful run or from a production incident opening to its recovery. Overlapping
+run and incident recoveries count once. Missing samples remain
 unavailable. `GET /api/projects/{project}/deploy/operations/logs` accepts
 environment, bounded time range, level, release, and text filters and returns
-at most 100 lines. `IOperationsTelemetryReader` is the integration boundary
-for the pending intake store; until it is connected, telemetry and logs show
-an explicit empty state while deploy markers and DORA remain live. The reader
-contract allows only aggregate usage without personal identifiers and requires
-secret masking before stored log lines are returned.
+100 lines per page with a cursor for later pages. `IOperationsTelemetryReader`
+projects the per-environment OTLP store into metrics and masked logs. The
+explicit empty state is reserved for a disabled store; read failures return a
+named error. Deploy markers and DORA remain live. The reader contract allows
+only aggregate usage without personal identifiers and requires secret masking
+before stored log lines are returned. The metric mapping and histogram
+quantile fallback are documented in
+[app telemetry intake](../../operations/setup/app-telemetry-intake.md).
+The Deploy area's Telemetry tab
+(`ProjectTelemetryTokensComponent`, `?view=telemetry`) lists the ingest tokens of
+one environment with signals, last use, expiry and state, creates a token whose
+endpoint, protocol and headers it shows once, labels the deploy-managed token,
+and revokes a token after a confirming click.
 
 ## Workspace deployment dashboard
 
@@ -202,6 +234,11 @@ containers without requiring older hosts to upgrade. Health uses host
 heartbeats (90 seconds), each check's own
 interval, and gate heartbeats (two minutes). The role-named manifest example is in
 `deploy/connectivity/one-box.json`.
+
+Hosts that report without a declaration show as observed nodes with facts,
+and the open view follows `structureDelta` pushes on the Studio hub with an
+entity-tag read as fallback (AGT-3954). Response shape, ids, facts and the
+placement file: [structure-placement.md](../../operations/setup/structure-placement.md).
 
 The same view lists library registries declared in schema 2
 `structure.registries` (artifact, provider, package, optional repository and
@@ -497,6 +534,10 @@ A refused optimistic triage move restores the original task, lane-pager
 snapshot, route, and active task tab together. The detail shows the refusal
 beside the action with the next step. If an error dialog opens, closing it
 returns focus to the failed action.
+When a move empties the captured lane, the detail stays on the moved task and
+refreshes its new lane state. A first move to Ready is labelled "Queued";
+"Requeued" requires a recorded execution. Preparation's empty Activity view
+names Promote to Ready and Run now as the controls for starting work.
 
 Each Wiki/Dossier tab owns a history stack containing its current target and up
 to 49 earlier or forward targets. Normal link navigation truncates that tab's
@@ -696,6 +737,12 @@ occur. It is not a claim about tunnel transfer time.
   is not the status `currentRelease` resolves its release with one `limit=1`
   read. Runs named by `/status` open without being on a loaded page; any other
   run is read from `/deployments/<id>`. The unpaged routes remain for existing clients.
+  The Deploy card, Operations overview, and deployment tools resolve the
+  environment release through the same running-release projection. A failed
+  deploy or rollback makes the running release uncertain until a later
+  successful host report confirms an artifact. The last successful release
+  remains the lifecycle baseline for promotion and rollback decisions; it is
+  not presented as the running release while host state is uncertain.
   Each source has its own loading or error state, so a failed deploy route
   leaves declared environment cards visible. A route 404 without an error body
   means the route is unavailable; a 404 with `{ error }` is shown as a server

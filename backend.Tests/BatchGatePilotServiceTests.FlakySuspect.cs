@@ -130,6 +130,136 @@ public sealed class BatchGatePilotFlakySuspectTests : BatchGatePilotServiceTests
         AssertLane(members[0].Key, TaskStates.Escalated);
     }
 
+    [Fact]
+    public async Task A_regate_the_gate_host_holds_is_recorded_requeued_and_returns_the_cohort_to_the_pool()
+    {
+        using var factory = BuildFactory();
+        var client = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        var a = SeedMember(factory, "CODE-HELD-A", "src/held-a.cs");
+        var b = SeedMember(factory, "CODE-HELD-B", "src/held-b.cs");
+        var first = true;
+        _gate.Batch = request =>
+        {
+            if (request.LedgerTriggerEvent?.StartsWith(BatchGatePilotService.FlakySuspectRegateCause,
+                    StringComparison.Ordinal) == true)
+                return HostRefused();
+            var red = first;
+            first = false;
+            return red ? ReportRed(request.ExpectedSha) : Green(request.ExpectedSha);
+        };
+        _gate.Base = request => Green(request.ExpectedSha);
+        _gate.Fallback = _ => throw new InvalidOperationException("A host-held re-gate member ran a per-card suite.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+
+        Assert.Equal(0, _gate.FallbackRuns);
+        var parent = store.ListManifests().Single(manifest => manifest.ParentBatchId is null);
+        var suspect = store.ReadFlakySuspect(ProjectName, parent.BatchId);
+        Assert.NotNull(suspect);
+        Assert.Equal(BatchFlakySuspectRegate.Requeued, suspect.Regate!.Outcome);
+        Assert.Equal([b.Key], suspect.Regate.MemberKeys);
+        Assert.True(suspect.Active);
+        Assert.Contains(store.ListPending(), item => item.Subject.TaskKey == b.Key);
+        Assert.Contains("flaky suspect re-gate could not reach the gate host",
+            store.LatestState(parent.BatchId).Reason, StringComparison.Ordinal);
+        AssertLane(a.Key, TaskStates.HumanReview);
+
+        using var state = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/{ProjectName}/batch-gate/state"));
+        var row = state.RootElement.GetProperty("batches").EnumerateArray()
+            .Single(batch => batch.GetProperty("batchId").GetString() == parent.BatchId);
+        Assert.Equal(BatchFlakySuspectRegate.Requeued,
+            row.GetProperty("flakySuspect").GetProperty("regate").GetProperty("outcome").GetString());
+    }
+
+    [Fact]
+    public async Task A_green_regate_whose_publication_does_not_land_is_recorded_unpublished_with_its_reason()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        SeedMember(factory, "CODE-UNPUB-A", "src/unpub-a.cs");
+        SeedMember(factory, "CODE-UNPUB-B", "src/unpub-b.cs");
+        var first = true;
+        _gate.Batch = request =>
+        {
+            if (request.LedgerTriggerEvent?.StartsWith(BatchGatePilotService.FlakySuspectRegateCause,
+                    StringComparison.Ordinal) == true)
+            {
+                // The integration branch moves under the green re-gate, so it cannot publish.
+                AdvanceOriginDevelop("src/unpub-drift.cs");
+                return Green(request.ExpectedSha);
+            }
+            var red = first;
+            first = false;
+            return red ? ReportRed(request.ExpectedSha) : Green(request.ExpectedSha);
+        };
+        _gate.Base = request => Green(request.ExpectedSha);
+        _gate.Fallback = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+
+        var parent = store.ListManifests().Single(manifest => manifest.ParentBatchId is null);
+        var suspect = store.ReadFlakySuspect(ProjectName, parent.BatchId);
+        Assert.NotNull(suspect);
+        Assert.Equal(BatchFlakySuspectRegate.Unpublished, suspect.Regate!.Outcome);
+        Assert.Contains(nameof(BatchPublishDecision.StaleBase), suspect.Regate.Reason, StringComparison.Ordinal);
+        Assert.True(suspect.Active);
+        Assert.NotEqual(BatchPhase.Published, store.LatestState(suspect.Regate.RegateBatchId).Phase);
+        Assert.Equal(1, _gate.FallbackRuns);
+    }
+
+    [Fact]
+    public async Task A_mark_whose_parent_left_isolation_without_a_regate_ends_interrupted()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        SeedMember(factory, "CODE-INTERRUPT-A", "src/interrupt-a.cs");
+        SeedMember(factory, "CODE-INTERRUPT-B", "src/interrupt-b.cs");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var parent = ClosePendingBatch(factory);
+        _gate.Batch = request => Green(request.ExpectedSha);
+        BatchGateStates.Reach(store, new BatchGateState(parent.BatchId, parent.MembershipDigest,
+            BatchPhase.Red, null, 1, _clock, "deterministic suite red"));
+        // The mark was written and the process died before its re-gate recorded a verdict.
+        Assert.True(store.RecordFlakySuspect(new BatchFlakySuspect(ProjectName, parent.BatchId, "red-run",
+            parent.BaseSha, parent.Members.Select(member => member.TaskKey).ToArray(), [UnstableTest], _clock)));
+        foreach (var item in store.ListPending())
+            BatchGateOwnershipStore.Write(item.JobFolderPath,
+                new BatchGateOwnership(item.ReviewAttemptId, item.Subject));
+
+        using var restarted = BuildFactory();
+        _ = restarted.CreateClient();
+        EnableBatchGate(restarted, closeSize: 2, scope: "code");
+        await restarted.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        Assert.Equal("isolation interrupted", store.LatestState(parent.BatchId).Reason);
+        var suspect = store.ReadFlakySuspect(ProjectName, parent.BatchId);
+        Assert.NotNull(suspect);
+        Assert.Equal(BatchFlakySuspectRegate.Interrupted, suspect.Regate!.Outcome);
+        Assert.False(suspect.Active);
+        Assert.DoesNotContain(store.ListFlakySuspects(ProjectName), view => view.Active);
+    }
+
+    private static BuildTestGateResult HostRefused()
+    {
+        const string refused = "Remote gate transport failure after bounded retries: ssh exited 255: "
+            + "ssh: connect to host 172.30.83.1 port 12222: Connection refused";
+        return new(BuildTestGateVerdict.Fail, null, 1, refused, refused, false, false)
+        {
+            FailureKind = BuildTestGateFailureKind.Environment,
+        };
+    }
+
     private BuildTestGateResult ReportRed(string? sha)
         => new(BuildTestGateVerdict.Fail, 1, 1, "Failed: 1",
             "dotnet test exit 1; output: Total tests: 2 Passed: 1 Failed: 1", false, false)

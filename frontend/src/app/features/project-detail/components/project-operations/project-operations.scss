@@ -4,7 +4,7 @@
 .project-operations__head { display: flex; align-items: start; justify-content: space-between; gap: var(--studio-spacing-4); }
 .project-operations__head > div { display: grid; gap: var(--studio-spacing-1); }
 .project-operations__head p, .project-operations dt, .project-operations small { color: var(--studio-text-secondary); }
-.project-operations__environment, .project-operations__dora, .project-operations__logs {
+.project-operations__environment, .project-operations__dora, .project-operations__logs, .project-operations__traces {
   display: grid; gap: var(--studio-spacing-3); padding-block: var(--studio-spacing-4);
 }
 .project-operations__metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--studio-spacing-3); margin: 0; }
@@ -23,6 +23,14 @@
 .project-operations button, .project-operations input, .project-operations select { font: inherit; color: inherit; border: 1px solid var(--studio-border); border-radius: 6px; background: var(--studio-surface); padding: var(--studio-spacing-1) var(--studio-spacing-2); }
 .project-operations button { cursor: pointer; }
 .project-operations button:focus-visible, .project-operations input:focus-visible, .project-operations select:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+.project-operations__trace-list, .project-operations__waterfall { display: grid; gap: var(--studio-spacing-2); margin: 0; padding: 0; list-style: none; }
+.project-operations__trace-list button { text-align: left; width: 100%; }
+.project-operations__waterfall li { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(0, 3fr) auto; align-items: center; gap: var(--studio-spacing-2); }
+.project-operations__span-name { overflow-wrap: anywhere; }
+.project-operations__span-track { display: flex; height: 1rem; background: var(--studio-bg-hover); border-radius: 4px; }
+.project-operations__span-bar { display: block; height: 100%; background: var(--studio-accent); border-radius: 4px; }
+.project-operations__span-bar--failed { background: var(--studio-text-secondary); }
+.project-operations__span-duration { font-variant-numeric: tabular-nums; }
 @media (max-width: 750px) {
   .project-operations__markers li, .project-operations__log-lines li { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }

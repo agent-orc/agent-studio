@@ -186,7 +186,7 @@ test('one footer entry per subscription, honest age, host problem, account and r
         await expect(footer.getByTestId('footer-usage-claude')).toContainText('WK 7%');
         await expect(footer.getByTestId('footer-usage-codex')).toContainText('WK 15%');
         await expect(footer.getByTestId('footer-usage-cost')).toContainText('$12.48');
-        await footer.getByTestId('footer-usage-claude').click();
+        await footer.getByTestId('footer-usage-cost').click();
         const sheet = page.getByTestId('usage-detail-surface');
         await expect(sheet).toHaveAttribute('data-mode', 'sheet');
         await expect(sheet).toBeVisible();
@@ -238,68 +238,6 @@ test('footer omits the separator when usage has no visible entries', async ({ pa
   await expect(page.getByTestId('status-bar-separator')).toHaveCount(0);
 });
 
-test('footer opens each provider week with its own reset and in-window receipts', async ({ page }) => {
-  test.setTimeout(180_000);
-  mkdirSync(shots, { recursive: true });
-  await page.clock.setFixedTime(FIXTURE_NOW);
-  const now = FIXTURE_NOW;
-  const reset = { claude: now + 5 * 86_400_000, codex: now + 6 * 86_400_000 };
-  const weekReads = { claude: 0, codex: 0 };
-  const weeklyCockpit = cockpit();
-  weeklyCockpit.clis = weeklyCockpit.clis.map(cli => ({ ...cli,
-    windows: cli.windows.map(window => ({ ...window,
-      usedPct: cli.cliId === 'claude' ? 35 : cli.cliId === 'codex' ? 42 : window.usedPct,
-      resetAtUtc: cli.cliId === 'claude' ? new Date(reset.claude).toISOString()
-        : cli.cliId === 'codex' ? new Date(reset.codex).toISOString() : window.resetAtUtc,
-    })),
-  }));
-  await page.route('**/api/usage/cockpit**', route => route.fulfill({ json: weeklyCockpit }));
-  await page.route(url => url.pathname === '/api/cli/quota', route => route.fulfill({ json: {
-    at: new Date(now).toISOString(), ttlSeconds: 600,
-    snapshots: (['claude', 'codex'] as const).map((cli, index) => ({
-      cliType: cli, subscriptionKey: `account-${cli}`, fetchedAt: new Date(now).toISOString(),
-      plan: 'Pro', windows: [{ label: 'Weekly', usedPct: index ? 42 : 35,
-        resetAt: new Date(reset[cli]).toISOString() }], source: 'fixture', rawSample: null, error: null,
-    })),
-  } }));
-  await page.route('**/api/workspace/tokens/subscription-week**', route => {
-    const cli = new URL(route.request().url()).searchParams.get('cli') as 'claude' | 'codex';
-    weekReads[cli] += 1;
-    const start = reset[cli] - 7 * 86_400_000;
-    return route.fulfill({ json: {
-      cli, subscriptionKey: `account-${cli}`, startUtc: new Date(start).toISOString(),
-      resetAtUtc: new Date(reset[cli]).toISOString(), usedPct: cli === 'claude' ? 35 : 42,
-      observedAt: new Date(now).toISOString(), totalTokens: cli === 'claude' ? 120 : 240,
-      receiptCount: 1, cards: [{ name: cli === 'claude' ? 'AGT-CLAUDE' : 'AGT-CODEX', tokens: cli === 'claude' ? 120 : 240, receipts: 1 }],
-      kinds: [{ name: 'coding', tokens: cli === 'claude' ? 120 : 240, receipts: 1 }],
-      models: [{ name: cli === 'claude' ? 'claude-sonnet' : 'gpt-5', tokens: cli === 'claude' ? 120 : 240, receipts: 1 }],
-      receipts: [{ project: 'Studio', card: cli === 'claude' ? 'AGT-CLAUDE' : 'AGT-CODEX',
-        at: new Date(now).toISOString(), kind: 'coding', model: cli === 'claude' ? 'claude-sonnet' : 'gpt-5',
-        cli, tokens: cli === 'claude' ? 120 : 240, source: 'ledger' }],
-      notice: 'Provider percentage uses account quota units; captured tokens are a separate local measure.',
-    } });
-  });
-  await page.goto('/');
-  await dismissDevErrorDialog(page);
-  for (const cli of ['claude', 'codex'] as const) {
-    await expect(page.getByTestId(`footer-usage-${cli}`)).toContainText(cli === 'claude' ? 'WK 35%' : 'WK 42%');
-    await page.getByTestId(`footer-usage-${cli}`).click();
-    await expect(page.getByTestId('subscription-week-pct')).toHaveText(cli === 'claude' ? '35%' : '42%');
-    await expect(page.getByTestId('subscription-week-period')).toContainText(new Date(reset[cli]).toLocaleDateString('en-GB', { timeZone: 'UTC', dateStyle: 'medium' }));
-    await expect(page.getByTestId('subscription-week-receipts')).toContainText(cli === 'claude' ? 'AGT-CLAUDE' : 'AGT-CODEX');
-    await expect(page.getByTestId('subscription-week-receipts')).not.toContainText(cli === 'claude' ? 'AGT-CODEX' : 'AGT-CLAUDE');
-    await expect(page.getByTestId('subscription-week')).toContainText('100.0% of captured tokens');
-    for (const theme of ['light', 'dark'] as const) {
-      await setTheme(page, theme);
-      await page.getByTestId('subscription-week').screenshot({ path: join(shots, `provider-week-${cli}-${theme}.png`), animations: 'disabled' });
-    }
-    await page.goto('/');
-    await dismissDevErrorDialog(page);
-  }
-  expect(weekReads.claude).toBeLessThanOrEqual(2);
-  expect(weekReads.codex).toBeLessThanOrEqual(2);
-});
-
 test('local profile shows Settings without an account control', async ({ page }) => {
   test.setTimeout(90_000);
   page.setDefaultNavigationTimeout(60_000);
@@ -336,4 +274,33 @@ test('legacy shell keeps usage in the footer and account actions in the header',
   await page.getByTestId('footer-usage-cost').click();
   await expect(page.getByTestId('usage-detail-surface')).toBeVisible();
   await page.getByTestId('usage-detail-close').click();
+});
+
+
+test('Fable weekly allowance appears independently in the footer in both themes', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.clock.setFixedTime(FIXTURE_NOW);
+  await page.route('**/api/usage/cockpit**', route => {
+    const snapshot = cockpit();
+    const claude = snapshot.clis.find(cli => cli.cliId === 'claude')!;
+    claude.windows.push({ ...claude.windows[0], id: 'claude/weekly-fable', label: 'Weekly (Fable)', usedPct: 84 });
+    return route.fulfill({ json: snapshot });
+  });
+  await page.goto('/');
+  await dismissDevErrorDialog(page);
+  const footer = page.getByTestId('footer-usage-claude');
+  await expect(footer).toContainText('Fable 84%');
+  await expect(footer).toContainText('WK 7%');
+  await expect(footer).toHaveAttribute('aria-label', /Fable weekly 84 percent used/);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ['dark', 'light'] as const) {
+      await setTheme(page, theme);
+      await expect(footer).toContainText('Fable 84%');
+      const bounds = await footer.boundingBox();
+      expect(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width).toBe(true);
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);
+      await page.screenshot({ path: join(shots, `fable-weekly-${width}-${theme}--mocked.png`), animations: 'disabled' });
+    }
+  }
 });

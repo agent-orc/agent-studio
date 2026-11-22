@@ -80,7 +80,14 @@ records with the actor, card, reason, and time. The existing eject path returns
 the remaining members to planning; the operator move requests a close on the
 next planner tick.
 The batch panel lists pending cards that have not joined a formed or running
-batch. A run without a finish event counts as running only while its batch is
+batch.
+An operator gate infrastructure retry records a durable request for the card's current
+review attempt and returns its request id immediately. The next pilot tick checks the
+park and review again, then moves and enqueues under the tick lock. The state read
+reports pending, applied, and refused retry requests with any refusal reason. Clicks
+during a pending request return its id; a refused request may be submitted again after
+its cause is fixed.
+A run without a finish event counts as running only while its batch is
 in the running phase; after interruption, the panel uses `phaseAtUtc` to show
 the elapsed run time. Detached flights include their batch, detach time, and
 lease deadline in the state response and panel. The project's durable flight
@@ -686,12 +693,20 @@ its failing test names. The members the existing path would send to per-card
 suites are gated once more together as a child batch on the cohort's code
 (`sameCodeRerunOfRunId` names the red run; trigger
 `flaky-suspect-regate:<batch>`). A green re-gate publishes them and no
-per-card suite starts. A second red on the same code, or any other result,
-takes the existing per-card path; that re-gate records no proven-red finding.
-The mark is written once before the re-gate, so a restart or an isolation
-retry never re-gates the same red again. The batch state shows
-`flakySuspect` (red run, failing tests, `active`, and the re-gate's outcome
-`passed`, `reproduced` or `inconclusive` with its minutes) on the red batch.
+per-card suite starts. A re-gate the gate host could not run is recorded
+`requeued`: the red batch pauses and its members return to the batch pool,
+as any host-held flight does. A second red on the same code (`reproduced`), a
+green re-gate whose publication did not land (`unpublished`, with the reason),
+or any other result (`inconclusive`) takes the existing per-card path; that
+re-gate records no proven-red finding. The mark is written once before the
+re-gate, so a restart or an isolation retry never re-gates the same red again.
+When the red batch leaves isolation before the re-gate recorded a verdict
+(claim lost, cancellation, process death), the `isolation interrupted`
+recovery records the re-gate `interrupted` and sends the members per-card.
+The batch state shows `flakySuspect` (red run, failing tests, `active`, and
+the re-gate's outcome with its minutes and reason) on the red batch. A
+reproduced or interrupted mark is no longer active, so the failed-test
+ranking stops counting its run as a flaky suspect run.
 
 Assembly sorts a replay that is not a conflict into three outcomes
 (`BatchGatePolicy.ReplayDisposition`): a mapped success is admitted; a member
@@ -1548,6 +1563,11 @@ only what ran; the log owns the arithmetic.
     totals survive both review rounds and epochs.
   - The core run carries its accumulated tokens on its live row. Its earlier
     runs are counted but not priced a second time.
+- **Legacy OpenAI usage.** Current rows and `earlierRuns` retain
+  `inputIncludesCached` and `usageNormalization` provenance. Cost reads apply
+  the ledger's OpenAI cached-input rule to older rows with no provenance when
+  input is at least the positive cache-read count. This keeps card and project
+  pipeline costs aligned with ledger receipts without rewriting stored rows.
 - **Decision model.** `StepModelUsage` is built from the same one-shot or CLI
   receipt the token ledger records. `DecisionModelContext` carries it to the
   decision row and to `decidedByModel` on the bus decision message.
@@ -2871,6 +2891,14 @@ operator changes cause the step to fail before its writer runs.
   and timeline event remain the detailed evidence. Every merge `Error` names a
   typed code (AGT-2995); the code table and the Error sites are in
   [rebase-merge-and-integration-invariants.md](../../concepts/platform-architecture/rebase-merge-and-integration-invariants.md#typed-codes-of-an-error-outcome-agt-2995).
+- A merge-only continuation is attributed when its earlier non-merge delivery
+  commits name the card (or carry its runner attribution trailer) and each new
+  merge imports a parent already on the integration branch. The run result SHA
+  receives a `commits[]` entry with that run's attempt id. A passing review
+  escalated solely for missing attribution can be restored to Auto Review by
+  the integration-history repair sweep, then admitted to a batch without a new
+  review. Other missing attribution escalations name the affected commits and
+  the required next-round action.
 - `post-orchestrator-review` is an early completeness gate. It must never render
   as a final verdict.
 - `post-orchestrator-decision` is the single final orchestrator verdict.
@@ -3062,13 +3090,28 @@ operator changes cause the step to fail before its writer runs.
   merge, independent of `ReviewDecisionOrchestrator:Enabled`:
   - Before the merge, Dossier placement fetches the fenced result and requires
     its diff against the integration line to stay inside exactly one
-    `docs/<slug>/` directory. The Dossier at that commit must pass the
+    `docs/<slug>/` directory. The diff starts at the merge base of the result
+    with the whole integration line: the Studio lane, a freshly fetched
+    `origin/<branch>`, and the run's recorded base when that line carries it
+    (`GitService.ChangedPathsAgainstIntegrationLine`, AGT-3964). The runner
+    merges the integration branch into the concept branch at the start of
+    every round, and the lane only catches up with origin at the next merge,
+    so a diff against the lane alone counted develop's own files and Dossiers
+    as the concept's change (AGT-3951). The Dossier at that commit must pass the
     concept contract, and `results/deliverables.md` must name it. The
     backend-owned `status.md` keeps that reference, as summary generation
     does. A refused delivery merges nothing. Its merge row records failure
     code `concept-dossier-rejected` with `Dossier placement failed:
     <findings>`. The delivery-chain reconciler then escalates the
     integrating card with that reason.
+  - `concept-dossier-rejected` is replayable (`ReplayAvailable`): Retry
+    integration (`POST /api/tasks/{id}/integration/retry`) replays the same
+    reviewed delivery through `ConceptDeliveryPostSteps`, so placement runs
+    again without a new agent round and the passed review is reused. A
+    Dossier already on the integration branch at the delivered content merges
+    as a no-op and is recorded as placed. An Escalated card that integrates
+    this way returns to Human Review with its Dossier linked. The automatic
+    gate-environment ladder never replays it.
   - After the merge, placement writes `.metadata/concept-workbench.json` with
     the integrated commit. Concept review reruns on that commit. The step then
     writes the `concept-sight-review` marker. An integrated but incomplete
@@ -3602,8 +3645,12 @@ every gate path:
 - `GateFailureTriagePolicy` classifies a gate log whose reason carries the
   invalid-definition text as `product` with kind `definition`, before any
   environment marker. The failing items are the `path [code]` pairs. Routing
-  starts the one fix round with the issues and the rule above, never attaches
-  the card to a shared cause, and never spends the environment replay budget.
+  starts at most two automatic fix rounds per card and preparation fingerprint,
+  even when each round produces a new delivery SHA. The prompt carries the
+  reported issue codes, paths, lines, and messages without advice for a
+  different rule. A repeated failure then parks the card with that issue line.
+  Definition failures never attach the card to a shared cause or spend the
+  environment replay budget.
 - Review checks the file first. Right after the completion gate,
   `ProjectDefinitionGate` reads `project.yml` at the exact subject SHA through
   git and validates it, including the existence of every referenced file. An
@@ -3660,15 +3707,18 @@ in
   repository-relative. Their segments contain only letters, digits, `.`, `_`, and
   `-`; no segment is empty, `.`, or `..`, or starts with `-`. A lone `.` names
   the repository root only for a container build context.
-- `environments` are ordered and exactly Staging, then Production. Production
+- `environments` are ordered: Staging alone, or Staging then Production. Production
   must be `protected`: every deploy, redeploy, or rollback into it needs an
   Owner or Maintainer approval. Staging deploys automatically after
-  integration, so `protected: true` on Staging is refused as
+  integration (an integration release, see
+  [Deployment as a first-class citizen](../../concepts/deployment-first-class.md#releases-standard-lifecycle-and-deploy-runs-bd-1)), so `protected: true` on Staging is refused as
   `staging-protection-unsupported`. The shorthand `[staging, production]`
   protects Production. When the file describes a deployment but omits
-  `environments` or `lifecycles`, the default is Staging, protected Production,
-  and the standard lifecycle.
-- `lifecycles.standard`: Staging is automatic after integration; Production
+  `environments`, the default is Staging and protected Production. When
+  `lifecycles` is omitted, the standard lifecycle follows the declared
+  environments. Removing Production therefore also requires removing its
+  lifecycle phase and all Production-scoped steps and references.
+- `lifecycles.standard`: Staging is automatic after integration; when declared, Production
   requires successful Staging and approval by Owner or Maintainer.
 - `tenants` declare customer installations with a unique portable `name`,
   optional unique `tags`, and a nonempty list of participating `environments`.
@@ -3786,6 +3836,12 @@ pins one compose service to the release artifact digest before pulling and
 starting it. It resolves secret names under the claimed job lease, sends step
 log messages to the deployment log, and records each step
 result. A failed deployment queues the previous healthy artifact for rollback.
+The status projection keeps the last successful release as the lifecycle
+baseline, while `releaseUncertain` marks a later failed deploy or rollback
+whose host state a newer successful host report has not confirmed. Consumers
+must not label the baseline or failed rollback target as the running release
+while this flag is set. A refused rollback returns its specific server reason;
+the operator can redeploy a known release or fix forward.
 The deploy host needs OpenSSH and access to the artifact store; its SSH target
 needs Python 3, and container targets also need Docker Compose. The
 [deploy host API contract](../contracts/deploy-host-api.md) defines the claim,
@@ -3800,6 +3856,23 @@ refuses it by route identity. The project
 Settings page shows the diagram, the validation result with line and path, and
 the migration preview with its confirm button in the Pipeline section below
 Execution.
+
+A schema 2 file that declares environments but no artifacts or deploy steps
+(the migration's result without JSON declarations) gets `deployStepsAvailable`
+on the read. Settings > Pipeline and Deploy > Overview then offer the deploy-step
+form: one static or container artifact, and per environment the target host,
+the static directory or the compose file and service, the health URL and the
+health timeout. `POST .../deploy-steps/preview` returns the proposal in the
+migration's dry-run shape and writes nothing; it appends `artifacts` and
+`deploy` to the unchanged file and accepts only plain values, because the
+project.yml reader has no escapes. `POST .../deploy-steps` repeats the form with
+both preview digests and writes under the same precondition and `PostStep`
+classification as the migration. Until steps exist, Deploy > Overview shows
+each declared environment as "No deploy step yet"; the JSON declaration
+guidance appears only for schema 1 projects. The `static-web` template carries
+this section commented out below a `# --- schema 2 deployment ---` marker; the
+`container-service` template is schema 2 with its deploy steps, telemetry
+environments and runbooks already declared (M5).
 
 A static site over SSH and a compose service, each with a health check:
 

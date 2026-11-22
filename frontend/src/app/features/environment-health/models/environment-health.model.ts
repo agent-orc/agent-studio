@@ -1,6 +1,6 @@
 /** Wire shapes of `/api/environment/health` and `/api/projects/{project}/environments/health` (IP-14). */
 /** `invalid`: the declaration is broken or a target resolves to an address the control plane refuses. */
-export type HealthStatus = 'up' | 'degraded' | 'down' | 'invalid' | 'unknown';
+export type HealthStatus = 'up' | 'degraded' | 'down' | 'invalid' | 'unknown' | 'not-observed';
 
 export interface HealthSample {
   at: string;
@@ -30,7 +30,7 @@ export interface HealthIncident {
 
 export interface EnvironmentHealthCheck {
   id: string;
-  kind: 'http' | 'tcp' | 'tls';
+  kind: 'http' | 'tcp' | 'tls' | 'database' | 'telemetry';
   target: string;
   derived: boolean;
   expectedStatus: number;
@@ -65,6 +65,8 @@ export interface EnvironmentHealth {
   checks: EnvironmentHealthCheck[];
   /** Why the environment cannot be watched, for example a broken declaration file. */
   error: string | null;
+  /** Board key of the open incident's card (NS-2); `currentIncident.cardId` is its folder slug. */
+  incidentCardKey?: string | null;
 }
 
 export interface EnvironmentHealthResponse {
@@ -79,6 +81,7 @@ export const HEALTH_STATUS_LABEL: Record<HealthStatus, string> = {
   down: 'Down',
   invalid: 'Misconfigured',
   unknown: 'No data',
+  'not-observed': 'Not observed',
 };
 
 /** Uptime share as a percentage with two decimals, so 99.95 % and 100 % stay distinct. */

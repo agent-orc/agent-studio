@@ -45,6 +45,74 @@ internal static class OtlpProtobufDecoder
         return factory.Logs();
     }
 
+    public static OtlpDecodeResult<TelemetrySpanRecord> DecodeTraces(ReadOnlySpan<byte> body, OtlpRecordFactory factory)
+    {
+        var reader = new ProtoWireReader(body);
+        while (reader.TryReadTag(out var field, out var type))
+        {
+            if (field == 1 && type == ProtoWireType.LengthDelimited) ReadResourceSpans(reader.ReadBytes(), factory);
+            else reader.Skip(type);
+        }
+        return factory.Spans();
+    }
+
+    private static void ReadResourceSpans(ReadOnlySpan<byte> data, OtlpRecordFactory factory)
+    {
+        var resource = factory.Resource(ReadResource(data, factory));
+        var reader = new ProtoWireReader(data);
+        while (reader.TryReadTag(out var field, out var type))
+        {
+            if (field == 2 && type == ProtoWireType.LengthDelimited) ReadScopeSpans(reader.ReadBytes(), resource, factory);
+            else reader.Skip(type);
+        }
+    }
+
+    private static void ReadScopeSpans(ReadOnlySpan<byte> data, TelemetryAttributes resource, OtlpRecordFactory factory)
+    {
+        var scoped = WithScope(data, resource, factory);
+        var reader = new ProtoWireReader(data);
+        while (reader.TryReadTag(out var field, out var type))
+        {
+            if (field == 2 && type == ProtoWireType.LengthDelimited) factory.AddSpan(scoped, ReadSpan(reader.ReadBytes(), factory));
+            else reader.Skip(type);
+        }
+    }
+
+    private static OtlpSpanFields ReadSpan(ReadOnlySpan<byte> data, OtlpRecordFactory factory)
+    {
+        var span = new OtlpSpanFields();
+        var reader = new ProtoWireReader(data);
+        while (reader.TryReadTag(out var field, out var type))
+        {
+            switch (field)
+            {
+                case 1 when type == ProtoWireType.LengthDelimited: span.TraceId = OtlpRecordFactory.Identifier(reader.ReadBytes(), 16); break;
+                case 2 when type == ProtoWireType.LengthDelimited: span.SpanId = OtlpRecordFactory.Identifier(reader.ReadBytes(), 8); break;
+                case 4 when type == ProtoWireType.LengthDelimited: span.ParentSpanId = OtlpRecordFactory.Identifier(reader.ReadBytes(), 8); break;
+                case 5 when type == ProtoWireType.LengthDelimited: span.Name = reader.ReadString(); break;
+                case 6 when type == ProtoWireType.Varint: span.Kind = reader.ReadVarint().ToString(System.Globalization.CultureInfo.InvariantCulture); break;
+                case 7 when type == ProtoWireType.Fixed64: span.StartUnixNano = Nanos(reader.ReadFixed64()); break;
+                case 8 when type == ProtoWireType.Fixed64: span.EndUnixNano = Nanos(reader.ReadFixed64()); break;
+                case 9 when type == ProtoWireType.LengthDelimited: AddAttribute(span.Attributes, reader.ReadBytes(), factory); break;
+                case 15 when type == ProtoWireType.LengthDelimited: span.Failed = ReadStatusError(reader.ReadBytes()); break;
+                default: reader.Skip(type); break;
+            }
+        }
+        return span;
+    }
+
+    private static bool ReadStatusError(ReadOnlySpan<byte> data)
+    {
+        var reader = new ProtoWireReader(data);
+        var failed = false;
+        while (reader.TryReadTag(out var field, out var type))
+        {
+            if (field == 3 && type == ProtoWireType.Varint) failed = reader.ReadVarint() == 2;
+            else reader.Skip(type);
+        }
+        return failed;
+    }
+
     private static void ReadResourceMetrics(ReadOnlySpan<byte> data, OtlpRecordFactory factory)
     {
         var resource = factory.Resource(ReadResource(data, factory));
@@ -138,6 +206,24 @@ internal static class OtlpProtobufDecoder
             else if (field == layout.Sum && type == ProtoWireType.Fixed64) point.Sum = reader.ReadDouble();
             else if (field == layout.Min && type == ProtoWireType.Fixed64) point.Min = reader.ReadDouble();
             else if (field == layout.Max && type == ProtoWireType.Fixed64) point.Max = reader.ReadDouble();
+            else if (kind == MetricKind.Histogram && field == 6 && type == ProtoWireType.Varint)
+            {
+                if (point.BucketCounts.Count < 129) point.BucketCounts.Add(reader.ReadVarint()); else reader.Skip(type);
+            }
+            else if (kind == MetricKind.Histogram && field == 6 && type == ProtoWireType.LengthDelimited)
+            {
+                var packed = new ProtoWireReader(reader.ReadBytes());
+                while (packed.HasRemaining && point.BucketCounts.Count < 129) point.BucketCounts.Add(packed.ReadVarint());
+            }
+            else if (kind == MetricKind.Histogram && field == 7 && type == ProtoWireType.Fixed64)
+            {
+                if (point.ExplicitBounds.Count < 128) point.ExplicitBounds.Add(reader.ReadDouble()); else reader.Skip(type);
+            }
+            else if (kind == MetricKind.Histogram && field == 7 && type == ProtoWireType.LengthDelimited)
+            {
+                var packed = new ProtoWireReader(reader.ReadBytes());
+                while (packed.HasRemaining && point.ExplicitBounds.Count < 128) point.ExplicitBounds.Add(packed.ReadDouble());
+            }
             else if (field == layout.Flags && type == ProtoWireType.Varint) point.Flags = (uint)reader.ReadVarint();
             else reader.Skip(type);
         }

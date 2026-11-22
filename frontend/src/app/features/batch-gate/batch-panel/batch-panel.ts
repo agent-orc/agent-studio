@@ -18,13 +18,14 @@ import { BatchQuarantineComponent } from '../batch-quarantine/batch-quarantine';
 import { BatchPhaseMetricsComponent } from '../batch-phase-metrics/batch-phase-metrics';
 import { BatchLaneAdmissionComponent } from '../batch-lane-admission/batch-lane-admission';
 import { BatchPerTaskGatesComponent } from '../batch-per-task-gates/batch-per-task-gates';
+import { BatchInfrastructureRetriesComponent } from './batch-infrastructure-retries/batch-infrastructure-retries';
 
 class FixCardError extends Error {}
 
 @Component({
   selector: 'app-batch-panel',
   standalone: true,
-  imports: [NgTemplateOutlet, PendingButtonDirective, BatchIsolationComponent, BatchQuarantineComponent, StatusIndicatorComponent, BatchPhaseMetricsComponent, BatchLaneAdmissionComponent, BatchPerTaskGatesComponent],
+  imports: [NgTemplateOutlet, BatchInfrastructureRetriesComponent, PendingButtonDirective, BatchIsolationComponent, BatchQuarantineComponent, StatusIndicatorComponent, BatchPhaseMetricsComponent, BatchLaneAdmissionComponent, BatchPerTaskGatesComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './batch-panel.html',
   styleUrl: './batch-panel.scss',
@@ -195,7 +196,9 @@ export class BatchPanelComponent implements OnDestroy {
   }
   isolationRows(batch: BatchGateBatch) { return batchIsolationRows(this.state(), batch); }
   isolationState(batch: BatchGateBatch) { return batchIsolationState(batch); }
-  flakySuspectLabel(suspect: BatchFlakySuspect): string { return batchFlakySuspectLabel(suspect); }
+  flakySuspectLabel(suspect: BatchFlakySuspect, batch: BatchGateBatch): string {
+    return batchFlakySuspectLabel(suspect, batch.phase !== 'red');
+  }
   /** The members a failed run proved red, joined for display, or null. */
   provenBy(failure: { batchId: string; runId: string }): string | null {
     const culprits = (this.state()?.isolationFindings ?? []).filter(finding => finding.status === 'proven-red'
