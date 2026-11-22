@@ -5682,12 +5682,27 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(started.SwitchStartedAt, reloaded.SwitchStartedAt);
         Assert.Equal(drained.DrainRequestedAt, reloaded.DrainRequestedAt);
 
+        // AGT-3930: a cancel from a session that loaded before the switch is
+        // refused with the current status; the drain and switch start stay.
+        var cancel = await management.PostAsync($"/api/clients/{reviewRunnerId}/deploy-cancel", null);
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, cancel.StatusCode);
+        var refusal = (await cancel.Content.ReadFromJsonAsync<CancelRefusal>(ApiJson))!;
+        Assert.Equal("client-switch-started", refusal.Error);
+        Assert.Equal(started.SwitchStartedAt, refusal.Status.SwitchStartedAt);
+        Assert.True(refusal.Status.Draining);
+        var kept = (await management.GetFromJsonAsync<AgentStudio.Clients.ClientDrainStatus>(
+            $"/api/clients/{reviewRunnerId}/drain-status", ApiJson))!;
+        Assert.Equal(started.SwitchStartedAt, kept.SwitchStartedAt);
+        Assert.Equal(drained.DrainRequestedAt, kept.DrainRequestedAt);
+
         (await management.PostAsync($"/api/clients/{reviewRunnerId}/resume", null)).EnsureSuccessStatusCode();
         var resumed = (await management.GetFromJsonAsync<AgentStudio.Clients.ClientDrainStatus>(
             $"/api/clients/{reviewRunnerId}/drain-status", ApiJson))!;
         Assert.False(resumed.Draining);
         Assert.Null(resumed.SwitchStartedAt);
     }
+
+    private sealed record CancelRefusal(string Error, AgentStudio.Clients.ClientDrainStatus Status);
 
     /// <summary>A coding run settled with a result and one review attempt over it.</summary>
     private static ReviewAttemptDto SeedSettledReview(

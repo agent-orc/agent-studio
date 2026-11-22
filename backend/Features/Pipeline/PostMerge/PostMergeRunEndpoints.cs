@@ -1,4 +1,5 @@
 using AgentStudio.Registry;
+using AgentStudio.Tasks;
 using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
 
@@ -19,8 +20,28 @@ public static class PostMergeRunEndpoints
                     var state = store.Read(project.Id);
                     return new DevelopStateSummary(project.DisplayName,
                         state.Runs.Count == 0 && state.ActiveRun is null ? null : state.DevelopState,
-                        state.LastGreenSha);
+                        state.LastGreenSha, state.PendingWindow);
                 }).ToArray());
+        });
+        app.MapGet("/api/runner/post-merge/projects", (ProjectRegistry registry,
+            ProjectSettingsService settings) => Results.Ok(registry.List()
+            .Where(project => !project.Archived
+                && IntegrationTestModes.Resolve(settings.Get(project.DisplayName)) == IntegrationTestModes.PostMerge)
+            .Select(project => (Project: project, Repository: RemoteProjectRepositoryResolver.Resolve(
+                project, settings.Get(project.DisplayName).IntegrationBranch)))
+            .Where(item => item.Repository is not null)
+            .Select(item => new PostMergeProjectTarget(item.Project.Id, item.Project.DisplayName,
+                item.Repository!.RepositoryUrl, item.Repository.DefaultBranch)).ToArray()));
+        app.MapPost("/api/runner/post-merge/projects/{project}/window", (string project,
+            PostMergeWindowObservation observation, ProjectRegistry registry, PostMergeRunStore store) =>
+        {
+            var record = registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project);
+            if (record is null) return Results.NotFound();
+            if (observation.TipSha is not { Length: 40 } || !observation.TipSha.All(Uri.IsHexDigit)
+                || observation.WindowMinutes < 0 || observation.AdmissionReason?.Length > 256)
+                return Results.BadRequest(new { error = "invalid post-merge window observation" });
+            store.ObserveWindow(record.Id, observation);
+            return Results.NoContent();
         });
         app.MapGet("/api/runner/post-merge/projects/{project}", (string project,
             ProjectRegistry registry, PostMergeRunStore store, ProjectSettingsService settings) =>
@@ -84,4 +105,5 @@ public static class PostMergeRunEndpoints
     }
 }
 
-public sealed record DevelopStateSummary(string Project, string? DevelopState, string? LastGreenSha);
+public sealed record DevelopStateSummary(string Project, string? DevelopState, string? LastGreenSha,
+    PostMergeWindowObservation? PendingWindow = null);

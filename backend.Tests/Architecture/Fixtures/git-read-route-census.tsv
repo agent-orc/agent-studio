@@ -74,6 +74,7 @@
 /api/concept-docs/{topic}	free	-	-	-
 /api/crash-recovery/pending	free	-	-	-
 /api/deploy/cards	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/deploy/hosts/{hostId}/containers	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/deploy/jobs/{project}/{jobId}/artifact	free	-	-	-
 /api/deploy/matrix	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/deploy/run-hosts	free	-	-	-
@@ -125,6 +126,7 @@
 /api/git/summary	reachable	measured-zero	-	-
 /api/host/filesystems	free	-	-	-
 /api/hosts/{id}/operations/{attemptId}	free	-	-	-
+/api/instance/deploy/reporter-tokens/	free	-	-	-
 /api/integrations/quality-studio/connection	free	-	-	-
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-
@@ -198,6 +200,7 @@
 /api/projects/{projectName}/cli-modes	free	-	-	-
 /api/projects/{projectName}/cycle-time	free	-	-	-
 /api/projects/{projectName}/cycle-time/tasks/{taskKey}	free	-	-	-
+/api/projects/{projectName}/deploy/actions	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/audit	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/cards	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/delivery-lanes	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
@@ -206,6 +209,8 @@
 /api/projects/{projectName}/deploy/deployments/{deploymentId}	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/deployments/{deploymentId}/log	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/environments	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/projects/{projectName}/deploy/instance	free	-	-	-
+/api/projects/{projectName}/deploy/integration-release	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/lanes	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/operations	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/operations/logs	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
@@ -213,12 +218,14 @@
 /api/projects/{projectName}/deploy/releases	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/releases/page	reachable	frozen	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/releases/{releaseId}	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/projects/{projectName}/deploy/releases/{releaseId}/actions	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/releases/{releaseId}/notes	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/releases/{releaseId}/page	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/runbooks	reachable	frozen	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/runbooks/runs	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/runbooks/runs/{runId}	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/runbooks/runs/{runId}/log	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/projects/{projectName}/deploy/secret-readiness	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/status	reachable	frozen	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/tenants	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deployment/summary	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
@@ -241,6 +248,7 @@
 /api/projects/{projectName}/execution/proposal-preview	free	-	-	-
 /api/projects/{projectName}/gate-result-cache	free	-	-	-
 /api/projects/{projectName}/graph	free	-	-	-
+/api/projects/{projectName}/incident-webhook	free	-	-	-
 /api/projects/{projectName}/lane-sort-strategies	free	-	-	-
 /api/projects/{projectName}/operator-sweeps	free	-	-	-
 /api/projects/{projectName}/post-work/shadow	free	-	-	-
@@ -331,6 +339,7 @@
 /api/runner/integration-lease/{projectName}/{integrationBranch}	free	-	-	-
 /api/runner/lease/{taskKey}	free	-	-	-
 /api/runner/orchestrator-feed	reachable	measured-zero	-	-
+/api/runner/post-merge/projects	free	-	-	-
 /api/runner/post-merge/projects/{project}	free	-	-	-
 /api/runner/release-candidates/{project}/{commit}	reachable	gap	Deploy and environments	Release candidate plan from Task Server source facts
 /api/runner/project-chat/status	free	-	-	-

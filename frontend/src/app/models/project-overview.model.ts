@@ -68,12 +68,21 @@ export interface ProjectEnvironmentHistory {
 
 export interface ProjectEnvironments {
   project: string;
+  runTargetRemovals?: {
+    environmentId: string;
+    hostId: string;
+    kind: string | null;
+    status: string;
+  }[];
   environments: {
     declaration: ProjectEnvironmentDeclaration;
     deployedArtifact: string | null;
     health: string;
     pendingArtifact: string | null;
     history: ProjectEnvironmentHistory[];
+    observed?: { state: string; restarts: number; crashOutput?: string[] | null } | null;
+    runtimeIncident?: { id: string; kind: string; startedAt: string; updatedAt: string;
+      restarts: number; endedAt: string | null } | null;
   }[];
   promotions: {
     artifact: string;

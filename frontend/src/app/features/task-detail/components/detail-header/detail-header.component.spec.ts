@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
@@ -9,6 +9,8 @@ import { AuthSessionState } from '../../../../services/auth.service';
 import type { TaskInfo } from '../../../../models/task.model';
 import { BatchGateService } from '../../../../services/batch-gate.service';
 import { redHalvingState } from '../../../batch-gate/testing/batch-fixtures';
+import { AcceptanceReadinessStore } from '../../../acceptance-readiness';
+import { readinessItem } from '../../../acceptance-readiness/testing/acceptance-readiness.fixtures';
 
 const taskInfo: TaskInfo = {
   id: 'ASS-871',
@@ -282,6 +284,22 @@ describe('DetailHeaderComponent (smoke)', () => {
     expect(btn!.disabled).toBe(false);
     expect(btn!.getAttribute('data-git-loading')).toBeNull();
     expect(fixture.nativeElement.textContent).toContain('Accept');
+  });
+
+  it('holds Accept with the reason when readiness reports review concerns (AGT-3830)', async () => {
+    const fixture = await mountHeader();
+    vi.spyOn(TestBed.inject(AcceptanceReadinessStore), 'itemFor').mockReturnValue(readinessItem('ASS-871', 'review-concerns',
+      { taskKey: 'ASS-871', reason: 'The requirement-fit review returned concerns: The result SHA is absent.' }));
+    fixture.componentRef.setInput('info', { ...fixture.componentInstance.info() });
+    fixture.detectChanges();
+    const cmp = fixture.componentInstance;
+    const button: HTMLButtonElement = fixture.nativeElement.querySelector('[data-testid="triage-action-mark-done"]');
+    expect(button.disabled).toBe(true);
+    expect(cmp.primaryTooltip()).toContain('The result SHA is absent.');
+    let emitted = 0;
+    cmp.triageAction.subscribe(() => emitted++);
+    cmp.onPrimaryClick();
+    expect(emitted).toBe(0);
   });
 
   it('keeps a pending delivery disabled after git status loads', async () => {

@@ -15,7 +15,7 @@
     <app-project-basics-card [projectName]="projectName()" (pathsSaved)="reloadBuildProfileGate()" />
     @if (buildProfileGate(); as gate) {
       @if (!gate.gateApplicable || gate.verifyDefinition?.state === 'checkout-missing') {
-        <app-project-build-profile-notice [summary]="gate" />
+        <app-project-build-profile-notice [summary]="gate" [projectName]="projectName()" />
       }
       @if (gate.contradictions && gate.contradictions.length > 0) {
         <app-project-build-profile-contradiction-notice [contradictions]="gate.contradictions" />
@@ -24,6 +24,7 @@
   </section>
   <app-project-execution-definition [projectName]="projectName()" />
   <app-quality-studio-connection-settings />
+  <app-incident-webhook-settings [projectName]="projectName()" />
   <app-batch-settings [project]="projectName()" />
   @if (workspaceId() && projectId()) {
     @defer { <app-workspace-quota [workspaceId]="workspaceId()!" [projectId]="projectId()" /> }

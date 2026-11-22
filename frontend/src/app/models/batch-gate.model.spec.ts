@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { isolatedRedState, redHalvingState } from '../features/batch-gate/testing/batch-fixtures';
 import {
-  batchAlert, batchIsolationEvidenceUrl, batchIsolationRows, batchProvenRedFor, batchShortId, batchWaitingCards, batchTimeLine, batchDateTime, BATCH_TIME_ZONE_NOTE,
-  type BatchGateState,
+  batchAlert, batchFlakySuspectLabel, batchIsolationEvidenceUrl, batchIsolationRows, batchProvenRedFor, batchShortId, batchWaitingCards, batchTimeLine, batchDateTime, BATCH_TIME_ZONE_NOTE,
+  type BatchFlakySuspect, type BatchGateState,
 } from './batch-gate.model';
 
 const root = (state: BatchGateState) => state.batches.find(batch => batch.batchId === 'batch-14')!;
@@ -97,5 +97,53 @@ describe('batch isolation model (AGT-3577)', () => {
       .toBe('/api/projects/my%20project/batch-gate/isolation-evidence?parentBatchId=batch-14&taskKey=AGT-2');
     expect(batchShortId('0123456789abcdef0123456789abcdef')).toBe('01234567');
     expect(batchShortId('batch-14')).toBe('batch-14');
+  });
+});
+
+describe('batch flaky suspect label (AGT-3858)', () => {
+  const mark = (outcome?: string, reason?: string | null): BatchFlakySuspect => ({
+    redRunId: 'run-7', failedTests: ['Product.Tests.Unstable'], markedAtUtc: '2026-11-16T03:00:00Z', active: true,
+    regate: outcome ? { regateBatchId: 'batch-9', memberKeys: ['AGT-2'], outcome, minutes: 12.4,
+      recordedAtUtc: '2026-11-16T03:20:00Z', reason } : null,
+  });
+
+  it('says the cohort is re-gated while the red batch still runs its isolation', () => {
+    expect(batchFlakySuspectLabel(mark())).toBe('Flaky suspect: no isolation child reproduced this red. '
+      + 'The cohort is re-gated once on the same code. Failing tests: Product.Tests.Unstable.');
+  });
+
+  it('says a green re-gate published the members', () => {
+    expect(batchFlakySuspectLabel(mark('passed'))).toContain('the same-code re-gate passed (12.4 min). No per-card suite ran.');
+  });
+
+  it('says a reproduced red is not flaky', () => {
+    expect(batchFlakySuspectLabel(mark('reproduced')))
+      .toContain('Not flaky: the same-code re-gate reproduced this red (12.4 min). Its members continue through their own gates.');
+  });
+
+  it('says a green re-gate passed and why its members still continued', () => {
+    const label = batchFlakySuspectLabel(mark('unpublished', 'publication ended abandoned: StaleBase'));
+    expect(label).toContain('the same-code re-gate passed (12.4 min), but its publication did not land: '
+      + 'publication ended abandoned: StaleBase. Its members continue through their own gates.');
+    expect(label).not.toContain('no test verdict');
+  });
+
+  it('says a host-held re-gate requeued its members to the batch pool', () => {
+    const label = batchFlakySuspectLabel(mark('requeued'));
+    expect(label).toContain('could not reach the gate host (12.4 min). Its members were requeued to the batch pool.');
+    expect(label).not.toContain('their own gates');
+  });
+
+  it('says an interrupted re-gate ended without a verdict', () => {
+    const recorded = batchFlakySuspectLabel(mark('interrupted'));
+    expect(recorded).toContain('Re-gate interrupted: no isolation child reproduced this red, and the same-code re-gate '
+      + 'ended before it recorded a verdict. Its members continue through their own gates.');
+    expect(recorded).not.toContain('is re-gated once');
+    expect(batchFlakySuspectLabel(mark(), true)).toBe(recorded);
+  });
+
+  it('says any other re-gate result gave no test verdict', () => {
+    expect(batchFlakySuspectLabel(mark('inconclusive')))
+      .toContain('the same-code re-gate gave no test verdict (12.4 min). Its members continue through their own gates.');
   });
 });

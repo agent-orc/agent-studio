@@ -158,7 +158,7 @@ public sealed class RunnerCapabilityProbeTests
     [Theory]
     [InlineData("0.155.0", false)]
     [InlineData("0.166.0", true)]
-    public async Task Gpt61_acceptance_is_advertised_and_only_probed_at_verified_cli_floor(
+    public async Task Version_gated_codex_acceptance_is_advertised_and_only_probed_at_verified_cli_floor(
         string version, bool probeable)
     {
         if (!OperatingSystem.IsLinux()) return;
@@ -178,11 +178,13 @@ public sealed class RunnerCapabilityProbeTests
 
         var candidates = RunnerCapabilityProbe.ModelCandidates(options,
             [(CliSelection.CodexCli, "gpt-6-sol")]);
-        Assert.Equal(probeable, candidates.Contains((CliSelection.CodexCli, CodexCliRelease.Gpt61Sol)));
-        Assert.Equal(probeable, candidates.Contains((CliSelection.CodexCli, CodexCliRelease.Gpt61Terra)));
+        Assert.Contains(CodexCliRelease.Gpt62Sol, CodexCliRelease.VersionGatedModels);
+        Assert.Contains(CodexCliRelease.Gpt62Astra, CodexCliRelease.VersionGatedModels);
+        foreach (var model in CodexCliRelease.VersionGatedModels)
+            Assert.Equal(probeable, candidates.Contains((CliSelection.CodexCli, model)));
 
         var advertised = RunnerCapabilityProbe.Advertise(options, gitPushReady: false);
-        foreach (var model in new[] { CodexCliRelease.Gpt61Sol, CodexCliRelease.Gpt61Terra })
+        foreach (var model in CodexCliRelease.VersionGatedModels)
         {
             var capability = Assert.Single(advertised,
                 item => item.Key == CapabilityProtocol.ModelAcceptance("codex", model));

@@ -22,6 +22,9 @@ public sealed class SessionContinuationLedgerStoreTests
             SessionContinuationLedgerStore.Append(folder, entry);
             Assert.Equal("session-1", SessionContinuationLedgerStore.Latest(folder)?.CapturedSessionId);
             Assert.Single(File.ReadAllLines(Path.Combine(folder, SessionContinuationLedgerStore.LedgerFileName)));
+            Assert.Contains("\"sessionMode\":\"fresh\"",
+                File.ReadAllText(Path.Combine(folder, SessionContinuationLedgerStore.LedgerFileName)));
+            Assert.Equal("resumed", (entry with { InputSessionId = "session-1" }).SessionMode);
 
             var delta = new MechanicalRoundDelta(new string('b', 40),
                 "refs/heads/result", new string('a', 40), ["a.cs"], "Steer", "Verify");

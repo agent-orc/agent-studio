@@ -1,0 +1,32 @@
+@if (owner()) {
+  <section class="webhook" aria-labelledby="webhook-title" data-testid="incident-webhook-settings">
+    <header class="webhook__head">
+      <h3 id="webhook-title">Incident notifications</h3>
+      <p>Send production health incident openings and recoveries to an HTTPS webhook. The receiver gets the project, environment, signal, start time, and a link to Studio.</p>
+    </header>
+    <div class="webhook__panel">
+      @if (destination()) {
+        <p>Sending to {{ destination() }}</p>
+      } @else {
+        <p>No webhook configured.</p>
+      }
+      <label class="webhook__field">
+        <span>HTTPS webhook URL</span>
+        <input type="url" autocomplete="off" data-testid="incident-webhook-url"
+               [value]="url()" (input)="url.set($any($event.target).value)"
+               placeholder="https://hooks.example/incident" />
+      </label>
+      <div class="webhook__actions">
+        <button type="button" class="webhook__primary" data-testid="incident-webhook-save"
+                [disabled]="busy() || !url().trim()" (click)="save()">Save webhook</button>
+        @if (destination()) {
+          <button type="button" class="webhook__secondary" data-testid="incident-webhook-test"
+                  [disabled]="busy()" (click)="test()">Send test</button>
+          <button type="button" class="webhook__secondary" data-testid="incident-webhook-remove"
+                  [disabled]="busy()" (click)="remove()">Remove</button>
+        }
+      </div>
+      @if (message()) { <p role="status">{{ message() }}</p> }
+    </div>
+  </section>
+}

@@ -33,8 +33,8 @@
             <p class="managed-databases__note" data-testid="managed-database-volume-alert">The volume uses {{ bytes(database.volumeBytes) }},
               at or above its {{ bytes(database.volumeAlertBytes) }} alert threshold.</p>
           }
-          @if (database.deletedAt) { <small>Deleted {{ database.deletedAt | date:'medium':'UTC' }} UTC, requested by {{ database.deletionRequestedBy }}</small> }
-          @else if (database.deletionRequestedAt) { <small>Deletion requested by {{ database.deletionRequestedBy }} {{ database.deletionRequestedAt | date:'medium':'UTC' }} UTC</small> }
+          @if (database.deletedAt) { <small>Deleted {{ database.deletedAt | date:'medium':'UTC' }} UTC, requested by {{ database.deletionRequestedBy | principalName }}</small> }
+          @else if (database.deletionRequestedAt) { <small>Deletion requested by {{ database.deletionRequestedBy | principalName }} {{ database.deletionRequestedAt | date:'medium':'UTC' }} UTC</small> }
           @if (database.state !== 'deleted') {
             <app-managed-database-backups [database]="database" [targets]="restoreTargets(environment, database)" [busy]="busy()"
               (operate)="runOperation(database, $event)" />

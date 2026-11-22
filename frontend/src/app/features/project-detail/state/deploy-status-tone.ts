@@ -23,15 +23,20 @@ export function runStateTone(state: string | null | undefined): StatusTone {
   return state && Object.hasOwn(RUN_STATE_TONE, state) ? RUN_STATE_TONE[state as StepState] : 'neutral';
 }
 
-/** Environment health as the Deploy overview card shows it. */
+/**
+ * Environment health as the Deploy overview card shows it. Misconfigured is a
+ * declaration problem the owner fixes, not an outage, so it reads as warning.
+ */
 const HEALTH_TONE: Readonly<Record<HealthState, StatusTone>> = {
   healthy: 'success',
   up: 'success',
   degraded: 'warning',
   unhealthy: 'danger',
   down: 'danger',
-  invalid: 'danger',
+  invalid: 'warning',
   unknown: 'neutral',
+  'crash-loop': 'danger',
+  'crash-rollback': 'danger',
   'not-observed': 'neutral',
 };
 

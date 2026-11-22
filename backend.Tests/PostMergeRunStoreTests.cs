@@ -63,6 +63,19 @@ public sealed class PostMergeRunStoreTests : IDisposable
         Assert.Null(store.Read(Project).AttributionEscalatedTaskId);
     }
 
+    [Fact]
+    public void StarvationObservationSurvivesRestartIgnoresOldPollAndClearsOnAdmission()
+    {
+        var store = new PostMergeRunStore(_root);
+        var observation = new PostMergeWindowObservation(First, Now.AddMinutes(-31), Now, 30, "busy");
+        store.ObserveWindow(Project, observation);
+        Assert.True(new PostMergeRunStore(_root).Read(Project).PendingWindow!.Starved);
+        store.ObserveWindow(Project, observation with { ObservedAtUtc = Now.AddMinutes(-1), AdmissionReason = null });
+        Assert.True(store.Read(Project).PendingWindow!.Starved);
+        store.Record(Project, Run("admitted", First, "window"));
+        Assert.Null(store.Read(Project).PendingWindow);
+    }
+
     private static PostMergeRunRecord Run(string id, string tip, string kind) =>
         new(id, "Agent Studio", kind, tip, null, Now, Now, 1, ["dotnet test"], [], "running", Now, null);
 

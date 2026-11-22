@@ -64,6 +64,7 @@ internal static class CarWorkerExecution
         Action<string, string> append,
         Func<CliOptions, CliOptions>? optionsCustomizer = null,
         string? cleanContextRoot = null,
+        IReadOnlyList<string>? extraCliArguments = null,
         CancellationToken stopToken = default)
     {
         var runId = string.IsNullOrWhiteSpace(spec.RunId)
@@ -75,7 +76,7 @@ internal static class CarWorkerExecution
         using var logger = new CarWorkerLogger(Path.Combine(workerDirectory, "car.log"), append);
         var protocolNovelty = new CliProtocolNoveltyTracker(cliType);
         using var signalRecorder = OperatingSystem.IsLinux()
-            ? new SignalRecordingCliSpawner()
+            ? new SignalRecordingCliSpawner(extraCliArguments)
             : null;
         var options = BuildCliOptions(spec, cliType) with { Spawner = signalRecorder };
         if (optionsCustomizer is not null) options = optionsCustomizer(options);

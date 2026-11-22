@@ -4,15 +4,18 @@ import { Observable, catchError, combineLatest, filter, forkJoin, map, of, start
 import { TaskService } from '../../../services/task.service';
 import type { ProjectEnvironments } from '../../../models/project-overview.model';
 import type {
+  DeployActionOption,
   DeployPanel,
   DeployRunAction,
   Deployment,
   DeploymentLogLine,
   DeploymentLogResponse,
   EnvironmentStatus,
+  IntegrationReleaseStatus,
   Release,
   DeployRunFilter,
   ReleaseGateStatus,
+  SecretReadinessResponse,
 } from '../state/deploy-area.model';
 import { artifactReleaseLookups, buildEnvironmentCards, ready, type DeploySources, type EnvironmentCardView } from '../state/deploy-area.model';
 import { ProjectPipelineDefinitionService, type PipelineDefinitionResponse } from './project-pipeline-definition.service';
@@ -116,10 +119,31 @@ export class ProjectDeployDataService {
     return panel(request, 'The release of the deployed artifact could not be loaded.', true);
   }
 
+  /** What creates the next release and what blocks it (AGT-3891). */
+  integrationRelease(projectName: string): Observable<DeployPanel<IntegrationReleaseStatus>> {
+    return panel(this.http.get<IntegrationReleaseStatus>(`${deployRoot(projectName)}/integration-release`),
+      'The next release could not be determined.', true);
+  }
+
+  /** Creates the release of the gated integration branch tip; the answer is the new status. */
+  createIntegrationRelease(projectName: string): Observable<IntegrationReleaseStatus> {
+    return this.http.post<IntegrationReleaseStatus>(`${deployRoot(projectName)}/integration-release`, {});
+  }
+
   /** F2: the standing release-candidate gate refusal, if the last release attempt was refused. */
   releaseGate(projectName: string): Observable<DeployPanel<ReleaseGateStatus>> {
     return panel(this.http.get<ReleaseGateStatus>(`${deployRoot(projectName)}/release-gate`),
       'The release gate state could not be loaded.', true);
+  }
+
+  /**
+   * F14: secrets a deploy would miss per environment, for the release or, without
+   * one, for the newest release the next run deploys.
+   */
+  secretReadiness(projectName: string, releaseId?: string | null): Observable<DeployPanel<SecretReadinessResponse>> {
+    const options = releaseId ? { params: { releaseId } } : {};
+    return panel(this.http.get<SecretReadinessResponse>(`${deployRoot(projectName)}/secret-readiness`, options),
+      'Secret bindings could not be checked.', true);
   }
 
   /** AGT-3201 deploy runs, newest first. */
@@ -153,12 +177,61 @@ export class ProjectDeployDataService {
     return panel(request, 'The step log could not be loaded.', true);
   }
 
-  /** Approve, reject, or cancel a run; the server checks role and state. */
-  act(projectName: string, deploymentId: string, action: DeployRunAction, reason?: string): Observable<Deployment> {
+  /**
+   * Approve, reject, or cancel a run; the server checks role and state. With
+   * `confirmMissingSecrets` a Production approval goes ahead without the secret
+   * bindings the server would otherwise refuse it for (F14).
+   */
+  act(projectName: string, deploymentId: string, action: DeployRunAction, reason?: string,
+    options: { confirmMissingSecrets?: boolean } = {}): Observable<Deployment> {
+    const intervention = action === 'retry' || action === 'skip' || action === 'abort';
     return this.http.post<Deployment>(
-      `${deployRoot(projectName)}/deployments/${encodeURIComponent(deploymentId)}/${
-        action === 'retry' || action === 'skip' || action === 'abort' ? 'intervention' : action}`,
-      action === 'retry' || action === 'skip' || action === 'abort' ? { action, reason } : {});
+      `${deployRoot(projectName)}/deployments/${encodeURIComponent(deploymentId)}/${intervention ? 'intervention' : action}`,
+      intervention ? { action, reason }
+        : action === 'approve' && options.confirmMissingSecrets ? { confirmMissingSecrets: true } : {});
+  }
+
+  /** Per environment: deploy the next release and redeploy the current one, as the lifecycle allows. */
+  deployActions(projectName: string): Observable<DeployPanel<DeployActionOption[]>> {
+    return panel(this.http.get<DeployActionOption[]>(`${deployRoot(projectName)}/actions`),
+      'Deploy actions could not be loaded.', true);
+  }
+
+  releaseDeployActions(projectName: string, releaseId: string): Observable<DeployPanel<DeployActionOption[]>> {
+    return panel(this.http.get<DeployActionOption[]>(
+      `${deployRoot(projectName)}/releases/${encodeURIComponent(releaseId)}/actions`),
+    'Deploy actions could not be loaded.', true);
+  }
+
+  /** Starts the option through the lifecycle routes; the server decides again and names a refusal. */
+  start(projectName: string, option: DeployActionOption): Observable<Deployment> {
+    const approve = !option.needsApproval;
+    return option.action === 'redeploy'
+      ? this.http.post<Deployment>(
+        `${deployRoot(projectName)}/environments/${encodeURIComponent(option.environmentId)}/redeploy`, { approve })
+      : this.http.post<Deployment>(
+        `${deployRoot(projectName)}/releases/${encodeURIComponent(option.releaseId)}/deployments`,
+        { environmentId: option.environmentId, approve });
+  }
+
+  /**
+   * The lifecycle rollback route (F13). With `approve` the request is the
+   * approval: the server queues it for an Owner or Maintainer and refuses it
+   * for anyone else. `acceptIncidentTarget` confirms a target that had an
+   * incident while running.
+   */
+  rollback(projectName: string, environmentId: string,
+    body: { approve: boolean; acceptIncidentTarget: boolean }): Observable<Deployment> {
+    return this.http.post<Deployment>(
+      `${deployRoot(projectName)}/environments/${encodeURIComponent(environmentId)}/rollback`, body);
+  }
+
+  stopEnvironment(projectName: string, environmentId: string): Observable<void> {
+    return this.http.post<void>(`/api/projects/${encodeURIComponent(projectName)}/environments/${encodeURIComponent(environmentId)}/stop`, {});
+  }
+
+  confirmRunTargetRemoval(projectName: string, environmentId: string, hostId: string): Observable<void> {
+    return this.http.post<void>(`/api/projects/${encodeURIComponent(projectName)}/environments/${encodeURIComponent(environmentId)}/run-target-removal/confirm`, { hostId });
   }
 
   pipeline(projectName: string): Observable<DeployPanel<PipelineDefinitionResponse>> {

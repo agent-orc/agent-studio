@@ -358,7 +358,7 @@ test.describe('Concept and held Accept in Human review (AGT-3704)', () => {
     if (RESULTS_DIR) await page.screenshot({ path: path.join(RESULTS_DIR, 'server-refused-accept-full-dark.png') });
   });
 
-  test('a completion-content-gap refusal offers the override next to Accept, and the override is accepted (AGT-3874)', async ({ page }) => {
+  test('a completion-content-gap refusal offers the override in place of Accept, and the override is accepted (AGT-3874, AGT-3830)', async ({ page }) => {
     const refusal = 'Completion refused: requirement-fit verdict was concerns.';
     let refused = false;
     const traffic = await mockApplication(page, INTEGRATED, route => {
@@ -377,9 +377,12 @@ test.describe('Concept and held Accept in Human review (AGT-3704)', () => {
     // AGT-3867 names the server refusal as an acceptance refusal.
     await expect(shown).toContainText(refusal.replace(/^Completion/, 'Acceptance'), { timeout: 15_000 });
     await expect(shown).toHaveAttribute('data-refusal-source', 'server');
-    const action = page.getByTestId('acceptance-refusal-action');
-    await expect(action).toHaveText('Accept with override…');
-    await expect(accept).toBeInViewport({ ratio: 1 });
+    // AGT-3830: a content refusal replaces Accept, which could only be refused
+    // again; Review again leads and the written-reason override sits beside it.
+    await expect(page.getByTestId('acceptance-refusal-action')).toHaveText('Review again');
+    await expect(page.getByTestId('acceptance-refusal-override')).toHaveText('Accept with a reason…');
+    await expect(accept).toHaveCount(0);
+    await expect(shown).toBeInViewport();
     for (const value of ['dark', 'light'] as const) {
       await theme(page, value);
       await screenshot(page, `content-gap-refusal-${value}.png`);

@@ -122,9 +122,7 @@ public sealed class RunTargetRenderingTests
         if (OperatingSystem.IsWindows()) return;
         using var workspace = new AgentStudio.TestSupport.TempWorkspace("run-target-network");
         var root = workspace.Directory("docker");
-        var command = Path.Combine(root, "docker-fake");
-        File.WriteAllText(command, "#!/bin/sh\nif [ \"$1 $2\" = \"network inspect\" ]; then echo false; exit 0; fi\nexit 0\n");
-        File.SetUnixFileMode(command, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var command = WriteDockerStub(root, "#!/bin/sh\nif [ \"$1 $2\" = \"network inspect\" ]; then echo false; exit 0; fi\nexit 0\n");
 
         var result = await new DockerCliRunTarget(command).EnsureNetworkAsync("app-net", CancellationToken.None);
 
@@ -141,15 +139,29 @@ public sealed class RunTargetRenderingTests
         if (OperatingSystem.IsWindows()) return;
         using var workspace = new AgentStudio.TestSupport.TempWorkspace("run-target-network-removal");
         var root = workspace.Directory("docker");
-        var command = Path.Combine(root, "docker-fake");
-        File.WriteAllText(command,
+        var command = WriteDockerStub(root,
             "#!/bin/sh\nif [ \"$1 $2\" = \"network inspect\" ]; then exit 1; fi\n"
             + "if [ \"$1 $2\" = \"network ls\" ]; then " + listCommand + "; fi\nexit 1\n");
-        File.SetUnixFileMode(command, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
 
         var result = await new DockerCliRunTarget(command).RemoveNetworkAsync("app-net", CancellationToken.None);
 
         Assert.Equal(removed, result.Ok);
+    }
+
+    private static string WriteDockerStub(string root, string script)
+    {
+        if (OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("The Docker stub requires a POSIX shell.");
+
+        var command = Path.Combine(root, "docker-fake");
+        // Finish every write and close the handle before making the stub executable.
+        using (var stream = new FileStream(command, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            stream.Write(System.Text.Encoding.UTF8.GetBytes(script));
+            stream.Flush(flushToDisk: true);
+        }
+        File.SetUnixFileMode(command, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return command;
     }
 
     [Fact]

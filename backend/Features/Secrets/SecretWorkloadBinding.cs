@@ -41,10 +41,18 @@ public sealed class SecretWorkloadLeases(ProjectEnvironmentService environments,
 {
     public DeployJobLease? FindClaimedDeployJob(string project, string jobId, string leaseToken)
         => environments.FindClaimedJob(project, jobId, leaseToken) is { } job
-            ? new DeployJobLease(job.Id, job.Project, job.EnvironmentId, job.HostId, job.SecretRefs,
-                bindings.ApprovedReferences(job.Project, job.EnvironmentId, job.SecretRefs,
-                    job.EnvironmentKind ?? "production"), security.DeployHostRunnerId(job.HostId))
+            ? Lease(job)
             : null;
+
+    /// <summary>A deploy job with telemetry also reads the deploy ingest token of its environment (M5).</summary>
+    private DeployJobLease Lease(DeployJob job)
+    {
+        IReadOnlyList<string> names = job.Telemetry is { } telemetry
+            ? [.. job.SecretRefs.Append(telemetry.SecretName).Distinct(StringComparer.Ordinal)] : job.SecretRefs;
+        return new DeployJobLease(job.Id, job.Project, job.EnvironmentId, job.HostId, names,
+            bindings.ApprovedReferences(job.Project, job.EnvironmentId, names, job.EnvironmentKind ?? "production"),
+            security.DeployHostRunnerId(job.HostId));
+    }
 
     public RunTargetCredentialLease? FindRunTargetCredentials(string project, string environmentId)
     {

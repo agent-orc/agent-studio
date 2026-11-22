@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 
 using Xunit;
@@ -321,10 +322,16 @@ public sealed class LeasePlacementEndpointsTests : IDisposable
     }
 
     private WebApplicationFactory<Program> BuildFactory() =>
-        new WebApplicationFactory<Program>()
+        new TestHostFactory()
             .WithWebHostBuilder(b =>
             {
                 b.UseEnvironment("Test");
+                b.ConfigureTestServices(services =>
+                {
+                    // These requests own claim and completion state. Background
+                    // reconciliation must not race their assertions or teardown.
+                    TestHostFactory.RemoveBackgroundHostedServices(services);
+                });
                 b.ConfigureAppConfiguration((_, cfg) =>
                 {
                     cfg.AddInMemoryCollection(new Dictionary<string, string?>

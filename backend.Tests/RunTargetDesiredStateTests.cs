@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AgentStudio.Projects;
+using AgentStudio.Runner;
 using AgentStudio.Security;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -205,7 +206,8 @@ public sealed class RunTargetDesiredStateTests : IDisposable
         Assert.Equal(0, service.RecordObserved("other-host", new(
             [new("demo", "stage", "running", _second, null, 0, now, [])])));
 
-        Assert.Equal(1, accepted);
+        Assert.Equal(2, accepted);
+        Assert.Equal("running", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "legacy").Observed?.State);
         var observed = service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Observed;
         Assert.NotNull(observed);
         Assert.Equal(("crash-loop", _first, (string?)null, now), (observed!.State, observed.RunningArtifact,
@@ -214,6 +216,88 @@ public sealed class RunTargetDesiredStateTests : IDisposable
         Assert.Equal((now, "health-ok", (string?)null), (observed.Events[^1].At, observed.Events[^1].Kind, observed.Events[^1].Artifact));
         Assert.DoesNotContain("sensitive-value", JsonSerializer.Serialize(service.Read("demo")));
         Assert.DoesNotContain("raw-host-output", JsonSerializer.Serialize(service.Read("demo")));
+    }
+
+    [Fact]
+    public void ObservedState_KeepsBoundedMaskedCrashOutput()
+    {
+        var service = Build();
+        var now = _clock.GetUtcNow().UtcDateTime;
+        var secret = "credential-" + Guid.NewGuid().ToString("N");
+        service.RecordObserved("run-host", new([new("demo", "stage", "crash-loop", _first, null, 9, now,
+            [new(now, "crash-loop", _first)], ["first line", "token=" + secret, new string('x', 700)])]));
+
+        var observed = service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Observed!;
+        Assert.NotNull(observed.CrashOutput);
+        Assert.DoesNotContain(secret, JsonSerializer.Serialize(observed));
+        Assert.All(observed.CrashOutput, line => Assert.True(line.Length <= 400));
+    }
+
+    [Fact]
+    public void CrashObservation_OpensOneEnvironmentIncident_AndUpdatesItsRestartCount()
+    {
+        var service = Build();
+        var now = _clock.GetUtcNow().UtcDateTime;
+        var crash = new RunTargetEvent(now, "crash-loop", _first);
+        service.RecordObserved("run-host", new([new("demo", "stage", "crash-loop", _first, null, 3, now,
+            [crash], ["FATAL: failed to start"])]));
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        service.RecordObserved("run-host", new([new("demo", "stage", "crash-loop", _first, null, 9,
+            _clock.GetUtcNow().UtcDateTime, [crash], ["FATAL: failed to start"])]));
+
+        var incident = service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").RuntimeIncident;
+        Assert.NotNull(incident);
+        Assert.Null(incident!.EndedAt);
+        Assert.Equal(9, incident.Restarts);
+        Assert.Equal("crash-loop", incident.Kind);
+        var activity = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
+        Assert.Equal(1, service.PublishRuntimeIncidentEvents(activity));
+        Assert.Equal(0, service.PublishRuntimeIncidentEvents(activity));
+        var watch = Path.Combine(_root, "workspace", "projects", "demo");
+        Assert.Single(activity.Read(watch), entry => entry.Topic == OrchestratorLogTopics.EnvironmentIncidentOpened);
+    }
+
+    [Fact]
+    public void LegacyContainerTarget_IsVisibleToItsHost_AndAcceptsCrashObservation()
+    {
+        var service = Build();
+        var path = Path.Combine(_root, "workspace", "deployments", "demo.json");
+        var state = new ProjectEnvironmentService.State();
+        state.Jobs.Add(new DeployJob("legacy-job", "demo", "legacy", "run-host", _first,
+            "container", "8081", null, [], 8080, null, "healthy", _clock.GetUtcNow().UtcDateTime));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, JsonSerializer.Serialize(state, JsonSerializerOptions.Web));
+
+        var target = Assert.Single(service.ContainerTargets("run-host"));
+        Assert.Equal(("demo", "legacy", "deploy-demo-legacy"),
+            (target.Project, target.EnvironmentId, target.Container));
+        Assert.Empty(service.ContainerTargets("other-host"));
+        Assert.Equal(1, service.RecordObserved("run-host", new([new("demo", "legacy", "crash-loop", _first,
+            null, 102, _clock.GetUtcNow().UtcDateTime, [], ["FATAL: startup failed"])])));
+        Assert.Equal(102, service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "legacy")
+            .RuntimeIncident!.Restarts);
+    }
+
+    [Fact]
+    public void CrashRollback_UpdatesOpenIncidentAndRaisesOneMoreActivityAlert()
+    {
+        var service = Build();
+        var activity = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
+        var now = _clock.GetUtcNow().UtcDateTime;
+        service.RecordObserved("run-host", new([new("demo", "stage", "crash-loop", _first, null, 5,
+            now, [new(now, "crash-loop", _first)])]));
+        Assert.Equal(1, service.PublishRuntimeIncidentEvents(activity));
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        var rollbackAt = _clock.GetUtcNow().UtcDateTime;
+        service.RecordObserved("run-host", new([new("demo", "stage", "running", _first, _second, 8,
+            rollbackAt, [new(rollbackAt, "crash-rollback", _second)])]));
+        Assert.Equal(1, service.PublishRuntimeIncidentEvents(activity));
+        Assert.Equal(0, service.PublishRuntimeIncidentEvents(activity));
+        var incident = service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").RuntimeIncident!;
+        Assert.Equal("crash-rollback", incident.Kind);
+        Assert.Null(incident.EndedAt);
+        var watch = Path.Combine(_root, "workspace", "projects", "demo");
+        Assert.Equal(2, activity.Read(watch).Count(entry => entry.Topic == OrchestratorLogTopics.EnvironmentIncidentOpened));
     }
 
     [Fact]
@@ -260,6 +344,13 @@ public sealed class RunTargetDesiredStateTests : IDisposable
         using var observed = await client.PostAsJsonAsync($"/api/deploy/run-targets/{runnerId}/observed-state",
             new RunTargetObservedReport([]));
         Assert.Equal(HttpStatusCode.OK, observed.StatusCode);
+        using var legacyTargets = await client.GetAsync($"/api/deploy/hosts/{runnerId}/containers");
+        Assert.Equal(HttpStatusCode.OK, legacyTargets.StatusCode);
+        using var legacyObserved = await client.PostAsJsonAsync($"/api/deploy/hosts/{runnerId}/observed-state",
+            new RunTargetObservedReport([]));
+        Assert.Equal(HttpStatusCode.OK, legacyObserved.StatusCode);
+        using var otherTargets = await client.GetAsync("/api/deploy/hosts/some-other-host/containers");
+        Assert.Equal(HttpStatusCode.Forbidden, otherTargets.StatusCode);
 
         // The run target cannot decide a removal or widen the domains it may claim.
         using var confirm = await client.PostAsJsonAsync("/api/projects/demo/environments/stage/run-target-removal/confirm",

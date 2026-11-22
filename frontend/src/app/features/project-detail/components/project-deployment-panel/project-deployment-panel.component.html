@@ -23,10 +23,9 @@
               <app-environment-state [environment]="state" [now]="now()" />
             }
             @if (environment.pendingArtifact) { <p>Queued: <code [title]="environment.pendingArtifact">{{ shortArtifact(environment.pendingArtifact) }}</code></p> }
-            @if (environment.history.length > 1) {
-              <button type="button" [attr.data-testid]="'environment-rollback-' + environment.declaration.id"
-                [disabled]="environmentBusy()" [appPendingButton]="pendingEnvironmentAction() === 'rollback:' + environment.declaration.id"
-                pendingLabel="Queueing rollback..." (click)="rollbackEnvironment(environment.declaration.id)">Roll back</button>
+            @if (offers().get(environment.declaration.id); as offer) {
+              <app-rollback-offer [offer]="offer" [now]="now()" [busy]="rollbackBusy() === offer.environmentId"
+                (rollback)="rollback.emit($event)" />
             }
             <details><summary>History ({{ environment.history.length }})</summary>
               <ol>@for (entry of environment.history; track entry.at + entry.artifact) {

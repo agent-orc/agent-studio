@@ -13,6 +13,16 @@ internal interface IReviewAgentCommandRunner
     string PlannedExecutable(ReviewCommandDto command);
 
     Task<CommandExecution> RunAsync(ReviewCommandDto command, CancellationToken ct);
+
+    /// <summary>
+    /// Whether this runner puts the shared review prefix of <paramref name="command"/>
+    /// at a provider cache breakpoint, so a sibling started after the lead's first
+    /// streamed usage reads it from the cache (AGT-3971).
+    /// </summary>
+    bool SharesReviewPrefix(ReviewCommandDto command) => false;
+
+    Task<CommandExecution> RunAsync(ReviewCommandDto command, ReviewAspectLaunch launch, CancellationToken ct)
+        => RunAsync(command, ct);
 }
 
 /// <summary>
@@ -62,8 +72,32 @@ internal sealed class RemoteReviewAgentCommandRunner : IReviewAgentCommandRunner
         }
     }
 
+    public Task<CommandExecution> RunAsync(ReviewCommandDto command, CancellationToken ct)
+        => RunAsync(command, ReviewAspectLaunch.Plain, ct);
+
+    public bool SharesReviewPrefix(ReviewCommandDto command)
+    {
+        // The flags reach the CLI through the runner's Linux process spawner.
+        if (!OperatingSystem.IsLinux()
+            || !ReviewCommandKinds.IsAgent(command.ExecutionKind)
+            || string.IsNullOrWhiteSpace(command.CliType)
+            || string.IsNullOrWhiteSpace(command.Model))
+            return false;
+        try
+        {
+            var invocation = Invocation(command);
+            return string.Equals(invocation.CliType, CliSelection.ClaudeCli, StringComparison.OrdinalIgnoreCase)
+                   && ClaudeSharedPrefixLaunch.IsSupported(invocation.FileName);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
     public async Task<CommandExecution> RunAsync(
         ReviewCommandDto command,
+        ReviewAspectLaunch launch,
         CancellationToken ct)
     {
         var started = DateTime.UtcNow;
@@ -88,11 +122,22 @@ internal sealed class RemoteReviewAgentCommandRunner : IReviewAgentCommandRunner
                 _artifactPath,
                 $"agent-{RemoteReviewWorkspace.SafeSegment(command.StepId)}");
             Directory.CreateDirectory(workerDirectory);
+            var stdin = command.Prompt;
+            IReadOnlyList<string>? extraArguments = null;
+            if (launch.SharedPrefixLength > 0 && SharesReviewPrefix(command))
+            {
+                var shared = ClaudeSharedPrefixLaunch.Compose(command.Prompt, launch.SharedPrefixLength, workerDirectory);
+                stdin = shared.Stdin;
+                extraArguments = shared.Arguments;
+                _log($"review-aspect-shared-prefix step={command.StepId} sharedCharacters={launch.SharedPrefixLength} " +
+                     $"aspectCharacters={stdin.Length}");
+            }
+            var firstUsage = launch.OnFirstUsage;
             var spec = new DetachedJobSpec(
                 invocation.FileName,
                 [],
                 _repositoryPath,
-                command.Prompt,
+                stdin,
                 _artifactPath,
                 Math.Clamp(command.TimeoutSeconds, 1, 7200),
                 invocation.CliType,
@@ -106,8 +151,15 @@ internal sealed class RemoteReviewAgentCommandRunner : IReviewAgentCommandRunner
                 spec,
                 workerDirectory,
                 (stream, line) =>
-                    _log($"review-agent step={command.StepId} stream={stream} {line}"),
+                {
+                    _log($"review-agent step={command.StepId} stream={stream} {line}");
+                    if (firstUsage is not null && stream == "stdout"
+                        && ClaudeSharedPrefixLaunch.TryReadFirstUsage(line, command.Model, out var usage)
+                        && Interlocked.Exchange(ref firstUsage, null) is { } notify)
+                        notify(usage);
+                },
                 cleanContextRoot: _homePath,
+                extraCliArguments: extraArguments,
                 stopToken: ct);
             ct.ThrowIfCancellationRequested();
             var provider = ProviderOutputEvidenceExtractor.Extract(raw.StdOut);

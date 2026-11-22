@@ -37,6 +37,7 @@ async function mount(item: AcceptanceReadinessItem | null, review: Review | null
     roundError: signal(null),
     sendingRound: signal(false),
     closeRound: vi.fn(() => draft.set(null)),
+    markAddressed: vi.fn(),
   };
   const tasks = {
     moveJob: vi.fn(() => of({})),
@@ -76,6 +77,14 @@ describe('AcceptanceNextStepsComponent (AGT-3867)', () => {
     expect(testId(host, 'review-current-brief')).not.toBeNull();
     expect(testId(host, 'accept-with-reason-open')).not.toBeNull();
     expect(testId(host, 'brief-difference-link')).toBeNull();
+  });
+
+  it('marks the gap addressed once the content review is requested, so a recorded refusal drops (F2)', async () => {
+    const { fixture, host, store, tasks } = await mount(readinessItem('DEMO-19', 'review-concerns'));
+    testId(host, 'review-current-brief')!.click();
+    await fixture.whenStable();
+    expect(tasks.reviewContentAgainstCurrentBrief).toHaveBeenCalledOnce();
+    expect(store.markAddressed).toHaveBeenCalledWith(expect.objectContaining({ id: 'DEMO-19' }));
   });
 
   it('opens the prefilled round in the detail', async () => {

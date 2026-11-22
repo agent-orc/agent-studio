@@ -2,7 +2,8 @@ namespace AgentStudio.Tokens;
 
 public sealed record ReviewUsageRow(
     string Project, string JobId, string Attempt, string Step, DateTime At,
-    string Model, string Level, string Host, long Tokens, decimal? Usd);
+    string Model, string Level, string Host, long Tokens, decimal? Usd,
+    long CacheReadTokens = 0, long CacheWriteTokens = 0);
 
 public sealed record ReviewMetric(double? Median, double? P90, int Samples, IReadOnlyList<double?> Last7d,
     IReadOnlyList<double?> Last30d);
@@ -16,6 +17,12 @@ public sealed record ReviewStatistics(
     IReadOnlyDictionary<string, ReviewMetric> ByModelLevelUsd,
     IReadOnlyList<string> AcceptedCards, IReadOnlyList<ReviewUsageRow> Reviews, string? Warning)
 {
+    /// <summary>Prompt-cache tokens read per delivery review, summed over its calls (AGT-3971).</summary>
+    public ReviewMetric DeliveryCacheReadTokens { get; init; } = ReviewStatisticsFold.Metric([], DateTime.UtcNow);
+
+    /// <summary>Prompt-cache tokens written per delivery review, summed over its calls (AGT-3971).</summary>
+    public ReviewMetric DeliveryCacheWriteTokens { get; init; } = ReviewStatisticsFold.Metric([], DateTime.UtcNow);
+
     /// <summary>The S2 review baseline; present only for <c>detail=baseline</c>.</summary>
     public AgentStudio.Review.ReviewBaselineReport? Baseline { get; init; }
 }
@@ -83,6 +90,8 @@ public static class ReviewStatisticsFold
         var deliveries = selected.GroupBy(r => (r.Project, r.JobId, r.Attempt))
             .Select(g => new { g.Key.Project, g.Key.JobId, At = g.Max(r => r.At),
                 Tokens = g.Sum(r => r.Tokens),
+                CacheRead = g.Sum(r => r.CacheReadTokens),
+                CacheWrite = g.Sum(r => r.CacheWriteTokens),
                 Usd = g.All(r => r.Usd.HasValue) ? (decimal?)g.Sum(r => r.Usd!.Value) : null })
             .ToList();
         var cards = deliveries.GroupBy(d => (d.Project, d.JobId)).ToList();
@@ -96,7 +105,7 @@ public static class ReviewStatisticsFold
             .Select(x => (x.Group.Max(d => d.At), 100d * x.Group.Sum(d => d.Tokens) / x.Total)).ToList();
         var steps = Subtotals(selected, r => r.Step);
         var models = Subtotals(selected, r => r.Model + " / " + r.Level);
-        return new ReviewStatistics(
+        var statistics = new ReviewStatistics(
             Metric(deliveries.Select(d => (d.At, (double)d.Tokens)), now),
             Metric(deliveries.Where(d => d.Usd.HasValue).Select(d => (d.At, (double)d.Usd!.Value)), now),
             Metric(roundPoints, now), Metric(cardTokens, now), Metric(cardUsd, now), Metric(share, now),
@@ -112,6 +121,11 @@ public static class ReviewStatisticsFold
             selected.OrderByDescending(r => r.At).ToList(),
             rows.Any(r => r.Step == "review, step unknown")
                 ? "Older remote review receipts have no step identity and appear under review, step unknown." : null);
+        return statistics with
+        {
+            DeliveryCacheReadTokens = Metric(deliveries.Select(d => (d.At, (double)d.CacheRead)), now),
+            DeliveryCacheWriteTokens = Metric(deliveries.Select(d => (d.At, (double)d.CacheWrite)), now),
+        };
     }
 
     private sealed record Subtotal(string Key, DateTime At, long Tokens, decimal? Usd);

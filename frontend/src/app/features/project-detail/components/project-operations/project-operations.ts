@@ -1,16 +1,16 @@
 import { historyRunStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { DatePipe } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, type WritableSignal } from '@angular/core';
 import { take } from 'rxjs';
-import { metric, ratio, type OperationsLogResult, type OperationsTrace, type OperationsSpan, type ProjectOperations } from './project-operations.model';
+import { hostStateLabel, hostStateTone, metric, ratio, type OperationsLogResult, type OperationsTrace, type OperationsSpan, type ProjectOperations } from './project-operations.model';
 import { OperationsTrendComponent } from '../operations-trend/operations-trend';
-import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
+import { LoadingSurfaceComponent, PendingButtonDirective } from '../../../../components/async-feedback';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 
 @Component({
-  selector: 'app-project-operations', standalone: true, imports: [StatusIndicatorComponent, DatePipe, OperationsTrendComponent, LoadingSurfaceComponent],
+  selector: 'app-project-operations', standalone: true, imports: [StatusIndicatorComponent, DatePipe, OperationsTrendComponent, LoadingSurfaceComponent, PendingButtonDirective],
   templateUrl: './project-operations.html', styleUrl: './project-operations.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -25,6 +25,7 @@ export class ProjectOperationsComponent {
   readonly openCard = output<string>();
   readonly snapshot = signal<ProjectOperations | null>(null);
   readonly error = signal<string | null>(null);
+  readonly pendingWindow = signal<{ starved: boolean; openedAtUtc: string; admissionReason: string } | null>(null);
   readonly selectedEnvironment = signal('');
   readonly since = signal('');
   readonly until = signal('');
@@ -37,27 +38,43 @@ export class ProjectOperationsComponent {
   readonly spans = signal<OperationsSpan[] | null>(null);
   readonly selectedTraceId = signal<string | null>(null);
   readonly traceError = signal<string | null>(null);
+  readonly loading = signal(false);
+  readonly logLoading = signal(false);
   readonly telemetryAvailable = computed(() => this.snapshot()?.environments.some(row => row.telemetryAvailable) ?? false);
   readonly metric = metric;
   readonly ratio = ratio;
+  readonly hostStateLabel = hostStateLabel;
+  readonly hostStateTone = hostStateTone;
   readonly projectSlug = computed(() => studioProjectSlug(this.projectName()));
 
   constructor() { effect(() => this.load(this.projectName())); }
 
   load(project: string): void {
     const generation = ++this.readGeneration;
+    this.pendingWindow.set(null);
+    this.http.get<{ project: string; pendingWindow?: { starved: boolean; openedAtUtc: string; admissionReason: string } }[]>(
+      '/api/develop-states').pipe(take(1)).subscribe({
+      next: rows => { if (generation === this.readGeneration)
+        this.pendingWindow.set(rows.find(row => row.project === project)?.pendingWindow ?? null); },
+      error: () => { /* Keep the application Operations snapshot available during a state read failure. */ },
+    });
     ++this.logGeneration;
     ++this.traceGeneration;
     this.snapshot.set(null); this.logs.set(null); this.error.set(null); this.release.set('');
     this.traces.set(null); this.spans.set(null); this.selectedTraceId.set(null); this.traceError.set(null);
+    this.logLoading.set(false);
+    this.loading.set(true);
     this.http.get<ProjectOperations>(`/api/projects/${encodeURIComponent(project)}/deploy/operations`).pipe(take(1)).subscribe({
       next: value => {
         if (generation !== this.readGeneration) return;
-        this.snapshot.set(value); this.error.set(null);
+        this.snapshot.set(value); this.error.set(null); this.loading.set(false);
         if (!value.environments.some(item => item.environment.id === this.selectedEnvironment()))
           this.selectedEnvironment.set(value.environments[0]?.environment.id ?? '');
       },
-      error: () => { if (generation === this.readGeneration) this.error.set('Operations data could not be loaded.'); },
+      error: (failure: HttpErrorResponse) => { if (generation === this.readGeneration) {
+        this.loading.set(false);
+        this.error.set(failure.status === 503 ? 'Operations telemetry store read failed.' : 'Operations data could not be loaded.');
+      } },
     });
   }
 
@@ -69,15 +86,20 @@ export class ProjectOperationsComponent {
     this.logs.set(null);
     this.logError.set(null);
     this.traces.set(null); this.spans.set(null); this.selectedTraceId.set(null);
+    this.logLoading.set(false);
   }
 
-  search(): void {
+  search(append = false): void {
     const environmentId = this.selectedEnvironment();
     if (!environmentId) return;
+    const previous = append ? this.logs() : null;
+    if (append && !previous?.nextCursor) return;
     const generation = ++this.logGeneration;
-    this.logs.set(null);
+    if (!append) this.logs.set(null);
     this.logError.set(null);
+    this.logLoading.set(true);
     const params: Record<string, string> = { environmentId };
+    if (append && previous?.nextCursor) params['cursor'] = previous.nextCursor;
     if (this.since()) params['since'] = new Date(this.since()).toISOString();
     if (this.until()) params['until'] = new Date(this.until()).toISOString();
     if (this.level()) params['level'] = this.level();
@@ -86,10 +108,16 @@ export class ProjectOperationsComponent {
     this.http.get<OperationsLogResult>(`/api/projects/${encodeURIComponent(this.projectName())}/deploy/operations/logs`,
       { params }).pipe(take(1)).subscribe({
       next: value => {
-        if (generation === this.logGeneration) { this.logs.set(value); this.logError.set(null); }
+        if (generation === this.logGeneration) {
+          this.logs.set(append && previous ? { ...value, lines: [...previous.lines, ...value.lines] } : value);
+          this.logError.set(null); this.logLoading.set(false);
+        }
       },
-      error: () => {
-        if (generation === this.logGeneration) { this.logs.set(null); this.logError.set('Log search could not be completed.'); }
+      error: (failure: HttpErrorResponse) => {
+        if (generation === this.logGeneration) {
+          this.logLoading.set(false);
+          this.logError.set(failure.status === 503 ? 'Operations telemetry store read failed.' : 'Log search could not be completed.');
+        }
       },
     });
   }

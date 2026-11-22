@@ -10,9 +10,9 @@ Release creation refuses a declaration that diverges from schema 2. See the
 for migration and validation.
 
 The API uses JSON with camel-case property names. On a networked installation,
-all four routes require HTTPS and a Runner service bearer with `runner.deploy`.
+the deploy host routes require HTTPS and a Runner service bearer with `runner.deploy`.
 The claim request's `hostId` must equal the enrolled Runner principal's ID.
-The report and log routes additionally require the current claim's `leaseToken`;
+The job report and step-log routes additionally require the current claim's `leaseToken`;
 the token is a claim capability and must stay out of operator logs and UI
 responses. The public demo denies these execution routes.
 
@@ -22,6 +22,17 @@ responses. The public demo denies these execution routes.
 | `POST /api/deploy/jobs/{project}/{jobId}/log` | `{ "leaseToken": "...", "step": "deploy[0]:static-site", "message": "..." }` | `200` after appending the line to the deploy run; `409` if validation or the claim fails. |
 | `POST /api/deploy/jobs/{project}/{jobId}/renew` | `{ "leaseToken": "..." }` | `200` after extending a live claim by five minutes; `409` for an expired or fenced token. |
 | `POST /api/deploy/jobs/{project}/{jobId}/report` | `{ "leaseToken": "...", "healthy": true, "evidence": "health-ok", "steps": [{ "name": "deploy[0]:static-site", "succeeded": true }] }` | `200` after closing the job and reconciling the run; `409` for a stale token, invalid step sequence, or a job that is no longer claimed. |
+| `GET /api/deploy/hosts/{hostId}/containers` | No body. The caller's enrolled Runner ID must equal `hostId`. | Last successful container template targets on this host, including deployments made before host observation was added. |
+| `POST /api/deploy/hosts/{hostId}/observed-state` | Bounded per-environment Docker state, restart count, crash events and masked crash output. | `200` with the number of accepted observations. The caller's enrolled Runner ID must equal `hostId`. |
+
+When a poll has no deploy job, the host inspects its listed containers and reads
+the last 20 Docker log lines from stdout and stderr. It masks values found in
+the container environment and common credential assignments before reporting;
+Studio enforces a 20-line, 400-character-per-line bound and masks credential
+assignments again. An observed crash loop opens or updates a durable environment
+runtime incident and raises an Activity alert. A later running observation
+closes the incident and records recovery. The project Operations view shows the
+host restart count and last crash output even without application telemetry.
 
 ## Run host identity and liveness
 

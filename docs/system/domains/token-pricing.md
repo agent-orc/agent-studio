@@ -3,8 +3,8 @@
 > **Status (2026-10-11):** Live on exactly pinned `TokenEconomy` 0.3.7,
 > including historical prices for the GPT-5.6 family, the GPT-5.5 family
 > (GPT-5.5, GPT-5.5 Pro, the GPT-5.5 Cyber preview), and the Claude 5 /
-> Sonnet 4.6 family. A dated Fable 5.2 seed supplements this version until
-> Token Economy TE-82 is available in the pinned package.
+> Sonnet 4.6 family. Dated Fable 5.2 and GPT-6.2 seeds supplement this
+> version until Token Economy TE-82 is available in the pinned package.
 
 ## Contract
 
@@ -23,6 +23,25 @@ at USD 16 input / 80 output per million tokens; Studio's existing ledger is a
 Standard API list-price estimate and does not infer fast mode from a model ID.
 Fable 5.2 has a 1M context window and 128K maximum output.
 [Provider pricing](https://platform.claude.com/docs/en/about-claude/pricing).
+
+GPT-6.2 uses the published catalogue entry when present. TokenEconomy 0.3.7
+(and the newer 0.3.8 and 0.3.9) carry none, so `TokenEconomyPriceProvider`
+adds one local listing per model effective 2026-11-17, verified 2026-11-18
+against the [provider pricing page](https://developers.openai.com/api/docs/pricing).
+Per million tokens, standard short-context tariff (up to 272K input):
+
+| Model | Input | Cached input | Cache write (30 min) | Output |
+|---|---:|---:|---:|---:|
+| `gpt-6.2-sol` | 2.00 | 0.10 | 2.50 | 10.00 |
+| `gpt-6.2-astra` | 8.00 | 0.40 | 10.00 | 40.00 |
+
+The long-context tariff above 272K input (Sol 4 / 0.20 / 5 / 15, Astra
+16 / 0.80 / 20 / 60) is recorded in the price note and not priced, as for
+GPT-6.1 Sol. Ultrafast service tiers (3x the standard rate until 2027-02-28)
+are not inferred from a model id. Each note also states the Codex credit rate,
+list price x `TokenEconomyPriceProvider.CodexCreditsPerUsd` (25). Studio has no
+Codex credit meter, so the rate is carried on the price basis only. Calls
+before 2026-11-17 stay `NoPriceForDate`.
 
 The adapter is exposed through `ITokenPriceProvider`. `AddTokenUsage` registers
 one singleton provider and one singleton `ITokenPricing` service. There is no

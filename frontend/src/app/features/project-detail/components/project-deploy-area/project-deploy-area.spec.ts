@@ -10,7 +10,7 @@ import { ProjectDeployDataService } from '../../services/project-deploy-data.ser
 import { ServerCheckoutStore } from '../../../server-checkout';
 import { urlProject } from '../../../server-checkout/testing/server-checkout.fixtures';
 import type { RegistryProjectSummary } from '../../../../models/task.model';
-import { DEPLOY_CLOCK, type DeployPanel } from '../../state/deploy-area.model';
+import { DEPLOY_CLOCK, type DeployActionOption, type DeployPanel } from '../../state/deploy-area.model';
 import { AuthSessionState } from '../../../../services/auth.service';
 import {
   ARTIFACT_B,
@@ -23,7 +23,10 @@ import {
   deployStatusFixture,
   deploymentLogFixture,
   pipelineDefinitionFixture,
+  productionRollbackFixture,
+  RELEASE_1,
 } from '../../testing/deploy-fixtures';
+import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 
 class FakeDeployData {
   readonly environmentsPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });
@@ -126,14 +129,58 @@ class FakeDeployData {
   }
   pipeline(): Observable<DeployPanel<unknown>> { return this.pipelinePanel; }
   health(): Observable<DeployPanel<unknown>> { return this.healthPanel; }
+  integrationRelease(): Observable<DeployPanel<unknown>> { return of({ status: 'unavailable' }); }
+  createIntegrationRelease(): Observable<unknown> { return of({}); }
   releaseGate(project: string): Observable<DeployPanel<unknown>> { this.requests.push(`gate:${project}`); return this.releaseGatePanel; }
+  readonly secretPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
+  readonly secretRequests: string[] = [];
+  secretReadiness(project: string, releaseId?: string | null): Observable<DeployPanel<unknown>> {
+    this.secretRequests.push(releaseId ? `${project}:${releaseId}` : project); return this.secretPanel;
+  }
   deploymentLog(_project: string, id: string): Observable<DeployPanel<unknown>> {
     this.requests.push(`log:${id}`);
     return new BehaviorSubject<DeployPanel<unknown>>({ status: 'ready', value: deploymentLogFixture(id) });
   }
-  act(_project: string, id: string, action: string): Observable<unknown> {
+  readonly actOptions: unknown[] = [];
+  act(_project: string, id: string, action: string, _reason?: string, options?: unknown): Observable<unknown> {
     this.actions.push(`${action}:${id}`);
+    this.actOptions.push(options);
     return this.actionResult;
+  }
+  readonly deployActionsPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'unavailable' });
+  readonly releaseActionReads: string[] = [];
+  releaseActionsAnswer: (releaseId: string) => DeployPanel<unknown> = () => ({ status: 'ready', value: [] });
+  readonly starts: DeployActionOption[] = [];
+  startResult = new Subject<unknown>();
+  deployActions(): Observable<DeployPanel<unknown>> { return this.deployActionsPanel; }
+  releaseDeployActions(_project: string, releaseId: string): Observable<DeployPanel<unknown>> {
+    this.releaseActionReads.push(releaseId);
+    return of(this.releaseActionsAnswer(releaseId));
+  }
+  start(_project: string, option: DeployActionOption): Observable<unknown> {
+    this.starts.push(option);
+    return this.startResult;
+  }
+  readonly rollbacks: string[] = [];
+  rollbackResult = new Subject<unknown>();
+  rollback(_project: string, environmentId: string, body: { approve: boolean; acceptIncidentTarget: boolean }): Observable<unknown> {
+    this.rollbacks.push(`${environmentId}:approve=${body.approve}:accept=${body.acceptIncidentTarget}`);
+    return this.rollbackResult;
+  }
+
+  serveRollback(incidentOnly = false): void {
+    const scenario = productionRollbackFixture(incidentOnly);
+    this.environmentsPanel.next({ status: 'ready', value: scenario.environments });
+    this.statusPanel.next({ status: 'ready', value: scenario.statuses });
+    this.releasesPanel.next({ status: 'ready', value: deployReleasesFixture() });
+    this.deploymentsPanel.next({ status: 'ready', value: scenario.deployments });
+    this.pipelinePanel.next({ status: 'ready', value: pipelineDefinitionFixture() });
+  }
+
+  stopEnvironment(_project: string, id: string): Observable<void> { this.actions.push(`stop:${id}`); return of(void 0); }
+  confirmRunTargetRemoval(_project: string, id: string, hostId: string): Observable<void> {
+    this.actions.push(`remove:${id}:${hostId}`);
+    return of(void 0);
   }
 
   serveEverything(): void {
@@ -269,6 +316,43 @@ describe('ProjectDeployAreaComponent', () => {
     expect(host().querySelectorAll('[data-testid^="deploy-run-row-"]')).toHaveLength(7);
     await click('deploy-tab-pipeline');
     expect(byTestId('pipeline-node-production')).not.toBeNull();
+  });
+
+  it('confirms stop and queues it without deleting the declaration', async () => {
+    data.serveEverything();
+    await settle();
+
+    await click('deploy-environment-stop');
+
+    expect(data.actions).toContain('stop:stage');
+    expect(vi.mocked(window.confirm).mock.calls[0][0]).toContain('environment secrets are kept');
+    expect(text('deploy-environment-action-message')).toContain('Stop queued');
+  });
+
+  it('queues a declaration change card and confirms host removal only after it is pending', async () => {
+    data.serveEverything();
+    await settle();
+
+    await click('deploy-environment-remove');
+    expect(vi.mocked(window.confirm).mock.calls[0][0]).toContain('app stays on its host');
+    expect(vi.mocked(window.confirm).mock.calls[0][0]).toContain('check-removed');
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/watch-paths').flush([{ name: 'Website', path: '/srv/tasks/website' }]);
+    const create = http.expectOne('/api/tasks');
+    expect(create.request.body.promptMarkdown).toContain('Do not add a removal tombstone');
+    create.flush({ id: 'WEB-100' });
+    await settle();
+    expect(text('deploy-environment-action-message')).toContain('WEB-100');
+    expect(data.actions).not.toContain('remove:stage:run-host');
+
+    const environments: import('../../../../models/project-overview.model').ProjectEnvironments = deployEnvironmentsFixture();
+    environments.runTargetRemovals = [{ environmentId: 'stage', hostId: 'run-host', kind: 'stage', status: 'pending-confirmation' }];
+    data.environmentsPanel.next({ status: 'ready', value: environments });
+    await settle();
+    host().querySelector<HTMLButtonElement>('[data-testid="deploy-pending-removal"] button')!.click();
+    await settle();
+    expect(data.actions).toContain('remove:stage:run-host');
+    expect(vi.mocked(window.confirm).mock.calls.at(-1)?.[0]).toContain('environment secrets are kept');
   });
 
   it('keeps the other panels and shows the error when a deploy route fails', async () => {
@@ -684,6 +768,48 @@ describe('ProjectDeployAreaComponent', () => {
     expect(data.actions).toEqual(['approve:run-c-production']);
   });
 
+  it('lists missing Production secrets on the card and the drawer, binds from there, and confirms the approval with the names (F14)', async () => {
+    data.serveEverything();
+    data.secretPanel.next({ status: 'ready', value: { project: 'Website', releaseId: null, environments: [
+      { environmentId: 'stage', environmentName: 'Stage', kind: 'stage', releaseId: RELEASE_3.id, requiresApproval: false, ready: true, missing: [] },
+      { environmentId: 'production', environmentName: 'Production', kind: 'production', releaseId: RELEASE_3.id,
+        requiresApproval: true, ready: false,
+        missing: [{ name: 'DATABASE_URL', reference: 'secret://Website/production/DATABASE_URL', reason: 'not-bound', bindable: true }] },
+    ] } });
+    await settle();
+    expect(byTestId('deploy-secret-gaps-stage')).toBeNull();
+    expect(text('deploy-secret-gaps-production')).toContain('DATABASE_URL');
+    expect(text('deploy-secret-gaps-production')).toContain('not bound to this environment');
+
+    await click('deploy-environment-review-approval');
+    expect(data.secretRequests).toContain(`Website:${RELEASE_3.id}`);
+    expect(text('deploy-run-drawer')).toContain('DATABASE_URL');
+    await click('deploy-run-approve');
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('1 secret binding is missing: DATABASE_URL.'));
+    expect(data.actions).toEqual(['approve:run-c-production']);
+    expect(data.actOptions).toEqual([{ confirmMissingSecrets: true }]);
+
+    fixture.componentInstance.closeRun();
+    await settle();
+    await click('deploy-secret-bind-production');
+    expect(fixture.componentInstance.view()).toBe('secrets');
+    expect(fixture.componentInstance.secrets.environment()).toBe('production');
+  });
+
+  it('sends no approval when the approver declines the missing-secret confirmation (F14)', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => false));
+    data.serveEverything();
+    data.secretPanel.next({ status: 'ready', value: { project: 'Website', releaseId: RELEASE_3.id, environments: [
+      { environmentId: 'production', environmentName: 'Production', kind: 'production', releaseId: RELEASE_3.id,
+        requiresApproval: true, ready: false,
+        missing: [{ name: 'DATABASE_URL', reference: 'secret://Website/production/DATABASE_URL', reason: 'not-bound', bindable: true }] },
+    ] } });
+    await settle();
+    await click('deploy-environment-review-approval');
+    await click('deploy-run-approve');
+    expect(data.actions).toEqual([]);
+  });
+
   it('asks a local session without sign-in to create the owner, then approves the Production run', async () => {
     const auth = TestBed.inject(AuthSessionState);
     auth.status.set({ profile: 'local', bootstrapRequired: true, authenticated: false });
@@ -807,6 +933,83 @@ describe('ProjectDeployAreaComponent', () => {
     expect(host().querySelectorAll('[data-testid^="deploy-run-row-"]')).toHaveLength(7);
   });
 
+  const option = (environmentId: string, action: 'deploy' | 'redeploy', releaseId: string, extra: Partial<DeployActionOption> = {}): DeployActionOption =>
+    ({ environmentId, action, releaseId, releaseVersion: RELEASE_3.version, allowed: true, needsApproval: false, reason: null, ...extra });
+
+  it('offers deploy, approval request and redeploy on the environment cards with the lifecycle refusal reasons', async () => {
+    data.serveEverything();
+    data.deployActionsPanel.next({ status: 'ready', value: [
+      option('stage', 'redeploy', RELEASE_3.id),
+      option('production', 'deploy', RELEASE_3.id, { needsApproval: true }),
+      option('production', 'redeploy', RELEASE_2.id, { allowed: false,
+        reason: 'This release is already queued, running or awaiting approval in Production.' }),
+      option('stage', 'deploy', RELEASE_2.id, { allowed: false,
+        reason: 'The release is older than the current release in Staging. Use rollback.' }),
+    ] });
+    await settle();
+
+    expect(text('deploy-action-redeploy-stage')).toBe('Redeploy Staging');
+    const request = byTestId('deploy-action-deploy-production') as HTMLButtonElement;
+    expect(request.textContent?.trim()).toBe('Request Production approval');
+    expect(request.classList).toContain('deploy-actions__primary');
+    const refused = byTestId('deploy-action-deploy-stage') as HTMLButtonElement;
+    expect(refused.disabled).toBe(true);
+    expect(text('deploy-action-deploy-stage-reason')).toBe(
+      'Deploy to Staging: The release is older than the current release in Staging. Use rollback.');
+    expect(refused.getAttribute('aria-describedby')).toBe(byTestId('deploy-action-deploy-stage-reason')!.id);
+    // Production shows its waiting approval; a refusal there would only repeat it.
+    expect(byTestId('deploy-action-redeploy-production')).toBeNull();
+
+    // A request needs no confirmation; the started run opens with its log.
+    await click('deploy-action-deploy-production');
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(data.starts.map(item => `${item.action}:${item.environmentId}:${item.needsApproval}`)).toEqual(['deploy:production:true']);
+    expect(request.disabled).toBe(true);
+    data.requests.length = 0;
+    data.runsById.set('run-requested', { ...deployDeploymentsFixture()[1], id: 'run-requested', state: 'awaiting-approval' });
+    data.startResult.next({ id: 'run-requested' });
+    await settle();
+    expect(data.requests).toContain('status');
+    expect(data.requests).toContain('log:run-requested');
+    expect(byTestId('deploy-run-drawer')).not.toBeNull();
+  });
+
+  it('confirms a direct Production deploy and shows the server refusal next to the buttons', async () => {
+    data.serveEverything();
+    data.deployActionsPanel.next({ status: 'ready', value: [option('production', 'deploy', RELEASE_3.id)] });
+    await settle();
+
+    expect(text('deploy-action-deploy-production')).toBe('Deploy to Production');
+    await click('deploy-action-deploy-production');
+    expect(window.confirm).toHaveBeenCalledWith('Deploy release 2026.10.19.2 to Production?');
+    data.startResult.error(new HttpErrorResponse({ status: 409,
+      error: { error: 'Wait until the active deployment in Production has finished.' } }));
+    await settle();
+
+    expect(text('deploy-action-error')).toBe('Wait until the active deployment in Production has finished.');
+    expect((byTestId('deploy-action-deploy-production') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('reads the deploy actions of the shown release on its detail', async () => {
+    data.serveEverything();
+    data.releaseActionsAnswer = releaseId => ({ status: 'ready', value: releaseId === RELEASE_2.id
+      ? [option('stage', 'deploy', RELEASE_2.id, { allowed: false,
+        reason: 'The release is older than the current release in Staging. Use rollback.' })]
+      : [option('stage', 'redeploy', releaseId), option('production', 'deploy', releaseId, { needsApproval: true })] });
+    await settle();
+    await click('deploy-tab-releases');
+
+    expect(data.releaseActionReads.at(-1)).toBe(RELEASE_3.id);
+    expect(text('deploy-release-actions')).toContain('Redeploy Staging');
+    expect(text('deploy-release-actions')).toContain('Request Production approval');
+
+    await click(`deploy-release-${RELEASE_2.id}`);
+    expect(data.releaseActionReads.at(-1)).toBe(RELEASE_2.id);
+    expect((byTestId('deploy-action-deploy-stage') as HTMLButtonElement).disabled).toBe(true);
+    expect(text('deploy-action-deploy-stage-reason')).toBe(
+      'Deploy to Staging: The release is older than the current release in Staging. Use rollback.');
+  });
+
   it('reloads every source on Refresh and keeps the deployment tools reachable', async () => {
     data.requests.length = 0;
     await click('deploy-refresh');
@@ -831,4 +1034,69 @@ describe('ProjectDeployAreaComponent', () => {
     expect(host().querySelector('app-project-environment-overview')).not.toBeNull();
     expect(host().textContent).toContain('Runbooks and their history by environment.');
   });
+
+  describe('rollback (F13)', () => {
+    const offerIn = (scope: string) => host().querySelector(
+      `[data-testid="${scope}"] [data-testid="rollback-offer-button"]`) as HTMLButtonElement | null;
+
+    it('offers the rollback on the Production card with target, age and runtime health, and asks before it sends', async () => {
+      data.serveRollback();
+      await settle();
+      const confirm = vi.spyOn(TestBed.inject(ConfirmDialogService), 'confirm').mockResolvedValue(false);
+      expect(host().querySelector('[data-testid="deploy-environment-production"] [data-testid="rollback-offer-target"]')?.textContent?.trim())
+        .toBe(`Release ${RELEASE_1.version}`);
+      expect(text('deploy-environment-production')).toContain('Ran without incident');
+      expect(text('deploy-environment-production')).toContain('Skips Release 2026.10.19.1: incident while running.');
+
+      offerIn('deploy-environment-production')!.click();
+      await settle();
+      expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+        title: `Roll back Production to Release ${RELEASE_1.version}?`,
+        items: expect.arrayContaining(['Current: Release 2026.10.19.2']),
+      }));
+      expect(data.rollbacks).toEqual([]);
+
+      confirm.mockResolvedValue(true);
+      offerIn('deploy-environment-production')!.click();
+      await settle();
+      expect(data.rollbacks).toEqual(['production:approve=true:accept=false']);
+      expect(window.confirm).not.toHaveBeenCalled();
+      data.runsById.set('run-rollback', { ...productionRollbackFixture().deployments[0], id: 'run-rollback',
+        releaseId: RELEASE_1.id, trigger: 'rollback', state: 'queued', finishedAtUtc: null });
+      data.rollbackResult.next({ id: 'run-rollback' });
+      await settle();
+      expect(byTestId('deploy-run-drawer')).not.toBeNull();
+    });
+
+    it('sends the incident acceptance only for a target that had an incident, and shows a refusal', async () => {
+      data.serveRollback(true);
+      await settle();
+      vi.spyOn(TestBed.inject(ConfirmDialogService), 'confirm').mockResolvedValue(true);
+      expect(text('deploy-environment-production')).toContain('Had an incident while running');
+      offerIn('deploy-environment-production')!.click();
+      await settle();
+      expect(data.rollbacks).toEqual(['production:approve=true:accept=true']);
+      data.rollbackResult.error(new HttpErrorResponse({ status: 403, error: { error: 'Production approval requires Owner or Maintainer.' } }));
+      await settle();
+      expect(text('deploy-rollback-error')).toBe(
+        'Production: Production approval requires Owner or Maintainer. Redeploy a known release or fix forward.');
+    });
+
+    it('offers the same rollback in the run drawer of the current release only', async () => {
+      data.serveRollback();
+      await settle();
+      vi.spyOn(TestBed.inject(ConfirmDialogService), 'confirm').mockResolvedValue(true);
+      fixture.componentInstance.openRun('run-c-production-done');
+      await settle();
+      expect(text('deploy-run-rollback')).toContain(`Release ${RELEASE_1.version}`);
+      offerIn('deploy-run-rollback')!.click();
+      await settle();
+      expect(data.rollbacks).toEqual(['production:approve=true:accept=false']);
+
+      fixture.componentInstance.openRun('run-a-stage');
+      await settle();
+      expect(byTestId('deploy-run-rollback')).toBeNull();
+    });
+  });
 });
+

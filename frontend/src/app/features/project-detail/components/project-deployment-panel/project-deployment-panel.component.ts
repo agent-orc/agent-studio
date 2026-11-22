@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, output, signal } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -11,6 +11,8 @@ import { DeploymentDefinitionEditorComponent } from '../deployment-definition-ed
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { TARGET_READINESS, deploymentHistoryTone, type TargetReadiness } from './deployment-status-tone';
 import { EnvironmentStateComponent } from '../environment-state/environment-state';
+import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
+import type { RollbackOffer } from '../../state/rollback-offer.model';
 import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
 import { DEPLOY_CLOCK, shortArtifact, type EnvironmentCardView } from '../../state/deploy-area.model';
 
@@ -18,7 +20,7 @@ import { DEPLOY_CLOCK, shortArtifact, type EnvironmentCardView } from '../../sta
   selector: 'app-project-deployment-panel',
   standalone: true,
   imports: [DatePipe, DecimalPipe, FormsModule, PendingButtonDirective, DeploymentDefinitionEditorComponent, StatusIndicatorComponent,
-    EnvironmentStateComponent],
+    EnvironmentStateComponent, RollbackOfferComponent],
   templateUrl: './project-deployment-panel.component.html',
   styleUrl: './project-deployment-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -31,13 +33,22 @@ export class ProjectDeploymentPanelComponent {
   private environmentReads = new Subscription();
 
   readonly projectName = input.required<string>();
+  /**
+   * F13: rollback runs only through the lifecycle offer of the Deploy area,
+   * which names the target and asks first; this panel has no rollback call.
+   */
+  readonly rollbackOffers = input<readonly RollbackOffer[]>([]);
+  readonly rollbackBusy = input<string | null>(null);
+  /** The deploy area's clock; ages of the environment states read against it too. */
+  readonly now = input<number>(this.clock());
+  readonly rollback = output<string>();
+  readonly offers = computed(() => new Map(this.rollbackOffers().map(offer => [offer.environmentId, offer])));
   readonly summary = signal<ProjectDeploymentSummary | null>(null);
   readonly environments = signal<ProjectEnvironments | null>(null);
   /** Health, release and age per environment id, from the one environment state projection. */
   readonly environmentStates = signal<ReadonlyMap<string, EnvironmentCardView>>(new Map());
-  readonly now = signal(this.clock());
   readonly environmentError = signal<string | null>(null);
-  /** The promotion or environment whose decision or rollback is in flight. */
+  /** The promotion whose decision is in flight. */
   readonly pendingEnvironmentAction = signal<string | null>(null);
   readonly environmentBusy = computed(() => this.pendingEnvironmentAction() !== null);
   readonly loading = signal(true);
@@ -68,19 +79,6 @@ export class ProjectDeploymentPanelComponent {
     this.tasks.decideProjectPromotion(this.projectName(), artifact, approve).subscribe({
       next: () => { this.pendingEnvironmentAction.set(null); this.loadEnvironments(this.projectName()); },
       error: () => { this.pendingEnvironmentAction.set(null); this.environmentError.set('Promotion could not be updated.'); },
-    });
-  }
-
-  rollbackEnvironment(id: string): void {
-    if (this.environmentBusy()) return;
-    this.environmentError.set(null);
-    this.pendingEnvironmentAction.set(`rollback:${id}`);
-    this.tasks.rollbackProjectEnvironment(this.projectName(), id).subscribe({
-      next: () => { this.pendingEnvironmentAction.set(null); this.loadEnvironments(this.projectName()); },
-      error: error => {
-        this.pendingEnvironmentAction.set(null);
-        this.environmentError.set(`${error?.error?.error ?? 'Rollback could not be queued.'} Redeploy the last known release or fix forward.`);
-      },
     });
   }
 
@@ -244,7 +242,6 @@ export class ProjectDeploymentPanelComponent {
     this.environmentReads.unsubscribe();
     this.environmentReads = this.deployData.environmentStates(projectName).subscribe(panel => {
       if (panel.status === 'loading') return;
-      this.now.set(this.clock());
       if (panel.status === 'ready' && panel.value.environments) {
         this.environments.set(panel.value.environments);
         this.environmentStates.set(new Map(panel.value.states.map(state => [state.id, state])));

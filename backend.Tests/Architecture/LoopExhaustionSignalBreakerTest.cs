@@ -4,7 +4,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-/// <summary>Every registered loop closes repeat admission before a decision is available.</summary>
+/// <summary>Every registered recovery loop closes repeat admission before a decision is available.</summary>
 [Trait("Category", "Guard")]
 public sealed class LoopExhaustionSignalBreakerTest
 {
@@ -13,19 +13,37 @@ public sealed class LoopExhaustionSignalBreakerTest
     {
         var path = Path.Combine(Architecture.CSharpSourceScanner.RepoRoot(), "docs", "system", "contracts", "loop-inventory.md");
         var inventory = File.ReadAllText(path);
-        var entries = Regex.Matches(inventory, @"(?m)^### (?<id>[a-z][a-z0-9.-]+)\s*$")
+        var recovery = inventory.Split("\n## Observation schedulers", 2, StringSplitOptions.None)[0];
+        var entries = Regex.Matches(recovery, @"(?m)^### (?<id>[a-z][a-z0-9.-]+)\s*$")
             .Select(match => match.Groups["id"].Value).ToArray();
         Assert.Equal(13, entries.Length);
         Assert.Equal(13, entries.Distinct(StringComparer.Ordinal).Count());
         foreach (var id in entries)
         {
-            var section = inventory.Split("### " + id + "\n", 2, StringSplitOptions.None)[1]
+            var section = recovery.Split("### " + id + "\n", 2, StringSplitOptions.None)[1]
                 .Split("\n### ", 2, StringSplitOptions.None)[0];
             Assert.Contains($"**Signal raised:** `loop.{id}.exhausted`", section);
             Assert.Contains("**Breaker test:**", section);
             Assert.Contains("Re-entry is blocked", section);
             Assert.DoesNotContain("**Action when budget exhausted:**", section);
         }
+    }
+
+    [Fact]
+    public void Observation_scheduler_keeps_attention_separate_from_recovery_exhaustion()
+    {
+        var root = Architecture.CSharpSourceScanner.RepoRoot();
+        var inventory = File.ReadAllText(Path.Combine(root, "docs", "system", "contracts", "loop-inventory.md"));
+        var sections = inventory.Split("\n## Observation schedulers", 2, StringSplitOptions.None);
+        Assert.Equal(2, sections.Length);
+        var entries = Regex.Matches(sections[1], @"(?m)^### (?<id>[a-z][a-z0-9.-]+)\s*$")
+            .Select(match => match.Groups["id"].Value).ToArray();
+        Assert.Equal(["post-merge.host-poll"], entries);
+        Assert.Contains("**Budget:**", sections[1]);
+        Assert.Contains("**Signal raised:** `pendingWindow.starved`", sections[1]);
+        Assert.Contains("**Breaker test:** `backend.Tests/Architecture/PostMergeWindowBudgetTests.cs`", sections[1]);
+        Assert.True(File.Exists(Path.Combine(root, "backend.Tests", "Architecture", "PostMergeWindowBudgetTests.cs")));
+        Assert.DoesNotContain("loop.post-merge.host-poll.exhausted", sections[1]);
     }
 
     [Theory]

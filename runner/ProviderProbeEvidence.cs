@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
@@ -73,8 +74,9 @@ public static partial class ProviderProbeClassifier
             return new(ProviderProbeOutcome.NetworkFailure, "Provider request failed before a trustworthy authentication response.");
         if (QuotaRegex().IsMatch(output))
         {
-            var match = ResetRegex().Match(output);
-            var reset = match.Success && DateTimeOffset.TryParse(match.Groups[1].Value, out var at) ? at : (DateTimeOffset?)null;
+            var access = ProviderAccessClassifier.ClassifyRun(
+                result.ExitCode, result.StdOut, result.StdErr, observedAt: request.ObservedAt);
+            var reset = access.ResetTimeReported ? access.LimitedUntil : null;
             return new(ProviderProbeOutcome.QuotaExhausted, "Provider reported account quota exhaustion.", ResetAt: reset);
         }
         // A generic 429 may be transient rate limiting; the account-quota path
@@ -117,12 +119,10 @@ public static partial class ProviderProbeClassifier
 
     [GeneratedRegex(@"(?i)\b(?:dns|enotfound|eai_again|tls|certificate|connection refused|network unreachable|timed? out|timeout|econnreset)\b")]
     private static partial Regex NetworkRegex();
-    [GeneratedRegex(@"(?i)\b(?:insufficient_quota|quota exhausted|quota exceeded|usage limit reached|session limit reached)\b")]
+    [GeneratedRegex(@"(?i)\b(?:insufficient_quota|quota exhausted|quota exceeded|usage limit reached|session limit reached|hit your weekly limit)\b")]
     private static partial Regex QuotaRegex();
     [GeneratedRegex(@"(?i)\b(?:401|unauthorized|incorrect api key|invalid api key|invalid_grant|refresh token expired)\b")]
     private static partial Regex UnauthorizedRegex();
-    [GeneratedRegex(@"(?i)resets? at\s+(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)")]
-    private static partial Regex ResetRegex();
 }
 
 /// <summary>One cached official status retrieval per provider, with a bounded response and no HTML storage.</summary>

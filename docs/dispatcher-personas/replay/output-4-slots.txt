@@ -1,0 +1,97 @@
+wave wave-2026-11-17-playthroughs: 57 cards, 4 slots
+pair detection {
+ "keywordAreas": {
+  "realPairs": 342,
+  "predictedPairs": 1482,
+  "precision": 0.23,
+  "recall": 0.99,
+  "f1": 0.37
+ },
+ "forecastModules": {
+  "realPairs": 342,
+  "predictedPairs": 503,
+  "precision": 0.43,
+  "recall": 0.64,
+  "f1": 0.52
+ },
+ "forecastFiles": {
+  "realPairs": 342,
+  "predictedPairs": 293,
+  "precision": 0.61,
+  "recall": 0.52,
+  "f1": 0.56
+ },
+ "citedFilesOnly": {
+  "realPairs": 342,
+  "predictedPairs": 71,
+  "precision": 0.83,
+  "recall": 0.17,
+  "f1": 0.29
+ },
+ "promptPathScope": {
+  "realPairs": 342,
+  "predictedPairs": 389,
+  "precision": 0.43,
+  "recall": 0.49,
+  "f1": 0.45
+ }
+}
+
+== durations: unit; conflict-free bound: {"runs": 57, "makespan": 23.0, "slotUse": 0.62, "exposedPairs": 0, "cardsNeedingSync": 0, "overlapsInsidePackages": 0}
+{"name": "Queue keeper (baseline)", "runs": 57, "makespan": 15.0, "slotUse": 0.95, "exposedPairs": 31, "cardsNeedingSync": 20, "overlapsInsidePackages": 0, "conflictsPer100": 35.1, "roundsPerCard": 1.35, "reworkShare": 0.26, "forecastF1": 0.0, "parallelism": 1.0, "scores": {"conflicts": 0, "tokens": 0, "rework": 0, "forecast": 0, "parallelism": 100, "lead": 100}, "valuePlain": 17, "value": 17}
+{"name": "Area warden, keyword areas", "runs": 57, "makespan": 53.0, "slotUse": 0.27, "exposedPairs": 0, "cardsNeedingSync": 0, "overlapsInsidePackages": 0, "conflictsPer100": 0.0, "roundsPerCard": 1.0, "reworkShare": 0.0, "forecastF1": 0.37, "parallelism": 0.44, "scores": {"conflicts": 100, "tokens": 100, "rework": 100, "forecast": 37, "parallelism": 44, "lead": 0}, "valuePlain": 81, "value": 45}
+{"name": "Area warden, forecast modules", "runs": 57, "makespan": 27.0, "slotUse": 0.53, "exposedPairs": 8, "cardsNeedingSync": 7, "overlapsInsidePackages": 0, "conflictsPer100": 12.3, "roundsPerCard": 1.12, "reworkShare": 0.11, "forecastF1": 0.52, "parallelism": 0.85, "scores": {"conflicts": 65, "tokens": 66, "rework": 58, "forecast": 52, "parallelism": 85, "lead": 68}, "valuePlain": 65, "value": 65}
+{"name": "Surveyor", "runs": 57, "makespan": 26.0, "slotUse": 0.55, "exposedPairs": 15, "cardsNeedingSync": 11, "overlapsInsidePackages": 0, "conflictsPer100": 19.3, "roundsPerCard": 1.19, "reworkShare": 0.16, "forecastF1": 0.56, "parallelism": 0.89, "scores": {"conflicts": 45, "tokens": 46, "rework": 38, "forecast": 56, "parallelism": 89, "lead": 71}, "valuePlain": 52, "value": 52}
+{"name": "Historian", "runs": 57, "makespan": 27.0, "slotUse": 0.53, "exposedPairs": 13, "cardsNeedingSync": 9, "overlapsInsidePackages": 0, "conflictsPer100": 15.8, "roundsPerCard": 1.16, "reworkShare": 0.14, "forecastF1": 0.56, "parallelism": 0.85, "scores": {"conflicts": 55, "tokens": 54, "rework": 46, "forecast": 56, "parallelism": 85, "lead": 68}, "valuePlain": 58, "value": 58}
+{"name": "Packer", "runs": 51, "makespan": 26.0, "slotUse": 0.55, "exposedPairs": 11, "cardsNeedingSync": 9, "overlapsInsidePackages": 2, "conflictsPer100": 15.8, "roundsPerCard": 1.05, "reworkShare": 0.15, "forecastF1": 0.56, "parallelism": 0.89, "scores": {"conflicts": 55, "tokens": 86, "rework": 42, "forecast": 56, "parallelism": 89, "lead": 71}, "valuePlain": 67, "value": 67}
+
+== durations: size; conflict-free bound: {"runs": 57, "makespan": 52.9, "slotUse": 0.5, "exposedPairs": 0, "cardsNeedingSync": 0, "overlapsInsidePackages": 0}
+{"name": "Queue keeper (baseline)", "runs": 57, "makespan": 26.8, "slotUse": 0.98, "exposedPairs": 67, "cardsNeedingSync": 31, "overlapsInsidePackages": 0, "conflictsPer100": 54.4, "roundsPerCard": 1.54, "reworkShare": 0.35, "forecastF1": 0.0, "parallelism": 1.0, "scores": {"conflicts": 0, "tokens": 0, "rework": 0, "forecast": 0, "parallelism": 100, "lead": 100}, "valuePlain": 17, "value": 17}
+{"name": "Area warden, keyword areas", "runs": 57, "makespan": 99.7, "slotUse": 0.26, "exposedPairs": 0, "cardsNeedingSync": 0, "overlapsInsidePackages": 0, "conflictsPer100": 0.0, "roundsPerCard": 1.0, "reworkShare": 0.0, "forecastF1": 0.37, "parallelism": 0.52, "scores": {"conflicts": 100, "tokens": 100, "rework": 100, "forecast": 37, "parallelism": 52, "lead": 0}, "valuePlain": 82, "value": 53}
+{"name": "Area warden, forecast modules", "runs": 57, "makespan": 55.5, "slotUse": 0.47, "exposedPairs": 17, "cardsNeedingSync": 9, "overlapsInsidePackages": 0, "conflictsPer100": 15.8, "roundsPerCard": 1.16, "reworkShare": 0.14, "forecastF1": 0.52, "parallelism": 0.94, "scores": {"conflicts": 71, "tokens": 70, "rework": 60, "forecast": 52, "parallelism": 94, "lead": 61}, "valuePlain": 69, "value": 69}
+{"name": "Surveyor", "runs": 57, "makespan": 51.5, "slotUse": 0.51, "exposedPairs": 29, "cardsNeedingSync": 16, "overlapsInsidePackages": 0, "conflictsPer100": 28.1, "roundsPerCard": 1.28, "reworkShare": 0.22, "forecastF1": 0.56, "parallelism": 1.0, "scores": {"conflicts": 48, "tokens": 48, "rework": 37, "forecast": 56, "parallelism": 100, "lead": 66}, "valuePlain": 55, "value": 55}
+{"name": "Historian", "runs": 57, "makespan": 55.8, "slotUse": 0.47, "exposedPairs": 20, "cardsNeedingSync": 11, "overlapsInsidePackages": 0, "conflictsPer100": 19.3, "roundsPerCard": 1.19, "reworkShare": 0.16, "forecastF1": 0.56, "parallelism": 0.94, "scores": {"conflicts": 65, "tokens": 65, "rework": 54, "forecast": 56, "parallelism": 94, "lead": 60}, "valuePlain": 66, "value": 66}
+{"name": "Packer", "runs": 51, "makespan": 52.7, "slotUse": 0.5, "exposedPairs": 19, "cardsNeedingSync": 12, "overlapsInsidePackages": 2, "conflictsPer100": 21.1, "roundsPerCard": 1.11, "reworkShare": 0.19, "forecastF1": 0.56, "parallelism": 1.0, "scores": {"conflicts": 61, "tokens": 80, "rework": 46, "forecast": 56, "parallelism": 100, "lead": 64}, "valuePlain": 69, "value": 69}
+
+size prior (median real code files per source): {'IN': 17, 'DP': 17, 'X': 2, 'RV': 5}
+size signal: correlation of real code files with forecast files, cited files over 55 cards with source text: 0.1 0.04
+
+packages: [['RV-22', 'RV-18'], ['RV-21', 'RV-11'], ['RV-20', 'RV-4', 'RV-7'], ['RV-14', 'RV-13'], ['RV-3', 'RV-2']]
+
+== today's prompt-path rule, unit and size durations, instant integration
+unit {"name": "Queue keeper, prompt paths (upper bound, unscored)", "runs": 57, "makespan": 21.0, "slotUse": 0.68, "exposedPairs": 11, "cardsNeedingSync": 10, "overlapsInsidePackages": 0, "roundsPerCard": 1.18, "parallelism": 1.0}
+size {"name": "Queue keeper, prompt paths (upper bound, unscored)", "runs": 57, "makespan": 44.0, "slotUse": 0.6, "exposedPairs": 26, "cardsNeedingSync": 16, "overlapsInsidePackages": 0, "roundsPerCard": 1.28, "parallelism": 1.0}
+
+== exposure window: integration lag in card durations, unit durations
+lag 1, check running: bound slotUse 0.59 makespan 24.0 syncs 33
+  {"name": "Queue keeper (baseline)", "cardsNeedingSync": 35, "exposedPairs": 107, "slotUse": 0.89, "parallelism": 1.0, "makespan": 16.0, "roundsPerCard": 1.61, "valuePlain": 17, "value": 17}
+  {"name": "Area warden, keyword areas", "cardsNeedingSync": 23, "exposedPairs": 23, "slotUse": 0.26, "parallelism": 0.44, "makespan": 54.0, "roundsPerCard": 1.4, "valuePlain": 81, "value": 45}
+  {"name": "Area warden, forecast modules", "cardsNeedingSync": 31, "exposedPairs": 46, "slotUse": 0.51, "parallelism": 0.86, "makespan": 28.0, "roundsPerCard": 1.54, "valuePlain": 43, "value": 43}
+  {"name": "Surveyor", "cardsNeedingSync": 33, "exposedPairs": 62, "slotUse": 0.53, "parallelism": 0.9, "makespan": 27.0, "roundsPerCard": 1.58, "valuePlain": 31, "value": 31}
+  {"name": "Historian", "cardsNeedingSync": 32, "exposedPairs": 57, "slotUse": 0.51, "parallelism": 0.86, "makespan": 28.0, "roundsPerCard": 1.56, "valuePlain": 37, "value": 37}
+  {"name": "Packer", "cardsNeedingSync": 29, "exposedPairs": 48, "slotUse": 0.55, "parallelism": 0.93, "makespan": 26.0, "roundsPerCard": 1.4, "valuePlain": 68, "value": 68}
+  {"name": "Queue keeper, prompt paths (upper bound, unscored)", "cardsNeedingSync": 30, "exposedPairs": 66, "slotUse": 0.65, "parallelism": 1.0, "makespan": 22.0, "roundsPerCard": 1.53, "valuePlain": null, "value": null}
+lag 1, check inflight: bound slotUse 0.35 makespan 41.0 syncs 0
+  {"name": "Queue keeper (baseline)", "cardsNeedingSync": 35, "exposedPairs": 107, "slotUse": 0.89, "parallelism": 1.0, "makespan": 16.0, "roundsPerCard": 1.61, "valuePlain": 17, "value": 17}
+  {"name": "Area warden, keyword areas", "cardsNeedingSync": 0, "exposedPairs": 0, "slotUse": 0.13, "parallelism": 0.37, "makespan": 106.0, "roundsPerCard": 1.0, "valuePlain": 80, "value": 37}
+  {"name": "Area warden, forecast modules", "cardsNeedingSync": 12, "exposedPairs": 18, "slotUse": 0.28, "parallelism": 0.8, "makespan": 51.0, "roundsPerCard": 1.21, "valuePlain": 64, "value": 64}
+  {"name": "Surveyor", "cardsNeedingSync": 14, "exposedPairs": 26, "slotUse": 0.31, "parallelism": 0.89, "makespan": 46.0, "roundsPerCard": 1.25, "valuePlain": 61, "value": 61}
+  {"name": "Historian", "cardsNeedingSync": 13, "exposedPairs": 22, "slotUse": 0.29, "parallelism": 0.83, "makespan": 49.0, "roundsPerCard": 1.23, "valuePlain": 63, "value": 63}
+  {"name": "Packer", "cardsNeedingSync": 15, "exposedPairs": 23, "slotUse": 0.32, "parallelism": 0.91, "makespan": 45.0, "roundsPerCard": 1.16, "valuePlain": 64, "value": 64}
+  {"name": "Queue keeper, prompt paths (upper bound, unscored)", "cardsNeedingSync": 13, "exposedPairs": 19, "slotUse": 0.38, "parallelism": 1.0, "makespan": 38.0, "roundsPerCard": 1.23, "valuePlain": null, "value": null}
+lag 2, check running: bound slotUse 0.57 makespan 25.0 syncs 36
+  {"name": "Queue keeper (baseline)", "cardsNeedingSync": 37, "exposedPairs": 168, "slotUse": 0.84, "parallelism": 1.0, "makespan": 17.0, "roundsPerCard": 1.65, "valuePlain": 20, "value": 20}
+  {"name": "Area warden, keyword areas", "cardsNeedingSync": 29, "exposedPairs": 45, "slotUse": 0.26, "parallelism": 0.46, "makespan": 55.0, "roundsPerCard": 1.51, "valuePlain": 81, "value": 47}
+  {"name": "Area warden, forecast modules", "cardsNeedingSync": 35, "exposedPairs": 76, "slotUse": 0.49, "parallelism": 0.86, "makespan": 29.0, "roundsPerCard": 1.61, "valuePlain": 40, "value": 40}
+  {"name": "Surveyor", "cardsNeedingSync": 36, "exposedPairs": 95, "slotUse": 0.51, "parallelism": 0.89, "makespan": 28.0, "roundsPerCard": 1.63, "valuePlain": 31, "value": 31}
+  {"name": "Historian", "cardsNeedingSync": 36, "exposedPairs": 90, "slotUse": 0.49, "parallelism": 0.86, "makespan": 29.0, "roundsPerCard": 1.63, "valuePlain": 31, "value": 31}
+  {"name": "Packer", "cardsNeedingSync": 35, "exposedPairs": 75, "slotUse": 0.53, "parallelism": 0.93, "makespan": 27.0, "roundsPerCard": 1.51, "valuePlain": 57, "value": 57}
+  {"name": "Queue keeper, prompt paths (upper bound, unscored)", "cardsNeedingSync": 35, "exposedPairs": 108, "slotUse": 0.62, "parallelism": 1.0, "makespan": 23.0, "roundsPerCard": 1.61, "valuePlain": null, "value": null}
+lag 2, check inflight: bound slotUse 0.24 makespan 59.0 syncs 0
+  {"name": "Queue keeper (baseline)", "cardsNeedingSync": 37, "exposedPairs": 168, "slotUse": 0.84, "parallelism": 1.0, "makespan": 17.0, "roundsPerCard": 1.65, "valuePlain": 17, "value": 17}
+  {"name": "Area warden, keyword areas", "cardsNeedingSync": 0, "exposedPairs": 0, "slotUse": 0.09, "parallelism": 0.38, "makespan": 159.0, "roundsPerCard": 1.0, "valuePlain": 81, "value": 38}
+  {"name": "Area warden, forecast modules", "cardsNeedingSync": 11, "exposedPairs": 20, "slotUse": 0.19, "parallelism": 0.79, "makespan": 76.0, "roundsPerCard": 1.19, "valuePlain": 67, "value": 67}
+  {"name": "Surveyor", "cardsNeedingSync": 19, "exposedPairs": 36, "slotUse": 0.22, "parallelism": 0.92, "makespan": 65.0, "roundsPerCard": 1.33, "valuePlain": 54, "value": 54}
+  {"name": "Historian", "cardsNeedingSync": 15, "exposedPairs": 24, "slotUse": 0.2, "parallelism": 0.83, "makespan": 72.0, "roundsPerCard": 1.26, "valuePlain": 60, "value": 60}
+  {"name": "Packer", "cardsNeedingSync": 16, "exposedPairs": 23, "slotUse": 0.22, "parallelism": 0.92, "makespan": 66.0, "roundsPerCard": 1.18, "valuePlain": 63, "value": 63}
+  {"name": "Queue keeper, prompt paths (upper bound, unscored)", "cardsNeedingSync": 13, "exposedPairs": 21, "slotUse": 0.26, "parallelism": 1.0, "makespan": 54.0, "roundsPerCard": 1.23, "valuePlain": null, "value": null}

@@ -1971,15 +1971,14 @@ public static class LeaseEndpoints
                 task,
                 attemptId,
                 req.RunnerId,
-                req.OutcomeDecision?.RawFacts.EffectiveModel);
+                req.OutcomeDecision?.RawFacts.EffectiveModel,
+                req.SessionContinuation);
             if (req.SessionContinuation is { } completedSession)
             {
                 AgentStudio.Runner.SessionContinuationLedgerStore.Append(
                     task.FolderPath,
                     AgentStudio.Runner.SessionContinuationLedgerStore.WithReceiptFallback(
                         completedSession, tokenReceipt.TotalTokens));
-                if (!string.IsNullOrWhiteSpace(completedSession.CapturedSessionId))
-                    sessions.BackfillLatestSessionEventCapturedId(task.Id, completedSession.CapturedSessionId, task.WatchPath);
             }
             if (!tokenReceipt.Persisted && !string.IsNullOrWhiteSpace(tokenReceipt.Warning))
             {

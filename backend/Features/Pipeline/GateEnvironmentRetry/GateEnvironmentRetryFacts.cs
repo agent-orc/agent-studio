@@ -162,11 +162,16 @@ public static class GateEnvironmentRetryFactsReader
     /// exists (AGT-3810). The checkout case stays off the automatic ladder; only
     /// an owner who configured the checkout knows when a replay can succeed. The
     /// sweep therefore selects its candidates with <see cref="IsGateEnvironmentFailure"/>.
+    /// AGT-3964: a refused Dossier placement is replayable by the operator too.
+    /// The replay runs the placement check again on the same reviewed concept
+    /// delivery, so a refusal the check itself caused (AGT-3951) or an
+    /// operator-placed Dossier no longer needs a new agent round.
     /// </summary>
     public static bool IsOperatorReplayable(TaskIntegrationStatus? integration)
         => IsGateEnvironmentFailure(integration)
            || IsTransportFailure(integration)
-           || integration?.Failure is { Code: AcceptedIntegrationFailureCodes.ServerCheckoutMissing, ReplayAvailable: true };
+           || integration?.Failure is { Code: AcceptedIntegrationFailureCodes.ServerCheckoutMissing, ReplayAvailable: true }
+           || integration?.Failure?.Code == AcceptedIntegrationFailureCodes.ConceptDossierRejected;
 
     /// <summary>
     /// The host-side integration faults this ladder replays. CAC-18 keeps a gate

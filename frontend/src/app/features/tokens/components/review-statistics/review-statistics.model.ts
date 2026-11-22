@@ -17,11 +17,16 @@ export interface ReviewUsageRow {
   host: string;
   tokens: number;
   usd: number | null;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
 }
 
 export interface ReviewStatistics {
   deliveryTokens: ReviewMetric;
   deliveryUsd: ReviewMetric;
+  /** Prompt-cache tokens read and written per delivery review (AGT-3971). */
+  deliveryCacheReadTokens?: ReviewMetric;
+  deliveryCacheWriteTokens?: ReviewMetric;
   roundsUntilAcceptance: ReviewMetric;
   tokensPerAcceptedCard: ReviewMetric;
   usdPerAcceptedCard: ReviewMetric;

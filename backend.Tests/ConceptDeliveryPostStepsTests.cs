@@ -127,6 +127,50 @@ public sealed class ConceptDeliveryPostStepsTests : IDisposable
         Assert.StartsWith(ConceptDeliveryPostSteps.PlacementParkPrefix, failure.Reason);
     }
 
+    /// <summary>
+    /// AGT-3964 (AGT-3951): the runner merges the current develop into the
+    /// concept branch at the start of every round. Develop's own files and its
+    /// other Dossiers then arrive through that merge. The Studio lane and the
+    /// origin tracking ref still lag, so a diff against them counted develop's
+    /// history as the concept's change and refused the delivery.
+    /// </summary>
+    [Fact]
+    public async Task Concept_branch_that_merged_develop_between_rounds_is_placed()
+    {
+        var resultSha = SeedDeliveryThatMergedDevelopBetweenRounds(touchProductCode: false);
+        var card = SeedCard();
+        var merges = 0;
+
+        var result = await _steps.IntegrateAsync(card, Request(resultSha), () =>
+        {
+            merges++;
+            return Task.FromResult(MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged, MergeIntoDevelop(resultSha)));
+        });
+
+        Assert.True(result.PostStepParkReason is null, result.PostStepParkReason);
+        Assert.Equal(1, merges);
+        Assert.Equal("docs/" + Topic, ConceptWorkbenchStore.Read(card.FolderPath)?.RepoRelativeDirectory);
+        var placement = _pipeline.Read(card.FolderPath)!.Steps
+            .Single(step => step.StepId == PipelineCatalogue.ConceptWorkbenchPlacementStepId);
+        Assert.Equal(PipelineStepStatus.Passed, placement.Status);
+    }
+
+    [Fact]
+    public async Task Concept_branch_that_merged_develop_still_refuses_its_own_product_change()
+    {
+        var resultSha = SeedDeliveryThatMergedDevelopBetweenRounds(touchProductCode: true);
+        var card = SeedCard();
+
+        var result = await _steps.IntegrateAsync(card, Request(resultSha),
+            () => throw new InvalidOperationException("A refused delivery must not merge."));
+
+        var reason = RemoteDeliveryParkReason.For(result);
+        Assert.Equal(AcceptedIntegrationFailureCodes.ConceptDossierRejected, result.FailureCode);
+        Assert.Contains("src/product.cs", reason);
+        Assert.DoesNotContain("src/develop-only.cs", reason);
+        Assert.DoesNotContain("found 2 topic directories", reason);
+    }
+
     [Fact]
     public async Task Dossier_not_named_by_the_card_results_is_refused_with_the_missing_reference()
     {
@@ -227,6 +271,60 @@ public sealed class ConceptDeliveryPostStepsTests : IDisposable
         }
         Git("add", "--all");
         Git("commit", "-m", "concept dossier");
+        var sha = Git("rev-parse", "HEAD");
+        Git("checkout", "main");
+        return sha;
+    }
+
+    /// <summary>
+    /// Round one writes the Dossier on a branch cut from develop. Develop then
+    /// moves on origin (a product file and another Dossier) while the Studio
+    /// lane and the origin tracking ref keep the old tip. Round two merges the
+    /// new develop into the concept branch and revises the Dossier.
+    /// </summary>
+    private string SeedDeliveryThatMergedDevelopBetweenRounds(bool touchProductCode)
+    {
+        Git("init", "--initial-branch=main");
+        Git("config", "user.name", "Concept Test");
+        Git("config", "user.email", "concept@example.invalid");
+        File.WriteAllText(Path.Combine(_repository, "README.md"), "seed\n");
+        Git("add", "--all");
+        Git("commit", "-m", "seed");
+        Git("branch", "develop");
+        var origin = Path.Combine(_root, "origin.git");
+        Git("init", "--bare", "--initial-branch=main", origin);
+        Git("remote", "add", "origin", origin);
+        Git("push", "origin", "main", "develop");
+        var staleTip = Git("rev-parse", "develop");
+        Git("update-ref", GitService.IntegrationLaneRef("develop"), staleTip);
+
+        Git("checkout", "-b", "task/concept-delivery", "develop");
+        var dossier = ConceptWorkbenchContract.CreateScaffold(
+            _repository, Topic, "Delivery contract", "How a concept is delivered.", CardKey);
+        AddImplementationTask(Path.Combine(dossier, ConceptWorkbenchContract.DescriptorFileName));
+        Git("add", "--all");
+        Git("commit", "-m", "concept dossier round 1");
+
+        Git("checkout", "-b", "develop-moves", staleTip);
+        Directory.CreateDirectory(Path.Combine(_repository, "src"));
+        File.WriteAllText(Path.Combine(_repository, "src", "develop-only.cs"), "// develop\n");
+        ConceptWorkbenchContract.CreateScaffold(
+            _repository, "other-topic", "Other topic", "A Dossier that develop already carries.", "AGT-9002");
+        Git("add", "--all");
+        Git("commit", "-m", "develop moves on");
+        var movedDevelop = Git("rev-parse", "HEAD");
+        Git("push", "origin", "develop-moves:develop");
+        // The Studio has not fetched since: only origin knows the new tip.
+        Git("update-ref", "refs/remotes/origin/develop", staleTip);
+
+        Git("checkout", "task/concept-delivery");
+        Git("branch", "-D", "develop-moves");
+        Git("merge", "--no-ff", "-m", "Merge develop at round start", movedDevelop);
+        File.AppendAllText(Path.Combine(dossier, ConceptWorkbenchContract.EntryFileName), "\n<!-- round 2 -->\n");
+        if (touchProductCode)
+            File.WriteAllText(Path.Combine(_repository, "src", "product.cs"), "// product\n");
+        Git("add", "--all");
+        Git("commit", "-m", "concept dossier round 2");
         var sha = Git("rev-parse", "HEAD");
         Git("checkout", "main");
         return sha;

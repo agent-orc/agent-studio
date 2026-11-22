@@ -8,8 +8,10 @@ import {
   RELEASE_1,
   deployEnvironmentsFixture,
   deployStatusFixture,
+  productionRollbackFixture,
   productionDownHealthFixture,
 } from '../../testing/deploy-fixtures';
+import { buildRollbackOffers } from '../../state/rollback-offer.model';
 
 /** The deploy status and control-plane health reads of the shared environment projection; 404 means "not on this server". */
 function answerStateSources(http: HttpTestingController, project: string, status?: unknown, health?: unknown): void {
@@ -20,31 +22,6 @@ function answerStateSources(http: HttpTestingController, project: string, status
 }
 
 describe('ProjectDeploymentPanelComponent', () => {
-  it('shows the server rollback refusal and recovery choices', async () => {
-    await TestBed.configureTestingModule({
-      imports: [ProjectDeploymentPanelComponent],
-      providers: [provideHttpClient(), provideHttpClientTesting()],
-    }).compileComponents();
-    const fixture = TestBed.createComponent(ProjectDeploymentPanelComponent);
-    fixture.componentRef.setInput('projectName', 'Demo');
-    fixture.detectChanges();
-    const http = TestBed.inject(HttpTestingController);
-    http.expectOne('/api/projects/Demo/environments').flush({ project: 'Demo', environments: [], promotions: [], failureCards: [] });
-    answerStateSources(http, 'Demo', []);
-    http.expectOne('/api/watch-paths').flush([]);
-    http.expectOne('/api/projects/Demo/deployment/summary').flush({
-      project: 'Demo', available: false, reason: null, source: '', lastDeployment: null,
-      history: [], pendingCount: null, pendingCommits: [], targets: [], defaultEvidenceRun: null,
-    });
-    fixture.componentInstance.rollbackEnvironment('production');
-    http.expectOne('/api/projects/Demo/environments/production/rollback').flush(
-      { error: 'No previous artifact is available.' }, { status: 409, statusText: 'Conflict' });
-    fixture.detectChanges();
-    const alert = fixture.nativeElement.querySelector('[role="alert"]') as HTMLElement;
-    expect(alert.textContent).toContain('No previous artifact is available.');
-    expect(alert.textContent).toContain('Redeploy');
-    expect(alert.textContent).toContain('fix forward');
-  });
   it('renders the shared baseline, pending delta, and newest-first history', async () => {
     await TestBed.configureTestingModule({
       imports: [ProjectDeploymentPanelComponent],
@@ -125,6 +102,40 @@ describe('ProjectDeploymentPanelComponent', () => {
     create.flush({ id: 'AGT-3000' });
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="project-deployment-created"]').textContent).toContain('AGT-3000');
+  });
+
+  it('rolls back only through the Deploy offer and never calls the older rollback route (F13)', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectDeploymentPanelComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectDeploymentPanelComponent);
+    fixture.componentRef.setInput('projectName', 'Website');
+    fixture.componentRef.setInput('now', DEPLOY_FIXTURE_NOW);
+    const emitted: string[] = [];
+    fixture.componentInstance.rollback.subscribe(id => emitted.push(id));
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    const scenario = productionRollbackFixture();
+    http.expectOne('/api/projects/Website/environments').flush(scenario.environments);
+    answerStateSources(http, 'Website', scenario.statuses);
+    http.expectOne('/api/watch-paths').flush([]);
+    http.expectOne('/api/projects/Website/deployment/summary').flush({ project: 'Website', available: false, reason: null,
+      source: 'none', pendingCount: null, defaultEvidenceRun: null, pendingCommits: [], lastDeployment: null, history: [], targets: [] });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const host = fixture.nativeElement as HTMLElement;
+    // Staging has four history rows, but without a lifecycle target there is no rollback button.
+    expect(host.querySelector('[data-testid="environment-stage"] button')).toBeNull();
+
+    fixture.componentRef.setInput('rollbackOffers', buildRollbackOffers(scenario.statuses));
+    fixture.detectChanges();
+    const offer = host.querySelector('[data-testid="environment-production"] [data-testid="rollback-offer-production"]');
+    expect(offer?.textContent).toContain(`Release ${RELEASE_1.version}`);
+    (offer!.querySelector('[data-testid="rollback-offer-button"]') as HTMLButtonElement).click();
+    expect(emitted).toEqual(['production']);
+    http.expectNone(request => request.url.endsWith('/rollback'));
+    http.verify();
   });
 
   it('accepts false as a provided value for ordinary required yes-no parameters', async () => {
@@ -213,6 +224,7 @@ describe('ProjectDeploymentPanelComponent', () => {
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Shop/environments')
       .flush({ project: 'Shop', environments: [], promotions: [], failureCards: [] });
+    answerStateSources(http, 'Shop', []);
     http.expectOne('/api/watch-paths').flush([]);
     http.expectOne('/api/projects/Shop/deployment/summary').flush({
       project: 'Shop', available: false, reason: 'The deploy-stable baseline is Studio\'s own deployment history.',

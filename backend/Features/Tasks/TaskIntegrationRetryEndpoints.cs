@@ -5,8 +5,8 @@ namespace AgentStudio.Tasks;
 
 /// <summary>
 /// Operator action for a delivery whose integration failed on the gate
-/// environment (AGT-2824) or on a server checkout that now exists (AGT-3810).
-/// It replays the integration of the unchanged delivery SHA and reuses the
+/// environment (AGT-2824), on a server checkout that now exists (AGT-3810), or
+/// on a refused concept Dossier placement (AGT-3964). It replays the integration of the unchanged delivery SHA and reuses the
 /// review that already passed for it, so recovering from a broken gate host
 /// or a missing checkout no longer costs a coding run or a review round.
 /// </summary>
@@ -35,8 +35,9 @@ public static class TaskIntegrationRetryEndpoints
             // ladder can never disagree about the same card. The refusal carries
             // the policy's reason slug next to its operator-facing sentence.
             var result = await retries.RetryNowAsync(job, ct);
-            var integrated = result.Status == GateEnvironmentRetryStatus.Replayed
-                && result.Outcome?.IsSuccessfulIntegration() == true;
+            // AGT-3964: a concept replay whose Dossier placement or concept
+            // review parked it did not integrate, whatever the merge said.
+            var integrated = result.Integrated;
             // AGT-3810: an Escalated card was parked only because its passed
             // delivery could not integrate. Once the replay landed it, the
             // card returns to Human Review for the owner's acceptance instead

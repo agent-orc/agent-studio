@@ -1512,6 +1512,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             $"/api/clients/{Uri.EscapeDataString(clientId)}/runner-git-capability", request, ct);
     }
 
+    private double? _advertisementRoundTripMs;
+
     public async Task AdvertiseCapabilitiesAsync(
         IReadOnlyList<Contract.AdvertisedCapabilityDto> capabilities,
         Contract.HostTelemetrySnapshotDto? telemetry,
@@ -1521,7 +1523,12 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         if (!_useV1 && !_supportsCapabilityAdvertisement) return;
         var options = _options ?? throw new InvalidOperationException("Runner options are unavailable.");
         if (telemetry is not null)
-            telemetry = telemetry with { Containers = await RunnerCapabilityProbe.ContainersAsync(ct) };
+            telemetry = telemetry with
+            {
+                Containers = await RunnerCapabilityProbe.ContainersAsync(ct),
+                // AGT-3954: the previous advertisement's round trip is the probed latency of this link.
+                TaskServerRoundTripMs = _advertisementRoundTripMs,
+            };
         var request = new Contract.CapabilityAdvertisementRequest(
             options.RunnerId,
             RunnerInstanceId,
@@ -1551,11 +1558,13 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             telemetry,
             RunnerReleaseIdentity.CurrentIdentity,
             _supportsCredentialHealthV2 ? 2 : _supportsCredentialObservationV2 ? 1 : null);
+        var roundTrip = System.Diagnostics.Stopwatch.StartNew();
         var snapshot = await SendJsonAsync<Contract.CapabilityAdvertisementRequest, Contract.RunnerCapabilitySnapshotDto>(
             HttpMethod.Put,
             $"/api/v1/runners/{Uri.EscapeDataString(options.RunnerId)}/capabilities",
             request,
             ct);
+        _advertisementRoundTripMs = Math.Round(roundTrip.Elapsed.TotalMilliseconds, 1);
         AdoptRoleMaxParallelism(snapshot?.RoleMaxParallelism);
         if (snapshot?.ConfiguredModelRoutes is { } configuredRoutes)
             RunnerModelAcceptanceProbe.Shared.UseConfiguredModels(configuredRoutes);

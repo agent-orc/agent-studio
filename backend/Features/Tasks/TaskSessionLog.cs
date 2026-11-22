@@ -294,6 +294,19 @@ public class TaskSessionLog
         return MutateLatestSessionEvent(jobId, watchPath, evt => evt with { CapturedSessionId = capturedSessionId });
     }
 
+    /// <summary>Apply worker provenance to the exact fenced remote run, including delayed completion.</summary>
+    public bool BackfillSessionContinuation(string jobId,
+        AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry entry, string? watchPath = null)
+        => MutateSessionEvent(jobId, watchPath,
+            evt => string.Equals(evt.RunAttemptId, entry.AttemptId, StringComparison.Ordinal),
+            evt => evt with
+            {
+                InputSessionId = entry.InputSessionId,
+                CapturedSessionId = entry.CapturedSessionId,
+                Resumed = entry.InputSessionId is not null,
+                Reason = entry.RejectionReason ?? evt.Reason,
+            });
+
     /// <summary>
     /// Records the post-run HEAD SHA on the most recent session event so
     /// downstream readers (the run timeline, the per-run commits endpoint)

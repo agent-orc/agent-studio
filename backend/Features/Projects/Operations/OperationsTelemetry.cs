@@ -1,5 +1,3 @@
-using AgentStudio.Telemetry;
-
 namespace AgentStudio.Projects;
 
 /// <summary>
@@ -10,7 +8,7 @@ namespace AgentStudio.Projects;
 public interface IOperationsTelemetryReader
 {
     OperationsMetrics? ReadMetrics(string project, string environmentId, DateTimeOffset since, DateTimeOffset until);
-    IReadOnlyList<OperationsLogLine>? SearchLogs(OperationsLogQuery query);
+    OperationsLogPage? SearchLogs(OperationsLogQuery query);
 }
 
 /// <param name="ActiveUsers">The most recent UTC daily bucket, deduplicated without exposing identities.</param>
@@ -27,32 +25,18 @@ public sealed record OperationsMetricSample(DateTimeOffset At, double? ResponseP
     long? Requests, double? CpuCores, long? MemoryBytes, long? DiskBytes);
 
 public sealed record OperationsLogQuery(string Project, string EnvironmentId, DateTimeOffset Since,
-    DateTimeOffset Until, string? Level, string? ReleaseId, string? Text, int Limit);
+    DateTimeOffset Until, string? Level, string? ReleaseId, string? Text, int Limit, string? Cursor);
 
 public sealed record OperationsLogLine(DateTimeOffset At, string Level, string Message, string? ReleaseId,
     string? TraceId = null);
+public sealed record OperationsLogPage(IReadOnlyList<OperationsLogLine> Lines, string? NextCursor);
 
-/// <summary>Temporary adapter until the OTLP intake store implements <see cref="IOperationsTelemetryReader"/>.</summary>
+public sealed class OperationsTelemetryReadException(Exception inner)
+    : Exception("Operations telemetry store read failed.", inner);
+
+/// <summary>Used only when the telemetry store is explicitly disabled.</summary>
 public sealed class UnavailableOperationsTelemetryReader : IOperationsTelemetryReader
 {
     public OperationsMetrics? ReadMetrics(string project, string environmentId, DateTimeOffset since, DateTimeOffset until) => null;
-    public IReadOnlyList<OperationsLogLine>? SearchLogs(OperationsLogQuery query) => null;
-}
-
-public sealed class StoreOperationsTelemetryReader(TelemetryStore store) : IOperationsTelemetryReader
-{
-    public OperationsMetrics? ReadMetrics(string project, string environmentId, DateTimeOffset since, DateTimeOffset until) => null;
-
-    public IReadOnlyList<OperationsLogLine>? SearchLogs(OperationsLogQuery query)
-    {
-        var attributes = query.ReleaseId is { } release
-            ? new Dictionary<string, string> { ["release.id"] = release }
-            : new Dictionary<string, string>();
-        var page = store.QueryLogs(new(query.Project, query.EnvironmentId), new LogQuery(
-            TelemetryAdmissionPolicy.UnixNanos(query.Since), TelemetryAdmissionPolicy.UnixNanos(query.Until),
-            query.Level is null ? null : TelemetrySeverity.Parse(query.Level), query.Text, attributes,
-            query.Limit, null));
-        return page.Records.Select(item => new OperationsLogLine(item.Time, item.Severity, item.Body,
-            item.Attributes.GetValueOrDefault("release.id"), item.TraceId)).ToArray();
-    }
+    public OperationsLogPage? SearchLogs(OperationsLogQuery query) => null;
 }

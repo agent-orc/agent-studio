@@ -7,6 +7,7 @@ import {
   artifactReleaseLookups,
   buildDeployRuns,
   buildEnvironmentCards,
+  declaredEnvironments,
   carriesArtifact,
   environmentNames,
   environmentReleaseDisplay,
@@ -362,6 +363,18 @@ describe('deploy area model', () => {
       expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'healthy' });
     });
 
+    it('shows an active container incident ahead of stale healthy status', () => {
+      const sources = deploySourcesFixture();
+      sources.environments!.environments[0].runtimeIncident = { id: 'stage/crash', kind: 'crash-loop',
+        startedAt: '2026-10-19T12:00:00Z', updatedAt: '2026-10-19T12:01:00Z', restarts: 102, endedAt: null };
+      sources.environments!.environments[0].observed = { state: 'crash-loop', restarts: 102,
+        crashOutput: ['FATAL: startup failed'] };
+      expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'crash-loop' });
+      sources.environments!.environments[0].runtimeIncident.endedAt = '2026-10-19T12:02:00Z';
+      sources.environments!.environments[0].observed.state = 'running';
+      expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'healthy' });
+    });
+
     it('reads "no checks" only for an unknown health without a declared health URL', () => {
       const host = hostOnlySourcesFixture();
       host.environments!.environments[0].health = 'unknown';
@@ -416,6 +429,18 @@ describe('deploy area model', () => {
       sources.statuses![1].currentDeployment = null;
       expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'degraded' });
       expect(buildEnvironmentCards(sources)[1].awaitingApproval?.deploymentId).toBeNull();
+    });
+
+    it('carries the declaration problem of a misconfigured check onto the card (F16)', () => {
+      const sources = deploySourcesFixture();
+      const problem = 'Health check http targets http://172.17.0.1:8080/health, a private network address.';
+      sources.health = { capturedAt: '', probeOrigin: '', environments: [{
+        project: 'Website', environmentId: 'stage', name: 'Staging', kind: 'stage', address: '',
+        status: 'invalid', checks: [{ id: 'http' }] as never, uptime24h: null, uptime7d: null,
+        uptime30d: null, latency24h: { p50Ms: null, p95Ms: null, p99Ms: null },
+        currentIncident: null, lastIncident: null, error: problem,
+      }] };
+      expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'invalid', problem });
     });
 
     it('uses the per-environment current deployment when that run is beyond the bounded history page', () => {
@@ -495,5 +520,27 @@ describe('deploy area model', () => {
     expect(groups.map(group => [group.step, group.state, group.lines.length])).toEqual([
       ['publish-static', 'succeeded', 2], ['health', 'failed', 1], ['rollback', null, 1],
     ]);
+  });
+  it('lists schema 2 environments that have no status card yet, matching staging to the stage card', () => {
+    const step = { path: 'deploy[0]', kind: 'static-site', target: 'web-vm' };
+    const definition = {
+      project: 'Shop', path: '.agent-studio/project.yml', exists: true, schemaVersion: 2, valid: true, issues: [],
+      migrationAvailable: false,
+      diagram: {
+        schemaVersion: 2, gate: { source: 'commands' as const, build: [], test: [], testSuites: [] }, artifacts: [],
+        environmentsDefaulted: false, lifecycleDefaulted: false,
+        environments: [
+          { path: 'environments[0]', name: 'staging', order: 0, protected: false, automatic: true, approval: [], steps: [step], variables: [] },
+          { path: 'environments[1]', name: 'production', order: 1, protected: true, automatic: false, approval: [], steps: [], variables: [] },
+        ],
+      },
+    };
+    const stage = buildEnvironmentCards(deploySourcesFixture()).filter(card => card.id === 'stage');
+
+    expect(declaredEnvironments(definition, stage)).toEqual([
+      { name: 'production', label: 'Production', protected: true, hasSteps: false },
+    ]);
+    expect(declaredEnvironments({ ...definition, schemaVersion: 1 }, [])).toEqual([]);
+    expect(declaredEnvironments(null, [])).toEqual([]);
   });
 });
