@@ -5,6 +5,15 @@
     <div><p>Operations</p><h2 id="project-operations-title">Monitoring, usage and load</h2><p>Last 30 days by application environment.</p></div>
     <button type="button" [appPendingButton]="loading()" pendingLabel="Refreshing…" (click)="load(projectName())">Refresh</button>
   </header>
+  @if (postMergeCoverage(); as coverage) {
+    @if (coverage.missing) {
+      <div class="project-operations__coverage-warning" role="alert" data-testid="operations-post-merge-warning">
+        <strong>Post-merge runs missing</strong>
+        <p>{{ coverage.message }}</p>
+        <a [href]="'#/projects/' + projectSlug() + '/settings'">Testing strategy in project settings</a>
+      </div>
+    }
+  }
   @if (error(); as message) { <p role="alert">{{ message }}</p> }
   @if (snapshot(); as state) {
     @if (!state.environments.length) { <p>No application environments are configured.</p> }

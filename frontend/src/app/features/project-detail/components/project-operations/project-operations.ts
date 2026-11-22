@@ -8,6 +8,7 @@ import { metric, ratio, type OperationsLogResult, type OperationsTrace, type Ope
 import { OperationsTrendComponent } from '../operations-trend/operations-trend';
 import { LoadingSurfaceComponent, PendingButtonDirective } from '../../../../components/async-feedback';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
+import type { PostMergeCoverage, ProjectTesting } from '../../../../models/task.model';
 
 @Component({
   selector: 'app-project-operations', standalone: true, imports: [StatusIndicatorComponent, DatePipe, OperationsTrendComponent, LoadingSurfaceComponent, PendingButtonDirective],
@@ -20,10 +21,13 @@ export class ProjectOperationsComponent {
   private readGeneration = 0;
   private logGeneration = 0;
   private traceGeneration = 0;
+  private coverageGeneration = 0;
   readonly projectName = input.required<string>();
   readonly openRelease = output<string>();
   readonly openCard = output<string>();
   readonly snapshot = signal<ProjectOperations | null>(null);
+  /** AGT-3965: a fast or balanced project whose develop moved without a post-merge run says so here. */
+  readonly postMergeCoverage = signal<PostMergeCoverage | null>(null);
   readonly error = signal<string | null>(null);
   readonly selectedEnvironment = signal('');
   readonly since = signal('');
@@ -47,6 +51,7 @@ export class ProjectOperationsComponent {
   constructor() { effect(() => this.load(this.projectName())); }
 
   load(project: string): void {
+    this.loadCoverage(project);
     const generation = ++this.readGeneration;
     ++this.logGeneration;
     ++this.traceGeneration;
@@ -65,6 +70,16 @@ export class ProjectOperationsComponent {
         this.loading.set(false);
         this.error.set(failure.status === 503 ? 'Operations telemetry store read failed.' : 'Operations data could not be loaded.');
       } },
+    });
+  }
+
+  private loadCoverage(project: string): void {
+    const generation = ++this.coverageGeneration;
+    this.postMergeCoverage.set(null);
+    this.http.get<ProjectTesting>(`/api/projects/${encodeURIComponent(project)}/testing`).pipe(take(1)).subscribe({
+      next: value => { if (generation === this.coverageGeneration) this.postMergeCoverage.set(value.postMergeCoverage ?? null); },
+      // The operations read stays usable; the settings page names the strategy.
+      error: () => { if (generation === this.coverageGeneration) this.postMergeCoverage.set(null); },
     });
   }
 

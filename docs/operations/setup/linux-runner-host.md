@@ -1766,6 +1766,15 @@ worker posts receipts to `/api/runner/post-merge/projects/{project}/runs` and
 does not read or mutate card folders. The board reads the compact
 `/api/develop-states` route; gate economics reads the same durable receipts.
 
+Every project on testing strategy `fast` (the default since AGT-3965) or
+`balanced` needs this pair of timers: those strategies integrate before the
+tests run, and the timers are develop's only check. A project whose develop
+moved without a receipt for six hours shows "Post-merge runs missing" on its
+settings page and Operations view and a `post-merge.missing` item in Needs
+you until a receipt arrives. A project that cannot get timers yet chooses
+`strict` on its settings page. The window run reads `windowSuites` from the
+state route: `affected` for fast, `routine` (every routine suite) for balanced.
+
 ### Salvage store retention
 
 The coding daemon owns the host salvage store and sweeps it on its own timer

@@ -55,6 +55,32 @@ describe('ProjectOperationsComponent', () => {
     expect(host.textContent).toContain('inventory HTTP');
   });
 
+  it('warns while develop moved without a post-merge run and clears once a run reports', async () => {
+    const fixture = TestBed.createComponent(ProjectOperationsComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    const requests = TestBed.inject(HttpTestingController);
+    const host = fixture.nativeElement as HTMLElement;
+    const coverage = {
+      project: 'demo', strategy: 'fast', state: 'missing', developTipSha: 'a'.repeat(40),
+      lastReportedTipSha: null, lastReportedAtUtc: null, missing: true,
+      message: 'No post-merge run was ever reported for demo, while develop moved to aaaaaaaaaaaa.',
+    };
+    requests.expectOne('/api/projects/demo/testing').flush({ strategy: 'fast', postMergeCoverage: coverage });
+    requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
+    await fixture.whenStable();
+    const warning = () => host.querySelector('[data-testid="operations-post-merge-warning"]');
+    expect(warning()?.textContent).toContain('No post-merge run was ever reported for demo');
+    expect(warning()?.querySelector('a')?.getAttribute('href')).toBe('#/projects/demo/settings');
+
+    fixture.componentInstance.load('demo');
+    requests.expectOne('/api/projects/demo/testing').flush({ strategy: 'fast',
+      postMergeCoverage: { ...coverage, state: 'current', missing: false, message: 'covered' } });
+    requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
+    await fixture.whenStable();
+    expect(warning()).toBeNull();
+  });
+
   it('shows unavailable telemetry without invented numbers and links a rollback to release and card', async () => {
     const fixture = TestBed.createComponent(ProjectOperationsComponent);
     fixture.componentRef.setInput('projectName', 'demo');

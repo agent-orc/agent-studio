@@ -258,7 +258,7 @@ public sealed class HumanReviewEscalationTests : IDisposable
         var mode = new PostMergeModeService(projects, runs, _scanner, clock);
         var settings = new ProjectSettings
         {
-            Testing = new ProjectTestingSettings { Mode = IntegrationTestModes.PostMerge },
+            Testing = new ProjectTestingSettings { Strategy = TestingStrategies.Fast },
         };
         Assert.Equal(IntegrationTestModes.PostMerge, mode.Resolve(ProjectName, settings));
 
@@ -281,7 +281,7 @@ public sealed class HumanReviewEscalationTests : IDisposable
         Assert.Equal(IntegrationTestModes.PreMerge, mode.Resolve(ProjectName,
             new ProjectSettings
             {
-                Testing = new ProjectTestingSettings { Mode = IntegrationTestModes.PreMerge },
+                Testing = new ProjectTestingSettings { Strategy = TestingStrategies.Strict },
             }));
     }
 
