@@ -25,6 +25,7 @@ export class ProjectOperationsComponent {
   readonly openCard = output<string>();
   readonly snapshot = signal<ProjectOperations | null>(null);
   readonly error = signal<string | null>(null);
+  readonly pendingWindow = signal<{ starved: boolean; openedAtUtc: string; admissionReason: string } | null>(null);
   readonly selectedEnvironment = signal('');
   readonly since = signal('');
   readonly until = signal('');
@@ -48,6 +49,13 @@ export class ProjectOperationsComponent {
 
   load(project: string): void {
     const generation = ++this.readGeneration;
+    this.pendingWindow.set(null);
+    this.http.get<{ project: string; pendingWindow?: { starved: boolean; openedAtUtc: string; admissionReason: string } }[]>(
+      '/api/develop-states').pipe(take(1)).subscribe({
+      next: rows => { if (generation === this.readGeneration)
+        this.pendingWindow.set(rows.find(row => row.project === project)?.pendingWindow ?? null); },
+      error: () => { /* Keep the application Operations snapshot available during a state read failure. */ },
+    });
     ++this.logGeneration;
     ++this.traceGeneration;
     this.snapshot.set(null); this.logs.set(null); this.error.set(null); this.release.set('');

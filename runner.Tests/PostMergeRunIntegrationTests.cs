@@ -65,6 +65,8 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
                 escalationChecks++;
                 return new HttpResponseMessage(HttpStatusCode.NoContent);
             }
+            if (request.RequestUri?.AbsolutePath.EndsWith("/window", StringComparison.Ordinal) == true)
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
             var run = JsonSerializer.Deserialize<PostMergeRunRecord>(
                 await request.Content!.ReadAsStringAsync(), new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
             received.Add(run);
@@ -78,7 +80,7 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
             return Json(PostMergeProjectState.Empty("PROJ-002"));
         })) { BaseAddress = new Uri("http://test/") };
         var options = new PostMergeRunOptions("Agent Studio", checkout, "http://test/",
-            "develop", "origin", "unused", "nightly", 6, TimeSpan.FromMinutes(30), 1, [], false);
+            "develop", "origin", "unused", "nightly", 6, TimeSpan.Zero, 1, [], false);
         var output = new StringWriter();
         var exit = await new PostMergeRunCommand(options, output, new FixedClock(), http, () => new(0.1, 0))
             .ExecuteAsync(CancellationToken.None);
@@ -91,7 +93,7 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         Assert.NotEqual(first, second);
 
         lastGreenForGet = second;
-        Assert.Equal(0, await new PostMergeRunCommand(options, output, new FixedClock(), http,
+        Assert.Equal(0, await new PostMergeRunCommand(options with { Mode = "window" }, output, new FixedClock(), http,
             () => new(0.1, 0)).ExecuteAsync(CancellationToken.None));
         Assert.Equal("skipped", received[^1].Status);
         Assert.Equal(2, escalationChecks);

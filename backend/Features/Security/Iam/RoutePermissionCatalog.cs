@@ -238,9 +238,10 @@ public static class RoutePermissionCatalog
             "/api/runner/project-chat/complete", "/api/runner/replay/events",
             "/api/runner/post-merge/projects/{}/runs",
             "/api/clients/{}/runner-git-capability", "/api/deploy/jobs/**", "/api/deploy/gate-releases");
-        Add("GET", IamPermissions.RunnerService, "/api/runner/post-merge/projects/{}");
+        Add("GET", IamPermissions.RunnerService, "/api/runner/post-merge/projects", "/api/runner/post-merge/projects/{}");
         Add("POST", IamPermissions.RunnerService,
-            "/api/runner/post-merge/projects/{}/escalation-check");
+            "/api/runner/post-merge/projects/{}/escalation-check",
+            "/api/runner/post-merge/projects/{}/window");
         Add("GET", IamPermissions.WorkspaceRead, "/api/develop-states");
         Add("GET", IamPermissions.RunnerService, "/api/runner/release-candidates/{}/{}");
         Add("PUT", IamPermissions.RunnerService, "/api/runner/release-suite-verdicts");

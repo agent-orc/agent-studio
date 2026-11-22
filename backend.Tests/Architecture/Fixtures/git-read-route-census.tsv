@@ -336,6 +336,7 @@
 /api/runner/integration-lease/{projectName}/{integrationBranch}	free	-	-	-
 /api/runner/lease/{taskKey}	free	-	-	-
 /api/runner/orchestrator-feed	reachable	measured-zero	-	-
+/api/runner/post-merge/projects	free	-	-	-
 /api/runner/post-merge/projects/{project}	free	-	-	-
 /api/runner/release-candidates/{project}/{commit}	reachable	gap	Deploy and environments	Release candidate plan from Task Server source facts
 /api/runner/project-chat/status	free	-	-	-
