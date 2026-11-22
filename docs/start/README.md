@@ -234,6 +234,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Operator API reference: routes for the operator agent, cross-project batch triage and next safe member operation (AGT-3462 OP-4) | [operations/operator-api.md](../operations/operator-api.md) |
 | studio-op operator CLI: installation, Owner token file setup, commands and their routes, watcher lock and lease, accept check, stable exit codes (AGT-3462 OP-8) | [operations/setup/studio-op.md](../operations/setup/studio-op.md) |
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
+| Structure view: observed hosts without a manifest, placement file apart from connectivity, facts per node and link, live deltas (AGT-3954) | [operations/setup/structure-placement.md](../operations/setup/structure-placement.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
 | Update Service operations: loopback bind, owner-only trigger token file, allowed Studio origins, forced triggers (AGT-3713) | [operations/setup/update-service.md](../operations/setup/update-service.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |

@@ -1,0 +1,48 @@
+<header class="page">
+  <p class="kicker">Concept Dossier · AGT-3955 · Live structure canvas</p>
+  <h1>Live prototype</h1>
+  <p class="lede">The canvas on the Dossier's own engine (candidate A), replaying a recording of deltas. Roles only, no host names.</p>
+</header>
+<p>Facts marked real in <code>src/model.js</code> come from the card and the code: the root disk at 84 % on software RAID 1, the sizes of workspace repository, checkouts and application state, the backup feature reporting <code>not-configured</code>, the manual snapshot of 9 November, the git mirror of the workspace. Capacities, CPU values, traffic, latencies, releases and the warnings for toolchain, release, parked cards and credentials are illustrative, modelled on the installation.</p>
+<p class="dim">Try: pick layers and combine them; wheel, pinch or keys to zoom; levels 1 to 4; search "secret" or "gate"; 2.5D; Play replay and watch card 101 move from coding to gate to review, a deploy restart the web container, and the tunnel drop and recover while the reliability engineer reassesses. Pick Facts only to see the canvas without any assessment.</p>
+<div class="lsc media-breakout" id="lsc">
+  <div class="lsc-bar">
+    <fieldset data-control="layers"><legend>Layers</legend></fieldset>
+  </div>
+  <div class="lsc-bar">
+    <fieldset data-control="persona"><legend>Assessment</legend></fieldset>
+    <fieldset data-control="view"><legend>View</legend><button type="button" data-value="flat">2D</button><button type="button" data-value="iso">2.5D</button></fieldset>
+    <fieldset data-control="motion"><legend>Motion</legend><button type="button" data-value="lively">Lively</button><button type="button" data-value="calm">Calm</button><button type="button" data-value="off">Off</button></fieldset>
+  </div>
+  <div class="lsc-stage">
+    <div>
+      <div class="lsc-wrap" id="lsc-wrap" tabindex="0" role="application" aria-roledescription="structure canvas" aria-describedby="lsc-help" aria-label="Live structure canvas of the installation">
+        <canvas id="lsc-canvas" aria-hidden="true"></canvas>
+        <div class="lsc-hud top-left">
+          <span class="lsc-level" id="lsc-level" aria-live="polite">Level 2</span>
+          <fieldset data-control="level" aria-label="Zoom level"><button type="button" data-value="1" title="Sites and outside services">1</button><button type="button" data-value="2" title="Machines">2</button><button type="button" data-value="3" title="Containers">3</button><button type="button" data-value="4" title="Inside a service">4</button></fieldset>
+        </div>
+        <div class="lsc-hud top-right"><div class="lsc-search"><input id="lsc-search" type="search" placeholder="Search nodes, problems, data" aria-label="Search and focus a node" autocomplete="off"><ul id="lsc-results" hidden></ul></div></div>
+        <div class="lsc-hud bottom-left"><button type="button" id="lsc-zoom-in" aria-label="Zoom in">+</button><button type="button" id="lsc-zoom-out" aria-label="Zoom out">−</button><button type="button" id="lsc-fit">Fit</button></div>
+        <canvas class="lsc-minimap" id="lsc-minimap" aria-hidden="true"></canvas>
+      </div>
+      <p class="lsc-sr" id="lsc-help">Arrow keys move between nodes, Down enters a group, Up leaves it, Enter flies to the node, Shift and arrows pan, plus and minus zoom, 0 fits, 1 to 4 choose the level, slash searches, i switches 2D and 2.5D, p plays the replay. The outline below lists the same content as text.</p>
+      <p class="lsc-sr" id="lsc-announce" aria-live="polite"></p>
+      <div class="lsc-replay" aria-label="Replay of recorded deltas">
+        <button type="button" id="lsc-play" aria-pressed="false">Play replay</button>
+        <div class="lsc-track"><div class="lsc-marks" id="lsc-marks"></div><input id="lsc-scrub" type="range" min="0" max="44" step="0.1" value="0" aria-label="Replay position"></div>
+        <div><fieldset data-control="speed" aria-label="Replay speed"><button type="button" data-value="1" aria-pressed="true">1×</button><button type="button" data-value="2">2×</button><button type="button" data-value="4">4×</button></fieldset></div>
+        <span class="lsc-clock" id="lsc-clock">21:40:00 UTC</span>
+        <span class="lsc-counters" id="lsc-counters"></span>
+        <ol class="lsc-log" id="lsc-log" aria-live="polite" aria-label="Event log"></ol>
+      </div>
+      <div class="lsc-legend" id="lsc-legend" aria-label="Legend of the active layers"></div>
+    </div>
+    <aside class="lsc-side" aria-label="Assessment, selection and warnings">
+      <section id="lsc-assessment" aria-live="polite"></section>
+      <section id="lsc-detail"></section>
+      <section id="lsc-warnings"></section>
+    </aside>
+  </div>
+  <details class="lsc-outline"><summary>Outline of the canvas (text alternative)</summary><div id="lsc-outline"></div></details>
+</div>

@@ -235,6 +235,11 @@ heartbeats (90 seconds), each check's own
 interval, and gate heartbeats (two minutes). The role-named manifest example is in
 `deploy/connectivity/one-box.json`.
 
+Hosts that report without a declaration show as observed nodes with facts,
+and the open view follows `structureDelta` pushes on the Studio hub with an
+entity-tag read as fallback (AGT-3954). Response shape, ids, facts and the
+placement file: [structure-placement.md](../../operations/setup/structure-placement.md).
+
 The same view lists library registries declared in schema 2
 `structure.registries` (artifact, provider, package, optional repository and
 private registry `secretRef`). `GET /api/v1/operations/structure/library` returns
