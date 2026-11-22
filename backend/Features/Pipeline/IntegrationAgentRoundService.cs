@@ -248,6 +248,23 @@ public sealed class IntegrationAgentRoundService
             return Task.FromResult(Failed(reason));
         }
 
+        // Ready is immediately claimable. Persist both the route and typed
+        // lineage first, just like acceptance-rail integration recovery.
+        var route = TaskIntegrationRecoveryService.SelectRecoveryRoute(job, new ModelRoutingPolicyRegistry());
+        if (route.Selected != route.Previous)
+        {
+            var level = route.Selected[(route.Selected.LastIndexOf('/') + 1)..];
+            if (!_mutations.SetRecoveryThinkingLevel(job.Id, level, job.WatchPath))
+                return Task.FromResult(Failed("The integration recovery reasoning route could not be persisted."));
+        }
+        SessionContinuationLedgerStore.SaveDelta(job.FolderPath, new AgentStudio.TaskServer.Contracts.MechanicalRoundDelta(
+            result.ConflictReport?.IntegrationTipSha ?? result.PreviousIntegrationSha ?? string.Empty,
+            subject.ImmutableResultRef ?? subject.ResultRef!,
+            subject.ResultSha,
+            result.ConflictReport?.ConflictedFiles ?? result.ConflictedFiles,
+            prompt,
+            IntegrationContinuationPrompt.VerificationScope.Trim()));
+
         var position = _states.PromoteToReadyTop(
             job.Id, job.WatchPath,
             transitionCause: LaneChangeCauses.IntegrationRecovery,
@@ -280,6 +297,10 @@ public sealed class IntegrationAgentRoundService
                 ["budgetUsed"] = Invariant(budget.Used + 1),
                 ["budgetLimit"] = Invariant(_maximumRecoveryRounds),
                 ["legacyRecoveryRoundsCounted"] = Invariant(budget.LegacyRounds),
+                ["previousRoute"] = route.Previous,
+                ["selectedRoute"] = route.Selected,
+                ["routeReason"] = route.Reason,
+                ["policyVersion"] = route.PolicyVersion,
             });
         _logger.LogInformation(
             "integration-agent-round-started project={Project} job={JobId} deliveryChain={DeliveryChain} epoch={Epoch} position={Position} supersededCommits={SupersededCommits}",
