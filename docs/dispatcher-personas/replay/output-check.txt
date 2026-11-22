@@ -1,0 +1,27 @@
+contract: ok
+
+DS slice against PT-13 to PT-20, shared prefix under today's rule:
+  DS-0: kept apart from 8 of 8 (docs/persona-team)
+  DS-1: kept apart from 8 of 8 (docs/persona-team)
+  DS-2: kept apart from 8 of 8 (docs/persona-team)
+  DS-3: kept apart from 8 of 8 (docs/persona-team)
+  DS-4: kept apart from 8 of 8 (docs/persona-team)
+  DS-5: kept apart from 8 of 8 (docs/persona-team)
+  DS-6: kept apart from 8 of 8 (docs/persona-team)
+  DS-7: kept apart from 8 of 8 (docs/persona-team)
+  DS-8: kept apart from 8 of 8 (docs/persona-team)
+  DS-9: kept apart from 8 of 8 (docs/persona-team)
+  DS-10: kept apart from 8 of 8 (docs/persona-team)
+  DS-11: kept apart from 8 of 8 (docs/persona-team)
+  DS-5 and PT-13 share: backend/Policies/personas
+
+Areas: {'DS-0': ['backend/Features/Runner', 'backend/Features/Tasks', 'backend/Shared/Models'], 'DS-1': ['backend/Features/Dispatch', 'backend/Features/Runner'], 'DS-2': ['backend/Features/Dispatch', 'backend/Features/Git', 'backend/Features/Pipeline'], 'DS-3': ['orchestration-decisions'], 'DS-4': ['backend/Features/Dispatch'], 'DS-5': ['backend/Features/Dispatch', 'backend/Features/Personas', 'backend/Policies/personas'], 'DS-6': ['backend/Features/Runner', 'backend/Features/Tasks'], 'DS-7': ['backend/Features/Dispatch'], 'DS-8': ['frontend/src'], 'DS-9': ['backend/Features/Dispatch', 'backend/Features/Tasks'], 'DS-10': ['backend/Features/Tasks'], 'DS-11': ['backend/Features/Dispatch', 'backend/Features/Runner']}
+same-area pairs without a dependsOn path: none
+
+replay table vs replay.py: match for 6 personas
+
+wave parts: 5 files, 57 cards, distinct and in key order
+
+review input: ok
+
+result: PASS

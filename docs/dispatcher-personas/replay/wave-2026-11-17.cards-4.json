@@ -1,0 +1,689 @@
+{
+ "schema": "dispatch-replay-wave-part/1",
+ "wave": "wave-2026-11-17-playthroughs",
+ "part": 4,
+ "of": 5,
+ "first": "AGT-3927",
+ "last": "AGT-3943",
+ "cards": [
+  {
+   "key": "AGT-3927",
+   "label": "RV-4",
+   "group": "RV",
+   "filesChanged": 7,
+   "codeFiles": [
+    "backend/Features/Management/ManagementEndpoints.cs",
+    "backend/Features/Runner/HeldCapabilityProjection.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "backend/Features/Tasks/TaskLiveStatusProjection.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Management/ManagementEndpoints.cs",
+    "backend/Features/Runner/HeldCapabilityProjection.cs",
+    "backend/Features/Runner/ReviewClaimStagnation.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "backend/Features/Tasks/TaskLiveStatusProjection.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Management/ManagementEndpoints.cs",
+    "backend/Features/Runner/AttemptAuthorityService.cs",
+    "backend/Features/Runner/AutoReviewQueueWatchdog.cs",
+    "backend/Features/Runner/HeldCapabilityProjection.cs",
+    "backend/Features/Runner/ReviewClaimStagnation.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "backend/Features/Tasks/TaskLiveStatusProjection.cs",
+    "backend/Shared/Models/TaskInfo.cs",
+    "frontend/src/app/components/task-live-status/task-live-status.component.html",
+    "frontend/src/app/components/task-live-status/task-live-status.component.spec.ts",
+    "frontend/src/app/components/task-live-status/task-live-status.component.ts",
+    "frontend/src/app/models/task.model.ts",
+    "runner/RemoteReviewDaemon.cs",
+    "runner/RunnerCapabilityProbe.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3928",
+   "label": "RV-5",
+   "group": "RV",
+   "filesChanged": 2,
+   "codeFiles": [
+    "frontend/src/app/features/remote-hosts/services/remote-hosts.service.spec.ts",
+    "frontend/src/app/features/remote-hosts/services/remote-hosts.service.ts"
+   ],
+   "citedFiles": [
+    "frontend/src/app/features/remote-hosts/services/remote-hosts.service.ts"
+   ],
+   "forecastFiles": [
+    "frontend/e2e/settings/remote-hosts.spec.ts",
+    "frontend/src/app/features/remote-hosts/components/remote-host-card/remote-host-card.html",
+    "frontend/src/app/features/remote-hosts/components/remote-host-card/remote-host-card.ts",
+    "frontend/src/app/features/remote-hosts/components/remote-hosts-panel/remote-hosts-panel.ts",
+    "frontend/src/app/features/remote-hosts/models/remote-host.model.ts",
+    "frontend/src/app/features/remote-hosts/services/remote-hosts.service.spec.ts",
+    "frontend/src/app/features/remote-hosts/services/remote-hosts.service.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3929",
+   "label": "RV-6",
+   "group": "RV",
+   "filesChanged": 11,
+   "codeFiles": [
+    "frontend/e2e/workspace/token-analysis.spec.ts",
+    "frontend/src/app/features/board/components/task-card/task-card-view-model.ts",
+    "frontend/src/app/features/board/components/task-card/token-usage-popover/token-usage-popover.component.spec.ts",
+    "frontend/src/app/features/quota/quota-freshness.util.spec.ts",
+    "frontend/src/app/features/quota/quota-freshness.util.ts",
+    "frontend/src/app/features/token-analysis/components/card-token-drilldown/card-token-drilldown.html",
+    "frontend/src/app/features/token-analysis/components/card-token-drilldown/card-token-drilldown.spec.ts",
+    "frontend/src/app/features/token-analysis/components/card-token-drilldown/card-token-drilldown.ts",
+    "frontend/src/app/features/token-analysis/components/token-analysis-quota/token-analysis-quota.html",
+    "frontend/src/app/features/token-analysis/components/token-analysis-quota/token-analysis-quota.spec.ts",
+    "frontend/src/app/features/token-analysis/components/token-analysis-quota/token-analysis-quota.ts"
+   ],
+   "citedFiles": [
+    "frontend/src/app/features/board/components/task-card/task-card-view-model.ts",
+    "frontend/src/app/features/token-analysis/components/card-token-drilldown/card-token-drilldown.html",
+    "frontend/src/app/features/token-analysis/components/token-analysis-quota/token-analysis-quota.html"
+   ],
+   "forecastFiles": [
+    "frontend/src/app/features/board/components/task-card/task-card-view-model.ts",
+    "frontend/src/app/features/token-analysis/components/card-token-drilldown/card-token-drilldown.html",
+    "frontend/src/app/features/token-analysis/components/token-analysis-quota/token-analysis-quota.html",
+    "frontend/src/app/models/task.model.ts"
+   ],
+   "keywordAreas": [
+    "frontend",
+    "git"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3930",
+   "label": "RV-7",
+   "group": "RV",
+   "filesChanged": 8,
+   "codeFiles": [
+    "backend/Features/Clients/ClientEndpoints.cs",
+    "backend/Features/Clients/ClientIdentityStore.cs",
+    "backend/Features/Security/Iam/OperatorPolicy/OperatorOperationCatalog.cs",
+    "frontend/src/app/features/remote-hosts/components/review-host-update/review-host-update.spec.ts",
+    "frontend/src/app/features/remote-hosts/components/review-host-update/review-host-update.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Clients/ClientEndpoints.cs",
+    "backend/Features/Clients/ClientIdentityStore.cs",
+    "frontend/src/app/features/remote-hosts/components/review-host-update/review-host-update.ts",
+    "frontend/src/app/features/remote-hosts/models/review-host-update.ts"
+   ],
+   "forecastFiles": [
+    "backend/Features/Clients/ClientEndpoints.cs",
+    "backend/Features/Clients/ClientIdentityStore.cs",
+    "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs",
+    "backend/Features/Runner/AttemptAuthorityService.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "backend/Features/Security/Iam/OperatorPolicy/OperatorOperationCatalog.cs",
+    "frontend/e2e/settings/remote-hosts.spec.ts",
+    "frontend/src/app/features/remote-hosts/components/review-host-update/review-host-update.html",
+    "frontend/src/app/features/remote-hosts/components/review-host-update/review-host-update.scss",
+    "frontend/src/app/features/remote-hosts/components/review-host-update/review-host-update.spec.ts",
+    "frontend/src/app/features/remote-hosts/components/review-host-update/review-host-update.ts",
+    "frontend/src/app/features/remote-hosts/models/review-host-update.spec.ts",
+    "frontend/src/app/features/remote-hosts/models/review-host-update.ts",
+    "runner/RemoteReviewDaemon.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3931",
+   "label": "RV-8",
+   "group": "RV",
+   "filesChanged": 4,
+   "codeFiles": [
+    "scripts/workload-identity-navigation.test.mjs"
+   ],
+   "citedFiles": [],
+   "forecastFiles": [],
+   "keywordAreas": [
+    "runner",
+    "frontend",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3932",
+   "label": "RV-9",
+   "group": "RV",
+   "filesChanged": 8,
+   "codeFiles": [
+    "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs",
+    "backend/Features/Pipeline/BatchGate/BatchGateStore.FlakySuspects.cs",
+    "frontend/src/app/features/batch-gate/batch-panel/batch-panel.html",
+    "frontend/src/app/features/batch-gate/batch-panel/batch-panel.ts",
+    "frontend/src/app/models/batch-gate.model.spec.ts",
+    "frontend/src/app/models/batch-gate.model.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs",
+    "backend/Features/Pipeline/BatchGate/BatchGateStore.FlakySuspects.cs",
+    "frontend/src/app/models/batch-gate.model.ts"
+   ],
+   "forecastFiles": [
+    "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs",
+    "backend/Features/Pipeline/BatchGate/BatchGateStateSnapshotReader.cs",
+    "backend/Features/Pipeline/BatchGate/BatchGateStore.FlakySuspects.cs",
+    "frontend/e2e/batch-gate/batch-gate.spec.ts",
+    "frontend/src/app/features/batch-gate/batch-panel/batch-panel.html",
+    "frontend/src/app/models/batch-gate.model.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3933",
+   "label": "RV-10",
+   "group": "RV",
+   "filesChanged": 7,
+   "codeFiles": [
+    "backend/Features/Pipeline/VerifyDefinition/VerifyDefinitionPolicy.cs",
+    "frontend/e2e/settings/second-project-server-checkout.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-build-profile-notice/project-build-profile-notice.component.html",
+    "frontend/src/app/features/project-detail/components/project-build-profile-notice/project-build-profile-notice.component.ts",
+    "frontend/src/app/features/project-detail/components/project-settings-panel/project-settings-panel.component.html",
+    "frontend/src/app/features/project-detail/components/project-settings-panel/project-settings-panel.component.spec.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Pipeline/VerifyDefinition/VerifyDefinitionPolicy.cs",
+    "backend/Features/Registry/ProjectRegistry.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/ExecutionPreparation/ProjectDefinitionProposalService.cs",
+    "backend/Features/Pipeline/VerifyDefinition/VerifyDefinitionPolicy.cs",
+    "backend/Features/Projects/ProjectSettingsEndpoints.cs",
+    "backend/Features/Registry/ProjectRegistry.cs",
+    "backend/Features/Registry/RegistryEndpoints.cs",
+    "frontend/src/app/features/project-detail/components/project-build-profile-notice/project-build-profile-notice.component.html",
+    "frontend/src/app/features/project-detail/components/project-build-profile-notice/project-build-profile-notice.component.spec.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3934",
+   "label": "RV-11",
+   "group": "RV",
+   "filesChanged": 16,
+   "codeFiles": [
+    "backend/Features/Tasks/Acceptance/AcceptanceReadiness.cs",
+    "backend/Features/Tasks/Acceptance/AcceptanceReadinessService.cs",
+    "frontend/e2e/task-detail/triage-merge-status.spec.ts",
+    "frontend/src/app/features/acceptance-readiness/components/acceptance-next-steps/acceptance-next-steps.component.spec.ts",
+    "frontend/src/app/features/acceptance-readiness/components/acceptance-next-steps/acceptance-next-steps.component.ts",
+    "frontend/src/app/features/acceptance-readiness/models/acceptance-primary-reason.spec.ts",
+    "frontend/src/app/features/acceptance-readiness/models/acceptance-primary-reason.ts",
+    "frontend/src/app/features/acceptance-readiness/models/acceptance-readiness.model.ts",
+    "frontend/src/app/features/acceptance-readiness/testing/acceptance-readiness.fixtures.ts",
+    "frontend/src/app/features/task-detail/state/acceptance-refusal.model.spec.ts",
+    "frontend/src/app/features/task-detail/state/acceptance-refusal.model.ts",
+    "frontend/src/app/features/task-detail/state/triage-controller.service.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Tasks/TaskTransitionService.cs",
+    "frontend/src/app/features/acceptance-readiness/models/acceptance-readiness.model.ts",
+    "frontend/src/app/features/task-detail/state/acceptance-refusal.model.ts"
+   ],
+   "forecastFiles": [
+    "backend/Features/Tasks/TaskTransitionService.cs",
+    "frontend/e2e/task-detail/concept-accept-refusal.spec.ts",
+    "frontend/e2e/task-detail/triage-merge-status.spec.ts",
+    "frontend/scripts/disclosure-baseline.json",
+    "frontend/src/app/app.ts",
+    "frontend/src/app/features/acceptance-readiness/models/acceptance-readiness.model.ts",
+    "frontend/src/app/features/acceptance-readiness/state/acceptance-readiness.store.spec.ts",
+    "frontend/src/app/features/acceptance-readiness/state/acceptance-readiness.store.ts",
+    "frontend/src/app/features/studio-shell/components/acceptance-refusal/acceptance-refusal.component.html",
+    "frontend/src/app/features/studio-shell/components/acceptance-refusal/acceptance-refusal.component.scss",
+    "frontend/src/app/features/studio-shell/components/acceptance-refusal/acceptance-refusal.component.spec.ts",
+    "frontend/src/app/features/studio-shell/components/acceptance-refusal/acceptance-refusal.component.ts",
+    "frontend/src/app/features/studio-shell/components/studio-tab-actions/studio-tab-actions.component.html",
+    "frontend/src/app/features/studio-shell/components/studio-tab-actions/studio-tab-actions.component.ts",
+    "frontend/src/app/features/task-detail/components/delivery-claim-panel/delivery-claim-panel.component.html",
+    "frontend/src/app/features/task-detail/components/delivery-claim-panel/delivery-claim-panel.component.spec.ts",
+    "frontend/src/app/features/task-detail/components/delivery-claim-panel/delivery-claim-panel.component.ts",
+    "frontend/src/app/features/task-detail/state/acceptance-refusal.model.spec.ts",
+    "frontend/src/app/features/task-detail/state/acceptance-refusal.model.ts",
+    "frontend/src/app/features/task-detail/state/triage-controller.service.spec.ts",
+    "frontend/src/app/features/task-detail/state/triage-controller.service.ts"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "header",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3935",
+   "label": "RV-12",
+   "group": "RV",
+   "filesChanged": 7,
+   "codeFiles": [
+    "frontend/src/app/app.ts",
+    "frontend/src/app/features/acceptance-readiness/components/acceptance-next-steps/acceptance-next-steps.component.spec.ts",
+    "frontend/src/app/features/acceptance-readiness/components/acceptance-next-steps/acceptance-next-steps.component.ts",
+    "frontend/src/app/features/acceptance-readiness/state/acceptance-readiness.store.ts",
+    "frontend/src/app/features/task-detail/components/detail-header/content-refusal.ts",
+    "frontend/src/app/features/task-detail/state/acceptance-refusal.model.spec.ts",
+    "frontend/src/app/features/task-detail/state/acceptance-refusal.model.ts"
+   ],
+   "citedFiles": [],
+   "forecastFiles": [],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "header",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3936",
+   "label": "RV-13",
+   "group": "RV",
+   "filesChanged": 6,
+   "codeFiles": [
+    "backend/Features/Tasks/TaskIntegrationStatusService.cs",
+    "frontend/e2e/task-detail/escalation-summary.spec.ts",
+    "frontend/src/app/features/task-detail/components/server-checkout-remedy/server-checkout-remedy.component.html",
+    "frontend/src/app/features/task-detail/components/server-checkout-remedy/server-checkout-remedy.component.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Git/IntegrationWorktreeProvider.cs",
+    "backend/Features/Tasks/TaskIntegrationStatusService.cs",
+    "frontend/src/app/features/task-detail/components/server-checkout-remedy/server-checkout-remedy.component.html"
+   ],
+   "forecastFiles": [
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Git/IntegrationWorktreeProvider.cs",
+    "backend/Features/Pipeline/MergeIntoDevelopRunner.cs",
+    "backend/Features/Tasks/TaskIntegrationStatusService.cs",
+    "frontend/src/app/features/task-detail/components/server-checkout-remedy/server-checkout-remedy.component.html"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3937",
+   "label": "RV-14",
+   "group": "RV",
+   "filesChanged": 4,
+   "codeFiles": [
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Git/IntegrationWorktreeProvider.cs",
+    "backend/Features/Tasks/TaskIntegrationStatusService.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Git/GitConfigSignature.cs",
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Git/GitStateIndexService.cs",
+    "backend/Features/Tasks/TaskIntegrationStatusService.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Git/GitConfigSignature.cs",
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Git/GitStateIndexService.cs",
+    "backend/Features/Tasks/TaskIntegrationStatusService.cs",
+    "backend/Features/Tasks/TaskListGitProjectionCache.cs",
+    "backend/Host/Program.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3938",
+   "label": "RV-15",
+   "group": "RV",
+   "filesChanged": 2,
+   "codeFiles": [
+    "backend/Features/Pipeline/WorkspaceArtifactCommitService.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Pipeline/WorkspaceArtifactCommitService.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Pipeline/WorkspaceArtifactCommitService.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3939",
+   "label": "RV-16",
+   "group": "RV",
+   "filesChanged": 3,
+   "codeFiles": [
+    "backend/Features/Runner/RemoteReviewPlanBuilder.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/Runner/RemoteReviewPlanBuilder.cs",
+    "backend/Features/Runner/ReviewEvidenceContext.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Runner/ProjectRunner.cs",
+    "backend/Features/Runner/RemoteReviewPlanBuilder.cs",
+    "backend/Features/Runner/ReviewEvidenceContext.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3940",
+   "label": "RV-17",
+   "group": "RV",
+   "filesChanged": 5,
+   "codeFiles": [
+    "frontend/e2e/workspace/token-analysis.spec.ts",
+    "frontend/src/app/features/token-analysis/components/token-analysis-distribution/token-analysis-distribution.html",
+    "frontend/src/app/features/token-analysis/components/token-analysis-distribution/token-analysis-distribution.spec.ts",
+    "frontend/src/app/features/token-analysis/token-analysis.util.spec.ts",
+    "frontend/src/app/features/token-analysis/token-analysis.util.ts"
+   ],
+   "citedFiles": [
+    "frontend/src/app/features/token-analysis/components/token-analysis-distribution/token-analysis-distribution.html",
+    "frontend/src/app/features/token-analysis/components/token-analysis-view/token-analysis-view.ts",
+    "frontend/src/app/features/token-analysis/token-analysis.util.ts"
+   ],
+   "forecastFiles": [
+    "frontend/src/app/features/token-analysis/components/token-analysis-distribution/token-analysis-distribution.html",
+    "frontend/src/app/features/token-analysis/components/token-analysis-view/token-analysis-view.ts",
+    "frontend/src/app/features/token-analysis/token-analysis.util.ts"
+   ],
+   "keywordAreas": [
+    "frontend"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3941",
+   "label": "RV-18",
+   "group": "RV",
+   "filesChanged": 11,
+   "codeFiles": [
+    "backend/Features/Tokens/TokenPricingEndpoints.cs",
+    "backend/Features/Tokens/UsageCockpitEndpoints.cs",
+    "backend/Features/Tokens/UsageCockpitProjection.cs",
+    "backend/Features/Tokens/UsageCostInputReader.cs",
+    "frontend/e2e/tokens/owner-day-token-usage.spec.ts",
+    "frontend/src/app/features/tokens/components/token-usage-section/token-usage-section.component.html",
+    "frontend/src/app/features/tokens/components/unpriced-models/unpriced-models.component.html",
+    "frontend/src/app/features/tokens/components/unpriced-models/unpriced-models.component.spec.ts",
+    "frontend/src/app/features/tokens/components/unpriced-models/unpriced-models.component.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Tokens/Aggregation/ModelUsageFold.cs",
+    "backend/Features/Tokens/TokenAggregationService.cs",
+    "backend/Features/Tokens/TokenPricingEndpoints.cs",
+    "backend/Features/Tokens/UsageCockpitEndpoints.cs",
+    "backend/Features/Tokens/WorkspaceBusUsage.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Tokens/Aggregation/ModelUsageFold.cs",
+    "backend/Features/Tokens/ITokenAggregator.cs",
+    "backend/Features/Tokens/TokenAggregationService.cs",
+    "backend/Features/Tokens/TokenPricingEndpoints.cs",
+    "backend/Features/Tokens/UsageCockpitEndpoints.cs",
+    "backend/Features/Tokens/WorkspaceBusUsage.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "frontend",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3942",
+   "label": "RV-19",
+   "group": "RV",
+   "filesChanged": 17,
+   "codeFiles": [
+    "backend/Features/AdHoc/AdHocClaudeInvoker.cs",
+    "backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs",
+    "backend/Features/Cli/Routing/OneShot/CodexOneShot.cs",
+    "backend/Features/Cli/Routing/OneShot/RemoteCliOneShot.cs",
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Prompts/PromptEnhancementService.cs",
+    "backend/Features/Review/CodeReviewStepService.cs",
+    "backend/Features/Review/SummaryGenerationService.cs",
+    "backend/Features/Runner/AspectRunnerService.cs",
+    "backend/Features/Runner/PostAbortReviewStepService.cs",
+    "backend/Features/Runner/ReviewDecisionOrchestrator.cs",
+    "backend/Features/Supervisor/SoftReasoningHostedService.cs",
+    "backend/Features/Tasks/TitleGenerationService.cs"
+   ],
+   "citedFiles": [
+    "backend/Features/AdHoc/AdHocClaudeInvoker.cs",
+    "backend/Features/Cli/Routing/OneShot/CodexOneShot.cs",
+    "backend/Features/Git/GitService.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/AdHoc/AdHocClaudeInvoker.cs",
+    "backend/Features/Cli/Execution/BackendCarExecution.cs",
+    "backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs",
+    "backend/Features/Cli/Routing/OneShot/CodexOneShot.cs",
+    "backend/Features/Cli/Routing/OneShot/HostOneShotIsolation.cs",
+    "backend/Features/Docs/ProjectDocsService.cs",
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Projects/ProjectSettingsEndpoints.cs",
+    "backend/Features/Prompts/PromptEnhancementService.cs",
+    "backend/Features/Review/SummaryGenerationService.cs",
+    "backend/Features/Runner/AspectRunnerService.cs",
+    "backend/Features/Runner/OrchestratorRunner.cs",
+    "backend/Features/Runner/ReviewDecisionOrchestrator.cs",
+    "backend/Features/Supervisor/SoftReasoningHostedService.cs",
+    "backend/Features/Tasks/TitleGenerationService.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "git"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 0,
+   "severity": "medium",
+   "findings": 1
+  },
+  {
+   "key": "AGT-3943",
+   "label": "RV-20",
+   "group": "RV",
+   "filesChanged": 20,
+   "codeFiles": [
+    "backend/Features/Management/ManagementEndpoints.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "backend/Features/Security/AccessSecurityEndpoints.cs",
+    "frontend/e2e/settings/quota-forecast.spec.ts",
+    "frontend/e2e/task-detail/pipeline-core-token-usage.spec.ts",
+    "frontend/e2e/usage-cockpit/usage-panel-navigation.spec.ts",
+    "frontend/src/app/features/cli/components/cli-admin-panel/cli-admin-panel.ts",
+    "frontend/src/app/features/cli/components/cli-models-panel/cli-models-panel.ts",
+    "frontend/src/app/features/cli/components/model-selection-view/model-selection-view.component.ts",
+    "frontend/src/app/features/quota/components/quota-curve/quota-curve.ts",
+    "frontend/src/app/features/quota/components/quota-forecast-panel/quota-forecast-panel.ts",
+    "frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.scss",
+    "frontend/src/app/features/usage-cockpit/components/usage-detail-panel/usage-detail-panel.html",
+    "frontend/src/app/features/usage-cockpit/usage-detail.util.spec.ts",
+    "frontend/src/app/features/usage-cockpit/usage-detail.util.ts"
+   ],
+   "citedFiles": [
+    "backend/Features/Management/ManagementEndpoints.cs",
+    "backend/Features/Runner/CapabilityReprobeDelivery.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "frontend/e2e/README.md",
+    "frontend/src/app/features/cli/components/cli-admin-panel/cli-admin-panel.ts",
+    "frontend/src/app/features/cli/components/cli-models-panel/cli-models-panel.ts",
+    "frontend/src/app/features/quota/components/quota-curve/quota-curve.ts",
+    "frontend/src/app/features/quota/components/quota-forecast-panel/quota-forecast-panel.ts",
+    "frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.scss",
+    "frontend/src/app/features/tokens/components/cli-window-analysis/cli-window-analysis.ts",
+    "frontend/src/app/features/usage-cockpit/components/usage-detail-panel/usage-detail-panel.html",
+    "frontend/src/app/features/usage-cockpit/usage-detail.util.ts",
+    "runner/RemoteReviewDaemon.cs"
+   ],
+   "forecastFiles": [
+    "backend/Features/Cli/CliEndpoints.cs",
+    "backend/Features/Cli/Quota/CliQuotaFallbackService.cs",
+    "backend/Features/Cli/Selection/ModelSelectionService.cs",
+    "backend/Features/Management/ManagementEndpoints.cs",
+    "backend/Features/Runner/CapabilityReprobeDelivery.cs",
+    "backend/Features/Runner/ProjectRunner.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+    "backend/Host/Program.cs",
+    "frontend/e2e/README.md",
+    "frontend/e2e/cli/consumer-model-policy.spec.ts",
+    "frontend/e2e/task-detail/pipeline-core-token-usage.spec.ts",
+    "frontend/scripts/disclosure-baseline.json",
+    "frontend/src/app/features/cli/components/cli-admin-panel/cli-admin-panel.html",
+    "frontend/src/app/features/cli/components/cli-admin-panel/cli-admin-panel.ts",
+    "frontend/src/app/features/cli/components/cli-models-panel/cli-models-panel.html",
+    "frontend/src/app/features/cli/components/cli-models-panel/cli-models-panel.scss",
+    "frontend/src/app/features/cli/components/cli-models-panel/cli-models-panel.spec.ts",
+    "frontend/src/app/features/cli/components/cli-models-panel/cli-models-panel.ts",
+    "frontend/src/app/features/quota/components/quota-curve/quota-curve.ts",
+    "frontend/src/app/features/quota/components/quota-forecast-panel/quota-forecast-panel.ts",
+    "frontend/src/app/features/quota/index.ts",
+    "frontend/src/app/features/quota/services/quota-api.service.ts",
+    "frontend/src/app/features/task-detail/components/prompt-pane/overview-pane/overview-pane.component.scss",
+    "frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.html",
+    "frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.scss",
+    "frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.spec.ts",
+    "frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.ts",
+    "frontend/src/app/features/tokens/components/cli-window-analysis/cli-window-analysis.ts",
+    "frontend/src/app/features/tokens/components/token-usage-section/token-usage-section.component.html",
+    "frontend/src/app/features/tokens/components/token-usage-section/token-usage-section.component.spec.ts",
+    "frontend/src/app/features/tokens/components/token-usage-section/token-usage-section.component.ts",
+    "frontend/src/app/features/usage-cockpit/components/usage-capacity-detail/usage-capacity-detail.html",
+    "frontend/src/app/features/usage-cockpit/components/usage-cost-detail/usage-cost-detail.html",
+    "frontend/src/app/features/usage-cockpit/components/usage-cost-detail/usage-cost-detail.ts",
+    "frontend/src/app/features/usage-cockpit/components/usage-detail-panel/usage-detail-panel.html",
+    "frontend/src/app/features/usage-cockpit/components/usage-detail-panel/usage-detail-panel.ts",
+    "frontend/src/app/features/usage-cockpit/components/usage-detail-surface/usage-detail-surface.ts",
+    "frontend/src/app/features/usage-cockpit/usage-chip.util.ts",
+    "frontend/src/app/features/usage-cockpit/usage-detail.util.spec.ts",
+    "frontend/src/app/features/usage-cockpit/usage-detail.util.ts",
+    "runner/RemoteReviewDaemon.cs",
+    "runner/RemoteRunnerDaemon.cs"
+   ],
+   "keywordAreas": [
+    "backend",
+    "runner",
+    "frontend",
+    "header",
+    "git",
+    "filesystem"
+   ],
+   "hasSourceText": true,
+   "developSyncCommits": 2,
+   "severity": "low",
+   "findings": 7
+  }
+ ]
+}

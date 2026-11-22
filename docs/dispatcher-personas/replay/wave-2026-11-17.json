@@ -1,0 +1,23 @@
+{
+ "schema": "dispatch-replay-wave/1",
+ "id": "wave-2026-11-17-playthroughs",
+ "createdFrom": {
+  "repository": "agent-studio",
+  "develop": "d3c4eed65",
+  "method": "Real files: union of the files touched by each card's own commits on any ref (subject starts with the card key; develop syncs and merges excluded). Code files: backend/, frontend/, orchestration-decisions/, runner/, scripts/ without Markdown. Cited files: repository paths and unique file names cited in the source finding text (problem, cause, acceptance criteria) of the playthrough card lists AGT-3885, AGT-3886, AGT-3888. Forecast files: cited files plus files that changed together with a cited file in at least half of its commits between 15 September and 15 November 2026 (at least three commits, commits of more than 40 code files ignored). Keyword areas: IntakeRunner.DetectTaskAreas needles applied to the same source text. Develop sync commits: commits naming the card whose subject records a develop merge, an include of latest develop or a conflict resolution, rewritten copies included.",
+  "split": "The cards are kept in the part files listed under parts, in key order, so that every file reaches a reviewer whole (the review diff keeps at most 40,000 characters a file). replay.py reads the parts in this order; check_dossier.py checks that they join to cardCount distinct cards."
+ },
+ "hubFiles": [
+  "backend/Host/Program.cs",
+  "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+  "frontend/src/app/models/task.model.ts"
+ ],
+ "cardCount": 57,
+ "parts": [
+  "wave-2026-11-17.cards-1.json",
+  "wave-2026-11-17.cards-2.json",
+  "wave-2026-11-17.cards-3.json",
+  "wave-2026-11-17.cards-4.json",
+  "wave-2026-11-17.cards-5.json"
+ ]
+}
