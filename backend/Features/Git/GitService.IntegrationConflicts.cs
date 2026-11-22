@@ -136,6 +136,17 @@ public partial class GitService
         return match.Success ? match.Value.ToUpperInvariant() : null;
     }
 
+    // Evidence must never interrupt merge abort or temporary-worktree cleanup.
+    private void TryCaptureIntegrationConflict(string worktreePath, IReadOnlyList<string> paths)
+    {
+        try { CaptureIntegrationConflict(worktreePath, paths); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            _logger.LogWarning(ex, "Integration conflict evidence could not be captured for {CardKey} at {Path}",
+                IntegrationConflictCapture.Active?.CardKey, worktreePath);
+        }
+    }
+
     private void CaptureIntegrationConflict(string worktreePath, IReadOnlyList<string> paths)
     {
         if (IntegrationConflictCapture.Active is not { Tip: not null } context || paths.Count == 0) return;

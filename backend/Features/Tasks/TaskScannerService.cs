@@ -634,6 +634,15 @@ public class TaskScannerService : ITaskScanner
     public List<TaskInfo> ScanAllAutomationJobsWithArchive()
         => ScanAllJobsWithArchive().Where(task => !task.Fixture).ToList();
 
+    /// <summary>Project-scoped automation snapshot, including archived tasks.</summary>
+    public List<TaskInfo> ScanAutomationJobsWithArchive(string watchPath)
+    {
+        if (_indexCache is null) return ScanWatchPathRaw(watchPath).Where(task => !task.Fixture).ToList();
+        var (live, archived) = _indexCache.GetSnapshotPartitions();
+        return live.Concat(archived).Where(task => !task.Fixture
+            && WatchPathComparison.PathsEqual(task.WatchPath, watchPath)).ToList();
+    }
+
     /// <summary>
     /// Returns the reverse-reference graph built for the current task snapshot.
     /// Production reads reuse the graph published by <see cref="TaskIndexCache"/>

@@ -29,6 +29,7 @@ public sealed class IntegrationConflictLedger(string? root = null)
     private static readonly ConcurrentDictionary<string, object> Locks = new(StringComparer.Ordinal);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly string _root = root ?? LocalStateRoot.Combine("agentstudio", "integration-conflicts");
+    private readonly ConcurrentDictionary<string, (long Length, DateTime Modified, IntegrationConflictEntry Row)> _readCache = new(StringComparer.Ordinal);
     public static IntegrationConflictLedger Default { get; } = new();
 
     private string Folder(string project) => Path.Combine(_root, Hash(project.ToUpperInvariant()));
@@ -54,6 +55,16 @@ public sealed class IntegrationConflictLedger(string? root = null)
 
     public void Resolve(string project, string cardKey, string deliverySha, string target, string resolution, bool preserveUnion = false, string? integrationTip = null)
     {
+        try { ResolveCore(project, cardKey, deliverySha, target, resolution, preserveUnion, integrationTip); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            AgentStudio.Diagnostics.SilentCatch.Note(ex, "Integration conflict resolution evidence could not be persisted.");
+        }
+    }
+
+    private void ResolveCore(string project, string cardKey, string deliverySha, string target, string resolution,
+        bool preserveUnion, string? integrationTip)
+    {
         var folder = Folder(project);
         lock (Locks.GetOrAdd(folder, _ => new object()))
         {
@@ -72,23 +83,35 @@ public sealed class IntegrationConflictLedger(string? root = null)
         }
     }
 
-    public IReadOnlyList<IntegrationConflictEntry> Read(string project)
+    public IReadOnlyList<IntegrationConflictEntry> Read(string project, DateTimeOffset? from = null, DateTimeOffset? to = null, string? target = null)
     {
         var folder = Folder(project);
         lock (Locks.GetOrAdd(folder, _ => new object()))
         {
             if (!Directory.Exists(folder)) return [];
             return Directory.EnumerateFiles(folder, "*.json")
-                .Select(path => JsonSerializer.Deserialize<IntegrationConflictEntry>(File.ReadAllText(path), Json)!)
+                .Select(path =>
+                {
+                    var file = new FileInfo(path);
+                    if (_readCache.TryGetValue(path, out var cached)
+                        && cached.Length == file.Length && cached.Modified == file.LastWriteTimeUtc) return cached.Row;
+                    var row = JsonSerializer.Deserialize<IntegrationConflictEntry>(File.ReadAllText(path), Json)!;
+                    _readCache[path] = (file.Length, file.LastWriteTimeUtc, row);
+                    return row;
+                })
+                .Where(row => (from is null || row.DetectedAtUtc >= from)
+                    && (to is null || row.DetectedAtUtc < to)
+                    && (target is null || row.IntegrationTarget == target))
                 .OrderBy(row => row.DetectedAtUtc).ToArray();
         }
     }
 
-    private static void Write(string path, IntegrationConflictEntry row)
+    private void Write(string path, IntegrationConflictEntry row)
     {
         var temporary = path + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(row, Json));
         File.Move(temporary, path, overwrite: true);
+        _readCache.TryRemove(path, out _);
     }
 }
 

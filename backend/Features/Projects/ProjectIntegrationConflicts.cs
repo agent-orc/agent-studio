@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
 
@@ -56,6 +57,7 @@ public static class ProjectIntegrationConflictEndpoints
 {
     public static void MapProjectIntegrationConflictEndpoints(this WebApplication app)
     {
+        var receipts = new IntegrationReceiptCache();
         app.MapGet("/api/projects/{name}/integration-conflicts", (string name, DateTimeOffset? from,
             DateTimeOffset? to, string? target, TaskScannerService scanner, TimelineLog timeline, BatchGateStore batches) =>
         {
@@ -65,15 +67,10 @@ public static class ProjectIntegrationConflictEndpoints
             var start = from ?? end.AddDays(-30);
             if (start >= end || end - start > TimeSpan.FromDays(366))
                 return Results.BadRequest(new { error = "Use a time range greater than zero and at most 366 days." });
-            var batchTargets = batches.ListManifests().Where(manifest =>
-                    manifest.Scope.Project.Equals(entry.Name, StringComparison.OrdinalIgnoreCase))
-                .ToDictionary(manifest => manifest.BatchId, manifest => manifest.Scope.IntegrationBranch);
-            var cards = scanner.ScanAllAutomationJobsWithArchive()
-                .Where(task => WatchPathComparison.PathsEqual(task.WatchPath, entry.Path))
-                .SelectMany(task => ReadIntegrations(task, timeline.ReadAll(task.FolderPath),
-                    IntegrationLaneEvents.Read(task.FolderPath), batchTargets)).ToArray();
+            var cards = scanner.ScanAutomationJobsWithArchive(entry.Path)
+                .SelectMany(task => receipts.Read(task, timeline, batches)).ToArray();
             return Results.Ok(ProjectIntegrationConflictSummary.Build(entry.Name, start, end,
-                IntegrationConflictLedger.Default.Read(entry.Name), cards, target));
+                IntegrationConflictLedger.Default.Read(entry.Name, start, end, target), cards, target));
         });
     }
     internal static IEnumerable<IntegratedCard> ReadIntegrations(TaskInfo task, IReadOnlyList<TimelineEvent> timeline,
@@ -89,4 +86,46 @@ public static class ProjectIntegrationConflictEndpoints
                 yield return new IntegratedCard(key, target, row.AtUtc);
     }
 
+}
+
+/// <summary>Reuse receipt projections until either source file changes. Keep all-time
+/// first integrations so range queries never count a later reacceptance twice.</summary>
+internal sealed class IntegrationReceiptCache
+{
+    private readonly ConcurrentDictionary<string, (FileStamp Timeline, FileStamp Lane, IntegratedCard[] Cards)> _entries = new();
+    internal readonly record struct FileStamp(long Length, DateTime Modified)
+    {
+        internal static FileStamp Read(string path)
+        {
+            var file = new FileInfo(path);
+            return file.Exists ? new(file.Length, file.LastWriteTimeUtc) : default;
+        }
+    }
+
+    internal IReadOnlyList<IntegratedCard> Read(TaskInfo task, TimelineLog timeline, BatchGateStore batches)
+    {
+        var timelineStamp = FileStamp.Read(TaskPaths.TimelineLog(task.FolderPath));
+        var laneStamp = FileStamp.Read(Path.Combine(task.FolderPath, IntegrationLaneEvents.FileName));
+        if (_entries.TryGetValue(task.FolderPath, out var cached)
+            && cached.Timeline == timelineStamp && cached.Lane == laneStamp) return cached.Cards;
+        var lane = IntegrationLaneEvents.Read(task.FolderPath);
+        var targets = new Dictionary<string, string>(StringComparer.Ordinal);
+        var complete = true;
+        foreach (var id in lane.Where(row => row.Kind == "published"
+                     && row.Reason?.StartsWith("batch:", StringComparison.Ordinal) == true)
+                     .Select(row => row.Reason![6..]).Distinct(StringComparer.Ordinal))
+        {
+            try { targets[id] = batches.ReadManifest(id).Scope.IntegrationBranch; }
+            catch (Exception ex) when (ex is IOException or BatchGateRecordUnreadableException)
+            {
+                AgentStudio.Diagnostics.SilentCatch.Note(ex, "Integration receipt target is unavailable; retry on the next read.");
+                complete = false;
+            }
+        }
+        var cards = ProjectIntegrationConflictEndpoints.ReadIntegrations(task,
+            timeline.ReadAll(task.FolderPath), lane, targets).ToArray();
+        // A late manifest must be retried even when receipt files have not changed.
+        if (complete) _entries[task.FolderPath] = (timelineStamp, laneStamp, cards);
+        return cards;
+    }
 }

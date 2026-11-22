@@ -4212,6 +4212,7 @@ public partial class GitService
         if (code != 0)
         {
             var conflictedFiles = ListUnmergedFiles(worktreePath);
+            TryCaptureIntegrationConflict(worktreePath, conflictedFiles);
             if (abortOnConflict)
             {
                 RunGitArgs(worktreePath, "rebase", "--abort");
@@ -4264,6 +4265,7 @@ public partial class GitService
             return new GitWorktreeResult(false, null, "Worktree path does not exist.");
 
         var conflictedFiles = ListUnmergedFiles(worktreePath);
+        TryCaptureIntegrationConflict(worktreePath, conflictedFiles);
         if (conflictedFiles.Count > 0)
             return new GitWorktreeResult(false, worktreePath, "Unmerged files remain; cannot continue rebase.", conflictedFiles);
 
@@ -4271,6 +4273,7 @@ public partial class GitService
         if (code != 0)
         {
             var stillConflicted = ListUnmergedFiles(worktreePath);
+            TryCaptureIntegrationConflict(worktreePath, stillConflicted);
             _logger.LogWarning("Rebase --continue failed at {Path}: {Error}", worktreePath, err.Trim());
             return new GitWorktreeResult(false, worktreePath, err.Trim(), stillConflicted);
         }
@@ -4289,7 +4292,6 @@ public partial class GitService
         if (code != 0 || string.IsNullOrEmpty(output)) return [];
         var files = output.Split('\0', StringSplitOptions.RemoveEmptyEntries)
             .Distinct(StringComparer.Ordinal).ToArray();
-        CaptureIntegrationConflict(worktreePath, files);
         return files;
     }
 
@@ -6662,6 +6664,7 @@ public partial class GitService
             .Append(sourceRef).ToArray();
         var (_, directMergeError, directMergeCode) = RunGitArgs(repoRoot, directMergeArgs);
         IReadOnlyList<string> directConflicts = directMergeCode == 0 ? [] : ListUnmergedFiles(repoRoot);
+        TryCaptureIntegrationConflict(repoRoot, directConflicts);
         var reportOnlyConflict = directMergeCode != 0
             && DeliveryReportPathPolicy.IsEnabled(repoRoot)
             && DeliveryReportPathPolicy.AreOnlyReportConflicts(directConflicts);
@@ -6770,6 +6773,7 @@ public partial class GitService
         if (mergeCode != 0)
         {
             var conflicted = ListUnmergedFiles(repoRoot);
+            TryCaptureIntegrationConflict(repoRoot, conflicted);
             RunGitArgs(repoRoot, "merge", "--abort");
             if (conflicted.Count > 0)
             {
@@ -6833,6 +6837,7 @@ public partial class GitService
             return MechanicalMergeAttempt.Applied(ReadHeadShaAt(repoRoot)!);
 
         var conflicted = ListUnmergedFiles(repoRoot);
+        TryCaptureIntegrationConflict(repoRoot, conflicted);
         if (conflicted.Count > 0)
         {
             RunGitArgs(repoRoot, "merge", "--abort");
@@ -7052,6 +7057,7 @@ public partial class GitService
         if (mergeCode != 0)
         {
             var conflicted = ListUnmergedFiles(worktreePath);
+            TryCaptureIntegrationConflict(worktreePath, conflicted);
             if (DeliveryReportPathPolicy.IsEnabled(worktreePath)
                 && DeliveryReportPathPolicy.AreOnlyReportConflicts(conflicted))
             {
@@ -7289,6 +7295,7 @@ public partial class GitService
                 if (rebaseCode != 0)
                 {
                     var conflictedFiles = ListUnmergedFiles(worktreePath);
+                    TryCaptureIntegrationConflict(worktreePath, conflictedFiles);
                     var stop = ParseRebaseStop(rebaseError, originalCommits);
                     attempt = conflictedFiles.Count > 0
                         ? MechanicalRebaseAttempt.Conflict(

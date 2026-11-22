@@ -34,7 +34,11 @@ future Dossier selection role.
 Capture covers the individual integration runner, batch assembly, formation
 admission and per-task fallback candidate probes. The agent-round service updates
 the record after queueing or parking. Unscoped Git operations (for example a user
-merge outside the pipeline) do not create project evidence.
+merge outside the pipeline) do not create project evidence. Recovery call sites
+explicitly capture after reading the unmerged index; `ListUnmergedFiles` only
+reads Git facts. Evidence I/O failures are logged and must not interrupt merge
+abort, worktree cleanup, or recovery routing. Such failures can leave a gap in
+history, so the rate describes captured conflicts, not guaranteed complete history.
 
 ## Read API and summary
 
@@ -43,6 +47,14 @@ merge outside the pipeline) do not create project evidence.
 `from` and `to` default to the last 30 days. The range is half-open `[from,to)`;
 invalid or greater-than-366-day ranges return 400. Unknown projects return 404.
 `target` is optional and case sensitive, as Git branch names are.
+
+Reads use the requested project's archive-inclusive task snapshot. Unchanged
+timeline and integration-lane files reuse receipt projections; only batch IDs
+referenced by published receipts are loaded. Missing manifests are retried on
+the next read. Conflict JSON is cached by file length and modification time,
+with range and target filtering in the ledger. A cold read still reads this
+project's historical receipts to preserve first-integration deduplication across
+time ranges; it does not walk other projects or list all batch manifests.
 
 The response contains `project`, `from`, `to`, `records`, and `summary`:
 
