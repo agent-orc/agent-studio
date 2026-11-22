@@ -43,29 +43,64 @@ public static class PostMergeRunPlan
     private static string[] DotnetRoutine => ["backend-routine", "runner-routine", "task-server-routine"];
 
     /// <summary>
-    /// The routine suites the changed paths select. A path outside every
-    /// area selects no routine suite when the project defines a
+    /// True for a repository-wide build or test input: it changes what every
+    /// area builds or which commands the suites run, so it selects every
+    /// routine suite. Mirrors the per-card global inputs
+    /// (<c>GeneratedTestProjectMap.GlobalInput</c>) plus the solution and the
+    /// central package and NuGet settings.
+    /// </summary>
+    public static bool IsGlobalInput(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        var name = normalized[(normalized.LastIndexOf('/') + 1)..];
+        return name.StartsWith("Directory.Build.", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Directory.Packages.props", StringComparison.OrdinalIgnoreCase)
+            || (!normalized.Contains('/') && (normalized.Equals("global.json", StringComparison.OrdinalIgnoreCase)
+                || normalized.Equals("NuGet.config", StringComparison.OrdinalIgnoreCase)
+                || normalized.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+                || normalized.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)))
+            || normalized.StartsWith(".agent-studio/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The routine suites the changed paths select (AGT-3966). The area map
+    /// describes a project only when it configures at least one routine suite
+    /// the map names; for any other project every changed path selects every
+    /// routine suite, as before. For a described project:
+    /// <list type="bullet">
+    /// <item>a path in an area selects that area's configured suites;</item>
+    /// <item>a path in an area whose suites the project does not configure, or
+    /// a global build input (<see cref="IsGlobalInput"/>), selects every routine
+    /// suite;</item>
+    /// <item>a path outside every area (docs, scripts, the changelog) selects
+    /// no routine suite when the project defines a
     /// <see cref="ProjectTestSuiteCategories.Base"/> suite, which runs in every
-    /// window (AGT-3966). Without a base suite such a path still selects every
-    /// routine suite, so a window never runs no test at all.
+    /// window. Without a base suite it selects every routine suite, so a window
+    /// never runs no test at all.</item>
+    /// </list>
     /// </summary>
     public static IReadOnlyList<string> SelectAffected(ProjectExecutionDefinition definition,
         IReadOnlyList<string> paths)
     {
         var routine = Suites(definition, ProjectTestSuiteCategories.Routine);
+        var every = routine.Select(suite => suite.Command).ToArray();
         var hasBase = Suites(definition, ProjectTestSuiteCategories.Base).Count > 0;
+        var described = routine.Any(suite => Areas.Any(area => area.Suites.Contains(suite.Id, StringComparer.Ordinal)));
+        if (!described) return paths.Count == 0 ? [] : every;
         var selected = new HashSet<string>(StringComparer.Ordinal);
         foreach (var path in paths)
         {
             var normalized = path.Replace('\\', '/');
+            if (IsGlobalInput(normalized)) return every;
             var area = Areas.FirstOrDefault(item =>
                 normalized.StartsWith(item.Prefix, StringComparison.OrdinalIgnoreCase));
-            var configured = area.Suites?.Where(id => routine.Any(suite => suite.Id == id)).ToArray() ?? [];
-            if (configured.Length == 0)
+            if (area.Suites is null)
             {
                 if (hasBase) continue;
-                return routine.Select(suite => suite.Command).ToArray();
+                return every;
             }
+            var configured = area.Suites.Where(id => routine.Any(suite => suite.Id == id)).ToArray();
+            if (configured.Length == 0) return every;
             selected.UnionWith(configured);
         }
         return routine.Where(suite => selected.Contains(suite.Id)).Select(suite => suite.Command).ToArray();
