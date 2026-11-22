@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using AgentStudio.Git;
 using AgentStudio.Projects;
 using AgentStudio.Pipeline;
@@ -99,6 +100,78 @@ public sealed class IntegrationConflictSummaryTests
             Assert.Equal(2, read.Files.Count);
             Assert.Equal(2, read.Files[0].HunkCount);
             Assert.Equal("union", read.Resolution);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void ReceiptProjectionReusesUnchangedFilesAndRefreshesOnNewIntegration()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "conflict-receipts-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(root);
+            var task = new TaskInfo { Id = "card", Key = "AGT-1", FolderPath = root };
+            var timeline = new TimelineLog(Microsoft.Extensions.Logging.Abstractions.NullLogger<TimelineLog>.Instance);
+            var batches = new BatchGateStore(Path.Combine(root, "batches"));
+            var cache = new IntegrationReceiptCache();
+            timeline.Append(root, new TimelineEvent { Kind = TimelineEventKinds.IntegrationSucceeded,
+                Ts = Start.UtcDateTime, Details = new() { ["integrationBranch"] = "develop" } });
+            var first = cache.Read(task, timeline, batches);
+            Assert.Single(first);
+            Assert.Same(first, cache.Read(task, timeline, batches));
+            timeline.Append(root, new TimelineEvent { Kind = TimelineEventKinds.IntegrationSucceeded,
+                Ts = Start.AddHours(1).UtcDateTime, Details = new() { ["integrationBranch"] = "main" } });
+            Assert.Equal(2, cache.Read(task, timeline, batches).Count);
+            IntegrationLaneEvents.Append(root, "Project", "card", "published", sequence: 1, reason: "batch:missing");
+            Assert.Equal(2, cache.Read(task, timeline, batches).Count);
+            Assert.Equal(0, batches.ManifestListings);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void LedgerRangeReadFiltersHalfOpenRangeAndTargetAndRefreshesResolution()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "conflict-range-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var ledger = new IntegrationConflictLedger(root);
+            ledger.Record(Row("one", "AGT-1"));
+            ledger.Record(Row("later", "AGT-1", 1));
+            ledger.Record(Row("main", "AGT-1", target: "main"));
+            Assert.Single(ledger.Read("Project", Start, Start.AddDays(1), "develop"));
+            ledger.Resolve("Project", "AGT-1", "delivery", "develop", "agent-round");
+            Assert.Equal("agent-round", Assert.Single(ledger.Read("Project", Start.AddDays(1), Start.AddDays(2), "develop")).Resolution);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void ProjectTaskReadAvoidsTheGlobalDiskWalkAndIncludesArchive()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "conflict-project-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            foreach (var (project, state) in new[] { ("alpha", TaskStates.Completed), ("alpha", TaskStates.Archive), ("beta", TaskStates.Completed) })
+            {
+                var folder = Path.Combine(root, project, state, project + state);
+                Directory.CreateDirectory(folder);
+                File.WriteAllText(Path.Combine(folder, "task.json"), System.Text.Json.JsonSerializer.Serialize(new
+                { title = project, state, fixture = false }));
+            }
+            var config = new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["WatchPaths:0:Name"] = "alpha", ["WatchPaths:0:Path"] = Path.Combine(root, "alpha"),
+                ["WatchPaths:1:Name"] = "beta", ["WatchPaths:1:Path"] = Path.Combine(root, "beta"),
+            }).Build();
+            var scanner = new TaskScannerService(config, Microsoft.Extensions.Logging.Abstractions.NullLogger<TaskScannerService>.Instance,
+                new SummaryGenerationService(Microsoft.Extensions.Logging.Abstractions.NullLogger<SummaryGenerationService>.Instance, config));
+            var tasks = scanner.ScanAutomationJobsWithArchive(Path.Combine(root, "alpha"));
+            Assert.Equal(2, tasks.Count);
+            Assert.All(tasks, task => Assert.Equal("alpha", task.ProjectName));
+            Assert.Contains(tasks, task => task.State == TaskStates.Archive);
+            Assert.Equal(0, scanner.RawScanCalls);
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
