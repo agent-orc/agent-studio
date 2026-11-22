@@ -94,6 +94,54 @@ public sealed class PostMergeRunTests
             PostMergeRunPlan.SelectAffected(WithBase(), ["runner.Tests/A.cs", "frontend/src/a.ts", "scripts/x.sh"]));
     }
 
+    [Theory]
+    [InlineData("global.json")]
+    [InlineData("Directory.Build.props")]
+    [InlineData("backend/Directory.Build.targets")]
+    [InlineData("Directory.Packages.props")]
+    [InlineData("NuGet.config")]
+    [InlineData("agent-taskboard.sln")]
+    [InlineData(".agent-studio/project.yml")]
+    public void GlobalBuildInputSelectsEveryRoutineSuiteDespiteTheBaseSuite(string path)
+    {
+        // A repository-wide build input changes every area, so it is not a docs-only path.
+        Assert.Equal(["backend tests", "runner tests", "task-server tests", "frontend tests"],
+            PostMergeRunPlan.SelectAffected(WithBase(), ["docs/a.md", path]));
+    }
+
+    [Fact]
+    public void AreaWhoseSuiteTheProjectDoesNotConfigureSelectsEveryRoutineSuite()
+    {
+        var definition = new ProjectExecutionDefinition(1, [],
+            new Dictionary<string, string>(), new("prepare", ["build"], [], []),
+            [new("backend-base", "base", 60, "backend smoke"),
+             new("backend-routine", "routine", 10, "backend tests"),
+             new("frontend-unit", "routine", 10, "frontend tests")],
+            [], [], new Dictionary<string, string>(), null, null, null, null, null);
+
+        Assert.Equal(["backend tests", "frontend tests"],
+            PostMergeRunPlan.SelectAffected(definition, ["task-server/Program.cs"]));
+        Assert.Empty(PostMergeRunPlan.SelectAffected(definition, ["docs/a.md"]));
+    }
+
+    [Fact]
+    public void ProjectTheAreaMapDoesNotDescribeKeepsEveryRoutineSuiteBesideItsBaseSuite()
+    {
+        // The area map names Agent Studio's suites. A project with other suite ids has no
+        // areas, so a base suite must not silently drop its routine suites from every window.
+        var definition = new ProjectExecutionDefinition(1, [],
+            new Dictionary<string, string>(), new("prepare", ["build"], [], []),
+            [new("smoke", "base", 60, "smoke"),
+             new("app-routine", "routine", 10, "app tests"),
+             new("web-routine", "routine", 10, "web tests")],
+            [], [], new Dictionary<string, string>(), null, null, null, null, null);
+
+        Assert.Equal(["prepare", "build", "smoke", "app tests", "web tests"],
+            PostMergeRunPlan.Build(definition, "window", ["src/App/Program.cs"], PostMergeWindowSuiteModes.Affected));
+        Assert.Equal(["prepare", "build", "smoke", "app tests", "web tests"],
+            PostMergeRunPlan.Build(definition, "window", ["docs/a.md"], PostMergeWindowSuiteModes.Affected));
+    }
+
     [Fact]
     public void NightlyKeepsTheFullRoutineSuiteAndBalancedAddsTheBaseSuite()
     {

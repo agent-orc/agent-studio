@@ -310,6 +310,19 @@ library (`contracts/`, `orchestration-decisions/`, `cli-hosting/`,
 path, for example `docs/`, `scripts/` or `CHANGELOG.md`, selects no routine
 suite when a base suite exists.
 
+Three cases still select every routine suite, so a base suite never hides a
+code change from the window:
+
+- A repository-wide build input (`PostMergeRunPlan.IsGlobalInput`): any
+  `Directory.Build.*`, `Directory.Packages.props`, a root `global.json`,
+  `NuGet.config` or solution file, and anything under `.agent-studio/`. These
+  match the per-card global inputs (`GeneratedTestProjectMap.GlobalInput`).
+- A path in an area whose suite the project does not configure, for example
+  `task-server/` in a project without `task-server-routine`.
+- A project whose routine suites carry none of the ids above. The area map
+  describes Agent Studio's layout only, so such a project has no areas, and
+  every window runs its base suite plus every routine suite.
+
 How to choose base tests:
 
 - The set together must finish within about ten minutes on the run host,
