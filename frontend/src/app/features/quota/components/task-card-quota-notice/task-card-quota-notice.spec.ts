@@ -23,11 +23,13 @@ describe('TaskCardQuotaNoticeComponent', () => {
 
     board.setWorkspace('Workspace quota reached');
     await fixture.whenStable();
-    expect(notice(root)?.textContent).toContain('Workspace quota reached');
+    expect(notice(root)?.textContent).toContain('Admission paused');
+    expect(notice(root)?.textContent).not.toContain('Workspace quota reached');
+    expect(notice(root)?.querySelector('app-status-indicator')?.getAttribute('tone')).toBe('neutral');
 
     board.setProject('alpha', 'Project alpha quota reached');
     await fixture.whenStable();
-    expect(notice(root)?.textContent).toContain('Project alpha quota reached');
+    expect(notice(root)?.textContent).toContain('Admission paused');
 
     board.reset();
     await fixture.whenStable();
@@ -42,7 +44,7 @@ describe('TaskCardQuotaNoticeComponent', () => {
 
     fixture.componentRef.setInput('running', false);
     await fixture.whenStable();
-    expect(notice(root)?.textContent).toContain('Workspace quota reached');
+    expect(notice(root)?.textContent).toContain('Admission paused');
   });
 
   it('stays hidden on completed and archived cards', async () => {

@@ -10,9 +10,12 @@
     <p data-testid="workspace-quota-week-period">Admission week: {{ quota.weekStartUtc | date:'d MMM y, HH:mm':'UTC' }} UTC to {{ quota.weekEndUtc | date:'d MMM y, HH:mm':'UTC' }} UTC. {{ quota.message }}</p>
     @if (quota.limits && !quota.meterComplete) { <p role="status" data-testid="workspace-quota-meter">Some usage records are unavailable. Admission waits for the meter.</p> }
     <div class="workspace-quota__metrics">
-      <div><strong>{{ quota.usage.modelTokens | number }}</strong> tokens used
-        @if (quota.limits?.modelTokensPerWeek !== null && quota.limits?.modelTokensPerWeek !== undefined) { / {{ quota.limits?.modelTokensPerWeek | number }} limit, {{ quota.remaining.modelTokens | number }} left }
-        <small data-testid="workspace-quota-cost">{{ quota.usage.modelCostUsd | currency:'USD' }} @if (quota.usage.unpricedRuns) { priced subtotal + <a href="#/workspace/settings/tokens">{{ quota.usage.unpricedRuns }} {{ quota.usage.unpricedRuns === 1 ? 'run' : 'runs' }} without price</a> } @else { at catalogue prices }</small></div>
+      <div><strong>{{ quota.usage.modelTokens | number }}</strong> tokens used (including cache reads)
+        @if (quota.limits?.modelTokensPerWeek !== null && quota.limits?.modelTokensPerWeek !== undefined) {; {{ quota.limits?.includeCacheReads === false ? quota.usage.uncachedTokens : quota.usage.modelTokens | number }} counted {{ quota.limits?.includeCacheReads === false ? 'excluding' : 'including' }} cache reads / {{ quota.limits?.modelTokensPerWeek | number }} limit, {{ quota.remaining.modelTokens | number }} left }
+        <small>{{ quota.usage.uncachedTokens | number }} uncached tokens (input + output + cache writes).</small>
+        <small data-testid="workspace-quota-cost">{{ quota.usage.modelCostUsd | currency:'USD' }} @if (quota.usage.unpricedRuns) { priced subtotal + <a href="#/workspace/settings/tokens">{{ quota.usage.unpricedRuns }} {{ quota.usage.unpricedRuns === 1 ? 'run' : 'runs' }} without price</a> } @else { at catalogue prices }
+          @if (quota.limits?.weeklyBudgetUsd !== null && quota.limits?.weeklyBudgetUsd !== undefined) { / {{ quota.limits?.weeklyBudgetUsd | currency:'USD' }} weekly budget, {{ quota.remaining.modelCostUsd | currency:'USD' }} remaining. Unpriced usage is outside this budget. }
+        </small></div>
       <div><strong>{{ quota.usage.computeCoreHours | number:'1.0-2' }}</strong> core hours used
         @if (quota.limits?.computeCoreHoursPerWeek !== null && quota.limits?.computeCoreHoursPerWeek !== undefined) { / {{ quota.limits?.computeCoreHoursPerWeek }} limit, {{ quota.remaining.computeCoreHours | number:'1.0-2' }} left }</div>
       <div><strong>{{ quota.usage.hostingSlots }}</strong> running environments
@@ -38,11 +41,23 @@
   }
   @if (canEdit()) {
     <div class="workspace-quota__editor">
+      <label>Weekly USD budget <input type="number" min="0" step="0.01" [ngModel]="limits().weeklyBudgetUsd" (ngModelChange)="update('weeklyBudgetUsd', $event)" /></label>
       <label>Tokens per week <input type="number" min="0" [ngModel]="limits().modelTokensPerWeek" (ngModelChange)="update('modelTokensPerWeek', $event)" /></label>
+      <label>Include cache reads in token limit <input type="checkbox" [ngModel]="limits().includeCacheReads !== false" (ngModelChange)="setCacheReads($event)" /></label>
       <label>Core hours per week <input type="number" min="0" step="0.01" [ngModel]="limits().computeCoreHoursPerWeek" (ngModelChange)="update('computeCoreHoursPerWeek', $event)" /></label>
       <label>Hosting slots <input type="number" min="0" [ngModel]="limits().hostingSlots" (ngModelChange)="update('hostingSlots', $event)" /></label>
       <button type="button" [disabled]="saving()" (click)="save()">Save quota</button>
     </div>
+    @if (projectId()) {
+      <div class="workspace-quota__editor">
+        <label>Card id or key <input [ngModel]="cardId()" (ngModelChange)="cardId.set($event)" /></label>
+        <button type="button" [disabled]="!cardId().trim()" (click)="loadCardBudget()">Load card budget</button>
+        <label>Card USD budget <input type="number" min="0" step="0.01" [ngModel]="cardUsd()" (ngModelChange)="cardUsd.set($event === '' ? null : $event)" /></label>
+        <label>Card tokens excluding cache reads <input type="number" min="0" [ngModel]="cardTokens()" (ngModelChange)="cardTokens.set($event === '' ? null : $event)" /></label>
+        <button type="button" [disabled]="saving() || !cardId().trim()" (click)="saveCardBudget()">Save card budget</button>
+        <small>Lifetime card usage across runs. Unpriced usage is outside the USD budget. Blank budgets clear the limit. New work stops at the next admission point.</small>
+      </div>
+    }
     @if (snapshot()?.status === 'blocked' && !snapshot()?.overrideActive) {
       <div class="workspace-quota__override">
         <label>Override reason <input [ngModel]="overrideReason()" (ngModelChange)="overrideReason.set($event)" /></label>

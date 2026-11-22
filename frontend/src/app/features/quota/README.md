@@ -13,7 +13,7 @@ Imports via `from './features/quota'`. See [`index.ts`](./index.ts).
 - `WorkspaceQuotaBannerComponent` (`app-workspace-quota-banner`): acute workspace quota warning (80 %), stop (100 %), or all hosting slots in use below the Studio navigation row; hidden at normal use and under an owner override.
 - `WorkspaceQuotaComponent` (`app-workspace-quota`): workspace or project quota usage, limits, dated daily trend, and the owner editor and override. Not in the barrel: hosts import it by path inside `@defer`, so it stays out of the initial bundle.
 - `WorkspaceQuotaDisclosureComponent` (`app-workspace-quota-disclosure`): one workspace's quota editor behind a disclosure row in Settings; the editor loads on first open.
-- `TaskCardQuotaNoticeComponent` (`app-task-card-quota-notice`): the project or workspace refusal on a board card that still waits for admission.
+- `TaskCardQuotaNoticeComponent` (`app-task-card-quota-notice`): a quiet card, project or workspace admission marker on a board card that still waits for admission.
 
 **State**: `WorkspaceQuotaBoardState` reads the workspace and every project admission in one request (`/api/workspaces/{id}/quota/admission`); the Studio shell calls `load()` on workspace change and every minute ([docs/concepts/workspace-quotas.md](../../../../../docs/concepts/workspace-quotas.md)).
 

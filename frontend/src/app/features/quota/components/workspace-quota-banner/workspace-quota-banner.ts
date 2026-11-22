@@ -14,6 +14,10 @@ export class WorkspaceQuotaBannerComponent {
   private readonly board = inject(WorkspaceQuotaBoardState);
   readonly quota = computed(() => {
     const quota = this.board.workspaceQuota();
-    return quota && quota.status !== 'ok' && quota.message && !quota.overrideActive ? quota : null;
+    const scopes = [quota, ...this.board.projectQuotas()].filter(scope =>
+      scope && scope.status !== 'ok' && scope.message && !scope.overrideActive);
+    if (!scopes.length) return null;
+    return { status: scopes.some(scope => scope?.status === 'blocked') ? 'blocked' : scopes[0]!.status,
+      message: scopes.map(scope => `${scope!.project ?? 'Workspace'}: ${scope!.message}`).join(' ') };
   });
 }

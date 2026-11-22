@@ -96,7 +96,8 @@ public sealed class PersonaSweepCoordinator
             var quota = _quotas.Snapshot(workspace.Id);
             var personaQuotaStatus = WorkspaceQuotaPolicy.Status(
                 new QuotaLimits(quota.Limits?.ModelTokensPerWeek,
-                    quota.Limits?.ComputeCoreHoursPerWeek, null), quota.Usage);
+                    quota.Limits?.ComputeCoreHoursPerWeek, null, quota.Limits?.WeeklyBudgetUsd,
+                    quota.Limits?.IncludeCacheReads ?? true), quota.Usage);
             var triggers = activations.ToDictionary(a => a.PersonaId, a =>
             {
                 var rows = events.Where(e => e.Time >= now.AddHours(-24)

@@ -386,6 +386,14 @@
         </tr>
       </thead>
       <tbody>
+        <tr>
+          <td>2026-11-23</td>
+          <td><strong>AGT-3794</strong> quota-cost-budget (fix <strong>AGT-3824</strong>)</td>
+          <td>No CLI crashed. The 15 November playthrough found that a cache-read-dominated weekly token limit refused new admission and repeated an acute notice on idle cards, including cards waiting for the owner.</td>
+          <td>Every token column counted toward the limit, USD budget fields had no writer, and card notices inferred a refusal from the workspace limit. There was no card spend budget.</td>
+          <td>Workspace and project USD budgets use priced spend, token limits declare their cache-read policy, and lifetime card budgets refuse new coding, review and gate admission with named reasons. Local aspects and grades record Pending with the same reason until the owner raises or clears the card budget. See <a href="../system/domains/tokens.md#spend-and-admission-budgets">spend and admission budgets</a>.</td>
+        </tr>
+
         <tr id="case-integration-round-loop-and-unattributed-merge-rounds">
           <td>2026-11-22</td>
           <td><code>AGT-3897</code>, <code>AGT-3914</code><br><span class="small">integration-round-loop and unattributed merge-only rounds (fix <code>AGT-3968</code>)</span></td>
@@ -3347,6 +3355,9 @@
        checks for an accepted stop before it writes the Human Review marker or moves
        the card. An accepted stop settles the attempt as <code>Stopped</code>, while a
        released lease cannot accept a new stop.</p>
+
+    <h3>Configured spend admission</h3>
+    <p>Workspace and project weekly USD or token limits and lifetime card spend limits are checked at new execution admission. A refused local aspect or grade records a Pending step with the named budget reason. The owner can raise or clear a card limit; weekly limits also resume on their documented UTC reset. Already admitted work keeps its current unit. The <a href="../system/domains/tokens.md#spend-and-admission-budgets">token domain contract</a> defines the accounting and settings.</p>
 
     <h3>Cancelled verification gates</h3>
     <p>A gate cancellation first checks delivery SHA, lane ownership, and pending continue intent.

@@ -75,3 +75,32 @@ for recording and attribution rules.
 | Project | `TokenAggregationService.cs`, `ITokenAggregator.cs`, token endpoints and cache stores |
 
 Paths in this table are relative to `backend/Features/Tokens/`. The earlier bus-backed shims and their parity-only tests were removed in AGT-3037. The golden characterization now covers the production composition directly. See [the token aggregation concept](../../concepts/token-aggregation.md) for the stage contract and [the token pricing domain](token-pricing.md) for catalog policy.
+
+## Spend and admission budgets
+
+Workspace and project quota settings accept `weeklyBudgetUsd` alongside weekly
+model tokens, core hours and hosting slots. Both scopes must admit new work.
+USD budgets use the priced ledger subtotal; unpriced runs remain explicitly
+outside that subtotal. The footer cost detail shows each configured budget,
+its priced spend and remaining amount. Budget weeks reset Monday 00:00 UTC,
+independently of the workspace display calendar and provider subscription resets.
+These are catalogue USD estimates, not subscription percentage limits.
+
+`includeCacheReads` defaults to true for existing weekly token limits. Owners
+can exclude cache reads; the meter always reports total and uncached tokens
+separately. Uncached means normalized input, output and cache writes.
+
+Project quota settings can set a lifetime card budget by card id or key, in USD,
+uncached tokens, or both. `PUT /api/workspaces/{workspace}/projects/{project}/quota/cards/{card}`
+accepts `{ "usd": 10, "uncachedTokens": null }`; two null fields clear it.
+Card usage includes older runs and does not reset with the week. Coding,
+review and gate admission refuse exhausted cards with `card-budget-usd` or
+`card-budget-tokens`. Running work finishes its current admitted unit. Missing
+card ledger data refuses admission as `card-budget-meter-unavailable`.
+The standalone Task Server refreshes known card-budget verdicts before claims
+outside its SQLite write transaction. New settings propagate through its normal
+30-second project snapshot; known card budgets are rechecked on each claim.
+
+The board owns one header notice for reached workspace or project limits,
+including amounts and reset. Cards show a quiet admission marker with detail
+in the tooltip. Acute refusal components remain tied to actual refused work.

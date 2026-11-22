@@ -10,8 +10,10 @@ interface QuotaLimits {
   modelTokensPerWeek: number | null;
   computeCoreHoursPerWeek: number | null;
   hostingSlots: number | null;
+  weeklyBudgetUsd?: number | null;
+  includeCacheReads?: boolean;
 }
-interface QuotaUsage { modelTokens: number; modelCostUsd: number; computeCoreHours: number; hostingSlots: number; unpricedRuns?: number }
+interface QuotaUsage { modelTokens: number; modelCostUsd: number; computeCoreHours: number; hostingSlots: number; unpricedRuns?: number; uncachedTokens?: number }
 interface QuotaConsumer { projectId: string; project: string; cardId: string | null; modelTokens: number; computeCoreHours: number }
 interface QuotaProjectConsumer { projectId: string; project: string; modelTokens: number; computeCoreHours: number }
 interface QuotaSnapshot {
@@ -58,6 +60,9 @@ export class WorkspaceQuotaComponent {
   readonly saving = signal(false);
   readonly limits = signal<QuotaLimits>(NO_LIMITS);
   readonly overrideReason = signal('');
+  readonly cardId = signal('');
+  readonly cardUsd = signal<number | null>(null);
+  readonly cardTokens = signal<number | null>(null);
   /** Header state: the override, else the status; a scope without any limit reads "No limit". */
   readonly state = computed(() => {
     const quota = this.snapshot();
@@ -80,6 +85,7 @@ export class WorkspaceQuotaComponent {
       untracked(() => {
         this.snapshot.set(null);
         this.limits.set(NO_LIMITS);
+        this.cardId.set(''); this.cardUsd.set(null); this.cardTokens.set(null);
         this.error.set(null);
         this.refresh();
       });
@@ -116,6 +122,30 @@ export class WorkspaceQuotaComponent {
     this.http.put<void>(this.url(), this.limits()).subscribe({
       next: () => { this.saving.set(false); this.refresh(); },
       error: () => { this.saving.set(false); this.error.set('Could not save quota. Check the values and owner access.'); },
+    });
+  }
+
+  setCacheReads(value: boolean): void {
+    this.limits.update(current => ({ ...current, includeCacheReads: value }));
+  }
+
+  loadCardBudget(): void {
+    if (!this.projectId() || !this.cardId().trim()) return;
+    const url = `${this.url()}/cards/${encodeURIComponent(this.cardId().trim())}`;
+    const current = () => url === `${this.url()}/cards/${encodeURIComponent(this.cardId().trim())}`;
+    this.http.get<{ usd: number | null; uncachedTokens: number | null }>(url).subscribe({
+      next: budget => { if (current()) { this.cardUsd.set(budget.usd); this.cardTokens.set(budget.uncachedTokens); this.error.set(null); } },
+      error: () => { if (current()) this.error.set('Could not load card budget. Check the card id or key.'); },
+    });
+  }
+
+  saveCardBudget(): void {
+    if (!this.projectId() || !this.cardId().trim()) return;
+    this.saving.set(true);
+    this.http.put<void>(`${this.url()}/cards/${encodeURIComponent(this.cardId().trim())}`,
+      { usd: this.cardUsd(), uncachedTokens: this.cardTokens() }).subscribe({
+      next: () => { this.saving.set(false); this.error.set(null); },
+      error: () => { this.saving.set(false); this.error.set('Could not save card budget. Check the card and values.'); },
     });
   }
 
