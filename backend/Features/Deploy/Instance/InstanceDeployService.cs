@@ -354,7 +354,8 @@ public sealed partial class InstanceDeployService
                 live.Select(item => ToRelease(item, SourceProject!)).ToArray(),
                 facts?.NotLiveYet, facts?.LiveCardReleases ?? new Dictionary<string, string>(),
                 liveSince, state.Runs.ToDictionary(item => item.Id, item => (IReadOnlyList<InstanceDeployStep>)item.Steps,
-                    StringComparer.Ordinal));
+                    StringComparer.Ordinal))
+            { LatestRun = latest is null ? null : ToView(latest, state, now) };
         }
     }
 
@@ -629,4 +630,17 @@ internal sealed record InstanceDeployOverlay(DeployEnvironment Environment, IRea
     /// server already runs its release.
     /// </summary>
     public Release? LiveRelease => LiveReleases.Count == 0 ? null : LiveReleases[^1];
+
+    /// <summary>The latest reported run with its derived state, stalled included.</summary>
+    public InstanceDeployRunView? LatestRun { get; init; }
+
+    /// <summary>
+    /// The server switch decides what runs. A run that failed before its switch
+    /// left the live release in place, and one that failed after it already
+    /// took its release live. Only a latest run that failed or stalled with
+    /// its switch reported but not succeeded leaves the running release open.
+    /// </summary>
+    public bool ReleaseUncertain => LatestRun is { State: InstanceDeployStates.Failed or InstanceDeployStates.Stalled } run
+        && run.Steps.Any(step => step.Kind == InstanceDeployStepKinds.ServerSwitch
+            && step.State is InstanceDeployStates.Running or InstanceDeployStates.Failed);
 }

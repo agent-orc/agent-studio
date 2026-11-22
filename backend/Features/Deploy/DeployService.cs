@@ -893,10 +893,10 @@ public sealed class DeployService
                 var runs = snapshot.Deployments(project);
                 var (signature, integrated) = DeliveryInputs(snapshot, runs, verification);
                 if (_deliveryLaneCache.TryGetValue(project, out var cached) && cached.Signature == signature)
-                    return cached.Value;
+                    return WithInstance(cached.Value, snapshot, integrated());
                 var value = DeliveryLaneProjection.Project(project, snapshot.Environments, snapshot.Releases, runs, integrated());
                 _deliveryLaneCache[project] = (signature, value);
-                return value;
+                return WithInstance(value, snapshot, integrated());
             }
         }
     }
@@ -977,16 +977,25 @@ public sealed class DeployService
         {
             try
             {
-                // Reading the queue persists its state, so skip projects
-                // without environment declarations.
-                if (_environments.Declarations(project) is not { Count: > 0 } && _instance?.IsSource(project) != true) continue;
+                // Every watched project gets a row (AGT-3949). Reading the
+                // queue persists its state, so a project without environment
+                // declarations is listed as such without that read; only the
+                // source project of this instance still has its Production.
+                var declared = _environments.Declarations(project) is { Count: > 0 };
+                if (!declared && _instance?.IsSource(project) != true)
+                {
+                    rows.Add(new(project, [], null) { EnvironmentsDeclared = false });
+                    continue;
+                }
                 var statuses = Status(project)?.Where(item => item.Environment.Kind is
-                    EnvironmentKinds.Staging or EnvironmentKinds.Production).ToArray();
-                if (statuses is { Length: > 0 })
-                    rows.Add(new(project, statuses, null)
-                    { TenantStatuses = (Tenants(project) ?? []).SelectMany(tenant => Status(project, tenant.Name) ?? [])
+                    EnvironmentKinds.Staging or EnvironmentKinds.Production).ToArray() ?? [];
+                rows.Add(new(project, statuses, null)
+                {
+                    EnvironmentsDeclared = declared,
+                    TenantStatuses = (Tenants(project) ?? []).SelectMany(tenant => Status(project, tenant.Name) ?? [])
                         .Where(item => item.Environment.Kind is EnvironmentKinds.Staging or EnvironmentKinds.Production)
-                        .ToArray() });
+                        .ToArray(),
+                });
             }
             catch (JsonException ex)
             {
@@ -1719,6 +1728,15 @@ public sealed class DeployService
             NewerRelease = status.NewerRelease is { } newer && instance.LiveRelease is { } live
                 && !EnvironmentStatusProjection.IsNewer(newer, live) ? null : status.NewerRelease,
             CardsSinceLastDeploy = instance.NotLiveYet?.Select(item => item.Key).ToArray() ?? status.CardsSinceLastDeploy,
+            // The generic projection calls every failure after the last success
+            // uncertain; the instance knows from the server switch what runs.
+            ReleaseUncertain = instance.ReleaseUncertain,
+            Instance = new(instance.LiveRelease is { } running && instance.LiveSince.TryGetValue(running.Id, out var since)
+                    ? since : null,
+                instance.LatestRun is { } run
+                    ? new(run.Id, run.State, run.Version, run.TargetCommit, run.StartedAtUtc,
+                        run.FinishedAtUtc ?? run.LastReportAtUtc, run.FailedStep ?? run.LastStep)
+                    : null),
         };
 
     /// <summary>A card is live once the live release contains one of its commits; it is live since that release went live.</summary>
@@ -1764,6 +1782,49 @@ public sealed class DeployService
                         Waiting = waiting,
                     }
                     : column).ToArray(),
+        };
+    }
+
+    /// <summary>
+    /// The lanes of the source project follow what the instance runs (AGT-3949),
+    /// as its delivery columns do: the instance lane lists the cards the live
+    /// commit contains, the newest live release first, and "Waiting for
+    /// release" the cards integrated after it, in landing order. Without this
+    /// every card integrated before the deploy records began would count as
+    /// waiting. Unchanged until the background refresh computed the facts.
+    /// </summary>
+    private static DeliveryLaneResponse WithInstance(DeliveryLaneResponse value, Snapshot snapshot,
+        IReadOnlyDictionary<string, string> titles)
+    {
+        if (snapshot.Instance is not { LiveRelease: not null, NotLiveYet: { } notLiveYet } instance) return value;
+        var live = instance.LiveCardReleases
+            .Select(item => (item.Key, Release: snapshot.ReleaseById.GetValueOrDefault(item.Value)))
+            .Where(item => item.Release is not null)
+            .Select(item => (item.Key, Release: item.Release!,
+                Since: instance.LiveSince.GetValueOrDefault(item.Release!.Id, item.Release.CreatedAtUtc)))
+            .OrderByDescending(item => item.Since).ThenBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var liveKeys = live.Select(item => item.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // A card a declared environment of the same project already runs is not waiting either.
+        var placed = value.Lanes.Where(lane => lane.EnvironmentId is not null)
+            .SelectMany(lane => lane.Cards).Select(card => card.Key)
+            .Concat(liveKeys).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return value with
+        {
+            Lanes = value.Lanes.Select(lane => lane.EnvironmentId is null
+                ? lane with
+                {
+                    Cards = notLiveYet.Where(item => !placed.Contains(item.Key))
+                        .Select(item => new DeliveryCard(item.Key,
+                            item.Title ?? titles.GetValueOrDefault(item.Key) ?? item.Key, null, null)).ToArray(),
+                }
+                : lane.EnvironmentId == instance.Environment.Id
+                    ? lane with
+                    {
+                        Cards = live.Select(item => new DeliveryCard(item.Key,
+                            titles.GetValueOrDefault(item.Key) ?? item.Key, item.Release.Version, item.Since)).ToArray(),
+                    }
+                    : lane with { Cards = lane.Cards.Where(card => !liveKeys.Contains(card.Key)).ToArray() }).ToArray(),
         };
     }
 

@@ -343,6 +343,10 @@
   <strong>AGT-3879 · Studio instance as Production</strong>
   <span>Delivered: the running Studio shows as the Production environment of its source project with live release, live-since time and the cards of its first-parent range; a deploy record API behind a deploy reporter token (start, idempotent steps, finish) with a curl recipe in the operations runbook; the integrated-not-live-yet list, live-since card badges and the deployed flow counter; failed and 30-minute stalled runs naming the last step; first start records the running version. Covered by InstanceDeployTests and the Bereitstellung component specs.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3949" data-delivered-at="2026-11-22" data-slice="Workspace dashboard data">
+  <strong>AGT-3949 · Workspace dashboard data</strong>
+  <span>Delivered: the workspace deployment dashboard lists every project the instance watches. The running Studio is the Production cell of its source project (live release and commit, live since, last run state including stalled, health) from the AGT-3879 records; a watched project without environment declarations shows "No environments declared" with the way to declare them; delivery lanes are requested only for watched projects, and the lanes of the source project place cards by the live commit (delivered against integrated after it); a long lane column shows its count, twelve cards and a Show all control; the empty table says why it is empty. Both routes keep their per-project access filter. Covered by WorkspaceDeployMatrixTests, the dashboard and delivery lane component specs and the mocked dashboard Playwright spec.</span>
+</li>
 <!-- agent-studio:implementation-log:end -->
   </ol>
 </section>
