@@ -146,7 +146,7 @@ def _pearson(xs, ys):
 
 
 SIZE_PRIOR = {g: _median([len(real[k]) for k in keys if cards[k]["group"] == g])
-              for g in {cards[k]["group"] for k in keys}}
+              for g in sorted({cards[k]["group"] for k in keys})}
 PACKAGE_MAX_PRIOR_FILES = 25
 PACKAGE_MAX_MEMBERS = 3
 
