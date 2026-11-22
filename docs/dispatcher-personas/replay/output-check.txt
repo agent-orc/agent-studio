@@ -20,4 +20,6 @@ same-area pairs without a dependsOn path: none
 
 replay table vs replay.py: match for 6 personas
 
+review input: ok
+
 result: PASS

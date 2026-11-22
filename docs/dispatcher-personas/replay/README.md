@@ -1,6 +1,7 @@
 # Dispatcher replay
 
-Evidence for the Dossier `docs/dispatcher-personas/index.html` (AGT-3974).
+Evidence for the Dossier `docs/dispatcher-personas/index.html` (AGT-3974);
+[../README.md](../README.md) lists every Dossier file.
 
 - `wave-2026-11-17.json`: the 57 playthrough cards AGT-3890 to AGT-3946 of
   17 November 2026, rebuilt from git at develop `d3c4eed65`. Per card it holds
@@ -16,11 +17,11 @@ Evidence for the Dossier `docs/dispatcher-personas/index.html` (AGT-3974).
   (today's pick-gate) and `inflight` (every started, unintegrated card).
   Standard library only.
 - `check_dossier.py`: mirrors the workbench contract (keys, bounded slices,
-  `dependsOn` order, concept sections), checks that slices sharing an area are
+  `dependsOn` order, concept sections, relative links of `index.html`), checks that slices sharing an area are
   ordered by `dependsOn`, applies today's pick-gate scope rule to the
   promoted prompts of the DS slices and PT-13 to PT-20 to show which pairs the
   platform keeps apart, and compares every cell of the replay results table in
-  `index.html` with the output of `replay.py`.
+  `index.html` with the output of `replay.py`, and runs `../review_input.py`.
 - `output-4-slots.txt`, `output-6-slots.txt`, `output-check.txt`: the full
   output of the three commands below at develop `d3c4eed65`, so the figures can
   be read without running anything.
