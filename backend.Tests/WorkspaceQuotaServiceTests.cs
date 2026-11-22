@@ -26,6 +26,76 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 16, 12, 0, 0, TimeSpan.Zero));
 
     [Fact]
+    public async Task Weekly_usd_and_cache_policy_persist_and_use_priced_receipts()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "budget"), "Budget", workspace.Id, _clock);
+        Directory.CreateDirectory(project.StorageLocation);
+        await Bus(services, project.DisplayName, "budget-receipt", new AgentMessageTokens(20, 5, 1000, Model: "claude-sonnet-5"));
+        var quota = services.GetRequiredService<WorkspaceQuotaService>();
+        quota.SetLimits(workspace.Id, project.Id, new QuotaLimits(100, null, null, 0, false));
+        var snapshot = quota.Snapshot(workspace.Id, project.Id);
+        Assert.Equal(25, snapshot.Usage.UncachedTokens);
+        Assert.Equal(1025, snapshot.Usage.ModelTokens);
+        Assert.True(snapshot.Usage.ModelCostUsd > 0);
+        Assert.False(quota.Admit(project.DisplayName).Allowed);
+        Assert.Contains("weekly USD budget", snapshot.Message);
+        var reload = ActivatorUtilities.CreateInstance<WorkspaceQuotaService>(services);
+        Assert.Equal(0, reload.Snapshot(workspace.Id, project.Id).Limits!.WeeklyBudgetUsd);
+        quota.SetLimits(workspace.Id, project.Id, new QuotaLimits(100, null, null, null, false));
+        Assert.True(quota.Admit(project.DisplayName).Allowed);
+    }
+
+    [Fact]
+    public void Card_budget_is_lifetime_scoped_resolves_key_and_has_a_named_refusal()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "cards"), "Cards", workspace.Id, _clock);
+        SeedTask(project.StorageLocation, "budget-card", new {
+            calls = 1, inputTokens = 10, outputTokens = 5, cacheReadTokens = 1000, totalTokens = 1015,
+            entries = new[] { new { ts = _clock.GetUtcNow().UtcDateTime.AddDays(-14),
+                model = "claude-sonnet-5", inputTokens = 10, outputTokens = 5, cacheReadTokens = 1000 } }
+        }, key: "BUD-1");
+        services.GetRequiredService<TaskScannerService>().InvalidateCache();
+        var quota = services.GetRequiredService<WorkspaceQuotaService>();
+        quota.SetCardBudget(workspace.Id, project.Id, "BUD-1", new(null, 16));
+        var admitted = quota.Admit(project.DisplayName, cardId: "budget-card");
+        Assert.True(admitted.Allowed, admitted.Message);
+        Assert.Equal(16, quota.GetCardBudget(workspace.Id, project.Id, "budget-card").UncachedTokens);
+        quota.SetCardBudget(workspace.Id, project.Id, "BUD-1", new(null, 15));
+        var refusal = quota.Admit(project.DisplayName, cardId: "BUD-1");
+        Assert.False(refusal.Allowed);
+        Assert.Contains("card-budget-tokens", refusal.Message);
+        var card = services.GetRequiredService<TaskScannerService>().ScanAllJobsWithArchive()
+            .Single(t => t.Id == "budget-card");
+        var pipeline = services.GetRequiredService<PipelineExecutionLog>();
+        pipeline.EnsureRun(card.FolderPath, PipelineCatalogue.Standard, project.DisplayName, card.Id, _clock.GetUtcNow().UtcDateTime);
+        Assert.True(services.GetRequiredService<ReviewDecisionOrchestrator>()
+            .RefuseSpendBudget(card, "aspect-budget-check", StepKind.Aspect));
+        Assert.Contains(pipeline.Read(card.FolderPath)!.Steps, step => step.StepId == "aspect-budget-check"
+            && step.Status == PipelineStepStatus.Pending && step.Reason!.Contains("card-budget-tokens"));
+        Assert.True(quota.Admit(project.DisplayName, cardId: "different-card").Allowed);
+        Assert.Contains("BUD-1", quota.ProjectAdmission(project.DisplayName).CardRefusals!.Keys);
+        var price = services.GetRequiredService<ITokenPricing>().Estimate("claude-sonnet-5", 10, 5, 1000, 0,
+            _clock.GetUtcNow().UtcDateTime.AddDays(-14)).Total;
+        Assert.True(price > 0);
+        quota.SetCardBudget(workspace.Id, project.Id, "BUD-1", new(price * 2, null));
+        Assert.True(quota.Admit(project.DisplayName, cardId: "budget-card").Allowed);
+        quota.SetCardBudget(workspace.Id, project.Id, "BUD-1", new(price, null));
+        Assert.Contains("card-budget-usd", quota.Admit(project.DisplayName, cardId: "budget-card").Message);
+        quota.SetCardBudget(workspace.Id, project.Id, "BUD-1", new(null, null));
+        Assert.True(quota.Admit(project.DisplayName, cardId: "budget-card").Allowed);
+    }
+
+    [Fact]
     public async Task Workspace_one_shot_rows_count_once_in_project_and_workspace_meters()
     {
         Directory.CreateDirectory(_root);
@@ -453,7 +523,7 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
         var betaScope = Assert.Single(limited.Projects, scope => scope.ProjectId == beta.Id);
         Assert.False(betaScope.CodingAllowed);
         Assert.Equal("Beta", betaScope.Project);
-        Assert.Contains("Weekly quota reached", betaScope.Message, StringComparison.Ordinal);
+        Assert.Contains("weekly token limit", betaScope.Message, StringComparison.Ordinal);
         Assert.True(Assert.Single(limited.Projects, scope => scope.ProjectId == alpha.Id).CodingAllowed);
     }
 
@@ -657,7 +727,7 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
         var claimed = store.Claim(new GateClaimRequest("gate-a", "instance-a"));
 
         Assert.Equal("empty", refused.Status);
-        Assert.Contains("Weekly quota reached", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("weekly token limit", refused.Message, StringComparison.Ordinal);
         Assert.Equal("claimed", claimed.Status);
         Assert.Equal("GAT-1", claimed.Subject!.TaskId);
     }

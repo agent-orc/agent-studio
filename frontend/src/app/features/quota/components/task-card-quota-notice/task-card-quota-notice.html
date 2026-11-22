@@ -1,6 +1,6 @@
 @if (message(); as quotaMessage) {
   <p class="task-card-quota-notice" role="status" data-testid="task-card-workspace-quota">
-    <app-status-indicator tone="danger" [label]="quotaMessage" [detail]="quotaMessage"
+    <app-status-indicator tone="neutral" label="Admission paused" [detail]="quotaMessage"
                           testId="task-card-workspace-quota-status" />
   </p>
 }

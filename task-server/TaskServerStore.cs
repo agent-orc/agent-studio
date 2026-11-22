@@ -201,7 +201,12 @@ public sealed partial class TaskServerStore
     {
         if (_quotaVerdicts is null) return;
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_quotaRefreshes.TryAdd(kind, done.Task)) return;
+        if (!_quotaRefreshes.TryAdd(kind, done.Task))
+        {
+            if (_quotaVerdicts.HasCardBudgets && _quotaRefreshes.TryGetValue(kind, out var pending))
+                await pending.WaitAsync(ct);
+            return;
+        }
         void Finish()
         {
             _quotaRefreshes.TryRemove(kind, out _);
@@ -238,6 +243,9 @@ public sealed partial class TaskServerStore
                 Finish();
             }
         }, CancellationToken.None);
+        // Card spend is checked again before the next claim, outside the write transaction.
+        if (names.Any(name => _quotaVerdicts.Read(name)?.CardRefusals is not null))
+            await done.Task.WaitAsync(ct);
     }
 
     /// <summary>Starts the refresh of every claim kind, so the first claims after a start find verdicts.</summary>
@@ -273,18 +281,36 @@ public sealed partial class TaskServerStore
     /// verdict yet, admits without an event; an unresolved project is admitted
     /// with a meter warning that names the card.
     /// </summary>
-    private WorkspaceQuotaVerdict CachedWorkspaceQuota(string? projectName, string subject)
+    private WorkspaceQuotaVerdict CachedWorkspaceQuota(string? projectName, string subject, string? cardId = null)
     {
         if (_quotaVerdicts is null) return new WorkspaceQuotaVerdict(true, null);
         if (projectName is null)
             return new WorkspaceQuotaVerdict(true,
                 $"{subject} could not be resolved to a project; quota admission is off for it.", true);
-        return _quotaVerdicts.Read(projectName) ?? new WorkspaceQuotaVerdict(true, null);
+        var verdict = _quotaVerdicts.Read(projectName) ?? new WorkspaceQuotaVerdict(true, null);
+        return cardId is not null && verdict.CardRefusals?.TryGetValue(cardId, out var reason) == true
+            ? new(false, reason) : verdict;
     }
 
     /// <summary>The outage message for the first claimed card of a project after its meter became unavailable.</summary>
     private string? ConsumeQuotaCardNotice(string? projectName)
         => projectName is null ? null : _quotaVerdicts?.TryConsumeCardNotice(projectName);
+
+    private async IAsyncEnumerable<TaskDto> WhereCardBudgetAllowedAsync(
+        IAsyncEnumerable<TaskDto> tasks, SqliteConnection connection, SqliteTransaction transaction,
+        Action<string> onRefusal, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        await foreach (var task in tasks.WithCancellation(ct))
+        {
+            if (_quotaVerdicts?.HasCardBudgets != true) { yield return task; continue; }
+            var projectName = await ScalarAsync(connection, "SELECT name FROM projects WHERE id = $project;",
+                ct, transaction, ("$project", task.ProjectId)) as string;
+            var reason = projectName is null ? null
+                : _quotaVerdicts.Read(projectName)?.CardRefusals?.GetValueOrDefault(task.TaskId);
+            if (reason is null) yield return task;
+            else onRefusal(reason);
+        }
+    }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
         => await InitializeCoreAsync(quarantineActiveAuthority: true, cancellationToken);
@@ -1695,13 +1721,13 @@ public sealed partial class TaskServerStore
             var verdicts = new List<ClaimPlacementVerdict>();
             string? modelRefusal = null;
             var (task, selected) = await ProjectPlacementSelection.SelectAsync(
-                WhereModelAcceptedAsync(
+                WhereCardBudgetAllowedAsync(WhereModelAcceptedAsync(
                     ExceptHeldModelRoutesAsync(connection, transaction,
                         ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId,
                             RequiresHostProjectPolicy, ct),
                         request.RunnerId, UtcNow, ct),
                     connection, transaction, request.RunnerId,
-                    reason => modelRefusal ??= reason, ct),
+                    reason => modelRefusal ??= reason, ct), connection, transaction, reason => modelRefusal ??= reason, ct),
                 async projectId =>
                 {
                     var verdict = await EvaluateProjectAsync(projectId);
@@ -1717,6 +1743,8 @@ public sealed partial class TaskServerStore
                                   ?? verdicts.LastOrDefault()?.Reason
                                   ?? (modelRefusal is null
                                       ? ProjectPlacementReasons.NoAdmissibleTask
+                                      : modelRefusal.StartsWith("card-budget-", StringComparison.Ordinal)
+                                          ? "card-budget-reached"
                                       : modelRefusal.StartsWith("Host model unavailable", StringComparison.Ordinal)
                                           ? "host-model-unavailable" : "host-capability-missing");
 

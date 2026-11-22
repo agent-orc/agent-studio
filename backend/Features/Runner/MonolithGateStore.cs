@@ -240,7 +240,6 @@ public sealed class MonolithGateStore
         foreach (var task in _scanner?.ScanAllJobsWithArchive() ?? [])
             foreach (var alias in new[] { task.Id, task.Key, task.TaskKey })
                 if (!string.IsNullOrWhiteSpace(alias)) projects.TryAdd(alias, task.ProjectName);
-        var byProject = new Dictionary<string, AgentStudio.Quota.QuotaAdmission>(StringComparer.OrdinalIgnoreCase);
         foreach (var taskId in taskIds)
         {
             if (!projects.TryGetValue(taskId, out var project))
@@ -250,8 +249,7 @@ public sealed class MonolithGateStore
                     $"Gate card '{taskId}' could not be resolved to a project; quota admission is off for it.", true);
                 continue;
             }
-            if (!byProject.TryGetValue(project, out var admission))
-                byProject[project] = admission = _workspaceQuota.Admit(project);
+            var admission = _workspaceQuota.Admit(project, cardId: taskId);
             verdicts[taskId] = admission;
         }
         return verdicts;

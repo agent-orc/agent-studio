@@ -436,7 +436,7 @@ public sealed partial class TaskServerStore
                             "SELECT p.name FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = $task LIMIT 1;",
                             ct, transaction, ("$task", candidate.Attempt.TaskId)) as string
                         : null;
-                    var quota = CachedWorkspaceQuota(quotaProjectName, "Review card " + candidate.Attempt.TaskId);
+                    var quota = CachedWorkspaceQuota(quotaProjectName, "Review card " + candidate.Attempt.TaskId, candidate.Attempt.TaskId);
                     if (!quota.Allowed)
                     {
                         capabilityBlock = quota.Message ?? "Workspace quota reached.";

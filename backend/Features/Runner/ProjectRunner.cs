@@ -441,8 +441,8 @@ public class ProjectRunner
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _selectionIdsByJob = new(StringComparer.Ordinal);
 
     /// <summary>Workspace or project quota refusal for a new local run; null admits it.</summary>
-    internal RunRejection? WorkspaceQuotaRefusal()
-        => _workspaceQuota?.Admit(ProjectName) is { Allowed: false } admission
+    internal RunRejection? WorkspaceQuotaRefusal(string? cardId = null)
+        => _workspaceQuota?.Admit(ProjectName, cardId: cardId) is { Allowed: false } admission
             ? new RunRejection(RunRejectReason.QuotaCapExceeded, admission.Message ?? "Workspace quota reached.")
             : null;
 
@@ -2771,7 +2771,7 @@ public class ProjectRunner
             // Resolve the run through the canonical admission boundary exactly
             // once. The decision is run-scoped and never mutates job.json, so a
             // recovered provider is selected again on the next launch.
-            if (WorkspaceQuotaRefusal() is { } quotaRefusal)
+            if (WorkspaceQuotaRefusal(info.Id) is { } quotaRefusal)
                 return RunOutcome.Reject(quotaRefusal);
             var admissionPlan = PlanQuotaAdmission(info);
             var route = new CliRouteDecision(

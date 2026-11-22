@@ -411,7 +411,7 @@ export function trustedBudgetPeriods(cost: UsageCostProjection, now: number): Us
   const trusted: UsageBudgetPeriod[] = [];
   for (const [period, budget, amount, startIso, endIso] of [
     ['daily', cost.dailyBudgetUsd, cost.todayUsd, cost.calendar?.dayStartUtc, cost.calendar?.dayEndUtc],
-    ['weekly', cost.weeklyBudgetUsd, cost.weekUsd, cost.calendar?.weekStartUtc, cost.calendar?.weekEndUtc],
+    ['weekly', cost.weeklyBudgetUsd, cost.budgetWeekSpentUsd ?? cost.weekUsd, cost.budgetWeekStartUtc ?? cost.calendar?.weekStartUtc, cost.budgetWeekEndUtc ?? cost.calendar?.weekEndUtc],
   ] as const) {
     if (budget == null) {
       trusted.push(period);
