@@ -216,17 +216,24 @@ public sealed class IntegrationReleaseService
             return Stop(project, IntegrationReleaseStates.Blocked,
                 "Staging and Production deploy different static artifacts; one release carries one package.",
                 "Deploy the same static artifact in Staging and Production.", tip);
-        var gate = Gate(project, tip);
+        var definition = DefinitionAt(repo, tip);
+        var gate = Gate(project, tip, definition?.DeliveryDeployAfterGreenWindow == true);
         if (gate.Red is { } red)
             return Stop(project, IntegrationReleaseStates.Blocked, red,
                 "Repair the integration branch. The next green gate creates the release.", tip);
+        if (gate.RunId is null && gate.GreenWindowNotOptedIn)
+            return Stop(project, IntegrationReleaseStates.WaitingForGate,
+                $"The tip {Short(tip)} of {branch} passed its merge-window run. project.yml does not set "
+                + "delivery.deployAfterGreenWindow, so a merge window does not release to Staging.",
+                "The nightly run or a card verification on this commit creates the release; "
+                + "set delivery.deployAfterGreenWindow: true to release after each green merge window.", tip);
         if (gate.RunId is null)
             return Stop(project, IntegrationReleaseStates.WaitingForGate,
                 $"The tip {Short(tip)} of {branch} has no green gate yet.",
                 "Studio creates the release as soon as the gate on this commit passes. Integrating a card runs that gate.",
                 tip);
         ReleaseSuiteVerdict? verdict = null;
-        if (FullSuiteRequired(repo, tip))
+        if (definition?.DeliveryFullSuite == "required")
         {
             if (_candidateGate is null)
                 return Stop(project, IntegrationReleaseStates.Blocked,
@@ -352,17 +359,29 @@ public sealed class IntegrationReleaseService
         return files == 0 ? "The package would be empty." : null;
     }
 
-    private (string? RunId, string? Red) Gate(string project, string tip)
+    /// <summary>
+    /// The green gate on <paramref name="tip"/>. A merge-window run executes
+    /// the base suite and the affected routine suites only (AGT-3966), so it
+    /// releases to Staging only when the tip's project.yml opts in with
+    /// <c>delivery.deployAfterGreenWindow</c>; a nightly run and a card
+    /// verification count as before. A red post-merge verdict on the tip blocks.
+    /// </summary>
+    private (string? RunId, string? Red, bool GreenWindowNotOptedIn) Gate(string project, string tip,
+        bool deployAfterGreenWindow)
     {
         var record = _registry?.FindByIdOrDisplayName(project) ?? _registry?.FindByShortCode(project);
+        var greenWindowNotOptedIn = false;
         if (_postMerge is not null && record is not null)
         {
             var state = _postMerge.Read(record.Id);
-            var onTip = state.Runs.LastOrDefault(run => run.Status is "green" or "red"
-                && string.Equals(run.TipSha, tip, StringComparison.OrdinalIgnoreCase));
-            if (onTip is { Status: "green" }) return ("post-merge/" + onTip.Id, null);
-            if (onTip is { Status: "red" })
-                return (null, $"The post-merge gate on the tip {Short(tip)} is red.");
+            var onTip = state.Runs.Where(run => run.Status is "green" or "red"
+                && string.Equals(run.TipSha, tip, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (onTip.LastOrDefault() is { Status: "red" })
+                return (null, $"The post-merge gate on the tip {Short(tip)} is red.", false);
+            if (onTip.LastOrDefault(run => run.Status == "green"
+                    && (run.Kind != "window" || deployAfterGreenWindow)) is { } green)
+                return ("post-merge/" + green.Id, null, false);
+            greenWindowNotOptedIn = onTip.Any(run => run.Status == "green");
         }
         foreach (var task in _scanner.ScanAllJobs().Where(task =>
                      string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase)))
@@ -370,14 +389,14 @@ public sealed class IntegrationReleaseService
             var verification = IntegrationVerificationStore.Read(task.FolderPath);
             if (verification is { State: IntegrationVerificationStates.Verified }
                 && string.Equals(verification.Sha, tip, StringComparison.OrdinalIgnoreCase))
-                return ("integration/" + (task.Key ?? task.TaskKey), null);
+                return ("integration/" + (task.Key ?? task.TaskKey), null, false);
         }
-        return (null, null);
+        return (null, null, greenWindowNotOptedIn);
     }
 
-    private bool FullSuiteRequired(string repo, string tip)
+    private ProjectExecutionDefinition? DefinitionAt(string repo, string tip)
         => _git.GetFileAtCommit(repo, tip, ProjectPreparationPaths.Definition) is { } yaml
-            && ProjectDefinitionReader.Parse(yaml).Definition?.DeliveryFullSuite == "required";
+            ? ProjectDefinitionReader.Parse(yaml).Definition : null;
 
     private static bool HasLifecycle(string project, IReadOnlyList<EnvironmentDeclaration> declarations)
     {

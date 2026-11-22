@@ -70,7 +70,8 @@ public static partial class RemoteCommitAttributionGuard
         string? repository = null,
         IReadOnlyCollection<string>? referencedKeys = null,
         IReadOnlyCollection<TaskCommitInfo>? previousCommits = null,
-        Func<string, bool>? mergeParentOnIntegration = null)
+        Func<string, bool>? mergeParentOnIntegration = null,
+        bool continuationRange = false)
     {
         var expected = taskKey.Trim();
         var normalizedBranch = TaskIntegrationBranch.Name(deliveryBranch);
@@ -93,8 +94,16 @@ public static partial class RemoteCommitAttributionGuard
         var previousShas = previousCommits?.Select(commit => commit.Sha)
             .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
         var newCommits = commits.Where(commit => !previousShas.Contains(commit.Sha)).ToList();
-        var mergeOnlyContinuation = previousShas.Count > 0 && newCommits.Count > 0
-            && newCommits.All(commit => commit.IsMerge);
+        // AGT-3968: a continuationRange is the integration merge-base range of
+        // a round whose own pickup-base range was empty: the runner's develop
+        // merge is the pickup base, or the round delivered the previous SHA
+        // unchanged. It may add no new commit at all, and it may add only
+        // integration merges; a new non-merge commit is never accepted on it.
+        var mergeOnlyContinuation = previousShas.Count > 0
+            && newCommits.All(commit => commit.IsMerge)
+            && (newCommits.Count > 0 || continuationRange);
+        if (continuationRange && !mergeOnlyContinuation)
+            return Rejected($"Remote commit attribution rejected for '{expected}': the continuation range carries new commits that are not integration merges.");
         if (mergeOnlyContinuation)
         {
             var missing = commits.Where(commit => !commit.IsMerge
@@ -134,6 +143,25 @@ public static partial class RemoteCommitAttributionGuard
             Confidence = 1.0,
         }).ToList();
         return new RemoteCommitAttributionResult(true, attributed, null);
+    }
+
+    /// <summary>
+    /// AGT-3968: true when <paramref name="commits"/> records the result SHA
+    /// for this run attempt. A commit the attempt produced carries its run
+    /// attempt and result SHA. A delivery that re-delivers an earlier commit
+    /// (a round that changed nothing) keeps that commit's first producer, so
+    /// the result commit itself, recorded in this attempt's delivery
+    /// generation, also counts.
+    /// </summary>
+    public static bool CoversDelivery(
+        IEnumerable<TaskCommitInfo> commits, string? runAttemptId, string? resultSha)
+    {
+        if (string.IsNullOrWhiteSpace(runAttemptId) || string.IsNullOrWhiteSpace(resultSha)) return false;
+        return commits.Any(commit =>
+            string.Equals(commit.RunAttemptId, runAttemptId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(commit.ResultSha, resultSha, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(commit.DeliveryAttemptId, runAttemptId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(commit.Sha, resultSha, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

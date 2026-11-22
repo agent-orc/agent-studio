@@ -1,0 +1,100 @@
+@if (view(); as view) {
+  <section class="instance-deploy" data-testid="instance-deploy" aria-labelledby="instance-deploy-title">
+    <header class="instance-deploy__head">
+      <div>
+        <h2 id="instance-deploy-title">{{ view.environmentName }} · this Studio</h2>
+        <p>The running instance, built from this project and deployed by the operator scripts.</p>
+      </div>
+      <app-status-indicator [tone]="runTone()" [label]="runLabel()" [detail]="run()?.message" testId="instance-deploy-run-state" />
+    </header>
+
+    <div class="instance-deploy__grid">
+      <div class="instance-deploy__block" data-testid="instance-deploy-live">
+        <h3>Live release</h3>
+        @if (view.live; as live) {
+          <dl class="instance-deploy__facts">
+            <dt>Version</dt><dd class="instance-deploy__numeric" data-testid="instance-deploy-version">{{ live.version }}</dd>
+            <dt>Develop commit</dt><dd><code data-testid="instance-deploy-commit">{{ shortCommit(live.commitSha) }}</code></dd>
+            <dt>Live since</dt>
+            <dd class="instance-deploy__numeric" data-testid="instance-deploy-live-since">
+              {{ utcMinute(live.liveSinceUtc) }}@if (age(live.liveSinceUtc); as ago) { <span class="instance-deploy__muted"> · {{ ago }}</span> }
+            </dd>
+            @for (component of components(); track component[0]) {
+              <dt>{{ component[0] }}</dt><dd class="instance-deploy__numeric">{{ component[1] }}</dd>
+            }
+          </dl>
+          @if (live.fromVersionRoute) {
+            <p class="instance-deploy__muted" data-testid="instance-deploy-version-route-note">Recorded from the version route on first start. Earlier deploys are not recorded.</p>
+          }
+        } @else {
+          <p class="instance-deploy__muted">No live release recorded yet.</p>
+        }
+      </div>
+
+      <div class="instance-deploy__block" data-testid="instance-deploy-run">
+        <h3>Latest deploy run</h3>
+        @if (run(); as run) {
+          <dl class="instance-deploy__facts">
+            <dt>Version</dt><dd class="instance-deploy__numeric">{{ run.version }} · <code>{{ shortCommit(run.targetCommit) }}</code></dd>
+            <dt>Started</dt><dd class="instance-deploy__numeric">{{ utcMinute(run.startedAtUtc) }}</dd>
+            <dt>Last report</dt>
+            <dd class="instance-deploy__numeric" data-testid="instance-deploy-last-report">{{ utcMinute(run.lastReportAtUtc) }}@if (run.lastStep) { · {{ run.lastStep }}}</dd>
+          </dl>
+          @if (run.steps.length) {
+            <ol class="instance-deploy__steps" data-testid="instance-deploy-steps">
+              @for (step of run.steps; track step.name) {
+                <li [attr.data-step]="step.name">
+                  <app-status-indicator [tone]="stepTone(step.state)" [label]="step.name + ' · ' + step.state"
+                    [detail]="step.message" [compact]="true" [wrap]="true" [testId]="'instance-deploy-step'" />
+                </li>
+              }
+            </ol>
+          }
+        } @else {
+          <p class="instance-deploy__muted">The deploy scripts have not reported a run yet.</p>
+        }
+      </div>
+    </div>
+
+    <div class="instance-deploy__grid">
+      <div class="instance-deploy__block" data-testid="instance-deploy-brought">
+        <h3>Brought by this release <span class="instance-deploy__count">{{ view.live?.cards?.length ?? 0 }}</span></h3>
+        @if (view.live; as live) {
+          @if (live.cards.length) {
+            <ul class="instance-deploy__cards">
+              @for (card of live.cards; track card.key) {
+                <li><button type="button" class="instance-deploy__card" (click)="openCard.emit(card.key)">
+                  <span class="instance-deploy__key">{{ card.key }}</span><span>{{ card.title ?? '' }}</span>
+                </button></li>
+              }
+            </ul>
+          } @else if (live.fromVersionRoute) {
+            <p class="instance-deploy__muted">The first recorded release has no previous release to compare with.</p>
+          } @else if (!live.cardsResolved) {
+            <p class="instance-deploy__muted">Reading the release range from git…</p>
+          } @else {
+            <p class="instance-deploy__muted">No card first landed since the previous release.</p>
+          }
+        }
+      </div>
+
+      <div class="instance-deploy__block" data-testid="instance-deploy-pending">
+        <h3>Integrated, not live yet <span class="instance-deploy__count">{{ view.notLiveYet.length }}</span></h3>
+        @if (factsPending()) {
+          <p class="instance-deploy__muted">Reading {{ view.developRef ?? 'the integration branch' }} from git…</p>
+        } @else if (view.notLiveYet.length) {
+          <p class="instance-deploy__muted">On {{ view.developRef }} after the live commit, in landing order. The next deploy brings them.</p>
+          <ol class="instance-deploy__cards">
+            @for (card of view.notLiveYet; track card.key) {
+              <li><button type="button" class="instance-deploy__card" (click)="openCard.emit(card.key)">
+                <span class="instance-deploy__key">{{ card.key }}</span><span>{{ card.title ?? '' }}</span>
+              </button></li>
+            }
+          </ol>
+        } @else {
+          <p class="instance-deploy__muted">Nothing accepted on {{ view.developRef ?? 'the integration branch' }} after the live commit.</p>
+        }
+      </div>
+    </div>
+  </section>
+}

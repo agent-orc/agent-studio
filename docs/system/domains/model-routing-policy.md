@@ -373,6 +373,13 @@ being silently replaced by a policy recommendation.
 
 A fresh coding claim after a resumed mechanical integration round is qualified
 again when the round found a semantic conflict or the deterministic gate failed.
+Automatic integration recovery, including batch replay conflicts, first reuses
+the acceptance-rail recovery selector. For an unpinned model with a declared low
+route it selects low or medium within the task's correctness floor, keeping the
+model. Explicit pins, unknown routes and stronger floors retain the existing
+route. This selection is saved before Ready becomes claimable. Claim admission
+remains authoritative: its mechanical recovery floor can raise a queued low
+selection to medium. No correctness floor is relaxed for session reuse.
 An integration recovery claim with a pending mechanical delta is qualified before
 admission at the stronger of its correctness floor and Terra/medium. This also
 covers a fresh run when the runner rejects the resume for a missing or stale

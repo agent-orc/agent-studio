@@ -28,6 +28,8 @@ public record OrchestratorTokenUsage
     /// it (AGT-2811). Null keeps legacy rows readable as "level unknown".
     /// </summary>
     public string? ThinkingLevel { get; init; }
+    /// <summary>Coding launch provenance: resumed or fresh; null when unrecorded.</summary>
+    public string? SessionMode { get; init; }
     /// <summary>CLI that made the call, when the writer knows it (AGT-2986).</summary>
     public string? CliType { get; init; }
     /// <summary>

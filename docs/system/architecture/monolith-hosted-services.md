@@ -124,6 +124,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | OrchestratorPrepHostedService | !PD, off by default | decide, local | Monolith until an engine occurrence can apply its prep verdict. |
 | ChatNoteHostedService | !PD | report | Authority host |
 | PipelineHealthService | always | report | Authority host |
+| PostMergeCoverageRefresher | !PD | report | Authority host. Once a minute reads the develop tip and the post-merge receipts and publishes whether a fast or balanced project lacks post-merge runs (AGT-3965); no lane move and no fallback. |
 | ApiStallDetector | always | report | Every API host. Logs an `api-stall` warning when its own timer tick runs late (GC pause or starved thread pool); no lane transition (AGT-3369). |
 | ApiHostDiskService | always | report | API host. Measures instance data and gate evidence mounts, reports disk pressure, and supplies claim admission; makes no lane transition decision. |
 | PublishEnvironmentReconciliationService | always | infra | Authority host. Polls website deployment state and releases stopped hosting reservations; no lane transition. |
@@ -166,6 +167,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | HostedVolumeBackupWorker | !PD, not Test | infra | Authority host (IP-D5 daily declared-volume backups through the host adapter; no lane decision) |
 | BackupHostedService | not Test | infra | Authority host (AGT-3574 scheduled encrypted installation backups, retention, restore verification and off-host copy; no lane decision) |
 | CardPreviewSweep | !PD, not Test | infra | Authority host. Reconciles green deliveries, integration and expiry into fenced preview deploy and removal jobs; it does not move cards. |
+| InstanceDeployWorker | !PD, not Test | infra | Authority host (AGT-3879). Records the running version as the live instance release on first start and refreshes the git-derived instance deploy facts; it does not move cards. |
 | DeploymentInterventionWorker | !PD, not Test | infra | Authority host. Runs deployment intervention timeout reconciliation each minute; it does not move task lanes. |
 | OrphanReaperHostedService | !PD | infra | Authority host |
 | CleanContextRetentionHostedService | !PD | infra | Authority host |

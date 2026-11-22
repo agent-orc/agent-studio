@@ -713,6 +713,64 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task An_environment_without_a_healthy_deploy_report_is_not_probed_and_opens_no_incident()
+    {
+        var fixture = Build(deployed: false);
+        _target.Respond(HttpStatusCode.BadGateway);
+
+        for (var tick = 0; tick < 5; tick++)
+        {
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            Assert.Equal(new HealthRunSummary(0, 0, 0, 0), await fixture.Service.RunDueAsync());
+        }
+
+        Assert.Empty(_target.Requests);
+        var environment = Assert.Single(fixture.Service.Read(Project)!.Environments);
+        Assert.Equal((EnvironmentHealthService.NotDeployed, null, null, null),
+            (environment.Status, environment.Uptime24h, environment.Uptime7d, environment.Uptime30d));
+        Assert.All(environment.Checks, check => Assert.Equal(EnvironmentHealthService.NotDeployed, check.Status));
+        Assert.Null(environment.CurrentIncident);
+        Assert.Empty(fixture.Cards());
+        Assert.Empty(fixture.Store.Load(Project).Checks);
+
+        // A failed deploy report does not start the probes either; the first healthy one does.
+        Report(fixture.Configuration, Project, ("stage", "failed"));
+        await Ticks(fixture, 1);
+        Assert.Empty(_target.Requests);
+
+        Report(fixture.Configuration, Project, ("stage", "healthy"));
+        _target.Respond(HttpStatusCode.OK, "ok");
+        await Ticks(fixture, 1);
+        Assert.Single(_target.Requests);
+        environment = Assert.Single(fixture.Service.Read(Project)!.Environments);
+        Assert.Equal(("up", 1.0), (environment.Status, environment.Uptime24h));
+    }
+
+    [Fact]
+    public async Task A_stopped_environment_stops_probing_and_closes_its_open_incident()
+    {
+        var fixture = Build();
+        await Sequence(fixture, false, false, false);
+        var card = Assert.Single(fixture.Cards());
+        Assert.NotNull(fixture.Store.Load(Project).Environments["stage"].OpenIncident);
+        var probes = _target.Requests.Count;
+
+        Report(fixture.Configuration, Project, ("stage", "stopped"));
+        await Sequence(fixture, false, false, false, false);
+
+        Assert.Equal(probes, _target.Requests.Count);
+        var environment = Assert.Single(fixture.Service.Read(Project)!.Environments);
+        Assert.Equal((EnvironmentHealthService.NotDeployed, null), (environment.Status, environment.CurrentIncident));
+        var comment = Assert.Single(fixture.Comments(card));
+        Assert.Contains("stopped", comment.Summary);
+        Assert.Single(fixture.Cards());
+        var state = fixture.Store.Load(Project);
+        Assert.Null(state.Environments["stage"].OpenIncident);
+        Assert.Empty(state.Checks);
+        Assert.NotNull(Assert.Single(state.Environments["stage"].IncidentHistory).EndedAt);
+    }
+
+    [Fact]
     public async Task ARemovedCheck_ClosesItsOpenIncident()
     {
         var probe = new ScriptedProbe(_clock);
@@ -816,6 +874,22 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         Assert.True(fixture.Store.Load(Project).Environments["production"].LastIncident!.RecoveryWebhookDelivered);
     }
 
+    /// <summary>Appends deploy reports to the project's deploy history, as a host's report does.</summary>
+    private void Report(IConfiguration configuration, string project, params (string Environment, string Status)[] reports)
+    {
+        var path = Path.Combine(configuration["TaskRepository"]!, "deployments", project + ".json");
+        var state = File.Exists(path)
+            ? JsonSerializer.Deserialize<ProjectEnvironmentService.State>(File.ReadAllText(path), Web)!
+            : new ProjectEnvironmentService.State();
+        var at = _clock.GetUtcNow().UtcDateTime;
+        state.History.AddRange(reports.Select(report => new ProjectEnvironmentService.EnvironmentHistoryRow(
+            report.Environment, at, new DeploymentHistoryItem(at, report.Status, "app:1", null, null))));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, JsonSerializer.Serialize(state, Web));
+    }
+
+    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
+
     private async Task Ticks(Fixture fixture, int count)
     {
         for (var tick = 0; tick < count; tick++)
@@ -836,7 +910,7 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
     }
 
     private Fixture Build(string? checks = null, IHealthCheckProbe? probe = null, string? extraDeclaration = null,
-        string? otherDeclaration = null, bool withTelemetry = false)
+        string? otherDeclaration = null, bool withTelemetry = false, bool deployed = true)
     {
         var repo = Path.Combine(_root, "repo");
         var watch = Path.Combine(_root, "workspace", "projects", Project);
@@ -866,6 +940,11 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
             ["WatchPaths:1:RootPath"] = otherRepo, ["WatchPaths:1:RepositoryPath"] = otherRepo,
             ["HealthChecks:MaxConcurrency"] = "2",
         }).Build();
+        if (deployed)
+        {
+            Report(configuration, Project, ("stage", "healthy"), ("production", "healthy"));
+            Report(configuration, "other", ("stage", "healthy"));
+        }
         var scanner = new TaskScannerService(configuration, NullLogger<TaskScannerService>.Instance,
             new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, configuration));
         var git = new GitService(NullLogger<GitService>.Instance, scanner, configuration);

@@ -209,6 +209,11 @@ public sealed class PostMergeIncidentService
             + $"Red tip: {run.TipSha}\nLast green: {lastGreen ?? "unknown"}\n"
             + $"Attributed merge: {failure?.AttributedMerge ?? "unresolved"}\n"
             + $"Original card: {failure?.AttributedTaskId ?? "unresolved"}\n"
+            + (failure?.NoRelevantMerges == true
+                ? "Attribution: environmental or flaky suspect. No merge in the window has changed paths that can explain this failure. No merge is blamed.\n"
+                : "")
+            + $"Start conditions: {run.StartOccupiedSlots?.ToString() ?? "unknown"} occupied slots, "
+            + $"load per core {run.StartLoadPerCore?.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"}\n"
             + $"Suspects: {string.Join(", ", failure?.SuspectMerges ?? [])}\n"
             + $"Failing tests: {string.Join(", ", failure?.FailingTests ?? [])}\n"
             + $"Failing paths: {string.Join(", ", failure?.FailingPaths ?? [])}\n\n"

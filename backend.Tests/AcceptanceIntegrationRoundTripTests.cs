@@ -366,7 +366,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(1, started.BudgetUsed);
         Assert.Equal(1, started.BudgetLimit);
         Assert.Equal(
-            $"automatic recovery budget used: 1/1 for delivery {deliverySha[..12]}",
+            "automatic recovery budget used: 1/1 for this card on develop. Conflicting files: budget-spent.txt.",
             started.Reason);
         Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
     }

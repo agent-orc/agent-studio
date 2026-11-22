@@ -286,6 +286,14 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
+        // The instance deploy record API authenticates its own deploy reporter
+        // token (AGT-3879); no session or other credential reaches it.
+        if (AgentStudio.Deploy.InstanceDeployEndpoints.IsReportRoute(context.Request.Method, path))
+        {
+            await _next(context);
+            return;
+        }
+
         if (path.Equals("/api/clients/register", StringComparison.OrdinalIgnoreCase))
         {
             await Reject(context, 404, "registration-disabled", "Open client registration is disabled in the networked profile.");
@@ -1109,6 +1117,9 @@ public sealed class AccessSecurityMiddleware
         if ((HttpMethods.IsGet(method) || HttpMethods.IsPost(method))
             && path.StartsWith("/api/deploy/run-targets/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Deploy;
+        if ((HttpMethods.IsGet(method) || HttpMethods.IsPost(method))
+            && path.StartsWith("/api/deploy/hosts/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Deploy;
         if (path.StartsWith("/api/pull-gates/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Gate;
         if (HttpMethods.IsGet(method)
@@ -1216,7 +1227,8 @@ public sealed class AccessSecurityMiddleware
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/complete", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         if (HttpMethods.IsPost(method) && path.StartsWith("/api/clients/", StringComparison.OrdinalIgnoreCase)
             && path.EndsWith("/runner-git-capability", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
-        if (path.StartsWith("/api/runner/post-merge/projects/", StringComparison.OrdinalIgnoreCase))
+        if (path.Equals("/api/runner/post-merge/projects", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/runner/post-merge/projects/", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsGet(method) ? RunnerScopes.Claim : RunnerScopes.Completion;
         return GateRunnerScope(method, path);
     }

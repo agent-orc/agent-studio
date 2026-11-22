@@ -6,6 +6,7 @@ using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Management;
 using AgentStudio.Registry;
 using AgentStudio.Git;
+using AgentStudio.Runner;
 using AgentStudio.Host;
 using AgentStudio.Diagnostics;
 using System.Net.Http.Json;
@@ -284,16 +285,34 @@ public static class ProjectOperatorDashboardEndpoints
 
         app.MapPost("/api/deploy/run-targets/{hostId}/observed-state", async (HttpContext context, string hostId,
             RunTargetObservedReport report, ProjectEnvironmentService environments,
-            ManagedDatabaseCredentials credentials, ManagedDatabaseMetrics metrics, IConfiguration configuration,
-            AccessSecurityStore security, RunHostDirectory runHosts, CancellationToken ct) =>
+            ManagedDatabaseCredentials credentials, ManagedDatabaseMetrics metrics, OrchestratorLog activity,
+            IConfiguration configuration, AccessSecurityStore security, RunHostDirectory runHosts,
+            CancellationToken ct) =>
         {
             if (RunTargetCallerDenied(context, hostId, configuration)) return RunTargetForbidden();
             RecordRunTargetContact(context, hostId, configuration, security, runHosts, DeployHostContact.Report);
             var measured = new List<(string Project, ManagedDatabaseRecord Record)>();
             var accepted = environments.RecordObserved(hostId, report, measured);
+            environments.PublishRuntimeIncidentEvents(activity, (report.Environments ?? []).Select(item => item.Project));
             // AGT-3878: database size and connections reach the environment's operations intake.
             metrics.Publish(measured);
             await ManagedDatabaseEndpoints.QuietlyAsync(context, () => credentials.RetireDeletedAsync(ct));
+            return Results.Ok(new { accepted });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
+        app.MapGet("/api/deploy/hosts/{hostId}/containers", (HttpContext context, string hostId,
+            ProjectEnvironmentService environments, IConfiguration configuration) =>
+            RunTargetCallerDenied(context, hostId, configuration) ? RunTargetForbidden()
+                : Results.Ok(environments.ContainerTargets(hostId)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
+
+        app.MapPost("/api/deploy/hosts/{hostId}/observed-state", (HttpContext context, string hostId,
+            RunTargetObservedReport report, ProjectEnvironmentService environments, OrchestratorLog activity,
+            IConfiguration configuration) =>
+        {
+            if (RunTargetCallerDenied(context, hostId, configuration)) return RunTargetForbidden();
+            var accepted = environments.RecordObserved(hostId, report);
+            environments.PublishRuntimeIncidentEvents(activity, (report.Environments ?? []).Select(item => item.Project));
             return Results.Ok(new { accepted });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 

@@ -176,6 +176,14 @@ public sealed class RunTargetSecretFiles(string root, Func<string, bool> isMemor
         if (System.IO.Directory.Exists(directory)) System.IO.Directory.Delete(directory, recursive: true);
     }
 
+    /// <summary>Read mounted values only while masking a diagnostic; never persist them.</summary>
+    public IReadOnlyList<string> ValuesForMasking(string composeProject)
+    {
+        var directory = Directory(composeProject);
+        if (!IsMemoryBacked() || !System.IO.Directory.Exists(directory)) return [];
+        return System.IO.Directory.EnumerateFiles(directory).Select(File.ReadAllText).ToArray();
+    }
+
     /// <summary>Production check: the longest mount point in /proc/self/mounts that contains the path.</summary>
     public static bool ProcMountsIsMemoryBacked(string path)
     {

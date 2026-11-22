@@ -68,7 +68,31 @@ public sealed record BatchGateReplayRecord(
     string OriginalResultSha, string TipBeforeSha, string? TipAfterSha,
     IReadOnlyList<AgentStudio.Git.RebasedCommitReplacement> Replacements,
     IReadOnlyList<string> ConflictedFiles, string Outcome,
-    DateTimeOffset RecordedAtUtc, string? Strategy = null, string? Reason = null);
+    DateTimeOffset RecordedAtUtc, string? Strategy = null, string? Reason = null)
+{
+    /// <summary>AGT-3968: add/add hunks this admitted replay resolved by union.</summary>
+    public IReadOnlyList<AgentStudio.Git.UnionResolvedHunk>? UnionResolvedHunks { get; init; }
+
+    /// <summary>AGT-3968: admitted members ahead of a sibling-deferred member that touched its conflicting files.</summary>
+    public IReadOnlyList<string>? SiblingKeys { get; init; }
+}
+
+/// <summary>Replay outcomes that keep a member queued for a later batch.</summary>
+public static class BatchReplayOutcomes
+{
+    public const string CascadeDeferred = "cascade-deferred";
+
+    /// <summary>
+    /// AGT-3968: the member conflicts only with a sibling admitted ahead of it
+    /// in the same batch; it merges cleanly onto the batch base. No agent can
+    /// resolve a conflict with an unpublished sibling, so the member waits for
+    /// the sibling to publish instead of opening an agent round.
+    /// </summary>
+    public const string SiblingDeferred = "sibling-deferred";
+
+    public static bool IsDeferred(string? outcome)
+        => outcome is CascadeDeferred or SiblingDeferred;
+}
 
 public sealed record BatchGateMemberRecord(
     string TaskKey, string RunAttempt, long DeliveryEpoch, string OriginalResultSha,

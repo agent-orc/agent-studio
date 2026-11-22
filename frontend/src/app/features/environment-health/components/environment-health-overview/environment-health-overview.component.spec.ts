@@ -35,8 +35,8 @@ describe('EnvironmentHealthOverviewComponent', () => {
 
 describe('environment health tones', () => {
   it('maps every health status and falls back to neutral', () => {
-    expect(['up', 'degraded', 'invalid', 'down', 'unknown', 'not-observed', 'new-state'].map(healthStatusTone))
-      .toEqual(['success', 'warning', 'warning', 'danger', 'neutral', 'neutral', 'neutral']);
+    expect(['up', 'degraded', 'invalid', 'down', 'unknown', 'not-observed', 'not-deployed', 'new-state'].map(healthStatusTone))
+      .toEqual(['success', 'warning', 'warning', 'danger', 'neutral', 'neutral', 'neutral', 'neutral']);
   });
 
   it('shows an open incident or a watch error as danger and nothing else as neutral', () => {

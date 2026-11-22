@@ -1,0 +1,1022 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dispatcher personas | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #696762;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+
+<style>
+  nav.contents { margin: 24px 0 36px; font: 0.82rem/1.8 var(--article-sans); }
+  .diagram text { font-family: var(--article-sans); }
+  .diagram .zone { fill: none; stroke: var(--article-line); stroke-width: 1.5; stroke-dasharray: 6 4; }
+  .diagram .zone-label { fill: var(--article-faint); font-size: 13px; font-weight: 750; letter-spacing: 0.06em; text-transform: uppercase; }
+  .diagram .node { fill: var(--article-surface); stroke: var(--article-line); }
+  .diagram .focus { fill: var(--article-link-soft); stroke: var(--article-link); }
+  .diagram .ext { fill: var(--article-surface-strong); stroke: var(--article-line); }
+  .diagram .gap { fill: var(--article-warn-soft); stroke: var(--article-warn); }
+  .diagram .hot { fill: var(--article-bad-soft); stroke: var(--article-bad); }
+  .diagram .label { fill: var(--article-ink); font-size: 15px; font-weight: 650; }
+  .diagram .sub { fill: var(--article-muted); font-size: 12.5px; }
+  .diagram .edge-label { fill: var(--article-link); font-size: 12px; font-weight: 650; }
+  .diagram .edge { fill: none; stroke: var(--article-link); stroke-width: 2; }
+  .diagram .edge-muted { fill: none; stroke: var(--article-faint); stroke-width: 1.6; stroke-dasharray: 5 4; }
+  .diagram .divider { stroke: var(--article-line); stroke-width: 1; }
+  .diagram .arrowhead { fill: var(--article-link); }
+  .diagram .arrowhead-muted { fill: var(--article-faint); }
+  .decision { margin: 24px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font: 0.9rem/1.6 var(--article-sans); }
+  .decision h3 { margin: 0 0 8px; }
+  .decision p { margin-bottom: 8px; }
+
+  /* Static mockups. They reuse the article tokens; nothing here is a new colour system. */
+  .mockup { margin-top: 30px; margin-bottom: 30px; font-family: var(--article-sans); }
+  .mock-frame { overflow: hidden; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-paper); font-size: 0.82rem; line-height: 1.5; }
+  .mock-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 16px; border-bottom: 1px solid var(--article-line); background: var(--article-surface); }
+  .mock-bar b { font-size: 0.92rem; }
+  .mock-bar .spacer { flex: 1; }
+  .mock-body { padding: 16px; }
+  .mock-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .mock-cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; }
+  .mock-card { min-width: 0; padding: 12px 14px; border: 1px solid var(--article-line); border-radius: 9px; background: var(--article-surface); }
+  .mock-card h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 0.9rem; }
+  .mock-card p { margin: 0 0 6px; color: var(--article-muted); font-size: 0.78rem; }
+  .mock-card.paused { background: var(--article-paper); }
+  .mock-card.alert { border-color: color-mix(in srgb, var(--article-bad) 35%, var(--article-line)); background: var(--article-bad-soft); }
+  .mock-section-title { margin: 18px 0 8px; color: var(--article-faint); font-size: 0.7rem; font-weight: 750; letter-spacing: 0.1em; text-transform: uppercase; }
+  .mock-section-title:first-child { margin-top: 0; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; min-height: 20px; padding: 1px 8px; border: 1px solid var(--article-line); border-radius: 999px; background: var(--article-paper); color: var(--article-muted); font-size: 0.7rem; font-weight: 650; white-space: nowrap; }
+  .chip.good { border-color: transparent; background: var(--article-good-soft); color: var(--article-good); }
+  .chip.warn { border-color: transparent; background: var(--article-warn-soft); color: var(--article-warn); }
+  .chip.bad { border-color: transparent; background: var(--article-bad-soft); color: var(--article-bad); }
+  .chip.accent { border-color: transparent; background: var(--article-link-soft); color: var(--article-link); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--article-faint); }
+  .dot.good { background: var(--article-good); }
+  .dot.warn { background: var(--article-warn); }
+  .dot.bad { background: var(--article-bad); }
+  .imp { display: inline-flex; align-items: center; justify-content: center; min-width: 2.3em; height: 1.65em; padding: 0 6px; border-radius: 6px; background: var(--article-surface-strong); color: var(--article-ink); font: 750 0.78rem/1 var(--article-sans); font-variant-numeric: tabular-nums; }
+  .imp.crit { background: var(--article-bad-soft); color: var(--article-bad); }
+  .imp.hi { background: var(--article-warn-soft); color: var(--article-warn); }
+  .imp.big { min-width: 2.6em; height: 2.2em; font-size: 1.1rem; }
+  .meter { position: relative; height: 6px; margin: 4px 0 2px; border-radius: 999px; background: var(--article-surface-strong); }
+  .meter > span { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: var(--article-link); }
+  .meter.warn > span { background: var(--article-warn); }
+  .kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; margin: 0; font-size: 0.78rem; }
+  .kv dt { color: var(--article-faint); }
+  .kv dd { margin: 0; color: var(--article-ink); font-variant-numeric: tabular-nums; }
+  .mock-list { margin: 0; padding: 0; list-style: none; }
+  .mock-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: start; margin: 0; padding: 9px 0; border-bottom: 1px solid var(--article-line); }
+  .mock-list li:last-child { border-bottom: 0; }
+  .mock-list li + li { margin-top: 0; }
+  .mock-list small { display: block; color: var(--article-muted); font-size: 0.74rem; }
+  .mock-list time { color: var(--article-faint); font-size: 0.72rem; white-space: nowrap; }
+  .mock-tabs { display: flex; gap: 18px; padding: 0 16px; border-bottom: 1px solid var(--article-line); font-size: 0.8rem; }
+  .mock-tabs span { padding: 9px 0; color: var(--article-muted); }
+  .mock-tabs span[aria-current] { color: var(--article-ink); font-weight: 700; box-shadow: inset 0 -2px 0 var(--article-link); }
+  .btn { display: inline-flex; align-items: center; min-height: 26px; padding: 2px 10px; border: 1px solid var(--article-line); border-radius: 7px; background: var(--article-paper); color: var(--article-ink); font-size: 0.74rem; font-weight: 650; }
+  .btn.primary { border-color: var(--article-link); background: var(--article-link); color: var(--article-paper); }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+  .stat { padding: 8px 10px; border: 1px solid var(--article-line); border-radius: 8px; background: var(--article-paper); }
+  .stat b { display: block; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--article-faint); font-size: 0.7rem; }
+  .mock-note { margin-top: 8px; color: var(--article-faint); font-size: 0.74rem; }
+
+
+  .diagram .axis line { stroke: var(--article-line); stroke-width: 1; }
+  .diagram .grid { stroke: var(--article-line); stroke-width: 1; stroke-dasharray: 2 4; }
+  .diagram .tick { fill: var(--article-faint); font-size: 12px; text-anchor: middle; }
+  .diagram .rowlabels text { fill: var(--article-ink); font-size: 13px; text-anchor: end; }
+  .diagram .values text { fill: var(--article-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .diagram .bar { fill: var(--article-link); }
+  .diagram .bar-muted { fill: var(--article-faint); }
+  .diagram .bar:hover, .diagram .bar-muted:hover { opacity: 0.8; }
+  .diagram .gate { stroke: var(--article-warn); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .diagram .gate-label { fill: var(--article-warn); font-size: 12px; font-weight: 650; }
+  .diagram.chart { border: 1px solid var(--article-line); }
+  @media (max-width: 760px) {
+    .mock-cols { grid-template-columns: 1fr; }
+    .mock-cols > * { min-width: 0; }
+    .mock-grid[style] { grid-template-columns: 1fr !important; }
+    .mock-tabs { overflow-x: auto; }
+  }
+  .variant-grid .variant p { font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main class="article">
+<header class="page">
+  <p class="kicker">Concept · Persona team · Dispatcher</p>
+  <h1>Dispatcher personas</h1>
+  <p class="lede">A new role in the persona team decides which Ready card starts when, what runs in parallel and what is chained, and for packaging personas how findings are cut into cards. Several dispatcher personas with their own rules compete on a replay of real waves, in shadow and alternately live. The owner ranks them by one weighted value.</p>
+  <div class="meta"><span><b>Pattern</b> concept</span><span><b>Status</b> decision-pending</span><span><b>Phase</b> decision-ready</span><span><b>Source card</b> AGT-3974</span><span><b>As of</b> 22 November 2026, develop <code>d3c4eed65</code></span><span><b>Builds on</b> Persona team, <code>docs/persona-team/index.html</code></span></div>
+</header>
+
+<nav class="contents" aria-label="Contents"><a href="#scope">Scope</a> · <a href="#summary">In one paragraph</a> · <a href="#exists">What exists</a> · <a href="#role">Role</a> · <a href="#personas">Starter personas</a> · <a href="#wave">Wave of 17 November</a> · <a href="#competition">Competition</a> · <a href="#criteria">Criteria and value</a> · <a href="#mockups">Mockups</a> · <a href="#cut">Cut of cards</a> · <a href="#foundation">Foundation and gaps</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#slices">Slices</a> · <a href="#implementation">Implementation</a></nav>
+
+<section id="scope">
+<h2><span class="number">01</span> Scope</h2>
+<p>An analysis of 17 and 18 November found that about 40 % of Claude usage was rework. 75 of 95 repeat coding runs since 15 November followed a review that had passed. In each case the delivery conflicted with develop at integration, the agent got a round to include develop, the new delivery went through the full review again, and by then develop had moved again. For Agent Studio the median batch gate latency is 133 minutes (p95 598), 48 % of batches are green, and every delivered card costs 1.9 full suite runs.</p>
+<p>The owner decided the following between 20 and 22 November 2026. This Dossier takes those decisions as fixed and does not reopen them:</p>
+<ul>
+<li>A merge conflict is an orchestration error, and specifically an error of the dispatcher. Selecting and ordering cards must prevent conflicts first. Cheaper conflict handling comes second.</li>
+<li>Integrate first, then test, is the default. Only the automated tests move behind integration, and the model review aspects stay in front of it. This is configurable, and the fast mode is the default. For Agent Studio, develop and Stage get a light base suite and are then deployed. Only a Production release gets the full suite.</li>
+<li>Efficiency comes before lead time.</li>
+<li>The selection knows several strategies and applies them. Strategies belong to the persona and role model, and personas compete with each other.</li>
+<li>The owner reviews personas by criteria that combine into one weighted value. The weights start with optimistic defaults, and the owner adjusts them afterwards.</li>
+<li>A persona whose strategy is packaging may recut cards, merging overlapping findings into one larger card or into a chain. Every persona has its own rules.</li>
+</ul>
+<p>This is a concept and changes no product code. It defines the role, five starter personas, the competition, the criteria and their weights, the two pages, and how cards are cut. It then splits the work into twelve slices that can be promoted to cards. Its main evidence is a replay of the 57 playthrough cards of 17 November. The replay was rebuilt from git, and its data and script are in <a href="replay/README.md">replay/</a>. <a href="README.md">README.md</a> lists every file of this Dossier.</p>
+<h3 id="coverage">Coverage of the card</h3>
+<table>
+<thead><tr><th>Card item</th><th>Where it is worked out</th></tr></thead>
+<tbody>
+<tr><td>1 · Role: charter, rights, reporting duty, capability model</td><td><a href="#role">Role</a> (charter, how a dispatcher runs, rights, reporting duty, place in the capability model); decisions DS-D1 to DS-D3</td></tr>
+<tr><td>2 · Starter personas, inputs, precision of <code>detectedAreas</code></td><td><a href="#personas">Starter personas</a> (Queue keeper, Area warden, Surveyor, Historian, Packer, each with rules and inputs); <a href="#areas-precision">Area precision</a>; decision DS-D4</td></tr>
+<tr><td>3 · Competition: replay, shadow, alternating live; first wave</td><td><a href="#wave">Wave of 17 November</a>; <a href="#competition">Competition</a> with cost and validity; <a href="#replay-results">Replay results</a>; <a href="#exposure-window">Exposure window</a>; decisions DS-D6 and DS-D10</td></tr>
+<tr><td>4 · Criteria, weighted value, default weights, character sheet, review page</td><td><a href="#criteria">Criteria and value</a>; <a href="#mockups">Mockups</a>; decision DS-D7</td></tr>
+<tr><td>5 · Cut of cards: waves, oversized cards, collection cards</td><td><a href="#cut">Cut of cards</a>; decision DS-D8</td></tr>
+<tr><td>6 · Foundation and gaps</td><td><a href="#exists">What exists</a>; <a href="#foundation">Foundation and gaps</a>; decision DS-D5</td></tr>
+<tr><td>7 · Decisions with recommendations; slices ordered by area</td><td><a href="#open-decisions">Open decisions</a> DS-D1 to DS-D10; <a href="#slices">Slices</a> DS-0 to DS-11 with <code>dependsOn</code> in <code>workbench.json</code>, checked by <code>replay/check_dossier.py</code></td></tr>
+</tbody>
+</table>
+</section>
+
+<section id="summary">
+<h2><span class="number">02</span> In one paragraph</h2>
+<p>The dispatcher is a persona role whose decisions are pure rules, not model sessions. Each dispatcher persona names a versioned strategy, which is a rule set evaluated in the orchestration decision library. The strategy gets typed facts: the Ready queue with owner pins and dependencies, the free slots, a touch forecast per card, and the conflict ledger. It returns a dispatch plan: an order, holds, chains, and admit or serialize for every free slot. Exactly one persona per project is live and its plan feeds the pick-gate. All other personas run in shadow. They compute their plan on the same facts at the same moment, and the plan is recorded but never applied. Models are used only for recut texts and the optional weekly narrative, so a dispatcher's own token cost stays small. After every wave the real changed files are known, so every persona's plan can be scored on the same cards: conflicts per 100 integrated cards, tokens per accepted card, share of rework, forecast accuracy, parallelism used, lead time, the persona's own cost, and the quality of its decision log. The weighted sum of these is multiplied by a parallelism gate, so that no persona can win by leaving slots empty. Replayed on the 17 November wave with instant integration, today's order would have run 31 overlapping pairs in parallel and sent 20 cards into a develop sync. In the real history 21 cards needed one. An Area warden that uses forecast modules instead of today's keyword areas would have sent 7. Even a planner that knows the real files used only 62 % of four slots on this wave without a conflict. Separation helps only if it covers the whole <b>exposure window</b>. A card stays exposed until it integrates, but today's pick-gate compares a candidate only with cards that are still coding. With an integration lag of one card duration, a check against running cards leaves 29 to 35 of the 57 cards needing a sync under every strategy. A check against every started card that has not integrated yet brings the forecast personas down to 12 to 15.</p>
+</section>
+
+<section id="exists">
+<h2><span class="number">03</span> What exists</h2>
+<p>Most of the building blocks exist, but they are not connected. The most important finding has two parts. The local pick-gate already declares a scope from the paths named in a card's prompt and refuses to run two overlapping cards together. The remote claim path, which ran the 17 November wave, applies no scope rule at all. Neither path compares a candidate with cards that finished coding but have not integrated yet.</p>
+<table>
+<thead><tr><th>Building block</th><th>State at <code>d3c4eed65</code></th><th>What the dispatcher takes from it</th></tr></thead>
+<tbody>
+<tr><td>Ready order</td><td><code>LaneSortStrategies.LaneEntry</code> is the default for every lane. Owner-dragged cards (<code>order</code> below 999) sit on top, and the rest flow newest arrival first. <code>LaneSortApplier.PickupOrder</code> interleaves projects by rank.</td><td>The baseline persona's order. Owner pins become a hard constraint for every persona.</td></tr>
+<tr><td>Dependencies</td><td><code>TaskReferences.DependsOn</code> (a DAG, validated). <code>WaitsOn</code> and <code>PickupHold</code> hold a card until its dependencies are delivered. Dossier promotion writes these edges.</td><td>Chains are plain <code>dependsOn</code> edges with an origin. The dispatcher may remove only edges it created itself.</td></tr>
+<tr><td>Pick-gate</td><td><code>ParallelSlotPolicy.Decide</code>: no free slot, exclusive running, read-only, scope overlap, otherwise admit. The local runner fills <code>TaskParallelism.PredictedScope</code> in <code>ProjectRunner.PredictParallelism</code>: the parent directory of every <code>backend/</code>, <code>frontend/</code>, <code>src/</code>, <code>docs/</code> or <code>tools/</code> path named in the title or <code>prompt.md</code>, at most 24, compared by prefix. A prompt without such a path has unknown scope and is admitted optimistically. The comparison set is <code>ActiveRuns</code>, the cards that are coding at that moment. The remote claim in <code>LeaseEndpoints</code> takes candidates in <code>LaneSortApplier.PickupOrder</code> and checks project slots, but it does not call the scope rule.</td><td>The admission point and a crude forecast. The dispatcher applies the rule on both claim paths, compares with every in-flight card (DS-0), and later replaces the prompt-path scope with its forecast (DS-6).</td></tr>
+<tr><td>Area detection</td><td><code>IntakeRunner.DetectTaskAreas</code>: substring needles for eight areas over title, type, tags and prompt. The result goes into <code>enrichmentReport.detectedAreas</code>.</td><td>Not usable for separation (see <a href="#areas-precision">Area precision</a>). It stays the selector for prompt enrichment.</td></tr>
+<tr><td>Conflict evidence</td><td><code>IntegrationConflictReport</code>: three stages, up to 20 conflicted files, integration tip and delivery SHA. It is held as <code>TaskIntegrationFailure.ConflictReport</code>, the latest failure of one card.</td><td>The raw material. Missing: history, the partner card that landed the colliding change, and the dispatcher decision that admitted both.</td></tr>
+<tr><td>Batch formation</td><td><code>BatchFormationPolicy</code> with overlap <code>separate</code> keeps cards whose real changed paths overlap out of one batch. It refuses when the diff is unavailable.</td><td>The same path-overlap rule, applied after delivery. The dispatcher applies it before the start with forecast paths.</td></tr>
+<tr><td>Review packages</td><td><code>ReviewPackageFormationPolicy</code> (AGT-3400) packs the cards of one Dossier into one review within a member cap and a material budget.</td><td>Precedent for packaging. Recut packages and chains stay compatible with it.</td></tr>
+<tr><td>Round accounting</td><td><code>CardRunLedgerPolicy</code>, <code>CardRoundBudgetPolicy</code> and <code>DeliveryChainPolicy</code> (<code>QueueMergeRound</code> when a delivery must be reconciled with develop).</td><td>The rework rounds and merge rounds that count against a persona.</td></tr>
+<tr><td>Test placement</td><td><code>testing.mode</code> is <code>pre-merge</code> or <code>post-merge</code>, with pre-merge as the code default. <code>testing.perCard</code> is <code>affected</code> or <code>full</code>.</td><td>Integrate-first is the owner's new default. A clean merge that turns develop red counts as a semantic conflict (see <a href="#criteria">Criteria</a>).</td></tr>
+<tr><td>Persona team PT-1 to PT-12</td><td>Delivered: descriptors under <code>backend/Policies/personas/</code>, activation, principals, scheduling and admission with the budget ledger (<code>PersonaSchedulingService</code>, <code>PersonaBudgetWeek</code>), occurrence receipts, the Team page and persona page, the character sheet, managers.</td><td>The role and descriptor frame, the budget and occurrence receipts, the pages.</td></tr>
+<tr><td>Chief of staff</td><td><code>PersonaManagerPolicy</code>: <code>card.requeue</code> only for cards from persona proposals, Backlog and Ready only, at most 5 moves a day.</td><td>Priority stays with the chief of staff. The dispatcher only orders inside a priority class.</td></tr>
+<tr><td>Capability addendum PT-13 to PT-20</td><td>Decision pending since 10 November: role template plus persona instances, assignment scopes, the capability catalogue, grant rows, explicit time-boxed T2 grants, usage records, the append-only log.</td><td>The dispatcher is the first role that needs these. Its slices do not wait for them. DS-5 brings its own allow list and decision log, with the operation names of the catalogue and the fields of <code>PersonaLogEntryV1</code>, so that PT-15 and PT-18 can take them over as data when they land.</td></tr>
+</tbody>
+</table>
+</section>
+
+<section id="role">
+<h2><span class="number">04</span> Role</h2>
+<h3>Charter</h3>
+<div class="callout" data-tone="accent"><p><b>Dispatcher.</b> Decide which Ready card starts when, what runs alongside what, and what is chained, so that cards integrate without conflicts at the lowest token cost per accepted card while using the parallel slots the work allows. Explain every decision. Never change what a card asks for. Never move a card into Progress, Review, Human review or Done. Never lower a priority or move an owner pin. Never remove a dependency set by the owner, a Dossier or another persona. Never raise the slot count.</p></div>
+<h3>How a dispatcher runs</h3>
+<p>Dispatch decisions are frequent and cheap, so they must not be model sessions. A slot frees several times an hour, and a persona occurrence is a five-minute session that runs at most seven to ten times a week. A dispatcher persona is therefore a descriptor that names a <b>strategy</b>: a versioned rule set with parameters, evaluated by a pure policy in <code>orchestration-decisions/</code>, as the repository requires for orchestration rules. The host collects the facts, calls the policy, and applies the returned plan. The persona's sessions do the rest: the weekly report and, for packaging personas, the text of recut proposals.</p>
+<figure>
+<svg class="diagram" viewBox="0 0 960 430" role="img" aria-labelledby="flow-title flow-desc">
+<title id="flow-title">How a dispatcher decision flows</title>
+<desc id="flow-desc">Facts flow into the live persona's strategy and into every shadow persona's strategy. The live plan goes to the pick-gate, which starts runs. Integration results and real changed files flow into the conflict ledger and the review projection, which score live and shadow plans alike.</desc>
+<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker><marker id="arrm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead-muted" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="zone" x="12" y="20" width="220" height="390" rx="10"/><text class="zone-label" x="28" y="44">Facts</text>
+<rect class="node" x="28" y="60" width="188" height="56" rx="8"/><text class="label" x="42" y="84">Ready queue</text><text class="sub" x="42" y="104">pins, priority, dependsOn</text>
+<rect class="node" x="28" y="128" width="188" height="56" rx="8"/><text class="label" x="42" y="152">Slots and runs</text><text class="sub" x="42" y="172">free slots, running cards</text>
+<rect class="focus" x="28" y="196" width="188" height="56" rx="8"/><text class="label" x="42" y="220">Touch forecast</text><text class="sub" x="42" y="240">files, modules, confidence</text>
+<rect class="focus" x="28" y="264" width="188" height="56" rx="8"/><text class="label" x="42" y="288">Conflict ledger</text><text class="sub" x="42" y="308">pairs, files, decisions</text>
+<rect class="node" x="28" y="332" width="188" height="56" rx="8"/><text class="label" x="42" y="356">Source wave</text><text class="sub" x="42" y="376">findings, size prior</text>
+<rect class="zone" x="262" y="20" width="300" height="390" rx="10"/><text class="zone-label" x="278" y="44">Strategies (pure policy)</text>
+<rect class="focus" x="278" y="64" width="268" height="84" rx="8"/><text class="label" x="294" y="90">Live persona</text><text class="sub" x="294" y="111">one per project, holds the dispatch lease</text><text class="sub" x="294" y="131">returns order, holds, chains, admissions</text>
+<rect class="node" x="278" y="170" width="268" height="72" rx="8"/><text class="label" x="294" y="196">Shadow personas</text><text class="sub" x="294" y="217">same facts, same moment</text><text class="sub" x="294" y="234">plan recorded, never applied</text>
+<rect class="node" x="278" y="264" width="268" height="72" rx="8"/><text class="label" x="294" y="290">Persona sessions</text><text class="sub" x="294" y="311">recut texts, weekly report</text><text class="sub" x="294" y="328">model use within allowance</text>
+<rect class="zone" x="592" y="20" width="356" height="390" rx="10"/><text class="zone-label" x="608" y="44">Platform</text>
+<rect class="node" x="608" y="64" width="150" height="84" rx="8"/><text class="label" x="622" y="92">Pick-gate</text><text class="sub" x="622" y="113">ParallelSlotPolicy</text><text class="sub" x="622" y="131">+ dispatch plan</text>
+<rect class="node" x="782" y="64" width="150" height="84" rx="8"/><text class="label" x="796" y="92">Runs</text><text class="sub" x="796" y="113">coding, review</text><text class="sub" x="796" y="131">integrate, test</text>
+<rect class="node" x="782" y="186" width="150" height="72" rx="8"/><text class="label" x="796" y="212">Integration</text><text class="sub" x="796" y="233">real changed files</text><text class="sub" x="796" y="250">conflicts, rounds</text>
+<rect class="focus" x="608" y="300" width="324" height="88" rx="8"/><text class="label" x="622" y="326">Review projection</text><text class="sub" x="622" y="347">scores live and shadow plans on the same cards</text><text class="sub" x="622" y="366">criteria, weighted value, parallelism gate</text>
+<path class="edge" d="M232 106 H272" marker-end="url(#arr)"/><path class="edge" d="M232 206 H272" marker-end="url(#arr)"/><text class="edge-label" x="236" y="98">facts</text>
+<path class="edge" d="M546 106 H602" marker-end="url(#arr)"/><text class="edge-label" x="554" y="98">plan</text>
+<path class="edge" d="M758 106 H776" marker-end="url(#arr)"/>
+<path class="edge" d="M857 148 V180" marker-end="url(#arr)"/>
+<path class="edge" d="M857 258 V294" marker-end="url(#arr)"/>
+<path class="edge-muted" d="M546 206 C580 206 580 344 602 344" marker-end="url(#arrm)"/><text class="sub" x="478" y="256">recorded</text>
+<path class="edge-muted" d="M782 222 H580 V398 H246 V292 H222" marker-end="url(#arrm)"/><text class="sub" x="330" y="392">ledger entries</text>
+</svg>
+<figcaption>Proposed flow. Blue boxes are new. Only the live persona's plan reaches the pick-gate. Shadow plans and the live plan are scored by the same projection once the real changed files are known.</figcaption>
+</figure>
+
+<h3>Rights</h3>
+<p>Rights are capability-catalogue operations granted per persona (PT-D15, PT-D16). The tier follows the persona team rule. T1 is a bounded, reversible action under a standing grant. T2 is anything that bypasses a check, and it needs an explicit, time-boxed owner grant with a use cap (PT-D17). Shadow personas hold only <code>observe</code> and <code>dispatch.shadow.record</code>.</p>
+<table>
+<thead><tr><th>Operation</th><th>Tier</th><th>Bounds</th></tr></thead>
+<tbody>
+<tr><td><code>dispatch.plan.write</code>: order the Ready lane</td><td>T1</td><td>Writes the persona's dispatch plan, not the lane <code>order</code> field. Owner pins and <code>urgent</code> cards keep their place. Order only within a priority class set by the owner or the chief of staff.</td></tr>
+<tr><td><code>dispatch.hold</code> and <code>dispatch.release</code></td><td>T1</td><td>Each hold needs a reason code and names what it waits for. At most 24 hours, renewable once, then the card is released or the hold becomes a decision request. At most 25 % of the Ready lane may be held at once.</td></tr>
+<tr><td><code>dispatch.dependency.add</code></td><td>T1</td><td>Only between Backlog and Ready cards of one project. Cycles are refused by the existing DAG check. The edge records <code>origin: dispatch:&lt;persona&gt;</code>.</td></tr>
+<tr><td><code>dispatch.dependency.remove</code></td><td>T1 for own edges, T2 otherwise</td><td>Removing an edge set by the owner, a Dossier promotion or another persona bypasses a check, so it is T2.</td></tr>
+<tr><td><code>dispatch.exclusive.set</code></td><td>T1</td><td>Marks a card as run-alone (<code>TaskParallelism.Exclusive</code>), for example one forecast over 3 modules. At most 2 at a time per project.</td></tr>
+<tr><td><code>dispatch.recut.propose</code></td><td>T1, packaging personas only</td><td>A draft package or chain with source links, published as a persona proposal item.</td></tr>
+<tr><td><code>dispatch.recut.apply</code></td><td>T1 within bounds, otherwise T2</td><td>T1 only for cards from automated sources (playthrough, review findings, scout) that have not started, with a 24-hour undo that restores the originals. Cards the owner wrote, cards that have started, and cross-Dossier merges are T2.</td></tr>
+<tr><td>Admit past a check</td><td>T2</td><td>Starting a card whose dependency is not delivered, admitting into a frozen area during a release freeze, admitting despite an exclusive run. Each needs an explicit owner grant with an expiry and a use cap.</td></tr>
+<tr><td>Change slot count or test placement</td><td>not grantable</td><td>Capacity and test placement are owner settings (fluid capacity, <code>testing.mode</code>).</td></tr>
+</tbody>
+</table>
+<p>Reads granted by the role template: card metadata and prompts of Backlog and Ready (internal), forecasts, the conflict ledger, run and round ledgers, token use per card, slot state. Not granted: run logs, secrets, chat.</p>
+
+<h3>Reporting duty</h3>
+<ul>
+<li><b>Every decision</b> writes one entry in the dispatcher log, which uses the fields of <code>PersonaLogEntryV1</code> (PT-D18): decision id, strategy and revision, the rule that fired, the digest of the facts, the candidates it passed over and why, the expected overlap, and a templated reason of at most 280 characters. Shadow decisions write the same entry, marked shadow.</li>
+<li><b>Every wave</b> gets a model-free summary item in the persona feed once its last card integrates: cards, conflicts and their attribution, holds over 4 hours, chains, recuts, forecast accuracy, parallelism used.</li>
+<li><b>Every week</b> a report from the template <code>dispatcher-v1</code>, composed deterministically. One optional model call within the allowance writes the narrative.</li>
+<li><b>Immediately</b>: every conflict attributed to the live persona becomes a feed item with importance from a fact floor of 60, so it reaches the magazine.</li>
+</ul>
+
+<h3>Place in the capability model</h3>
+<table>
+<thead><tr><th>Persona team concept</th><th>For the dispatcher</th></tr></thead>
+<tbody>
+<tr><td>Role template (PT-D13)</td><td>One role <code>dispatcher</code>, kind <code>dispatcher</code>, aspect <code>delivery</code>. The template carries the charter, the default grants above, the report template and the floors.</td></tr>
+<tr><td>Persona instance</td><td>Each starter persona is an instance with its own strategy reference and parameters, principal (<code>opa_persona_*</code>), log, budget and page.</td></tr>
+<tr><td>Assignment (PT-D14)</td><td>Project scope. Conflicts happen inside one repository, so a dispatcher is assigned to one project. The same persona may be assigned to several projects, each with its own lease and record.</td></tr>
+<tr><td>Grants (PT-D16)</td><td>Grant rows per persona and project. Live mode needs <code>dispatch.plan.write</code>, <code>hold</code> and <code>dependency.add</code>. Shadow mode needs <code>observe</code> and <code>dispatch.shadow.record</code>.</td></tr>
+<tr><td>Usage (PT-D19)</td><td>One <code>PersonaUsageRecordV1</code> per applied operation. Shadow decisions are logged, but they are not usage.</td></tr>
+<tr><td>T2 (PT-D17)</td><td>Only the bypasses listed above. No standing T2.</td></tr>
+<tr><td>Enforcement (PT-D20)</td><td>The policy step refuses an operation without a grant. The pick-gate ignores a plan whose lease is not current.</td></tr>
+<tr><td>Budget (PT-D3)</td><td>Allowance 20,000 tokens a week per persona (the hot path is model-free). Packaging personas get 60,000 for recut texts. Exhaustion stops the model work only. The rules keep dispatching, and recut proposals become model-free stubs.</td></tr>
+<tr><td>Managers</td><td>The chief of staff sets priority. The dispatcher sequences inside it. The budget steward may pause a dispatcher's model work, not its rules. Pausing the live dispatcher hands the lease to the baseline persona.</td></tr>
+</tbody>
+</table>
+</section>
+
+<section id="personas">
+<h2><span class="number">05</span> Starter personas</h2>
+<p>Five personas, each with one strategy and its own rules. All of them respect owner pins, <code>urgent</code>, priority classes, <code>dependsOn</code>, exclusive runs and the slot count. Unless noted, all of them are work-conserving: when the head card must wait, they look further down the queue for an admissible card rather than leaving a slot empty.</p>
+<div class="variant-grid">
+<article class="variant"><h3>Queue keeper · baseline</h3>
+<p><b>Strategy</b> <code>lane-entry-v1</code>. Today's behaviour, kept as the control group: owner pins first, then newest arrival, and any card is admitted when a slot is free (unknown scope is optimistic).</p>
+<p><b>Inputs</b> Ready lane, pins, <code>dependsOn</code>, free slots. <b>Model</b> none. <b>Rights</b> none beyond observe. When it is live, its plan equals today's pick order.</p>
+<p><b>Rules</b> No holds, no chains, no recut. It never retires: it is the reference every other persona is measured against, and the fallback when a live persona is paused or exceeds the guard.</p></article>
+<article class="variant"><h3>Area warden</h3>
+<p><b>Strategy</b> <code>one-per-area-v1</code>. Never two cards of one area at a time.</p>
+<p><b>Inputs</b> Touch forecast, reduced to <b>modules</b>: <code>frontend/src/app/features/&lt;x&gt;</code>, <code>frontend/src/app/&lt;x&gt;</code>, <code>frontend/e2e/&lt;x&gt;</code>, <code>backend/Features/&lt;X&gt;</code>, <code>orchestration-decisions</code>, <code>runner</code>. Not <code>detectedAreas</code>.</p>
+<p><b>Rules</b> Hub files (<code>Program.cs</code>, <code>RoutePermissionCatalog.cs</code>, <code>task.model.ts</code>, extendable) do not define an area. A card without a forecast has the area <code>unknown</code>, and only one such card runs at a time. A card forecast over more than 3 modules runs exclusive. <b>Model</b> none.</p></article>
+<article class="variant"><h3>Surveyor</h3>
+<p><b>Strategy</b> <code>file-overlap-v1</code>. Estimates the touched files per card and separates only on real overlap.</p>
+<p><b>Inputs</b> Forecast files with confidence. Optionally, a model-assisted forecast at Ready entry (rule parameter <code>forecast: model-assisted</code>, about 3,000 tokens per card, charged to the persona).</p>
+<p><b>Rules</b> Serialize when two forecasts share at least one non-hub file. A low-confidence forecast (no cited path) falls back to module level. Skip ahead to fill slots with disjoint cards. Its forecast files replace the prompt-path scope in <code>PredictedScope</code>, so the existing pick-gate rule fires on forecast files instead of on whatever paths a prompt happens to name.</p></article>
+<article class="variant"><h3>Historian</h3>
+<p><b>Strategy</b> <code>ledger-learned-v1</code>. Learns from the conflict ledger.</p>
+<p><b>Inputs</b> The ledger (card pairs, partner card, files, base SHA), the real changed files of delivered cards, the forecast.</p>
+<p><b>Rules</b> Surveyor rules plus: a module that took part in a conflict within 14 days is <b>hot</b>, and only one card at a time may touch it. Two cards that collided never run together again in their recovery rounds. A source whose earlier wave had a mean partner count above 5 is chained by default. With an empty ledger it behaves exactly like the Surveyor. <b>Model</b> none.</p></article>
+<article class="variant"><h3>Packer</h3>
+<p><b>Strategy</b> <code>package-then-chain-v1</code>. Packages overlapping findings before the start.</p>
+<p><b>Inputs</b> Forecast, the source wave (findings and their source card), a size prior per source kind (median real code files of earlier delivered cards from the same kind of source), the ledger.</p>
+<p><b>Rules</b> Merge findings from one source into one card when they share at least 2 non-hub forecast files, at most 3 findings and a size prior of at most 25 code files. Chain the rest of an overlapping cluster in source order. Split proposals for collection cards that touch more than 3 modules. Never package across projects or Dossiers. Then dispatch like the Surveyor. <b>Model</b> recut title and prompt, within its allowance. <b>Rights</b> <code>dispatch.recut.*</code>.</p></article>
+</div>
+
+<h3 id="areas-precision">Area precision</h3>
+<p><code>enrichmentReport.detectedAreas</code> is not precise enough to separate cards. <code>DetectTaskAreas</code> looks for substrings such as <code>card</code>, <code>ui</code>, <code>state</code>, <code>service</code> or <code>api</code> in the whole prompt. On the source text of the 55 wave cards that have one, it tagged 53 cards <code>frontend</code> and 48 <code>backend</code>, with 3.6 areas per card on average. As an overlap test it flags 1,482 card pairs, while 342 pairs really share a code file. That is a precision of 0.23. A warden that uses these areas runs no conflicts, but it falls back to almost sequential work: on the replay it uses 27 % of four slots and needs 53 rounds instead of 15. The same matcher tagged this concept card, which changes only documents, as <code>frontend</code> and <code>git</code> and attached the design-token and git rules to its prompt. Detected areas remain useful for what they were built for, which is choosing enrichment blocks. Separating cards needs file paths.</p>
+<table>
+<thead><tr><th>Overlap test on the wave</th><th>Pairs flagged</th><th>Precision</th><th>Recall</th><th>F1</th></tr></thead>
+<tbody>
+<tr><td>Keyword areas (<code>detectedAreas</code>)</td><td>1,482</td><td>0.23</td><td>0.99</td><td>0.37</td></tr>
+<tr><td>Cited files only</td><td>71</td><td>0.83</td><td>0.17</td><td>0.29</td></tr>
+<tr><td>Today's prompt-path scope (parent directories of cited paths)</td><td>389</td><td>0.43</td><td>0.49</td><td>0.45</td></tr>
+<tr><td>Forecast modules</td><td>503</td><td>0.43</td><td>0.64</td><td>0.52</td></tr>
+<tr><td>Forecast files (cited plus co-change, hubs ignored)</td><td>293</td><td>0.61</td><td>0.52</td><td>0.56</td></tr>
+</tbody>
+</table>
+<p class="dim">Real overlapping pairs: 342 of 1,596. Forecast files are the cited paths plus every file that changed together with a cited file in at least half of its commits between 15 September and 15 November 2026. At file level they find 30 to 52 % of the files each card really changed, against 12 to 42 % for the cited paths alone.</p>
+</section>
+
+<section id="wave">
+<h2><span class="number">06</span> Wave of 17 November</h2>
+<p>The 57 cards AGT-3890 to AGT-3946 were created within one minute and without a single dependency. They came from three playthroughs. Deployment (DP, from AGT-3885) has 20 findings in 18 cards, AGT-3891 to AGT-3908. Incident (IN, from AGT-3886) has 15 findings in 15 cards, AGT-3909 to AGT-3923. Review (RV, from AGT-3888) has 39 findings in 23 cards, AGT-3924 to AGT-3946. AGT-3890 could not be mapped to a playthrough without the board, which the runner cannot reach. It stays in the replay as an unlabelled card with 2 code files.</p>
+<table>
+<thead><tr><th>Source</th><th>Cards</th><th>Files changed, mean</th><th>Code files, mean</th><th>Other cards sharing a code file, mean</th><th>Cards with a develop sync</th><th>Develop sync commits</th></tr></thead>
+<tbody>
+<tr><td>DP · deployment</td><td>18</td><td>19.7</td><td>15.9</td><td>18.8</td><td>12</td><td>35</td></tr>
+<tr><td>IN · incident</td><td>15</td><td>25.5</td><td>18.7</td><td>20.9</td><td>7</td><td>32</td></tr>
+<tr><td>RV · review findings</td><td>23</td><td>8.8</td><td>6.8</td><td>1.3</td><td>2</td><td>4</td></tr>
+</tbody>
+</table>
+<p>The owner's figures (16 to 19 partners for DP and IN cards, 0.7 for RV cards) are slightly lower. This count takes the union over every rewritten copy of a card's own commits, so it includes files a later rewrite dropped. The hottest files were <code>backend/Host/Program.cs</code> (14 cards), <code>deploy-area.model.ts</code> (13), <code>project-deploy-area.spec.ts</code> (12) and <code>ProjectEnvironmentService.cs</code> (11). IN-13 (AGT-3921) changed 66 files and merged develop six times. DP-7 (AGT-3897) has nine develop sync commits.</p>
+<p>The wave consists of two very different populations. 33 DP and IN cards form one dense overlap cluster. 23 RV cards are small and nearly disjoint. This is the most useful property for a dispatcher: the RV cards can fill parallel slots while the dense cluster runs as chains.</p>
+</section>
+
+<section id="competition">
+<h2><span class="number">07</span> Competition</h2>
+<table>
+<thead><tr><th>Method</th><th>How</th><th>Cost</th><th>Validity</th></tr></thead>
+<tbody>
+<tr><td><b>Replay on history</b></td><td>Every persona plans a past wave with the information it would have had before the start: forecast built only from history before the wave, and the ledger up to that day. The real changed files then count the overlaps each plan would have run in parallel.</td><td>CPU seconds, no tokens. Needs the wave's cards, their real files, and a dated co-change index.</td><td>Conflicts are counterfactual, with a shared file as the upper bound. Tokens are estimated from rounds. It cannot see how agents behave differently in a chain or a package. Hindsight leaks in unless the forecast is dated.</td></tr>
+<tr><td><b>Shadow</b></td><td>The live persona decides. Every other persona computes its plan on the same facts at the same moment, and the plan is recorded. After integration, the plans are scored on the real files like a replay.</td><td>Near zero: the decisions are model-free. Storage of plans.</td><td>The information state at decision time is real: the queue, the forecast and the arrivals as they were. The outcomes of non-live personas stay counterfactual.</td></tr>
+<tr><td><b>Alternating live</b></td><td>The lease moves between personas by wave window within one project. A card keeps the admission it started under, and the conflicts of a card count against the persona that admitted it.</td><td>Real: a weak persona costs real rework. Guarded by automatic fallback.</td><td>Real conflicts and real tokens. Confounded by different wave mixes, so many waves are needed. By project would confound with project differences. By time of day would split waves.</td></tr>
+</tbody>
+</table>
+<figure>
+<svg class="diagram" viewBox="0 0 960 170" role="img" aria-labelledby="ladder-title ladder-desc">
+<title id="ladder-title">Recommended competition order</title>
+<desc id="ladder-desc">Three steps from left to right: replay on history, shadow, alternating live. Each step has an entry condition.</desc>
+<defs><marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="focus" x="16" y="30" width="276" height="110" rx="10"/><text class="label" x="34" y="60">1 · Replay</text><text class="sub" x="34" y="84">17 November wave, then the last</text><text class="sub" x="34" y="102">30 days rebuilt from git and the ledger</text><text class="sub" x="34" y="124">Gate: beats baseline on conflicts</text>
+<rect class="node" x="342" y="30" width="276" height="110" rx="10"/><text class="label" x="360" y="60">2 · Shadow</text><text class="sub" x="360" y="84">all personas, baseline live</text><text class="sub" x="360" y="102">at least 100 integrated cards, 2 waves</text><text class="sub" x="360" y="124">Gate: top two by value, gate passed</text>
+<rect class="node" x="668" y="30" width="276" height="110" rx="10"/><text class="label" x="686" y="60">3 · Alternating live</text><text class="sub" x="686" y="84">top two by wave window, per project</text><text class="sub" x="686" y="102">guard: fall back to baseline</text><text class="sub" x="686" y="124">champion after 4 waves each</text>
+<path class="edge" d="M292 85 H336" marker-end="url(#arr2)"/><path class="edge" d="M618 85 H662" marker-end="url(#arr2)"/>
+</svg>
+<figcaption>Recommended order. Replay is free and runs first. Shadow then validates on real decision-time facts. Only the top two go live, alternately, behind a guard.</figcaption>
+</figure>
+<p><b>Champion and challenger.</b> The live persona is the champion. A challenger replaces it when its weighted value is at least 5 points higher over at least 100 integrated cards and two waves in shadow, and stays ahead over four alternating live waves. <b>Guard:</b> if the live persona's conflicts per 100 integrated cards over its last 20 cards exceed the baseline's shadow value for the same cards by 10 or more, the platform hands the lease back to the Queue keeper. This is a T1 platform action with a feed item at importance 70, and the owner can undo it.</p>
+
+<h3 id="replay-results">Replay results</h3>
+<p>Model: four equal slots, every card one unit of time, integration at the end of a run (the exposure window below drops this assumption). A card is exposed when a card that shares a real code file integrates while it runs, and the later of the two needs a develop sync. As a robustness check the same replay ran with six slots and with durations that grow with card size. The same three personas stayed on top in every run (forecast-module Area warden, Packer, Historian), but their order changed. See the robustness table.</p>
+<figure>
+<svg class="diagram chart" viewBox="0 0 960 330" role="img" aria-labelledby="c1-title c1-desc">
+<title id="c1-title">Cards needing a develop sync, of 57</title>
+<desc id="c1-desc">Replay with four slots and unit durations. Queue keeper 20, keyword Area warden 0, forecast-module Area warden 7, Surveyor 11, Historian 9, Packer 9. Observed in the real history: 21.</desc>
+<text class="zone-label" x="16" y="24">Cards needing a develop sync, of 57 · replay, 4 slots</text>
+<g class="axis"><line x1="300" y1="40" x2="300" y2="300"/><line x1="300" y1="300" x2="900" y2="300"/>
+<text class="tick" x="300" y="320">0</text><text class="tick" x="450" y="320">5</text><text class="tick" x="600" y="320">10</text><text class="tick" x="750" y="320">15</text><text class="tick" x="900" y="320">20</text>
+<line class="grid" x1="450" y1="40" x2="450" y2="300"/><line class="grid" x1="600" y1="40" x2="600" y2="300"/><line class="grid" x1="750" y1="40" x2="750" y2="300"/><line class="grid" x1="900" y1="40" x2="900" y2="300"/></g>
+<g class="rowlabels">
+<text x="288" y="62">Observed history</text><text x="288" y="98">Queue keeper</text><text x="288" y="134">Area warden, keyword</text><text x="288" y="170">Area warden, modules</text><text x="288" y="206">Surveyor</text><text x="288" y="242">Historian</text><text x="288" y="278">Packer</text></g>
+<rect class="bar-muted" x="300" y="48" width="630" height="20" rx="4"><title>Observed history: 21 cards had at least one develop sync commit</title></rect>
+<rect class="bar" x="300" y="84" width="600" height="20" rx="4"><title>Queue keeper: 20 cards, 31 overlapping pairs run in parallel</title></rect>
+<rect class="bar" x="300" y="120" width="2" height="20" rx="1"><title>Area warden, keyword areas: 0 cards</title></rect>
+<rect class="bar" x="300" y="156" width="210" height="20" rx="4"><title>Area warden, forecast modules: 7 cards</title></rect>
+<rect class="bar" x="300" y="192" width="330" height="20" rx="4"><title>Surveyor: 11 cards</title></rect>
+<rect class="bar" x="300" y="228" width="270" height="20" rx="4"><title>Historian: 9 cards</title></rect>
+<rect class="bar" x="300" y="264" width="270" height="20" rx="4"><title>Packer: 9 cards, 6 runs saved by packages</title></rect>
+<g class="values"><text x="938" y="63">21</text><text x="908" y="99">20</text><text x="310" y="135">0, at 27 % slot use</text><text x="518" y="171">7</text><text x="638" y="207">11</text><text x="578" y="243">9</text><text x="578" y="279">9</text></g>
+</svg>
+<figcaption>Replay of the 17 November wave (<a href="replay/replay.py">replay.py</a>). The baseline matches the observed history: 20 cards against 21 cards that really merged develop at least once. Admit-all is the right model of today for this wave, because at least ten of its cards demonstrably ran through the remote claim, which applies no scope rule (<a href="replay/remote-claim-evidence.md">remote claim evidence</a>). The match is a plausibility check, not a calibration: slot count and integration timing of the real wave are not known. The grey bar is the observed count.</figcaption>
+</figure>
+<figure>
+<svg class="diagram chart" viewBox="0 0 960 300" role="img" aria-labelledby="c2-title c2-desc">
+<title id="c2-title">Parallelism used, share of the conflict-free bound</title>
+<desc id="c2-desc">Slot use divided by the slot use of a planner that knows the real files, capped at 1. Queue keeper 1.00, keyword Area warden 0.44, forecast-module Area warden 0.85, Surveyor 0.89, Historian 0.85, Packer 0.89. The gate is at 0.80.</desc>
+<text class="zone-label" x="16" y="24">Parallelism used · share of the conflict-free bound (62 % of 4 slots)</text>
+<g class="axis"><line x1="300" y1="40" x2="300" y2="262"/><line x1="300" y1="262" x2="900" y2="262"/>
+<text class="tick" x="300" y="282">0</text><text class="tick" x="450" y="282">0.25</text><text class="tick" x="600" y="282">0.5</text><text class="tick" x="750" y="282">0.75</text><text class="tick" x="900" y="282">1</text>
+<line class="grid" x1="450" y1="40" x2="450" y2="262"/><line class="grid" x1="600" y1="40" x2="600" y2="262"/><line class="grid" x1="750" y1="40" x2="750" y2="262"/></g>
+<line class="gate" x1="780" y1="36" x2="780" y2="262"/><text class="gate-label" x="786" y="48">gate 0.8</text>
+<g class="rowlabels"><text x="288" y="62">Queue keeper</text><text x="288" y="98">Area warden, keyword</text><text x="288" y="134">Area warden, modules</text><text x="288" y="170">Surveyor</text><text x="288" y="206">Historian</text><text x="288" y="242">Packer</text></g>
+<rect class="bar" x="300" y="48" width="600" height="20" rx="4"><title>Queue keeper: 1.00 (95 % slot use, but 20 syncs)</title></rect>
+<rect class="bar" x="300" y="84" width="264" height="20" rx="4"><title>Area warden, keyword areas: 0.44</title></rect>
+<rect class="bar" x="300" y="120" width="510" height="20" rx="4"><title>Area warden, forecast modules: 0.85</title></rect>
+<rect class="bar" x="300" y="156" width="534" height="20" rx="4"><title>Surveyor: 0.89</title></rect>
+<rect class="bar" x="300" y="192" width="510" height="20" rx="4"><title>Historian: 0.85</title></rect>
+<rect class="bar" x="300" y="228" width="534" height="20" rx="4"><title>Packer: 0.89</title></rect>
+<g class="values"><text x="908" y="63">1.00</text><text x="572" y="99">0.44</text><text x="818" y="135">0.85</text><text x="842" y="171">0.89</text><text x="818" y="207">0.85</text><text x="842" y="243">0.89</text></g>
+</svg>
+<figcaption>A planner that knows the real files used 62 % of four slots on this wave without a conflict. Parallelism is therefore measured against that bound, not against the slot count.</figcaption>
+</figure>
+<table>
+<thead><tr><th>Persona</th><th>Runs</th><th>Pairs in parallel</th><th>Cards needing sync</th><th>Rounds per card</th><th>Parallelism</th><th>Time</th><th>Value, plain</th><th>Value, gated</th></tr></thead>
+<tbody>
+<tr><td>Queue keeper</td><td>57</td><td>31</td><td>20</td><td>1.35</td><td>1.00</td><td>15</td><td>17</td><td>17</td></tr>
+<tr><td>Area warden, keyword areas</td><td>57</td><td>0</td><td>0</td><td>1.00</td><td>0.44</td><td>53</td><td>81</td><td>45</td></tr>
+<tr><td>Area warden, forecast modules</td><td>57</td><td>8</td><td>7</td><td>1.12</td><td>0.85</td><td>27</td><td>65</td><td>65</td></tr>
+<tr><td>Surveyor</td><td>57</td><td>15</td><td>11</td><td>1.19</td><td>0.89</td><td>26</td><td>52</td><td>52</td></tr>
+<tr><td>Historian</td><td>57</td><td>13</td><td>9</td><td>1.16</td><td>0.85</td><td>27</td><td>58</td><td>58</td></tr>
+<tr><td>Packer</td><td>51</td><td>11</td><td>9</td><td>1.05</td><td>0.89</td><td>26</td><td>67</td><td>67</td></tr>
+<tr><td class="dim">Conflict-free bound</td><td class="dim">57</td><td class="dim">0</td><td class="dim">0</td><td class="dim">1.00</td><td class="dim">1.00</td><td class="dim">23</td><td class="dim">n/a</td><td class="dim">n/a</td></tr>
+</tbody>
+</table>
+<p class="dim">Rounds per card: (runs plus syncs) ÷ 57, a proxy for tokens that counts a package run once although it is longer. Time is in rounds of one card. Values use the default weights below, with own cost and explanation not measurable in a replay and left out.</p>
+<table>
+<thead><tr><th>Robustness</th><th>Queue keeper</th><th>Warden, keyword</th><th>Warden, modules</th><th>Surveyor</th><th>Historian</th><th>Packer</th></tr></thead>
+<tbody>
+<tr><td>4 slots, size-weighted: syncs · value</td><td>31 · 17</td><td>0 · 53</td><td>9 · 69</td><td>16 · 55</td><td>11 · 66</td><td>12 · 69</td></tr>
+<tr><td>6 slots, unit: syncs · value</td><td>25 · 17</td><td>0 · 40</td><td>7 · 70</td><td>13 · 54</td><td>11 · 59</td><td>10 · 69</td></tr>
+<tr><td>6 slots, size-weighted: syncs · value</td><td>31 · 17</td><td>0 · 57</td><td>11 · 66</td><td>15 · 57</td><td>13 · 61</td><td>16 · 59</td></tr>
+</tbody>
+</table>
+<p><b>Today's prompt-path rule.</b> If the remote claim had applied the local rule, and every card prompt had named its cited paths, the Queue keeper would have sent 10 cards into a sync instead of 20, at 68 % slot use and 21 rounds. With size-weighted durations it would have sent 16 instead of 31. This is an upper bound, because the real prompts are not in git and the cited paths include file names that the replay resolved to full paths. The row stays outside the scored comparison set. It shows that a crude directory scope already removes half the exposure, and that the remaining gain comes from better forecasts.</p>
+
+<h3 id="exposure-window">Exposure window</h3>
+<p>The replay above integrates a card the moment its run ends. In reality a card finishes coding, then waits for the model review aspects and the batch gate (median 133 minutes for Agent Studio), and only then integrates. During that time it holds no slot, but it is still exposed: a card that starts and touches the same file will conflict with it. Today's pick-gate compares a candidate only with <code>ActiveRuns</code>. The replay therefore gained an integration lag, measured in card durations, and two check modes. Mode <i>running</i> compares a candidate with running cards, like today. Mode <i>in flight</i> also compares it with cards that have ended their run but have not integrated.</p>
+<table>
+<thead><tr><th>Run</th><th>Queue keeper</th><th>Warden, keyword</th><th>Warden, modules</th><th>Surveyor</th><th>Historian</th><th>Packer</th><th>Prompt paths</th><th>Bound</th></tr></thead>
+<tbody>
+<tr><td>Lag 0</td><td>20</td><td>0</td><td>7</td><td>11</td><td>9</td><td>9</td><td>10</td><td>0</td></tr>
+<tr><td>Lag 1 · running</td><td>35</td><td>23</td><td>31</td><td>33</td><td>32</td><td>29</td><td>30</td><td>33</td></tr>
+<tr><td>Lag 1 · in flight</td><td>35</td><td>0</td><td>12</td><td>14</td><td>13</td><td>15</td><td>13</td><td>0</td></tr>
+<tr><td>Lag 2 · in flight</td><td>37</td><td>0</td><td>11</td><td>19</td><td>15</td><td>16</td><td>13</td><td>0</td></tr>
+<tr><td>Value · lag 1</td><td>17</td><td>37</td><td>64</td><td>61</td><td>63</td><td>64</td><td class="dim">unscored</td><td class="dim">n/a</td></tr>
+<tr><td>Value · lag 2</td><td>17</td><td>38</td><td>67</td><td>54</td><td>60</td><td>63</td><td class="dim">unscored</td><td class="dim">n/a</td></tr>
+</tbody>
+</table>
+<p class="dim">Cards needing a develop sync, of 57, with four slots and unit durations. Lag 0 is the table above. The value rows are gated values under the in-flight check. Output of <code>python3 -I replay.py</code>, section "exposure window". The Queue keeper admits everything, so its check mode makes no difference. The bound is the planner that knows the real files, under the same lag and check mode. Under lag 1 in flight it uses 35 % of four slots, and under lag 2 it uses 24 %.</p>
+<p>With a lag and a running-only check, separation is close to worthless. Even the planner that knows the real files sends 33 cards into a sync, because the card it waited for is still in review when the next one starts. Checking against in-flight cards restores the protection. The cost is parallelism: at lag 1 the forecast-module warden uses 28 % of four slots and needs 51 rounds instead of 27. The owner's rule that efficiency comes before lead time accepts this cost. Integrate-first, then test, shortens the lag, because the batch gate moves behind integration, and so it buys back part of the lost parallelism. The ranking of the forecast personas holds under the in-flight check: the module warden is first or tied first in both lag runs.</p>
+
+<p>Five findings follow from the replay.</p>
+<ol>
+<li>Separating cards on a forecast cuts the cards needing a develop sync by 45 to 65 %, at a lead time close to the conflict-free bound. The bound is 23 rounds against 26 to 27 for the practical personas.</li>
+<li>The forecast-module Area warden is the most robust. It is first in two of the four runs, tied first in one, and two points behind the Packer (65 against 67) in the base run. No other persona stays within two points of the leader in every run. It needs no model and no recut rights.</li>
+<li>Packaging helps the token side (6 fewer runs and reviews) but not the conflict side. With six slots and size-weighted durations it is worse than the warden. It earns its place through measured tokens, which only shadow and live can show.</li>
+<li>The Historian starts cold on this wave and gains a little over the Surveyor. Its value depends on the ledger, which does not exist yet.</li>
+<li>Every strategy needs the overlap check to cover the whole exposure window, from start to integration, and on both claim paths. Without that, no persona can keep its promise. This is the first slice (DS-0), and it pays off before any persona exists. Today's order with the prompt-path scope and an in-flight check already falls to 13 cards at lag 1, as an upper bound.</li>
+</ol>
+</section>
+
+<section id="criteria">
+<h2><span class="number">08</span> Criteria and value</h2>
+<table>
+<thead><tr><th>Criterion</th><th>Measure</th><th>Source</th><th>Default weight</th></tr></thead>
+<tbody>
+<tr><td>Conflicts per 100 integrated cards</td><td>Cards with an integration conflict, a queued merge round or a develop sync, counted against the persona that admitted the later of the two colliding cards. A clean merge that turns develop red counts as a semantic conflict when red-batch isolation names two cards of the same window with overlapping forecasts.</td><td>Conflict ledger, <code>DeliveryChainPolicy</code> outcomes, batch isolation</td><td>30</td></tr>
+<tr><td>Tokens per accepted card</td><td>All model tokens of accepted cards (coding, review aspects, rework rounds, merge rounds, gate-fix rounds) divided by accepted cards. In shadow: actual tokens minus the rounds the persona would have avoided, marked as estimated.</td><td>Token ledger per card, run ledger</td><td>25</td></tr>
+<tr><td>Share of rework</td><td>Rounds caused by integration (sync, merge, conflict, semantic conflict) divided by all rounds.</td><td>Run ledger</td><td>10</td></tr>
+<tr><td>Forecast accuracy</td><td>F1 of predicted overlapping pairs against real overlapping pairs. File-level F1 per card is shown as detail. Area personas are measured at module level.</td><td>Forecast record, real changed files</td><td>10</td></tr>
+<tr><td>Parallelism used</td><td>Slot time used divided by the slot time of the conflict-free bound on the same cards, capped at 1. It also acts as a gate (below).</td><td>Slot ledger, replay of the bound</td><td>10</td></tr>
+<tr><td>Lead time</td><td>Median hours from Ready to integrated.</td><td>Card timeline</td><td>5</td></tr>
+<tr><td>Own token cost</td><td>The persona's model tokens per 100 dispatched cards.</td><td>Persona occurrence receipts</td><td>5</td></tr>
+<tr><td>Explanation</td><td>Share of decision log entries that pass the deterministic explanation check (names the rule, the facts, the passed-over candidates and the expected effect), weighted 70, plus the owner's rating of sampled entries, weighted 30.</td><td>Persona log, owner rating</td><td>5</td></tr>
+</tbody>
+</table>
+<h3>Weighted value</h3>
+<p>Each criterion becomes a score from 0 to 100 within one comparison set: all personas on the same cards in the same window, with the baseline always included. The best value in the set scores 100 and the worst scores 0. Forecast accuracy and parallelism are already ratios and score as 100 × the ratio. The weighted value is the weighted mean of the scores, multiplied by the <b>parallelism gate</b>, <code>min(1, parallelism ÷ 0.8)</code>.</p>
+<pre><code>value = Σ (weight_c × score_c) ÷ Σ weight_c × min(1, parallelism ÷ gate)      gate = 0.8</code></pre>
+<p>The gate is necessary, not cosmetic. With a plain weighted sum, the keyword Area warden wins the replay with 81 points, by running almost sequentially. Conflicts, tokens and rework all reward an empty slot. With the gate it drops to 45, and the warden that uses forecast modules (65) and the Packer (67) lead. A value is shown only with at least 40 integrated cards per persona in the window. Below that the page says "too few cards", as the persona team does for rates.</p>
+<h3>Optimistic defaults</h3>
+<p>The defaults are optimistic in two ways. They trust every measure from the first wave on, without a discount for thin data or for estimated shadow tokens. They also put 65 of 100 points on efficiency (conflicts, tokens, rework) and only 5 on lead time, as if the forecasts were already good. The first review is expected to correct them. Shadow token estimates, for example, may deserve less weight than real tokens.</p>
+<h3>Changing the weights</h3>
+<p>The review page has a weights panel. The owner enters numbers that must add up to 100, and the panel shows the remainder as they type. The gate threshold sits next to them (default 0.8, range 0.5 to 1). Saving creates a new weight revision with the owner as author, the time, and an optional reason. Raw criterion values are stored per persona and window, so every ranking is recomputed under the new revision, and the history can show the ranking under any earlier revision. Personas can read the weights but cannot change them. Managers cannot change them either. The setting lives in the workspace settings as <code>dispatch.review.weights</code> and is written only by the owner.</p>
+</section>
+
+<section id="mockups">
+<h2><span class="number">09</span> Mockups</h2>
+<p>Static mockups of proposed surfaces, drawn in the article tokens. They show proposed content and make no claim about how the current product looks. The figures come from the replay where it measures them. Everything a replay cannot measure (own tokens, explanation rating, rank) is marked as an example.</p>
+<h3>Character sheet</h3>
+<figure class="mockup media-breakout" id="mock-sheet">
+<div class="mock-frame" role="img" aria-label="Character sheet mockup for the Area warden dispatcher persona: identity, strategy and mode in the header, owner-set attributes with what each changes, the record of the 17 November replay, and a value panel with criterion scores.">
+<div class="mock-bar"><b>Area warden</b><span class="chip">dispatcher</span><span class="chip">strategy one-per-area-v1 · rev 2026.11.1</span><span class="chip accent">Shadow · Agent Studio</span><span class="spacer"></span><span class="chip">principal opa_persona_area-warden</span><span class="chip">Probation · example</span></div>
+<div class="mock-tabs"><span>Decisions</span><span>Waves</span><span>Conflicts</span><span aria-current="page">Sheet</span><span>Budget</span><span>Charter</span><span>History</span></div>
+<div class="mock-body"><div class="mock-cols">
+<div>
+<p class="mock-section-title">Attributes · set by the owner</p>
+<div class="mock-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+<div class="mock-card"><h4>Area key · forecast modules</h4><p>Feature folder per forecast file. Hubs excluded: Program.cs, RoutePermissionCatalog.cs, task.model.ts.</p></div>
+<div class="mock-card"><h4>Caution · 1 module</h4><div class="meter"><span style="width:30%"></span></div><p>Two cards that share one module never run together. Over 3 modules: run alone.</p></div>
+<div class="mock-card"><h4>Hold limit · 24 h</h4><p>Renew once, then release or ask the owner. At most 25 % of Ready held.</p></div>
+<div class="mock-card"><h4>Autonomy · A1 shadow</h4><p>Records plans only. Live needs plan.write, hold and dependency.add.</p></div>
+</div>
+<p class="mock-section-title">Record · replay of 17 November wave · 57 cards · 4 slots</p>
+<div class="stat-grid">
+<div class="stat"><b>57</b><span>cards planned</span></div>
+<div class="stat"><b>8</b><span>pairs run in parallel</span></div>
+<div class="stat"><b>7</b><span>cards needing sync · baseline 20</span></div>
+<div class="stat"><b>12.3</b><span>conflicts per 100</span></div>
+<div class="stat"><b>1.12</b><span>rounds per card · baseline 1.35</span></div>
+<div class="stat"><b>0.85</b><span>parallelism vs bound</span></div>
+<div class="stat"><b>0.52</b><span>forecast F1 · module pairs</span></div>
+<div class="stat"><b>27</b><span>rounds to finish · bound 23</span></div>
+<div class="stat"><b>0</b><span>own tokens · rules only</span></div>
+</div>
+</div>
+<div>
+<p class="mock-section-title">Value · weights revision w1</p>
+<div class="mock-card"><dl class="kv"><dt>Conflicts · 30</dt><dd>65</dd><dt>Tokens · 25</dt><dd>66</dd><dt>Rework · 10</dt><dd>58</dd><dt>Forecast · 10</dt><dd>52</dd><dt>Parallelism · 10</dt><dd>85</dd><dt>Lead time · 5</dt><dd>68</dd><dt>Own cost · 5</dt><dd>not in replay</dd><dt>Explanation · 5</dt><dd>not in replay</dd></dl>
+<div style="display:flex;align-items:center;gap:10px;margin-top:10px"><span class="imp big">65</span><span class="dim" style="font-size:0.78rem">gate passed (0.85 ≥ 0.8) · rank 2 of 6 · Packer 67</span></div></div>
+<p class="mock-section-title">Eligibility</p>
+<div class="mock-card"><p>Challenger for live after 100 shadow cards and 2 waves with a value at least 5 above the champion. Now: replay only.</p></div>
+<p class="mock-section-title">By strategy revision</p>
+<div class="mock-card"><dl class="kv"><dt>2026.11.1</dt><dd>replay · 57 cards</dd></dl></div>
+</div>
+</div></div></div>
+<figcaption>Proposed character sheet for a dispatcher persona. Attributes name what they change. The record shows the 17 November replay with its baseline. The value panel shows each criterion score with its weight, and says when a criterion cannot be measured in a replay.</figcaption>
+</figure>
+
+<h3>Review page</h3>
+<figure class="mockup media-breakout" id="mock-review">
+<div class="mock-frame" role="img" aria-label="Dispatch review page mockup for Agent Studio: a ranking table of six dispatcher personas with mode, cards, criterion scores, gate and value, a weights panel with eight numbers adding up to 100, and a list of attributed conflicts.">
+<div class="mock-bar"><b>Dispatch review · Agent Studio</b><span class="chip">Replay · wave 17 November</span><span class="chip">Shadow · last 30 days</span><span class="chip">Live</span><span class="spacer"></span><span class="btn">Run replay</span><span class="btn">Compare revisions</span></div>
+<div class="mock-body"><div class="mock-cols">
+<div>
+<p class="mock-section-title">Ranking · weights w1 · gate 0.8</p>
+<table style="margin:0;font-size:0.76rem">
+<thead><tr><th>Persona</th><th>Mode</th><th>Conf.</th><th>Tok.</th><th>Rew.</th><th>Fcst.</th><th>Par.</th><th>Lead</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>Packer</td><td><span class="chip">shadow</span></td><td>55</td><td>86</td><td>42</td><td>56</td><td>89</td><td>71</td><td><span class="imp">67</span></td></tr>
+<tr><td>Area warden, modules</td><td><span class="chip">shadow</span></td><td>65</td><td>66</td><td>58</td><td>52</td><td>85</td><td>68</td><td><span class="imp">65</span></td></tr>
+<tr><td>Historian</td><td><span class="chip">shadow</span></td><td>55</td><td>54</td><td>46</td><td>56</td><td>85</td><td>68</td><td><span class="imp">58</span></td></tr>
+<tr><td>Surveyor</td><td><span class="chip">shadow</span></td><td>45</td><td>46</td><td>38</td><td>56</td><td>89</td><td>71</td><td><span class="imp">52</span></td></tr>
+<tr><td>Area warden, keyword</td><td><span class="chip">shadow</span></td><td>100</td><td>100</td><td>100</td><td>37</td><td>44</td><td>0</td><td><span class="imp">45</span> <span class="chip warn">gated · 81</span></td></tr>
+<tr><td>Queue keeper</td><td><span class="chip good">live</span></td><td>0</td><td>0</td><td>0</td><td>0</td><td>100</td><td>100</td><td><span class="imp">17</span></td></tr>
+</tbody></table>
+<p class="mock-note">57 cards in the comparison set. Own cost and explanation are not measured in a replay; their weight is left out.</p>
+<p class="mock-section-title">Attributed conflicts · Queue keeper</p>
+<ul class="mock-list">
+<li><span class="dot bad"></span><span><b>DP-1 and DP-4</b><small>deploy-area.model.ts, ProjectEnvironmentService.cs and 4 more · admitted together</small></span><time>replay</time></li>
+<li><span class="dot bad"></span><span><b>IN-13 and IN-14</b><small>TelemetryStore.cs, project-operations.html and 6 more · admitted together</small></span><time>replay</time></li>
+<li><span class="dot"></span><span><b>29 more pairs</b><small>open the wave</small></span><time></time></li>
+</ul>
+</div>
+<div>
+<p class="mock-section-title">Weights · revision w1 · owner</p>
+<div class="mock-card"><dl class="kv"><dt>Conflicts</dt><dd>30</dd><dt>Tokens per accepted card</dt><dd>25</dd><dt>Share of rework</dt><dd>10</dd><dt>Forecast accuracy</dt><dd>10</dd><dt>Parallelism used</dt><dd>10</dd><dt>Lead time</dt><dd>5</dd><dt>Own token cost</dt><dd>5</dd><dt>Explanation</dt><dd>5</dd><dt>Sum</dt><dd>100</dd><dt>Parallelism gate</dt><dd>0.8</dd></dl>
+<p style="margin-top:10px"><span class="btn primary">Save as w2</span> <span class="btn">Reset to defaults</span></p></div>
+<p class="mock-section-title">Champion</p>
+<div class="mock-card"><p>Queue keeper is live. Challenger needs +5 over 100 shadow cards and 2 waves. Guard: back to Queue keeper at +10 conflicts per 100 over 20 cards.</p></div>
+</div>
+</div></div></div>
+<figcaption>Proposed review page. Ranking scores come from the replay script. The two attributed pairs are real exposed pairs of the baseline replay, with their shared code files. One accent marks the gated persona, showing why the plain value would mislead.</figcaption>
+</figure>
+</section>
+
+<section id="cut">
+<h2><span class="number">10</span> Cut of cards</h2>
+<p>A dispatcher can only order what it is given. Three cuts cause most of the overlap.</p>
+<h3>Waves from one source</h3>
+<p>Playthroughs, review-finding sweeps and the scout create many cards for one area at once. On 17 November three playthroughs created 57 cards in one minute with no dependency, and 33 of them formed one overlap cluster. Rules:</p>
+<ul>
+<li>A source that emits more than 5 cards writes a <b>wave id</b> and, per finding, the cited paths it already knows. The playthrough cards cite files with line numbers in their <code>cause</code> field. The cards land in Backlog with <code>creationSource</code> and wave id.</li>
+<li>The live dispatcher plans the wave as a whole before any card enters Ready: packages (Packer only), chains for dense clusters, and interleaving so that sparse cards fill parallel slots while chains run.</li>
+<li>Source prompts gain one instruction: group findings that share a cause file into one card, and say which findings must land before which.</li>
+</ul>
+<h3>Cards that are too large</h3>
+<p>IN-13 (AGT-3921) changed 66 files, of which 29 are code files, and merged develop six times. The finding text gave no warning. Over the 55 wave cards with source text, real code files correlate at 0.10 with the forecast size and at 0.04 with the number of cited files (both printed by <code>replay.py</code>). Measured on the finding text itself, which the wave file does not keep, they correlate at 0.08 with the number of acceptance criteria and at 0.12 with the word count. Size must therefore come from a <b>size prior per source kind</b>, the median real code files of earlier delivered cards from that kind of source. On this wave that is 17 for playthrough product gaps and 5 for review findings. Rules:</p>
+<ul>
+<li>A card whose forecast spans more than 3 modules, or whose source prior exceeds 25 code files, runs exclusive or gets a split proposal before the start.</li>
+<li>When a delivery's real change exceeds 40 code files, the ledger records it and the size prior is updated. The dispatcher never recuts a card that has started.</li>
+<li>Packages respect the prior. In the first replay draft the Packer bundled IN-13 with two other incident cards because their forecasts looked small, which would have produced a card of about 90 code files. The size prior rule prevents this.</li>
+</ul>
+<h3>Collection cards of small fixes</h3>
+<p>DP-18 (AGT-3908) collected three small deployment fixes and touched 26 code files with 23 partner cards. RV-20 to RV-22 (AGT-3943 to AGT-3945) collected 6 to 7 review findings each, touching 5 to 15 code files with 2 to 3 partners. Spread is harmless when the modules are cold and harmful when one of them is hot. Rule: a collection card that touches a hot module is split by module, and the hot part is chained behind the cluster. A collection card in cold modules stays whole, because one review is cheaper than seven.</p>
+</section>
+
+<section id="foundation">
+<h2><span class="number">11</span> Foundation and gaps</h2>
+<table>
+<thead><tr><th>Area</th><th>Exists</th><th>Missing</th><th>Slice</th></tr></thead>
+<tbody>
+<tr><td>Conflict record</td><td><code>IntegrationConflictReport</code>, latest per card, up to 20 files</td><td>Append-only ledger, partner card attribution (who landed the colliding change between base and tip), the admitting decision, semantic conflicts, backfill</td><td>DS-2</td></tr>
+<tr><td>Test strategies</td><td><code>testing.mode</code> pre-merge or post-merge, <code>testing.perCard</code>, batch isolation</td><td>Semantic conflict attribution to the window and the admitting persona. Integrate-first as default is decided elsewhere and not built here.</td><td>DS-2, DS-7</td></tr>
+<tr><td>Ready order</td><td>Lane sort strategies, pins, pickup order</td><td>A dispatch plan beside the lane order, the board showing plan position and holds</td><td>DS-6</td></tr>
+<tr><td>Dependencies</td><td><code>dependsOn</code> DAG, <code>WaitsOn</code>, pickup hold</td><td>Edge origin (owner, Dossier, dispatcher) so removal rights can be checked</td><td>DS-5</td></tr>
+<tr><td>File scope</td><td><code>PredictedScope</code> from prompt paths on the local pick-gate, compared with running cards only. Batch overlap <code>separate</code></td><td>The rule on the remote claim, the in-flight comparison set (DS-0). A better producer: the touch forecast, the co-change index, the module map, real-file recording (DS-1, used by DS-6)</td><td>DS-0, DS-1, DS-6</td></tr>
+<tr><td>Persona scheduling and budget ledger</td><td>PT-3 sweep, admission, <code>PersonaBudgetWeek</code>, receipts</td><td>The <code>dispatcher</code> kind, strategy reference in the descriptor, lease per project, shadow record</td><td>DS-5</td></tr>
+<tr><td>Capabilities</td><td>PT-13 to PT-20 pending</td><td>The dispatch operations. DS-5 always delivers its own allow list and log with catalogue names and fields. Taking them into PT-15 grant rows and the PT-18 log is part of those slices, not a dependency of this Dossier</td><td>DS-5</td></tr>
+<tr><td>Review</td><td>Persona value panel (PT-11)</td><td>Criteria projection, weight revisions, gate, review page</td><td>DS-7, DS-8</td></tr>
+</tbody>
+</table>
+</section>
+
+<section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+<h2><span class="number">12</span> Alternatives</h2>
+<h3>DS-D1 · Form of a dispatcher</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Model session that orders the lane</h3><p>Like the chief of staff, a periodic session reads Ready and writes an order. It is far too slow and too costly for a decision that is due every time a slot frees, and its decisions cannot be replayed deterministically.</p></article>
+<article class="variant"><h3>B. Persona names a pure strategy (recommended)</h3><p>A versioned rule set in <code>orchestration-decisions/</code>, selected and parameterised by the persona descriptor. It is replayable, explainable, and costs no tokens in the hot path. Sessions only write recut texts and reports.</p></article>
+<article class="variant"><h3>C. Project setting without personas</h3><p>A scheduler mode per project. It is cheap, but it contradicts the owner's decision that strategies belong to personas that compete.</p></article>
+</div>
+<h3>DS-D2 · Where the order lives</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Write the lane <code>order</code></h3><p>Simple, but it collides with owner drags, the 999 pin sentinel and the five-move limit of managers.</p></article>
+<article class="variant"><h3>B. Separate dispatch plan (recommended)</h3><p>The live persona's plan is a record next to the lane. The pick-gate reads it. Pins and <code>urgent</code> stay hard constraints. The board shows plan position and hold reasons.</p></article>
+<article class="variant"><h3>C. Advisory only</h3><p>Plans are shown and never applied. That is the same as shadow forever, so conflicts never fall.</p></article>
+</div>
+<h3>DS-D3 · Rights and tiers</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Everything T1</h3><p>Fast, but removing owner dependencies or admitting past a check would need no grant.</p></article>
+<article class="variant"><h3>B. Bounded T1, T2 for every bypass (recommended)</h3><p>Order, hold for at most 24 hours, own dependency edges, exclusive and bounded recut are T1. Removing others' edges, recutting owner cards and admitting past a check are T2.</p></article>
+<article class="variant"><h3>C. Proposals only</h3><p>Every hold or chain waits for the owner. The owner becomes the dispatcher.</p></article>
+</div>
+<h3>DS-D4 · Touch forecast</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Keyword areas</h3><p>Exists, but has a pair precision of 0.23 and drives a warden to 27 % slot use.</p></article>
+<article class="variant"><h3>B. Shared model-free forecast (recommended)</h3><p>Cited paths, co-change expansion from a dated index, a module map, and confidence, with real files recorded at delivery. Pair F1 is 0.52 to 0.56 at zero tokens.</p></article>
+<article class="variant"><h3>C. Model estimate for every card</h3><p>Possibly more accurate, but costs about 3,000 tokens per card for everybody. It is better offered as a persona option whose cost the persona carries.</p></article>
+</div>
+<h3>DS-D5 · Conflict record</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Latest report per card</h3><p>Today. No history, no partner, no attribution.</p></article>
+<article class="variant"><h3>B. Append-only ledger with partner attribution (recommended)</h3><p>One entry per conflict, semantic conflict or develop sync: card, partner cards that changed the conflicted files between base and tip, files, SHAs, the admitting decision ids, live or shadow. Backfilled for 30 days from git.</p></article>
+<article class="variant"><h3>C. Derive from git on demand</h3><p>No store, but slow, and the admitting decision is lost.</p></article>
+</div>
+<h3>DS-D6 · Competition order</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Alternating live from the start</h3><p>Real numbers, but a weak persona costs real rework from the first day.</p></article>
+<article class="variant"><h3>B. Replay, then shadow, then alternating live (recommended)</h3><p>Replay is free and immediate. Shadow is near free and uses real decision-time facts. Only the top two go live, by wave window per project, behind a guard.</p></article>
+<article class="variant"><h3>C. Replay and shadow only</h3><p>Safe, but tokens and agent behaviour in chains are never measured for real.</p></article>
+</div>
+<h3>DS-D7 · Criteria and value</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Plain weighted sum</h3><p>Simple, but the replay shows that it ranks a nearly sequential warden first (81).</p></article>
+<article class="variant"><h3>B. Weighted sum with parallelism gate (recommended)</h3><p>Min-max scores within one comparison set, default weights 30, 25, 10, 10, 10, 5, 5, 5, and a gate at 0.8 of the conflict-free bound.</p></article>
+<article class="variant"><h3>C. Lexicographic</h3><p>Conflicts first, then tokens. Transparent, but the owner cannot trade anything off, which contradicts weights the owner adjusts.</p></article>
+</div>
+<h3>DS-D8 · Recut and source cut</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Only the owner recuts</h3><p>Safe and slow. Waves of 57 cards arrive in one minute.</p></article>
+<article class="variant"><h3>B. Packer recuts automated waves, sources emit wave and paths (recommended)</h3><p>Packages and chains for unstarted automated-source cards with a 24-hour undo, size from the source prior, and split proposals for oversized and hot collection cards.</p></article>
+<article class="variant"><h3>C. Sources cut themselves</h3><p>Needed in part (the prompt instruction), but a playthrough cannot see the rest of the board or the ledger.</p></article>
+</div>
+<h3>DS-D9 · First live persona</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Queue keeper stays live until shadow ends</h3><p>No change in conflicts for several weeks.</p></article>
+<article class="variant"><h3>B. Area warden on modules first, the rest in shadow (recommended)</h3><p>Most robust in the replay (never more than two points behind the leader), model-free, no recut rights needed. It goes live after its shadow gate. The Packer stays in shadow with proposals only until two waves prove its tokens.</p></article>
+<article class="variant"><h3>C. Packer live directly</h3><p>Top value on the base replay (67 against 65), but its token gain is a proxy, and it falls behind the warden in two of the three robustness runs (69 against 70, and 59 against 66).</p></article>
+</div>
+<h3>DS-D10 · Exposure window of the overlap check</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Running cards only</h3><p>Today's local rule. Full parallelism, but with a review and gate lag every strategy leaves 29 to 35 of 57 cards needing a sync in the replay.</p></article>
+<article class="variant"><h3>B. Every in-flight card, on both claim paths (recommended)</h3><p>Compare a candidate with every card of the project that has started and not integrated yet, on the local pickup and the remote claim. In the replay at lag 1 the forecast personas fall to 12 to 15 cards. Parallelism falls with them, and integrate-first wins part of it back.</p></article>
+<article class="variant"><h3>C. In flight for wave cards only</h3><p>Use the in-flight check only between cards of one source wave. It is cheaper in slots, but it misses collisions between a wave and owner cards, which the ledger cannot charge to anyone.</p></article>
+</div>
+</section>
+
+<section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+<h2><span class="number">13</span> Recommendation</h2>
+<div class="callout" data-tone="accent"><h3>Recommended default</h3>
+<p>Build the dispatcher as a persona role whose personas name pure strategies (DS-D1 B), with a separate dispatch plan (DS-D2 B), bounded T1 rights and T2 for every bypass (DS-D3 B). Give every persona the same model-free touch forecast (DS-D4 B) and an append-only conflict ledger with partner attribution (DS-D5 B). Let personas compete by replay, then shadow, then alternating live (DS-D6 B), ranked by a weighted value with a parallelism gate (DS-D7 B). Let the Packer recut automated waves within bounds, while sources emit waves and paths (DS-D8 B). Put the forecast-module Area warden live first (DS-D9 B). Before any persona exists, make the overlap check cover every in-flight card on both claim paths (DS-D10 B).</p>
+<p>The most important reason: on the 17 November wave, separating on forecast modules would have cut the cards needing a develop sync from 20 to 7, at no token cost and with a lead time 4 rounds above what a conflict-free plan allows. That holds only if the check covers the whole exposure window. With a lag of one card duration, the same warden leaves 31 cards with a running-only check and 12 with an in-flight check.</p></div>
+<p>Expected effect on the scope numbers. Replayed, the practical personas cut rounds per card from 1.35 to 1.05 to 1.12, which is 17 to 22 % fewer rounds. Under integrate-first every avoided sync also avoids a re-review. This is the share of the 40 % rework that comes from integration. Rework from failed reviews is not touched by a dispatcher.</p>
+</section>
+
+<section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+<h2><span class="number">14</span> Evidence</h2>
+<p>This Dossier makes no claim about how a current product surface looks. Its claims concern code, git history and a replay, so they are backed by source references and a reproducible script instead of screenshots. The mockups are proposals, and the persona pages of PT-1 to PT-12 are cited only as delivered code, not by their appearance.</p>
+<p>Evidence files in this Dossier, all at develop <code>d3c4eed65</code>:</p>
+<ul>
+<li><a href="replay/wave-2026-11-17.json">replay/wave-2026-11-17.json</a>: the 57 wave cards with real, cited and forecast files, keyword areas and develop sync commits; <a href="replay/README.md">replay/README.md</a> describes every replay file. The field <code>createdFrom.method</code> states how each field was derived.</li>
+<li><a href="replay/replay.py">replay/replay.py</a>: the replay of six strategies. Its full output is kept as <a href="replay/output-4-slots.txt">output-4-slots.txt</a> (four slots, unit and size-weighted durations, prompt-path row, exposure window) and <a href="replay/output-6-slots.txt">output-6-slots.txt</a> (six slots).</li>
+<li><a href="replay/check_dossier.py">replay/check_dossier.py</a>: the workbench contract, the slice separation under today's pick-gate rule, and a cell-by-cell comparison of the <a href="#replay-results">replay results</a> table with the script output, and the review input check of <a href="review_input.py">review_input.py</a>. Its output is <a href="replay/output-check.txt">output-check.txt</a>.</li>
+<li><a href="replay/remote-claim-evidence.md">replay/remote-claim-evidence.md</a>: the ten wave cards whose runner reports name a remote result ref, with the delivery commits, which all exist in git.</li>
+<li><a href="review_input.py">review_input.py</a>: ports what the concept review receives of this Dossier, the snapshot of linked files and the delivery diff with their limits, and fails when a file would be missing, cut or not reached, so every file arrives whole.</li>
+</ul>
+<div class="evidence-list">
+<a class="evidence" href="#exists"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The pick-gate scope comes from prompt paths, locally only</b><small><code>backend/Features/Runner/ProjectRunner.cs</code> <code>PredictParallelism</code> and <code>ScopePathRegex</code> (parent directory of each named path, at most 24), called at pickup admission (<code>DecideAdmission</code> against <code>_activeRuns.RunningTasks()</code>) and stored on the claim. <code>ParallelSlotPolicy.FirstScopeConflict</code> compares by prefix and treats an empty scope as unknown. <code>backend/Features/Tasks/LeaseEndpoints.cs</code> remote claim: <code>LaneSortApplier.PickupOrder</code> and <code>ProjectExecutionPolicy.EvaluateProjectSlot</code>, with no scope or <code>TaskParallelism</code> check.</small></span></a>
+<a class="evidence" href="#replay-results"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The wave ran through the remote claim</b><small>The runner reports of ten wave cards (AGT-3894, AGT-3895, AGT-3897, AGT-3904, AGT-3909, AGT-3911, AGT-3918, AGT-3919, AGT-3921, AGT-3923) name delivery refs <code>refs/heads/agent-studio/results/run_…/fence-…</code>. Only the remote runner writes these (<code>runner/GitWorkspace.cs</code>). Each named delivery commit exists in git. The extract is <code>replay/remote-claim-evidence.md</code>. So the remote claim, without a scope rule, admitted at least these cards.</small></span></a>
+<a class="evidence" href="#exists"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Ready order and dependencies</b><small><code>backend/Shared/Models/ProjectSettings.cs</code> <code>LaneSortStrategies.GetDefaultForLane</code> returns <code>lane-entry</code>. <code>backend/Features/Tasks/LaneSortApplier.cs</code> <code>PickupOrder</code>. <code>TaskReferences.DependsOn</code>, <code>WaitsOn</code>, <code>PickupHold</code>.</small></span></a>
+<a class="evidence" href="#areas-precision"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Area detection is a substring match</b><small><code>backend/Features/Runner/IntakeRunner.cs</code> <code>DetectTaskAreas</code> and <code>AreaNeedles</code> (eight areas; needles such as <code>card</code>, <code>ui</code>, <code>state</code>, <code>api</code>). This card's own enrichment appended <code>frontend-design-tokens-components</code> and <code>git-handling-api-not-cli</code> to a documents-only task.</small></span></a>
+<a class="evidence" href="#exists"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Conflict evidence is per card and latest only</b><small><code>backend/Features/Git/IntegrationConflictReport.cs</code> (at most 20 files, no partner). <code>backend/Shared/Models/TaskProvenance.cs</code> <code>TaskIntegrationFailure.ConflictReport</code>: "the latest accepted-integration failure".</small></span></a>
+<a class="evidence" href="#exists"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Related rules already exist</b><small><code>orchestration-decisions/BatchFormationPolicy.cs</code> overlap <code>separate</code>. <code>ReviewPackageFormationPolicy.cs</code>. <code>DeliveryChainPolicy.cs</code> <code>QueueMergeRound</code>. <code>backend/Features/Personas/PersonaManagerPolicy.cs</code> <code>RequireMove</code>. <code>ProjectSettings.cs</code> <code>IntegrationTestModes</code>.</small></span></a>
+<a class="evidence" href="#wave"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The wave, from git</b><small><code>replay/wave-2026-11-17.json</code>: 57 cards, real files per card from their own commits on all refs, develop sync commits, cited paths from the playthrough card lists of AGT-3885, AGT-3886 and AGT-3888 (runner results). It matches the owner's figures in shape: DP and IN cards 18.8 and 20.9 partners, RV 1.3; IN-13 66 files.</small></span></a>
+<a class="evidence" href="#replay-results"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Replay of six strategies</b><small><code>replay/replay.py</code> (standard library, <code>python3 -I replay.py [wave] [slots]</code>), output in <code>output-4-slots.txt</code> and <code>output-6-slots.txt</code>. Shared file as the upper bound for a conflict, equal or size-weighted durations, instant integration by default, an integration lag with running or in-flight checks, and today's prompt-path rule as an unscored row. The baseline matches the history: 20 replayed cards against 21 observed cards with a develop sync.</small></span></a>
+<a class="evidence" href="#replay-results"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Published figures match the script</b><small><code>replay/check_dossier.py</code> runs <code>replay.py</code> and compares every cell of the replay results table with its output. It fails on any drift. The robustness and exposure tables are transcribed from the same output files.</small></span></a>
+<a class="evidence" href="#cut"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Size is not predictable from the finding text</b><small>Correlation of real code files with forecast size 0.10 and with cited files 0.04 over the 55 cards with source text, printed by <code>replay.py</code>. With acceptance criteria 0.08 and with words 0.12, measured on the finding text, which the wave file does not keep. Hence the size prior per source kind.</small></span></a>
+<a class="evidence" href="#criteria"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Weights and gate</b><small>Default weights 30, 25, 10, 10, 10, 5, 5, 5 and gate 0.8 are a starting point for the owner. The replay shows why the gate is needed.</small></span></a>
+</div>
+<p class="dim">Limits: the board API was not reachable from the runner, so card titles and slice labels come from commit subjects and the playthrough card lists, and the runner reports of the wave cards were read on the runner host (54 of 57 exist there). AGT-3890 stays unlabelled. Token figures are proxies (rounds). The co-change index covers 3,095 commits between 15 September and 15 November 2026.</p>
+</section>
+
+<section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+<h2><span class="number">15</span> Open decisions</h2>
+<p>Each decision has a recommended working option. A promoted card uses it unless a recorded owner decision selects another.</p>
+<div class="decision" data-decision-id="DS-D1" data-decision-kind="single" data-decision-status="pending"><h3>DS-D1 · Form of a dispatcher</h3><p>Is a dispatcher a model session, a pure strategy chosen by a persona, or a project setting?</p><ul><li data-option-id="A">Model session that orders the lane</li><li data-option-id="B">Persona names a pure strategy in the decision library (recommended)</li><li data-option-id="C">Project setting without personas</li></ul><p><b>Recommended:</b> B. Decisions are frequent, must be replayable and explainable, and must cost no tokens. Sessions write only recut texts and reports.</p></div>
+<div class="decision" data-decision-id="DS-D2" data-decision-kind="single" data-decision-status="pending"><h3>DS-D2 · Where the order lives</h3><p>Does the dispatcher write the lane order or its own plan?</p><ul><li data-option-id="A">Write the lane order field</li><li data-option-id="B">Separate dispatch plan read by the pick-gate; pins and urgent stay hard (recommended)</li><li data-option-id="C">Advisory only</li></ul><p><b>Recommended:</b> B. Owner drags keep their meaning, and plans can be compared between personas.</p></div>
+<div class="decision" data-decision-id="DS-D3" data-decision-kind="single" data-decision-status="pending"><h3>DS-D3 · Rights and tiers</h3><p>Which dispatcher actions are T1 and which need an explicit T2 grant?</p><ul><li data-option-id="A">Everything T1</li><li data-option-id="B">Bounded T1 (order, hold of at most 24 hours, own edges, exclusive, bounded recut); T2 for every bypass (recommended)</li><li data-option-id="C">Proposals only</li></ul><p><b>Recommended:</b> B, with the bounds in <a href="#role">Rights</a>.</p></div>
+<div class="decision" data-decision-id="DS-D4" data-decision-kind="single" data-decision-status="pending"><h3>DS-D4 · Touch forecast</h3><p>What tells a dispatcher which files a card will touch?</p><ul><li data-option-id="A">Keyword areas from the enrichment</li><li data-option-id="B">Shared model-free forecast: cited paths, co-change expansion, module map, confidence; real files recorded (recommended)</li><li data-option-id="C">Model estimate for every card</li></ul><p><b>Recommended:</b> B. A model-assisted forecast is a persona option whose cost the persona carries.</p></div>
+<div class="decision" data-decision-id="DS-D5" data-decision-kind="single" data-decision-status="pending"><h3>DS-D5 · Conflict record</h3><p>How are conflicts recorded so that they can be attributed and learned from?</p><ul><li data-option-id="A">Latest report per card, as today</li><li data-option-id="B">Append-only ledger with partner attribution and admitting decisions, backfilled for 30 days (recommended)</li><li data-option-id="C">Derive from git on demand</li></ul><p><b>Recommended:</b> B. Without the partner and the decision, a conflict cannot be charged to a dispatcher.</p></div>
+<div class="decision" data-decision-id="DS-D6" data-decision-kind="single" data-decision-status="pending"><h3>DS-D6 · Competition order</h3><p>In which order do personas compete?</p><ul><li data-option-id="A">Alternating live from the start</li><li data-option-id="B">Replay, then shadow, then alternating live by wave window per project, behind a guard (recommended)</li><li data-option-id="C">Replay and shadow only</li></ul><p><b>Recommended:</b> B, with the champion and guard rules in <a href="#competition">Competition</a>.</p></div>
+<div class="decision" data-decision-id="DS-D7" data-decision-kind="single" data-decision-status="pending"><h3>DS-D7 · Criteria and value</h3><p>How do the criteria combine into one value?</p><ul><li data-option-id="A">Plain weighted sum</li><li data-option-id="B">Weighted sum with min-max scores and a parallelism gate at 0.8; default weights 30, 25, 10, 10, 10, 5, 5, 5 (recommended)</li><li data-option-id="C">Lexicographic order</li></ul><p><b>Recommended:</b> B. The owner changes weights and the gate in weight revisions on the review page.</p></div>
+<div class="decision" data-decision-id="DS-D8" data-decision-kind="single" data-decision-status="pending"><h3>DS-D8 · Recut and source cut</h3><p>Who may recut cards, and what must sources provide?</p><ul><li data-option-id="A">Only the owner recuts</li><li data-option-id="B">Packer recuts unstarted automated-source cards with undo; sources emit wave id and cited paths; size from a source prior (recommended)</li><li data-option-id="C">Sources cut themselves</li></ul><p><b>Recommended:</b> B, with the rules in <a href="#cut">Cut of cards</a>.</p></div>
+<div class="decision" data-decision-id="DS-D9" data-decision-kind="single" data-decision-status="pending"><h3>DS-D9 · First live persona</h3><p>Which persona takes the live lease first?</p><ul><li data-option-id="A">Queue keeper until shadow ends</li><li data-option-id="B">Area warden on forecast modules after its shadow gate; Packer in shadow with proposals (recommended)</li><li data-option-id="C">Packer live directly</li></ul><p><b>Recommended:</b> B. It was the most robust in the replay, never more than two points behind the leader, and needs neither a model nor recut rights.</p></div>
+<div class="decision" data-decision-id="DS-D10" data-decision-kind="single" data-decision-status="pending"><h3>DS-D10 · Exposure window of the overlap check</h3><p>Which cards does the pick-gate compare a candidate with?</p><ul><li data-option-id="A">Running cards only, as today</li><li data-option-id="B">Every in-flight card of the project, from start to integration, on the local pickup and the remote claim (recommended)</li><li data-option-id="C">In flight only between cards of one source wave</li></ul><p><b>Recommended:</b> B. It is the only option under which separation still works with a review and gate lag. The slot cost is accepted because efficiency comes before lead time, and integrate-first reduces it.</p></div>
+</section>
+
+<section id="slices">
+<h2><span class="number">16</span> Slices</h2>
+<p>Twelve slices, listed in delivery order. A slice that changes the same area as an earlier one depends on it, directly or through a chain, so no two slices of one area run at the same time. Every such edge is a <code>dependsOn</code> entry in <code>workbench.json</code>, which promotion turns into an enforced card dependency. Backend slices register services through one <code>AddDispatch</code> extension created by DS-1, not by new lines in <code>Program.cs</code>, the hottest file of the wave. Every slice that registers there therefore depends on DS-1.</p>
+<table>
+<thead><tr><th>Slice</th><th>Area</th><th>Depends on</th><th>Delivers</th></tr></thead>
+<tbody>
+<tr><td>DS-0</td><td><code>backend/Features/Runner</code> admission facts, <code>LeaseEndpoints</code> remote claim</td><td>none</td><td>Overlap check on both claim paths against every in-flight card, <code>dispatch.overlapWindow</code></td></tr>
+<tr><td>DS-1</td><td><code>backend/Features/Dispatch</code> (new), intake hook in <code>backend/Features/Runner</code></td><td>DS-0</td><td>Touch forecast, co-change index, module map, real-file recording, <code>AddDispatch</code></td></tr>
+<tr><td>DS-2</td><td><code>backend/Features/Git</code>, Dispatch store, Pipeline hook</td><td>DS-1</td><td>Conflict ledger with partner attribution, semantic conflicts, 30-day backfill</td></tr>
+<tr><td>DS-3</td><td><code>orchestration-decisions/</code></td><td>none</td><td>Pure <code>DispatchPlanPolicy</code> and five strategy rule sets</td></tr>
+<tr><td>DS-4</td><td><code>backend/Features/Dispatch/Replay</code> command and its tests</td><td>DS-2, DS-3</td><td>Replay harness on the ledger with lag and check mode, the 17 November wave as a fixture</td></tr>
+<tr><td>DS-5</td><td><code>backend/Features/Personas</code>, <code>backend/Policies/personas</code>, Dispatch (allow list, lease, shadow store)</td><td>DS-3, DS-4</td><td>Dispatcher role, five persona descriptors, own allow list and log, edge origin, shadow record</td></tr>
+<tr><td>DS-6</td><td><code>backend/Features/Runner</code>, lane sort, <code>LeaseEndpoints</code></td><td>DS-0, DS-1, DS-5</td><td>Pick-gate reads the live plan, forecast replaces the prompt-path scope, holds, <code>dispatch.mode</code></td></tr>
+<tr><td>DS-7</td><td><code>backend/Features/Dispatch</code></td><td>DS-2, DS-6</td><td>Review projection, criteria, weight revisions, gate, API</td></tr>
+<tr><td>DS-8</td><td><code>frontend/src/app/features/persona-team</code></td><td>DS-7</td><td>Dispatcher sheet, Dispatch review page, weights panel</td></tr>
+<tr><td>DS-9</td><td><code>backend/Features/Dispatch</code>, card creation through existing endpoints</td><td>DS-7</td><td>Packer recut: packages, chains, split proposals, undo</td></tr>
+<tr><td>DS-10</td><td>Source prompts, task creation API</td><td>DS-9</td><td>Wave id and cited paths from playthroughs and finding sweeps</td></tr>
+<tr><td>DS-11</td><td>Runner, Dispatch</td><td>DS-8, DS-10</td><td>Alternating live by wave window, champion and guard</td></tr>
+</tbody>
+</table>
+<p>Pairs that may run together: DS-0 with DS-3, and DS-8 with DS-9. They touch disjoint directories. Today's scope rule may still serialize them, because every slice prompt names <code>docs/dispatcher-personas/index.html</code>. That costs lead time, not tokens.</p>
+<h3>Cards outside this Dossier</h3>
+<p>PT-13 to PT-20 of the persona team addendum are not delivered. They can only become dependencies after promotion, and <code>dependsOn</code> names slices of this Dossier only. So no slice waits for them, and none needs them. DS-5 always delivers its own allow list and log under the names and fields of the addendum. When PT-15 or PT-18 land, those cards take the dispatcher's data over.</p>
+<p>The remaining risk is that DS-5 and a PT card edit the same files at the same time. The platform prevents this through the scope rule, not through prose:</p>
+<ul>
+<li>DS-5 depends on DS-4 and through it on DS-0. When DS-5 can start, the scope rule runs on both claim paths and compares with every in-flight card.</li>
+<li>The DS-5 prompt names the directories it changes: <code>backend/Features/Personas/</code>, <code>backend/Policies/personas/</code> and <code>backend/Features/Dispatch/</code>. The PT-13 prompt names <code>backend/Policies/personas/</code>, so the two cannot run together.</li>
+<li>Every PT-13 to PT-20 prompt, and every DS prompt, names <code>docs/persona-team/index.html</code>. Their scopes share <code>docs/persona-team</code>, so any DS slice and any PT addendum card are serialized while both are in flight. This also covers DS-8 against PT-19 and PT-20, the persona pages.</li>
+</ul>
+<p>This separation is coarse. It holds back more pairs than necessary, which the owner's rule of efficiency before lead time accepts. DS-6 replaces it with forecast files.</p>
+</section>
+
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation">
+<h2><span class="number">17</span> Implementation</h2>
+<p>Delivery slices append their current implementation status here. Decision content above remains unchanged. Each slice is one <code>workbench.json</code> <code>implementationTasks</code> entry with a bounded <code>acceptanceScope</code>.</p>
+<ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+</ol>
+</section>
+<!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

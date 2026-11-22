@@ -53,6 +53,26 @@ public sealed class ReviewStatisticsFoldTests
         Assert.Equal(1.2, medium.ByModelLevelUsd["gpt-6-sol / medium"].Median);
     }
 
+    [Fact]
+    public void Cache_read_and_write_are_summed_per_delivery_review()
+    {
+        var rows = new[]
+        {
+            Row("P", "A", "one", "requirement-fit", "claude-opus-5-5", "high", 60_000, null) with
+                { CacheReadTokens = 10_700, CacheWriteTokens = 52_000 },
+            Row("P", "A", "one", "code-quality", "claude-opus-5-5", "high", 60_000, null) with
+                { CacheReadTokens = 58_000, CacheWriteTokens = 1_200 },
+            Row("P", "B", "one", "code-quality", "claude-opus-5-5", "high", 10, null),
+        };
+
+        var result = ReviewStatisticsFold.Build(rows, new Dictionary<string, long>(), new HashSet<string>(), Now, 30);
+
+        Assert.Equal(2, result.DeliveryCacheReadTokens.Samples);
+        Assert.Equal(68_700, result.DeliveryCacheReadTokens.P90);
+        Assert.Equal(53_200, result.DeliveryCacheWriteTokens.P90);
+        Assert.Equal(26_600, result.DeliveryCacheWriteTokens.Median);
+    }
+
     [Theory]
     [InlineData("support:remote-review:attempt-1:step:aspect-code-quality", "code-quality", "attempt-1")]
     [InlineData("support:remote-review:attempt-1:step:post-code-review-grade", "grade", "attempt-1")]

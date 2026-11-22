@@ -4,6 +4,7 @@ import { ProjectDeploymentPanelComponent } from '../project-deployment-panel/pro
 import { ProjectDeployOverviewComponent } from '../project-deploy-overview/project-deploy-overview';
 import { ProjectDeployReleasesComponent } from '../project-deploy-releases/project-deploy-releases';
 import { ProjectDeployPipelineComponent } from '../project-deploy-pipeline/project-deploy-pipeline';
+import { ProjectInstanceDeploySectionComponent } from '../project-instance-deploy-section/project-instance-deploy-section';
 import { ProjectDeployHistoryComponent } from '../project-deploy-history/project-deploy-history';
 import { DeployRunDrawerComponent, type DeployRunActionState } from '../deploy-run-drawer/deploy-run-drawer';
 import { ProjectPipelinePanelComponent } from '../project-pipeline-panel/project-pipeline-panel.component';
@@ -59,7 +60,7 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
     ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent,
     ProjectTelemetryTokensComponent, FlowHealthPageComponent, LocalOwnerDialogComponent, PendingButtonDirective,
-    RollbackOfferComponent,
+    RollbackOfferComponent, ProjectInstanceDeploySectionComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',

@@ -55,6 +55,18 @@ attempt from durable salvage; exhausted chains terminate visibly. Infrastructure
 outcomes set every product-defect, completion, and coding-rework budget flag to
 false.
 
+Provider quota refusals, including Claude's `You've hit your weekly limit`
+message and typed assistant `error: rate_limit` frames, are `QuotaExceeded`.
+They select `WaitForCapabilityRecovery`, including when a resumable session and
+published salvage exist. They never select the CLI-crash same-session retry.
+The refusal detail remains in the classified outcome for card and timeline
+consumers. The host records its provider capability as Limited, so admission
+waits or selects an available configured fallback. A login status probe cannot
+clear the hold before its reset. Clock-only resets such as
+`1pm (Europe/Berlin)` use the reported zone, with the host zone used when none
+is supplied. Ordinary assistant prose and tool output are not provider-access
+evidence, even when a failed run discusses quotas.
+
 ### Repository identity
 
 `RepositoryIdentity` is the materializable Git repository identity, not the

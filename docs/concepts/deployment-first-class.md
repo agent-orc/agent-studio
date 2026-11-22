@@ -178,6 +178,10 @@ stays the only executor; releases and runs describe and steer it.
   without a green full-suite verdict blocks the release with its reason. A
   repository that contains `scripts/release/promote-develop-to-main.sh` keeps
   releasing through the train; Studio creates no integration release for it.
+  A green merge-window run counts as the gate only when project.yml sets
+  `delivery.deployAfterGreenWindow: true` (AGT-3966); a window runs only the
+  base suite and the affected routine suites, while a nightly run counts
+  without the opt-in.
 - **Release.** A green gate release (`POST /api/deploy/gate-releases`, or the
   operator route `POST /api/projects/{project}/environments/releases`) records an
   immutable release: version `yyyy.MM.dd.N`, commit, artifact digests, a process
@@ -367,6 +371,24 @@ per participating tenant and environment. Optional `?tenant={name}` keeps only
 matching `tenantStatuses` and drops rows without one; project access filtering
 still applies. The workspace dashboard uses these statuses to show each
 tenant's current release, deployment age, state and health.
+
+The matrix has one row per project this instance watches (AGT-3949). A project
+whose repository declares no environment has `environmentsDeclared: false` and
+no statuses; the dashboard lists it as "No environments declared" with the way
+to declare them. A project the workspace registers but this instance does not
+watch has no row, and the dashboard requests delivery lanes only for the rows
+it received. The source project of the running Studio carries the instance as
+a Production status even without declarations (see
+[instance deploy records](../operations/instance-deploy-records.md)). That
+status has `instance: {liveSinceUtc, lastRun}`; `lastRun` is `{id, state,
+version, commitSha, startedAtUtc, atUtc, step}` with `state` `running`,
+`succeeded`, `failed` or `stalled`. The generic `currentDeployment.state` of
+the same run reads a stalled run as `failed`. `instance` is null for every
+declared environment. `GET /api/projects/{project}/deploy/delivery-lanes` of
+the source project places cards by the live commit: the instance lane holds the
+cards that commit contains, "Waiting for release" the cards integrated after
+it. The dashboard renders the first twelve cards of a lane and a "Show all"
+control for the rest.
 
 Routes, under `/api/projects/{project}/deploy`: `GET environments`, `status`
 (one EnvironmentStatus per environment), `releases`, `releases/{id}`,

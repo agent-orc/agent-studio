@@ -202,6 +202,50 @@ public sealed class BatchGateReviewPlanTests
         finally { DeleteDirectory(fixture.Root); }
     }
 
+    [Theory]
+    [InlineData(TestingStrategies.Strict, true)]
+    [InlineData(TestingStrategies.Fast, false)]
+    [InlineData(TestingStrategies.Balanced, false)]
+    [InlineData(null, false)]
+    public void OnlyStrictDefersBuildTestsToTheBatchGate(string? strategy, bool deferred)
+    {
+        // AGT-3965: through the wired mode service, strict keeps the batch
+        // gate exactly; fast (the default) and balanced integrate post-merge.
+        var fixture = CreateFixture();
+        var projects = new AgentStudio.Registry.ProjectRegistry(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = fixture.Root })
+            .Build(), NullLogger<AgentStudio.Registry.ProjectRegistry>.Instance);
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(Now);
+        projects.EnsureProjectForStorage(fixture.Folder, "project", DefaultWorkspace.Id, clock);
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, fixture.Config);
+        var mode = new PostMergeModeService(projects, new PostMergeRunStore(Path.Combine(fixture.Root, "post-merge")),
+            new TaskScannerService(fixture.Config, NullLogger<TaskScannerService>.Instance, summary), clock);
+        var builder = new RemoteReviewPlanBuilder(fixture.Aspects, fixture.Config, fixture.Git, postMergeMode: mode);
+        try
+        {
+            Git(fixture.Repo, "switch", "-qc", "agent-studio/results/task");
+            Directory.CreateDirectory(Path.Combine(fixture.Repo, "docs"));
+            File.WriteAllText(Path.Combine(fixture.Repo, "docs", "pilot.md"), "Pilot notes.\n");
+            Git(fixture.Repo, "add", ".");
+            Git(fixture.Repo, "commit", "-qm", "docs");
+            var resultSha = Git(fixture.Repo, "rev-parse", "HEAD").Trim();
+            Git(fixture.Repo, "switch", "-q", "develop");
+
+            var plan = builder.Build(fixture.Task, fixture.Repo, new ProjectSettings
+            {
+                BatchGate = new(Enabled: true),
+                Testing = strategy is null ? null : new ProjectTestingSettings { Strategy = strategy },
+            }, "develop", resultSha, ["docs/pilot.md"], "refs/heads/agent-studio/results/task");
+
+            Assert.Equal(deferred, plan.BuildTestDeferredToBatch);
+            Assert.Equal(deferred ? null : "The project integrates post-merge, so no batch gate runs.",
+                plan.BuildTestDeferralDisabledReason);
+            Assert.Contains(plan.Commands, command =>
+                AgentStudio.TaskServer.Contracts.ReviewCommandKinds.IsAgent(command.ExecutionKind));
+        }
+        finally { DeleteDirectory(fixture.Root); }
+    }
+
     [Fact]
     public void DocumentationOnlyResultDefersBuildTestsButKeepsModelReview()
     {
@@ -406,8 +450,12 @@ public sealed class BatchGateReviewPlanTests
             Git(repo, "switch", "-q", "develop");
 
             var plan = PlanBuilder().Build(AutoReviewTask(repo, folder), repo,
-                new ProjectSettings { BatchGate = new(Enabled: true, Scope: "code") }, "develop",
-                resultSha, ["backend/RunnerReleaseIdentity.cs"], resultRef);
+                new ProjectSettings
+                {
+                    BatchGate = new(Enabled: true, Scope: "code"),
+                    // The ordinary per-card gate this pins is the strict plan (AGT-3965).
+                    Testing = new ProjectTestingSettings { Strategy = TestingStrategies.Strict },
+                }, "develop", resultSha, ["backend/RunnerReleaseIdentity.cs"], resultRef);
 
             Assert.False(plan.BuildTestDeferredToBatch);
             Assert.Null(plan.TestLevel);

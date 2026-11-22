@@ -115,6 +115,8 @@ class FakeDeployData {
       return { status: 'ready', value: { items: items.slice(offset, offset + 25), total: items.length, offset, limit: 25 } };
     }));
   }
+  /** The deployment tools and the Runbooks tab read the shared environment projection on their own. */
+  environmentStates(): Observable<DeployPanel<unknown>> { return of({ status: 'loading' }); }
   releaseForArtifact(project: string, artifact: string, notAfterUtc: string | null): Observable<DeployPanel<unknown>> {
     const read = new Subject<DeployPanel<unknown>>();
     this.artifactLookups.push({ project, artifact, notAfterUtc, read });

@@ -44,7 +44,8 @@ public sealed class ReviewStatisticsService(
                 string.IsNullOrWhiteSpace(usage.Model) ? "model unknown" : usage.Model!,
                 string.IsNullOrWhiteSpace(usage.ThinkingLevel) ? "level unknown" : usage.ThinkingLevel!,
                 TokenUsageHost.Resolve(usage.Host, log.ParticipantId), total,
-                entry.Cost?.ModelKnown == true ? entry.Cost.Total : null));
+                entry.Cost?.ModelKnown == true ? entry.Cost.Total : null,
+                usage.CacheReadTokens, usage.CacheCreationTokens));
         }
         foreach (var task in taskMap.Values)
         {

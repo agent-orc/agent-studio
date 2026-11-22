@@ -29,6 +29,8 @@ public sealed class HostRouteClassificationTests : IDisposable
     private static readonly string[] Sources =
     [
         "runner/TaskServerClient.cs",
+        "runner/PostMergeHostScheduler.cs",
+        "runner/PostMergeRunCommand.cs",
         "runner/SourceFacts/TaskServerClient.SourceFacts.cs",
         "runner/WorkContainers/WorkContainerCredentialSource.cs",
         "runner/WorkContainers/WorkContainerCommand.cs",
@@ -75,6 +77,10 @@ public sealed class HostRouteClassificationTests : IDisposable
         new("POST", "/api/runner/personas/claim", Monolith.RunnerScope),
         new("POST", "/api/runner/personas/complete", Monolith.RunnerScope),
         new("GET", "/api/runner/post-merge/projects/{}", Monolith.RunnerScope),
+        new("GET", "/api/runner/post-merge/projects", Monolith.RunnerScope),
+        new("POST", "/api/runner/post-merge/projects/{}/window", Monolith.RunnerScope),
+        new("POST", "/api/runner/post-merge/projects/{}/runs", Monolith.RunnerScope),
+        new("POST", "/api/runner/post-merge/projects/{}/escalation-check", Monolith.RunnerScope),
         new("POST", "/api/runner/project-chat/claim", Monolith.RunnerScope),
         new("POST", "/api/runner/project-chat/complete", Monolith.RunnerScope),
         new("POST", "/api/runner/project-chat/renew", Monolith.RunnerScope),

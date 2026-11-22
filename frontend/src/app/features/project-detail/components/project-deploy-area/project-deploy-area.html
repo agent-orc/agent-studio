@@ -46,6 +46,7 @@
   </ng-template>
   <div class="deploy-area__body" [class.deploy-area__body--drawer]="selectedRun()">
     <div class="deploy-area__main">
+      @if (view() === 'overview') { <app-project-instance-deploy-section [project]="projectName()" [now]="now()" (openCard)="openCard($event)" /> }
       @switch (view()) {
         @case ('overview') {
           <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()" [busy]="environmentActionBusy()"

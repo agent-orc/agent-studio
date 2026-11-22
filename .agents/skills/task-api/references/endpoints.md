@@ -384,6 +384,7 @@ Event types, the fact each one publishes, and the suggested operations:
 | `quota.exhausted` | A card waits for a quota reset, or a CLI hit its provider limit (installation-wide) | `capacity.read`, `routing.change` |
 | `quota.fallback-active` | A running card uses a quota fallback | `capacity.read`, `routing.change` |
 | `gate-host.unreachable` | Consecutive transport failures of one kind marked the gate host unreachable (installation-wide). The reason names the host, the first failure, the last error, the waiting batch members and the owner's options | `stalls.inspect`, `batch.triage` |
+| `post-merge.missing` | A project on testing strategy `fast` or `balanced` has develop commits older than six hours that no post-merge run covers, and no run reported in six hours. One per project; a covering run clears it | `owner.decide` |
 | `watcher.heartbeat` | The watcher lease was granted, taken over, renewed, or released | `watcher.status` |
 
 Each occurrence is published once. A fact that ends and returns later (a
