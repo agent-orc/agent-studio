@@ -89,9 +89,9 @@ public sealed class ProviderAuthLatchRecoveryTests : IDisposable
 
     public static TheoryData<string, string> LimitAnswers => new()
     {
-        // Claude Code weekly limit with a clock-only reset no classifier dates:
-        // the real request reads as an unclassified failure.
-        { "claude", "You've hit your weekly limit · resets 12pm (UTC)" },
+        // Keep coverage for genuinely unclassified refusals. The weekly-limit
+        // signature is now recognized and covered by WeeklyQuotaRefusalTests.
+        { "claude", "Provider returned an unclassified refusal." },
         { "codex", "You've hit your usage limit. Upgrade to Pro or try again later." },
     };
 
@@ -210,7 +210,7 @@ public sealed class ProviderAuthLatchRecoveryTests : IDisposable
     [Fact]
     public async Task Known_reset_schedules_the_recovery_request_at_the_reset_and_refunds_limit_answers()
     {
-        var fleet = Build("claude", "usage limit reached; resets at 2026-11-17T12:00:00Z");
+        var fleet = Build("claude", "You've hit your weekly limit · resets 12pm (UTC)");
         fleet.Now = LimitHit.AddMinutes(-10);
         await fleet.Probe.RefreshAsync("claude", CancellationToken.None);
         fleet.Now = LimitHit;
@@ -231,7 +231,7 @@ public sealed class ProviderAuthLatchRecoveryTests : IDisposable
     [Fact]
     public async Task Advertisement_carries_the_latch_facts_for_the_queue_watchdogs()
     {
-        var fleet = Build("claude", "You've hit your weekly limit · resets 12pm (UTC)");
+        var fleet = Build("claude", "Provider returned an unclassified refusal.");
         fleet.Now = LimitHit;
         fleet.Probe.RecordProcessResult("claude", new ProcessResult(1, "", "Claude AI usage limit reached"));
         fleet.Now = LimitHit.AddMinutes(61);
