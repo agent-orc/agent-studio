@@ -1922,7 +1922,8 @@ public sealed class DeployService
     }
 
     /// <summary>
-    /// Creates one backlog bug card per failed Production run. Each run is
+    /// Creates one backlog bug card per failed Production run, worded by
+    /// <see cref="ProductionFailureCard"/>. Each run is
     /// handled once per process: storage is read only when a run first fails,
     /// and the stable card id keeps a restart from creating a duplicate.
     /// </summary>
@@ -1931,9 +1932,7 @@ public sealed class DeployService
     {
         var production = environments.Where(item => item.Kind == EnvironmentKinds.Production)
             .Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
-        var pending = runs.Where(item => (item.State == DeploymentStates.Failed
-                    || (item.State == DeploymentStates.Cancelled && item.InterventionDecision == "abort"
-                        && item.FailedStep is not null))
+        var pending = runs.Where(item => ProductionFailureCard.Failed(item)
                 && production.Contains(item.EnvironmentId)
                 && !_failureCardsHandled.Contains(project + "/" + item.Id))
             .ToArray();
@@ -1953,21 +1952,20 @@ public sealed class DeployService
         var existing = _scanner.ScanWatchPathRaw(watchPath)
             .Select(item => item.Id)
             .ToHashSet(StringComparer.Ordinal);
+        var releases = records.Select(item => item.Release).ToArray();
         foreach (var run in pending.Where(item => !existing.Contains(FailureCardId(item.Id))))
         {
-            var release = records.FirstOrDefault(item => item.Release.Id == run.ReleaseId)?.Release;
-            if (release is null) continue;
-            var cards = string.Join(", ", release.CardKeys);
+            if (records.All(item => item.Release.Id != run.ReleaseId)) continue;
             var excerpt = string.Join("\n", _store.ReadLog(project, run.Id).TakeLast(5)
                 .Select(item => $"- {item.Step}: {item.Message}"));
+            var card = ProductionFailureCard.Build(project, run, runs, releases, excerpt);
             try
             {
                 var cardId = _mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
                 {
                     Id = FailureCardId(run.Id),
-                    Title = $"Investigate Production deployment of release {release.Version}",
-                    PromptMarkdown = $"# Production deployment failed\n\nRelease: {release.Version} (`{release.Id}`)"
-                        + $"\nDeployment: `{run.Id}`\nIncluded cards: {cards}\n\nRecent deployment log:\n{excerpt}\n",
+                    Title = card.Title,
+                    PromptMarkdown = card.Prompt,
                     WatchPath = watchPath,
                     TargetState = TaskStates.Backlog,
                     TaskType = TaskTypes.Bug,
@@ -1987,7 +1985,7 @@ public sealed class DeployService
         }
     }
 
-    private static string FailureCardId(string deploymentId) => "production-deploy-failed-" + deploymentId;
+    private static string FailureCardId(string deploymentId) => ProductionFailureCard.CardId(deploymentId);
 
     private void Persist(string project, IReadOnlyList<DeploymentRecord> runs,
         IReadOnlyList<DeploymentLogEntry> log, IReadOnlyList<DeployAuditEntry> audit)

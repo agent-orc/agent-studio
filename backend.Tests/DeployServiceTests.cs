@@ -1666,6 +1666,49 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void ProductionFailureCards_ListCardsSinceTheLastHealthyRelease_AndTitleFailedRollbacks()
+    {
+        // F15: release 2 never reached Production, release 3 failed its health
+        // check there and the automatic rollback to release 1 failed as well.
+        var (_, environments, store) = Build();
+        var deploy = WithFailureCards(environments, store);
+        var first = Head();
+        Card("DEMO-1", first);
+        var r1 = CreateRelease(deploy, Artifact('a'), first);
+        DeployThroughProduction(deploy, environments, r1, Owner);
+        var second = Commit("second");
+        Card("DEMO-2", second);
+        CreateRelease(deploy, Artifact('b'), second);
+        Report(deploy, environments, "stage-host", healthy: true);
+        var third = Commit("third");
+        Card("DEMO-3", third);
+        var r3 = CreateRelease(deploy, Artifact('c'), third);
+        Report(deploy, environments, "stage-host", healthy: true);
+        var waiting = deploy.Deployments("demo", "production")!.First(item =>
+            item.ReleaseId == r3.Id && item.State == DeploymentStates.AwaitingApproval);
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", waiting.Id, Owner).Kind);
+        Report(deploy, environments, "prod-host", healthy: false, evidence: DeployEvidence.HealthFailed);
+        var rollback = environments.Claim("prod-host")!;
+        Assert.True(rollback.IsRollback);
+        Assert.True(environments.Report("demo", rollback.Id, ReportJob(rollback, healthy: false)));
+        deploy.SyncAfterHostCall("demo");
+
+        var failures = _scanner!.ScanWatchPathRaw(_watch)
+            .Where(item => item.Id.StartsWith("production-deploy-failed-", StringComparison.Ordinal))
+            .ToDictionary(item => item.Id, StringComparer.Ordinal);
+        Assert.Equal(2, failures.Count);
+        var deployCard = failures["production-deploy-failed-" + waiting.Id];
+        Assert.Equal($"Investigate Production deployment of release {r3.Version}", deployCard.Title);
+        var deployPrompt = File.ReadAllText(Path.Combine(deployCard.FolderPath, "prompt.md"));
+        Assert.Contains($"Last healthy release in Production: {r1.Version}", deployPrompt);
+        Assert.Contains($"Cards added since {r1.Version}: DEMO-2, DEMO-3", deployPrompt);
+        var rollbackCard = failures["production-deploy-failed-" + rollback.Id];
+        Assert.Equal($"Rollback to release {r1.Version} failed in Production", rollbackCard.Title);
+        Assert.Contains($"Failure card: `production-deploy-failed-{waiting.Id}`",
+            File.ReadAllText(Path.Combine(rollbackCard.FolderPath, "prompt.md")));
+    }
+
+    [Fact]
     public void Cancel_StopsQueuedWork_AndAbortsWorkTheHostRuns()
     {
         var (deploy, environments, _) = Build();
@@ -3201,6 +3244,17 @@ public sealed class DeployServiceTests : IDisposable
         var client = new AgentStudio.Tasks.TaskServerBoardClient(new StubTaskServerClientFactory(answer), config);
         var attribution = new ReleaseCardAttributionSource(_scanner!, new AgentStudio.Tasks.TaskArtifactsSourceSettings(config), client);
         return new DeployService(environments, store, _git!, _scanner!, _clock, NullLogger<DeployService>.Instance, null, attribution);
+    }
+
+    private DeployService WithFailureCards(ProjectEnvironmentService environments, DeployStore store)
+    {
+        var mutations = new AgentStudio.Tasks.TaskMutationService(_scanner!,
+            new AgentStudio.Clients.ClientIdentityStore(_configuration!, NullLogger<AgentStudio.Clients.ClientIdentityStore>.Instance),
+            new AgentStudio.Registry.ProjectRegistry(_configuration!, NullLogger<AgentStudio.Registry.ProjectRegistry>.Instance),
+            new AgentStudio.Tasks.TaskChangeNotifier(NullLogger<AgentStudio.Tasks.TaskChangeNotifier>.Instance),
+            NullLogger<AgentStudio.Tasks.TaskMutationService>.Instance);
+        return new DeployService(environments, store, _git!, _scanner!, _clock, NullLogger<DeployService>.Instance,
+            mutations);
     }
 
     private sealed class StubTaskServerClientFactory(Func<HttpRequestMessage, HttpContent> answer) : IHttpClientFactory
