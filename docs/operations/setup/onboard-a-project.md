@@ -384,3 +384,7 @@ task store to perform it.
 | Old project uses `.orchestrator/jobs` | Treat it as legacy. Follow the migration outline above; do not onboard a duplicate project or push that folder. |
 
 For the first real run, continue with [Your first task](./your-first-task.md). For general setup failures, see [Troubleshooting](./troubleshooting.md).
+
+## Library releases
+
+For repository-owned npm and NuGet release scripts, see [Library releases](library-releases.md).

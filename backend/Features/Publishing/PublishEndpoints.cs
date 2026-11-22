@@ -46,7 +46,8 @@ public static class PublishEndpoints
                 project,
                 request.TargetId,
                 request.Version,
-                cancellationToken))))
+                cancellationToken,
+                request.DryRun))))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
         app.MapPost("/api/projects/{project}/publish/website", (

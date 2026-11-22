@@ -22,17 +22,19 @@ integration stream. The latter follows the
   existing tag or workflow-dispatch path.
 - **Still out of scope:** storing registry secrets or implementing a second
   package publisher. Trusted Publishing remains keyless and the existing
-  GitHub Actions workflow owns the actual publish.
+  repository release script or GitHub Actions workflow owns the actual publish.
 
 ## 2. Target derivation (from repo facts, never settings)
 
+A project can declare `release.command` and `release.branch` in project.yml. This derives a package target without a GitHub workflow and enables a dry run plus verified script execution on that branch.
+
 A project can have zero or more **publish targets**. Targets are derived, per
-project, from three repository facts - workflows, tags, and manifests - and never
+project, from repository declarations, workflows, tags, and manifests, and never
 from a stored operator setting.
 
 ### 2.1 Package target (npm / NuGet)
 
-A package target is derived when the repository has:
+A declared release command derives a package target directly. Without one, a package target is derived when the repository has:
 
 1. a **release-triggered workflow** under `.github/workflows/` - a workflow
    triggered by a version tag push (`on: push: tags: ['v*']`) or a published
@@ -115,8 +117,8 @@ For later releases, a feature task in the pending set suggests the next minor
 version; a mix containing only bugs and chores suggests the next patch. The
 operator can edit the suggestion before confirmation. Confirmation requires a
 clean worktree, updates `package.json` or the packable `.csproj`, creates one
-release commit and `vX.Y.Z`, then atomically pushes `HEAD` and the tag to
-`origin`. The product does not run `npm publish` or `dotnet nuget push`.
+release commit and `vX.Y.Z`, then atomically pushes the release branch and tag to
+`origin`. The legacy action requires a `main` checkout and also updates npm lockfile root versions. The legacy tag action leaves registry publishing to GitHub. A declared project release command runs the repository script after verification; see [Library releases](../operations/setup/library-releases.md).
 
 Each target stores an automation mode: `manual`, `suggest`, or `auto`. Package
 targets clamp `auto` to `suggest`; website targets may use all three modes. The
@@ -130,6 +132,7 @@ dispatching the existing workflow.
 - Backend derivation: `backend/Features/Publishing/` -
   `PublishWorkflowParser`, `PublishManifestLocator`, `PublishTargetService`,
   `TaskPublishableService`, and `PublishEndpoints`.
+- Repository releases: `ProjectReleaseExecution` previews the declared branch subject, verifies it, runs the repository command, and atomically pushes its branch and tag. Contained pending cards receive package release timeline receipts.
 - Backend actions: `PublishActionService` performs guarded manifest/tag pushes,
   GitHub workflow dispatch, and `gh api` run tracking. Authorization comes from
   the operator-managed `gh` CLI session; the product never persists a token.
@@ -146,7 +149,7 @@ dispatching the existing workflow.
   modern `actions/deploy-pages` deployment is not recorded in git, so PUB-1
   labels a release-tag approximation or stays quiet when no anchor exists.
 - Derivation is heuristic over workflow text. An unusual custom pipeline may not
-  be recognized, which fails safe to “no target” rather than a wrong badge.
+  be recognized. Declare `release.command` and `release.branch` for a custom release pipeline.
 - Target publishing does not answer whether all of `develop` should be promoted
   to `main`; the transparent release manifest owns that broader decision.
 

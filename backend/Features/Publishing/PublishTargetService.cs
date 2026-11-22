@@ -160,6 +160,11 @@ public sealed class PublishTargetService : IDisposable
 
             return new ProjectPublishComputation(projectName, true, null, targets);
         }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Invalid project release definition for {Project}.", projectName);
+            return ProjectPublishComputation.Empty(projectName, ex.Message);
+        }
         catch (PublishProjectionReadException ex)
         {
             _logger.LogWarning(
@@ -185,7 +190,8 @@ public sealed class PublishTargetService : IDisposable
         string root, string integrationBranch, IReadOnlyList<WorkflowFacts> workflows,
         IReadOnlyList<string> websiteRoots, string? latestTag)
     {
-        var hasReleaseTrigger = workflows.Any(w => w.HasReleaseTrigger);
+        var release = ProjectReleaseExecution.Read(root)?.Release;
+        var hasReleaseTrigger = workflows.Any(w => w.HasReleaseTrigger) || release?.Command is not null;
         if (!hasReleaseTrigger) yield break;
 
         // Which ecosystems does a workflow actually publish? Fall back to manifest
@@ -216,6 +222,9 @@ public sealed class PublishTargetService : IDisposable
                 throw new PublishProjectionReadException("NuGet manifests");
             }
         }
+
+        if (npm is null && nuget is null && !wantsNpm && !wantsNuGet && release?.Command is not null)
+            yield return BuildPackageTarget(root, integrationBranch, "project", "Release", null, websiteRoots, latestTag);
 
         if (npm != null || wantsNpm)
             yield return BuildPackageTarget(root, integrationBranch, PublishEcosystems.Npm, "npm", npm, websiteRoots, latestTag);
@@ -258,6 +267,8 @@ public sealed class PublishTargetService : IDisposable
             PackageName = manifest?.PackageName,
             CurrentVersion = currentVersion,
             FirstPublishPending = firstPublishPending,
+            ReleaseCommand = ProjectReleaseExecution.Read(root)?.Release?.Command,
+            ReleaseBranch = ProjectReleaseExecution.Read(root)?.Release?.Branch,
             PendingCount = firstPublishPending ? null : commits.Count,
             ReferenceKind = firstPublishPending ? PublishReferenceKinds.None : PublishReferenceKinds.Tag,
             Reference = firstPublishPending ? null : latestTag,

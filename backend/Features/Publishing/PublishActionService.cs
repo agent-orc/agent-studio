@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
+using AgentStudio.TaskServer.Contracts;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -8,7 +10,7 @@ namespace AgentStudio.Publishing;
 
 /// <summary>
 /// PUB-2 action layer. It deliberately drives repositories through their
-/// existing tag- or workflow-dispatch-triggered GitHub Actions workflows. It
+/// release commands and tag- or workflow-dispatch-triggered GitHub Actions workflows. It
 /// never handles registry credentials and never publishes a package itself.
 /// </summary>
 public interface IPublishEnvironmentReconciler
@@ -27,8 +29,10 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
     private readonly ILogger<PublishActionService> _logger;
     private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
     private readonly TimeProvider _clock;
+    private readonly TimelineLog? _timeline;
     private readonly AgentStudio.Management.StructureLibraryService? _library;
     private readonly object _runGate = new();
+    private readonly ConcurrentDictionary<string, object> _releaseGates = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PublishWorkflowRun> _runs = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _autoDeploying = new(StringComparer.OrdinalIgnoreCase);
 
@@ -41,7 +45,8 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         ILogger<PublishActionService> logger,
         AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
         TimeProvider? clock = null,
-        AgentStudio.Management.StructureLibraryService? library = null)
+        AgentStudio.Management.StructureLibraryService? library = null,
+        TimelineLog? timeline = null)
     {
         _git = git;
         _targets = targets;
@@ -52,6 +57,7 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         _workspaceQuota = workspaceQuota;
         _clock = clock ?? TimeProvider.System;
         _library = library;
+        _timeline = timeline;
     }
 
     public PublishActionPanel GetPanel(string project, string targetId)
@@ -79,9 +85,9 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
             AutomationMode = mode,
             PendingTasks = pending,
             SuggestedVersion = target.Kind == PublishTargetKind.Package
-                ? SuggestNextVersion(target.CurrentVersion, pending.Select(x => x.TaskType))
+                ? SuggestNextVersion(target.CurrentVersion, pending.Select(x => x.TaskType)) ?? "0.1.0"
                 : null,
-            Notice = target.FirstPublishPending
+            Notice = target.FirstPublishPending && target.ReleaseCommand is null
                 ? "First publish must be completed manually by the operator. Trusted Publishing remains keyless; no registry secret is stored here."
                 : null,
             LastRun = GetStoredRun(project, target.Id),
@@ -158,19 +164,52 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         string project,
         string targetId,
         string version,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool dryRun = false)
+    {
+        _ = RequireRepo(project);
+        lock (_releaseGates.GetOrAdd(project, static _ => new object()))
+            return PublishPackageCore(project, targetId, version, cancellationToken, dryRun);
+    }
+
+    private PublishWorkflowRun PublishPackageCore(string project, string targetId, string version, CancellationToken cancellationToken, bool dryRun)
     {
         var admission = _workspaceQuota?.Admit(project);
         if (admission is { Allowed: false }) throw new InvalidOperationException(admission.Message);
         var panel = GetPanel(project, targetId);
         var target = panel.Target!;
         if (target.Kind != PublishTargetKind.Package) throw new InvalidOperationException("Target is not a package.");
-        if (target.FirstPublishPending) throw new InvalidOperationException(panel.Notice);
-        if (!TryParseVersion(version, out _, out _, out _) || !IsGreater(version, target.CurrentVersion!))
+        if (target.FirstPublishPending && target.ReleaseCommand is null) throw new InvalidOperationException(panel.Notice);
+        if (!TryParseVersion(version, out _, out _, out _) || target.CurrentVersion is not null && !IsGreater(version, target.CurrentVersion))
             throw new InvalidOperationException($"Version '{version}' must be valid SemVer and greater than {target.CurrentVersion}.");
-        if (panel.PendingTasks.Count == 0) throw new InvalidOperationException("No pending package tasks to publish.");
+        if (panel.PendingTasks.Count == 0 && target.ReleaseCommand is null) throw new InvalidOperationException("No pending package tasks to publish.");
 
         var root = RequireRepo(project);
+        if (target.ReleaseCommand is not null)
+        {
+            var plan = ProjectReleaseExecution.Execute(root, version, dryRun, cancellationToken);
+            if (dryRun) return new PublishWorkflowRun
+            {
+                Project = project, TargetId = target.Id, Workflow = plan, Version = version,
+                Status = "preview", TriggeredAt = _clock.GetUtcNow().UtcDateTime,
+            };
+            foreach (var pending in panel.PendingTasks)
+            {
+                var job = _scanner.FindJob(pending.TaskKey);
+                if (job is not null && BoardMergeStatusService.AnchorFor(job) is { } anchor
+                    && _git.IsAncestor(root, anchor, $"v{version}"))
+                    _timeline?.Append(job.FolderPath, TimelineEventKinds.PackageReleased, TimelineActors.System, $"Released as v{version}",
+                        details: new() { ["tag"] = $"v{version}", ["branch"] = target.ReleaseBranch! });
+            }
+            _targets.InvalidateCache();
+            return StoreRun(new PublishWorkflowRun
+            {
+                Project = project, TargetId = target.Id, Workflow = target.ReleaseCommand,
+                Version = version, Status = "completed", Conclusion = "success",
+                TriggeredAt = _clock.GetUtcNow().UtcDateTime,
+            });
+        }
+        if (dryRun) throw new InvalidOperationException("Dry run requires a project release command.");
         var workflow = FindWorkflow(root, package: true)
             ?? throw new InvalidOperationException("No existing version-tag-triggered package workflow was found.");
         PublishPackageTagPath(root, target.Ecosystem!, version, cancellationToken);
@@ -247,6 +286,7 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
     {
         var stored = GetStoredRun(project, targetId);
         if (stored is null) return null;
+        if (stored.Status == "completed" && targetId != "website") return stored;
         var root = RequireRepo(project);
         try
         {
@@ -394,12 +434,16 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         string root,
         string ecosystem,
         string version,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string releaseBranch = "main")
     {
+        var currentBranch = RunRequired(root, "branch lookup failed", "branch", "--show-current").Trim();
+        if (currentBranch != releaseBranch)
+            throw new InvalidOperationException($"Switch to release branch {releaseBranch} before using the legacy tag workflow, or declare a project release command.");
         RequireClean(root);
         var manifest = BumpManifest(root, ecosystem, version);
-        RunRequired(root, "git add failed", "add", "--", manifest);
-        RunRequired(root, "release commit failed", "commit", "-m", $"Release v{version}");
+        RunRequired(root, "git add failed", new[] { "add", "--" }.Concat(manifest).ToArray());
+        RunRequired(root, "release commit failed", "commit", "-m", $"chore(release): v{version}");
         RunRequired(root, "release tag failed", "tag", $"v{version}");
         RunRequired(
             root,
@@ -408,11 +452,11 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
             "push",
             "--atomic",
             "origin",
-            "HEAD",
+            $"HEAD:refs/heads/{releaseBranch}",
             $"refs/tags/v{version}");
     }
 
-    private static string BumpManifest(string root, string ecosystem, string version)
+    private static string[] BumpManifest(string root, string ecosystem, string version)
     {
         var websiteRoots = new[] { PublishTargetService.DefaultWebsiteRoot };
         var info = ecosystem == PublishEcosystems.Npm
@@ -427,7 +471,20 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
                 ?? throw new InvalidOperationException("package.json is not a JSON object.");
             node["version"] = version;
             File.WriteAllText(path, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
-            return Path.GetRelativePath(root, path);
+            var paths = new List<string> { Path.GetRelativePath(root, path) };
+            foreach (var name in new[] { "package-lock.json", "npm-shrinkwrap.json" })
+            {
+                var lockPath = Path.Combine(dir, name);
+                if (!File.Exists(lockPath)) continue;
+                var locked = JsonNode.Parse(File.ReadAllText(lockPath))?.AsObject()
+                    ?? throw new InvalidOperationException($"{name} is not a JSON object.");
+                locked["version"] = version;
+                if (locked["packages"] is JsonObject packages && packages[""] is JsonObject package)
+                    package["version"] = version;
+                File.WriteAllText(lockPath, locked.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+                paths.Add(Path.GetRelativePath(root, lockPath));
+            }
+            return paths.ToArray();
         }
 
         var pathCsproj = Directory.EnumerateFiles(dir, "*.csproj")
@@ -444,7 +501,7 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         }
         else versionNode.Value = version;
         xml.Save(pathCsproj, SaveOptions.DisableFormatting);
-        return Path.GetRelativePath(root, pathCsproj);
+        return [Path.GetRelativePath(root, pathCsproj)];
     }
 
     private static bool TryParseVersion(string? value, out int major, out int minor, out int patch)
@@ -517,6 +574,20 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
     private PublishWorkflowRun? GetStoredRun(string project, string targetId)
     {
         lock (_runGate) return _runs.GetValueOrDefault($"{project}\n{targetId}");
+    }
+
+    /// <summary>Repository shells use the same bounded publishing process boundary as gh.</summary>
+    internal static void RunReleaseCommand(string root, string command, ProjectExecutionDefinition definition, string version, CancellationToken token)
+    {
+        var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "cmd.exe" : "bash")
+        { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
+        start.ArgumentList.Add(OperatingSystem.IsWindows() ? "/c" : "-c");
+        start.ArgumentList.Add(command);
+        foreach (var pair in definition.Environment) start.Environment[pair.Key] = pair.Value;
+        start.Environment["RELEASE_VERSION"] = version;
+        var result = GitNetworkProcessRunner.Run(start, timeout: TimeSpan.FromMinutes(30), cancellationToken: token);
+        if (result.ExitCode != 0)
+            throw new InvalidOperationException($"Release command failed: {command}\n{result.StandardOutput}\n{result.StandardError}");
     }
 
     private static string? StringValue(JsonElement element, string name) =>

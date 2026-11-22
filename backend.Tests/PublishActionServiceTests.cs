@@ -54,6 +54,7 @@ public sealed class PublishActionServiceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
     public void PackageTagPath_BumpsManifest_CommitsAndAtomicallyPushesVersionTag()
     {
         var repo = Path.Combine(_root, "repo");
@@ -63,6 +64,7 @@ public sealed class PublishActionServiceTests : IDisposable
         Git(repo, "config", "user.email", "test@example.com");
         Git(repo, "config", "user.name", "test");
         Git(repo, "config", "commit.gpgsign", "false");
+        File.WriteAllText(Path.Combine(repo, "package-lock.json"), "{\"name\":\"fixture\",\"version\":\"1.2.3\",\"lockfileVersion\":3,\"packages\":{\"\":{\"version\":\"1.2.3\"}}}");
         File.WriteAllText(Path.Combine(repo, "package.json"), "{\"name\":\"fixture\",\"version\":\"1.2.3\"}\n");
         Directory.CreateDirectory(Path.Combine(repo, ".github", "workflows"));
         File.WriteAllText(Path.Combine(repo, ".github", "workflows", "release.yml"),
@@ -81,9 +83,81 @@ public sealed class PublishActionServiceTests : IDisposable
 
         using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(repo, "package.json")));
         Assert.Equal("1.3.0", manifest.RootElement.GetProperty("version").GetString());
+        using var lockfile = JsonDocument.Parse(File.ReadAllText(Path.Combine(repo, "package-lock.json")));
+        Assert.Equal("1.3.0", lockfile.RootElement.GetProperty("version").GetString());
+        Assert.Equal("1.3.0", lockfile.RootElement.GetProperty("packages").GetProperty("").GetProperty("version").GetString());
         Assert.Equal("v1.3.0", Git(repo, "describe", "--tags", "--exact-match").Trim());
         Assert.Equal(Git(repo, "rev-parse", "HEAD").Trim(), Git(remote, "rev-parse", "refs/heads/main").Trim());
         Assert.Equal(Git(repo, "rev-parse", "v1.3.0").Trim(), Git(remote, "rev-parse", "refs/tags/v1.3.0").Trim());
+        Git(repo, "switch", "-q", "-c", "develop");
+        Assert.Throws<InvalidOperationException>(() =>
+            PublishActionService.PublishPackageTagPath(repo, PublishEcosystems.Npm, "1.3.1"));
+        Assert.Empty(Git(repo, "tag", "-l", "v1.3.1"));
+        Assert.Empty(Git(remote, "branch", "--list", "develop"));
+        Assert.Equal("develop", Git(repo, "branch", "--show-current").Trim());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "MachineBound")]
+    public void Project_release_uses_declared_branch_and_verifies_before_script(bool failVerification)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var repo = Path.Combine(_root, "project");
+        var remote = Path.Combine(_root, "project.git");
+        Git(_root, "init", "--bare", "-q", remote);
+        Git(_root, "init", "-q", "-b", "main", repo);
+        Git(repo, "config", "user.email", "test@example.com");
+        Git(repo, "config", "user.name", "test");
+        Git(repo, "config", "commit.gpgsign", "false");
+        Directory.CreateDirectory(Path.Combine(repo, ".agent-studio"));
+        var yaml = "schemaVersion: 2\nproject:\n  id: example-project\nstack: [node]\ncommands:\n  prepare: echo prepared\n  build: "
+            + (failVerification ? "false" : "test $(git branch --show-current) = main")
+            + "\n  test: echo verified\nrelease:\n  command: git tag v$RELEASE_VERSION\n  branch: main\n";
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "project.yml"), yaml);
+        Git(repo, "add", "-A");
+        Git(repo, "commit", "-qm", "seed");
+        Git(repo, "remote", "add", "origin", remote);
+        Git(repo, "push", "-q", "origin", "main");
+        Git(repo, "switch", "-qc", "develop");
+        File.WriteAllText(Path.Combine(repo, "unreleased.txt"), "integration only");
+        Git(repo, "add", "-A");
+        Git(repo, "commit", "-qm", "integration only");
+        var integration = Git(repo, "rev-parse", "HEAD");
+
+        var preview = ProjectReleaseExecution.Execute(repo, "1.2.4", true, CancellationToken.None);
+        Assert.Contains("Branch: main", preview);
+        Assert.Empty(Git(repo, "tag", "-l", "v1.2.4"));
+        Assert.DoesNotContain("studio-release-", Git(repo, "worktree", "list"));
+        if (failVerification)
+        {
+            Assert.Throws<InvalidOperationException>(() => ProjectReleaseExecution.Execute(repo, "1.2.4", false, CancellationToken.None));
+            Assert.Empty(Git(repo, "tag", "-l", "v1.2.4"));
+        }
+        else
+        {
+            ProjectReleaseExecution.Execute(repo, "1.2.4", false, CancellationToken.None);
+            Assert.Equal(Git(repo, "rev-parse", "main"), Git(remote, "rev-parse", "refs/tags/v1.2.4"));
+            Assert.NotEqual(integration, Git(remote, "rev-parse", "refs/heads/main"));
+        }
+        Assert.Equal(integration, Git(repo, "rev-parse", "HEAD"));
+        Assert.Equal("develop", Git(repo, "branch", "--show-current").Trim());
+        Assert.DoesNotContain("studio-release-", Git(repo, "worktree", "list"));
+    }
+
+    [Fact]
+    public void Package_release_receipt_records_tag_and_branch_without_changing_release_gates()
+    {
+        var timeline = new TimelineLog(Microsoft.Extensions.Logging.Abstractions.NullLogger<TimelineLog>.Instance);
+        Assert.True(timeline.Append(_root, TimelineEventKinds.PackageReleased, TimelineActors.System, "Released as v1.3.0",
+            details: new() { ["tag"] = "v1.3.0", ["branch"] = "main" }));
+        var receipt = Assert.Single(timeline.ReadAll(_root));
+        Assert.Equal("package_released", receipt.Kind);
+        Assert.Equal(TimelineActors.System, receipt.Actor);
+        Assert.NotEqual(TimelineEventKinds.TaskReleased, receipt.Kind);
+        Assert.Equal("v1.3.0", receipt.Details!["tag"]);
+        Assert.Equal("main", receipt.Details["branch"]);
     }
 
     private static string Git(string cwd, params string[] args)
