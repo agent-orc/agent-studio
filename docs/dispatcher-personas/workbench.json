@@ -1,0 +1,407 @@
+{
+  "schemaVersion": 1,
+  "id": "dispatcher-personas",
+  "title": "Dispatcher personas: competing strategies that order, separate, chain and cut cards",
+  "summary": "A new persona role decides which Ready card starts when, what runs in parallel and what is chained, and for packaging personas how findings are cut into cards. Dispatcher personas name pure, versioned strategies evaluated in the decision library (model-free in the hot path); one is live per project, the others run in shadow on the same facts. Five starter personas: Queue keeper (today\u0027s order), Area warden (one card per forecast module), Surveyor (file overlap), Historian (learns from a new conflict ledger with partner attribution), Packer (packages and chains overlapping findings before the start). Today\u0027s local pick-gate derives a scope from prompt paths but compares only with running cards, and the remote claim that ran the 17 November wave applies no scope rule. A replay of the 57 playthrough cards of that wave, rebuilt from git, matches history (20 replayed against 21 observed cards needing a develop sync) and shows the Area warden on forecast modules cutting that to 7 with instant integration; with an integration lag a running-only check leaves 29 to 35 cards for every strategy, an in-flight check 12 to 15. The keyword areas of the prompt enrichment are too coarse (53 of 55 cards tagged frontend, pair precision 0.23). Criteria combine into one weighted value with a parallelism gate, because a plain sum ranks a nearly sequential warden first. Ten decisions with recommendations, character sheet and review page mockups, and twelve slices whose area separation is carried entirely by dependsOn edges.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-11-22T11:30:00Z",
+  "sourceTaskKeys": [
+    "AGT-3974"
+  ],
+  "relatedTaskKeys": [
+    "AGT-3573",
+    "AGT-3885",
+    "AGT-3886",
+    "AGT-3888",
+    "AGT-3897",
+    "AGT-3921",
+    "AGT-3908"
+  ],
+  "buildsOn": [
+    "docs/persona-team/",
+    "docs/merge-gate-economics/",
+    "docs/integration-lane-throughput/",
+    "docs/economy-dial/"
+  ],
+  "tags": [
+    "personas",
+    "dispatcher",
+    "scheduling",
+    "merge-conflicts",
+    "parallelism",
+    "replay",
+    "rework",
+    "card-cut"
+  ],
+  "openDecisions": [
+    {
+      "id": "DS-D1",
+      "decisionId": "dispatcher-form",
+      "title": "Form of a dispatcher",
+      "question": "Is a dispatcher a model session, a pure strategy chosen by a persona, or a project setting?",
+      "options": {
+        "A": "Model session that orders the lane",
+        "B": "Persona names a pure strategy in the decision library",
+        "C": "Project setting without personas"
+      },
+      "recommended": "B",
+      "recommendation": "B. Persona names a pure strategy in the decision library",
+      "rationale": "Decisions are frequent and must be replayable, explainable and token-free; sessions only write recut texts and reports.",
+      "status": "open"
+    },
+    {
+      "id": "DS-D2",
+      "decisionId": "dispatch-order-home",
+      "title": "Where the order lives",
+      "question": "Does the dispatcher write the lane order or its own plan?",
+      "options": {
+        "A": "Write the lane order field",
+        "B": "Separate dispatch plan read by the pick-gate; pins and urgent stay hard",
+        "C": "Advisory only"
+      },
+      "recommended": "B",
+      "recommendation": "B. Separate dispatch plan read by the pick-gate; pins and urgent stay hard",
+      "rationale": "Owner drags keep their meaning and plans stay comparable between personas.",
+      "status": "open"
+    },
+    {
+      "id": "DS-D3",
+      "decisionId": "dispatch-rights",
+      "title": "Rights and tiers",
+      "question": "Which dispatcher actions are T1 and which need an explicit T2 grant?",
+      "options": {
+        "A": "Everything T1",
+        "B": "Bounded T1 (order, hold at most 24 h, own edges, exclusive, bounded recut); T2 for every bypass",
+        "C": "Proposals only"
+      },
+      "recommended": "B",
+      "recommendation": "B. Bounded T1 (order, hold at most 24 h, own edges, exclusive, bounded recut); T2 for every bypass",
+      "rationale": "Follows the persona team tiers; nothing that bypasses a check runs on a standing grant.",
+      "status": "open"
+    },
+    {
+      "id": "DS-D4",
+      "decisionId": "touch-forecast",
+      "title": "Touch forecast",
+      "question": "What tells a dispatcher which files a card will touch?",
+      "options": {
+        "A": "Keyword areas from the prompt enrichment",
+        "B": "Shared model-free forecast: cited paths, co-change expansion, module map, confidence; real files recorded",
+        "C": "Model estimate for every card"
+      },
+      "recommended": "B",
+      "recommendation": "B. Shared model-free forecast: cited paths, co-change expansion, module map, confidence; real files recorded",
+      "rationale": "Pair F1 0.52 to 0.56 at zero tokens against 0.37 for keyword areas; a model-assisted forecast stays a persona option.",
+      "status": "open"
+    },
+    {
+      "id": "DS-D5",
+      "decisionId": "conflict-ledger",
+      "title": "Conflict record",
+      "question": "How are conflicts recorded so that they can be attributed and learned from?",
+      "options": {
+        "A": "Latest report per card, as today",
+        "B": "Append-only ledger with partner attribution and admitting decisions, backfilled for 30 days",
+        "C": "Derive from git on demand"
+      },
+      "recommended": "B",
+      "recommendation": "B. Append-only ledger with partner attribution and admitting decisions, backfilled for 30 days",
+      "rationale": "Without partner and decision a conflict cannot be charged to a dispatcher.",
+      "status": "open"
+    },
+    {
+      "id": "DS-D6",
+      "decisionId": "competition-order",
+      "title": "Competition order",
+      "question": "In which order do personas compete?",
+      "options": {
+        "A": "Alternating live from the start",
+        "B": "Replay, then shadow, then alternating live by wave window per project, behind a guard",
+        "C": "Replay and shadow only"
+      },
+      "recommended": "B",
+      "recommendation": "B. Replay, then shadow, then alternating live by wave window per project, behind a guard",
+      "rationale": "Cheap and safe first; real tokens and behaviour only for the top two.",
+      "status": "open"
+    },
+    {
+      "id": "DS-D7",
+      "decisionId": "review-value",
+      "title": "Criteria and value",
+      "question": "How do the criteria combine into one value?",
+      "options": {
+        "A": "Plain weighted sum",
+        "B": "Weighted sum with min-max scores and a parallelism gate at 0.8; default weights 30, 25, 10, 10, 10, 5, 5, 5",
+        "C": "Lexicographic order"
+      },
+      "recommended": "B",
+      "recommendation": "B. Weighted sum with min-max scores and a parallelism gate at 0.8; default weights 30, 25, 10, 10, 10, 5, 5, 5",
+      "rationale": "A plain sum ranks a nearly sequential warden first (81); the gate drops it to 45.",
+      "status": "open"
+    },
+    {
+      "id": "DS-D8",
+      "decisionId": "recut-and-source-cut",
+      "title": "Recut and source cut",
+      "question": "Who may recut cards, and what must sources provide?",
+      "options": {
+        "A": "Only the owner recuts",
+        "B": "Packer recuts unstarted automated-source cards with undo; sources emit wave id and cited paths; size from a source prior",
+        "C": "Sources cut themselves"
+      },
+      "recommended": "B",
+      "recommendation": "B. Packer recuts unstarted automated-source cards with undo; sources emit wave id and cited paths; size from a source prior",
+      "rationale": "Waves of 57 cards arrive in one minute; size is not predictable from text (r at most 0.12), so a source prior bounds packages.",
+      "status": "open"
+    },
+    {
+      "id": "DS-D9",
+      "decisionId": "first-live-dispatcher",
+      "title": "First live persona",
+      "question": "Which persona takes the live lease first?",
+      "options": {
+        "A": "Queue keeper until shadow ends",
+        "B": "Area warden on forecast modules after its shadow gate; Packer in shadow with proposals",
+        "C": "Packer live directly"
+      },
+      "recommended": "B",
+      "recommendation": "B. Area warden on forecast modules after its shadow gate; Packer in shadow with proposals",
+      "rationale": "Most robust in the replay: first or tied first in three of four runs and two points behind the Packer in the base run; model-free, needs no recut rights.",
+      "status": "open"
+    },
+    {
+      "id": "DS-D10",
+      "decisionId": "overlap-window",
+      "title": "Exposure window of the overlap check",
+      "question": "Which cards does the pick-gate compare a candidate with?",
+      "options": {
+        "A": "Running cards only, as today",
+        "B": "Every in-flight card of the project, from start to integration, on the local pickup and the remote claim",
+        "C": "In flight only between cards of one source wave"
+      },
+      "recommended": "B",
+      "recommendation": "B. Every in-flight card of the project, from start to integration, on the local pickup and the remote claim",
+      "rationale": "With an integration lag of one card duration a running-only check leaves 29 to 35 of 57 cards needing a sync under every strategy; in flight the forecast personas reach 12 to 15. The slot cost is accepted because efficiency comes before lead time.",
+      "status": "open"
+    }
+  ],
+  "implementationTasks": [
+    {
+      "id": "DS-0",
+      "title": "DS-0 \u00B7 Overlap check on both claim paths over the exposure window",
+      "dependsOn": [],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DS-0",
+        "criteria": [
+          "Remote claim test: two Ready cards of one project whose prompts name \u0060backend/Features/Personas/A.cs\u0060 and \u0060backend/Features/Personas/B.cs\u0060 are never leased at the same time; the second records a \u0060parallel-conflict\u0060 pickup skip naming the first card and the prefix.",
+          "In-flight test (local pickup and remote claim): a card in a review lane or waiting for integration whose prompt names \u0060frontend/src/app/features/project-detail/state/deploy-area.model.ts\u0060 blocks a Ready card naming a file in the same directory; after the first card integrates, the second is admitted.",
+          "With \u0060dispatch.overlapWindow\u0060 set to \u0060running\u0060, local pickup admissions are identical to today (existing runner tests green) and the remote claim applies the same rule against leased running cards only.",
+          "\u0060ParallelSlotPolicy\u0060 decision rules and \u0060ScopePathRegex\u0060 are unchanged; only the comparison set and the remote call site change."
+        ]
+      },
+      "promptMarkdown": "# DS-0 \u00B7 Overlap check on both claim paths over the exposure window\n\nSource: \u0060docs/dispatcher-personas/index.html\u0060 (AGT-3974), replay data and script in \u0060docs/dispatcher-personas/replay/\u0060. Read AGENTS.md, docs/system/contracts/orchestration-decisions.md and \u0060docs/persona-team/index.html\u0060 (persona team, capability addendum) first. Each Dossier recommendation (DS-D1 to DS-D10) is the working decision unless a recorded operator decision selects another option; record the option implemented in the results status. Orchestration rules live only in \u0060orchestration-decisions/\u0060 as pure policies; hosts collect facts and apply returned decisions. Workspace data only through the application API; git stays with the platform. One bounded slice; no em dashes in text.\n\n**Area:** \u0060backend/Features/Runner/\u0060 (\u0060ProjectRunner\u0060 admission facts, \u0060ActiveRuns\u0060 comparison set, \u0060PredictParallelism\u0060 moved to a shared helper), \u0060backend/Features/Tasks/LeaseEndpoints.cs\u0060 (remote claim), \u0060backend/Shared/Models/ProjectSettings.cs\u0060 (one setting)\n\n## Why\nThe Dossier section Exposure window shows that a card stays exposed from its start until it integrates, while today\u0027s local pick-gate compares a candidate only with running cards, and the remote claim (\u0060LeaseEndpoints\u0060, which ran the 17 November wave) applies no scope rule at all. Decision DS-D10, recommended option B.\n\n## Deliver\n1. Move \u0060ProjectRunner.PredictParallelism\u0060 and \u0060ScopePathRegex\u0060 into a shared helper with byte-identical behaviour (parent directory of every named \u0060backend/\u0060, \u0060frontend/\u0060, \u0060src/\u0060, \u0060docs/\u0060, \u0060tools/\u0060 path in title and \u0060prompt.md\u0060, at most 24; none means unknown scope).\n2. Project setting \u0060dispatch.overlapWindow\u0060: \u0060running\u0060 (today\u0027s local behaviour) or \u0060in-flight\u0060 (default). In \u0060in-flight\u0060, the comparison set is every card of the project that has started a coding run and has not integrated yet: Progress, the review lanes, cards waiting for the batch gate or integration, and queued merge rounds. Their scopes come from the same helper.\n3. The remote claim calls \u0060ParallelSlotPolicy.Decide\u0060 for each candidate in \u0060LaneSortApplier.PickupOrder\u0060 against that comparison set (leased running cards plus, in \u0060in-flight\u0060, the other in-flight cards) and skips a conflicting candidate with a \u0060parallel-conflict\u0060 pickup skip, as the local pickup does.\n4. Every serialize names the window, the conflicting card and the shared prefix in the pickup skip and the runner log, so DS-4 and DS-7 can measure over-serialization later.\n5. Exclusive cards keep blocking only while running; unknown scope stays optimistic. No change to lane order.\n\nRecord in the results status which window is the default and how many serializes the first day produced."
+    },
+    {
+      "id": "DS-1",
+      "title": "DS-1 \u00B7 Touch forecast, co-change index and real-file record",
+      "dependsOn": [
+        "DS-0"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DS-1",
+        "criteria": [
+          "Unit tests: cited-path extraction on the AGT-3885/3886/3888 finding texts in the Dossier wave file reproduces the \u0060citedFiles\u0060 there for at least 50 of 55 cards.",
+          "A test over \u0060docs/dispatcher-personas/replay/wave-2026-11-17.json\u0060 reproduces pair F1 0.56 (forecast files) and 0.52 (modules) within 0.03 using the stored forecasts.",
+          "Forecast computation for one card takes under 50 ms with a warm index; no model call anywhere in the slice.",
+          "Real changed files and accuracy are stored for every delivered card; the read API returns forecast and accuracy."
+        ]
+      },
+      "promptMarkdown": "# DS-1 \u00B7 Touch forecast, co-change index and real-file record\n\nSource: \u0060docs/dispatcher-personas/index.html\u0060 (AGT-3974), replay data and script in \u0060docs/dispatcher-personas/replay/\u0060. Read AGENTS.md, docs/system/contracts/orchestration-decisions.md and \u0060docs/persona-team/index.html\u0060 (persona team, capability addendum) first. Each Dossier recommendation (DS-D1 to DS-D10) is the working decision unless a recorded operator decision selects another option; record the option implemented in the results status. Orchestration rules live only in \u0060orchestration-decisions/\u0060 as pure policies; hosts collect facts and apply returned decisions. Register backend services through \u0060AddDispatch\u0060 in \u0060backend/Features/Dispatch/\u0060 (created by DS-1), not through new lines in \u0060backend/Host/Program.cs\u0060. Workspace data only through the application API; git stays with the platform. One bounded slice; no em dashes in text.\n\n**Area:** new \u0060backend/Features/Dispatch/\u0060, one hook in the intake path (\u0060backend/Features/Runner/IntakeRunner.cs\u0060 or the Ready-entry transition)\n\n## Deliver\n1. \u0060TouchForecastV1\u0060 per card, computed model-free when a card enters Ready and when its prompt changes: \u0060citedFiles\u0060 (repository paths and unique file names cited in title and prompt, resolved against \u0060git ls-files\u0060 at the integration tip), \u0060forecastFiles\u0060 (cited files plus files that changed together with a cited file in at least half of its commits, minimum three commits, commits over 40 code files ignored), \u0060modules\u0060 (map in the Dossier: \u0060frontend/src/app/features/\u003Cx\u003E\u0060, \u0060frontend/src/app/\u003Cx\u003E\u0060, \u0060frontend/e2e/\u003Cx\u003E\u0060, \u0060backend/Features/\u003CX\u003E\u0060, top folder otherwise), \u0060hubFiles\u0060 excluded from modules, \u0060confidence\u0060 (\u0060cited\u0060, \u0060module-only\u0060, \u0060none\u0060), \u0060indexRevision\u0060.\n2. A co-change index per project, rebuilt nightly from the integration branch over the last 60 days, stored with its date so that replays can use the index as of a wave start.\n3. A hub file list per project (default \u0060backend/Host/Program.cs\u0060, \u0060backend/Features/Security/Iam/RoutePermissionCatalog.cs\u0060, \u0060frontend/src/app/models/task.model.ts\u0060), editable in project settings.\n4. At delivery, record the real changed code files of the card (merge-base diff of the delivery) next to the forecast, plus file-level and module-level precision and recall.\n5. Read API \u0060GET /api/projects/{project}/dispatch/forecasts?cards=\u0060 and the forecast on the card detail payload (no UI in this slice).\n6. \u0060AddDispatch\u0060 service registration extension and \u0060MapDispatchEndpoints\u0060, wired once in Program.cs and EndpointMapping.cs.\n\u0060IntakeRunner.DetectTaskAreas\u0060 stays unchanged and keeps serving prompt enrichment."
+    },
+    {
+      "id": "DS-2",
+      "title": "DS-2 \u00B7 Conflict ledger with partner attribution",
+      "dependsOn": [
+        "DS-1"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DS-2",
+        "criteria": [
+          "Backend test: a synthetic repository with two cards touching one file produces one record with the other card as partner.",
+          "Backfill on the agent-studio history of 17 and 18 November finds at least 19 of the 21 cards with a develop sync named in the Dossier.",
+          "The existing card-visible \u0060TaskIntegrationFailure.ConflictReport\u0060 and its rendering are unchanged (existing tests green).",
+          "Records are append-only: no update or delete path exists; a test asserts it."
+        ]
+      },
+      "promptMarkdown": "# DS-2 \u00B7 Conflict ledger with partner attribution\n\nSource: \u0060docs/dispatcher-personas/index.html\u0060 (AGT-3974), replay data and script in \u0060docs/dispatcher-personas/replay/\u0060. Read AGENTS.md, docs/system/contracts/orchestration-decisions.md and \u0060docs/persona-team/index.html\u0060 (persona team, capability addendum) first. Each Dossier recommendation (DS-D1 to DS-D10) is the working decision unless a recorded operator decision selects another option; record the option implemented in the results status. Orchestration rules live only in \u0060orchestration-decisions/\u0060 as pure policies; hosts collect facts and apply returned decisions. Register backend services through \u0060AddDispatch\u0060 in \u0060backend/Features/Dispatch/\u0060 (created by DS-1), not through new lines in \u0060backend/Host/Program.cs\u0060. Workspace data only through the application API; git stays with the platform. One bounded slice; no em dashes in text.\n\n**Area:** \u0060backend/Features/Git/\u0060 (conflict report builder), \u0060backend/Features/Dispatch/\u0060 (ledger store), \u0060backend/Features/Pipeline/\u0060 integration outcome hook\n\n## Deliver\n1. Append-only \u0060DispatchConflictRecordV1\u0060 per project: card, kind (\u0060integration-conflict\u0060, \u0060merge-round\u0060, \u0060develop-sync\u0060, \u0060semantic\u0060), delivery base SHA, integration tip SHA, conflicted files (all, not capped at 20), **partner cards** (cards whose commits between base and tip changed a conflicted file, read from commit attribution and provenance), the dispatch decision ids that admitted card and partners (null until DS-6), live or shadow persona id, time.\n2. Write a record from \u0060IntegrationConflictReport\u0060 (keep that report unchanged), from every \u0060DeliveryChainAction.QueueMergeRound\u0060, and from every agent develop sync round.\n3. Semantic conflict: when red-batch isolation names two cards of the same admission window whose forecasts overlap, write \u0060semantic\u0060 with both cards.\n4. Backfill: a one-shot command that rebuilds the last 30 days from git (develop sync and conflict-resolution commits, as in the Dossier wave method) and marks records \u0060backfilled\u0060.\n5. Read API \u0060GET /api/projects/{project}/dispatch/conflicts?from=\u0026to=\u0060."
+    },
+    {
+      "id": "DS-3",
+      "title": "DS-3 \u00B7 Dispatch plan policy and starter strategies",
+      "dependsOn": [],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DS-3",
+        "criteria": [
+          "Policy tests for each strategy on small fixtures, including the hard constraints.",
+          "Equivalence test: \u0060lane-entry-v1\u0060 plan equals today\u0027s pickup order and admissions on 200 randomised queues.",
+          "\u0060TransitionDecisionBoundaryTests\u0060 and \u0060MonolithDecisionBoundaryTests\u0060 stay green; the policy has no I/O.",
+          "Every Serialize and hold carries a reason code and the passed-over candidates."
+        ]
+      },
+      "promptMarkdown": "# DS-3 \u00B7 Dispatch plan policy and starter strategies\n\nSource: \u0060docs/dispatcher-personas/index.html\u0060 (AGT-3974), replay data and script in \u0060docs/dispatcher-personas/replay/\u0060. Read AGENTS.md, docs/system/contracts/orchestration-decisions.md and \u0060docs/persona-team/index.html\u0060 (persona team, capability addendum) first. Each Dossier recommendation (DS-D1 to DS-D10) is the working decision unless a recorded operator decision selects another option; record the option implemented in the results status. Orchestration rules live only in \u0060orchestration-decisions/\u0060 as pure policies; hosts collect facts and apply returned decisions. Register backend services through \u0060AddDispatch\u0060 in \u0060backend/Features/Dispatch/\u0060 (created by DS-1), not through new lines in \u0060backend/Host/Program.cs\u0060. Workspace data only through the application API; git stays with the platform. One bounded slice; no em dashes in text.\n\n**Area:** \u0060orchestration-decisions/\u0060 only (new \u0060DispatchPlanPolicy.cs\u0060 plus tests)\n\n## Deliver\n1. Pure \u0060DispatchPlanPolicy.Plan(DispatchFacts, DispatchStrategy)\u0060 returning \u0060DispatchPlan\u0060: ordered candidates, holds (card, reason code, waits-for, expiry), dependency edges to add (origin dispatcher), exclusive marks, and for each free slot \u0060Admit\u0060 or \u0060Serialize\u0060 with a reason code and the candidates passed over.\n2. Facts: Ready cards with priority class, owner pin, \u0060urgent\u0060, \u0060dependsOn\u0060 state, forecast (files, modules, confidence), source wave and size prior; running cards with forecasts; free slots; ledger summaries (hot modules within 14 days, collided pairs); hub files.\n3. Strategies as data (\u0060dispatch-strategy.v1\u0060, id plus revision plus parameters): \u0060lane-entry-v1\u0060 (Queue keeper), \u0060one-per-area-v1\u0060 (Area warden, module key, unknown area one at a time, over 3 modules exclusive), \u0060file-overlap-v1\u0060 (Surveyor), \u0060ledger-learned-v1\u0060 (Historian), \u0060package-then-chain-v1\u0060 (Packer dispatch part; recut itself is DS-9). Rules exactly as in the Dossier section Starter personas.\n4. Hard constraints for every strategy: pins and \u0060urgent\u0060 first within priority class, \u0060dependsOn\u0060 respected, exclusive runs, slot count, hold bounds (24 h, at most 25 % of Ready).\n5. \u0060lane-entry-v1\u0060 must reproduce today\u0027s \u0060LaneSortApplier\u0060 order plus \u0060ParallelSlotPolicy\u0060 admissions exactly."
+    },
+    {
+      "id": "DS-4",
+      "title": "DS-4 \u00B7 Replay harness on recorded waves",
+      "dependsOn": [
+        "DS-2",
+        "DS-3"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DS-4",
+        "criteria": [
+          "On the fixture with 4 slots and unit durations: Queue keeper 20 cards needing sync, forecast-module Area warden 7, conflict-free bound 0, each within \u00B11 of the Dossier\u0027s \u0060replay.py\u0060.",
+          "Replay never reads data dated after the wave start (test with a planted future co-change entry).",
+          "Runs in under 30 seconds for a 100-card wave.",
+          "On the fixture with lag 1 and check \u0060in-flight\u0060: forecast-module Area warden 12 cards needing sync and Queue keeper 35, within \u00B11 of the Dossier\u0027s \u0060replay.py\u0060 section \u0022exposure window\u0022."
+        ]
+      },
+      "promptMarkdown": "# DS-4 \u00B7 Replay harness on recorded waves\n\nSource: \u0060docs/dispatcher-personas/index.html\u0060 (AGT-3974), replay data and script in \u0060docs/dispatcher-personas/replay/\u0060. Read AGENTS.md, docs/system/contracts/orchestration-decisions.md and \u0060docs/persona-team/index.html\u0060 (persona team, capability addendum) first. Each Dossier recommendation (DS-D1 to DS-D10) is the working decision unless a recorded operator decision selects another option; record the option implemented in the results status. Orchestration rules live only in \u0060orchestration-decisions/\u0060 as pure policies; hosts collect facts and apply returned decisions. Register backend services through \u0060AddDispatch\u0060 in \u0060backend/Features/Dispatch/\u0060 (created by DS-1), not through new lines in \u0060backend/Host/Program.cs\u0060. Workspace data only through the application API; git stays with the platform. One bounded slice; no em dashes in text.\n\n**Area:** \u0060backend/Features/Dispatch/Replay/\u0060 (a test-host command) and its tests; no product runtime change\n\n## Deliver\n1. A replay command that takes a project and a time window (or a wave id), builds the wave from the ledger and git (real files per card, forecast as of the wave start using the dated co-change index), runs every strategy of DS-3 through \u0060DispatchPlanPolicy\u0060 with N slots, unit or size-weighted durations, an integration lag, and the check mode \u0060running\u0060 or \u0060in-flight\u0060 of DS-0, and prints the criteria of the Dossier (cards needing sync, pairs in parallel, runs, rounds per card, rework share, pair F1, parallelism against the conflict-free bound, time, plain and gated value).\n2. The 17 November wave as a checked-in fixture (copy of \u0060docs/dispatcher-personas/replay/wave-2026-11-17.json\u0060 under the test fixtures).\n3. Output as JSON for DS-7 (\u0060replay\u0060 mode in the review projection)."
+    },
+    {
+      "id": "DS-5",
+      "title": "DS-5 \u00B7 Dispatcher role, starter personas and shadow record",
+      "dependsOn": [
+        "DS-3",
+        "DS-4"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DS-5",
+        "criteria": [
+          "Descriptor validation tests for the five personas; an invalid strategy id is refused.",
+          "Policy tests for tiers: removing an owner edge without T2 is refused with a capability refusal; own edges are removable.",
+          "Shadow plans are recorded for every active persona on each evaluation and never change a card.",
+          "Exactly one live lease per project; pausing the live persona hands the lease to queue-keeper."
+        ]
+      },
+      "promptMarkdown": "# DS-5 \u00B7 Dispatcher role, starter personas and shadow record\n\nSource: \u0060docs/dispatcher-personas/index.html\u0060 (AGT-3974), replay data and script in \u0060docs/dispatcher-personas/replay/\u0060. Read AGENTS.md, docs/system/contracts/orchestration-decisions.md and \u0060docs/persona-team/index.html\u0060 (persona team, capability addendum) first. Each Dossier recommendation (DS-D1 to DS-D10) is the working decision unless a recorded operator decision selects another option; record the option implemented in the results status. Orchestration rules live only in \u0060orchestration-decisions/\u0060 as pure policies; hosts collect facts and apply returned decisions. Register backend services through \u0060AddDispatch\u0060 in \u0060backend/Features/Dispatch/\u0060 (created by DS-1), not through new lines in \u0060backend/Host/Program.cs\u0060. Workspace data only through the application API; git stays with the platform. One bounded slice; no em dashes in text.\n\n**Area:** \u0060backend/Features/Personas/\u0060, \u0060backend/Policies/personas/\u0060, \u0060backend/Features/Dispatch/\u0060 (allow list, lease, shadow store, log), \u0060docs/app/schemas/persona.schema.json\u0060\n\n## Deliver\n1. Persona kind \u0060dispatcher\u0060 and an optional \u0060dispatch\u0060 block in the descriptor schema: \u0060strategy\u0060 (id and revision of a DS-3 strategy), \u0060parameters\u0060, \u0060mode\u0060 (\u0060shadow\u0060 default, \u0060live\u0060 only through the lease), \u0060forecast\u0060 (\u0060model-free\u0060 or \u0060model-assisted\u0060).\n2. Role template \u0060dispatcher\u0060 with charter, default grants, report template \u0060dispatcher-v1\u0060, floor 60 for attributed conflicts. Five descriptors: queue-keeper, area-warden, surveyor, historian, packer, with the attributes of the Dossier (allowance 20,000 tokens a week, Packer 60,000).\n3. Catalogue operations \u0060dispatch.plan.write\u0060, \u0060dispatch.hold\u0060, \u0060dispatch.release\u0060, \u0060dispatch.dependency.add\u0060, \u0060dispatch.dependency.remove\u0060, \u0060dispatch.exclusive.set\u0060, \u0060dispatch.recut.propose\u0060, \u0060dispatch.recut.apply\u0060, \u0060dispatch.shadow.record\u0060 with the tiers of the Dossier. Implement them as a narrow allow list in \u0060backend/Features/Dispatch/\u0060, held as data (\u0060backend/Policies/personas/dispatcher.grants.v1.json\u0060) under the catalogue names, whether or not the persona team addendum (PT-13 to PT-20) has landed. Do not read or change addendum structures; taking this data into grant rows belongs to PT-15.\n4. Dependency edge origin: \u0060dependsOn\u0060 entries gain an optional \u0060origin\u0060 (\u0060owner\u0060, \u0060dossier\u0060, \u0060dispatch:\u003Cpersona\u003E\u0060); removing an edge not created by the acting persona is refused unless a T2 grant is present.\n5. Dispatch lease per project (one live persona); shadow record: every active dispatcher persona\u0027s plan is computed on the same facts at each pick evaluation and stored with decision ids, marked shadow. Log entries go to an append-only dispatcher log with the fields of \u0060PersonaLogEntryV1\u0060 (PT-D18); taking it into the persona log belongs to PT-18.\n\nSeparation from the persona team addendum is enforced by the platform, not by this text: this slice depends on DS-4 and through it on DS-0, so the scope rule compares it with every in-flight card on both claim paths, and its Area line names \u0060backend/Policies/personas/\u0060, which the PT-13 prompt names too."
+    },
+    {
+      "id": "DS-6",
+      "title": "DS-6 \u00B7 Pick-gate applies the live dispatch plan",
+      "dependsOn": [
+        "DS-0",
+        "DS-1",
+        "DS-5"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DS-6",
+        "criteria": [
+          "With \u0060dispatch.mode\u0060 off or shadow, pickup order and admissions are byte-identical to today (existing runner tests plus an equivalence test).",
+          "In live mode with the Area warden, two Ready cards sharing a forecast module never run together (integration test with two slots).",
+          "Decision ids appear on run records and in DS-2 conflict records.",
+          "Playwright: a held Ready card shows its hold reason in light and dark at 390 and 1440 px; screenshots under the results folder."
+        ]
+      },
+      "promptMarkdown": "# DS-6 \u00B7 Pick-gate applies the live dispatch plan\n\nSource: \u0060docs/dispatcher-personas/index.html\u0060 (AGT-3974), replay data and script in \u0060docs/dispatcher-personas/replay/\u0060. Read AGENTS.md, docs/system/contracts/orchestration-decisions.md and \u0060docs/persona-team/index.html\u0060 (persona team, capability addendum) first. Each Dossier recommendation (DS-D1 to DS-D10) is the working decision unless a recorded operator decision selects another option; record the option implemented in the results status. Orchestration rules live only in \u0060orchestration-decisions/\u0060 as pure policies; hosts collect facts and apply returned decisions. Register backend services through \u0060AddDispatch\u0060 in \u0060backend/Features/Dispatch/\u0060 (created by DS-1), not through new lines in \u0060backend/Host/Program.cs\u0060. Workspace data only through the application API; git stays with the platform. One bounded slice; no em dashes in text.\n\n**Area:** \u0060backend/Features/Runner/\u0060 (pickup, \u0060ActiveRuns\u0060, \u0060ParallelSlotPolicy\u0060 call site), \u0060backend/Features/Tasks/LaneSortApplier.cs\u0060, \u0060LeaseEndpoints\u0060 remote claim\n\n## Deliver\n1. Project setting \u0060dispatch.mode\u0060: \u0060off\u0060 (today), \u0060shadow\u0060 (default after this slice: plans recorded, today\u0027s order applied), \u0060live\u0060 (the live persona\u0027s plan decides order and admission).\n2. In \u0060live\u0060, the local pickup and the remote claim (\u0060LaneSortApplier.PickupOrder\u0060) take candidates in plan order and apply plan holds and edges; \u0060TaskParallelism.PredictedScope\u0060 is filled from the forecast (non-hub forecast files) instead of the prompt-path scope of DS-0, for the candidate and for every in-flight card in the DS-0 comparison set; exclusive marks set \u0060Exclusive\u0060.\n3. Every admission and serialize writes the dispatch decision id onto the run record so DS-2 can attribute conflicts.\n4. Board: a hold reason chip and plan position on Ready cards through the existing pickup-hold presentation (no new component).\n5. A held card always names what it waits for; a hold that expires releases the card automatically."
+    },
+    {
+      "id": "DS-7",
+      "title": "DS-7 \u00B7 Review projection, criteria, weights and gate",
+      "dependsOn": [
+        "DS-2",
+        "DS-6"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DS-7",
+        "criteria": [
+          "Fed with the DS-4 output for the 17 November fixture, the projection reproduces the Dossier\u0027s gated values (Packer 67, Area warden modules 65, keyword warden 45, Queue keeper 17) within \u00B12.",
+          "A weight revision whose sum is not 100 is refused; a persona principal is refused; the owner succeeds and the ranking is recomputed.",
+          "Below 40 integrated cards the API returns \u0060tooFewCards\u0060 instead of a value."
+        ]
+      },
+      "promptMarkdown": "# DS-7 \u00B7 Review projection, criteria, weights and gate\n\nSource: \u0060docs/dispatcher-personas/index.html\u0060 (AGT-3974), replay data and script in \u0060docs/dispatcher-personas/replay/\u0060. Read AGENTS.md, docs/system/contracts/orchestration-decisions.md and \u0060docs/persona-team/index.html\u0060 (persona team, capability addendum) first. Each Dossier recommendation (DS-D1 to DS-D10) is the working decision unless a recorded operator decision selects another option; record the option implemented in the results status. Orchestration rules live only in \u0060orchestration-decisions/\u0060 as pure policies; hosts collect facts and apply returned decisions. Register backend services through \u0060AddDispatch\u0060 in \u0060backend/Features/Dispatch/\u0060 (created by DS-1), not through new lines in \u0060backend/Host/Program.cs\u0060. Workspace data only through the application API; git stays with the platform. One bounded slice; no em dashes in text.\n\n**Area:** \u0060backend/Features/Dispatch/\u0060 (projection, settings, API)\n\n## Deliver\n1. \u0060DispatchReviewProjection\u0060 per project, persona and window (default 30 days) with the raw criterion values of the Dossier: conflicts per 100 integrated cards (attributed through DS-2), tokens per accepted card including reviews and rework (from the token ledger; shadow values estimated and flagged), share of rework, forecast pair F1 and file F1, parallelism against the conflict-free bound (computed with the DS-4 replay over the window\u0027s real files), median Ready-to-integrated hours, own tokens per 100 dispatched cards (occurrence receipts), explanation (deterministic check 70, owner rating of sampled entries 30).\n2. Scores 0 to 100 by min-max within the comparison set (baseline always included); weighted value with the parallelism gate \u0060min(1, parallelism / gate)\u0060; \u0022too few cards\u0022 below 40 integrated cards.\n3. Workspace setting \u0060dispatch.review.weights\u0060 with revisions (author, time, reason); default revision w1 = 30, 25, 10, 10, 10, 5, 5, 5 and gate 0.8; sum must be 100; owner-only write, readable by personas.\n4. Recompute any window under any weight revision from stored raw values.\n5. Champion and challenger evaluation and the guard rule as typed facts for DS-11 (no switching here).\n6. API \u0060GET /api/projects/{project}/dispatch/review?window=\u0026weights=\u0060 and \u0060PUT /api/workspaces/{id}/dispatch/review/weights\u0060."
+    },
+    {
+      "id": "DS-8",
+      "title": "DS-8 \u00B7 Dispatcher character sheet and Dispatch review page",
+      "dependsOn": [
+        "DS-7"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DS-8",
+        "criteria": [
+          "Playwright with fixture data: sheet and review page in light and dark at 390 and 1440 px; screenshots under the results folder.",
+          "Weights panel blocks saving when the sum is not 100 and shows the remainder; saving calls the DS-7 API.",
+          "The gated persona shows both values; keyboard path through the table and the weights panel."
+        ]
+      },
+      "promptMarkdown": "# DS-8 \u00B7 Dispatcher character sheet and Dispatch review page\n\nSource: \u0060docs/dispatcher-personas/index.html\u0060 (AGT-3974), replay data and script in \u0060docs/dispatcher-personas/replay/\u0060. Read AGENTS.md, docs/system/contracts/orchestration-decisions.md and \u0060docs/persona-team/index.html\u0060 (persona team, capability addendum) first. Each Dossier recommendation (DS-D1 to DS-D10) is the working decision unless a recorded operator decision selects another option; record the option implemented in the results status. Orchestration rules live only in \u0060orchestration-decisions/\u0060 as pure policies; hosts collect facts and apply returned decisions. Register backend services through \u0060AddDispatch\u0060 in \u0060backend/Features/Dispatch/\u0060 (created by DS-1), not through new lines in \u0060backend/Host/Program.cs\u0060. Workspace data only through the application API; git stays with the platform. One bounded slice; no em dashes in text.\n\n**Area:** \u0060frontend/src/app/features/persona-team/\u0060 only\n\n## Deliver\n1. Dispatcher variant of the persona character sheet (existing PT-7 sheet): strategy and revision, mode chip, owner-set attributes with what each changes, record of the current window (cards planned, pairs in parallel, cards needing sync with baseline, conflicts per 100, rounds per card, parallelism against bound, forecast F1, own tokens), value panel with each criterion score and weight, and criteria not measurable in replay marked as such. Follow the Dossier mockup \u0060#mock-sheet\u0060.\n2. Dispatch review page per project (route under the persona team area): ranking table (persona, mode, criterion scores, value, gated marker showing the plain value), attributed conflicts list, weights panel (eight numbers with live remainder, gate, Save as new revision, Reset to defaults), champion panel, data source switch (replay, shadow, live). Follow \u0060#mock-review\u0060.\n3. Studio tokens and existing components only; no left accent bars; both themes."
+    },
+    {
+      "id": "DS-9",
+      "title": "DS-9 \u00B7 Packer recut: packages, chains and split proposals",
+      "dependsOn": [
+        "DS-7"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DS-9",
+        "criteria": [
+          "On the 17 November fixture the Packer produces only review-finding packages (no DP or IN package) and chains the DP and IN clusters, matching the Dossier replay output.",
+          "Undo within 24 hours restores the original cards, their order and edges exactly (test).",
+          "An owner-authored or started card is never recut without a T2 grant (refusal test)."
+        ]
+      },
+      "promptMarkdown": "# DS-9 \u00B7 Packer recut: packages, chains and split proposals\n\nSource: \u0060docs/dispatcher-personas/index.html\u0060 (AGT-3974), replay data and script in \u0060docs/dispatcher-personas/replay/\u0060. Read AGENTS.md, docs/system/contracts/orchestration-decisions.md and \u0060docs/persona-team/index.html\u0060 (persona team, capability addendum) first. Each Dossier recommendation (DS-D1 to DS-D10) is the working decision unless a recorded operator decision selects another option; record the option implemented in the results status. Orchestration rules live only in \u0060orchestration-decisions/\u0060 as pure policies; hosts collect facts and apply returned decisions. Register backend services through \u0060AddDispatch\u0060 in \u0060backend/Features/Dispatch/\u0060 (created by DS-1), not through new lines in \u0060backend/Host/Program.cs\u0060. Workspace data only through the application API; git stays with the platform. One bounded slice; no em dashes in text.\n\n**Area:** \u0060backend/Features/Dispatch/\u0060 (recut service), task creation and reference API calls (\u0060backend/Features/Tasks/\u0060 through existing endpoints)\n\n## Deliver\n1. Wave planning for the Packer: within one source wave, merge findings into one card when they share at least 2 non-hub forecast files, at most 3 findings, and a size prior of at most 25 code files (prior = median real code files of earlier delivered cards of the same source kind, from DS-1 records); chain the rest of an overlapping cluster in source order with \u0060dependsOn\u0060 (origin \u0060dispatch:packer\u0060).\n2. Split proposals for cards whose forecast spans more than 3 modules or whose prior exceeds 25 code files, and for collection cards that touch a hot module (split by module, hot part chained).\n3. Apply only for unstarted cards from automated sources (\u0060creationSource\u0060 playthrough, review findings, scout) as T1 with a 24-hour undo that restores the original cards and edges; everything else is a \u0060dispatch.recut.propose\u0060 item for the owner. Merged cards keep links to every source finding and original card; originals are archived with a pointer, not deleted.\n4. Recut title and prompt drafted by one model call within the Packer allowance; on exhaustion a deterministic concatenation stub."
+    },
+    {
+      "id": "DS-10",
+      "title": "DS-10 \u00B7 Sources emit waves and cited paths",
+      "dependsOn": [
+        "DS-9"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DS-10",
+        "criteria": [
+          "API test: 57 cards posted in one request get one wave id and land in Backlog in shadow or live mode, and in Ready in off mode (today\u0027s behaviour).",
+          "The playthrough card-list schema accepts \u0060citedPaths\u0060; the forecast of DS-1 uses them first.",
+          "Live probe of the changed prompt recorded, or the reason it could not run."
+        ]
+      },
+      "promptMarkdown": "# DS-10 \u00B7 Sources emit waves and cited paths\n\nSource: \u0060docs/dispatcher-personas/index.html\u0060 (AGT-3974), replay data and script in \u0060docs/dispatcher-personas/replay/\u0060. Read AGENTS.md, docs/system/contracts/orchestration-decisions.md and \u0060docs/persona-team/index.html\u0060 (persona team, capability addendum) first. Each Dossier recommendation (DS-D1 to DS-D10) is the working decision unless a recorded operator decision selects another option; record the option implemented in the results status. Orchestration rules live only in \u0060orchestration-decisions/\u0060 as pure policies; hosts collect facts and apply returned decisions. Register backend services through \u0060AddDispatch\u0060 in \u0060backend/Features/Dispatch/\u0060 (created by DS-1), not through new lines in \u0060backend/Host/Program.cs\u0060. Workspace data only through the application API; git stays with the platform. One bounded slice; no em dashes in text.\n\n**Area:** task creation API (\u0060backend/Features/Tasks/\u0060), playthrough and review-finding prompts and skills that create card lists\n\n## Deliver\n1. Task creation accepts \u0060waveId\u0060 and \u0060citedPaths\u0060 per card; a request creating more than 5 cards from one source sets a \u0060waveId\u0060 automatically.\n2. When \u0060dispatch.mode\u0060 is shadow or live, wave cards land in Backlog with the wave id and the live dispatcher moves them to Ready after wave planning (DS-9 for the Packer, ordering only for others).\n3. Playthrough and review-finding prompts gain one instruction: group findings that share a cause file into one card and state which finding must land before which; emit \u0060citedPaths\u0060 from the cause field.\n4. Prompt changes under \u0060prompts/runtime/\u0060 follow the AGENTS.md live probe rule."
+    },
+    {
+      "id": "DS-11",
+      "title": "DS-11 \u00B7 Alternating live, champion and guard",
+      "dependsOn": [
+        "DS-8",
+        "DS-10"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DS-11",
+        "criteria": [
+          "Simulation test: alternation over six synthetic waves assigns leases as specified and never moves a running card.",
+          "Guard test: a planted conflict streak triggers the fallback, the feed item and an undo path.",
+          "The decision rule for champion change and guard lives in \u0060orchestration-decisions/\u0060 with boundary tests green."
+        ]
+      },
+      "promptMarkdown": "# DS-11 \u00B7 Alternating live, champion and guard\n\nSource: \u0060docs/dispatcher-personas/index.html\u0060 (AGT-3974), replay data and script in \u0060docs/dispatcher-personas/replay/\u0060. Read AGENTS.md, docs/system/contracts/orchestration-decisions.md and \u0060docs/persona-team/index.html\u0060 (persona team, capability addendum) first. Each Dossier recommendation (DS-D1 to DS-D10) is the working decision unless a recorded operator decision selects another option; record the option implemented in the results status. Orchestration rules live only in \u0060orchestration-decisions/\u0060 as pure policies; hosts collect facts and apply returned decisions. Register backend services through \u0060AddDispatch\u0060 in \u0060backend/Features/Dispatch/\u0060 (created by DS-1), not through new lines in \u0060backend/Host/Program.cs\u0060. Workspace data only through the application API; git stays with the platform. One bounded slice; no em dashes in text.\n\n**Area:** \u0060backend/Features/Dispatch/\u0060 (lease scheduler), \u0060backend/Features/Runner/\u0060 lease read\n\n## Deliver\n1. Alternating live by wave window per project: the lease alternates between the champion and one challenger per wave (or per day when no wave id is present); a card keeps the admission it started under; conflicts count against the persona that admitted the later card.\n2. Challenger entry from DS-7 facts: value at least 5 above the champion over 100 shadow cards and two waves, gate passed; champion change after four alternating waves each with the challenger ahead.\n3. Guard: if the live persona\u0027s conflicts per 100 over its last 20 integrated cards exceed the baseline\u0027s shadow value on the same cards by 10 or more, hand the lease to the Queue keeper (T1 platform action), publish a feed item at importance 70, owner can undo.\n4. Owner controls on the review page: pin a live persona, stop alternation, undo a guard fallback (frontend change limited to the DS-8 page)."
+    }
+  ],
+  "key": "AGT-W3464"
+}

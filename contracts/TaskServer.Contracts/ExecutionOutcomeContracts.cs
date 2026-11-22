@@ -275,7 +275,8 @@ public static class ExecutionOutcomeAdapter
         if (!honestTerminal
             && facts.Signal is null
             && providerAccess.Kind == ProviderAccessEvidenceKind.RateLimited)
-            return Decide(facts, ExecutionOutcomeKind.QuotaExceeded, OutcomeConfidence.High, null, infrastructure: true);
+            return Decide(facts, ExecutionOutcomeKind.QuotaExceeded, OutcomeConfidence.High, null,
+                infrastructure: true, detail: providerAccess.Detail);
         if (!honestTerminal
             && facts.Signal is null
             && providerAccess.Kind == ProviderAccessEvidenceKind.ModelCapacity)

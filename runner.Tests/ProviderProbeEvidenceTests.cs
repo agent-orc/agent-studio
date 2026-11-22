@@ -8,6 +8,22 @@ public sealed class ProviderProbeEvidenceTests
 {
     private static readonly DateTimeOffset At = new(2026, 9, 26, 12, 0, 0, TimeSpan.Zero);
 
+    [Theory]
+    [InlineData("You've hit your weekly limit · resets 1pm (Europe/Berlin)", ProviderProbeOutcome.QuotaExhausted)]
+    [InlineData("HTTP 429 too many requests", ProviderProbeOutcome.Indeterminate)]
+    public void Weekly_quota_probe_uses_reported_reset_without_treating_generic_429_as_account_exhaustion(
+        string output, ProviderProbeOutcome expected)
+    {
+        var observed = new DateTimeOffset(2026, 11, 17, 8, 19, 0, TimeSpan.Zero);
+        var result = ProviderProbeClassifier.Classify(new ProviderProbeRequest(
+            "claude", "configured", "claude-code", "native-cli-store", "g1", observed,
+            new ProcessResult(1, "", output)));
+        Assert.Equal(expected, result.Outcome);
+        Assert.Equal(expected == ProviderProbeOutcome.QuotaExhausted
+            ? new DateTimeOffset(2026, 11, 17, 12, 0, 0, TimeSpan.Zero)
+            : (DateTimeOffset?)null, result.ResetAt);
+    }
+
     [Fact]
     public void September_401_requires_applicable_incident_evidence()
     {
