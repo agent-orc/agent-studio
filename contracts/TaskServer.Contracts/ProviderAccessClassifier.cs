@@ -65,6 +65,18 @@ public static partial class ProviderAccessClassifier
                 // Quota telemetry is a provider frame. An allowed warning is
                 // counter-evidence for nearby limit prose on stderr.
                 var isProviderError = type is "error" or "turn.failed" or "response.failed" or "rate_limit_event";
+                if (type == "assistant"
+                    && root.TryGetProperty("error", out var assistantError)
+                    && assistantError.ValueKind == JsonValueKind.String
+                    && assistantError.GetString() == "rate_limit")
+                {
+                    // Claude emits synthetic assistant messages for quota
+                    // refusals. The typed error is evidence even when its
+                    // human-readable wording changes.
+                    providerErrors.Add(line);
+                    providerErrors.Add("rate limit exceeded");
+                    continue;
+                }
                 if (type == "result")
                 {
                     isProviderError = root.TryGetProperty("is_error", out var isError)
@@ -89,6 +101,7 @@ public static partial class ProviderAccessClassifier
     private static readonly string[] RateLimitSignals =
     [
         "hit your session limit",
+        "hit your weekly limit",
         "session limit",
         "usage limit",
         "quota exceeded",
@@ -291,6 +304,9 @@ public static partial class ProviderAccessClassifier
             return null;
 
         var utcNow = observedAt.UtcDateTime;
+        if (clock.Groups["zone"].Success
+            && TimeZoneInfo.TryFindSystemTimeZoneById(clock.Groups["zone"].Value, out var reportedZone))
+            localZone = reportedZone;
         var localNow = TimeZoneInfo.ConvertTimeFromUtc(utcNow, localZone);
         var localReset = new DateTime(
             localNow.Year,
@@ -357,7 +373,7 @@ public static partial class ProviderAccessClassifier
     [GeneratedRegex(@"\bresetsAt\s*=\s*(?<value>\d{10})\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex EpochResetRegex();
 
-    [GeneratedRegex(@"\bresets?(?:\s+(?:at|on))?\s+(?<value>\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\bresets?(?:\s+(?:at|on))?\s+(?<value>(?:\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?|\d{1,2}\s*(?:a\.?m\.?|p\.?m\.?)))(?:\s*\((?<zone>[A-Za-z_+./-]+)\))?", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ClockResetRegex();
 
     [GeneratedRegex(@"\bretry\s+(?:after|in)\s+(?<amount>\d{1,5})\s*(?<unit>seconds?|minutes?|hours?|s|m|h)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
