@@ -9,6 +9,11 @@ at the same time.
 Model, stated so the numbers can be checked:
 - N equal slots. A card occupies one slot for its duration and integrates at the end.
 - Durations: "unit" (every card 1) or "size" (1 + real code files / 15).
+- Integration lag (default 0): time between the end of a card's coding run and its
+  integration (review aspects, batch gate). During the lag the card holds no slot but
+  is still exposed. Check "running" compares a candidate only with running cards, as
+  today's pick-gate does (ActiveRuns); "inflight" also compares it with cards whose run
+  ended but that have not integrated yet.
 - A package of cards runs as one unit whose duration is the sum of its members.
 - A card is exposed when another card that shares a real code file integrated while
   it was running. The later of the two needs a develop sync. A shared file is an upper
@@ -17,12 +22,20 @@ Model, stated so the numbers can be checked:
   file- and module-based strategies, because their edits are append-only and usually
   merge cleanly. They still count as real overlap in the measurement.
 
+Today's pick-gate (ProjectRunner.PredictParallelism) already declares a scope: the parent
+directory of every backend/, frontend/, src/, docs/ or tools/ path named in the card's
+title or prompt.md, compared by prefix (ParallelSlotPolicy.FirstScopeConflict). The real
+prompts of the wave are not in git, so "Queue keeper, prompt paths" applies that rule to
+the cited paths of each finding. It is an upper bound for how often the rule could fire
+and is reported outside the scored comparison set.
+
 Usage: python3 -I replay.py [wave.json] [slots]
 Standard library only.
 """
 import itertools
 import json
 import os
+import re
 import sys
 from collections import defaultdict
 
@@ -83,6 +96,22 @@ def overlap_real(a, b):
     return bool(union(real[k] for k in a) & union(real[k] for k in b))
 
 
+# Today's rule: ProjectRunner.ScopePathRegex, parent directory, prefix overlap.
+SCOPE_PATH = re.compile(r"\b((?:backend|frontend|src|docs|tools)/[A-Za-z0-9_./-]+)", re.IGNORECASE)
+prompt_scope = {k: {p.rsplit("/", 1)[0] for p in cards[k]["citedFiles"] if SCOPE_PATH.match(p)} for k in keys}
+
+
+def _prefix_overlap(x, y):
+    return x == y or x.startswith(y + "/") or y.startswith(x + "/")
+
+
+def overlap_prompt_paths(a, b):
+    sa, sb = union(prompt_scope[k] for k in a), union(prompt_scope[k] for k in b)
+    if not sa or not sb:  # unknown scope is admitted optimistically
+        return False
+    return any(_prefix_overlap(x, y) for x in sa for y in sb)
+
+
 def pair_quality(pred):
     pairs = list(itertools.combinations(keys, 2))
     truth = {p for p in pairs if real[p[0]] & real[p[1]]}
@@ -139,13 +168,13 @@ def packer_units():
 
 
 # --- one simulation ---------------------------------------------------------------
-def simulate(admit, units=None, after=None, learn=False, durations="unit"):
+def simulate(admit, units=None, after=None, learn=False, durations="unit", lag=0.0, check="running"):
     units = units or [[k] for k in ORDER]
     after = after or {}
     dur = (lambda u: float(len(u))) if durations == "unit" else (
         lambda u: sum(1 + len(real[k]) / 15 for k in u))
     queue = list(range(len(units)))
-    running, done, start, integrated = [], {}, {}, []
+    running, pending, done, start, integrated = [], [], {}, {}, []
     t, busy = 0.0, 0.0
     locks, pairs_seen, exposed = set(), set(), set()
 
@@ -154,6 +183,8 @@ def simulate(admit, units=None, after=None, learn=False, durations="unit"):
 
     def allowed(q):
         others = [units[r] for r, _ in running]
+        if check == "inflight":
+            others += [units[r] for r, _ in pending]
         if not all(admit(units[q], o) for o in others):
             return False
         if learn:
@@ -165,7 +196,7 @@ def simulate(admit, units=None, after=None, learn=False, durations="unit"):
                     return False
         return True
 
-    while queue or running:
+    while queue or running or pending:
         moved = True
         while len(running) < SLOTS and moved:
             moved = False
@@ -176,17 +207,20 @@ def simulate(admit, units=None, after=None, learn=False, durations="unit"):
                     start[q] = t
                     moved = True
                     break
-            if not moved and not running and queue:
+            if not moved and not running and not pending and queue:
                 q = next(x for x in queue if ready(x))
                 queue.remove(q)
                 running.append((q, t + dur(units[q])))
                 start[q] = t
                 moved = True
-        nxt = min(end for _, end in running)
+        nxt = min([end for _, end in running] + [end for _, end in pending])
         busy += sum(min(end, nxt) - t for _, end in running)
         t = nxt
-        finished = sorted(r for r in running if r[1] == t)
+        ended = [r for r in running if r[1] == t]
         running = [r for r in running if r[1] != t]
+        pending += [(q, t + lag) for q, _ in ended]
+        finished = sorted(r for r in pending if r[1] == t)
+        pending = [r for r in pending if r[1] != t]
         for q, _ in finished:
             for p, tp in integrated:
                 if tp > start[q]:
@@ -212,18 +246,27 @@ def admit_all(a, b):
     return True
 
 
-def run(durations):
+def run(durations, lag=0.0, check="running"):
     pk_units, pk_after = packer_units()
+    opt = dict(durations=durations, lag=lag, check=check)
     rows = [
-        ("Queue keeper (baseline)", simulate(admit_all, durations=durations), None),
-        ("Area warden, keyword areas", simulate(lambda a, b: not overlap_keyword(a, b), durations=durations), overlap_keyword),
-        ("Area warden, forecast modules", simulate(lambda a, b: not overlap_module(a, b), durations=durations), overlap_module),
-        ("Surveyor", simulate(lambda a, b: not overlap_files(a, b), durations=durations), overlap_files),
-        ("Historian", simulate(lambda a, b: not overlap_files(a, b), learn=True, durations=durations), overlap_files),
-        ("Packer", simulate(lambda a, b: not overlap_files(a, b), units=pk_units, after=pk_after, durations=durations), overlap_files),
+        ("Queue keeper (baseline)", simulate(admit_all, **opt), None),
+        ("Area warden, keyword areas", simulate(lambda a, b: not overlap_keyword(a, b), **opt), overlap_keyword),
+        ("Area warden, forecast modules", simulate(lambda a, b: not overlap_module(a, b), **opt), overlap_module),
+        ("Surveyor", simulate(lambda a, b: not overlap_files(a, b), **opt), overlap_files),
+        ("Historian", simulate(lambda a, b: not overlap_files(a, b), learn=True, **opt), overlap_files),
+        ("Packer", simulate(lambda a, b: not overlap_files(a, b), units=pk_units, after=pk_after, **opt), overlap_files),
     ]
-    bound = simulate(lambda a, b: not overlap_real(a, b), durations=durations)
+    bound = simulate(lambda a, b: not overlap_real(a, b), **opt)
     return rows, bound, pk_units
+
+
+def prompt_path_row(durations, bound, lag=0.0, check="running"):
+    """Today's prompt-path rule, scored against the same bound but outside the min-max set."""
+    r = simulate(lambda a, b: not overlap_prompt_paths(a, b), durations=durations, lag=lag, check=check)
+    return dict(name="Queue keeper, prompt paths (upper bound, unscored)", **r,
+                roundsPerCard=round((r["runs"] + r["cardsNeedingSync"]) / len(keys), 2),
+                parallelism=round(min(1.0, r["slotUse"] / bound["slotUse"]), 2) if bound["slotUse"] else 0.0)
 
 
 WEIGHTS = {"conflicts": 30, "tokens": 25, "rework": 10, "forecast": 10, "parallelism": 10, "lead": 5}
@@ -269,6 +312,7 @@ if __name__ == "__main__":
         "forecastFiles": pair_quality(overlap_files),
         "citedFilesOnly": pair_quality(lambda a, b: bool(
             union(set(cards[k]["citedFiles"]) for k in a) & union(set(cards[k]["citedFiles"]) for k in b))),
+        "promptPathScope": pair_quality(overlap_prompt_paths),
     }, indent=1))
     for durations in ("unit", "size"):
         rows, bound, pk = run(durations)
@@ -277,3 +321,16 @@ if __name__ == "__main__":
             print(json.dumps(row))
     print("\nsize prior (median real code files per source):", SIZE_PRIOR)
     print("\npackages:", [[cards[k]["label"] for k in u] for u in pk if len(u) > 1])
+    print("\n== today's prompt-path rule, unit and size durations, instant integration")
+    for durations in ("unit", "size"):
+        _, bound, _ = run(durations)
+        print(durations, json.dumps(prompt_path_row(durations, bound)))
+    print("\n== exposure window: integration lag in card durations, unit durations")
+    for lag in (1, 2):
+        for check in ("running", "inflight"):
+            rows, bound, _ = run("unit", lag=lag, check=check)
+            table = score(rows, bound)
+            pp = prompt_path_row("unit", bound, lag=lag, check=check)
+            print(f"lag {lag}, check {check}: bound slotUse {bound['slotUse']} makespan {bound['makespan']} syncs {bound['cardsNeedingSync']}")
+            for row in table + [pp]:
+                print("  " + json.dumps({f: row.get(f) for f in ("name", "cardsNeedingSync", "exposedPairs", "slotUse", "parallelism", "makespan", "roundsPerCard", "valuePlain", "value")}))
