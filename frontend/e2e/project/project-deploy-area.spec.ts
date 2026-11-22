@@ -13,6 +13,7 @@ import {
   deployStatusFixture,
   deploymentLogFixture,
   pipelineDefinitionFixture,
+  productionDownHealthFixture,
   productionRollbackFixture,
   RELEASE_1,
   RELEASE_2,
@@ -1343,6 +1344,68 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(page.getByTestId('deploy-run-drawer')).toContainText('Production');
     await page.getByTestId('deploy-run-approve').click();
     await expect.poll(() => calls).toEqual(['approve:run-c-production']);
+  });
+
+  test('M2: every environment surface reads Production down from the open incident, with release version and age', async ({ page }) => {
+    test.setTimeout(180_000);
+    // Every deploy report and /deploy/status still say healthy; the control plane has an open incident on Production.
+    await openDeploy(page, fullMocks({ health: productionDownHealthFixture() }), 90_000);
+    await page.route(`**/api/projects/${PROJECT}/deployment/summary`, route => route.fulfill(json({
+      project: PROJECT, available: false, reason: 'No deploy-stable history is available for this project.',
+      source: 'logs/stable-restarts.jsonl', lastDeployment: null, history: [], pendingCount: null, pendingCommits: [],
+      targets: [], defaultEvidenceRun: null,
+    })));
+    await page.route(`**${DEPLOY}/runbooks`, route => route.fulfill(json([{ name: 'restart', steps: ['restart-container'], environments: [] }])));
+    await page.route(`**${DEPLOY}/runbooks/runs?*`, route => route.fulfill(json([])));
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z', environments: [],
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: 0, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    const area = page.getByTestId('project-deploy-area');
+    const expectProductionDown = async (production: ReturnType<Page['getByTestId']>, healthId: string) => {
+      await expect(production.getByTestId(healthId)).toHaveText('Down');
+      await expect(production.getByTestId(healthId)).toHaveAttribute('data-tone', 'danger');
+      await expect(production).not.toContainText('Healthy');
+    };
+
+    const surfaces: { name: string; production: string; open: () => Promise<void>; check: () => Promise<void> }[] = [
+      { name: 'overview', production: 'deploy-environment-production', open: () => page.getByTestId('deploy-tab-overview').click(), check: async () => {
+        await expectProductionDown(area.getByTestId('deploy-environment-production'), 'deploy-environment-health');
+        await expect(area.getByTestId('deploy-environment-production').getByTestId('deploy-environment-release')).toHaveText('Release 2026.10.18.1');
+      } },
+      { name: 'tools', production: 'environment-production', open: async () => { await page.getByTestId('deploy-tab-overview').click(); await page.getByTestId('deploy-open-tools').click(); }, check: async () => {
+        const production = area.getByTestId('environment-production');
+        await expectProductionDown(production, 'environment-state-health');
+        await expect(production.getByTestId('environment-state-release')).toHaveText('Release 2026.10.18.1 deployed 13 h ago');
+        await expect(production.getByTestId('environment-state-digest')).toHaveText('website@sha256:aaaaaaaaaaaa');
+        await expect(area.getByTestId('environment-stage').getByTestId('environment-state-health')).toHaveText('Up');
+      } },
+      { name: 'runbooks', production: 'project-environment-production', open: () => page.getByTestId('deploy-tab-runbooks').click(), check: async () => {
+        const production = area.getByTestId('project-environment-production');
+        await expectProductionDown(production, 'environment-state-health');
+        await expect(production.getByTestId('environment-state-release')).toHaveText('Release 2026.10.18.1 deployed 13 h ago');
+        await expect(production.getByTestId('environment-runbooks')).toContainText('restart');
+        await expect(production).not.toContainText('registry.example/website@sha256');
+      } },
+      { name: 'operations', production: 'environment-health-production', open: () => page.getByTestId('deploy-tab-operations').click(), check: async () => {
+        await expect(area.getByTestId('environment-health-production').getByTestId('environment-health-status')).toHaveText('Down');
+      } },
+    ];
+
+    for (const [width, height] of [[1280, 900], [390, 844]] as const) {
+      await page.setViewportSize({ width, height });
+      for (const theme of width === 1280 ? (['light', 'dark'] as const) : (['light'] as const)) {
+        await setTheme(page, theme);
+        for (const surface of surfaces) {
+          await surface.open();
+          await surface.check();
+          if (width === 390) expect((await area.boundingBox())?.width).toBeLessThanOrEqual(390);
+          await area.getByTestId(surface.production).scrollIntoViewIfNeeded();
+          await capture(page, `m2-production-down-${surface.name}-${width}-${theme}`);
+        }
+      }
+    }
   });
 
   test('F17: after approval and the host report, the Production card follows without a reload', async ({ page }) => {

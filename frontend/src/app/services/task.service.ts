@@ -2938,11 +2938,6 @@ export class TaskService {
     return this.http.get<ProjectEnvironments>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments`);
   }
 
-  getProjectEnvironmentReleaseStatuses(projectName: string) {
-    return this.http.get<import('../features/project-detail/state/deploy-area.model').EnvironmentStatus[]>(
-      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/deploy/status`);
-  }
-
   decideProjectPromotion(projectName: string, artifact: string, approve: boolean) {
     const action = approve ? 'approve' : 'reject';
     return this.http.post<void>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments/promotions/${action}`, { artifact });
