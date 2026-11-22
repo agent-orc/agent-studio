@@ -57,6 +57,13 @@ describe('DeployEnvironmentCardComponent', () => {
     expect(host().querySelector('[data-testid="deploy-environment-age"] time')?.getAttribute('datetime')).toBe('2026-10-19T11:48:00Z');
   });
 
+  it('shows an open host crash loop ahead of an older healthy deploy', async () => {
+    const card = { ...fullCards()[0], health: { status: 'reported', state: 'crash-loop' } } as EnvironmentCardView;
+    await render(card);
+    expect(text('deploy-environment-health')).toBe('Crash loop');
+    expect(tone('deploy-environment-health')).toBe('danger');
+  });
+
   it('labels a production environment without telemetry as not observed', async () => {
     await render({ ...fullCards()[1], health: { status: 'reported', state: 'not-observed' } });
     expect(text('deploy-environment-health')).toBe('Not observed');

@@ -243,7 +243,10 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3891 adds the integration release action on Start: it records a
         // release of the gated integration tip and queues the Staging run, the
         // same effect as the gate release handoff, so public demo denies it.
-        Assert.Equal(167, routes.Count);
+        // H5 of the playthrough adds the deploy host's container supervision: the
+        // container target read on Claim and the observed Docker state on PostStep.
+        // Like the run-target routes they serve host work, so public demo denies both.
+        Assert.Equal(169, routes.Count);
         foreach (var (routePath, path) in new[]
         {
             ("/api/tasks/{jobId}/content-review", ExecutionAdmissionPath.Review),
@@ -336,6 +339,8 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/projects/{projectName}/run-target-domain-suffixes", "PUT", ExecutionAdmissionPath.Start),
             ("/api/deploy/run-targets/{hostId}/desired-state", "GET", ExecutionAdmissionPath.Claim),
             ("/api/deploy/run-targets/{hostId}/observed-state", "POST", ExecutionAdmissionPath.PostStep),
+            ("/api/deploy/hosts/{hostId}/containers", "GET", ExecutionAdmissionPath.Claim),
+            ("/api/deploy/hosts/{hostId}/observed-state", "POST", ExecutionAdmissionPath.PostStep),
         })
         {
             var route = Assert.Single(routes, candidate => candidate.RoutePattern.RawText == routePath);
@@ -359,13 +364,13 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 14,
+                [ExecutionAdmissionPath.Claim] = 15,
                 [ExecutionAdmissionPath.Start] = 39,
                 [ExecutionAdmissionPath.Continue] = 39,
                 [ExecutionAdmissionPath.Review] = 10,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 32,
-                [ExecutionAdmissionPath.PostStep] = 24,
+                [ExecutionAdmissionPath.PostStep] = 25,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));

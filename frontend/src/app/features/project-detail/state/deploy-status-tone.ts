@@ -35,6 +35,8 @@ const HEALTH_TONE: Readonly<Record<HealthState, StatusTone>> = {
   down: 'danger',
   invalid: 'warning',
   unknown: 'neutral',
+  'crash-loop': 'danger',
+  'crash-rollback': 'danger',
   'not-observed': 'neutral',
 };
 

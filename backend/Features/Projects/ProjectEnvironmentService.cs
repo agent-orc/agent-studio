@@ -59,7 +59,12 @@ public sealed record DeploymentHistoryItem(DateTime At, string Status, string Ar
 
 public sealed record ProjectEnvironmentView(EnvironmentDeclaration Declaration, string? DeployedArtifact,
     string Health, string? PendingArtifact, IReadOnlyList<DeploymentHistoryItem> History,
-    RunTargetObservation? Observed = null);
+    RunTargetObservation? Observed = null, RuntimeIncident? RuntimeIncident = null);
+
+/// <summary>Incident driven by a host's container observation, independent of application telemetry.</summary>
+public sealed record RuntimeIncident(string Id, string Kind, DateTime StartedAt, DateTime UpdatedAt,
+    int Restarts, DateTime? EndedAt = null, bool OpenedEventRaised = false, bool RecoveryEventRaised = false,
+    string? AlertedKind = null);
 
 public sealed record DeployJob(string Id, string Project, string EnvironmentId, string HostId,
     string Artifact, string Template, string Destination, string? HealthUrl,
@@ -700,6 +705,7 @@ public sealed partial class ProjectEnvironmentService
                 Promotions = [.. persisted.Promotions],
                 History = [.. persisted.History],
                 Observed = persisted.Observed,
+                RuntimeIncidents = persisted.RuntimeIncidents,
                 Placements = persisted.Placements,
                 RunTargetRemovals = persisted.RunTargetRemovals,
             };
@@ -711,10 +717,12 @@ public sealed partial class ProjectEnvironmentService
                 var latest = history.FirstOrDefault();
                 var pending = state.Jobs.LastOrDefault(job => job.EnvironmentId == item.Id && !job.IsStop && job.RunbookName is null
                     && (job.Status is "queued" or "claimed"));
+                var observed = state.Observed.LastOrDefault(row => row.EnvironmentId == item.Id)?.Observation;
+                var runtimeIncident = state.RuntimeIncidents.LastOrDefault(row => row.EnvironmentId == item.Id)?.Incident;
                 return new ProjectEnvironmentView(item, latest?.Artifact,
-                    latest is null ? "unknown" : latest.Status is "failed" or "stopped" ? latest.Status : "healthy",
-                    pending?.Artifact, history,
-                    state.Observed.LastOrDefault(row => row.EnvironmentId == item.Id)?.Observation);
+                    runtimeIncident is { EndedAt: null } ? "crash-loop"
+                    : latest is null ? "unknown" : latest.Status is "failed" or "stopped" ? latest.Status : "healthy",
+                    pending?.Artifact, history, observed, runtimeIncident);
             }).ToArray(), state.Promotions.ToArray(), state.Jobs.Select(Sanitize).ToArray(),
                 state.History.Where(row => row.Item.Status == "failed").AsEnumerable().Reverse()
                     .Take(20).Select(row => new DeploymentFailureCard(row.EnvironmentId,
@@ -1950,6 +1958,7 @@ public sealed partial class ProjectEnvironmentService
         public List<EnvironmentPromotion> Promotions { get; set; } = [];
         public List<EnvironmentHistoryRow> History { get; set; } = [];
         public List<RunTargetObservedRow> Observed { get; set; } = [];
+        public List<RuntimeIncidentRow> RuntimeIncidents { get; set; } = [];
         public List<RunTargetPlacement> Placements { get; set; } = [];
         public List<RunTargetRemovalRecord> RunTargetRemovals { get; set; } = [];
         public List<ManagedDatabaseRecord> Databases { get; set; } = [];
@@ -1957,4 +1966,5 @@ public sealed partial class ProjectEnvironmentService
     }
     public sealed record EnvironmentHistoryRow(string EnvironmentId, DateTime At, DeploymentHistoryItem Item);
     public sealed record RunTargetObservedRow(string EnvironmentId, RunTargetObservation Observation);
+    public sealed record RuntimeIncidentRow(string EnvironmentId, RuntimeIncident Incident);
 }

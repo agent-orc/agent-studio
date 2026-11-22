@@ -8,6 +8,10 @@
   display: grid; gap: var(--studio-spacing-3); padding-block: var(--studio-spacing-4);
 }
 .project-operations__metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--studio-spacing-3); margin: 0; }
+.project-operations__host { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-4); margin: 0; font-variant-numeric: tabular-nums; }
+.project-operations__host > div { display: grid; gap: var(--studio-spacing-1); }
+.project-operations__crash { display: grid; gap: var(--studio-spacing-2); min-width: 0; }
+.project-operations__crash pre { margin: 0; padding: var(--studio-spacing-3); overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--studio-text-primary); background: var(--studio-bg-hover); }
 .project-operations__trends { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--studio-spacing-3); }
 .project-operations__table-wrap { overflow-x: auto; }
 .project-operations table { border-collapse: collapse; width: 100%; }

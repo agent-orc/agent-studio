@@ -69,6 +69,8 @@ public sealed class RunTargetReconciler(
         CancellationToken ct)
     {
         var state = store.Load();
+        foreach (var app in state.Apps.Values)
+            app.TotalDockerRestarts = Math.Max(app.TotalDockerRestarts, app.DockerRestarts);
         await RetryPendingCleanupAsync(state, ct);
         await RetryPendingStopsAsync(state, ct);
         var reports = new List<RunTargetJobReport>();
@@ -155,8 +157,8 @@ public sealed class RunTargetReconciler(
         var observations = state.Apps.Values
             .Where(app => specs.ContainsKey(RunTargetNames.AppKey(app.Project, app.EnvironmentId)))
             .Select(app => new RunTargetObservation(app.Project, app.EnvironmentId, app.Status,
-                app.Current?.Artifact, app.Previous?.Artifact, app.DockerRestarts + app.HostRestarts, now,
-                app.Events.ToArray()))
+                app.Current?.Artifact, app.Previous?.Artifact, app.TotalDockerRestarts + app.HostRestarts, now,
+                app.Events.ToArray(), app.CrashOutput.ToArray()))
             // The removed observation confirms the removal, so Studio stops sending it.
             .Concat(removed.Select(item => new RunTargetObservation(item.Project, item.EnvironmentId, "removed",
                 null, null, 0, now, [])))
@@ -361,6 +363,8 @@ public sealed class RunTargetReconciler(
         app.DockerRestarts = 0;
         app.LastRestartAt = app.NextRestartAt = null;
         app.RecentRestarts.Clear();
+        // A crash rollback still needs the failed revision's output in the host report.
+        if (!restoring) app.CrashOutput.Clear();
         store.Save(state);
         if (older is not null) await RemoveOrQueueAsync(older, state, ct);
         return true;
@@ -374,7 +378,19 @@ public sealed class RunTargetReconciler(
         var status = await docker.InspectAsync(slot.ComposeProject, ct);
         // Docker's count starts again for a recreated container.
         var dockerRestarts = status.RestartCount >= app.DockerRestarts ? status.RestartCount - app.DockerRestarts : status.RestartCount;
+        app.TotalDockerRestarts += dockerRestarts;
         app.DockerRestarts = status.RestartCount;
+        if (dockerRestarts > 0 || status.State is RunTargetContainerState.Exited or RunTargetContainerState.Restarting)
+        {
+            var output = await docker.LogsAsync(slot.ComposeProject, ct);
+            if (output.Ok)
+            {
+                var secretValues = secretFiles.ValuesForMasking(slot.ComposeProject)
+                    .Concat((slot.Databases ?? []).SelectMany(database =>
+                        secretFiles.ValuesForMasking(database.DatabaseKey)));
+                app.CrashOutput = [.. RunTargetCrashOutput.Sanitize(output.Detail, secretValues)];
+            }
+        }
         app.RecentRestarts = [.. RunTargetCrashPolicy.InWindow(app.RecentRestarts, now), .. Enumerable.Repeat(now, dockerRestarts)];
         if (RunTargetCrashPolicy.ShouldRollBack(app.RecentRestarts, now) && await RollBackCrashLoopAsync(name, app, state, ct))
             return;
