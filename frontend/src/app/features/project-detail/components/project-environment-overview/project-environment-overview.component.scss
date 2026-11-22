@@ -25,7 +25,7 @@
 
 .project-environments__card {
   display: grid;
-  grid-template-columns: minmax(10rem, 1fr) auto minmax(16rem, 2fr);
+  grid-template-columns: minmax(10rem, 1fr) minmax(16rem, 3fr);
   align-items: baseline;
   gap: var(--studio-spacing-4);
   padding: var(--studio-spacing-3) 0;

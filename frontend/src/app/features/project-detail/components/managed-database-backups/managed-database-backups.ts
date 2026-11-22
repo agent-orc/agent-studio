@@ -6,6 +6,7 @@ import {
   backupKind, backupPolicy, backupStatus, formatBytes, operationKind, operationState,
   type DatabaseBackup, type DatabaseOperation, type DatabaseOperationRequest, type ManagedDatabase,
 } from '../managed-databases-panel/managed-database.model';
+import { PrincipalNamePipe } from '../../../../pipes/principal-name.pipe';
 
 /** Backups shown before the disclosure reveals the rest. */
 export const VISIBLE_BACKUPS = 5;
@@ -25,7 +26,7 @@ function backupTime(value: string): string {
 @Component({
   selector: 'app-managed-database-backups',
   standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent, DisclosureMarkerComponent],
+  imports: [PrincipalNamePipe, DatePipe, StatusIndicatorComponent, DisclosureMarkerComponent],
   templateUrl: './managed-database-backups.html',
   styleUrl: './managed-database-backups.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

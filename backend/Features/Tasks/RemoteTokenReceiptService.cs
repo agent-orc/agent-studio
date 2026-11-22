@@ -40,8 +40,14 @@ public sealed class RemoteTokenReceiptService
         TaskInfo task,
         string runAttemptId,
         string runnerId,
-        string? effectiveModel = null)
+        string? effectiveModel = null,
+        AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? sessionContinuation = null)
     {
+        var continuation = sessionContinuation ?? SessionContinuationLedgerStore.Latest(task.FolderPath);
+        if (!string.Equals(continuation?.AttemptId, runAttemptId, StringComparison.Ordinal))
+            continuation = null;
+        if (continuation is not null)
+            _sessions.BackfillSessionContinuation(task.Id, continuation, task.WatchPath);
         var parser = _parsers.Get(task.CliType ?? task.Agent);
         if (parser is null)
             return new RemoteTokenReceiptResult(false, 0, "No usage parser is registered for the task CLI.");
@@ -130,6 +136,7 @@ public sealed class RemoteTokenReceiptService
                     CacheCreationTokens = SafeInt(item.Usage.CacheWrite),
                     InputIncludesCached = item.Usage.InputIncludesCached,
                     ThinkingLevel = thinkingLevel,
+                    SessionMode = continuation?.SessionMode,
                     CliType = cliType,
                     Host = host,
                 },

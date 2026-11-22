@@ -225,6 +225,12 @@ public sealed record BatchReplayResult(
 
     public static BatchReplayResult Conflict(IReadOnlyList<string> files, string error, BatchReplayRoute route)
         => new(false, null, [], files, error, route, BatchReplayFailure.Conflict);
+
+    /// <summary>
+    /// AGT-3968: add/add hunks the merge route resolved by keeping both sides.
+    /// Empty for an ordinary replay.
+    /// </summary>
+    public IReadOnlyList<UnionResolvedHunk> UnionResolvedHunks { get; init; } = [];
 }
 public sealed record BatchCandidateRefResult(bool Success, string? Error);
 
@@ -6896,6 +6902,13 @@ public partial class GitService
             && DeliveryReportPathPolicy.IsEnabled(repoRoot)
             && DeliveryReportPathPolicy.AreOnlyReportConflicts(replay.ConflictedFiles))
             return MergeBatchMember(repoRoot, immutableResultRef, expectedResultSha, batchTip);
+        // AGT-3968: a conflict whose hunks all only add lines on both sides is
+        // resolved by the merge route, which keeps every delivery SHA. Any
+        // other conflict stays the rebase conflict it was.
+        if (replay.FailureKind == MechanicalRebaseFailureKind.Conflict
+            && MergeBatchMember(repoRoot, immutableResultRef, expectedResultSha, batchTip)
+                is { Success: true, UnionResolvedHunks.Count: > 0 } union)
+            return union;
         return replay.FailureKind switch
         {
             MechanicalRebaseFailureKind.Conflict => BatchReplayResult.Conflict(
@@ -7045,6 +7058,22 @@ public partial class GitService
                 }
                 else mergeError = restoreError;
             }
+            // AGT-3968: both sides only added lines at the same places. Keep
+            // both; the batch gate then builds and tests the candidate, and a
+            // red gate sends the member through isolation as before.
+            var union = conflicted.Count > 0 ? TryResolveAddAddConflicts(worktreePath, conflicted) : null;
+            if (union is { Resolved: true })
+            {
+                var (_, commitError, commitCode) = RunGitArgs(worktreePath, "commit", "--no-edit");
+                if (commitCode == 0)
+                {
+                    var verified = VerifyBatchMergeParents(worktreePath, resultSha, batchTip);
+                    return verified.Success ? verified with { UnionResolvedHunks = union.Hunks } : verified;
+                }
+                mergeError = commitError;
+            }
+            else if (union?.Refusal is { } refusal)
+                mergeError = $"{mergeError.Trim()} Not resolved by union: {refusal}";
             RunGitArgs(worktreePath, "merge", "--abort");
             return conflicted.Count > 0
                 ? BatchReplayResult.Conflict(conflicted, $"Batch merge conflicted and was aborted: {mergeError.Trim()}",
@@ -9133,6 +9162,31 @@ public partial class GitService
     }
 
     /// <summary>
+    /// AGT-3879: commit, parents (first parent first) and message of each
+    /// commit reachable from <paramref name="tip"/> but not from
+    /// <paramref name="exclusiveBase"/>, newest first. The instance deploy view
+    /// walks the first-parent chain of a deploy range with them. Empty when a
+    /// revision is invalid or unknown.
+    /// </summary>
+    public IReadOnlyList<AgentStudio.Deploy.RangeCommit> ListRangeCommits(string repoRoot, string tip,
+        string? exclusiveBase, int maxCount)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot) || !IsLikelyBranchName(tip)
+            || exclusiveBase is not null && !IsLikelyBranchName(exclusiveBase)) return [];
+        var arguments = new List<string> { "log", $"--max-count={Math.Max(1, maxCount)}", "--format=%H%x1f%P%x1f%B%x1e", tip };
+        if (exclusiveBase is not null) arguments.Add("^" + exclusiveBase);
+        arguments.Add(RevisionsOnly);
+        var (output, _, code) = RunGitArgs(repoRoot, [.. arguments]);
+        if (code != 0) return [];
+        return output.Split('\x1e', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(entry => entry.Split('\x1f', 3))
+            .Where(fields => fields.Length >= 2)
+            .Select(fields => new AgentStudio.Deploy.RangeCommit(fields[0],
+                fields[1].Split(' ', StringSplitOptions.RemoveEmptyEntries), fields.Length > 2 ? fields[2] : ""))
+            .ToArray();
+    }
+
+    /// <summary>
     /// BD-1: whether <paramref name="ancestor"/> is an ancestor of
     /// <paramref name="descendant"/>, or null when git cannot answer. Unlike
     /// <see cref="IsAncestor"/>, only exit code 1 of
@@ -9171,6 +9225,26 @@ public partial class GitService
             .Where(parts => parts.Length == 2 && parts[0].Split(' ') is [_, "blob", _])
             .Select(parts => parts[1])
             .ToArray();
+    }
+
+    /// <summary>
+    /// Writes the uncompressed <c>git archive</c> of a full commit SHA to
+    /// <paramref name="outputFile"/>, limited to <paramref name="path"/> when
+    /// given. An integration release packs the gated tree this way. False when
+    /// git cannot read the commit or the path.
+    /// </summary>
+    public bool ArchiveCommit(string repoRoot, string sha, string? path, string outputFile)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Regex.IsMatch(sha, @"\A[0-9a-f]{40}\z")
+            || path is not null && !Regex.IsMatch(path,
+                AgentStudio.TaskServer.Contracts.ProjectDeploymentVocabulary.ArtifactPathPattern)) return false;
+        var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
+        if (!Directory.Exists(root)) return false;
+        string[] args = path is null or "."
+            ? ["archive", "--format=tar", "-o", outputFile, sha]
+            : ["archive", "--format=tar", "-o", outputFile, sha, path];
+        var (_, _, code) = RunGitArgs(root, args);
+        return code == 0 && File.Exists(outputFile);
     }
 
     /// <summary>

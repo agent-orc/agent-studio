@@ -76,6 +76,18 @@ through a batch gate executed by the pull worker.
 The profile does not contact an SSH host or use a real provider
 credential. Screenshots go to `JOB_RESULTS_DIR` when set.
 
+### Deploy lifecycle on a real backend
+
+Run `npm --prefix frontend run e2e -- e2e/project/deploy-staging-retry-production-approval.spec.ts`.
+The `deploy-lifecycle` profile (`scripts/deploy-lifecycle-e2e-fixture.sh`)
+adds a "Deploy Fixture" project whose `develop` branch declares Staging and
+Production with `.invalid` health URLs and `delivery.fullSuite: off`, and sets
+`Deploy:ReleaseEvidenceRoot` inside the disposable workspace. The spec writes
+the gate's release evidence, posts the gate release with a `runner.release`
+credential and plays the deploy host over the claim and report routes; every
+person's step (Staging retry, Production approval) goes through the Deploy
+area. Screenshots go to `JOB_RESULTS_DIR` when set.
+
 Run `npm --prefix frontend run e2e -- e2e/settings/second-project-server-checkout.spec.ts`
 for the AGT-3809 journey on the `first-run` profile. It verifies Git access
 for one URL project in the checklist, adds a second URL project next to it,
@@ -605,11 +617,12 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `tab-label-tooltip-alignment.spec.ts` | restored task tab hides its watch path and uses the canonical tooltip in both themes |
 | `url-preview-failure-recovery.spec.ts` | offline 4184 is actionable, responsive, and links to quick setup |
 
-### `system/` - 23 specs
+### `system/` - 24 specs
 
 | Spec | Summary |
 |------|---------|
 | `app-markdown-central-component.spec.ts` | <cac-markdown> central component |
+| `base-product-start.spec.ts` | the product starts and its board shows a card created through the API |
 | `caret-suppression.spec.ts` | caret suppression on non-text-input elements |
 | `concept-help.spec.ts` | orchestrator concept-help on the global orchestrator card |
 | `crash-recovery-prompt.spec.ts` | Crash recovery prompt |

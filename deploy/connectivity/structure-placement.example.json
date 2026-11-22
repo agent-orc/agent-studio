@@ -1,0 +1,27 @@
+{
+  "machines": [
+    {
+      "id": "studio-server", "name": "Studio server", "kind": "cloud-server", "location": "Cloud provider",
+      "components": [
+        { "id": "api", "name": "API", "role": "api", "kind": "container" },
+        { "id": "web", "name": "Web frontend", "role": "web", "kind": "container" },
+        { "id": "edge", "name": "Edge proxy", "role": "edge", "kind": "container" },
+        { "id": "engine", "name": "Orchestrator engine", "role": "engine", "kind": "container" }
+      ]
+    },
+    { "id": "home-lab", "name": "Home-lab machine", "kind": "physical", "location": "Home lab", "components": [] },
+    { "id": "linux-vm", "name": "Linux VM", "kind": "vm", "parentId": "home-lab", "components": [] }
+  ],
+  "externals": [
+    { "id": "cdn", "name": "CDN proxy" },
+    { "id": "source-host", "name": "Source host" },
+    { "id": "registry", "name": "Container registry", "kind": "registry" },
+    { "id": "models", "name": "Model providers" }
+  ],
+  "structureLinks": [
+    { "from": "external:cdn", "to": "component:studio-server:edge", "kind": "call", "label": "Public traffic" },
+    { "from": "studio-server", "to": "external:source-host", "kind": "call", "label": "Git" },
+    { "from": "studio-server", "to": "external:registry", "kind": "artifact", "label": "Images" },
+    { "from": "linux-vm", "to": "external:models", "kind": "call", "label": "Model calls" }
+  ]
+}

@@ -68,7 +68,7 @@ public sealed partial class BatchGatePilotService
                     BatchGatePolicy.CandidateRef(green, run.CoordinatorFence), run.CandidateSha, admitted,
                     child ? [] : outcomes.Where(item => item.Value is "conflict" or "unattributable")
                         .Select(item => item.Key).ToArray(),
-                    child ? [] : outcomes.Where(item => item.Value == "cascade-deferred")
+                    child ? [] : outcomes.Where(item => BatchReplayOutcomes.IsDeferred(item.Value))
                         .Select(item => item.Key).ToArray(), false);
                 // Ejected members of a published batch leave through the
                 // published-batch recovery of the same tick.

@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, output, signal } from '@angular/core';
+import { Subscription } from 'rxjs';
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
@@ -8,14 +9,18 @@ import { VisibleCliTaskService, type VisibleCliTaskCreated } from '../../../visi
 import type { WatchPathEntry } from '../../../../models/task.model';
 import { DeploymentDefinitionEditorComponent } from '../deployment-definition-editor/deployment-definition-editor';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
-import { TARGET_READINESS, deploymentHistoryTone, environmentHealthTone, type TargetReadiness } from './deployment-status-tone';
-import { catchError, forkJoin, of } from 'rxjs';
-import { runningReleaseLabel, type EnvironmentStatus } from '../../state/deploy-area.model';
+import { TARGET_READINESS, deploymentHistoryTone, type TargetReadiness } from './deployment-status-tone';
+import { EnvironmentStateComponent } from '../environment-state/environment-state';
+import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
+import type { RollbackOffer } from '../../state/rollback-offer.model';
+import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
+import { DEPLOY_CLOCK, shortArtifact, type EnvironmentCardView } from '../../state/deploy-area.model';
 
 @Component({
   selector: 'app-project-deployment-panel',
   standalone: true,
-  imports: [DatePipe, DecimalPipe, FormsModule, PendingButtonDirective, DeploymentDefinitionEditorComponent, StatusIndicatorComponent],
+  imports: [DatePipe, DecimalPipe, FormsModule, PendingButtonDirective, DeploymentDefinitionEditorComponent, StatusIndicatorComponent,
+    EnvironmentStateComponent, RollbackOfferComponent],
   templateUrl: './project-deployment-panel.component.html',
   styleUrl: './project-deployment-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -23,6 +28,9 @@ import { runningReleaseLabel, type EnvironmentStatus } from '../../state/deploy-
 export class ProjectDeploymentPanelComponent {
   private readonly tasks = inject(TaskService);
   private readonly cliTasks = inject(VisibleCliTaskService);
+  private readonly deployData = inject(ProjectDeployDataService);
+  private readonly clock = inject(DEPLOY_CLOCK);
+  private environmentReads = new Subscription();
 
   readonly projectName = input.required<string>();
   readonly focusedEnvironment = input<string | null>(null);
@@ -30,10 +38,24 @@ export class ProjectDeploymentPanelComponent {
     const all = this.environments()?.environments ?? [];
     return this.focusedEnvironment() ? all.filter(item => item.declaration.id === this.focusedEnvironment()) : all;
   });
+  /**
+   * F13: rollback runs only through the lifecycle offer of the Deploy area,
+   * which names the target and asks first; this panel has no rollback call.
+   */
+  readonly rollbackOffers = input<readonly RollbackOffer[]>([]);
+  readonly rollbackBusy = input<string | null>(null);
+  /** The deploy area's clock; ages of the environment states read against it too. */
+  readonly now = input<number>(this.clock());
+  readonly rollback = output<string>();
+  readonly offers = computed(() => new Map(this.rollbackOffers().map(offer => [offer.environmentId, offer])));
   readonly summary = signal<ProjectDeploymentSummary | null>(null);
   readonly environments = signal<ProjectEnvironments | null>(null);
-  readonly releaseStatuses = signal<readonly EnvironmentStatus[]>([]);
+  /** Health, release and age per environment id, from the one environment state projection. */
+  readonly environmentStates = signal<ReadonlyMap<string, EnvironmentCardView>>(new Map());
   readonly environmentError = signal<string | null>(null);
+  /** The promotion whose decision is in flight. */
+  readonly pendingEnvironmentAction = signal<string | null>(null);
+  readonly environmentBusy = computed(() => this.pendingEnvironmentAction() !== null);
   readonly loading = signal(true);
   readonly requestFailed = signal(false);
   readonly workspaces = signal<WatchPathEntry[]>([]);
@@ -41,7 +63,6 @@ export class ProjectDeploymentPanelComponent {
   readonly parameterValues = signal<Record<string, string | boolean>>({});
   readonly running = signal(false);
   readonly runError = signal<string | null>(null);
-  readonly rollingBack = signal<string | null>(null);
   readonly createdTask = signal<VisibleCliTaskCreated | null>(null);
   readonly visibleExecution = signal(true);
   readonly revisionMode = signal<'tested' | 'head'>('head');
@@ -49,6 +70,7 @@ export class ProjectDeploymentPanelComponent {
 
   constructor() {
     effect(() => this.load(this.projectName()));
+    inject(DestroyRef).onDestroy(() => this.environmentReads.unsubscribe());
   }
 
   refresh(): void {
@@ -56,24 +78,12 @@ export class ProjectDeploymentPanelComponent {
   }
 
   decidePromotion(artifact: string, approve: boolean): void {
+    if (this.environmentBusy()) return;
     this.environmentError.set(null);
+    this.pendingEnvironmentAction.set(`${approve ? 'approve' : 'reject'}:${artifact}`);
     this.tasks.decideProjectPromotion(this.projectName(), artifact, approve).subscribe({
-      next: () => this.loadEnvironments(this.projectName()),
-      error: () => this.environmentError.set('Promotion could not be updated.'),
-    });
-  }
-
-  rollbackEnvironment(id: string): void {
-    if (this.rollingBack()) return;
-    this.environmentError.set(null);
-    this.rollingBack.set(id);
-    this.tasks.rollbackProjectEnvironment(this.projectName(), id).subscribe({
-      next: () => { this.rollingBack.set(null); this.loadEnvironments(this.projectName()); },
-      error: error => {
-        this.rollingBack.set(null);
-        this.environmentError.set(
-          `${error?.error?.error ?? 'Rollback could not be queued.'} Redeploy the last known release or fix forward.`);
-      },
+      next: () => { this.pendingEnvironmentAction.set(null); this.loadEnvironments(this.projectName()); },
+      error: () => { this.pendingEnvironmentAction.set(null); this.environmentError.set('Promotion could not be updated.'); },
     });
   }
 
@@ -125,12 +135,9 @@ export class ProjectDeploymentPanelComponent {
     return target.targetHostId || 'Repository environment';
   }
 
-  readonly environmentHealthTone = environmentHealthTone;
   readonly historyTone = deploymentHistoryTone;
-
-  releaseLabel(view: ProjectEnvironments['environments'][number]): string {
-    return runningReleaseLabel(view, this.releaseStatuses().find(item => item.environment.id === view.declaration.id) ?? null);
-  }
+  /** Digests are secondary detail: short form, full value on hover. */
+  readonly shortArtifact = shortArtifact;
 
   targetReadiness(target: ProjectDeploymentTarget): { tone: StatusTone; label: string } {
     let readiness: TargetReadiness;
@@ -235,16 +242,17 @@ export class ProjectDeploymentPanelComponent {
     this.tasks.getWatchPaths().subscribe({ next: paths => this.workspaces.set(paths) });
   }
 
+  /** Declarations and history, with each environment's state from the shared projection (M2). */
   private loadEnvironments(projectName: string): void {
-    forkJoin({
-      environments: this.tasks.getProjectEnvironments(projectName),
-      statuses: this.tasks.getProjectEnvironmentReleaseStatuses(projectName).pipe(catchError(() => of([] as EnvironmentStatus[]))),
-    }).subscribe({
-      next: value => {
-        this.environments.set(value.environments);
-        this.releaseStatuses.set(value.statuses);
-      },
-      error: () => this.environmentError.set('Environments could not be loaded.'),
+    this.environmentReads.unsubscribe();
+    this.environmentReads = this.deployData.environmentStates(projectName).subscribe(panel => {
+      if (panel.status === 'loading') return;
+      if (panel.status === 'ready' && panel.value.environments) {
+        this.environments.set(panel.value.environments);
+        this.environmentStates.set(new Map(panel.value.states.map(state => [state.id, state])));
+      } else {
+        this.environmentError.set('Environments could not be loaded.');
+      }
     });
   }
 }

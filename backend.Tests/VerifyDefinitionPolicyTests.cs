@@ -127,6 +127,9 @@ public sealed class VerifyDefinitionPolicyTests : IDisposable
         Assert.Equal(VerifyDefinitionState.CheckoutMissing, report.State);
         Assert.Contains("checkout", report.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("no build or test command", report.Message, StringComparison.OrdinalIgnoreCase);
+        // A URL project gets its checkout from the server-checkout action; the path field needs an existing clone.
+        Assert.Contains("create the server checkout", report.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("repository checkout path", report.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Null(report.Example);
     }
 

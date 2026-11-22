@@ -24,7 +24,8 @@ export interface OperatorAttentionResponse {
 
 /** The decision-event classes of the operator stream, in the order the list shows them. */
 export type AttentionClass =
-  | 'incident' | 'decision' | 'dossier' | 'escalation' | 'human-review' | 'push-blocked' | 'gate-host' | 'batch' | 'batch-record' | 'push'
+  | 'incident' | 'decision' | 'dossier' | 'escalation' | 'human-review' | 'push-blocked' | 'gate-host' | 'post-merge'
+  | 'batch' | 'batch-record' | 'push'
   | 'quota'
   | 'host' | 'review-host' | 'installation' | 'other';
 
@@ -47,6 +48,8 @@ const CLASSES: readonly AttentionClassSpec[] = [
   { key: 'push-blocked', label: 'Push blocked', action: 'Open card', target: 'card' },
   // AGT-3792: the gate host itself, or the RemoteGate:SshHost setting, is the repair.
   { key: 'gate-host', label: 'Gate host unreachable', action: 'Open environment', target: 'hosts' },
+  // AGT-3965: a fast or balanced project integrates untested while no post-merge run reports.
+  { key: 'post-merge', label: 'Post-merge runs missing', action: 'Open operations', target: 'operations' },
   { key: 'batch', label: 'Batch needs attention', action: 'Open batch panel', target: 'batch-gate' },
   { key: 'batch-record', label: 'Batch record unreadable', action: 'Open batch gate', target: 'batch-gate' },
   { key: 'push', label: 'Overdue pending push', action: 'Open batch gate', target: 'batch-gate' },
@@ -66,6 +69,7 @@ const CLASS_OF_TYPE: Readonly<Record<string, AttentionClass>> = {
   'escalation.opened': 'escalation',
   'human-review.ready': 'human-review',
   'gate-host.unreachable': 'gate-host',
+  'post-merge.missing': 'post-merge',
   'batch.red': 'batch',
   'batch.isolating': 'batch',
   'batch.running-without-gate': 'batch',

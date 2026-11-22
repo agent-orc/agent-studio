@@ -1,0 +1,19 @@
+<div class="rollback-offer" [attr.data-testid]="'rollback-offer-' + offer().environmentId">
+  <dl class="rollback-offer__facts">
+    <dt>Rollback target</dt>
+    <dd data-testid="rollback-offer-target"><span class="rollback-offer__release">Release {{ offer().targetVersion }}</span></dd>
+    <dt>Age</dt>
+    <dd data-testid="rollback-offer-age">
+      <time class="rollback-offer__numeric" [attr.datetime]="offer().targetCreatedAt" [title]="offer().targetCreatedAt | date:'medium'">{{ age() ?? 'Unknown' }}</time>
+    </dd>
+    <dt>Runtime</dt>
+    <dd><app-status-indicator [tone]="health().tone" [label]="health().label" [detail]="offer().incidentDetail" [compact]="true"
+      testId="rollback-offer-health" /></dd>
+  </dl>
+  @if (skipped()) {
+    <p class="rollback-offer__muted" data-testid="rollback-offer-skipped">Skips {{ skipped() }}: incident while running.</p>
+  }
+  <button type="button" class="rollback-offer__button" data-testid="rollback-offer-button"
+    [attr.aria-label]="'Roll back ' + offer().environmentName + ' to Release ' + offer().targetVersion"
+    [appPendingButton]="busy()" pendingLabel="Queuing rollback…" (click)="rollback.emit(offer().environmentId)">Roll back…</button>
+</div>

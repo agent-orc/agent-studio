@@ -25,8 +25,14 @@
           <p class="environment-health__incident" role="status" data-testid="environment-health-incident">
             Incident since {{ incident.startedAt | date:'medium':'UTC' }} UTC · {{ incident.checkId }} · {{ incident.firstError }}
             · {{ incident.failedProbes }} {{ incident.checkId.startsWith('telemetry-') ? 'firing evaluations' : 'failed probes' }}
-            @if (incident.cardId) { · card <code>{{ incident.cardId }}</code> }
+            @if (environment.incidentCardKey ?? incident.cardId; as card) {
+              · card <button type="button" class="environment-health__card-link" data-testid="environment-health-incident-card"
+                             (click)="openCard(card)">{{ card }}</button>
+            }
           </p>
+          @if (incidentAction(); as action) {
+            <ng-container *ngTemplateOutlet="action; context: { $implicit: environment.environmentId }" />
+          }
         } @else if (environment.lastIncident; as last) {
           <p class="environment-health__quiet">Last incident {{ last.startedAt | date:'medium':'UTC' }} to {{ last.endedAt | date:'shortTime':'UTC' }} UTC · {{ last.checkId }}</p>
         }

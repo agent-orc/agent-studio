@@ -21,8 +21,8 @@ public sealed class HealthIncidentContextReader(DeployService deploy, ProjectEnv
         var until = clock.GetUtcNow();
         var since = startedAt < until.AddDays(-30) ? until.AddDays(-30) : startedAt;
         var metrics = telemetry.ReadMetrics(project, environmentId, since, until);
-        var lines = telemetry.SearchLogs(new OperationsLogQuery(project, environmentId, since, until,
-            null, status?.CurrentRelease?.Id, null, 100));
+        IReadOnlyList<OperationsLogLine>? lines = telemetry.SearchLogs(new OperationsLogQuery(project, environmentId, since, until,
+            null, status?.CurrentRelease?.Id, null, 100, null))?.Lines;
         // Operations telemetry is optional today. The built-in OTLP store and run-target
         // observation still provide real incident evidence when that adapter is absent.
         if (lines is null)

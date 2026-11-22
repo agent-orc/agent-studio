@@ -49,6 +49,8 @@ import type {
   ReviewProjectionView,
   TaskDeliveryClaimAnswer,
   DecisionActionResponse,
+  ProjectTesting,
+  TestingStrategy,
 } from '../models/task.model';
 import { TaskState } from '../models/task.model';
 import type { CouncilFindingAction, CouncilReactionDisposition } from '../models/council-review.model';
@@ -2698,6 +2700,14 @@ export class TaskService {
     );
   }
 
+  /** AGT-3965: Owner only; the server rebuilds queued review plans for the new tier. */
+  setProjectTestingStrategy(projectName: string, strategy: TestingStrategy) {
+    return this.http.put<ProjectTesting>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/testing`,
+      { strategy },
+    );
+  }
+
   setProjectAutoCommit(projectName: string, enabled: boolean) {
     return this.http.put(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/auto-commit`,
@@ -2928,18 +2938,9 @@ export class TaskService {
     return this.http.get<ProjectEnvironments>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments`);
   }
 
-  getProjectEnvironmentReleaseStatuses(projectName: string) {
-    return this.http.get<import('../features/project-detail/state/deploy-area.model').EnvironmentStatus[]>(
-      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/deploy/status`);
-  }
-
   decideProjectPromotion(projectName: string, artifact: string, approve: boolean) {
     const action = approve ? 'approve' : 'reject';
     return this.http.post<void>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments/promotions/${action}`, { artifact });
-  }
-
-  rollbackProjectEnvironment(projectName: string, environmentId: string) {
-    return this.http.post<void>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments/${encodeURIComponent(environmentId)}/rollback`, {});
   }
 
   /** Project-wide planned/running/completed test-run pipeline with derived card attachments. */

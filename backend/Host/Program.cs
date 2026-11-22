@@ -698,6 +698,14 @@ builder.Services.AddSingleton<TaskPublishableService>();
 builder.Services.AddSingleton<PublishActionService>();
 builder.Services.AddHttpClient("structure-registry", client => client.Timeout = TimeSpan.FromSeconds(10));
 builder.Services.AddSingleton<AgentStudio.Management.StructureLibraryService>();
+// AGT-3954: the structure projection is cached and refreshed in the background;
+// requests and hub subscribers read it, hosts are never asked per request.
+builder.Services.AddSingleton<AgentStudio.Management.StructurePlacementSource>();
+builder.Services.AddSingleton<AgentStudio.Management.StudioSelfObserver>();
+builder.Services.AddSingleton<AgentStudio.Management.StructureDataLocationService>();
+builder.Services.AddSingleton<AgentStudio.Management.StructureSnapshotService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Management.StructureSnapshotService>());
+builder.Services.AddSingleton<AgentStudio.Host.StructureHubBroadcaster>();
 builder.Services.AddHostedService<AgentStudio.Management.StructureRegistryRefreshService>();
 builder.Services.AddSingleton<AgentStudio.Publishing.IPublishEnvironmentReconciler>(sp =>
     sp.GetRequiredService<PublishActionService>());
@@ -720,13 +728,27 @@ if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") &&
     builder.Services.AddHostedService<HostedVolumeBackupWorker>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
+builder.Services.AddSingleton<AgentStudio.Deploy.InstanceDeployStore>();
+builder.Services.AddSingleton<AgentStudio.Deploy.InstanceDeployService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<AgentStudio.Deploy.InstanceDeployWorker>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.DeploySecretReadiness>();
 builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityReleaseRangeVerdictClient>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateGate>();
+builder.Services.AddSingleton<AgentStudio.Deploy.IntegrationReleaseService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<AgentStudio.Deploy.IntegrationReleaseReconciler>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateEvidence>();
+builder.Services.AddSingleton<AgentStudio.Deploy.RunbookVerifier>();
+builder.Services.AddSingleton<AgentStudio.Security.IUserDisplayNames>(sp => sp.GetRequiredService<AccessSecurityStore>());
 builder.Services.AddSingleton<AgentStudio.Deploy.RunbookService>();
-builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
-    AgentStudio.Projects.StoreOperationsTelemetryReader>();
+if (builder.Configuration.GetValue<bool?>("Telemetry:Enabled") == false)
+    builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
+        AgentStudio.Projects.UnavailableOperationsTelemetryReader>();
+else
+    builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
+        AgentStudio.Projects.StoreOperationsTelemetryReader>();
 builder.Services.AddSingleton<AgentStudio.Projects.ProjectOperationsService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
@@ -997,7 +1019,7 @@ builder.Services.AddSingleton<CliUsageParserRegistry>();
 builder.Services.AddSingleton<BusAggregationCache>();
 builder.Services.AddTokenUsage();
 // IP-15: OTLP intake and the built-in metrics and logs store per project environment.
-builder.Services.AddTelemetryIntake();
+builder.Services.AddTelemetryIntake(builder.Configuration.GetValue<bool?>("Telemetry:Enabled") != false);
 // Central step-call dispatch: the concrete Claude runner is wrapped by the
 // PromptLoggingCliOneShot decorator so every one-shot step prompt (aspects,
 // code-review-grade, orchestrator-decision, drift, ...) is captured raw into
@@ -1171,6 +1193,11 @@ builder.Services.AddSingleton<AgentStudio.Security.IOperatorGateEvidence, AgentS
 builder.Services.AddOperatorApprovals();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeIncidentService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeModeService>();
+// AGT-3965: fast and balanced say visibly when develop gets no post-merge runs.
+builder.Services.AddSingleton<AgentStudio.Pipeline.IDevelopCoverageGit, AgentStudio.Pipeline.DevelopCoverageGit>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeCoverageService>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService<AgentStudio.Pipeline.PostMergeCoverageRefresher>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateAdvisorService>();
 builder.Services.AddSingleton<AgentStudio.Operator.BatchTriageReader>();
 builder.Services.AddSingleton<AgentStudio.Operator.DeployPreflightService>();
@@ -1529,9 +1556,12 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGat
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorReviewHostDriftFactSource>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPostMergeCoverageFactSource(
+    () => sp.GetRequiredService<AgentStudio.Pipeline.PostMergeCoverageService>().Missing()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorEnvironmentIncidentFactSource(
     sp.GetRequiredService<HealthCheckStore>(),
-    () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name)));
+    () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name),
+    (project, cardId) => sp.GetRequiredService<EnvironmentHealthService>().CardKey(project, cardId)));
 builder.Services.AddSingleton<OperatorDecisionPublisher>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<OperatorDecisionPublisher>());
@@ -1856,6 +1886,14 @@ var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
 // which forwarding replaces below (AGT-3230).
 app.UseConnectionPeerCapture();
 app.UseOperatorListener();
+// AGT-3954: note that a proxy forwarded the request before the headers are consumed;
+// the structure view reads it as the observation of the edge.
+var structureSelf = app.Services.GetRequiredService<AgentStudio.Management.StudioSelfObserver>();
+app.Use((context, next) =>
+{
+    structureSelf.ObserveRequest(context.Request.Headers);
+    return next(context);
+});
 app.UseForwardedHeaders();
 // Directly after forwarding, so every later short-circuit (Task Server proxy
 // 404, rejections, exception handler) carries the framing and content policy
@@ -2380,6 +2418,9 @@ jobHubBroadcaster.AttachMoveSource(app.Services.GetRequiredService<TaskTransitio
 // gitStateChanged push (AGT-2726): resolving the singleton attaches it to
 // GitStateIndexService.RepositoryIndexed. See backend/Host/Hubs/GitStateHubBroadcaster.cs.
 app.Services.GetRequiredService<AgentStudio.Host.GitStateHubBroadcaster>();
+// structureDelta push (AGT-3954): resolving the singleton attaches it to
+// StructureSnapshotService.DeltaPublished. See backend/Host/Hubs/StructureHubBroadcaster.cs.
+app.Services.GetRequiredService<AgentStudio.Host.StructureHubBroadcaster>();
 
 // Cycle 1: bind the in-memory snapshot cache. TaskScannerService.ScanAllJobs
 // now serves from cache; TaskWatcherService.OnJobChanged invalidates it on

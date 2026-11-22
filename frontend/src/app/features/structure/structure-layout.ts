@@ -1,4 +1,4 @@
-import { isGroup, isPlacement, kindText, observationText, observationWord, summaryText,
+import { isGroup, isPlacement, isUndeclared, kindText, observationText, observationWord, summaryText,
   type StructureBox, type StructureData, type StructureNode } from './structure.model';
 
 export type Point = readonly [number, number];
@@ -68,7 +68,7 @@ function measure(box: StructureBox, avail: number, view: 'host' | 'container'): 
       : '';
     const w = clamp(Math.max(textWidth(box.label + replicas, 12, true) + textWidth(observationWord(box.observation), 10) + 42,
       textWidth(leafDetail(box, view), 10) + 40, textWidth(version, 10) + 36), 240, 320);
-    return { box, w: Math.min(w, avail), h: box.observation?.difference === 'undeclared' ? 72 : 60,
+    return { box, w: Math.min(w, avail), h: isUndeclared(box) ? 72 : 60,
       x: 0, y: 0, opaque: true, children: [] };
   }
   if (box.collapsed || box.children.length === 0) {

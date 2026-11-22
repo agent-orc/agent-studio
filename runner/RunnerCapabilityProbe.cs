@@ -418,7 +418,10 @@ internal static class RunnerCapabilityProbe
                 BuildNodeSweep.Latest?.ObservedAt,
                 ClaimLoadGate: claimLoadGate,
                 OneShotClaimRoute: oneShotClaimRoute,
-                Filesystems: sample.Filesystems);
+                Filesystems: sample.Filesystems,
+                Placement: sample.Placement,
+                NetworkReceiveBytesPerSecond: sample.NetworkReceiveBytesPerSecond,
+                NetworkTransmitBytesPerSecond: sample.NetworkTransmitBytesPerSecond);
 
     /// <summary>A missing Docker daemon leaves the optional inventory absent for older hosts.</summary>
     public static async Task<IReadOnlyList<HostContainerSummaryDto>?> ContainersAsync(CancellationToken ct)
@@ -435,15 +438,17 @@ internal static class RunnerCapabilityProbe
             if (ids.Length == 0) return [];
             if (ids.Length > 200) return null;
             var inspected = await ProcessRunner.RunAsync("docker",
-                ["inspect", "--format", "{{.Name}}\t{{.Image}}\t{{.State.Status}}", .. ids],
+                ["inspect", "--format", "{{.Name}}\t{{.Image}}\t{{.State.Status}}\t{{.Id}}", .. ids],
                 ct: deadline.Token);
             if (!inspected.Success) return null;
             return inspected.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Select(line => line.TrimEnd('\r').Split('\t'))
-                .Where(parts => parts.Length == 3 && parts[0].Length > 0)
+                .Where(parts => parts.Length is 3 or 4 && parts[0].Length > 0)
                 .Select(parts => new HostContainerSummaryDto(parts[0].TrimStart('/'),
                     parts[1].StartsWith("sha256:", StringComparison.Ordinal) ? parts[1] : null,
-                    parts[2]))
+                    parts[2],
+                    // The short id is the default host name inside the container (AGT-3954).
+                    parts.Length == 4 && parts[3].Length >= 12 ? parts[3][..12] : null))
                 .ToArray();
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException

@@ -75,6 +75,15 @@ describe('operator attention model', () => {
     expect(attentionActionLabel(group.items[0], group.spec)).toBe('Open environment');
   });
 
+  it('opens the project Operations view while post-merge runs are missing (AGT-3965)', () => {
+    const missing = item('post-merge.missing', { cardKey: null, cards: [], project: 'Agent Studio' });
+    expect(attentionClassOf(missing.type)).toBe('post-merge');
+    const [group] = groupAttention([missing]);
+    expect(group.spec.label).toBe('Post-merge runs missing');
+    expect(attentionTarget(group.items[0], group.spec)).toBe('operations');
+    expect(attentionActionLabel(group.items[0], group.spec)).toBe('Open operations');
+  });
+
   it('opens the card of a blocked push (AGT-3695)', () => {
     const [blocked] = groupAttention([item('push.blocked')]);
     expect(blocked.spec.label).toBe('Push blocked');

@@ -5,7 +5,9 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Clients;
+using AgentStudio.Projects;
 using AgentStudio.Security;
+using AgentStudio.Secrets;
 using AgentStudio.Telemetry;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -108,6 +110,32 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         var rows = await harness.Client.GetFromJsonAsync<List<TraceSummaryResponse>>(Environment
             + "/traces?from=2026-10-16T11:00:00Z&to=2026-10-16T13:00:00Z");
         Assert.True(Assert.Single(rows!).Failed);
+    }
+
+    [Fact]
+    public async Task Otlp_json_intake_feeds_operations_metrics_and_logs()
+    {
+        var harness = await Start();
+        var token = (await CreateToken(harness)).Secret;
+        var now = _clock.GetUtcNow();
+        var time = TelemetryAdmissionPolicy.UnixNanos(now.AddMinutes(-1)).ToString();
+        var metricBody = """
+            {"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"http.server.request.duration","unit":"s","histogram":{"aggregationTemporality":1,"dataPoints":[{"timeUnixNano":"__TIME__","count":"2","sum":0.06,"min":0.01,"max":0.05,"bucketCounts":["1","1"],"explicitBounds":[0.02],"attributes":[{"key":"http.response.status_code","value":{"stringValue":"500"}}]}]}}]}]}]}
+            """.Replace("__TIME__", time);
+        var logBody = """
+            {"resourceLogs":[{"resource":{"attributes":[{"key":"service.version","value":{"stringValue":"v2"}}]},"scopeLogs":[{"logRecords":[{"timeUnixNano":"__TIME__","severityNumber":17,"body":{"stringValue":"upstream timeout"}}]}]}]}
+            """.Replace("__TIME__", time);
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Metrics, Encoding.UTF8.GetBytes(metricBody), token, "application/json")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Logs, Encoding.UTF8.GetBytes(logBody), token, "application/json")).StatusCode);
+        Assert.Equal(4, await harness.Writer.DrainOnceAsync(CancellationToken.None));
+        var reader = new StoreOperationsTelemetryReader(harness.Services.GetRequiredService<TelemetryStore>(),
+            harness.Services.GetRequiredService<TelemetryOptions>());
+        var result = reader.ReadMetrics("shop", "stage", now.AddHours(-1), now)!;
+        Assert.Equal(2, result.Requests);
+        Assert.Equal(1, result.ErrorRate);
+        Assert.Equal(20, result.ResponseP50Ms);
+        Assert.Equal("upstream timeout", Assert.Single(reader.SearchLogs(new("shop", "stage", now.AddHours(-1),
+            now, "ERROR", "v2", "timeout", 100, null))!.Lines).Message);
     }
 
     public async ValueTask DisposeAsync()
@@ -328,6 +356,107 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         var exportedMetrics = sink.Batches.SelectMany(batch => batch.Metrics).ToList();
         Assert.Equal(6, exportedMetrics.Count);
         Assert.DoesNotContain(exportedMetrics, sample => sample.Attributes.Json.Contains("hunter2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Provider_values_are_masked_in_every_log_field_before_staging_and_storage()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "secret-workspace"),
+            ["Secrets:KeyFile"] = Path.Combine(_root, "keys", "secrets.kek")
+        }).Build();
+        var store = new BuiltInSecretStore(configuration,
+            new ConfiguredKeyEncryptionKeySource(configuration, _ => null, _ => { }));
+        var provider = new SecretProvider(store, new SecretAuditLog(configuration), new SecretValueScrubber(_clock),
+            _clock, NullLogger<SecretProvider>.Instance);
+        var value = "value-" + Guid.NewGuid().ToString("N");
+        var projectValue = "value-" + Guid.NewGuid().ToString("N");
+        var workspaceValue = "value-" + Guid.NewGuid().ToString("N");
+        await provider.PutAsync(SecretScope.ForEnvironment("shop", "stage"), "DATABASE_URL", value,
+            SecretActor.Human("owner"));
+        await provider.PutAsync(SecretScope.ForProject("shop"), "PROJECT_KEY", projectValue,
+            SecretActor.Human("owner"));
+        await provider.PutAsync(SecretScope.Workspace, "WORKSPACE_KEY", workspaceValue,
+            SecretActor.Human("owner"));
+        var harness = await Start(secretStore: store);
+        var token = (await CreateToken(harness)).Secret;
+        var logs = JsonSerializer.Serialize(new
+        {
+            resourceLogs = new[] { new
+            {
+                scopeLogs = new[] { new
+                {
+                    logRecords = new[] { new
+                    {
+                        timeUnixNano = "1792152000000000000", severityNumber = 17,
+                        severityText = value, eventName = value,
+                        body = new { stringValue = value + " " + projectValue + " " + workspaceValue },
+                        attributes = new[]
+                        {
+                            new { key = "field", value = new { stringValue = value } },
+                            new { key = value, value = new { stringValue = "ordinary" } }
+                        }
+                    } }
+                } }
+            } }
+        });
+
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Logs, Encoding.UTF8.GetBytes(logs), token,
+            "application/json")).StatusCode);
+        var staged = Assert.Single(Directory.EnumerateFiles(Path.Combine(_root, "telemetry", "pending"), "*.json"));
+        var stagedText = File.ReadAllText(staged);
+        Assert.DoesNotContain(value, stagedText, StringComparison.Ordinal);
+        Assert.DoesNotContain(projectValue, stagedText, StringComparison.Ordinal);
+        Assert.DoesNotContain(workspaceValue, stagedText, StringComparison.Ordinal);
+        Assert.Contains("[REDACTED_CREDENTIAL]", stagedText, StringComparison.Ordinal);
+
+        var metrics = JsonSerializer.Serialize(new
+        {
+            resourceMetrics = new[] { new
+            {
+                scopeMetrics = new[] { new
+                {
+                    metrics = new[] { new
+                    {
+                        name = "db.pool.size",
+                        gauge = new { dataPoints = new[] { new
+                        {
+                            timeUnixNano = "1792152000000000000", asInt = "4",
+                            attributes = new[] { new { key = "field", value = new { stringValue = value } } }
+                        } } }
+                    } }
+                } }
+            } }
+        });
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Metrics, Encoding.UTF8.GetBytes(metrics), token,
+            "application/json")).StatusCode);
+        var spans = JsonSerializer.Serialize(new { resourceSpans = new[] { new { scopeSpans = new[] { new {
+            spans = new[] { new { traceId = "11111111111111111111111111111111", spanId = "2222222222222222",
+                name = value, startTimeUnixNano = "1792152000000000000", endTimeUnixNano = "1792152001000000000",
+                attributes = new[] { new { key = "db.url", value = new { stringValue = projectValue } } } } }
+        } } } } });
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Traces, Encoding.UTF8.GetBytes(spans), token,
+            "application/json")).StatusCode);
+        Assert.All(Directory.EnumerateFiles(Path.Combine(_root, "telemetry", "pending"), "*.json"), path =>
+        {
+            Assert.DoesNotContain(value, File.ReadAllText(path), StringComparison.Ordinal);
+            Assert.DoesNotContain(projectValue, File.ReadAllText(path), StringComparison.Ordinal);
+        });
+
+        await harness.Writer.DrainOnceAsync(CancellationToken.None);
+        var trace = await harness.Client.GetStringAsync(Environment + "/traces/11111111111111111111111111111111");
+        Assert.DoesNotContain(value, trace, StringComparison.Ordinal);
+        Assert.DoesNotContain(projectValue, trace, StringComparison.Ordinal);
+        var page = await harness.Client.GetStringAsync(Environment + "/logs?from=2026-10-16T11:00:00Z");
+        Assert.DoesNotContain(value, page, StringComparison.Ordinal);
+        Assert.DoesNotContain(projectValue, page, StringComparison.Ordinal);
+        Assert.DoesNotContain(workspaceValue, page, StringComparison.Ordinal);
+        var database = Path.Combine(_root, "telemetry", "shop", "stage.sqlite");
+        var stored = File.ReadAllText(database);
+        Assert.DoesNotContain(value, stored, StringComparison.Ordinal);
+        Assert.DoesNotContain(projectValue, stored, StringComparison.Ordinal);
+        Assert.DoesNotContain(workspaceValue, stored, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -613,7 +742,7 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
     }
 
     private async Task<Harness> Start(TelemetryOptions? options = null, ITelemetryExportSink? sink = null,
-        ITelemetryEnvironmentDirectory? directory = null)
+        ITelemetryEnvironmentDirectory? directory = null, ISecretStore? secretStore = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root })
@@ -627,6 +756,7 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
         builder.Services.AddSingleton<ITelemetryIngestCredentials, AccessStoreTelemetryIngestCredentials>();
         builder.Services.AddSingleton(directory ?? new ShopStageDirectory());
         builder.Services.AddSingleton<ITelemetryValueMasker, CredentialTelemetryValueMasker>();
+        if (secretStore is not null) builder.Services.AddSingleton(secretStore);
         builder.Services.AddSingleton<TelemetryStore>();
         builder.Services.AddSingleton<TelemetryIntakeQueue>();
         builder.Services.AddSingleton<TelemetryIntakeService>();

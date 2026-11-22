@@ -21,6 +21,9 @@ import {
   type Release,
 } from '../state/deploy-area.model';
 import type { PipelineDefinitionResponse } from '../services/project-pipeline-definition.service';
+import type {
+  EnvironmentHealth, EnvironmentHealthCheck, EnvironmentHealthResponse, HealthIncident, HealthStatus,
+} from '../../environment-health/models/environment-health.model';
 
 export const DEPLOY_FIXTURE_NOW = Date.parse('2026-10-19T12:00:00Z');
 
@@ -134,6 +137,39 @@ export function deployStatusFixture(): EnvironmentStatus[] {
   ];
 }
 
+/** An open control-plane incident on the HTTP check of an environment (M2: Production down). */
+export function openIncidentFixture(environmentId: string): HealthIncident {
+  return {
+    id: `incident-${environmentId}`, environmentId, checkId: 'http', startedAt: '2026-10-19T11:50:00Z',
+    firstError: 'connection refused', failedProbes: 3, endedAt: null, cardId: null,
+  };
+}
+
+/** `GET /environments/health` entry with one HTTP check in the given state. */
+export function observedHealthFixture(environmentId: string, status: HealthStatus,
+  currentIncident: HealthIncident | null = null): EnvironmentHealth {
+  const check: EnvironmentHealthCheck = {
+    id: 'http', kind: 'http', target: `https://${environmentId}.website.example/healthz`, derived: true, expectedStatus: 200,
+    hasBodyMarker: false, intervalSeconds: 30, timeoutSeconds: 5, failureThreshold: 3, recoveryThreshold: 2, status,
+    lastSample: null, consecutiveFailures: currentIncident ? 3 : 0, uptime24h: null, uptime7d: null, uptime30d: null,
+    latency24h: { p50Ms: null, p95Ms: null, p99Ms: null }, certificateNotAfter: null,
+  };
+  return {
+    project: 'Website', environmentId, name: environmentId, kind: environmentId, address: `https://${environmentId}.website.example`,
+    status, uptime24h: null, uptime7d: null, uptime30d: null, latency24h: { p50Ms: null, p95Ms: null, p99Ms: null },
+    currentIncident, lastIncident: null, checks: [check], error: null,
+  };
+}
+
+/** Control-plane health: Staging up, Production down with an open incident, while every deploy report still says healthy. */
+export function productionDownHealthFixture(): EnvironmentHealthResponse {
+  return {
+    capturedAt: '2026-10-19T12:00:00Z', probeOrigin: 'mock', environments: [
+      observedHealthFixture('stage', 'up'), observedHealthFixture('production', 'down', openIncidentFixture('production')),
+    ],
+  };
+}
+
 /** Every source ready: AGT-3176 environments plus the AGT-3201 deploy routes. */
 export function deploySourcesFixture(): DeploySources {
   return {
@@ -192,4 +228,34 @@ export function pipelineDefinitionFixture(): PipelineDefinitionResponse {
       ],
     },
   };
+}
+
+/**
+ * F13, the playthrough story: Production runs Release 3; Release 2 crash-looped
+ * there while its deploy-time health step passed, so the rollback target is
+ * Release 1 and Release 2 is skipped. `incidentOnly` leaves Release 2 as the
+ * only older release, marked with its incident.
+ */
+export function productionRollbackFixture(incidentOnly = false): {
+  environments: ProjectEnvironments; statuses: EnvironmentStatus[]; deployments: Deployment[];
+} {
+  const productionRun = run('run-c-production-done', RELEASE_3.id, 'production', 'succeeded', 'deploy',
+    { created: '2026-10-19T11:49:00Z', started: '2026-10-19T11:50:00Z', finished: '2026-10-19T11:52:00Z' },
+    [['approval', 'succeeded', '2026-10-19T11:49:00Z', '2026-10-19T11:50:00Z'],
+      ['publish-static', 'succeeded', '2026-10-19T11:50:00Z', '2026-10-19T11:52:00Z'], ['health', 'succeeded', '2026-10-19T11:52:00Z', '2026-10-19T11:52:00Z']],
+    { requestedBy: 'release-gate', approvedBy: 'local.owner' });
+  const environments = deployEnvironmentsFixture();
+  environments.environments[1] = { ...environments.environments[1], deployedArtifact: ARTIFACT_C };
+  environments.promotions = environments.promotions.filter(item => item.status !== 'pending');
+  const deployments = [productionRun, ...deployDeploymentsFixture().filter(item => item.id !== 'run-c-production')];
+  const statuses = deployStatusFixture();
+  statuses[1] = {
+    ...statuses[1], currentRelease: RELEASE_3, currentDeployment: productionRun, newerRelease: null, cardsSinceLastDeploy: [],
+    rollbackTarget: incidentOnly
+      ? { release: RELEASE_2, deployedAtUtc: '2026-10-19T09:10:00Z', runtimeHealth: 'incident',
+        incident: { source: 'crash-loop', startedAtUtc: '2026-10-19T09:20:00Z', detail: 'the host reported crash-loop' }, skippedVersions: [] }
+      : { release: RELEASE_1, deployedAtUtc: '2026-10-18T22:10:00Z', runtimeHealth: 'healthy', incident: null,
+        skippedVersions: [RELEASE_2.version] },
+  };
+  return { environments, statuses, deployments };
 }

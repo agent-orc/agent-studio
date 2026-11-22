@@ -56,48 +56,80 @@ public class ReleaseArtifactRegistry
             var isPackage = artifact == "release-package@sha256:" + sourceDigest;
             var unsigned = new RegisteredArtifact(project, commit, artifact, digest, gateRunId,
                 isPackage ? "static" : "container", builderIdentity, isPackage ? "built-in" : "external", sourceDigest);
-            lock (_gate)
-            {
-                var record = unsigned with { Signature = Sign(unsigned, createKey: true) };
-                var path = RecordPath(project, commit, digest);
-                if (File.Exists(path)) return JsonSerializer.Deserialize<RegisteredArtifact>(File.ReadAllText(path)) == record
-                    && Verify(record);
-                if (isPackage)
-                {
-                    var blob = BlobPath(digest);
-                    Directory.CreateDirectory(Path.GetDirectoryName(blob)!);
-                    if (!File.Exists(blob))
-                    {
-                        var temporaryBlob = blob + "." + Guid.NewGuid().ToString("N") + ".tmp";
-                        try
-                        {
-                            File.Copy(Path.Combine(evidence, "release.tar.gz"), temporaryBlob);
-                            if (!MatchesDigest(temporaryBlob, digest)) return false;
-                            try { File.Move(temporaryBlob, blob, false); }
-                            catch (IOException) when (File.Exists(blob))
-                            {
-                                if (!MatchesDigest(blob, digest)) return false;
-                            }
-                        }
-                        finally { if (File.Exists(temporaryBlob)) File.Delete(temporaryBlob); }
-                    }
-                    if (!MatchesDigest(blob, digest)) return false;
-                }
-                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-                try
-                {
-                    File.WriteAllText(temporary, JsonSerializer.Serialize(record));
-                    File.Move(temporary, path, false);
-                }
-                finally { if (File.Exists(temporary)) File.Delete(temporary); }
-                return true;
-            }
+            return Store(unsigned, isPackage ? Path.Combine(evidence, "release.tar.gz") : null);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
             or InvalidOperationException or KeyNotFoundException or ArgumentException)
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Registers a release package Studio packed itself from a commit its own
+    /// gate passed (an integration release). The package is stored by its
+    /// digest, like a promotion-train package; <paramref name="gateRunId"/>
+    /// names the gate verdict behind it.
+    /// </summary>
+    public bool PushStudioPackage(string project, string commit, string packagePath, string gateRunId,
+        string builderIdentity)
+    {
+        if (!CommitPattern.IsMatch(commit) || string.IsNullOrWhiteSpace(gateRunId) || gateRunId.Length > 200
+            || string.IsNullOrWhiteSpace(builderIdentity)) return false;
+        try
+        {
+            string digest;
+            using (var source = File.OpenRead(packagePath))
+                digest = Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant();
+            return Store(new RegisteredArtifact(project, commit, "release-package@sha256:" + digest, digest, gateRunId,
+                "static", builderIdentity, "built-in", digest), packagePath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
+            or InvalidOperationException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Signs and stores the record; a built-in package is copied into the blob store first.</summary>
+    private bool Store(RegisteredArtifact unsigned, string? package)
+    {
+        lock (_gate)
+        {
+            var record = unsigned with { Signature = Sign(unsigned, createKey: true) };
+            var path = RecordPath(unsigned.Project, unsigned.Commit, unsigned.Digest);
+            if (File.Exists(path)) return JsonSerializer.Deserialize<RegisteredArtifact>(File.ReadAllText(path)) == record
+                && Verify(record);
+            if (package is not null)
+            {
+                var blob = BlobPath(unsigned.Digest);
+                Directory.CreateDirectory(Path.GetDirectoryName(blob)!);
+                if (!File.Exists(blob))
+                {
+                    var temporaryBlob = blob + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                    try
+                    {
+                        File.Copy(package, temporaryBlob);
+                        if (!MatchesDigest(temporaryBlob, unsigned.Digest)) return false;
+                        try { File.Move(temporaryBlob, blob, false); }
+                        catch (IOException) when (File.Exists(blob))
+                        {
+                            if (!MatchesDigest(blob, unsigned.Digest)) return false;
+                        }
+                    }
+                    finally { if (File.Exists(temporaryBlob)) File.Delete(temporaryBlob); }
+                }
+                if (!MatchesDigest(blob, unsigned.Digest)) return false;
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(temporary, JsonSerializer.Serialize(record));
+                File.Move(temporary, path, false);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            return true;
         }
     }
 

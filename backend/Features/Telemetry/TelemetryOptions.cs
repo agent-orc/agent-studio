@@ -9,6 +9,11 @@ namespace AgentStudio.Telemetry;
 public sealed record TelemetryOptions
 {
     public string? StoreRoot { get; init; }
+    /// <summary>
+    /// OTLP base URL deployed workloads send to, such as <c>https://studio.example/api/telemetry/otlp</c>.
+    /// Without it a deploy uses the intake under the URL its host reached Studio at.
+    /// </summary>
+    public string? PublicOtlpEndpoint { get; init; }
     public int MetricMinuteRetentionDays { get; init; } = 14;
     public int MetricHourRetentionDays { get; init; } = 90;
     public int LogRetentionDays { get; init; } = 7;
@@ -73,10 +78,14 @@ public sealed record TelemetryOptions
             || options.MaxConcurrentRequests < 1 || options.MaxAttributeBytesPerRecord < 256
             || options.MaxScopesPerRequest < 1 || options.MaxConcurrentRequestsPerEnvironment < 1
             || options.MaxConcurrentRequestsPerEnvironment > options.MaxConcurrentRequests
-            || options.RequestDeadlineSeconds is < 1 or > 600)
+            || options.RequestDeadlineSeconds is < 1 or > 600
+            || options.PublicOtlpEndpoint is { Length: > 0 } endpoint
+                && (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")
+                    || !string.IsNullOrEmpty(uri.UserInfo) || uri.Query.Length > 0))
             throw new InvalidOperationException("Telemetry configuration has an out-of-range limit or retention value.");
         return options with
         {
+            PublicOtlpEndpoint = string.IsNullOrWhiteSpace(options.PublicOtlpEndpoint) ? null : options.PublicOtlpEndpoint.TrimEnd('/'),
             StoreRoot = string.IsNullOrWhiteSpace(options.StoreRoot)
                 ? string.IsNullOrWhiteSpace(configuration["TaskRepository"]) ? null : Path.Combine(configuration["TaskRepository"]!, "telemetry")
                 : options.StoreRoot

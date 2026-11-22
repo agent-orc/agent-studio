@@ -71,8 +71,12 @@ public sealed class OperatorDeployFactSource(WorkspaceQuotaService quota, Projec
         }).ToArray();
 }
 
-/// <summary>Open environment incidents from the durable health state. Recovery clears the fact.</summary>
-public sealed class OperatorEnvironmentIncidentFactSource(HealthCheckStore store, Func<IEnumerable<string>> projects)
+/// <summary>
+/// Open environment incidents from the durable health state. Recovery clears the fact.
+/// <paramref name="cardKey"/> turns the incident card's folder slug into the key the board shows.
+/// </summary>
+public sealed class OperatorEnvironmentIncidentFactSource(HealthCheckStore store, Func<IEnumerable<string>> projects,
+    Func<string, string, string?>? cardKey = null)
     : IOperatorDecisionFactSource
 {
     public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.EnvironmentIncidentOpen];
@@ -99,11 +103,12 @@ public sealed class OperatorEnvironmentIncidentFactSource(HealthCheckStore store
                 {
                     new("environment operations", environmentUrl),
                 };
-                if (incident.CardId is { } card)
+                var card = incident.CardId is { } cardId ? cardKey?.Invoke(project, cardId) ?? cardId : null;
+                if (card is not null)
                     evidence.Add(new("incident card", "/#/tasks/" + Uri.EscapeDataString(card)));
                 facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.EnvironmentIncidentOpen,
                     $"{OperatorDecisionTypes.EnvironmentIncidentOpen}|{project}|{incident.Id}",
-                    project, incident.CardId,
+                    project, card,
                     $"{incident.EnvironmentName} since {incident.StartedAt:yyyy-MM-dd HH:mm} UTC: {signal}",
                     incident.StartedAt.UtcDateTime, evidence,
                     Title: $"{project} · {incident.EnvironmentName} incident"));
@@ -277,4 +282,25 @@ public sealed class OperatorProviderLimitFactSource(ProviderLimitRegistry limits
 
     public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
         => OperatorDecisionFacts.FromProviderLimits(limits.Active(nowUtc));
+}
+
+/// <summary>
+/// AGT-3965: one fact per fast or balanced project whose develop moved
+/// without a post-merge run reported within six hours. The occurrence is the
+/// last reported tip, so a new report that leaves develop uncovered again is
+/// a new occurrence, and a report that covers develop clears it.
+/// </summary>
+public sealed class OperatorPostMergeCoverageFactSource(Func<IReadOnlyList<PostMergeCoverage>> missing)
+    : IOperatorDecisionFactSource
+{
+    public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.PostMergeRunsMissing];
+
+    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+        => missing().Select(coverage => new OperatorDecisionFact(
+            OperatorDecisionTypes.PostMergeRunsMissing,
+            $"{OperatorDecisionTypes.PostMergeRunsMissing}|{coverage.Project}|{coverage.LastReportedTipSha ?? "never"}",
+            coverage.Project, null, coverage.Message,
+            (coverage.LastReportedAtUtc + PostMergeCoveragePolicy.Limit)?.UtcDateTime ?? nowUtc,
+            [new OperatorEvidenceLink("testing", "/api/projects/" + Uri.EscapeDataString(coverage.Project) + "/testing")],
+            Title: "Post-merge runs missing")).ToArray();
 }

@@ -1,7 +1,9 @@
 import type { WritableSignal } from '@angular/core';
 import type { ProjectEnvironments } from '../../../models/project-overview.model';
 import type { DeployPage } from '../services/project-deploy-data.service';
-import type { DeployPanel, DeployRun, DeployRunAction, EnvironmentStatus, Release } from './deploy-area.model';
+import {
+  ready, type DeployPanel, type DeployRun, type DeployRunAction, type EnvironmentCardView, type EnvironmentStatus, type Release,
+} from './deploy-area.model';
 
 /** Pure helpers for the Deploy area's reads and their live refresh (F17). */
 
@@ -18,6 +20,15 @@ export function isProductionRun(run: DeployRun, statuses: readonly EnvironmentSt
   return !!statuses?.some(item => item.environment.id === run.environmentId && item.environment.kind === 'production')
     || !!environments?.environments.some(item => item.declaration.id === run.environmentId && item.declaration.kind === 'production')
     || run.environmentName.toLowerCase() === 'production';
+}
+
+/** An environment's display name and whether it is Production, for the deploy action confirmations. */
+export function deploymentEnvironment(id: string, cards: readonly EnvironmentCardView[],
+  statuses: DeployPanel<EnvironmentStatus[]>, environments: DeployPanel<ProjectEnvironments>): { name: string; production: boolean } {
+  const name = cards.find(card => card.id === id)?.name ?? id;
+  return { name, production: !!ready(statuses)?.some(item => item.environment.id === id && item.environment.kind === 'production')
+    || !!ready(environments)?.environments.some(item => item.declaration.id === id && item.declaration.kind === 'production')
+    || name.toLowerCase() === 'production' };
 }
 
 /** F17: the confirmation names the environment, the release version, and its card count, not the run id. */

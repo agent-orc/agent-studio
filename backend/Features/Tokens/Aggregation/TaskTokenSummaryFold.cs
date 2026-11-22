@@ -84,6 +84,7 @@ public static class TaskTokenSummaryFold
                 Model = string.IsNullOrWhiteSpace(storedId) ? null : storedId,
                 DisplayModel = label,
                 ThinkingLevel = Trimmed(usage.ThinkingLevel),
+                SessionMode = usage.SessionMode,
                 ParticipantId = entry.ParticipantId,
                 CliType = Trimmed(usage.CliType),
                 Host = Trimmed(usage.Host),

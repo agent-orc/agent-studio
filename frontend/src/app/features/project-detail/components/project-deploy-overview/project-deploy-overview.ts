@@ -3,9 +3,12 @@ import { EmptyStateComponent } from '../../../../components/empty-state/empty-st
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { DeployEnvironmentCardComponent } from '../deploy-environment-card/deploy-environment-card';
+import type { RollbackOffer } from '../../state/rollback-offer.model';
 import { ProjectDeployStepsFormComponent } from '../project-deploy-steps-form/project-deploy-steps-form';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
-import { declaredEnvironments, type DeployPanel, type EnvironmentCardView } from '../../state/deploy-area.model';
+import {
+  declaredEnvironments, type DeployActionOption, type DeployActionState, type DeployPanel, type EnvironmentCardView,
+} from '../../state/deploy-area.model';
 
 /**
  * Overview: one status card per declared environment. Environments project.yml
@@ -26,11 +29,23 @@ export class ProjectDeployOverviewComponent {
   readonly panel = input.required<DeployPanel<unknown>>();
   readonly cards = input.required<readonly EnvironmentCardView[]>();
   readonly now = input.required<number>();
+  readonly busy = input(false);
+  readonly stop = output<string>();
+  readonly remove = output<string>();
   readonly projectName = input('');
   /** The parsed project.yml, or null while it loads or when it is unavailable. */
   readonly definition = input<PipelineDefinitionResponse | null>(null);
   readonly openRun = output<string>();
   readonly openTools = output<void>();
+  readonly actions = input<readonly DeployActionOption[]>([]);
+  readonly actionState = input<DeployActionState>({ busy: null, error: null });
+  readonly startAction = output<DeployActionOption>();
+  readonly rollbackOffers = input<readonly RollbackOffer[]>([]);
+  /** The environment whose rollback request is on its way. */
+  readonly rollbackBusy = input<string | null>(null);
+  readonly rollback = output<string>();
+  readonly offers = computed(() => new Map(this.rollbackOffers().map(offer => [offer.environmentId, offer])));
+  readonly openSecrets = output<string>();
   /** project.yml changed; the owner reloads the Deploy sources. */
   readonly definitionChanged = output<void>();
 
