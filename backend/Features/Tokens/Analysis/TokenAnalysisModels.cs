@@ -117,4 +117,7 @@ public sealed record TokenAnalysisCardDetail(
     TokenAnalysisCard Card,
     IReadOnlyList<TokenAnalysisEvent> Events,
     ProjectTokenDataFreshness Freshness,
-    string Disclaimer);
+    string Disclaimer,
+    IReadOnlyList<TokenAnalysisDuplicateWarning>? DuplicateCodingEvents = null);
+
+public sealed record TokenAnalysisDuplicateWarning(string Code, IReadOnlyList<int> EventIndexes);

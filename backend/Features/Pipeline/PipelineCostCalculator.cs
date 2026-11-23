@@ -166,9 +166,9 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
                 ? PipelineStoredUsageNormalization.CostExecutions(pricing, normalized)
                 : null;
             var est = executions is null
-                ? pricing.Estimate(
-                    normalized.Model, normalized.InputTokens, normalized.OutputTokens, normalized.CacheReadTokens, normalized.CacheCreationTokens,
-                    record.StartedAt)
+                ? pricing.EstimateRecorded(normalized.Model, normalized.InputTokens, normalized.OutputTokens,
+                    normalized.CacheReadTokens, normalized.CacheCreationTokens, record.StartedAt,
+                    normalized.InputIncludesCached, normalized.UsageNormalization)
                 : SumEstimates(executions, record.StartedAt);
             var input = executions?.Sum(run => run.InputTokens) ?? normalized.InputTokens;
             var output = executions?.Sum(run => run.OutputTokens) ?? normalized.OutputTokens;
@@ -242,9 +242,9 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
         decimal input = 0, output = 0, cacheRead = 0, cacheWrite = 0;
         foreach (var run in executions)
         {
-            var estimate = pricing.Estimate(
-                run.Model, run.InputTokens, run.OutputTokens, run.CacheReadTokens, run.CacheCreationTokens,
-                run.StartedAt ?? recordedAt);
+            var estimate = pricing.EstimateRecorded(run.Model, run.InputTokens, run.OutputTokens,
+                    run.CacheReadTokens, run.CacheCreationTokens, run.StartedAt ?? recordedAt,
+                    run.InputIncludesCached, run.UsageNormalization);
             first ??= estimate;
             if (StepCostMeasurement.Tokens(run) > 0 && !estimate.ModelKnown) firstUnknown ??= estimate;
             input += estimate.InputUsd;
@@ -293,14 +293,14 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
                     {
                         var tokens = call.InputTokens + call.OutputTokens
                             + call.CacheReadTokens + call.CacheCreationTokens;
-                        if (call.ModelPriced)
+                        if (ReceiptTokenPricing.HasUsableStoredCost(call))
                         {
                             acc.AddPricedTokens(step.Kind, tokens, call.EstimatedApiCostUsd);
                             continue;
                         }
-                        acc.AddTokens(step.Kind, tokens, pricing.Estimate(
-                            call.Model, call.InputTokens, call.OutputTokens,
-                            call.CacheReadTokens, call.CacheCreationTokens, call.Ts));
+                        acc.AddTokens(step.Kind, tokens, pricing.EstimateRecorded(call.Model, call.InputTokens, call.OutputTokens,
+                            call.CacheReadTokens, call.CacheCreationTokens, call.Ts,
+                            call.InputIncludesCached, call.UsageNormalization));
                     }
                     continue;
                 }
@@ -310,10 +310,9 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
                     var tokens = StepCostMeasurement.Tokens(run);
                     acc.AddExecution(step.Kind, tokens, tokens <= 0
                         ? null
-                        : pricing.Estimate(
-                            run.Model, run.InputTokens, run.OutputTokens,
-                            run.CacheReadTokens, run.CacheCreationTokens,
-                            run.StartedAt ?? attempt.StartedAt));
+                        : pricing.EstimateRecorded(run.Model, run.InputTokens, run.OutputTokens,
+                            run.CacheReadTokens, run.CacheCreationTokens, run.StartedAt ?? attempt.StartedAt,
+                            run.InputIncludesCached, run.UsageNormalization));
                 }
             }
         }
@@ -378,14 +377,10 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
             cacheRead += call.CacheReadTokens;
             cacheCreation += call.CacheCreationTokens;
 
-            var estimate = pricing.Estimate(
-                call.Model,
-                call.InputTokens,
-                call.OutputTokens,
-                call.CacheReadTokens,
-                call.CacheCreationTokens,
-                call.Ts);
-            var priceResolved = call.ModelPriced || estimate.ModelKnown;
+            var estimate = pricing.EstimateRecorded(call.Model, call.InputTokens, call.OutputTokens,
+                    call.CacheReadTokens, call.CacheCreationTokens, call.Ts,
+                    call.InputIncludesCached, call.UsageNormalization);
+            var priceResolved = ReceiptTokenPricing.HasUsableStoredCost(call) || estimate.ModelKnown;
             allPriced &= priceResolved;
             if (!priceResolved)
             {
@@ -401,7 +396,7 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
                 // If an older ledger row was unpriced but a newer catalogue
                 // version now resolves the same run date, use that historical
                 // catalogue estimate so rollout removes the missing-price state.
-                var scale = call.ModelPriced
+                var scale = ReceiptTokenPricing.HasUsableStoredCost(call)
                     ? call.EstimatedApiCostUsd / estimate.Total
                     : 1m;
                 inputCost += estimate.InputUsd * scale;
@@ -417,7 +412,7 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
             // four visible components still sum exactly to the row.
             var tokens = call.InputTokens + call.OutputTokens
                 + call.CacheReadTokens + call.CacheCreationTokens;
-            if (call.ModelPriced && tokens > 0)
+            if (ReceiptTokenPricing.HasUsableStoredCost(call) && tokens > 0)
             {
                 inputCost += call.EstimatedApiCostUsd * call.InputTokens / tokens;
                 outputCost += call.EstimatedApiCostUsd * call.OutputTokens / tokens;
@@ -696,18 +691,14 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
                 cacheCreation += call.CacheCreationTokens;
                 var tokens = call.InputTokens + call.OutputTokens
                     + call.CacheReadTokens + call.CacheCreationTokens;
-                var estimate = pricing.Estimate(
-                    model,
-                    call.InputTokens,
-                    call.OutputTokens,
-                    call.CacheReadTokens,
-                    call.CacheCreationTokens,
-                    call.Ts == default ? null : call.Ts);
-                var priceResolved = tokens == 0 || call.ModelPriced || estimate.ModelKnown;
+                var estimate = pricing.EstimateRecorded(model, call.InputTokens, call.OutputTokens,
+                    call.CacheReadTokens, call.CacheCreationTokens, call.Ts == default ? null : call.Ts,
+                    call.InputIncludesCached, call.UsageNormalization);
+                var priceResolved = tokens == 0 || ReceiptTokenPricing.HasUsableStoredCost(call) || estimate.ModelKnown;
                 modelKnown &= priceResolved;
                 if (!priceResolved)
                     gaps.AddRange(PricingGapsFor(estimate, tokens, model));
-                cost += call.ModelPriced ? call.EstimatedApiCostUsd : estimate.Total;
+                cost += ReceiptTokenPricing.HasUsableStoredCost(call) ? call.EstimatedApiCostUsd : estimate.Total;
             }
 
             byModel.Add(new PipelineModelTokenUsage(
@@ -789,7 +780,13 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
             long output = g.Sum(item => item.Step.OutputTokens);
             long cacheRead = g.Sum(item => item.Step.CacheReadTokens);
             long cacheCreation = g.Sum(item => item.Step.CacheCreationTokens);
-            var est = pricing.Estimate(model, input, output, cacheRead, cacheCreation, recordedAt);
+            var est = SumEstimates(g.Select(item => new PipelineStepRunSummary
+            {
+                Model = item.Step.Model, InputTokens = item.Step.InputTokens, OutputTokens = item.Step.OutputTokens,
+                CacheReadTokens = item.Step.CacheReadTokens, CacheCreationTokens = item.Step.CacheCreationTokens,
+                InputIncludesCached = item.Step.InputIncludesCached, UsageNormalization = item.Step.UsageNormalization,
+                StartedAt = item.Step.StartedAt,
+            }).ToList(), recordedAt);
 
             byModel.Add(new PipelineModelTokenUsage(
                 Model: model,
@@ -823,7 +820,7 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
         var modelId = !string.IsNullOrWhiteSpace(displayModel)
             ? displayModel.Trim()
             : string.IsNullOrWhiteSpace(estimate.ModelId) ? "unknown" : estimate.ModelId.Trim();
-        return [new PipelinePricingGap(modelId, estimate.Status.ToString(), 1)];
+        return [new PipelinePricingGap(modelId, estimate.IncompleteReason ?? estimate.Status.ToString(), 1)];
     }
 
     private IReadOnlyList<PipelinePricingGap> MergePricingGaps(

@@ -34,3 +34,15 @@ The earlier token services read overlapping sources and folded them independentl
 The completed Stable reports `.metadata/migrations/openai-usage-input-v1.json` (2026-09-25, 605 repaired, 0 failed) and `.metadata/migrations/token-ledger-duplicates-v1.json` (2026-10-10, 0 failed) show both one-time repairs have run. AGT-3037 removed their startup registrations and classes. Read time handling for immutable historical rows remains in `StoredUsageNormalization` and `TokenLedgerDuplicates`.
 
 The domain record in [`docs/system/domains/tokens.md`](../system/domains/tokens.md) describes source precedence, price semantics, endpoint contracts, and current files.
+
+### Remote receipt replay and incomplete Codex input
+
+Remote log lines now retain their full UTC timestamp. Receipt attribution
+prefers the recorded run's CLI and model, and replayed source turns keep the
+earliest receipt's attribution across imports. The reader collapses replay
+identities before computing residual totals. Equal counters without source
+identity remain inspection warnings in card analysis. OpenAI input with no
+cache split or normalization provenance remains measurable but unpriced;
+the system marks cost incomplete instead of assuming all input was uncached.
+See [the token domain](../system/domains/tokens.md#remote-receipt-replay-and-missing-cache-evidence-agt-3973)
+for identity rules and the card-detail diagnostic contract.

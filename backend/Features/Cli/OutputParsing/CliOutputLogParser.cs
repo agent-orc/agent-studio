@@ -178,7 +178,13 @@ public static partial class CliOutputLogParser
         }
 
         var timestamp = fallbackDateUtc;
-        if (DateTime.TryParseExact(match.Groups["time"].Value, TimeFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedTime))
+        if (DateTime.TryParse(match.Groups["time"].Value, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var absolute)
+            && match.Groups["time"].Value.Contains('T'))
+        {
+            timestamp = absolute;
+        }
+        else if (DateTime.TryParseExact(match.Groups["time"].Value, TimeFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedTime))
         {
             timestamp = fallbackDateUtc.Add(parsedTime.TimeOfDay);
         }
@@ -191,6 +197,6 @@ public static partial class CliOutputLogParser
         };
     }
 
-    [GeneratedRegex(@"^\[(?<time>\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]\s+\[(?<stream>stdout|stderr|user|system|orchestrator)\]\s?(?<text>.*)$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^\[(?<time>(?:\d{4}-\d{2}-\d{2}T)?\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z?)\]\s+\[(?<stream>stdout|stderr|user|system|orchestrator)\]\s?(?<text>.*)$", RegexOptions.IgnoreCase)]
     private static partial Regex PersistedLineRegex();
 }

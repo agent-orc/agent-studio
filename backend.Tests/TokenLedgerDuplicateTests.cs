@@ -58,6 +58,201 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         catch { /* best-effort */ }
     }
 
+    [Theory]
+    [InlineData("AGT-3897", 23_140_000, 9, 31)]
+    [InlineData("AGT-3891", 15_340_000, 9, 16)]
+    [InlineData("AGT-3830", 7_160_000, 3, 26)]
+    public void Reimport_does_not_redate_or_reattribute_an_earlier_Codex_turn(
+        string card, int input, int hour, int minute)
+    {
+        var (scanner, _, receipts) = BuildWriteServices();
+        WriteTask(null);
+        var folder = Path.GetDirectoryName(TaskJsonPath())!;
+        var at = new DateTime(2026, 11, 17, hour, minute, 0, DateTimeKind.Utc);
+        var oldCall = new TaskTokenCall
+        {
+            Ts = at, Model = "gpt-6-sol", InputTokens = input, OutputTokens = 100,
+            InputIncludesCached = true,
+            ParticipantId = $"agent:remote-runner:{Attempt}:usage:turn:00000000:00",
+        };
+        WriteTask(Summary(oldCall));
+        var path = TaskPaths.CliOutputLog(folder);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var frame = JsonSerializer.Serialize(new
+        {
+            type = "turn.completed",
+            usage = new { input_tokens = input, cached_input_tokens = 0, output_tokens = 100 },
+        });
+        File.WriteAllText(path, $"[{at:HH:mm:ss.fff}] [stdout] {frame}\n");
+        File.SetLastWriteTimeUtc(path, at.AddDays(1));
+        new TaskSessionLog(scanner, NullLogger<TaskSessionLog>.Instance).AppendSessionEvent(JobId,
+            new SessionEvent
+            {
+                Ts = at.AddDays(1).AddMinutes(-1), FinishedAt = at.AddDays(1).AddMinutes(1),
+                RunAttemptId = LaterAttempt, Cli = "claude", Model = "claude-opus-5-5",
+            }, _watchPath);
+
+        var result = receipts.PersistFromLog(scanner.FindJob(JobId, _watchPath)!, LaterAttempt, "host");
+
+        Assert.False(result.Persisted);
+        var read = new ProjectTokenReceiptReader().Read(_watchPath);
+        var only = Assert.Single(read.Entries);
+        Assert.Equal(at, only.Ts);
+        Assert.Equal("gpt-6-sol", only.TokenUsage!.Model);
+        Assert.Equal(input, only.TokenUsage.InputTokens);
+        Assert.False(string.IsNullOrEmpty(card));
+    }
+
+    [Theory]
+    [InlineData(23_140_000)]
+    [InlineData(15_340_000)]
+    [InlineData(7_160_000)]
+    public void Receipt_reader_collapses_replayed_source_turn_despite_changed_day_and_model(int input)
+    {
+        var real = new TaskTokenCall
+        {
+            Ts = new DateTime(2026, 11, 17, 9, 31, 0, DateTimeKind.Utc),
+            Model = "gpt-6-sol", InputTokens = input, OutputTokens = 100, InputIncludesCached = true,
+            UsageNormalization = ProviderUsageNormalization.OpenAiInputIncludesCachedV1,
+            ParticipantId = $"agent:remote-runner:{Attempt}:usage:turn:00000000:00",
+        };
+        var phantom = real with
+        {
+            Ts = real.Ts.AddDays(1), Model = "claude-opus-5-5",
+            ParticipantId = $"agent:remote-runner:{LaterAttempt}:usage:turn:00000000:00",
+        };
+        WriteTask(Summary(real, phantom));
+
+        var read = new ProjectTokenReceiptReader().Read(_watchPath);
+
+        Assert.Equal(real.Ts, Assert.Single(read.Entries).Ts);
+        Assert.Equal("gpt-6-sol", read.Entries[0].TokenUsage!.Model);
+        Assert.Equal(1, read.CollapsedDuplicates.Entries);
+        Assert.Equal(input + 100, read.Summaries[JobId].TotalTokens);
+        var events = TokenAnalysisFold.Events(TokenAnalysisFold.Items(TokenTestServices.Pricing(),
+            new TokenAnalysisJobInput(JobId, null, null, read.Entries)));
+        var coding = Assert.Single(events);
+        Assert.Equal(real.Ts, coding.At);
+        Assert.Equal(ModelIdentity.Label(real.Model), coding.Model);
+        Assert.Equal(TokenTestServices.Pricing().Estimate(real.Model, input, 100, 0, 0, real.Ts).Total, coding.CostUsd);
+        Assert.Empty(TokenAnalysisFold.DuplicateCodingEvents(events));
+    }
+
+    [Fact]
+    public void Cumulative_Claude_receipt_stays_on_its_original_day_and_reasoning_level()
+    {
+        var real = new TaskTokenCall
+        {
+            Ts = new DateTime(2026, 11, 16, 3, 24, 0, DateTimeKind.Utc),
+            Model = "claude-opus-5-5", ThinkingLevel = "medium",
+            CacheReadTokens = 41_700_000, OutputTokens = 111_000,
+            ParticipantId = $"agent:remote-runner:{Attempt}:usage:scope:claude-session-1",
+        };
+        WriteTask(Summary(real, real with
+        {
+            Ts = real.Ts.AddDays(1), ThinkingLevel = "high",
+            ParticipantId = $"agent:remote-runner:{LaterAttempt}:usage:scope:claude-session-1",
+        }));
+        var read = new ProjectTokenReceiptReader().Read(_watchPath);
+        var entry = Assert.Single(read.Entries);
+        Assert.Equal(real.Ts, entry.Ts);
+        Assert.Equal("medium", entry.TokenUsage!.ThinkingLevel);
+        Assert.Equal(41_700_000, entry.TokenUsage.CacheReadTokens);
+        Assert.Equal(111_000, entry.TokenUsage.OutputTokens);
+    }
+
+    [Fact]
+    public void Recorded_run_dimensions_and_absolute_log_time_win_over_current_card_settings()
+    {
+        var (scanner, _, receipts) = BuildWriteServices();
+        WriteTask(null); // The current card is Claude; the completed run was Codex.
+        var folder = Path.GetDirectoryName(TaskJsonPath())!;
+        var at = new DateTime(2026, 11, 17, 9, 31, 0, DateTimeKind.Utc);
+        var sessions = new TaskSessionLog(scanner, NullLogger<TaskSessionLog>.Instance);
+        sessions.AppendSessionEvent(JobId, new SessionEvent
+        {
+            Ts = at.AddMinutes(-1), FinishedAt = at.AddMinutes(1), RunAttemptId = Attempt,
+            Cli = "codex", Model = "gpt-6-sol", ThinkingLevel = "high",
+        }, _watchPath);
+        var path = TaskPaths.CliOutputLog(folder);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var frame = JsonSerializer.Serialize(new
+        {
+            type = "turn.completed",
+            usage = new { input_tokens = 44_300_000, cached_input_tokens = 44_000_000, output_tokens = 111_000 },
+        });
+        File.WriteAllText(path, $"[{at:yyyy-MM-ddTHH:mm:ss.fffZ}] [stdout] {frame}\n");
+        File.SetLastWriteTimeUtc(path, at.AddDays(1));
+        Assert.True(receipts.PersistFromLog(scanner.FindJob(JobId, _watchPath)!, Attempt, "host").Persisted);
+        var call = Assert.Single(ReadReceipt().Entries);
+        Assert.Equal(at, call.Ts);
+        Assert.Equal("gpt-6-sol", call.Model);
+        Assert.Equal("codex", call.CliType);
+        Assert.Equal("high", call.ThinkingLevel);
+        Assert.Equal(300_000, call.InputTokens);
+        Assert.Equal(44_000_000, call.CacheReadTokens);
+        var before = File.ReadAllText(TaskJsonPath());
+        File.SetLastWriteTimeUtc(path, at.AddDays(2));
+        Assert.True(receipts.PersistFromLog(scanner.FindJob(JobId, _watchPath)!, Attempt, "host").Persisted);
+        Assert.Equal(before, File.ReadAllText(TaskJsonPath()));
+    }
+
+    [Fact]
+    public void Codex_frame_without_cached_input_field_is_stored_as_unpriced_evidence()
+    {
+        var (scanner, _, receipts) = BuildWriteServices();
+        WriteTask(null);
+        var folder = Path.GetDirectoryName(TaskJsonPath())!;
+        var at = new DateTime(2026, 11, 17, 9, 31, 0, DateTimeKind.Utc);
+        // Older imports marked missing cache fields as an explicit zero.
+        // Re-import must revise that evidence while preserving attribution.
+        WriteTask(Summary(new TaskTokenCall
+        {
+            Ts = at, Model = "gpt-6-sol", InputTokens = 61_600_000, OutputTokens = 111_000,
+            InputIncludesCached = true, ModelPriced = true, EstimatedApiCostUsd = 124m,
+            ParticipantId = $"agent:remote-runner:{Attempt}:usage:turn:00000000:00",
+        }));
+        new TaskSessionLog(scanner, NullLogger<TaskSessionLog>.Instance).AppendSessionEvent(JobId,
+            new SessionEvent
+            {
+                Ts = at.AddMinutes(-1), FinishedAt = at.AddMinutes(1), RunAttemptId = Attempt,
+                Cli = "codex", Model = "gpt-6-sol",
+            }, _watchPath);
+        var path = TaskPaths.CliOutputLog(folder);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var frame = JsonSerializer.Serialize(new
+        {
+            type = "turn.completed", usage = new { input_tokens = 61_600_000, output_tokens = 111_000 },
+        });
+        File.WriteAllText(path, $"[{at:yyyy-MM-ddTHH:mm:ss.fffZ}] [stdout] {frame}\n");
+        Assert.True(receipts.PersistFromLog(scanner.FindJob(JobId, _watchPath)!, Attempt, "host").Persisted);
+        var call = Assert.Single(ReadReceipt().Entries);
+        Assert.Null(call.InputIncludesCached);
+        Assert.False(call.ModelPriced);
+        Assert.Equal(0m, call.EstimatedApiCostUsd);
+        Assert.Equal(61_600_000, call.InputTokens);
+    }
+
+    [Theory]
+    [InlineData(61_600_000)]
+    [InlineData(52_200_000)]
+    public void Remote_Codex_zero_cache_without_field_provenance_is_unpriced_on_read(int input)
+    {
+        WriteTask(Summary(new TaskTokenCall
+        {
+            Ts = CodexAt, Model = "gpt-6-sol", InputTokens = input, OutputTokens = 111_000,
+            InputIncludesCached = true, ModelPriced = true, EstimatedApiCostUsd = input == 61_600_000 ? 124m : 105m,
+            ParticipantId = $"agent:remote-runner:{Attempt}:usage:turn:00000000:00",
+        }));
+        var entry = Assert.Single(new ProjectTokenReceiptReader().Read(_watchPath).Entries);
+        Assert.Null(entry.TokenUsage!.InputIncludesCached);
+        Assert.Equal(input, entry.TokenUsage.InputTokens);
+        var estimate = Assert.Single(TokenTestServices.Pricing().Price([entry])).Cost!;
+        Assert.False(estimate.ModelKnown);
+        Assert.Equal(0m, estimate.Total);
+        Assert.True(Assert.Single(ReadReceipt().Entries).InputIncludesCached); // Read-only marking.
+    }
+
     // ---- write path -------------------------------------------------------
 
     [Fact]
