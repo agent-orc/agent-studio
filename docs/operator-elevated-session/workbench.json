@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "id": "operator-elevated-session",
+  "title": "Elevated operator session from the terminal",
+  "summary": "How the owner can be admin safely and fast from an operator agent's terminal session. Proposes a terminal-started sign-in that the owner confirms in the browser or on the phone with a passkey or authenticator code, sessions bound by proof of possession to a key that never leaves the device (TPM or Secure Enclave where present, a memory-held key otherwise), named elevated action classes with a 60-minute window and rate limits instead of a stronger role, batch confirmation of override acceptances and archive overrides in Needs you with one tap, the testing strategy as the first route moved from Owner to a project permission, an override permission that makes approvals work, and hard refusals no token can lift. Compares owner in the browser, agent driving the owner's browser, and the elevated terminal session; recommends the elevated terminal session as the default. Thirteen decisions, threat model updates for the security Dossier, and eight slices.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-11-23T18:00:00Z",
+  "sourceTaskKeys": [
+    "AGT-3989"
+  ],
+  "relatedTaskKeys": [
+    "AGT-3353"
+  ],
+  "implementationTasks": [
+    {
+      "id": "ES-1",
+      "title": "ES-1 · Testing strategy as a project setting",
+      "dependsOn": [],
+      "promptMarkdown": "# Testing strategy as a project setting\n\nSource: docs/operator-elevated-session/index.html (AGT-3989), extending docs/security-model/index.html (AGT-3353). Read both Dossiers and this workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/operations/security/overview.md and docs/operations/setup/operator-agent.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Update docs/operations/security/overview.md and the operator agent setup guide for every behaviour you change, and append one entry to the Implementation log of the Dossier.\n\nDependencies: none.\n\nDecision ES-D7 option A (first half).\n\nEntry points: `backend/Features/Projects/ProjectSettingsEndpoints.cs` (`PUT /api/projects/{projectName}/testing`, today `.RequireStudioRole(StudioRoles.Owner)`), `backend/Features/Security/Iam/RoutePermissionCatalog.cs`, `backend/Features/Security/Iam/OperatorPolicy/OperatorOperationCatalog.cs`, the settings UI that shows the testing strategy.\n\n## Deliver\n- Replace the Owner requirement on `PUT /api/projects/{project}/testing` with `project.settings.write`, so Owner and Admin of the project can set it, like its neighbouring project settings. `GET` stays `project.read`.\n- Write an audit entry for every change with actor, project, old and new strategy and, for an operator session, the stated reason (`X-Operator-Reason`).\n- Add the catalogue operation `project.testing.set` for this route, tier T2 for now, so an operator session can reach it only through a single SM-5 approval until ES-6 adds the `project.testing` class. The `operator-agent` role does not gain `project.settings.write`.\n- Keep the queued review plan rebuild that the route does today.\n- The settings UI shows the control to Admins of the project, not only to the Owner.\n- Do not change the build profile, review package, security file, checkout or gate capacity routes.\n\n## Acceptance\n- An Owner and a project Admin change the testing strategy (200); a Developer and a Viewer get 403 in tests.\n- An operator session request without an approval answers 403 approval-required; after an approved SM-5 approval it succeeds once.\n- Every change writes one audit entry with old and new value; RoutePermissionInventoryTests and OperatorOperationCatalogInventoryTests pass.\n- The project settings page shows the strategy control to a project Admin (Playwright, light and dark).\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "ES-1 Testing strategy as a project setting",
+        "criteria": [
+          "An Owner and a project Admin change the testing strategy (200); a Developer and a Viewer get 403 in tests.",
+          "An operator session request without an approval answers 403 approval-required; after an approved SM-5 approval it succeeds once.",
+          "Every change writes one audit entry with old and new value; RoutePermissionInventoryTests and OperatorOperationCatalogInventoryTests pass.",
+          "The project settings page shows the strategy control to a project Admin (Playwright, light and dark)."
+        ]
+      }
+    },
+    {
+      "id": "ES-2",
+      "title": "ES-2 · Override as a permission",
+      "dependsOn": [],
+      "promptMarkdown": "# Override as a permission\n\nSource: docs/operator-elevated-session/index.html (AGT-3989), extending docs/security-model/index.html (AGT-3353). Read both Dossiers and this workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/operations/security/overview.md and docs/operations/setup/operator-agent.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Update docs/operations/security/overview.md and the operator agent setup guide for every behaviour you change, and append one entry to the Implementation log of the Dossier.\n\nDependencies: none.\n\nDecisions ES-D8 option A and ES-D9 (single-request path until ES-7).\n\nEntry points: `backend/Features/Tasks/TaskCrudEndpoints.cs` (both move routes: `ProjectAccessAuthorization.HasOperatorAuthority` for `operatorOverride`, the `HumanPrincipal` Owner check for `archiveOverride`), `backend/Features/Security/Iam/IamCatalog.cs`, `OperatorOperationCatalog.cs` (`CardMove` refinement), the SM-5 approval store.\n\n## Deliver\n- Add the permission `project.cards.override` (\"Accept a card with an override or archive it with an override, each with a written reason\"), held by Owner and Admin. Not held by Developer, Operator agent, Product, Reviewer, Viewer or Approver.\n- Both move routes check this permission for `operatorOverride` and for `archiveOverride` instead of the projected role and the human-Owner check. The written reason stays mandatory; the other refusals stay as they are.\n- Catalogue: a move into Completed with `operatorOverride` resolves to `card.accept-override` (T2), a move into Archive with `archiveOverride` resolves to `card.archive-override` (T2). Other moves into delivered lanes stay `gate.bypass`; a plain move into Archive by an operator session stays not catalogued.\n- When an SM-5 approval admits one of these two operations for an operator session, the request carries `project.cards.override` for that request only. No other principal gains it through an approval.\n- The card timeline and the audit entry name the operator session as actor, the approving Owner and the reason.\n- Fix the card-to-project lookup in `AccessSecurityMiddleware`: for a non-API-token service account with only workspace bindings, `SkipTaskResolutionItem` makes every card write unaddressed, so an operator session bound on the workspace is refused with `project-scope-denied` (\"installation-wide\"). Resolve the card's project for writes by any principal whose strongest role is `operator-agent`.\n\n## Acceptance\n- An operator session's override acceptance answers approval-required; after the Owner approves, the replay completes the card (today it ends with operator-authority-required).\n- An archive override by an operator session follows the same approval path; without reason it is refused with the existing reason error.\n- A Developer and an unapproved operator session are refused with typed reasons; an Admin and the Owner succeed directly.\n- The permission inventory and catalogue inventory tests pass with the new permission and operations.\n- An operator session of an agent bound on the workspace moves a card into Ready (200), where today it gets 403 project-scope-denied.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "ES-2 Override as a permission",
+        "criteria": [
+          "An operator session's override acceptance answers approval-required; after the Owner approves, the replay completes the card (today it ends with operator-authority-required).",
+          "An archive override by an operator session follows the same approval path; without reason it is refused with the existing reason error.",
+          "A Developer and an unapproved operator session are refused with typed reasons; an Admin and the Owner succeed directly.",
+          "The permission inventory and catalogue inventory tests pass with the new permission and operations.",
+          "An operator session of an agent bound on the workspace moves a card into Ready (200), where today it gets 403 project-scope-denied."
+        ]
+      }
+    },
+    {
+      "id": "ES-3",
+      "title": "ES-3 · Terminal sign-in confirmed with step-up",
+      "dependsOn": [],
+      "promptMarkdown": "# Terminal sign-in confirmed with step-up\n\nSource: docs/operator-elevated-session/index.html (AGT-3989), extending docs/security-model/index.html (AGT-3353). Read both Dossiers and this workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/operations/security/overview.md and docs/operations/setup/operator-agent.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Update docs/operations/security/overview.md and the operator agent setup guide for every behaviour you change, and append one entry to the Implementation log of the Dossier.\n\nDependencies: none.\n\nDecision ES-D2 option S2, ES-D5 option A (session part).\n\nEntry points: `backend/Features/Security/Iam/OperatorAgentEndpoints.cs` and `AccessSecurityStore.OperatorAgents.cs` (session start), `backend/Features/Security/AccessSecurityEndpoints.cs` (`/api/auth/step-up`), the access middleware, the `studio-op` CLI (see docs/operations/setup/studio-op.md), Settings > Access operator panel.\n\n## Deliver\n- Anonymous, throttled `POST` start route that takes the public key (JWK, P-256), a device label, the operator agent id and requested classes, and answers a user code (8 characters, unambiguous alphabet, 10 minutes, single use), a confirmation link, a poll handle and a 5-second interval. A poll answers pending, slow-down, denied, expired or the session.\n- Confirmation page in Studio (`Confirm terminal sign-in`): shows code entry (or the code from the link with an explicit \"this code is on my terminal now\" tick), device label, whether the key thumbprint is known, the requesting address and whether it matches the browser's, requested classes (removable, not addable) and lifetime. Confirm consumes a fresh step-up; only an active Owner may confirm. Five wrong code entries per Owner in 15 minutes lock the page for 15 minutes.\n- On confirmation Studio creates an `oas.*` session of the chosen agent with the device record (label, key thumbprint, address at confirmation, confirming browser session id) and returns it to the next poll. Store the key thumbprint even before ES-4 enforces it.\n- Device records per operator agent: known devices, last use, `Forget device`.\n- `studio-op login [--agent <name>]` runs the flow, prints code, link and a terminal QR code, writes the session to the existing `operator-session` file with mode 600, and never prints the secret.\n- Revoking the confirming browser session, an Owner password reset or Owner disable ends the sessions it confirmed. Audit: `operator-signin.start`, `.confirm`, `.deny`, `.expire`, `.issue`.\n\n## Acceptance\n- A session is issued only after an Owner confirmation with a fresh second factor; without step-up the confirmation answers step-up-required.\n- Expired, reused and unknown codes are refused; the sixth wrong entry within 15 minutes locks the page (tests).\n- studio-op login end to end on the networked-https Playwright profile: code shown, Owner confirms in the browser, studio-op auth status reports the session; light, dark and 390 px screenshots of the confirmation page.\n- The session row in Settings > Access shows device label, key thumbprint and address at confirmation.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "ES-3 Terminal sign-in confirmed with step-up",
+        "criteria": [
+          "A session is issued only after an Owner confirmation with a fresh second factor; without step-up the confirmation answers step-up-required.",
+          "Expired, reused and unknown codes are refused; the sixth wrong entry within 15 minutes locks the page (tests).",
+          "studio-op login end to end on the networked-https Playwright profile: code shown, Owner confirms in the browser, studio-op auth status reports the session; light, dark and 390 px screenshots of the confirmation page.",
+          "The session row in Settings > Access shows device label, key thumbprint and address at confirmation."
+        ]
+      }
+    },
+    {
+      "id": "ES-4",
+      "title": "ES-4 · Proof-of-possession binding",
+      "dependsOn": [
+        "ES-3"
+      ],
+      "promptMarkdown": "# Proof-of-possession binding\n\nSource: docs/operator-elevated-session/index.html (AGT-3989), extending docs/security-model/index.html (AGT-3353). Read both Dossiers and this workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/operations/security/overview.md and docs/operations/setup/operator-agent.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Update docs/operations/security/overview.md and the operator agent setup guide for every behaviour you change, and append one entry to the Implementation log of the Dossier.\n\nDependencies: ES-3.\n\nDecisions ES-D3 option B2 and ES-D4 option A (memory key).\n\nEntry points: the access middleware (bearer resolution for `oas.*`), `studio-op`, the sign-in records from ES-3.\n\n## Deliver\n- Server: a session issued with a key thumbprint is accepted only with a `DPoP` header (RFC 9449): compact JWS with ES256, `htm`, `htu` (normalized to the public origin behind the trusted proxy), `iat` within 60 seconds, a single-use `jti` (replay cache of at least 5 minutes, bounded memory), and `ath` over the token. Optional server nonce (`DPoP-Nonce`) rotated every 5 minutes. Refusals answer 401 with `dpop-required`, `dpop-invalid`, `dpop-replayed`, `dpop-stale` or `dpop-key-mismatch` and count as refused bearer requests in the security view.\n- `studio-op agent`: a resident process under the agent's OS user that generates the session key in memory at login, exposes signing over a socket with mode 600 (named pipe with a user-only ACL on Windows), and dies with the session. `studio-op` commands sign through it; the key is never written to disk.\n- Two-level key preparation: the sign-in start carries the session key; ES-5 adds the hardware key certification.\n- Keep unbound sessions working only when started through the old Settings path (ES-D2), shown as unbound in the session row.\n\n## Acceptance\n- A bound session's token without a proof, with a proof for another method or address, older than 60 seconds or replayed is refused in tests.\n- Copying the operator-session file to another user or machine yields 401 dpop-required on every route (scripted test).\n- Median added server time per request below 2 ms over 1,000 requests (measured and recorded in results).\n- The memory key never appears on disk: a test searches the agent user's home and temp directories for the key material after login.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "ES-4 Proof-of-possession binding",
+        "criteria": [
+          "A bound session's token without a proof, with a proof for another method or address, older than 60 seconds or replayed is refused in tests.",
+          "Copying the operator-session file to another user or machine yields 401 dpop-required on every route (scripted test).",
+          "Median added server time per request below 2 ms over 1,000 requests (measured and recorded in results).",
+          "The memory key never appears on disk: a test searches the agent user's home and temp directories for the key material after login."
+        ]
+      }
+    },
+    {
+      "id": "ES-5",
+      "title": "ES-5 · Hardware device keys",
+      "dependsOn": [
+        "ES-4"
+      ],
+      "promptMarkdown": "# Hardware device keys\n\nSource: docs/operator-elevated-session/index.html (AGT-3989), extending docs/security-model/index.html (AGT-3353). Read both Dossiers and this workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/operations/security/overview.md and docs/operations/setup/operator-agent.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Update docs/operations/security/overview.md and the operator agent setup guide for every behaviour you change, and append one entry to the Implementation log of the Dossier.\n\nDependencies: ES-4.\n\nDecision ES-D3 option B2 (hardware part), ES-D4 option A.\n\n## Deliver\n- A key provider interface in `studio-op` with three implementations: Windows TPM 2.0 through the Microsoft Platform Crypto Provider (CNG, non-exportable ECDSA P-256, per user); macOS Secure Enclave (P-256, wrapped key stored in the agent user's config directory, a small signed helper if required); Linux TPM 2.0 through tpm2-tss or a PKCS#11 module. Detect availability and fall back to the memory key with a clear note.\n- The device key is created once per device and agent user and signs, at login, a statement over the in-memory session key's thumbprint, the sign-in id and time. Studio verifies it against the device record's thumbprint and records binding kind `tpm`, `secure-enclave` or `memory`.\n- A known device whose hardware key signature fails is treated as unknown on the confirmation page.\n- Document per platform setup and the fallback in docs/operations/setup/operator-agent.md.\n\n## Acceptance\n- On each of the three platforms (CI runner or recorded manual run) the private key cannot be exported through the platform API, and login records the right binding kind.\n- A copied device configuration directory on another machine does not produce a valid certification (test with a fake provider plus one recorded platform run).\n- The confirmation page and the session row show the binding kind in light and dark themes.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "ES-5 Hardware device keys",
+        "criteria": [
+          "On each of the three platforms (CI runner or recorded manual run) the private key cannot be exported through the platform API, and login records the right binding kind.",
+          "A copied device configuration directory on another machine does not produce a valid certification (test with a fake provider plus one recorded platform run).",
+          "The confirmation page and the session row show the binding kind in light and dark themes."
+        ]
+      }
+    },
+    {
+      "id": "ES-6",
+      "title": "ES-6 · Elevated action classes and window",
+      "dependsOn": [
+        "ES-1",
+        "ES-2",
+        "ES-4"
+      ],
+      "promptMarkdown": "# Elevated action classes and window\n\nSource: docs/operator-elevated-session/index.html (AGT-3989), extending docs/security-model/index.html (AGT-3353). Read both Dossiers and this workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/operations/security/overview.md and docs/operations/setup/operator-agent.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Update docs/operations/security/overview.md and the operator agent setup guide for every behaviour you change, and append one entry to the Implementation log of the Dossier.\n\nDependencies: ES-1, ES-2, ES-4.\n\nDecisions ES-D5 option A, ES-D6 option A, ES-D9 option A.\n\n## Deliver\n- Session records gain `elevation`: classes, window start and end (default 60 minutes, at most 4 hours, never past the session), confirming Owner, uses per class. The ES-3 confirmation sets it; `Extend elevation` with step-up renews it; the agent cannot.\n- Classes in a code-owned catalogue next to the operation catalogue: `cards.accept-override` and `cards.archive-override` (mode batch, used by ES-7), `project.testing` (mode named-for-session: the policy step admits `project.testing.set` without an approval while the class is active, rate 6 per project and hour, reason required). Adding a class is a catalogue change (T2 by construction).\n- Rate limits per class persisted like grant rates; refusal `elevation-rate-exceeded`; three refusals in 10 minutes end the elevation and raise a Needs you row.\n- Hard refusals stay first in the middleware: access, grants, sessions, kill switch, break-glass, secrets, production deploy and approval, catalogue, audit, `workspace.administer`. Add a test that no class can name an operation behind them.\n- Header chip in the Studio shell while an elevation is active (agent, minutes left, End elevation, End session), using the shared status components and tokens; notice 10 minutes before the end. The kill switch ends every elevation.\n- Audit entries of elevated actions carry class, reason, instruction source as stated, device thumbprint and window id; Settings > Access > Operator activity filters them per operator agent and session.\n\n## Acceptance\n- With project.testing confirmed, an operator session sets the testing strategy without an approval; without the class or after the window it answers approval-required.\n- The seventh change in an hour is refused with elevation-rate-exceeded; three such refusals end the elevation (tests).\n- No class can admit an operation behind a hard refusal (inventory test).\n- Header chip, End elevation and the activity filter work in Playwright at 1280 and 390 px, light and dark.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "ES-6 Elevated action classes and window",
+        "criteria": [
+          "With project.testing confirmed, an operator session sets the testing strategy without an approval; without the class or after the window it answers approval-required.",
+          "The seventh change in an hour is refused with elevation-rate-exceeded; three such refusals end the elevation (tests).",
+          "No class can admit an operation behind a hard refusal (inventory test).",
+          "Header chip, End elevation and the activity filter work in Playwright at 1280 and 390 px, light and dark."
+        ]
+      }
+    },
+    {
+      "id": "ES-7",
+      "title": "ES-7 · Batch confirmation in Needs you",
+      "dependsOn": [
+        "ES-6"
+      ],
+      "promptMarkdown": "# Batch confirmation in Needs you\n\nSource: docs/operator-elevated-session/index.html (AGT-3989), extending docs/security-model/index.html (AGT-3353). Read both Dossiers and this workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/operations/security/overview.md and docs/operations/setup/operator-agent.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Update docs/operations/security/overview.md and the operator agent setup guide for every behaviour you change, and append one entry to the Implementation log of the Dossier.\n\nDependencies: ES-6.\n\nDecisions ES-D9 option A, ES-D10 option A, ES-D11 option A.\n\n## Deliver\n- Route for an operator session to submit a batch: class, typed items (card, target lane, reason), instruction source; at most 25 items; lapses 30 minutes after submission. Studio checks each item: for `cards.accept-override` the card is in Human Review, its delivery is integrated and its review ran, and the item carries the review's reservation in one line; for `cards.archive-override` the card has no delivery on a protected branch. Non-qualifying items are marked and cannot be confirmed.\n- Needs you class `operator-approval.pending` that counts open batches and open single approvals; its row opens a sheet usable at 390 px with one line per item (key, title, reservation, agent's reason, link), all selected by default, deselectable. One step-up (passkey or authenticator code) confirms the selected items.\n- Studio executes the confirmed items in order as the operator session with `approvedBy` the Owner and the batch id, re-checking each item; an item whose card changed since submission is skipped with a reason. The agent reads the batch result; `studio-op accept --batch` and `studio-op archive --batch` submit and wait.\n- The existing operator feed event and the optional push link point at the sheet.\n\n## Acceptance\n- A batch of nine acceptances is confirmed with one step-up from a 390 px viewport and all nine cards reach Completed with reason, actor and approver on each timeline (Playwright on the networked-https profile, light and dark screenshots).\n- Deselected items, items whose card changed after submission and non-qualifying items are not executed and carry a reason in the result.\n- Rejecting or letting a batch lapse executes nothing; a confirmed batch cannot be confirmed again.\n- The Needs you count includes open batches and drops to zero after the decision.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "ES-7 Batch confirmation in Needs you",
+        "criteria": [
+          "A batch of nine acceptances is confirmed with one step-up from a 390 px viewport and all nine cards reach Completed with reason, actor and approver on each timeline (Playwright on the networked-https profile, light and dark screenshots).",
+          "Deselected items, items whose card changed after submission and non-qualifying items are not executed and carry a reason in the result.",
+          "Rejecting or letting a batch lapse executes nothing; a confirmed batch cannot be confirmed again.",
+          "The Needs you count includes open batches and drops to zero after the decision."
+        ]
+      }
+    },
+    {
+      "id": "ES-8",
+      "title": "ES-8 · Retire operator-role API tokens and flag direct edits",
+      "dependsOn": [
+        "ES-3",
+        "ES-4",
+        "ES-7"
+      ],
+      "promptMarkdown": "# Retire operator-role API tokens and flag direct edits\n\nSource: docs/operator-elevated-session/index.html (AGT-3989), extending docs/security-model/index.html (AGT-3353). Read both Dossiers and this workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/operations/security/overview.md and docs/operations/setup/operator-agent.md. Use the Dossier's recommended option for each named decision unless a recorded operator decision selects another, and record in results/status.md which option you implemented. Update docs/operations/security/overview.md and the operator agent setup guide for every behaviour you change, and append one entry to the Implementation log of the Dossier.\n\nDependencies: ES-3, ES-4, ES-7.\n\nDecisions ES-D12 option A and ES-D13 option A.\n\n## Deliver\n- Once ES-3 and ES-4 are live: Settings > Access no longer issues API tokens with the operator role; viewer tokens stay. Existing operator-role API tokens appear as a finding in the installation security view with their holder and last use, and are refused 30 days after this slice deploys (configurable, never longer than 90 days), answering `token-kind-retired`.\n- `studio-op auth status` warns when it reads an operator-role API token and names `studio-op login`.\n- Settings drift: the project settings store records a content hash with every audited change; a periodic check (at most every 10 minutes) and the API start compare the file with the last audited hash and raise a security finding and a Needs you row when they differ outside an active break-glass window. The finding names the project and time, not the content.\n- Update the security model's credentials table and the operator setup guide.\n\n## Acceptance\n- New operator-role API tokens are refused at creation; existing ones are listed as a finding and refused after the grace period (tests with a fake clock).\n- Editing a project's settings file outside Studio raises the finding within 10 minutes; the same edit inside a break-glass window is recorded but raises no acute row (tests).\n- Viewer API tokens and bound operator sessions keep working.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "ES-8 Retire operator-role API tokens and flag direct edits",
+        "criteria": [
+          "New operator-role API tokens are refused at creation; existing ones are listed as a finding and refused after the grace period (tests with a fake clock).",
+          "Editing a project's settings file outside Studio raises the finding within 10 minutes; the same edit inside a break-glass window is recorded but raises no acute row (tests).",
+          "Viewer API tokens and bound operator sessions keep working."
+        ]
+      }
+    }
+  ]
+}
