@@ -102,6 +102,17 @@ public sealed record SecretWorkload(
     public const string RunTarget = "run-target";
 
     public SecretActor Actor => SecretActor.Workload(Identity);
+
+    /// <summary>
+    /// Other keys the workload's project goes by in a reference scope: its
+    /// registry id, display name, and the project segment of bound references
+    /// (AGT-3987). <see cref="Project"/> always counts.
+    /// </summary>
+    public IReadOnlyCollection<string> ProjectKeys { get; init; } = [];
+
+    public bool OwnsProject(string? scopeProject)
+        => scopeProject is not null && (string.Equals(scopeProject, Project, StringComparison.OrdinalIgnoreCase)
+            || ProjectKeys.Contains(scopeProject, StringComparer.OrdinalIgnoreCase));
 }
 
 public sealed record ResolvedSecret(SecretReference Requested, SecretReference Resolved, string Value);

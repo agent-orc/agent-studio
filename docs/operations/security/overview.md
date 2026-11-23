@@ -439,7 +439,10 @@ account role and does not use human sign-in.
   request a deployment to another environment. The store refuses any other
   environment key with `invalid-scope`.
 - Deployment status, release, deployment, log, and audit reads require
-  `project.read`. Deployment actions require a deploy permission. Production
+  `project.read`. Editing a release note
+  (`PUT /api/projects/{project}/deploy/releases/{id}/notes/{cardKey}`) requires
+  `project.docs.write`, since notes are product copy. Deployment actions
+  require a deploy permission. Production
   approve and reject routes require `environment.production.deploy.approve`;
   a human Approver bound at the workspace, project, or production environment
   may decide in scope. Service accounts cannot approve. The deployment
