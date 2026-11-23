@@ -371,7 +371,19 @@ public class TaskScannerService : ITaskScanner
         // registry records and must be readable without a settings edit or restart.
         if (_projectRegistry != null)
         {
-            var registryProjects = _projectRegistry.List().Where(p => !p.Archived).ToList();
+            var allRegistryProjects = _projectRegistry.List();
+            var registryProjects = allRegistryProjects.Where(p => !p.Archived).ToList();
+            var activeStorage = registryProjects.Select(ResolveRegistryStorageLocation)
+                .Where(path => path != null).Select(NormalizeWatchPath)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var archivedStorage = allRegistryProjects.Where(p => p.Archived)
+                .Select(ResolveRegistryStorageLocation).Where(path => path != null)
+                .Select(NormalizeWatchPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var archivedNames = allRegistryProjects.Where(p => p.Archived)
+                .Select(p => p.DisplayName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // A legacy configured path must not resurrect an archived registry project.
+            resolved.RemoveAll(entry => !activeStorage.Contains(NormalizeWatchPath(entry.Path))
+                && (archivedStorage.Contains(NormalizeWatchPath(entry.Path)) || archivedNames.Contains(entry.Name)));
             for (var i = 0; i < resolved.Count; i++)
             {
                 var project = registryProjects.FirstOrDefault(p => string.Equals(
@@ -633,6 +645,15 @@ public class TaskScannerService : ITaskScanner
     /// <summary>Archive-inclusive counterpart of <see cref="ScanAllAutomationJobs"/>.</summary>
     public List<TaskInfo> ScanAllAutomationJobsWithArchive()
         => ScanAllJobsWithArchive().Where(task => !task.Fixture).ToList();
+
+    /// <summary>Project-scoped automation snapshot, including archived tasks.</summary>
+    public List<TaskInfo> ScanAutomationJobsWithArchive(string watchPath)
+    {
+        if (_indexCache is null) return ScanWatchPathRaw(watchPath).Where(task => !task.Fixture).ToList();
+        var (live, archived) = _indexCache.GetSnapshotPartitions();
+        return live.Concat(archived).Where(task => !task.Fixture
+            && WatchPathComparison.PathsEqual(task.WatchPath, watchPath)).ToList();
+    }
 
     /// <summary>
     /// Returns the reverse-reference graph built for the current task snapshot.

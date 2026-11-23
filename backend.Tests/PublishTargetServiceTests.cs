@@ -49,6 +49,64 @@ public class PublishTargetServiceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Declared_release_command_derives_package_without_GitHub_workflow()
+    {
+        var (repoRoot, watchPath) = SetupRepo();
+        File.WriteAllText(Path.Combine(repoRoot, "package.json"), "{\"name\":\"fixture\",\"version\":\"1.0.0\"}");
+        Directory.CreateDirectory(Path.Combine(repoRoot, ".agent-studio"));
+        File.WriteAllText(Path.Combine(repoRoot, ".agent-studio", "project.yml"),
+            "schemaVersion: 2\nproject:\n  id: example-project\nstack: [node]\ncommands:\n  prepare: echo ready\nrelease:\n  command: bash scripts/release.sh\n  branch: main\n");
+        RunGit(repoRoot, "add", "-A");
+        RunGit(repoRoot, "commit", "-qm", "seed");
+        var service = BuildService(repoRoot, watchPath);
+        var target = Assert.Single(service.GetProjectPublishStatus("Demo").Targets);
+        Assert.Equal("package:npm", target.Id);
+        Assert.Equal("main", target.ReleaseBranch);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Invalid_release_definition_returns_validation_details_without_targets()
+    {
+        var (repoRoot, watchPath) = SetupRepo();
+        WriteFile(repoRoot, ".agent-studio/project.yml",
+            "schemaVersion: 2\nproject:\n  id: example-project\nstack: [node]\ncommands:\n  prepare: echo ready\nrelease:\n  command: echo release\n");
+        CommitAll(repoRoot, "seed");
+
+        var status = BuildService(repoRoot, watchPath).GetProjectPublishStatus("Demo");
+
+        Assert.Contains("Invalid project.yml:", status.Error);
+        Assert.Contains("Release command and branch must be declared together.", status.Error);
+        Assert.Empty(status.Targets);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Package_targets_share_the_declared_release_configuration()
+    {
+        var (repoRoot, watchPath) = SetupRepo();
+        WriteWorkflow(repoRoot, "npm.yml", NpmReleaseWorkflow);
+        WriteWorkflow(repoRoot, "nuget.yml", NuGetReleaseWorkflow);
+        WriteFile(repoRoot, "package.json", "{\"name\":\"fixture\",\"version\":\"1.0.0\"}");
+        WriteFile(repoRoot, "src/Library/Library.csproj", PackableCsproj("Library"));
+        WriteFile(repoRoot, ".agent-studio/project.yml",
+            "schemaVersion: 2\nproject:\n  id: example-project\nstack: [node, dotnet]\ncommands:\n  prepare: echo ready\nrelease:\n  command: bash scripts/release.sh\n  branch: main\n");
+        CommitAll(repoRoot, "seed");
+
+        var targets = BuildService(repoRoot, watchPath).GetProjectPublishStatus("Demo").Targets;
+
+        Assert.Equal(2, targets.Count);
+        Assert.Contains(targets, target => target.Ecosystem == PublishEcosystems.Npm);
+        Assert.Contains(targets, target => target.Ecosystem == PublishEcosystems.NuGet);
+        Assert.All(targets, target =>
+        {
+            Assert.Equal("main", target.ReleaseBranch);
+            Assert.Equal("bash scripts/release.sh", target.ReleaseCommand);
+        });
+    }
+
+    [Fact]
     public void Derive_NuGetPlusWebsite_TaggedRepo_ReportsVersionAndPendingDeltas()
     {
         var (repoRoot, watchPath) = SetupRepo();

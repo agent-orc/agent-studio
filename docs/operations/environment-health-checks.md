@@ -163,8 +163,14 @@ checks fail together raises one alert and one card. Reports
 
 - Open: an `alert` Activity entry with topic `environment-incident-opened` and
   a Backlog bug card tagged `environment-health` with every failing check, its
-  target and its last ten probes. A recurrence within 30 minutes of recovery
-  reopens the resolved card (`change: reopened`).
+  target and its last ten probes. Each environment incident gets its own card,
+  including when an earlier card remains in Backlog. The card captures the
+  running release version, deploy time and release cards, restart count, and
+  the last masked crash or error log lines. Missing
+  release or telemetry facts are stated as unavailable. Its links open the
+  incident window in Operations and the environment's rollback and runbook
+  views. The task detail shows the incident record and these operator actions
+  without coding controls or delivery status.
 - More checks: a check that fails while the environment incident is open
   comments on its card (`check-failing`); a check that recovers while others
   still fail comments too (`check-recovered`).

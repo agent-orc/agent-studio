@@ -1,0 +1,56 @@
+<section aria-labelledby="integration-conflicts-title" data-testid="integration-conflicts">
+  <header>
+    <div>
+      <h3 id="integration-conflicts-title">Integration conflicts</h3>
+      <p>Last 7 days · selection evidence · UTC days</p>
+    </div>
+    <button type="button" (click)="retry()" [disabled]="loading()">Refresh conflicts</button>
+  </header>
+  @if (loading()) {
+    <p role="status">Loading integration conflicts...</p>
+  } @else if (error()) {
+    <p role="alert">Integration conflict history is unavailable. Refresh to retry.</p>
+  } @else if (summary(); as data) {
+    <p class="total" data-testid="integration-conflict-rate">
+      <strong>{{ data.per100IntegratedCards === null ? 'Unavailable' : (data.per100IntegratedCards | number:'1.0-1':'en-US') }}</strong>
+      conflicts per 100 integrated cards
+    </p>
+    <p>{{ data.conflicts }} conflicts / {{ data.integratedCards }} integrated cards.
+      @if (data.integratedCards === 0) { No integrations recorded in this range. }
+      Repeat recovery stages count once per delivery and target tip.</p>
+    <div class="columns">
+      <div>
+        <h4>Rate over time</h4>
+        <p>First and last UTC days may be partial.</p>
+        <table aria-label="Daily integration conflict rate">
+          <thead><tr><th scope="col">UTC day</th><th scope="col">Conflicts</th><th scope="col">Integrated</th><th scope="col">Per 100</th></tr></thead>
+          <tbody>
+            @for (day of data.daily; track day.day) {
+              <tr><th scope="row">{{ day.day | date:'MMM d':'UTC':'en-US' }}</th><td>{{ day.conflicts }}</td><td>{{ day.integratedCards }}</td><td>{{ day.per100IntegratedCards === null ? 'N/A' : (day.per100IntegratedCards | number:'1.0-1':'en-US') }}</td></tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <h4>Top conflicting files</h4>
+        @if (data.topFiles.length === 0) {
+          <p>No conflicts recorded in this range. History starts when capture is deployed.</p>
+        } @else {
+          <ol aria-label="Top conflicting files">
+            @for (file of data.topFiles.slice(0, 5); track file.name) {
+              <li><code>{{ file.name }}</code><span>{{ file.count }}</span></li>
+            }
+          </ol>
+        }
+        @if (data.cardPairs.length > 0) {
+          <h4>Colliding cards</h4>
+          <ol aria-label="Colliding card pairs">
+            @for (pair of data.cardPairs.slice(0, 5); track pair.cardA + ':' + pair.cardB) {
+              <li><span>{{ pair.cardA }} / {{ pair.cardB }}</span><span>{{ pair.count }}</span></li>
+            }
+          </ol>
+        }
+      </div>
+    </div>
+  }
+</section>

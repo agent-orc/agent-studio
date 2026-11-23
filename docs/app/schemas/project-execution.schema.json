@@ -176,13 +176,9 @@
       "$ref": "#/$defs/relativePath"
     },
     "release": {
-      "description": "Optional Stable release contract. Stable release tooling refuses a project when this section is absent.",
+      "description": "Optional repository release command and branch, and Stable dependency identity contract.",
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "identity",
-        "restore"
-      ],
       "properties": {
         "identity": {
           "type": "array",
@@ -199,7 +195,37 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9/_.-]*$"
         }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "identity",
+            "restore"
+          ]
+        },
+        {
+          "required": [
+            "command",
+            "branch"
+          ]
+        }
+      ],
+      "dependentRequired": {
+        "command": [
+          "branch"
+        ],
+        "branch": [
+          "command"
+        ]
       }
     },
     "project": {

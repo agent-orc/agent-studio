@@ -24,6 +24,7 @@ import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { WorkspaceSettingsService } from '../../state/workspace-settings.service';
 import { WorkspaceQuotaDisclosureComponent } from '../../../quota/lazy';
+import { OperatorAttentionService } from '../../../operator-attention';
 
 interface WorkspaceProjectDragData {
   projectId: string;
@@ -48,6 +49,7 @@ export class WorkspaceManagementComponent implements OnInit {
   private readonly jobService = inject(TaskService);
   private readonly workspaceManager = inject(WorkspaceManagerService);
   private readonly projectLookup = inject(ProjectLookupService);
+  private readonly operatorAttention = inject(OperatorAttentionService);
   private readonly lifecycleDialogs = inject(ProjectLifecycleDialogService);
   readonly wsSettings = inject(WorkspaceSettingsService);
 
@@ -157,7 +159,6 @@ export class WorkspaceManagementComponent implements OnInit {
     this.workspaceManager.openCreate();
   }
 
-  /** F66 — click-to-edit rename (state owned by WorkspaceSettingsService). */
   renameRegistryWorkspace(ws: RegistryWorkspaceListItem): void {
     this.wsSettings.startRename(ws.id, ws.displayName);
   }
@@ -171,7 +172,6 @@ export class WorkspaceManagementComponent implements OnInit {
     queueMicrotask(() => { el.focus(); el.select(); });
   });
 
-  /** F45b — prompt for an accent color hex string. Empty input clears the color. */
   editRegistryWorkspaceColor(ws: RegistryWorkspaceListItem): void {
     const input = window.prompt(
       `Workspace "${ws.displayName}" color (hex like #a78bfa, blank to clear)`,
@@ -246,14 +246,12 @@ export class WorkspaceManagementComponent implements OnInit {
     return list.length > 0 && list[list.length - 1].id !== ws.id;
   }
 
-  /** F45b — rename a project by prompt. */
   renameRegistryProject(projId: string, currentDisplayName: string): void {
     const name = window.prompt(`Rename project "${currentDisplayName}"`, currentDisplayName)?.trim();
     if (!name || name === currentDisplayName) return;
     this.runProjectPatch(projId, { displayName: name });
   }
 
-  /** F45b — change the short code (2-6 chars A-Z 0-9). */
   editRegistryProjectShortCode(projId: string, currentShortCode: string): void {
     const code = window.prompt(
       `Project ${projId} short code (2-6 chars, A-Z and 0-9)`, currentShortCode)?.trim();
@@ -261,7 +259,6 @@ export class WorkspaceManagementComponent implements OnInit {
     this.runProjectPatch(projId, { shortCode: code });
   }
 
-  /** F45b — set or clear the project color. */
   editRegistryProjectColor(projId: string, currentColor: string | null): void {
     const input = window.prompt(
       `Project ${projId} color (hex like #a78bfa, blank to clear)`, currentColor ?? '');
@@ -298,7 +295,6 @@ export class WorkspaceManagementComponent implements OnInit {
       || this.wsSettings.deletingProjectId() === projectId;
   }
 
-  /** F45b — archive (or un-archive) a project. */
   async toggleRegistryProjectArchived(project: RegistryProjectSummary): Promise<void> {
     const ok = await this.lifecycleDialogs.confirmArchive({
       projectId: project.id, displayName: project.displayName, shortCode: project.shortCode,
@@ -317,7 +313,11 @@ export class WorkspaceManagementComponent implements OnInit {
   }): void {
     this.registryProjectBusyId.set(projId);
     this.jobService.updateRegistryProject(projId, patch).subscribe({
-      next: () => { this.registryProjectBusyId.set(null); this.reloadRegistryWorkspaces(); },
+      next: () => {
+        this.registryProjectBusyId.set(null);
+        this.workspaceManager.notifyRegistryChanged();
+        if (patch.archived !== undefined) this.operatorAttention.refresh();
+      },
       error: (err: unknown) => {
         this.registryProjectBusyId.set(null);
         this.registryWorkspacesError.set(this.errMsg(err));

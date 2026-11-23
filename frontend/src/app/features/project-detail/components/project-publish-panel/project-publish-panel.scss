@@ -56,3 +56,5 @@ button:disabled { cursor: wait; opacity: 0.55; }
 @media (max-width: 680px) {
   .publish__tasks li, .publish__automation { grid-template-columns: 1fr; }
 }
+
+.publish__workflow { white-space: pre-wrap; }

@@ -17,7 +17,7 @@
     <section aria-label="Environments">
       <h2>Environments</h2>
       <div class="project-environments__grid">
-        @for (environment of environments(); track environment.state.id) {
+        @for (environment of visibleEnvironments(); track environment.state.id) {
           <article class="project-environments__card" [attr.data-testid]="'project-environment-' + environment.state.id">
             <h3>{{ environment.state.name }}</h3>
             <app-environment-state [environment]="environment.state" [now]="now()" />

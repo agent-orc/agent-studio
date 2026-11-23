@@ -16,6 +16,21 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
     private static readonly ModelRoutingKnowledgeBase Knowledge = ModelRoutingKnowledgeBase.Default;
 
     private static readonly ModelMigrationCatalogRegistry MigrationCatalog = new();
+    private static readonly IReadOnlySet<string> ApprovedCodexModels = PolicyCodexModels();
+
+    private static HashSet<string> PolicyCodexModels()
+    {
+        var policy = new ModelRoutingPolicyRegistry().Policy;
+        return policy.Tiers.Select(tier => tier.Model)
+            .Concat(policy.ProviderRejectionFallbacks
+                .Where(fallback => fallback.CliType == CliTypes.Codex)
+                .Select(fallback => fallback.ToModel))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool IsApprovedPolicyModel(ModelRoutingModel model)
+        => NormalizeCli(model.CliId) != CliTypes.Codex || ApprovedCodexModels.Contains(model.CanonicalId);
+
     private readonly ITokenPricing _pricing;
     public string Version { get; } = BuildVersion();
     public IReadOnlyList<ModelEquivalenceRoute> Routes { get; }
@@ -182,12 +197,14 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
     // Proposal-only successors never enter the automatic route table; they
     // are reached only through their predecessor (see ComparablePredecessor).
     private static bool IsUsableSource(ModelRoutingModel model)
-        => ModelMetadataRegistry.Find(model.CanonicalId)?.Deprecated != true
+        => IsApprovedPolicyModel(model)
+           && ModelMetadataRegistry.Find(model.CanonicalId)?.Deprecated != true
            && ComparablePredecessor(model.CanonicalId) is null
            && !string.Equals(model.RoutingStatus.ToString(), "Deprecated", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsRoutable(ModelRoutingModel model)
-        => ModelMetadataRegistry.Find(model.CanonicalId)?.Deprecated != true
+        => IsApprovedPolicyModel(model)
+           && ModelMetadataRegistry.Find(model.CanonicalId)?.Deprecated != true
            && !string.Equals(model.RoutingStatus.ToString(), "Deprecated", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsSelectable(ModelRoutingModel model)

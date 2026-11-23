@@ -21,6 +21,7 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | Task 2a | `app-task-move-refusal` | Why this card's last move was refused; for a content refusal the review's concern, Accept with a written reason and Review again | The open card's last move was refused | Acute notice below the toolbar; its refusal toast docks below it and the toolbar (`below-toolbar`), never over them. AGT-3873. |
 | Task 3 | Global alert banner | Cross-task integration alert | Alert threshold reached | Single alert banner in `app-workspace-banner`; `5d496e73e`. |
 | Task 3a | Phone primary lane action | Current lane decision, or the acceptance refusal that replaces it | Primary action or refusal available below 600 px | Full-width shared primary button above task notices; a content refusal renders as a stacked block (AGT-3830). |
+| Task 3b | Archived project notice | The open tab belongs to an archived project and can be restored in Workspace Settings | Archived project tab active | Muted Deck-Panel notice in the editor; AGT-3820. |
 | Task 4 | `app-task-resource-status` | Resource limitation affecting this task | Resource finding exists | Notice; `2b1436acc`. |
 | Task 5 | `app-detail-header` | Legacy task identity and actions | Legacy focused view; hidden in Studio | Header row; original detail extraction `839f3c9801`. |
 | Task 6 | `app-archived-task-notice` | Archive state and restore | Archived task | Notice; `1bc7b5703`. |
@@ -37,6 +38,11 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | Task 17 | `app-command-deck` | Run and stop controls, execution configuration | Task permits an action or has an active run | Action row; `4c73e5ec7`. |
 | Task 18 | `app-pane-toggle-bar` | Pane visibility | Task detail open; hidden in Studio where toolbar owns toggles | Toolbar; `170164f07`. |
 | Task 19 | Phone pane switcher | Active card detail pane | Task detail open below 600 px | One Overview, Result, or Git pane at a time; full page scroll. |
+
+Environment health incident cards replace the normal task detail with an
+incident record and operator links. The task toolbar and phone lane primary are
+omitted for those cards because coding and lane actions do not apply. This is a
+conditional rendering of the existing task header slots, not a new slot.
 
 The global top row's child order is navigation, breadcrumb, project picker,
 search, defaults, Environment, Project Chat, theme, Needs you, Settings, and

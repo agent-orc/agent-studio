@@ -220,7 +220,11 @@ public sealed record ProjectReleaseIdentityRule(
 
 public sealed record ProjectReleaseDefinition(
     IReadOnlyList<ProjectReleaseIdentityRule> Identity,
-    IReadOnlyList<string> Restore);
+    IReadOnlyList<string> Restore)
+{
+    public string? Command { get; init; }
+    public string? Branch { get; init; }
+}
 
 public sealed record ProductProperties(
     bool? PublicFacing,
@@ -602,7 +606,7 @@ public static partial class ProjectDefinitionReader
             .Where(line => line.Indent == 2 && !line.Text.StartsWith("- ", StringComparison.Ordinal))
             .Select(line => KeyValue(line.Text).Key)
             .ToArray();
-        if (fields.Any(key => key is not ("identity" or "restore")))
+        if (fields.Any(key => key is not ("identity" or "restore" or "command" or "branch")))
             issues.Add(new("release", "unknown-field", "Release contains an unsupported field."));
 
         var identities = new List<ProjectReleaseIdentityRule>();
@@ -631,7 +635,11 @@ public static partial class ProjectDefinitionReader
         }
 
         var restore = NestedStringList(lines, "release", "restore");
-        return new(identities, restore);
+        return new(identities, restore)
+        {
+            Command = NullIfBlank(NestedScalar(lines, "release", "command")),
+            Branch = NullIfBlank(NestedScalar(lines, "release", "branch")),
+        };
     }
 
     private static ProjectReleaseIdentityRule ToReleaseIdentity(
@@ -968,10 +976,19 @@ public static partial class ProjectDefinitionValidator
             issues.Add(new("image", "image-path-invalid", "An optional image must be a repository-relative path without traversal."));
         if (definition.Release is { } release)
         {
-            if (release.Identity.Count == 0)
+            if (release.Command is null && release.Identity.Count == 0)
                 issues.Add(new("release.identity", "release-identity-required", "At least one release identity rule is required."));
-            if (release.Restore.Count == 0 || release.Restore.Any(string.IsNullOrWhiteSpace))
+            if ((release.Command is null || release.Identity.Count > 0) && release.Restore.Count == 0
+                || release.Restore.Any(string.IsNullOrWhiteSpace))
                 issues.Add(new("release.restore", "release-restore-required", "At least one release restore command is required."));
+
+            if (release.Command is not null && release.Branch is null || release.Branch is not null && release.Command is null)
+                issues.Add(new("release", "release-command-branch-required", "Release command and branch must be declared together."));
+            if (release.Branch is { } branch &&
+                (!Regex.IsMatch(branch, @"^[A-Za-z0-9][A-Za-z0-9/_.-]*$") || branch.Contains("..", StringComparison.Ordinal)
+                 || branch.Contains("//", StringComparison.Ordinal) || branch.EndsWith('/') || branch.EndsWith('.')
+                 || branch.EndsWith(".lock", StringComparison.Ordinal)))
+                issues.Add(new("release.branch", "release-branch-invalid", "Release branch must be a named Git branch."));
 
             var packages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             for (var index = 0; index < release.Identity.Count; index++)

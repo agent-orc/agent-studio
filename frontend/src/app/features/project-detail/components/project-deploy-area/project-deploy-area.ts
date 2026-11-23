@@ -1,5 +1,6 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, untracked, type WritableSignal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, computed, effect, inject, input, output, signal, untracked, type WritableSignal } from '@angular/core';
 import { Subscription } from 'rxjs';
+import { linkedDeployView } from './linked-deploy-view';
 import { ProjectDeploymentPanelComponent } from '../project-deployment-panel/project-deployment-panel.component';
 import { ProjectDeployOverviewComponent } from '../project-deploy-overview/project-deploy-overview';
 import { ProjectDeployReleasesComponent } from '../project-deploy-releases/project-deploy-releases';
@@ -24,7 +25,7 @@ import { ProjectDeployDataService, serverMessage } from '../../services/project-
 import { ServerCheckoutStore } from '../../../server-checkout/server-checkout.store';
 import { LocalOwnerSessionService } from '../../../../services/local-owner-session.service';
 import { ProjectDeployEnvironmentActions } from '../../services/project-deploy-environment-actions.service';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { LoadingSurfaceComponent, PendingButtonDirective } from '../../../../components/async-feedback';
 import { LocalOwnerDialogComponent } from '../../../../components/local-owner-dialog/local-owner-dialog';
 import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
 import { DeployRollbackFlow } from '../../state/deploy-rollback-flow';
@@ -49,18 +50,16 @@ import { DeployAreaSecrets, missingSecretsPrompt } from './deploy-area-secrets';
 export type DeployView = 'overview' | 'releases' | 'pipeline' | 'flow' | 'history' | 'steps' | 'runbooks' | 'operations' | 'telemetry' | 'secrets' | 'tools';
 
 const IDLE: DeployRunActionState = { busy: null, error: null };
-
 @Component({
   selector: 'app-project-deploy-area',
   standalone: true,
   providers: [ProjectDeployEnvironmentActions, DeployRollbackFlow],
   imports: [
     ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent,
-    ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
-    ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
-    ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent,
+    ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent, RollbackOfferComponent,
+    ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent, ProjectInstanceDeploySectionComponent,
+    ProjectOperationsComponent, HostedDataPanelComponent, ManagedDatabasesPanelComponent, ProjectSecretsPageComponent, LoadingSurfaceComponent,
     ProjectTelemetryTokensComponent, FlowHealthPageComponent, LocalOwnerDialogComponent, PendingButtonDirective,
-    RollbackOfferComponent, ProjectInstanceDeploySectionComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',
@@ -97,6 +96,7 @@ export class ProjectDeployAreaComponent {
   });
   readonly releaseTarget = input<{ project: string; id: string } | null>(null);
   readonly initialView = input<DeployView>('overview');
+  readonly focusedEnvironment = computed(() => new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('environmentId'));
   readonly focusStepId = input<string | undefined>();
   readonly openPrompts = output<void>();
   readonly openTask = output<{ jobId: string; watchPath: string }>();
@@ -206,9 +206,8 @@ export class ProjectDeployAreaComponent {
     ...[...this.artifactReleases().values()].map(panel => ['Release lookup', panel] as const),
     ...(this.fetchedRun() ? [['Deploy run', this.fetchedRun()!] as const] : []),
   ]));
-
   constructor() {
-    effect(() => this.view.set(this.initialView()));
+    effect(() => this.view.set(linkedDeployView() ?? this.initialView()));
     effect(onCleanup => {
       const project = this.projectName();
       const missingCheckout = this.checkoutMissing();
@@ -243,6 +242,7 @@ export class ProjectDeployAreaComponent {
       untracked(() => this.resolveArtifacts(lookups));
     });
   }
+  @HostListener('window:hashchange') onHashChange(): void { this.view.set(linkedDeployView() ?? this.initialView()); }
   private openTargetRelease(target: { project: string; id: string }): void {
     this.openedTarget = target;
     this.openRelease(target.id);

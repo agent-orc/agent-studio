@@ -21,6 +21,7 @@ export class OperatorAttentionService {
   private readonly docs = inject(ProjectDocsService);
   private readonly _facts = signal<readonly OperatorAttentionItem[]>([]);
   private readonly _dossiers = signal<readonly OperatorAttentionItem[]>([]);
+  private readonly _archivedProjects = signal<ReadonlySet<string>>(new Set());
   private readonly _backup = signal<OperatorAttentionItem | null>(null);
   private readonly _loaded = signal(false);
   private readonly _error = signal(false);
@@ -37,8 +38,8 @@ export class OperatorAttentionService {
   private lastDossierRead = 0;
 
   readonly items = computed(() => [
-    ...this._facts(),
-    ...this._dossiers(),
+    ...this._facts().filter(item => !item.project || !this._archivedProjects().has(item.project.toLowerCase())),
+    ...this._dossiers().filter(item => !item.project || !this._archivedProjects().has(item.project.toLowerCase())),
     ...(this._backup() ? [this._backup()!] : []),
     ...((this.inventory.inventory()?.items ?? [])
       .filter(item => ['expiring', 'missing', 'unexpected'].includes(item.state))
@@ -53,12 +54,18 @@ export class OperatorAttentionService {
   readonly error = this._error.asReadonly();
   readonly count = computed(() => this.items().length);
   readonly groups = computed(() => groupAttention(this.items()));
-  readonly reviewCount = computed(() => this._facts().filter(item => item.type === 'human-review.ready').length);
+  readonly reviewCount = computed(() => this._facts().filter(item => item.type === 'human-review.ready'
+    && (!item.project || !this._archivedProjects().has(item.project.toLowerCase()))).length);
   readonly readyCount = computed(() => this._facts().filter(item => item.type === 'human-review.ready'
+    && (!item.project || !this._archivedProjects().has(item.project.toLowerCase()))
     && this.readinessFor(item)?.readiness === 'ready').length);
   readonly readinessChecked = this._readinessChecked.asReadonly();
   readonly readinessLoading = this._readinessLoading.asReadonly();
   readonly readinessError = this._readinessError.asReadonly();
+
+  setArchivedProjects(names: readonly string[]): void {
+    this._archivedProjects.set(new Set(names.map(name => name.toLowerCase())));
+  }
 
   readinessFor(item: OperatorAttentionItem): AcceptanceReadinessItem | null {
     return item.project && item.cardKey
@@ -153,6 +160,7 @@ export class OperatorAttentionService {
     }
     this.readinessInFlight = true;
     const cards = this._facts().filter(item => item.type === 'human-review.ready'
+      && (!item.project || !this._archivedProjects().has(item.project.toLowerCase()))
       && item.project && item.cardKey);
     const version = ++this.readinessVersion;
     this._readinessLoading.set(cards.length > 0);

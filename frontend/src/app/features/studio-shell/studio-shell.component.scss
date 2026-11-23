@@ -1902,6 +1902,16 @@
   flex-direction: column;
 }
 
+.studio-archived-project-notice {
+  @include m.deck-panel;
+  @include m.deck-panel-muted;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+  margin: var(--studio-spacing-3);
+  color: var(--studio-fg);
+}
+
 // Inline Workspace settings owns its own panel scroll. Keep the outer editor
 // viewport fixed so wheel and scrollIntoView cannot move the entire settings page.
 .studio-editor__main:has(.ws-settings--inline) { overflow: hidden; }

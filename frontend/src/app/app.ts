@@ -395,8 +395,9 @@ export class App implements OnInit, OnDestroy {
    * the "+ Add workspace" affordance fires.
    */
   readonly workspaceManager = inject(WorkspaceManagerService);
-  private readonly projectRegistryChangedFx = effect(() => {
-    if (this.workspaceManager.registryChanged() > 0) this.loadWatchPaths();
+  private readonly registryWatchPathRefresh = effect(() => {
+    if (this.workspaceManager.registryChanged() === 0) return;
+    untracked(() => this.loadWatchPaths());
   });
   readonly workspaceTokensOpen = this.workspaceOverlays.tokensOpen;
   readonly workspaceScreenshotsOpen = this.workspaceOverlays.screenshotsOpen;
@@ -1291,12 +1292,14 @@ export class App implements OnInit, OnDestroy {
   // review panel carries its one decision.
   readonly studioTriagePrimary = computed<TriageButton | null>(() => {
     const sel = this.selectedJob();
+    if (sel?.info.creationSource === 'environment-health' && sel.info.id.startsWith('health-')) return null;
     return sel && sel.info.parkedBlocker?.blockerType !== 'gate-infrastructure'
       && !this.reviewerSession.reviewsOnly(sel.info.projectName)
       ? primaryActionForTask(sel.info) : null;
   });
   readonly studioTriageOverflow = computed<TriageButton[]>(() => {
     const sel = this.selectedJob();
+    if (sel?.info.creationSource === 'environment-health' && sel.info.id.startsWith('health-')) return [];
     return sel && sel.info.parkedBlocker?.blockerType !== 'gate-infrastructure'
       && !this.reviewerSession.reviewsOnly(sel.info.projectName)
       ? overflowActionsFor(sel.info.state) : [];
@@ -1365,7 +1368,9 @@ export class App implements OnInit, OnDestroy {
   readonly studioTabActionsTask = computed<TaskDetail | null>(() => {
     if (this.studioTabState.activeTab()?.kind !== 'task') return null;
     if (this.detailPreview() || this.detailLoading() || this.detailLoadError()) return null;
-    return this.selectedJob();
+    const selected = this.selectedJob();
+    return selected?.info.creationSource === 'environment-health' && selected.info.id.startsWith('health-')
+      ? null : selected;
   });
 
   readonly studioTabActionsPager = computed<StudioTabPager>(() => ({
@@ -1948,6 +1953,12 @@ export class App implements OnInit, OnDestroy {
     const projectName = 'projectSlug' in route && route.projectSlug
       ? this.watchPaths().find(entry => studioProjectSlug(entry.name) === route.projectSlug)?.name ?? null : null;
     if ('projectSlug' in route && route.projectSlug && !projectName) {
+      if (this.watchPathsLoaded()) {
+        this.studioTabState.activateAllProjectsBoard();
+        this.notifications.info('This project is unavailable or archived. Restore an archived project in Workspace Settings.',
+          'Project unavailable');
+        this.studioRouteReady.set(true);
+      }
       return true;
     }
 

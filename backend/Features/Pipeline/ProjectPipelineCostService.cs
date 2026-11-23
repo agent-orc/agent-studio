@@ -3,13 +3,14 @@ using System.Collections.Concurrent;
 namespace AgentStudio.Pipeline;
 
 /// <summary>
-/// Project-level rollup of pipeline step cost over time. Durable task token
-/// receipts are authoritative when present; legacy tasks fall back to
-/// <c>pipeline-execution.json</c>. Both paths fold token usage into
-/// (step-kind, day) cells priced
-/// through the single <see cref="ITokenPricing"/> service. The frontend
-/// renders the result as a stacked time trend in the project Token Usage
-/// surface, next to the orchestrator-log heatmap.
+/// Project-level rollup of pipeline step cost over time. The facts come from
+/// <see cref="TokenAnalysisService.ProjectCostItems"/>, the same reconciled
+/// receipts, ledger calls and execution-log steps that the token analysis
+/// slices price, so <c>pipeline-cost</c> and the analysis totals agree. The
+/// facts are folded into (step-kind, day) cells priced through the single
+/// <see cref="ITokenPricing"/> service. The frontend renders the result as a
+/// stacked time trend in the project Token Usage surface, next to the
+/// orchestrator-log heatmap.
 ///
 /// <para>
 /// This is the deliberately-separate, cached path that
@@ -21,32 +22,25 @@ namespace AgentStudio.Pipeline;
 public sealed class ProjectPipelineCostService
 {
     private readonly ITokenPricing _pricing;
+    private readonly TokenAnalysisService _analysis;
     public const int DefaultDays = 30;
     public const int MaxDays = 180;
 
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(30);
 
-    private readonly TaskScannerService _scanner;
-    private readonly PipelineExecutionLog _log;
-    private readonly ProjectTokenReceiptReader _receipts;
     private readonly ConcurrentDictionary<string, (DateTime At, ProjectPipelineCostTimeline Value)> _cache = new();
 
-    public ProjectPipelineCostService(ITokenPricing pricing,
-        TaskScannerService scanner,
-        PipelineExecutionLog log,
-        ProjectTokenReceiptReader receipts)
+    public ProjectPipelineCostService(ITokenPricing pricing, TokenAnalysisService analysis)
     {
         _pricing = pricing;
-        _scanner = scanner;
-        _log = log;
-        _receipts = receipts;
+        _analysis = analysis;
     }
 
     /// <summary>
-    /// Build the per-step-kind cost timeline for one project. Reads each
-    /// task folder's pipeline-execution.json once; result is cached for a
-    /// short TTL so a panel that re-fetches on tab switches does not
-    /// re-walk the disk every time.
+    /// Build the per-step-kind cost timeline for one project from the
+    /// reconciled analysis facts; the result is cached for a short TTL so a
+    /// panel that re-fetches on tab switches does not re-walk the disk every
+    /// time.
     /// </summary>
     public ProjectPipelineCostTimeline Build(string projectName, string watchPath, int days, DateTime? nowUtc = null)
     {
@@ -59,50 +53,14 @@ public sealed class ProjectPipelineCostService
             return hit.Value;
         }
 
-        var records = new List<PipelineExecutionRecord>();
-        var warnings = new List<string>();
-        var sources = new List<string>();
-        var receiptRead = _receipts.Read(watchPath);
-        if (receiptRead.SourceAvailable) sources.Add("task-token-receipts");
-        if (!string.IsNullOrWhiteSpace(receiptRead.Warning)) warnings.Add(receiptRead.Warning!);
-        var receiptRecords = BuildReceiptRecords(projectName, receiptRead.Entries);
-
-        var taskLogs = new List<(string JobId, PipelineExecutionRecord Record)>();
-        if (!string.IsNullOrWhiteSpace(watchPath))
+        var now = (nowUtc ?? DateTime.UtcNow).ToUniversalTime();
+        var facts = _analysis.ProjectCostItems(projectName, watchPath, now);
+        var timeline = BuildFromAnalysis(_pricing, projectName, facts.Items, d, now);
+        timeline = timeline with
         {
-            foreach (var task in _scanner.ScanAllAutomationJobsWithArchive())
-            {
-                if (!string.Equals(task.WatchPath, watchPath, StringComparison.OrdinalIgnoreCase)) continue;
-                if (string.IsNullOrWhiteSpace(task.FolderPath)) continue;
-                var rec = _log.Read(task.FolderPath);
-                if (rec != null)
-                {
-                    sources.Add("pipeline-execution-log");
-                    taskLogs.Add((task.Id, rec));
-                }
-                else if (File.Exists(Path.Combine(task.FolderPath, PipelineExecutionLog.FileName)))
-                {
-                    warnings.Add($"Pipeline telemetry for task {task.Id} could not be read.");
-                }
-            }
-        }
-        records.AddRange(MergeSources(_pricing, receiptRecords, taskLogs));
-
-        var timeline = BuildFromRecords(_pricing, projectName, records, d, nowUtc);
-        var distinctWarnings = warnings.Distinct(StringComparer.Ordinal).ToList();
-        var freshness = timeline.Freshness with
-        {
-            Status = distinctWarnings.Count == 0
-                ? "complete"
-                : timeline.HasData ? "partial" : "unavailable",
-            Warning = distinctWarnings.Count == 0 ? null : string.Join(" ", distinctWarnings),
-            Sources = sources.Distinct(StringComparer.Ordinal).ToList(),
+            Freshness = facts.Freshness with { AsOf = facts.Freshness.AsOf ?? timeline.Freshness.AsOf },
         };
-        timeline = timeline with { Freshness = freshness };
-        if (nowUtc == null)
-        {
-            _cache[cacheKey] = (DateTime.UtcNow, timeline);
-        }
+        if (nowUtc is null) _cache[cacheKey] = (DateTime.UtcNow, timeline);
         return timeline;
     }
 
@@ -192,7 +150,7 @@ public sealed class ProjectPipelineCostService
                     contributed = true;
                 }
             }
-            if (contributed) contributingTasks.Add(rec.JobId);
+            if (contributed && !string.IsNullOrWhiteSpace(rec.JobId)) contributingTasks.Add(rec.JobId);
         }
 
         var dayCosts = dayList.Select(day =>
@@ -278,128 +236,7 @@ public sealed class ProjectPipelineCostService
             DecisionCost: decisionCost.Build());
     }
 
-    internal static IReadOnlyList<PipelineExecutionRecord> BuildReceiptRecords(
-        string projectName,
-        IReadOnlyList<OrchestratorLogEntry> entries)
-    {
-        var records = new List<PipelineExecutionRecord>();
-        foreach (var entry in entries)
-        {
-            var usage = entry.TokenUsage;
-            if (usage is null || string.IsNullOrWhiteSpace(entry.JobId)) continue;
-            if ((long)usage.InputTokens + usage.OutputTokens + usage.CacheReadTokens + usage.CacheCreationTokens <= 0)
-                continue;
-
-            var kind = TokenParticipants.IsOrchestrator(entry.ParticipantId)
-                ? StepKind.Orchestrator
-                : TokenParticipants.IsSupporting(entry.ParticipantId)
-                    ? StepKind.Aspect
-                    : StepKind.Core;
-            var stepId = kind switch
-            {
-                StepKind.Orchestrator => "task-receipt-orchestrator",
-                StepKind.Aspect => "task-receipt-supporting",
-                _ => PipelineCatalogue.CoreAgentRunStepId,
-            };
-            records.Add(new PipelineExecutionRecord
-            {
-                PipelineId = ReceiptPipelineId,
-                Project = projectName,
-                JobId = entry.JobId!,
-                StartedAt = entry.Ts,
-                CompletedAt = entry.Ts,
-                Steps =
-                [
-                    new PipelineStepExecution
-                    {
-                        StepId = stepId,
-                        Kind = kind,
-                        Status = PipelineStepStatus.Passed,
-                        StartedAt = entry.Ts,
-                        CompletedAt = entry.Ts,
-                        Model = usage.Model,
-                        InputTokens = usage.InputTokens,
-                        OutputTokens = usage.OutputTokens,
-                        CacheReadTokens = usage.CacheReadTokens,
-                        CacheCreationTokens = usage.CacheCreationTokens,
-                        InputIncludesCached = usage.InputIncludesCached,
-                        TokenUsageSource = "Durable task token receipt",
-                    },
-                ],
-            });
-        }
-        return records;
-    }
-
     private const string ReceiptPipelineId = "task-token-receipt";
-
-    /// <summary>
-    /// Combine durable receipts and execution logs into one record list
-    /// without counting a token twice. For a task with a receipt, the receipt
-    /// prices the agent run and the execution log contributes every other
-    /// step (aspects, the orchestrator decisions, drift) plus the core row's
-    /// run count. Before AGT-3015 a receipt task's log was skipped entirely,
-    /// which is why no orchestrator step reached this ledger.
-    /// </summary>
-    internal static IReadOnlyList<PipelineExecutionRecord> MergeSources(ITokenPricing pricing,
-        IReadOnlyList<PipelineExecutionRecord> receiptRecords,
-        IEnumerable<(string JobId, PipelineExecutionRecord Record)> taskLogs)
-    {
-        var merged = new List<PipelineExecutionRecord>();
-        // Core receipts are written per agent turn and do not repeat the
-        // logged core row's cumulative counters, so they are reconciled per
-        // attempt by time: an attempt whose window holds a core receipt is
-        // priced by its receipts, and an attempt without one keeps its
-        // logged core tokens.
-        var coreReceiptTimes = receiptRecords
-            .Where(record => record.Steps.Any(step => step.Kind == StepKind.Core))
-            .GroupBy(record => record.JobId, StringComparer.Ordinal)
-            .ToDictionary(
-                group => group.Key,
-                group => group.Select(record => record.StartedAt).ToList(),
-                StringComparer.Ordinal);
-        // A receipt has no step id. Match each orchestrator or supporting
-        // (aspect, drift, analysis) call to one measured execution of the
-        // same family by model and all four token counters. Consume matches
-        // one at a time so repeated calls with identical usage are reconciled
-        // without hiding additional receipts, and a receipt with no measured
-        // execution in a partial log stays in the ledger.
-        var measuredCalls = new List<ReceiptMatch>();
-        foreach (var (jobId, record) in taskLogs)
-        {
-            var attempts = new List<PipelineExecutionRecord> { record };
-            attempts.AddRange(record.PreviousAttempts);
-            foreach (var step in attempts.SelectMany(attempt => attempt.Steps))
-            {
-                if (ReconciledFamily(step.Kind) is not { } family) continue;
-                foreach (var run in PipelineStoredUsageNormalization.CostExecutions(pricing, step))
-                {
-                    if (StepCostMeasurement.Tokens(run) <= 0) continue;
-                    measuredCalls.Add(ReceiptMatchKey(jobId, family, run.Model, run.InputTokens, run.OutputTokens,
-                        run.CacheReadTokens, run.CacheCreationTokens));
-                }
-            }
-            if (coreReceiptTimes.TryGetValue(jobId, out var receiptTimes))
-            {
-                attempts = WithoutReceiptBackedCoreTokens(attempts, receiptTimes);
-            }
-            merged.AddRange(attempts);
-        }
-
-        var receiptCalls = receiptRecords
-            .Select(receipt =>
-            {
-                var call = receipt.Steps.Single();
-                return ReconciledFamily(call.Kind) is { } family
-                    ? ReceiptMatchKey(receipt.JobId, family, call.Model, call.InputTokens, call.OutputTokens,
-                        call.CacheReadTokens, call.CacheCreationTokens)
-                    : (ReceiptMatch?)null;
-            })
-            .ToList();
-        var reconciled = ReconcileReceipts(receiptCalls, measuredCalls);
-        merged.AddRange(receiptRecords.Where((_, index) => !reconciled.Contains(index)));
-        return merged;
-    }
 
     /// <summary>
     /// Indices of the receipts a measured execution already prices. First
@@ -461,80 +298,38 @@ public sealed class ProjectPipelineCostService
     internal readonly record struct ReceiptMatch(
         string JobId, StepKind Kind, string Model, long Input, long Output, long CacheRead, long CacheCreation);
 
-    /// <summary>
-    /// The receipt kind a measured step reconciles against. Receipts know
-    /// only their participant: <c>orchestrator:</c> calls are Orchestrator
-    /// and every <c>support:</c> call (aspect, drift, analysis) is Aspect.
-    /// Core is reconciled per attempt by time instead.
-    /// </summary>
-    private static StepKind? ReconciledFamily(StepKind kind) => kind switch
+    internal static ProjectPipelineCostTimeline BuildFromAnalysis(ITokenPricing pricing, string project,
+        IReadOnlyList<(string JobId, TokenAnalysisItem Item)> items, int days, DateTime now)
     {
-        StepKind.Orchestrator => StepKind.Orchestrator,
-        StepKind.Aspect or StepKind.Drift or StepKind.Analysis => StepKind.Aspect,
-        _ => null,
-    };
-
-    private static ReceiptMatch ReceiptMatchKey(
-        string jobId, StepKind kind, string? model, long input, long output, long cacheRead, long cacheCreation)
-        => new(jobId, kind, ModelIdentity.RegistryId(model ?? string.Empty), input, output, cacheRead, cacheCreation);
-
-    /// <summary>
-    /// Zero the logged core tokens only in the attempts a core receipt covers.
-    /// Attempt i owns the window from its start to the next attempt's start;
-    /// the first window is open towards the past and the last towards the
-    /// future, so every receipt lands in exactly one attempt.
-    /// </summary>
-    private static List<PipelineExecutionRecord> WithoutReceiptBackedCoreTokens(
-        IReadOnlyList<PipelineExecutionRecord> attempts, IReadOnlyList<DateTime> receiptTimes)
-    {
-        var ordered = attempts
-            .Select((attempt, index) => (Attempt: attempt, Index: index))
-            .OrderBy(entry => entry.Attempt.StartedAt)
-            .ToList();
-        var backed = new HashSet<int>();
-        foreach (var at in receiptTimes)
+        var records = items.Where(row => row.Item.At <= now).Select(row =>
         {
-            var owner = ordered[0].Index;
-            foreach (var entry in ordered)
+            var item = row.Item;
+            var kind = item.Kind switch
             {
-                if (entry.Attempt.StartedAt > at) break;
-                owner = entry.Index;
-            }
-            backed.Add(owner);
-        }
-        return attempts
-            .Select((attempt, index) => backed.Contains(index) ? WithoutCoreTokens(attempt) : attempt)
-            .ToList();
+                TokenUsageKinds.Coding or TokenUsageKinds.FixRound => StepKind.Core,
+                TokenUsageKinds.ReviewAspect or TokenUsageKinds.DeepReview => StepKind.Aspect,
+                TokenUsageKinds.ReviewGrade or TokenUsageKinds.OrchestratorDecision => StepKind.Orchestrator,
+                TokenUsageKinds.Enrichment => StepKind.Analysis,
+                TokenUsageKinds.Gate => StepKind.Tool,
+                _ => StepKind.Module,
+            };
+            return new PipelineExecutionRecord
+            {
+                PipelineId = item.Source == TokenAnalysisFold.SourceLedger ? ReceiptPipelineId : "pipeline",
+                JobId = row.JobId, Project = project, StartedAt = item.At, CompletedAt = item.At,
+                Steps = [new PipelineStepExecution
+                {
+                    StepId = item.Label, Kind = kind, Model = item.ModelId,
+                    ThinkingLevel = item.Level, StartedAt = item.At, CompletedAt = item.At,
+                    Status = PipelineStepStatus.Passed,
+                    InputTokens = item.Input, OutputTokens = item.Output,
+                    CacheReadTokens = item.CacheRead, CacheCreationTokens = item.CacheWrite,
+                    InputIncludesCached = false, CostBasis = item.CostBasis,
+                }],
+            };
+        }).ToList();
+        return BuildFromRecords(pricing, project, records, days, now);
     }
-
-    /// <summary>
-    /// Zero the core rows' tokens so a receipt-backed attempt counts its agent
-    /// runs from the log while the receipt alone prices them.
-    /// </summary>
-    private static PipelineExecutionRecord WithoutCoreTokens(PipelineExecutionRecord record)
-        => record with
-        {
-            Steps = record.Steps
-                .Select(step => step.Kind != StepKind.Core
-                    ? step
-                    : step with
-                    {
-                        InputTokens = 0,
-                        OutputTokens = 0,
-                        CacheReadTokens = 0,
-                        CacheCreationTokens = 0,
-                        EarlierRuns = step.EarlierRuns?
-                            .Select(run => run with
-                            {
-                                InputTokens = 0,
-                                OutputTokens = 0,
-                                CacheReadTokens = 0,
-                                CacheCreationTokens = 0,
-                            })
-                            .ToList(),
-                    })
-                .ToList(),
-        };
 
     public static int ResolveDays(int requested) =>
         requested <= 0 ? DefaultDays : Math.Min(requested, MaxDays);

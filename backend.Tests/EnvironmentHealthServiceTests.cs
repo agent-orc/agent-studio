@@ -319,17 +319,18 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CardCreation_IsIdempotent_AcrossTicksReopeningAndALostCardId()
+    public async Task CardCreation_IsIdempotent_AcrossTicksRecurrenceAndALostCardId()
     {
         var fixture = Build();
         await Sequence(fixture, false, false, false, false, false);
         var card = Assert.Single(fixture.Cards());
 
-        // A quick recurrence reopens the resolved card instead of creating a second one.
+        // A recurrence inside the recovery cool-down has its own current incident record.
         await Sequence(fixture, true, true, false, false, false);
-        Assert.Equal(card.Id, Assert.Single(fixture.Cards()).Id);
-        Assert.Equal(TaskStates.Backlog, Assert.Single(fixture.Cards()).State);
-        Assert.Equal(["recovered", "reopened"], fixture.Comments(card).Select(item => item.Details!["change"]));
+        Assert.Equal(2, fixture.Cards().Count);
+        Assert.Equal(TaskStates.Completed, fixture.Scanner.FindJob(card.Id, fixture.WatchPath)!.State);
+        Assert.NotEqual(card.Id, fixture.Store.Load(Project).Environments["stage"].OpenIncident!.CardId);
+        Assert.Equal(["recovered"], fixture.Comments(card).Select(item => item.Details!["change"]));
 
         // A tick that created the card but stopped before saving its id adopts the card by slug.
         var store = fixture.Store;
@@ -347,18 +348,53 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
             Id = slug, Title = "lost", PromptMarkdown = "lost", WatchPath = fixture.WatchPath, TargetState = TaskStates.Backlog,
         });
         await Sequence(fixture, false);
-        Assert.Equal(2, fixture.Cards().Count);
+        Assert.Equal(3, fixture.Cards().Count);
         Assert.Equal(lost, store.Load(Project).Environments["stage"].OpenIncident!.CardId);
 
-        // After the cool-down, the next incident gets its own card.
+        // A later incident gets its own card even when the prior one is complete.
         await Sequence(fixture, true, true);
         new TaskStateMachine(fixture.Scanner, NullLogger<TaskStateMachine>.Instance)
             .MoveJob(lost!, TaskStates.Completed, fixture.WatchPath, reason: "test: incident handled");
         Assert.Equal(TaskStates.Completed, fixture.Scanner.FindJob(lost!, fixture.WatchPath)!.State);
-        _clock.Advance(TimeSpan.FromMinutes(31));
         await Sequence(fixture, false, false, false, false);
-        Assert.Equal(3, fixture.Cards().Count);
+        Assert.Equal(4, fixture.Cards().Count);
         Assert.Equal(4, fixture.Activity().Count(entry => entry.Topic == OrchestratorLogTopics.EnvironmentIncidentOpened));
+    }
+
+    [Fact]
+    public async Task IncidentCard_CapturesRunningReleaseTelemetryAndOperatorRoutes()
+    {
+        var deployment = new DateTime(2026, 10, 19, 7, 30, 0, DateTimeKind.Utc);
+        var credential = "secret-" + Guid.NewGuid().ToString("N");
+        var context = new FixedIncidentContext(new HealthIncidentContext("PROJ-002", "v1.4.2", deployment,
+            ["CARD-1", "CARD-2"], 4,
+            [new OperationsLogLine(_clock.GetUtcNow(), "error", $"process crashed password={credential}", "release-1")]));
+        var fixture = Build(context: context);
+
+        await Sequence(fixture, false, false, false);
+
+        var card = Assert.Single(fixture.Cards());
+        var prompt = File.ReadAllText(Path.Combine(card.FolderPath, "prompt.md"));
+        Assert.Contains("Running release: v1.4.2", prompt);
+        Assert.Contains("Deployed: 2026-10-19 07:30 UTC", prompt);
+        Assert.Contains("Release cards: CARD-1, CARD-2", prompt);
+        Assert.Contains("Restart count: 4", prompt);
+        Assert.Contains("process crashed", prompt);
+        Assert.DoesNotContain(credential, prompt);
+        Assert.Contains("#/projects/PROJ-002/deploy?view=operations&environmentId=stage&since=", prompt);
+        Assert.Contains("#/projects/PROJ-002/deploy?view=tools&environmentId=stage", prompt);
+        Assert.Contains("#/projects/PROJ-002/deploy?view=runbooks&environmentId=stage", prompt);
+        Assert.Equal("environment-health", card.CreationSource);
+    }
+
+    [Fact]
+    public async Task IncidentCard_IsStillCreatedWhenTelemetryCannotBeRead()
+    {
+        var fixture = Build(context: new ThrowingIncidentContext());
+        await Sequence(fixture, false, false, false);
+        var prompt = File.ReadAllText(Path.Combine(Assert.Single(fixture.Cards()).FolderPath, "prompt.md"));
+        Assert.Contains("Restart count: Telemetry unavailable", prompt);
+        Assert.Contains("No crash or error lines available", prompt);
     }
 
     [Fact]
@@ -692,7 +728,7 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         probe.Set("http", false);
         await Ticks(fixture, 3);
         var card = Assert.Single(fixture.Cards());
-        Assert.Equal("Health incident: Stage is failing", card.Title);
+        Assert.StartsWith("Health incident: Stage · ", card.Title);
         Assert.Contains("## Check `http`", File.ReadAllText(Path.Combine(card.FolderPath, "prompt.md")));
 
         probe.Set("tls", false);
@@ -910,7 +946,8 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
     }
 
     private Fixture Build(string? checks = null, IHealthCheckProbe? probe = null, string? extraDeclaration = null,
-        string? otherDeclaration = null, bool withTelemetry = false, bool deployed = true)
+        string? otherDeclaration = null, IHealthIncidentContext? context = null, bool withTelemetry = false,
+        bool deployed = true)
     {
         var repo = Path.Combine(_root, "repo");
         var watch = Path.Combine(_root, "workspace", "projects", Project);
@@ -960,7 +997,7 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         var stateMachine = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance,
             timeline: timeline, configuration: configuration);
         var alerts = new HealthAlerts(scanner, mutations, timeline, activity, _clock,
-            NullLogger<HealthAlerts>.Instance, stateMachine, new AgentStudio.Deploy.DeployStore(configuration));
+            NullLogger<HealthAlerts>.Instance, stateMachine, new AgentStudio.Deploy.DeployStore(configuration), context);
         var webhookTarget = new WebhookTarget();
         var webhooks = new IncidentWebhookService(configuration, new FakeHttpClients(webhookTarget),
             NullLogger<IncidentWebhookService>.Instance);
@@ -997,6 +1034,17 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         public IReadOnlyList<OrchestratorLogEntry> Activity() => Log.Read(WatchPath);
 
         public void Declare(string checks) => File.WriteAllText(Path.Combine(Declarations, "stage.json"), Stage(checks));
+    }
+
+    private sealed class FixedIncidentContext(HealthIncidentContext context) : IHealthIncidentContext
+    {
+        public HealthIncidentContext Read(string project, string environmentId, DateTimeOffset startedAt) => context;
+    }
+
+    private sealed class ThrowingIncidentContext : IHealthIncidentContext
+    {
+        public HealthIncidentContext Read(string project, string environmentId, DateTimeOffset startedAt)
+            => throw new IOException("telemetry unavailable");
     }
 
     private sealed class WebhookTarget : HttpMessageHandler

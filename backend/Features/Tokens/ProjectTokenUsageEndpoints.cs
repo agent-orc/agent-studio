@@ -24,10 +24,10 @@ public static class ProjectTokenUsageEndpoints
 {
     public static void MapProjectTokenUsageEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/projects/{projectName}/token-usage/summary", (
+        app.MapGet("/api/projects/{projectName}/token-usage/summary", async (
             string projectName,
             TaskScannerService scanner,
-            ITokenAggregator tokens) =>
+            ITokenAggregator tokens, TokenEndpointReads reads, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(projectName))
                 return Results.BadRequest(new { error = "project required" });
@@ -35,7 +35,8 @@ public static class ProjectTokenUsageEndpoints
                 string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (entry is null)
                 return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
-            return Results.Ok(tokens.ProjectSummary(projectName, entry.Path));
+            return await reads.ReadAsync("summary:" + projectName + "\n" + entry.Path,
+                () => Task.Run<object>(() => tokens.ProjectSummary(projectName, entry.Path)), ct);
         });
 
         app.MapGet("/api/projects/{projectName}/token-usage/heatmap", (

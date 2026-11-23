@@ -269,7 +269,7 @@ public sealed class StepCostMeasurementTests : IDisposable
     public void Receipt_backed_task_still_contributes_its_orchestrator_rows_without_double_counting_core()
     {
         var now = new DateTime(2026, 10, 4, 12, 0, 0, DateTimeKind.Utc);
-        var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",
+        OrchestratorLogEntry[] receipts =
         [
             new OrchestratorLogEntry
             {
@@ -278,14 +278,12 @@ public sealed class StepCostMeasurementTests : IDisposable
                 ParticipantId = "agent:remote-runner:a1",
                 TokenUsage = new OrchestratorTokenUsage { Model = PricedModel, InputTokens = 100_000, OutputTokens = 10_000 },
             },
-        ]);
+        ];
         var log = Record("J1", now,
             Step(PipelineCatalogue.CoreAgentRunStepId, StepKind.Core, PricedModel, 999_999, 999_999),
             Step(PipelineCatalogue.TaskSpawnerStepId, StepKind.Orchestrator, PricedModel, 1_000_000, 200_000));
 
-        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(),
-            receipts, [("J1", log)]);
-        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", merged, days: 7, nowUtc: now);
+        var (timeline, merged) = Fold(receipts, log, now);
 
         var core = Assert.Single(timeline.Kinds, kind => kind.Kind == "core");
         Assert.Equal(110_000, core.TotalTokens); // the receipt, not the log's core row
@@ -300,7 +298,7 @@ public sealed class StepCostMeasurementTests : IDisposable
     {
         var firstAttemptAt = TestAt;
         var secondAttemptAt = TestAt.AddHours(2);
-        var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",
+        OrchestratorLogEntry[] receipts =
         [
             new OrchestratorLogEntry
             {
@@ -309,7 +307,7 @@ public sealed class StepCostMeasurementTests : IDisposable
                 ParticipantId = "agent:remote-runner:a1",
                 TokenUsage = new OrchestratorTokenUsage { Model = PricedModel, InputTokens = 100_000, OutputTokens = 10_000 },
             },
-        ]);
+        ];
         var previous = Record("J1", firstAttemptAt,
             Step(PipelineCatalogue.CoreAgentRunStepId, StepKind.Core, PricedModel, 999_999, 999_999));
         var current = Record("J1", secondAttemptAt,
@@ -319,8 +317,7 @@ public sealed class StepCostMeasurementTests : IDisposable
             PreviousAttempts = [previous],
         };
 
-        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(), receipts, [("J1", current)]);
-        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", merged, days: 7, nowUtc: secondAttemptAt);
+        var (timeline, merged) = Fold(receipts, current, secondAttemptAt);
 
         var core = Assert.Single(timeline.Kinds, kind => kind.Kind == "core");
         // The first attempt is priced by its receipt (not its 999,999 log
@@ -336,7 +333,7 @@ public sealed class StepCostMeasurementTests : IDisposable
     [Fact]
     public void Matching_orchestrator_receipt_and_step_execution_are_priced_once()
     {
-        var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",
+        OrchestratorLogEntry[] receipts =
         [
             new OrchestratorLogEntry
             {
@@ -356,13 +353,11 @@ public sealed class StepCostMeasurementTests : IDisposable
                     Model = PricedModel, InputTokens = 50_000, OutputTokens = 5_000,
                 },
             },
-        ]);
+        ];
         var log = Record("J1", TestAt,
             Step(PipelineCatalogue.TaskSpawnerStepId, StepKind.Orchestrator, PricedModel, 1_000_000, 200_000));
 
-        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(),
-            receipts, [("J1", log)]);
-        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", merged, days: 7, nowUtc: TestAt);
+        var (timeline, merged) = Fold(receipts, log, TestAt.AddMinutes(5));
 
         Assert.Equal(2, merged.Count); // measured step plus the unmatched receipt
         var spawner = Assert.Single(timeline.Steps, step => step.StepId == PipelineCatalogue.TaskSpawnerStepId);
@@ -377,7 +372,7 @@ public sealed class StepCostMeasurementTests : IDisposable
     [Fact]
     public void Aspect_receipts_are_reconciled_with_measured_aspect_executions_not_discarded_wholesale()
     {
-        var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",
+        OrchestratorLogEntry[] receipts =
         [
             // Matches the measured aspect execution below: priced once.
             new OrchestratorLogEntry
@@ -398,13 +393,11 @@ public sealed class StepCostMeasurementTests : IDisposable
                     Model = PricedModel, InputTokens = 30_000, OutputTokens = 3_000,
                 },
             },
-        ]);
+        ];
         var log = Record("J1", TestAt,
             Step("aspect-code-quality", StepKind.Aspect, PricedModel, 40_000, 4_000));
 
-        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(),
-            receipts, [("J1", log)]);
-        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", merged, days: 7, nowUtc: TestAt);
+        var (timeline, merged) = Fold(receipts, log, TestAt.AddMinutes(5));
 
         Assert.Equal(2, merged.Count); // measured execution plus the unmatched receipt
         var aspect = Assert.Single(timeline.Kinds, kind => kind.Kind == "aspect");
@@ -421,7 +414,7 @@ public sealed class StepCostMeasurementTests : IDisposable
     {
         // AspectRunnerService retries a missing verdict once: two paid calls,
         // two receipts, and one step row carrying the sum of both.
-        var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",
+        OrchestratorLogEntry[] receipts =
         [
             new OrchestratorLogEntry
             {
@@ -448,12 +441,11 @@ public sealed class StepCostMeasurementTests : IDisposable
                     Model = PricedModel, InputTokens = 30_000, OutputTokens = 3_000,
                 },
             },
-        ]);
+        ];
         var log = Record("J1", TestAt,
             Step("aspect-code-quality", StepKind.Aspect, PricedModel, 82_000, 4_000));
 
-        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(), receipts, [("J1", log)]);
-        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", merged, days: 7, nowUtc: TestAt);
+        var (timeline, merged) = Fold(receipts, log, TestAt.AddMinutes(5));
 
         Assert.Equal(2, merged.Count); // summed step row plus the unrelated receipt
         var aspect = Assert.Single(timeline.Kinds, kind => kind.Kind == "aspect");
@@ -467,7 +459,7 @@ public sealed class StepCostMeasurementTests : IDisposable
     [Fact]
     public void A_retried_aspect_with_identical_per_call_usage_consumes_both_receipts()
     {
-        var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",
+        OrchestratorLogEntry[] receipts =
         [
             new OrchestratorLogEntry
             {
@@ -479,11 +471,11 @@ public sealed class StepCostMeasurementTests : IDisposable
                 Ts = TestAt.AddSeconds(30), JobId = "J1", ParticipantId = "support:aspect-code-quality",
                 TokenUsage = new OrchestratorTokenUsage { Model = PricedModel, InputTokens = 10_000, OutputTokens = 500 },
             },
-        ]);
+        ];
         var log = Record("J1", TestAt,
             Step("aspect-code-quality", StepKind.Aspect, PricedModel, 20_000, 1_000));
 
-        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(), receipts, [("J1", log)]);
+        var (_, merged) = Fold(receipts, log, TestAt.AddMinutes(5));
 
         Assert.Single(merged);
     }
@@ -491,19 +483,18 @@ public sealed class StepCostMeasurementTests : IDisposable
     [Fact]
     public void A_drift_receipt_is_reconciled_with_its_measured_drift_execution()
     {
-        var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",
+        OrchestratorLogEntry[] receipts =
         [
             new OrchestratorLogEntry
             {
                 Ts = TestAt, JobId = "J1", ParticipantId = "support:docs-drift",
                 TokenUsage = new OrchestratorTokenUsage { Model = PricedModel, InputTokens = 25_000, OutputTokens = 2_000 },
             },
-        ]);
+        ];
         var log = Record("J1", TestAt,
             Step(PipelineCatalogue.DriftAdrCodeStepId, StepKind.Drift, PricedModel, 25_000, 2_000));
 
-        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(), receipts, [("J1", log)]);
-        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", merged, days: 7, nowUtc: TestAt);
+        var (timeline, merged) = Fold(receipts, log, TestAt.AddMinutes(5));
 
         Assert.Single(merged);
         Assert.Equal(27_000, timeline.TotalTokens);
@@ -512,7 +503,7 @@ public sealed class StepCostMeasurementTests : IDisposable
     [Fact]
     public void An_orchestrator_only_receipt_does_not_erase_core_step_usage()
     {
-        var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",
+        OrchestratorLogEntry[] receipts =
         [new OrchestratorLogEntry
         {
             Ts = TestAt, JobId = "J1", ParticipantId = "orchestrator:P",
@@ -520,13 +511,11 @@ public sealed class StepCostMeasurementTests : IDisposable
             {
                 Model = PricedModel, InputTokens = 50_000, OutputTokens = 5_000,
             },
-        }]);
+        }];
         var log = Record("J1", TestAt,
             Step(PipelineCatalogue.CoreAgentRunStepId, StepKind.Core, PricedModel, 100_000, 10_000));
 
-        var merged = ProjectPipelineCostService.MergeSources(TokenTestServices.Pricing(),
-            receipts, [("J1", log)]);
-        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(), "P", merged, days: 7, nowUtc: TestAt);
+        var (timeline, merged) = Fold(receipts, log, TestAt.AddMinutes(5));
 
         Assert.Equal(110_000, Assert.Single(timeline.Kinds, kind => kind.Kind == "core").TotalTokens);
         Assert.Equal(55_000, Assert.Single(timeline.Kinds, kind => kind.Kind == "orchestrator").TotalTokens);
@@ -789,6 +778,22 @@ public sealed class StepCostMeasurementTests : IDisposable
             InputTokens = input,
             OutputTokens = output,
         };
+
+    /// <summary>
+    /// Fold one card's receipts and execution log the way the project
+    /// pipeline-cost timeline does in production: through the reconciled
+    /// token analysis facts. The second value lists the facts that carry
+    /// tokens (measured executions and unmatched receipts).
+    /// </summary>
+    private static (ProjectPipelineCostTimeline Timeline, IReadOnlyList<TokenAnalysisItem> Priced) Fold(
+        IReadOnlyList<OrchestratorLogEntry> receipts, PipelineExecutionRecord log, DateTime now)
+    {
+        var pricing = TokenTestServices.Pricing();
+        var items = TokenAnalysisFold.Items(pricing, new TokenAnalysisJobInput("J1", null, log, receipts));
+        var timeline = ProjectPipelineCostService.BuildFromAnalysis(pricing, "P",
+            items.Select(item => ("J1", item)).ToList(), 7, now);
+        return (timeline, items.Where(item => item.Total > 0).ToList());
+    }
 
     private static PipelineExecutionRecord Record(string jobId, DateTime at, params PipelineStepExecution[] steps)
         => new()

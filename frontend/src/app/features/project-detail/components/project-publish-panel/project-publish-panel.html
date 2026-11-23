@@ -1,3 +1,8 @@
+@if (!hasPackageRelease()) {
+  <p data-testid="publish-not-configured">No package release definition found.
+    <a href="https://github.com/agent-orc/agent-studio/blob/main/docs/operations/setup/library-releases.md" target="_blank" rel="noopener">Set up library releases</a>
+  </p>
+}
 @if (badges().length > 0) {
   <section class="publish" data-testid="project-publish-badges">
     <h3>Publishable</h3>
@@ -51,14 +56,20 @@
         @if (panel.notice) {
           <p class="publish__notice" data-testid="publish-first-notice">{{ panel.notice }}</p>
         } @else if (panel.target.kind === 'package') {
+          @if (panel.target.releaseCommand) {
+            <p>Release branch: <code>{{ panel.target.releaseBranch }}</code></p>
+            <p>Command: <code>{{ panel.target.releaseCommand }}</code></p>
+            <button type="button" data-testid="publish-dry-run" [appPendingButton]="busy() && action() === 'preview'" pendingLabel="Preparing dry run" [disabled]="busy() || !versionDraft.trim()" (click)="trigger(true)">Dry run</button>
+          }
           <label class="publish__version">
             <span>Next version</span>
             <input [(ngModel)]="versionDraft" inputmode="numeric" data-testid="publish-version" />
             <small>Suggested from the pending task mix. Features bump minor; bugs and chores bump patch.</small>
           </label>
           <button type="button" class="publish__primary" data-testid="publish-confirm"
+                  [appPendingButton]="busy() && action() === 'release'" pendingLabel="Verifying and releasing"
                   [disabled]="busy() || !versionDraft.trim()" (click)="trigger()">
-            Confirm, commit and push v{{ versionDraft }}
+            Verify and release v{{ versionDraft }}
           </button>
         } @else {
           <button type="button" class="publish__primary" data-testid="deploy-confirm"
@@ -69,9 +80,9 @@
           <div class="publish__run" data-testid="publish-workflow-status">
             @let runState = runStatus(currentRun);
             <app-status-indicator [tone]="runState.tone" [label]="runState.label" testId="publish-workflow-state" />
-            <small>{{ currentRun.workflow }}@if (currentRun.version) { · v{{ currentRun.version }} }</small>
+            <small class="publish__workflow">{{ currentRun.workflow }}@if (currentRun.version) { · v{{ currentRun.version }} }</small>
             @if (currentRun.error) { <p>{{ currentRun.error }}</p> }
-            <button type="button" class="publish__quiet" [disabled]="busy()" (click)="refreshRun()">Refresh workflow</button>
+            @if (currentRun.status !== 'preview') { <button type="button" class="publish__quiet" [disabled]="busy()" (click)="refreshRun()">Refresh workflow</button> }
             @if (currentRun.url) { <a [href]="currentRun.url" target="_blank" rel="noopener">Open on GitHub</a> }
           </div>
         }

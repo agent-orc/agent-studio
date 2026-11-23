@@ -39,12 +39,20 @@ public interface ITokenPriceProvider
 {
     TokenCostEstimate Estimate(string? modelId, long inputTokens, long outputTokens,
         long cacheReadTokens, long cacheCreationTokens, DateTime? recordedAt = null);
+
+    TokenCostEstimate EstimateRequest(string? modelId, long inputTokens, long outputTokens,
+        long cacheReadTokens, long cacheCreationTokens, long promptTokens, DateTime recordedAt)
+        => Estimate(modelId, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, recordedAt);
 }
 
 public interface ITokenPricing
 {
     TokenCostEstimate Estimate(string? modelId, long inputTokens, long outputTokens,
         long cacheReadTokens, long cacheCreationTokens, DateTime? recordedAt = null);
+
+    TokenCostEstimate EstimateRequest(string? modelId, long inputTokens, long outputTokens,
+        long cacheReadTokens, long cacheCreationTokens, long promptTokens, DateTime recordedAt)
+        => Estimate(modelId, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, recordedAt);
 
     IReadOnlyList<PricedTokenEntry> Price(IReadOnlyList<OrchestratorLogEntry> ledger);
 }
@@ -56,6 +64,11 @@ public sealed class TokenPricingService(ITokenPriceProvider provider) : ITokenPr
         long cacheReadTokens, long cacheCreationTokens, DateTime? recordedAt = null)
         => provider.Estimate(ModelIdentity.Resolve(modelId)?.ModelId ?? modelId,
             inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, recordedAt);
+
+    public TokenCostEstimate EstimateRequest(string? modelId, long inputTokens, long outputTokens,
+        long cacheReadTokens, long cacheCreationTokens, long promptTokens, DateTime recordedAt)
+        => provider.EstimateRequest(ModelIdentity.Resolve(modelId)?.ModelId ?? modelId,
+            inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, promptTokens, recordedAt);
 
     public IReadOnlyList<PricedTokenEntry> Price(IReadOnlyList<OrchestratorLogEntry> ledger)
         => ledger.Select(entry => new PricedTokenEntry(entry, entry.TokenUsage is { } usage

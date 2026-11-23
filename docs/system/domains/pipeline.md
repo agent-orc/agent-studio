@@ -1746,7 +1746,8 @@ only what ran; the log owns the arithmetic.
 Ledger (`GET /api/projects/{project}/token-usage/pipeline-cost`):
 
 - `ProjectPipelineCostService.MergeSources` now reads the execution log of a
-  receipt-backed (remote) task as well.
+  receipt-backed (remote) task as well. (AGT-3952 removed `MergeSources`; the
+  same reconciliation now runs in `TokenAnalysisFold`, which feeds the ledger.)
 - A core receipt prices the agent run of the attempt whose time window holds
   it (an attempt owns the span from its start to the next attempt's start).
   An attempt with no core receipt keeps its logged core tokens. The log adds the aspect,
@@ -4135,3 +4136,12 @@ When a deployment section already exists, the import is a no-op. Unsupported des
 yield a clear error and leave the repository unchanged.
 Review the generated process before committing it; imported commands retain
 the legacy behavior and do not acquire a web-branch publish step automatically.
+
+## Integration conflict evidence (AGT-3969)
+
+Conflicts are captured before Git recovery removes the unmerged index, including
+union resolution and batch sibling collisions. The durable version 1 record,
+project time-range API, rate denominator and attribution limitations are specified
+in [Integration conflict evidence](../contracts/integration-conflicts.md). The
+project Pipeline panel shows seven days of daily rates, top files and card pairs.
+This evidence supports later selection work; it changes no transition policy.

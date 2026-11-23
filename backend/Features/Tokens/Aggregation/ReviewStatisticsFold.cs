@@ -33,25 +33,31 @@ public static class ReviewStatisticsFold
     private const string RemotePrefix = "support:remote-review:";
     private const string LocalPrefix = "support:review-attempt:";
 
-    public static string? Step(string? participant)
+    /// <summary>Original pipeline step id carried by a durable review call.</summary>
+    public static string? StepId(string? participant)
     {
         if (participant is null) return null;
         if (participant.StartsWith(RemotePrefix, StringComparison.OrdinalIgnoreCase)
             || participant.StartsWith(LocalPrefix, StringComparison.OrdinalIgnoreCase))
         {
             var marker = participant.IndexOf(":step:", StringComparison.OrdinalIgnoreCase);
-            if (marker < 0) return "review, step unknown";
+            if (marker < 0) return null;
             var step = participant[(marker + 6)..];
             var usageMarker = step.IndexOf(":usage:", StringComparison.OrdinalIgnoreCase);
-            return NormalizeStep(usageMarker < 0 ? step : step[..usageMarker]);
+            return usageMarker < 0 ? step : step[..usageMarker];
         }
-        if (participant.StartsWith("support:aspect-", StringComparison.OrdinalIgnoreCase))
-            return NormalizeStep(participant["support:".Length..]);
-        if (participant.Equals("support:post-code-review-grade", StringComparison.OrdinalIgnoreCase)) return "grade";
-        if (participant.Equals("support:review-decision", StringComparison.OrdinalIgnoreCase)) return "review decision";
-        if (participant.Equals("support:post-orchestrator-review", StringComparison.OrdinalIgnoreCase)) return "orchestrator review";
+        if (participant.StartsWith("support:aspect-", StringComparison.OrdinalIgnoreCase)
+            || participant is "support:post-code-review-grade" or "support:review-decision"
+                or "support:post-orchestrator-review")
+            return participant["support:".Length..];
         return null;
     }
+
+    public static string? Step(string? participant)
+        => StepId(participant) is { } step ? NormalizeStep(step)
+            : participant?.StartsWith(RemotePrefix, StringComparison.OrdinalIgnoreCase) == true
+                || participant?.StartsWith(LocalPrefix, StringComparison.OrdinalIgnoreCase) == true
+                ? "review, step unknown" : null;
 
     public static string Attempt(string? participant, DateTime at)
     {

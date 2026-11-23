@@ -17,6 +17,7 @@ public static class ProjectOperatorDashboardEndpoints
 {
     public static void MapProjectOperatorDashboardEndpoints(this WebApplication app)
     {
+        app.MapProjectIntegrationConflictEndpoints();
         // AGT-3954: the projection is cached and refreshed in the background by
         // StructureSnapshotService. A request reads the cache; it never rebuilds
         // the structure per client and never asks a host.

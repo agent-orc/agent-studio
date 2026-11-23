@@ -38,7 +38,6 @@ public static class TokenUsageKindPolicy
         "post-concept-review",
         "post-concept-sight-review",
         "post-abort-review",
-        "post-summary-assessment",
     };
 
     private static readonly HashSet<string> GateSteps = new(StringComparer.OrdinalIgnoreCase)
@@ -58,6 +57,9 @@ public static class TokenUsageKindPolicy
 
     private static readonly HashSet<string> EnrichmentSteps = new(StringComparer.OrdinalIgnoreCase)
     {
+        "post-summary-assessment",
+        "summary-generation",
+        "auto-tag",
         "pre-prompt-enrichment",
         "pre-model-qualification",
         "pre-orchestrator-prep",
@@ -124,6 +126,10 @@ public static class TokenUsageKindPolicy
     /// <param name="firstCodingRun">True when an agent call belongs to the card's first coding run.</param>
     public static string ForLedger(string? participantId, string? topic, bool firstCodingRun)
     {
+        var step = ReviewStatisticsFold.StepId(participantId);
+        if (step is not null)
+            return ForStep(step, step.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+                ? StepKind.Aspect : StepKind.Orchestrator, firstCodingRun);
         var t = topic?.Trim() ?? "";
         if (t.Contains("chat", StringComparison.OrdinalIgnoreCase)) return TokenUsageKinds.Chat;
         if (EnrichmentTopics.Contains(t)) return TokenUsageKinds.Enrichment;

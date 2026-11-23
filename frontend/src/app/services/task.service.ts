@@ -2448,10 +2448,10 @@ export class TaskService {
     );
   }
 
-  publishPackage(projectName: string, targetId: string, version: string) {
+  publishPackage(projectName: string, targetId: string, version: string, dryRun = false) {
     return this.http.post<PublishWorkflowRun>(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/publish/package`,
-      { targetId, version },
+      { targetId, version, dryRun },
     );
   }
 

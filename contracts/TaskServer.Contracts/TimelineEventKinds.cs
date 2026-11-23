@@ -238,6 +238,9 @@ public static class TimelineEventKinds
     /// release-gated dependents the decision unblocks.
     /// </summary>
     public const string TaskReleased = "task_released";
+
+    /// <summary>A repository package release containing this card was pushed.</summary>
+    public const string PackageReleased = "package_released";
     /// <summary>The task's lane changed (any move).</summary>
     public const string LaneChanged = "lane_changed";
     /// <summary>An owner tried to move a card, but the transition refused it with a reason.</summary>

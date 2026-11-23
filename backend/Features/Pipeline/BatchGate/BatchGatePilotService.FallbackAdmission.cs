@@ -152,6 +152,9 @@ public sealed partial class BatchGatePilotService
                     ? "superseded-review" : "ineligible:" + (exclusion?.ToString() ?? "operator-eject");
                 continue;
             }
+            using var conflictCapture = IntegrationConflictCapture.Begin(subject.Project,
+                subject.TaskKey, subject.IntegrationBranch, subject.ResultSha,
+                reviewedAt: subject.ReviewCompletedAtUtc);
             var replay = _git.ReplayBatchMember(repo, subject.ResultRef, subject.ResultSha, tip);
             if (replay.ConflictedFiles.Count > 0)
             {

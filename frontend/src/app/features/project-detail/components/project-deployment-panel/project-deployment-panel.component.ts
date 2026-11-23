@@ -33,6 +33,11 @@ export class ProjectDeploymentPanelComponent {
   private environmentReads = new Subscription();
 
   readonly projectName = input.required<string>();
+  readonly focusedEnvironment = input<string | null>(null);
+  readonly visibleEnvironments = computed(() => {
+    const all = this.environments()?.environments ?? [];
+    return this.focusedEnvironment() ? all.filter(item => item.declaration.id === this.focusedEnvironment()) : all;
+  });
   /**
    * F13: rollback runs only through the lifecycle offer of the Deploy area,
    * which names the target and asks first; this panel has no rollback call.

@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { PendingButtonDirective } from '../../../../components/async-feedback';
 import type {
   PublishActionPanel,
   PublishAutomationMode,
@@ -39,7 +40,7 @@ export function publishRunStatus(run: Pick<PublishWorkflowRun, 'status' | 'concl
 @Component({
   selector: 'app-project-publish-panel',
   standalone: true,
-  imports: [FormsModule, TooltipDirective, StatusIndicatorComponent],
+  imports: [FormsModule, TooltipDirective, StatusIndicatorComponent, PendingButtonDirective],
   templateUrl: './project-publish-panel.html',
   styleUrl: './project-publish-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -52,13 +53,16 @@ export class ProjectPublishPanelComponent {
   private readonly tasks = inject(TaskService);
   readonly selected = signal<PublishActionPanel | null>(null);
   readonly busy = signal(false);
+  readonly action = signal<'preview' | 'release' | null>(null);
   readonly message = signal<string | null>(null);
   readonly run = signal<PublishWorkflowRun | null>(null);
   versionDraft = '';
   automationDraft: PublishAutomationMode = 'manual';
 
+  readonly hasPackageRelease = computed(() => this.targets().some(target => target.kind === 'package'));
+
   readonly badges = computed(() => this.targets()
-    .filter(target => target.firstPublishPending || (target.pendingCount ?? 0) > 0)
+    .filter(target => target.releaseCommand || target.firstPublishPending || (target.pendingCount ?? 0) > 0)
     .map(target => ({
       target,
       text: target.firstPublishPending
@@ -103,18 +107,20 @@ export class ProjectPublishPanelComponent {
     });
   }
 
-  trigger(): void {
+  trigger(dryRun = false): void {
     const panel = this.selected();
     if (!panel || panel.notice) return;
+    this.action.set(dryRun ? 'preview' : 'release');
     this.busy.set(true);
     this.message.set(null);
     const request = panel.target.kind === 'package'
-      ? this.tasks.publishPackage(this.projectName(), panel.target.id, this.versionDraft.trim())
+      ? this.tasks.publishPackage(this.projectName(), panel.target.id, this.versionDraft.trim(), dryRun)
       : this.tasks.deployWebsite(this.projectName());
     request.subscribe({
       next: run => {
         this.run.set(run);
-        this.message.set(panel.target.kind === 'package'
+        this.action.set(null);
+        this.message.set(dryRun ? 'Dry run ready.' : panel.target.releaseCommand ? `Release v${run.version} completed on ${panel.target.releaseBranch}.` : panel.target.kind === 'package'
           ? `v${run.version} pushed. The existing release workflow is now tracking.`
           : 'Website workflow dispatched.');
         this.busy.set(false);
@@ -137,5 +143,6 @@ export class ProjectPublishPanelComponent {
     const response = error as { error?: { error?: string }; message?: string } | null;
     this.message.set(response?.error?.error ?? response?.message ?? fallback);
     this.busy.set(false);
+    this.action.set(null);
   }
 }

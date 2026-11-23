@@ -58,6 +58,7 @@ internal sealed class PublishInputChangeTracker : IDisposable
         AppendWatcherState(hash, before);
 
         reliable &= AppendFile(hash, root, Path.Combine(root, "package.json"));
+        reliable &= AppendFile(hash, root, Path.Combine(root, ".agent-studio", "project.yml"));
         reliable &= AppendWorkflowDirectory(hash, root);
 
         // If an event arrived while the direct fingerprint was being built,

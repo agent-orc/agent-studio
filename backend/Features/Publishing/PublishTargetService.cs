@@ -1,3 +1,5 @@
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Publishing;
 
 /// <summary>
@@ -70,8 +72,8 @@ public sealed class PublishTargetService : IDisposable
 
     /// <summary>
     /// Wire-facing publish status for the Project Hub badge: derived targets with
-    /// their pending deltas, minus the internal per-commit SHA sets. Never throws;
-    /// a non-repo / unknown project yields <see cref="ProjectPublishStatus.IsRepo"/>
+    /// their pending deltas, minus the internal per-commit SHA sets.
+    /// A non-repo / unknown project yields <see cref="ProjectPublishStatus.IsRepo"/>
     /// false with an <see cref="ProjectPublishStatus.Error"/>.
     /// </summary>
     public ProjectPublishStatus GetProjectPublishStatus(string projectName)
@@ -160,6 +162,11 @@ public sealed class PublishTargetService : IDisposable
 
             return new ProjectPublishComputation(projectName, true, null, targets);
         }
+        catch (ProjectReleaseDefinitionException ex)
+        {
+            _logger.LogWarning(ex, "Invalid project release definition for {Project}.", projectName);
+            return ProjectPublishComputation.Empty(projectName, ex.Message);
+        }
         catch (PublishProjectionReadException ex)
         {
             _logger.LogWarning(
@@ -185,7 +192,8 @@ public sealed class PublishTargetService : IDisposable
         string root, string integrationBranch, IReadOnlyList<WorkflowFacts> workflows,
         IReadOnlyList<string> websiteRoots, string? latestTag)
     {
-        var hasReleaseTrigger = workflows.Any(w => w.HasReleaseTrigger);
+        var release = ProjectReleaseExecution.Read(root)?.Release;
+        var hasReleaseTrigger = workflows.Any(w => w.HasReleaseTrigger) || release?.Command is not null;
         if (!hasReleaseTrigger) yield break;
 
         // Which ecosystems does a workflow actually publish? Fall back to manifest
@@ -217,15 +225,19 @@ public sealed class PublishTargetService : IDisposable
             }
         }
 
+        if (npm is null && nuget is null && !wantsNpm && !wantsNuGet && release?.Command is not null)
+            yield return BuildPackageTarget(root, integrationBranch, "project", "Release", null, websiteRoots, latestTag, release);
+
         if (npm != null || wantsNpm)
-            yield return BuildPackageTarget(root, integrationBranch, PublishEcosystems.Npm, "npm", npm, websiteRoots, latestTag);
+            yield return BuildPackageTarget(root, integrationBranch, PublishEcosystems.Npm, "npm", npm, websiteRoots, latestTag, release);
         if (nuget != null || (wantsNuGet && npm == null))
-            yield return BuildPackageTarget(root, integrationBranch, PublishEcosystems.NuGet, "NuGet", nuget, websiteRoots, latestTag);
+            yield return BuildPackageTarget(root, integrationBranch, PublishEcosystems.NuGet, "NuGet", nuget, websiteRoots, latestTag, release);
     }
 
     private PublishTargetComputation BuildPackageTarget(
         string root, string integrationBranch, string ecosystem, string label,
-        ManifestInfo? manifest, IReadOnlyList<string> websiteRoots, string? latestTag)
+        ManifestInfo? manifest, IReadOnlyList<string> websiteRoots, string? latestTag,
+        ProjectReleaseDefinition? release)
     {
         var sourceRoot = manifest?.SourceRootRelDir ?? string.Empty;
         var include = string.IsNullOrEmpty(sourceRoot) ? Array.Empty<string>() : [sourceRoot];
@@ -258,6 +270,8 @@ public sealed class PublishTargetService : IDisposable
             PackageName = manifest?.PackageName,
             CurrentVersion = currentVersion,
             FirstPublishPending = firstPublishPending,
+            ReleaseCommand = release?.Command,
+            ReleaseBranch = release?.Branch,
             PendingCount = firstPublishPending ? null : commits.Count,
             ReferenceKind = firstPublishPending ? PublishReferenceKinds.None : PublishReferenceKinds.Tag,
             Reference = firstPublishPending ? null : latestTag,
