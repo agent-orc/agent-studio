@@ -1533,6 +1533,30 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
     }
 
     [Fact]
+    public void Disk_full_recovery_does_not_spend_card_infrastructure_retry_budget()
+    {
+        var service = NewService();
+        var (_, current) = CompletedRunWithReview(service, "sha-a");
+        for (var number = 0; number < 4; number++)
+        {
+            var claimed = service.ClaimReview(current.AttemptId, "reviewer", "host", 60,
+                $"claim-disk-{number}").ReviewAttempt!;
+            Assert.True(service.SettleReview(new SettleReviewAttemptRequest(
+                new AttemptWriteReference(claimed.AttemptId, claimed.LastFence, claimed.AuthorityEpoch,
+                    $"disk-{number}"), "sha-a", ReviewTerminalOutcome.InfrastructureFailure, "DiskFull")).Accepted);
+            Assert.True(service.HasReviewInfrastructureRetryBudget(claimed.AttemptId));
+            Assert.True(service.ScheduleReviewInfrastructureRetry(claimed.AttemptId, "DiskFull").Accepted);
+            current = service.CreateReviewAttempt(new CreateReviewAttemptRequest(
+                claimed.TaskKey, claimed.RepositoryId, claimed.Subject.ExpectedResultSha,
+                claimed.SourceRunAttemptId, claimed.Subject.TaskRequirementsHash,
+                claimed.Subject.ReviewPolicyHash, claimed.Subject.EvidenceDigestInputs,
+                $"disk-retry-{number}", claimed.AttemptId)).ReviewAttempt!;
+            service.ClearScheduledReviewInfrastructureRetry(claimed.AttemptId);
+        }
+        Assert.True(service.HasReviewInfrastructureRetryBudget(current.AttemptId));
+    }
+
+    [Fact]
     public void Review_infrastructure_retry_budget_allows_exactly_two_linked_retries()
     {
         var service = NewService();

@@ -92,6 +92,43 @@ test.describe('Operator attention list', () => {
     await expect(page).toHaveURL(/\/projects\/[^/]+\/operations/);
   });
 
+  test('disk pressure appears in Needs you with a host action', async ({ page }) => {
+    await page.route('**/api/host/filesystems', route => route.fulfill({ json: {
+      host: 'studio-api', observedAt: new Date().toISOString(), level: 'healthy', reason: 'Healthy', filesystems: [],
+      remoteHosts: [{ id: 'gate-ssh:gate-host', host: 'gate-host', observedAt: new Date().toISOString(),
+        level: 'critical', reason: 'Gate disk is critical; admission paused.',
+        filesystems: [{ purpose: 'gate work', path: '/srv/gates', freeBytes: 6 * 1073741824, totalBytes: 246 * 1073741824 }] }],
+    } }));
+    const item = { id: 'host.disk-pressure|review-01', type: 'host.disk-pressure', project: null,
+      cardKey: null, cards: [], title: 'Host review-01 disk space low',
+      reason: 'Host review-01: review work file system at / is critical: 6.5 GiB free (2.6%). New work is paused.',
+      observedAt: new Date().toISOString(), suggestedOperations: ['stalls.inspect'], evidence: [] };
+    await page.route('**/api/operator/attention', route => route.fulfill({ json: { items: [item], count: 1 } }));
+    await gotoStudio(page);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await openAndReconcile(page);
+      const row = page.getByTestId('attention-group-disk').getByTestId('attention-row');
+      await expect(row).toContainText('6.5 GiB free');
+      await expect(row).toContainText('New work is paused');
+      await expect(row.getByTestId('attention-row-action')).toHaveText('Open hosts');
+      await row.scrollIntoViewIfNeeded();
+      await screenshot(page, `disk-pressure-desktop-${theme}--mocked`);
+      await page.getByTestId('studio-attention-list').getByRole('button', { name: 'Close' }).click();
+    }
+    await openAndReconcile(page);
+    await page.getByTestId('attention-group-disk').getByTestId('attention-row-action').click();
+    await expect(page).toHaveURL(/environment/);
+    await page.getByTestId('remote-host-primary-row').filter({ hasText: 'gate-host' }).click();
+    const load = page.getByTestId('remote-host-detail-toggle-load');
+    if (await load.getAttribute('aria-expanded') !== 'true') await load.click();
+    const disks = page.getByTestId('remote-host-filesystems');
+    await expect(disks).toContainText('/srv/gates');
+    await expect(disks).toContainText('free of');
+    await disks.scrollIntoViewIfNeeded();
+    await screenshot(page, 'gate-disk-operations-dark--mocked');
+  });
+
   test('review host drift shows a status cue and opens its host detail', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.route('**/api/workbenches', route => route.fulfill({

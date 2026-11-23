@@ -93,11 +93,25 @@ internal static class ReviewAttemptTemp
     }
 
     /// <summary>Removes the temp root without following links. True when it is gone.</summary>
-    internal static bool Remove(string tempRoot)
+    internal static bool Remove(string tempRoot, Action<string>? delete = null)
     {
         if (!Directory.Exists(tempRoot) && !File.Exists(tempRoot)) return true;
         try
         {
+            delete ??= path =>
+            {
+                if (Directory.Exists(path)) ResilientDirectory.Delete(path);
+                else File.Delete(path);
+            };
+            if (Directory.Exists(tempRoot)
+                && (File.GetAttributes(tempRoot) & FileAttributes.ReparsePoint) == 0)
+            {
+                // Keep the ownership receipt until all potentially locked children
+                // are gone. Otherwise a partial delete makes the orphan unsweepable.
+                foreach (var entry in Directory.EnumerateFileSystemEntries(tempRoot)
+                             .Where(entry => Path.GetFileName(entry) != OwnerFileName))
+                    delete(entry);
+            }
             ResilientDirectory.Delete(tempRoot);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

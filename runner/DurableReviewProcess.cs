@@ -482,7 +482,7 @@ internal sealed class DurableReviewProcess
         {
             result = new DetachedReviewResult(
                 exception.Evidence,
-                exception.Classification,
+                RunnerDiskWriteFailure.IsDiskFull(exception) ? "DiskFull" : exception.Classification,
                 exception.Message,
                 DateTime.UtcNow);
         }
@@ -497,7 +497,7 @@ internal sealed class DurableReviewProcess
         {
             result = new DetachedReviewResult(
                 null,
-                "ReviewWorkerFailed",
+                RunnerDiskWriteFailure.IsDiskFull(exception) ? "DiskFull" : "ReviewWorkerFailed",
                 $"Detached review worker failed: {exception.Message}",
                 DateTime.UtcNow);
         }
@@ -507,6 +507,8 @@ internal sealed class DurableReviewProcess
         // that teardown and be counted as a leftover it had to kill.
         if (shutdownBuildServers) WorkerBuildServerHygiene.ShutdownBuildServers();
 
+        if (result.FailureClassification == "DiskFull")
+            await RunnerDiskAdmission.WaitForRecoveryAsync(options, Console.Error.WriteLine, CancellationToken.None);
         if (!await WriteAtomicAsync(
             Path.Combine(directory, "review-result.json"),
             JsonSerializer.Serialize(result, Json)))
@@ -516,35 +518,44 @@ internal sealed class DurableReviewProcess
 
     internal static async Task<bool> WriteAtomicAsync(string path, string content)
     {
-        var temporary = path + $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
-        try
+        while (true)
         {
-            await using (var stream = new FileStream(
-                             temporary,
-                             FileMode.CreateNew,
-                             FileAccess.Write,
-                             FileShare.None,
-                             4096,
-                             FileOptions.WriteThrough | FileOptions.Asynchronous))
-            await using (var writer = new StreamWriter(stream))
+            var temporary = path + $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
+            try
             {
-                await writer.WriteAsync(content);
-                await writer.FlushAsync();
-                stream.Flush(flushToDisk: true);
+                await using (var stream = new FileStream(
+                                 temporary,
+                                 FileMode.CreateNew,
+                                 FileAccess.Write,
+                                 FileShare.None,
+                                 4096,
+                                 FileOptions.WriteThrough | FileOptions.Asynchronous))
+                await using (var writer = new StreamWriter(stream))
+                {
+                    await writer.WriteAsync(content);
+                    await writer.FlushAsync();
+                    stream.Flush(flushToDisk: true);
+                }
+                File.Move(temporary, path, overwrite: true);
+                return true;
             }
-            File.Move(temporary, path, overwrite: true);
-            return true;
-        }
-        catch (Exception exception) when (exception is DirectoryNotFoundException or FileNotFoundException)
-        {
-            // State deletion is the daemon's acknowledgement that this fenced
-            // worker no longer owns a reportable attempt.
-            return false;
-        }
-        finally
-        {
-            try { File.Delete(temporary); }
-            catch (DirectoryNotFoundException) { }
+            catch (Exception exception) when (RunnerDiskWriteFailure.IsDiskFull(exception))
+            {
+                Console.Error.WriteLine($"DiskFull: review state write paused path={path}; waiting for free space.");
+                await Task.Delay(TimeSpan.FromSeconds(30));
+                if (!Directory.Exists(Path.GetDirectoryName(path))) return false;
+            }
+            catch (Exception exception) when (exception is DirectoryNotFoundException or FileNotFoundException)
+            {
+                // State deletion is the daemon's acknowledgement that this fenced
+                // worker no longer owns a reportable attempt.
+                return false;
+            }
+            finally
+            {
+                try { File.Delete(temporary); }
+                catch (DirectoryNotFoundException) { }
+            }
         }
     }
 

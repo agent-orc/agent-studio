@@ -355,10 +355,15 @@ evidence once a minute. Set
 `DiskPressure:RunnerWorkRoot` and `DiskPressure:ContainerStoragePath` when those
 paths are on other mounts. Runner heartbeats measure their work, state, review,
 salvage, and visible container-storage mounts. Operations shows each file system
-with free bytes and percentage. A low-space finding includes measured product
+with free bytes and percentage. For the compatibility SSH gate host, the API's
+minute sampler reads the filesystem containing `RemoteGate:Root` over the
+configured SSH connection. The bridge preflights that filesystem before starting
+a gate and waits above the warning limits after a critical reading. Operations
+shows this host as `gate-ssh:<host>`; a missing work root uses its nearest existing
+parent filesystem. A low-space finding includes measured product
 consumers when the directory scan can finish.
 
-The warning defaults are 30 GiB or 15% free. The critical defaults are 8 GiB
+The warning defaults are 20 GiB or 15% free. The critical defaults are 8 GiB
 or 5% free. Either limit crossing is enough. Critical space pauses new coding,
 review and gate claims on that host, and the API batch planner reports
 `diskPauseReason`. Existing attempts continue. Admission reopens when every
@@ -376,6 +381,40 @@ completed or archived cards after its configured `SalvageRetentionDays`, while
 active attempts, lease markers, retained worktree markers, dirty worktrees, and
 commits without a remote tracking copy are kept. Unknown card state is a keep
 decision.
+
+Remote review retention runs hourly, including while admission is paused. It
+removes inactive `review-*` attempts older than 72 hours and then removes the
+oldest inactive attempts until their combined size is within 20 GiB. The budget
+includes associated temp directories and the configured review work root's
+`-stale` sibling (`review-work-stale` for `review-work`). Set
+`RUNNER_REVIEW_RETENTION_GIB` on each review role to change the budget. When
+several containers have separate work mounts on one VM, divide the VM's desired
+retention budget among them. Active namespaces, the current root's reusable
+caches, links, and unrecognized folders are excluded. Known caches in the stale
+sibling are abandoned data and join its age and size sweep; they are kept when
+that sibling still contains a known active attempt. A cache or active attempt can therefore
+still exhaust the disk; admission is the final protection.
+
+Temp cleanup preserves `.owner` until child deletion succeeds. A failed delete
+is retried by retention even when the work root no longer exists. If cleanup
+continues to fail, inspect ownership and permissions in the container and the
+logged path. Do not remove active attempt state. The presence of the cleanup
+warning alone does not prove disk exhaustion or a permissions problem.
+
+Disk-full command output and write exceptions settle as `ReviewInfra/DiskFull`.
+The worker waits for space above warning before writing its result, and the
+review executor waits before reporting it. The infrastructure successor uses
+backoff and host admission, without charging the card's ordinary infrastructure
+retry budget or opening a product finding. Operations retains the disk reason;
+Needs you shows a host disk-space item until recovery. Existing gates already
+classify disk-full output as `DiskFull` and use infrastructure retry handling.
+
+For a low-space host, inspect `df -h`, `docker system df`, the review work and
+stale roots, and the retention logs. Reclaim unused review images through the
+verified rollout procedure, or remove specific unused images after confirming
+the current and previous images. Build cache may be reclaimed with
+`docker builder prune` during maintenance. Restore free space above both warning
+limits so paused claims resume. Avoid broad volume pruning.
 
 Container image and build-cache pruning belongs to the deployment tooling;
 the product reports that mount but does not delete container images.

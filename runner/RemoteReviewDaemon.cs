@@ -495,13 +495,6 @@ public sealed class RemoteReviewDaemon
                     var occupied = Math.Max(active.Count, persisted.Busy + persisted.Unreadable);
                     HostRoleDrainControl.Acknowledge(_options.StateDir, "review", hostDrain, occupied);
                     idleWatchdog.RecordPollStarted();
-                    var disk = diskAdmission.Observe();
-                    if (disk.Level == HostDiskPressureLevel.Critical)
-                    {
-                        _log($"review claim paused on {_options.Hostname}: {disk.Reason}");
-                        await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown);
-                        continue;
-                    }
                     if (occupied == 0)
                     {
                         drainedToStop = true;
@@ -584,7 +577,7 @@ public sealed class RemoteReviewDaemon
                                 _options.ReviewWorkDir,
                                 active.Select(slot => slot.ResourceNamespace),
                                 DateTime.UtcNow,
-                                _log);
+                                _log, maximumRetainedBytes: _options.ReviewRetentionBytes);
                             CliProcessReaper.RecordExternalReap(CliOrphanSweep.Sweep(
                                 [_options.ReviewWorkDir],
                                 ReviewSlotReconciler.MaximumDormantAge,
@@ -650,7 +643,8 @@ public sealed class RemoteReviewDaemon
                             // Admission polls read only cpu.max. The stateful
                             // throttling delta belongs exclusively to the
                             // minutely capability advertisement above.
-                            planeBudgetProbe.ReadRoleQuotaCores());
+                            planeBudgetProbe.ReadRoleQuotaCores(),
+                            diskAdmission.Observe());
                     if (!admission.Admitted)
                     {
                         if (!admissionClosed)

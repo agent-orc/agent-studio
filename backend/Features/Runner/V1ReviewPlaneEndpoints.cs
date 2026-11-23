@@ -1776,6 +1776,7 @@ public static class V1ReviewPlaneEndpoints
             var interventionStep = PipelineCatalogue.FindStep(PipelineCatalogue.FailureInterventionStepId)!;
             var breakerEnabled = causeBreakers.IsEnabled(task.ProjectName);
             if (infrastructureFailure
+                && !string.Equals(request.FailureClassification, "DiskFull", StringComparison.OrdinalIgnoreCase)
                 && !aspectRetryExhausted
                 && !diagnosisContractUnsupported
                 && (breakerEnabled
@@ -1835,12 +1836,14 @@ public static class V1ReviewPlaneEndpoints
                     intervention = await failureInterventions.RaiseAsync(task, failureEvidence, ct);
                 }
             }
-            if (breakerEnabled && settled.ReviewAttempt.Outcome != ReviewTerminalOutcome.Pass)
+            if (breakerEnabled && request.FailureClassification != "DiskFull"
+                && settled.ReviewAttempt.Outcome != ReviewTerminalOutcome.Pass)
                 probeFailed = causeBreakers.ObserveProbeFailure(task,
                     settled.ReviewAttempt.TaskKey, settled.ReviewAttempt.AttemptId, request.Outcome);
             var retry = infrastructureFailure && MonolithTransitionAdapter.TransitionDecisionPolicyRetryInfrastructure(
                 authority.HasReviewInfrastructureRetryBudget(settled.ReviewAttempt.AttemptId),
-                aspectRetryExhausted, intervention is not null, probeFailed, !diagnosisContractUnsupported);
+                aspectRetryExhausted, intervention is not null, probeFailed, !diagnosisContractUnsupported,
+                request.FailureClassification);
             var repeatDiagnosis = infrastructureFailure
                 ? RecordInfrastructureRepeatDiagnosis(authority, timeline, task, settled.ReviewAttempt)
                 : null;

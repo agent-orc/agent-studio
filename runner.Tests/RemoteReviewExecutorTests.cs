@@ -54,6 +54,21 @@ public sealed class RemoteReviewExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task Disk_full_preparation_reports_the_disk_cause()
+    {
+        var handler = new InterruptedArtifactHandler { DiskFull = true };
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        var options = Options();
+        using var client = new TaskServerClient(http, options.RunnerId, usesDurableTaskServer: true, options: options);
+        var state = new ReviewStateStore(options.StateDir);
+        Assert.Equal(3, await new RemoteReviewExecutor(options, client, state, _ => { })
+            .RunClaimedAsync(Claim(), CancellationToken.None));
+        var report = Assert.Single(handler.Reports);
+        Assert.Equal("ReviewInfra", report.Outcome);
+        Assert.Equal("DiskFull", report.FailureClassification);
+    }
+
+    [Fact]
     public async Task Graceful_shutdown_during_preparation_hands_the_attempt_to_the_replacement()
     {
         // AGT-3647: a daemon stop is not a lost review. The slot stays for the
@@ -652,6 +667,7 @@ public sealed class RemoteReviewExecutorTests : IDisposable
 
     private sealed class InterruptedArtifactHandler : HttpMessageHandler
     {
+        public bool DiskFull { get; init; }
         public TaskCompletionSource ArtifactRequested { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public List<ReviewReportRequest> Reports { get; } = [];
@@ -664,6 +680,7 @@ public sealed class RemoteReviewExecutorTests : IDisposable
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
             if (request.Method == HttpMethod.Get && path.EndsWith("/artifacts/bundle/content", StringComparison.Ordinal))
             {
+                if (DiskFull) throw new IOException("No space left on device");
                 ArtifactRequested.TrySetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
                 throw new InvalidOperationException("The cancelled artifact request must not complete.");

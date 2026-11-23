@@ -1,8 +1,8 @@
 namespace AgentRunner;
 
 /// <summary>
-/// Removes abandoned remote-review attempt workspaces after a fixed safety
-/// window. The reusable baseline, verify and dependency caches and every attempt
+/// Removes abandoned remote-review workspaces by age and size budget.
+/// The current root's reusable baseline, verify and dependency caches and every attempt
 /// the daemon still owns are outside the deletion set. An attempt's short temp
 /// root below <c>/tmp</c> goes with its attempt, and one whose attempt is
 /// already gone is removed by its owner file (AGT-3429).
@@ -17,6 +17,7 @@ namespace AgentRunner;
 internal static class ReviewWorkspaceRetention
 {
     internal static readonly TimeSpan MaximumOrphanAge = TimeSpan.FromHours(72);
+    internal const long MaximumRetainedBytes = 20L * 1024 * 1024 * 1024;
     internal static readonly TimeSpan MaximumPackageAge = TimeSpan.FromDays(30);
     private const string NuGetPackageMarkerFileName = ".nupkg.metadata";
     private const string NuGetLockDirectoryName = "lock";
@@ -30,11 +31,10 @@ internal static class ReviewWorkspaceRetention
         IEnumerable<string> activeResourceNamespaces,
         DateTime utcNow,
         Action<string> log,
-        string? tempBase = null)
+        string? tempBase = null,
+        long maximumRetainedBytes = MaximumRetainedBytes)
     {
-        var root = Path.GetFullPath(reviewWorkDir);
-        if (!Directory.Exists(root))
-            return new ReviewWorkspaceRetentionResult(0, 0, 0, 0, 0);
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(reviewWorkDir));
         tempBase ??= ReviewAttemptTemp.DefaultBase();
 
         var active = activeResourceNamespaces
@@ -46,12 +46,22 @@ internal static class ReviewWorkspaceRetention
         var youngSkipped = 0;
         var unsafeSkipped = 0;
 
-        foreach (var directory in Directory.EnumerateDirectories(root))
+        // A previous installation may have moved settled work to this sibling.
+        // Never traverse a linked root, or unrecognized folders inside either root.
+        var roots = new[] { root, root + "-stale" }
+            .Where(path => Directory.Exists(path)
+                && (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0).ToArray();
+        var staleRoot = root + "-stale";
+        var staleHasActiveAttempt = roots.Contains(staleRoot) && SafeDirectories(staleRoot)
+            .Any(path => active.Contains(Path.GetFileName(path)));
+        var candidates = new List<(DirectoryInfo Info, long Bytes, long TempBytes)>();
+        foreach (var directory in roots.SelectMany(path => Directory.EnumerateDirectories(path)))
         {
             var info = new DirectoryInfo(directory);
-            if (info.Name is BaselineCacheDirectoryName or DependencyCacheDirectoryName or VerifyCacheDirectoryName)
-                continue;
-            if (!info.Name.StartsWith(AttemptDirectoryPrefix, StringComparison.Ordinal))
+            var reusableCache = info.Name is BaselineCacheDirectoryName or DependencyCacheDirectoryName or VerifyCacheDirectoryName;
+            var stale = string.Equals(info.Parent?.FullName, staleRoot, StringComparison.Ordinal);
+            if (reusableCache && (!stale || staleHasActiveAttempt)) continue;
+            if (!info.Name.StartsWith(AttemptDirectoryPrefix, StringComparison.Ordinal) && !reusableCache)
             {
                 unsafeSkipped++;
                 continue;
@@ -68,21 +78,39 @@ internal static class ReviewWorkspaceRetention
                 unsafeSkipped++;
                 continue;
             }
-            if (utcNow - info.LastWriteTimeUtc <= MaximumOrphanAge)
+            try
+            {
+                var temp = ReviewAttemptTemp.Root(tempBase, info.FullName);
+                var tempBytes = Directory.Exists(temp)
+                    && (File.GetAttributes(temp) & FileAttributes.ReparsePoint) == 0 ? DirectoryBytes(temp) : 0;
+                candidates.Add((info, DirectoryBytes(info.FullName) + tempBytes, tempBytes));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                unsafeSkipped++;
+                log($"review retention measurement failed path={info.FullName}: {exception.Message}");
+            }
+        }
+
+        var retainedBytes = candidates.Sum(candidate => candidate.Bytes);
+        foreach (var (info, bytes, tempBytes) in candidates.OrderBy(candidate => candidate.Info.LastWriteTimeUtc))
+        {
+            if (utcNow - info.LastWriteTimeUtc <= MaximumOrphanAge
+                && retainedBytes <= Math.Max(0, maximumRetainedBytes))
             {
                 youngSkipped++;
                 continue;
             }
-
             try
             {
                 var age = utcNow - info.LastWriteTimeUtc;
-                ReviewAttemptTemp.Remove(ReviewAttemptTemp.Root(tempBase, info.FullName));
+                var tempGone = ReviewAttemptTemp.Remove(ReviewAttemptTemp.Root(tempBase, info.FullName));
                 ResilientDirectory.Delete(info.FullName);
                 if (!Directory.Exists(info.FullName))
                 {
                     removed++;
-                    log($"removed expired review workspace path={info.FullName} ageHours={age.TotalHours:F1}");
+                    retainedBytes -= bytes - (tempGone ? 0 : tempBytes);
+                    log($"removed retained review workspace path={info.FullName} ageHours={age.TotalHours:F1}");
                 }
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -91,7 +119,8 @@ internal static class ReviewWorkspaceRetention
             }
         }
 
-        var tempRemoved = ReviewAttemptTemp.SweepOrphans(tempBase, root, active, log);
+        var tempRemoved = new[] { root, root + "-stale" }
+            .Sum(path => ReviewAttemptTemp.SweepOrphans(tempBase, path, active, log));
         // A package version is only safe to remove while no attempt can be
         // resolving or compiling against it.
         var packagesRemoved = active.Count == 0
@@ -106,7 +135,7 @@ internal static class ReviewWorkspaceRetention
             unsafeSkipped,
             tempRemoved,
             packagesRemoved);
-        log($"review workspace retention inspected={result.Inspected} removed={result.Removed} activeSkipped={result.ActiveSkipped} youngSkipped={result.YoungSkipped} unsafeSkipped={result.UnsafeSkipped} tempRemoved={result.TempRemoved} nugetPackagesRemoved={result.PackagesRemoved} reusableCaches=preserved cutoffHours={MaximumOrphanAge.TotalHours:F0}");
+        log($"review workspace retention inspected={result.Inspected} removed={result.Removed} activeSkipped={result.ActiveSkipped} youngSkipped={result.YoungSkipped} unsafeSkipped={result.UnsafeSkipped} tempRemoved={result.TempRemoved} nugetPackagesRemoved={result.PackagesRemoved} reusableCaches=preserved cutoffHours={MaximumOrphanAge.TotalHours:F0} retainedBytes={retainedBytes} budgetBytes={maximumRetainedBytes}");
         return result;
     }
 
@@ -152,6 +181,19 @@ internal static class ReviewWorkspaceRetention
         if (removed > 0)
             log($"pruned shared review nuget packages removed={removed} cutoffDays={MaximumPackageAge.TotalDays:F0} path={packages}");
         return removed;
+    }
+
+    private static long DirectoryBytes(string path)
+    {
+        long bytes = 0;
+        foreach (var entry in Directory.GetFileSystemEntries(path))
+        {
+            var attributes = File.GetAttributes(entry);
+            if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
+            bytes += (attributes & FileAttributes.Directory) != 0
+                ? DirectoryBytes(entry) : new FileInfo(entry).Length;
+        }
+        return bytes;
     }
 
     private static IEnumerable<string> SafeDirectories(string path)
