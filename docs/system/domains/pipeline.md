@@ -280,6 +280,18 @@ process plumbing) and the project's declared environment are supplied. Daemon
 `RUNNER_*`, `AGENT_HOST_*`, provider credentials, and Git credentials are not
 inherited. The worker also removes its service-token variables from declared
 values. Repository fetches keep the host's existing credential routing.
+Host-owned Linux commands also run in a fresh sibling `worker-*` cgroup for
+each command (AGT-3983), using the coding worker's CPU and task envelope under
+the role aggregate. Attachment is required before the command executes. The
+scheduler defers execution when delegation is unavailable; it never falls back
+into the daemon leaf. Completion or cancellation kills remaining cgroup
+residents and removes the command marker. The review build-server fence also
+prevents host-shared MSBuild or Roslyn servers from doing work outside that
+command's cgroup. Standalone timer invocations keep
+their independently configured service context. Real cgroup tests are
+`MachineBound` and require an explicitly owned transient test scope, rather
+than borrowing the daemon's delegated service subtree.
+
 This bounds environment inheritance; the commands still run under the host
 account and can access its readable files, including files under `HOME`.
 `--dry-run` prints the fetch and command plan without
@@ -295,6 +307,19 @@ projects the state, last green SHA, nightly verdict, and red duration. The board
 header reads the smaller `/api/develop-states` projection. The state is evidence for the separate red
 develop repair and release-hold cards; this unit does not open a repair card or
 alter integration transitions.
+
+A red incident's two-hour escalation leaves repair cards in Auto Review
+(including queued or executing gates), Human Review, Completed, and Archive
+with their delivery owner. Both receipt processing and the periodic overdue
+check apply this rule through `RedDevelopRepairPolicy`; the final escalation
+also rereads the lane and fences its move against that source state. The
+project's temporary pre-merge fallback still applies while develop stays red.
+
+Incident attribution and a `Revert` recommendation do not prove a published
+revert. Green receipts close incidents without reopening original suspect
+cards, including old resolved incidents retried after restart. If a published
+revert is later proven, reopening its original card is an explicit task action
+with that evidence, rather than a side effect of a green receipt.
 
 The Dossier's recorded working decisions are D1 T-B, D2 A, D3 A, D4 A,
 D5 L-B, D6 A, D7 A-B, D8 A, D9 A, and D10 A. This card implements T3 under
@@ -419,8 +444,9 @@ The project post-merge store keeps one open incident per fingerprint. A repeat
 red receipt reuses that card; a green receipt closes open incidents and records
 their red duration. A red terminal verdict blocks release creation. The
 scheduled runner invokes an escalation check even when the checkout is busy;
-it escalates an incident that has remained red for two hours and offers the
-project's pre-merge batch gate as the fallback.
+it escalates an incident that has remained red for two hours when its repair
+is outside the delivery lanes described above, and offers the project's
+pre-merge batch gate as the fallback.
 The integration executor reads that project state before publication. While
 the latest terminal T3 verdict is red, it compares the delivery's changed
 paths with open incident paths under its publication lease. An overlap

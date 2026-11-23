@@ -8,7 +8,7 @@ namespace AgentRunner;
 /// and exact-tip run fencing remain on Studio; checkout locks also cover legacy timers.</summary>
 public sealed class PostMergeHostScheduler(HttpClient http, string stateDirectory,
     int maxSlots, IReadOnlyList<string> stateDirectories, TimeProvider clock,
-    Func<CoverageHostLoad> probeHost, Action<string> log)
+    Func<CoverageHostLoad> probeHost, Action<string> log, RunnerOptions? hostOptions = null)
 {
     private string? _executingProject;
     public const int DefaultWindowMinutes = 30;
@@ -47,7 +47,7 @@ public sealed class PostMergeHostScheduler(HttpClient http, string stateDirector
         }
         var scheduler = new PostMergeHostScheduler(http, options.StateDir,
             Math.Max(1, options.HostMaxParallelism), StateDirectories(), TimeProvider.System,
-            () => CoverageRunCommand.ProbeHost(StateDirectories()), log);
+            () => CoverageRunCommand.ProbeHost(StateDirectories()), log, options);
         var execution = Task.CompletedTask;
         try
         {
@@ -124,6 +124,12 @@ public sealed class PostMergeHostScheduler(HttpClient http, string stateDirector
         {
             if (!System.Text.RegularExpressions.Regex.IsMatch(project.ProjectId, "^PROJ-[0-9]{3,}$"))
                 throw new IOException("Post-merge target has an invalid stable project ID.");
+            if (!observeOnly && hostOptions is not null && OperatingSystem.IsLinux()
+                && (!hostOptions.WorkerEnvelopeEnabled || WorkerCgroup.EnsureDelegationRoot(log) is null))
+            {
+                log($"post-merge project={project.ProjectId} deferred: worker cgroup delegation is unavailable");
+                return;
+            }
             var checkout = Path.Combine(stateDirectory, "post-merge", project.ProjectId);
             var options = new PostMergeRunOptions(project.Project, checkout, http.BaseAddress!.ToString(),
                 project.Branch, "origin", "", mode, PostMergeRunPlan.DefaultMaxMerges,
@@ -144,7 +150,7 @@ public sealed class PostMergeHostScheduler(HttpClient http, string stateDirector
             if (!observeOnly) Volatile.Write(ref _executingProject, project.ProjectId);
             try
             {
-                await new PostMergeRunCommand(options, output, clock, http, Admission).ExecuteAsync(deadline.Token, observeOnly);
+                await new PostMergeRunCommand(options, output, clock, http, Admission, hostOptions).ExecuteAsync(deadline.Token, observeOnly);
             }
             finally { if (!observeOnly) Volatile.Write(ref _executingProject, null); }
         }

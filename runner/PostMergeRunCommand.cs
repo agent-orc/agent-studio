@@ -62,15 +62,17 @@ public sealed class PostMergeRunCommand
     private readonly TimeProvider _clock;
     private readonly HttpClient _http;
     private readonly Func<CoverageHostLoad> _probeHost;
+    private readonly RunnerOptions? _hostOptions;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public PostMergeRunCommand(PostMergeRunOptions options, TextWriter output, TimeProvider clock,
-        HttpClient http, Func<CoverageHostLoad>? probeHost = null)
+        HttpClient http, Func<CoverageHostLoad>? probeHost = null, RunnerOptions? hostOptions = null)
     {
         _options = options;
         _output = output;
         _clock = clock;
         _http = http;
+        _hostOptions = hostOptions;
         _probeHost = probeHost ?? (() => CoverageRunCommand.ProbeHost(options.StateDirectories));
     }
 
@@ -462,10 +464,14 @@ public sealed class PostMergeRunCommand
         _output.WriteLine($"post-merge {command}");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromHours(2));
+        using var envelope = PostMergeCommandEnvelope.Prepare(_hostOptions, line => _output.WriteLine(line));
+        var launch = envelope?.Launch("sh", ["-c", command]) ?? new WorkerLaunch("sh", ["-c", command]);
+        var childEnvironment = ChildEnvironment(environment);
+        if (envelope is not null) childEnvironment = envelope.ChildEnvironment(childEnvironment);
         try
         {
-            var result = await ProcessRunner.RunAsync("sh", ["-c", command], _options.Checkout,
-                environment: ChildEnvironment(environment), clearEnvironment: true,
+            var result = await ProcessRunner.RunAsync(launch.FileName, launch.Arguments, _options.Checkout,
+                environment: childEnvironment, clearEnvironment: true,
                 onStdOut: line => _output.WriteLine(line),
                 onStdErr: line => _output.WriteLine(line),
                 isolateProcessGroup: OperatingSystem.IsLinux(), ct: timeout.Token);

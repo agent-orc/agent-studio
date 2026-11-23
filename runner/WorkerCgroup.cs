@@ -106,6 +106,10 @@ internal sealed class WorkerCgroup
         + "printf '[runner] worker cgroup attach failed: %s\\n' \"$1\" >&2; "
         + "shift; exec \"$@\"";
 
+    // Host-owned commands must never fall back into the daemon's leaf.
+    internal const string RequiredAttachScript =
+        "printf '%s\\n' \"$$\" >\"$1\" 2>/dev/null || exit 125; shift; exec \"$@\"";
+
     private static readonly object ResolveGate = new();
     private static string? _delegationRoot;
     private static bool _delegationResolved;
@@ -352,12 +356,12 @@ internal sealed class WorkerCgroup
             ? new WorkerLaunch(fileName, arguments)
             : Wrap(cgroup.ProcsPath, fileName, arguments);
 
-    internal static WorkerLaunch Wrap(string procsPath, string fileName, IReadOnlyList<string> arguments)
+    internal static WorkerLaunch Wrap(string procsPath, string fileName, IReadOnlyList<string> arguments, bool requireAttachment = false)
     {
         var wrapped = new List<string>(arguments.Count + 4)
         {
             "-c",
-            AttachScript,
+            requireAttachment ? RequiredAttachScript : AttachScript,
             "agent-host-worker",
             procsPath,
             fileName,
