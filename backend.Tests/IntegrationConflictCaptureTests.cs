@@ -43,7 +43,9 @@ public sealed class IntegrationConflictCaptureTests : IDisposable
         if (ledgerUnavailable) File.WriteAllText(ledgerPath, "not a directory");
         var ledger = new IntegrationConflictLedger(ledgerPath);
         var passed = DateTimeOffset.UnixEpoch;
-        using (IntegrationConflictCapture.Begin("Project", "AGT-2", "develop", delivery, baseSha, passed, ledger))
+        var reviewReads = 0;
+        using (IntegrationConflictCapture.Begin("Project", "AGT-2", "develop", delivery, baseSha,
+            ledger: ledger, reviewTimeProvider: () => { reviewReads++; return passed; }))
         {
             if (direct)
             {
@@ -54,9 +56,11 @@ public sealed class IntegrationConflictCaptureTests : IDisposable
             {
                 var result = service.ReplayBatchMember(_root, "task/agt-2", delivery, tip);
                 Assert.Equal(additions, result.Success);
+                using var pinned = IntegrationConflictCapture.Pin(delivery, tip);
                 IntegrationConflictCapture.Resolve(result.Success ? "mechanical" : "parked");
             }
         }
+        Assert.Equal(1, reviewReads);
         if (!ledgerUnavailable)
         {
             var row = Assert.Single(ledger.Read("Project"));
@@ -74,6 +78,41 @@ public sealed class IntegrationConflictCaptureTests : IDisposable
         }
         Assert.Equal("", Git("status", "--porcelain", "--untracked-files=no"));
         Assert.Single(Git("worktree", "list", "--porcelain").Split('\n'), line => line.StartsWith("worktree "));
+    }
+
+    [Fact]
+    public void CleanReplayDoesNotReadReviewHistory()
+    {
+        Directory.CreateDirectory(_root);
+        Git("init", "-q");
+        Git("config", "user.name", "Test");
+        Git("config", "user.email", "test@example.invalid");
+        File.WriteAllText(Path.Combine(_root, "base.cs"), "base\n");
+        Git("add", ".");
+        Git("commit", "-qm", "base");
+        var baseSha = Git("rev-parse", "HEAD");
+        Git("checkout", "-qb", "develop");
+        File.WriteAllText(Path.Combine(_root, "first.cs"), "first\n");
+        Git("add", ".");
+        Git("commit", "-qm", "AGT-1: first card");
+        var tip = Git("rev-parse", "HEAD");
+        Git("checkout", "-qb", "task/agt-2", baseSha);
+        File.WriteAllText(Path.Combine(_root, "second.cs"), "second\n");
+        Git("add", ".");
+        Git("commit", "-qm", "AGT-2: second card");
+        var delivery = Git("rev-parse", "HEAD");
+        var config = new ConfigurationBuilder().Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var service = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var ledger = new IntegrationConflictLedger(Path.Combine(_root, ".git", "conflicts"));
+        var reads = 0;
+        using var capture = IntegrationConflictCapture.Begin("Project", "AGT-2", "develop", delivery,
+            ledger: ledger, reviewTimeProvider: () => { reads++; return DateTimeOffset.UnixEpoch; });
+        var result = service.ReplayBatchMember(_root, "task/agt-2", delivery, tip);
+        Assert.True(result.Success, result.Error);
+        Assert.Equal(0, reads);
+        Assert.Empty(ledger.Read("Project"));
     }
 
     [Fact]

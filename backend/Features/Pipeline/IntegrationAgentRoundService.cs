@@ -342,7 +342,8 @@ public sealed class IntegrationAgentRoundService
             position,
             supersession.MarkedCommits);
         IntegrationConflictLedger.Default.Resolve(request.Project, subject.TaskKey, subject.ResultSha,
-            request.IntegrationBranch, "agent-round");
+            request.IntegrationBranch, "agent-round",
+            integrationTip: result.ConflictReport?.IntegrationTipSha ?? result.PreviousIntegrationSha);
         return Task.FromResult(new IntegrationAgentRoundStartResult(true, prompt)
         {
             BudgetUsed = budget.Used + 1,
@@ -364,7 +365,8 @@ public sealed class IntegrationAgentRoundService
         var conflictSubject = subject ?? ReviewSubjectStore.Read(folderPath);
         if (conflictSubject is not null)
             IntegrationConflictLedger.Default.Resolve(request.Project, conflictSubject.TaskKey,
-                conflictSubject.ResultSha, request.IntegrationBranch, "parked");
+                conflictSubject.ResultSha, request.IntegrationBranch, "parked",
+                integrationTip: result.ConflictReport?.IntegrationTipSha ?? result.PreviousIntegrationSha);
         var details = new Dictionary<string, string>
         {
             ["outcome"] = result.Outcome.ToString(),

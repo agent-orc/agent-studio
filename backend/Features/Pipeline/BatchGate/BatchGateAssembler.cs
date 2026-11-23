@@ -42,6 +42,7 @@ public sealed class BatchGateAssembler
             {
                 using var capture = IntegrationConflictCapture.Begin(member.Project, member.TaskKey,
                     member.IntegrationBranch, member.ResultSha, reviewedAt: member.ReviewCompletedAtUtc);
+                using var pinned = IntegrationConflictCapture.Pin(member.ResultSha, tip);
                 var result = git.ReplayBatchMember(repositoryPath, member.ResultRef, member.ResultSha, tip);
                 IntegrationConflictCapture.Resolve(result.Success ? "mechanical" : "parked");
                 return result;
@@ -108,7 +109,7 @@ public sealed class BatchGateAssembler
                     SiblingKeys = siblings,
                 });
                 IntegrationConflictLedger.Default.Resolve(member.Project, member.TaskKey,
-                    member.ResultSha, member.IntegrationBranch, "deferred");
+                    member.ResultSha, member.IntegrationBranch, "deferred", integrationTip: tip);
                 siblingDeferred.Add(member.TaskKey);
                 _store.AppendState(new BatchGateState(
                     batchId, manifest.MembershipDigest, BatchPhase.Assembling,

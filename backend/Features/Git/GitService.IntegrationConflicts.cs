@@ -188,11 +188,12 @@ public partial class GitService
             var cards = touches.SelectMany(touch => touch.CardKeys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
             files.Add(new IntegrationConflictFile(path, hunks, cards) { Commits = touches });
         }
+        var reviewedAt = context.ReviewedAt.Value;
         var at = DateTimeOffset.UtcNow;
         var id = IntegrationConflictLedger.Hash($"{context.Project.ToUpperInvariant()}\n{context.CardKey.ToUpperInvariant()}\n{context.Target}\n{context.DeliverySha}\n{context.Tip}");
         context.Ledger.Record(new IntegrationConflictEntry(1, id, context.Project, context.CardKey,
-            context.Target, context.DeliverySha, baseSha, context.Tip, at, context.ReviewedAt,
-            context.ReviewedAt is { } reviewed ? Math.Max(0, (at - reviewed).TotalSeconds) : null,
+            context.Target, context.DeliverySha, baseSha, context.Tip, at, reviewedAt,
+            reviewedAt is { } reviewed ? Math.Max(0, (at - reviewed).TotalSeconds) : null,
             commits, files, "pending", at));
     }
 
