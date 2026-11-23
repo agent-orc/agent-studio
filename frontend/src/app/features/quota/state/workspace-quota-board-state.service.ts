@@ -23,6 +23,7 @@ export interface WorkspaceQuotaBoardAdmission {
   workspaceId: string;
   workspace: WorkspaceQuotaAdmission;
   projects: WorkspaceQuotaAdmission[];
+  cardRefusals?: Record<string, string>;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -32,6 +33,8 @@ export class WorkspaceQuotaBoardState {
   private readonly projectMessages = signal<Record<string, string>>({});
   /** Workspace quota for the Studio header; null before the first read and after a failed one. */
   readonly workspaceQuota = signal<WorkspaceQuotaAdmission | null>(null);
+  readonly projectQuotas = signal<WorkspaceQuotaAdmission[]>([]);
+  private readonly cardRefusals = signal<Record<string, string>>({});
   private loadedWorkspace: string | null = null;
   private sequence = 0;
 
@@ -53,6 +56,8 @@ export class WorkspaceQuotaBoardState {
       next: admission => {
         if (sequence !== this.sequence) return;
         this.workspaceQuota.set(admission.workspace);
+        this.projectQuotas.set(admission.projects);
+        this.cardRefusals.set(admission.cardRefusals ?? {});
         this.setWorkspace(refusal(admission.workspace));
         const messages: Record<string, string> = {};
         for (const project of admission.projects) {
@@ -75,12 +80,14 @@ export class WorkspaceQuotaBoardState {
     });
   }
 
-  messageFor(projectName: string): string | null {
-    return this.projectMessages()[projectName] ?? this.workspaceMessage();
+  messageFor(projectName: string, cardId?: string): string | null {
+    return (cardId ? this.cardRefusals()[projectName + "/" + cardId] : null) ?? this.projectMessages()[projectName] ?? this.workspaceMessage();
   }
 
   private clear(): void {
     this.workspaceQuota.set(null);
+    this.projectQuotas.set([]);
+    this.cardRefusals.set({});
     this.workspaceMessage.set(null);
     this.projectMessages.set({});
   }

@@ -61,6 +61,8 @@ export interface UsageProjectCost {
   unpricedWeekRuns?: number;
   coverage: UsageSourceState;
   latestReceiptAt?: string | null;
+  weeklyBudgetUsd?: number | null;
+  budgetWeekSpentUsd?: number | null;
 }
 
 export interface UsageCostProjection {
@@ -80,6 +82,9 @@ export interface UsageCostProjection {
   latestReceiptAt?: string | null;
   dailyBudgetUsd?: number | null;
   weeklyBudgetUsd?: number | null;
+  budgetWeekSpentUsd?: number | null;
+  budgetWeekEndUtc?: string | null;
+  budgetWeekStartUtc?: string | null;
 }
 
 export interface UsageSlotPool {

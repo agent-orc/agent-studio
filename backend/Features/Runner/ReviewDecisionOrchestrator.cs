@@ -241,6 +241,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private readonly MonolithOrchestrationStore? _orchestration;
     private readonly ReviewInputDecisionGateway? _reviewInputDecisions;
     private readonly QuotaAdmissionService? _quotaAdmission;
+    private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
     private readonly ReportContentReviewService _reportReview;
 
     /// <summary>
@@ -302,7 +303,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         TimeProvider? timeProvider = null,
         ReviewInputDecisionGateway? reviewInputDecisions = null,
         QuotaAdmissionService? quotaAdmission = null,
-        ReportContentReviewService? reportReview = null)
+        ReportContentReviewService? reportReview = null,
+        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null)
     {
         _scanner = scanner;
         _stateMachine = stateMachine;
@@ -344,6 +346,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _orchestration = orchestration;
         _reviewInputDecisions = reviewInputDecisions;
         _quotaAdmission = quotaAdmission;
+        _workspaceQuota = workspaceQuota;
         _reportReview = reportReview
             ?? new ReportContentReviewService(aspectRunner, configuration, projectSettings, attemptAuthority);
 
@@ -2807,6 +2810,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         foreach (var aspectId in enabledAspects)
         {
             var stepId = $"aspect-{aspectId}";
+            if (RefuseSpendBudget(current, stepId, StepKind.Aspect)) return;
             var aspectCli = cliForAspect?.Invoke(aspectId) ?? NormalizeReviewCliType(cliBinary);
             var candidateModel = modelForAspect?.Invoke(aspectId) ?? aspectModel;
             var aspectThinking = thinkingLevelForAspect?.Invoke(aspectId);
@@ -5398,6 +5402,18 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         });
     }
 
+    /// <summary>Leaves a spend-producing step pending when quota admission refuses it.</summary>
+    internal bool RefuseSpendBudget(TaskInfo task, string stepId, StepKind kind)
+    {
+        if (_workspaceQuota?.Admit(task) is not { Allowed: false } refusal)
+            return false;
+        _pipelineLog?.RecordStep(task.FolderPath, new PipelineStepExecution
+        {
+            StepId = stepId, Kind = kind, Status = PipelineStepStatus.Pending, Reason = refusal.Message,
+        });
+        return true;
+    }
+
     /// <summary>
     /// Run the automatic post-CORE quality-grade code-review step (ASS-1657)
     /// and record it on the pipeline. It assigns an A/B/C/D grade and structured
@@ -5484,6 +5500,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var thinkingLevel = catalogueStep is null
                 ? null
                 : PipelineStepConfigResolver.ResolveThinkingLevel(projectSettings, catalogueStep, cli, model);
+            if (RefuseSpendBudget(job, stepId, StepKind.Orchestrator)) return null;
             var gradeAdmission = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
                 cli, model, thinkingLevel, entry.Name, 0, "review-grade", SameClassOnly: true));
             if (gradeAdmission is { ShouldLaunch: false })

@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 
 namespace AgentStudio.TaskServer;
 
-public sealed record WorkspaceQuotaVerdict(bool Allowed, string? Message, bool MeterUnavailable = false);
+public sealed record WorkspaceQuotaVerdict(bool Allowed, string? Message, bool MeterUnavailable = false, IReadOnlyDictionary<string, string>? CardRefusals = null);
 
 public interface IWorkspaceQuotaAdmission
 {
@@ -41,6 +41,8 @@ public sealed class WorkspaceQuotaVerdictCache(IWorkspaceQuotaAdmission admissio
 
     // CardNoticePending: the next claimed card of this project still owes one meter-unavailable event.
     private sealed record Entry(WorkspaceQuotaVerdict Verdict, DateTimeOffset FetchedAt, bool CardNoticePending);
+
+    public bool HasCardBudgets => _entries.Values.Any(entry => entry.Verdict.CardRefusals is not null);
 
     public string State => _entries.Values.Any(entry => entry.Verdict.MeterUnavailable)
         ? WorkspaceQuotaAdmissionStates.Unreachable : WorkspaceQuotaAdmissionStates.On;
@@ -81,7 +83,8 @@ public sealed class WorkspaceQuotaVerdictCache(IWorkspaceQuotaAdmission admissio
     }
 
     private bool IsFresh(string name)
-        => _entries.TryGetValue(name, out var entry) && clock.GetUtcNow() - entry.FetchedAt < Ttl;
+        => _entries.TryGetValue(name, out var entry) && entry.Verdict.CardRefusals is null
+            && clock.GetUtcNow() - entry.FetchedAt < Ttl;
 
     private async Task<WorkspaceQuotaTransition?> RunOwnedAsync(
         string name, Lazy<Task<WorkspaceQuotaTransition?>> mine)
@@ -106,6 +109,9 @@ public sealed class WorkspaceQuotaVerdictCache(IWorkspaceQuotaAdmission admissio
                 $"Quota admission failed ({ex.GetType().Name}); the claim proceeded and the meter needs attention.", true);
         }
         var previous = _entries.TryGetValue(name, out var known) ? known : null;
+        if (verdict.MeterUnavailable && previous?.Verdict.CardRefusals is { } cardRefusals)
+            verdict = verdict with { Allowed = false,
+                Message = "card-budget-meter-unavailable: known card budgets cannot be verified.", CardRefusals = cardRefusals };
         var wasUnavailable = previous?.Verdict.MeterUnavailable == true;
         _entries[name] = new Entry(verdict, clock.GetUtcNow(),
             verdict.MeterUnavailable && (!wasUnavailable || previous!.CardNoticePending));

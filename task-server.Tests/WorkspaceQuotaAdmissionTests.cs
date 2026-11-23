@@ -9,6 +9,22 @@ namespace TaskServer.Tests;
 public sealed class WorkspaceQuotaAdmissionTests
 {
     [Fact]
+    public async Task Known_card_budgets_refresh_before_ttl_and_wait_when_meter_is_unavailable()
+    {
+        var meter = new SwitchableAdmission(new WorkspaceQuotaVerdict(true, null,
+            CardRefusals: new Dictionary<string, string>()));
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 22, 12, 0, 0, TimeSpan.Zero));
+        var cache = new WorkspaceQuotaVerdictCache(meter, clock);
+        await cache.RefreshAsync(["p"], default);
+        meter.Verdict = new(true, "Meter unavailable", true);
+        await cache.RefreshAsync(["p"], default);
+        Assert.Equal(2, meter.Calls);
+        Assert.False(cache.Read("p")!.Allowed);
+        Assert.Contains("card-budget-meter-unavailable", cache.Read("p")!.Message);
+        Assert.True(cache.HasCardBudgets);
+    }
+
+    [Fact]
     public async Task Remote_refusal_is_returned_to_claim_authority()
     {
         var serviceToken = "quota-service-" + Guid.NewGuid().ToString("N");
