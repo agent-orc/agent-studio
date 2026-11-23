@@ -146,6 +146,71 @@ public sealed class PublishActionServiceTests : IDisposable
         Assert.DoesNotContain("studio-release-", Git(repo, "worktree", "list"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "MachineBound")]
+    public void Project_release_reports_cleanup_failure_without_masking_command_failure(bool failRelease)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var repo = Path.Combine(_root, "cleanup-project");
+        var remote = Path.Combine(_root, "cleanup-project.git");
+        Git(_root, "init", "--bare", "-q", remote);
+        Git(_root, "init", "-q", "-b", "main", repo);
+        Git(repo, "config", "user.email", "test@example.com");
+        Git(repo, "config", "user.name", "test");
+        Git(repo, "config", "commit.gpgsign", "false");
+        Directory.CreateDirectory(Path.Combine(repo, ".agent-studio"));
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "project.yml"),
+            "schemaVersion: 2\nproject:\n  id: example-project\nstack: [node]\ncommands:\n  prepare: echo ready\n  build: echo built\n  test: echo verified\nrelease:\n  branch: main\n  command: git worktree lock . && "
+            + (failRelease ? "echo original-release-failure >&2 && false" : "git tag v$RELEASE_VERSION") + "\n");
+        Git(repo, "add", "-A");
+        Git(repo, "commit", "-qm", "seed");
+        Git(repo, "remote", "add", "origin", remote);
+        Git(repo, "switch", "-qc", "develop");
+        try
+        {
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                ProjectReleaseExecution.Execute(repo, "1.2.4", false, CancellationToken.None));
+            if (failRelease)
+            {
+                Assert.Contains("original-release-failure", error.Message);
+                var cleanup = Assert.IsType<InvalidOperationException>(error.Data["ReleaseWorktreeCleanupFailure"]);
+                Assert.Contains("locked", cleanup.Message);
+                Assert.Empty(Git(remote, "tag", "-l", "v1.2.4"));
+            }
+            else
+            {
+                Assert.Contains("locked", error.Message);
+                Assert.Equal(Git(repo, "rev-parse", "main"), Git(remote, "rev-parse", "v1.2.4"));
+            }
+        }
+        finally
+        {
+            var checkouts = Git(repo, "worktree", "list", "--porcelain").Split('\n')
+                .Where(line => line.StartsWith("worktree ", StringComparison.Ordinal))
+                .Select(line => line["worktree ".Length..]).Where(path => path != repo).ToArray();
+            foreach (var checkout in checkouts)
+            {
+                Git(repo, "worktree", "unlock", checkout);
+                Git(repo, "worktree", "remove", "--force", checkout);
+            }
+        }
+    }
+
+    [Fact]
+    public void Invalid_project_manifest_has_a_specific_definition_error()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".agent-studio"));
+        File.WriteAllText(Path.Combine(_root, ".agent-studio", "project.yml"),
+            "schemaVersion: 2\nstack: [node]\ncommands:\n  prepare: echo ready\nrelease:\n  command: echo release\n");
+
+        var error = Assert.Throws<ProjectReleaseDefinitionException>(() => ProjectReleaseExecution.Read(_root));
+
+        Assert.Contains("Invalid project.yml:", error.Message);
+        Assert.Contains("Release command and branch must be declared together.", error.Message);
+    }
+
     [Fact]
     public void Package_release_receipt_records_tag_and_branch_without_changing_release_gates()
     {

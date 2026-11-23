@@ -12,7 +12,7 @@ internal static class ProjectReleaseExecution
         if (!File.Exists(path)) return null;
         var result = ProjectDefinitionReader.Parse(File.ReadAllText(path));
         if (!result.IsValid)
-            throw new InvalidOperationException("Invalid project.yml: " + string.Join("; ", result.Issues.Select(x => x.Message)));
+            throw new ProjectReleaseDefinitionException("Invalid project.yml: " + string.Join("; ", result.Issues.Select(x => x.Message)));
         return result.Definition;
     }
 
@@ -42,6 +42,7 @@ internal static class ProjectReleaseExecution
         // A named branch lets repository scripts resolve their release branch correctly.
         // Git refuses this if another checkout already owns that branch.
         Git(root, token, "worktree", "add", checkout, release.Branch);
+        Exception? executionFailure = null;
         try
         {
             if (Git(checkout, token, "rev-parse", "HEAD").Trim() != commit)
@@ -61,9 +62,24 @@ internal static class ProjectReleaseExecution
             Git(checkout, token, "push", "--atomic", "origin", $"HEAD:refs/heads/{release.Branch}", tag);
             return plan;
         }
+        catch (Exception ex)
+        {
+            executionFailure = ex;
+            throw;
+        }
         finally
         {
-            Git(root, CancellationToken.None, "worktree", "remove", "--force", checkout);
+            try
+            {
+                Git(root, CancellationToken.None, "worktree", "remove", "--force", checkout);
+            }
+            catch (Exception cleanupFailure) when (executionFailure is not null)
+            {
+                // Keep the release failure and its stack; retain cleanup evidence for diagnosis.
+                executionFailure.Data["ReleaseWorktreeCleanupFailure"] = cleanupFailure;
+                AgentStudio.Diagnostics.SilentCatch.Note(cleanupFailure,
+                    $"ProjectReleaseExecution: could not remove release worktree {checkout}");
+            }
         }
     }
 
@@ -77,3 +93,6 @@ internal static class ProjectReleaseExecution
         return result.StandardOutput;
     }
 }
+
+/// <summary>A repository manifest failed validation while reading its release configuration.</summary>
+internal sealed class ProjectReleaseDefinitionException(string message) : InvalidOperationException(message);
