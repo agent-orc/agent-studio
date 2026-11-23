@@ -940,10 +940,14 @@ public sealed class IamHandlerAccessTests : IClassFixture<IamHandlerAccessTests.
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var actor = "service-account:" + account.Id;
         var provider = factory.Services.GetRequiredService<ISecretProvider>();
-        var record = Assert.Single((await provider.ListAsync(SecretScope.ForProject("alpha"))).Records);
+        // AGT-3987: a new project secret is stored under the project's registry id, not its display name.
+        var projectId = factory.Services.GetRequiredService<SecretProjectKeys>().Canonical("alpha");
+        Assert.NotEqual("alpha", projectId);
+        var stored = SecretScope.ForProject(projectId);
+        var record = Assert.Single((await provider.ListAsync(stored)).Records);
         Assert.Equal(actor, record.CreatedBy);
         Assert.Equal(actor, record.UpdatedBy);
-        Assert.Contains(await provider.ReadAuditAsync(SecretScope.ForProject("alpha"), 20),
+        Assert.Contains(await provider.ReadAuditAsync(stored, 20),
             entry => entry.Action == SecretAuditActions.Put && entry.Actor == actor && entry.Outcome == "ok");
     }
 
