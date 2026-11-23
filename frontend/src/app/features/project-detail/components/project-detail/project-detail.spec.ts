@@ -245,7 +245,7 @@ describe('ProjectDetailComponent (smoke)', () => {
     await fixture.whenStable();
     expect(fixture.componentInstance.testingStrategyDraft()).toBe('strict');
     expect(host.querySelector('[data-testid="project-detail-testing-strategy-error"]')?.textContent)
-      .toContain('Only the Owner can change the testing strategy.');
+      .toContain('Only the Owner or an Admin of this project can change the testing strategy.');
     fixture.destroy();
   });
 

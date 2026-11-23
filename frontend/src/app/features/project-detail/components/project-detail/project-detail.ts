@@ -544,7 +544,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
     });
   }
 
-  /** AGT-3965: Owner only; the server refuses other roles and the error names why. */
+  /** The Owner and project Admins can change the strategy; the server checks the project permission. */
   setTestingStrategy(strategy: TestingStrategy): void {
     if (strategy === this.settings()?.testingStrategy && !this.testingStrategyError()) return;
     this.testingStrategyDraft.set(strategy);
@@ -559,7 +559,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
         this.testingStrategySaving.set(false);
         this.testingStrategyDraft.set(this.settings()?.testingStrategy ?? 'fast');
         this.testingStrategyError.set(err?.status === 403
-          ? 'Only the Owner can change the testing strategy.'
+          ? 'Only the Owner or an Admin of this project can change the testing strategy.'
           : err?.error?.error || 'The testing strategy could not be saved.');
       },
     });

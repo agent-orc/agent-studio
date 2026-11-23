@@ -37,6 +37,103 @@ public sealed class OperatorApprovalFlowTests : IDisposable
     private string _ownerTotpSecret = string.Empty;
 
     [Fact]
+    public async Task Testing_strategy_requires_one_exact_approval_and_audits_the_change()
+    {
+        using var factory = BuildFactory();
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var (agentId, sessionId, token) = StartSession(factory, installationScope: true);
+        using var owner = await OwnerClientAsync(factory);
+        using var agent = BearerClient(factory, token);
+        const string route = "/api/projects/alpha/testing";
+        Task<HttpResponseMessage> Set(string? approval = null, string strategy = "strict")
+        {
+            var request = new HttpRequestMessage(HttpMethod.Put, route) { Content = JsonContent.Create(new { strategy }) };
+            request.Headers.Add(ReasonHeader, "Use%20strict%20for%20the%20release");
+            if (approval is not null) request.Headers.Add(ApprovalHeader, approval);
+            return agent.SendAsync(request);
+        }
+        var start = store.ControlPlaneAudit.HeadSequence + 1;
+        var refused = await AssertRefused(Set(), "approval-required");
+        var id = refused.GetProperty("approvalId").GetString()!;
+        Assert.Equal("project.testing.set", (await Approval(owner, id)).GetProperty("operation").GetString());
+        await StepUpAsync(factory, owner);
+        await ReadOk(owner.PostAsJsonAsync($"/api/auth/iam/operator-approvals/{id}/approve", new { }));
+        await AssertRefused(Set(id, "balanced"), "approval-digest-mismatch");
+        var updated = await ReadOk(Set(id));
+        Assert.Equal("strict", updated.GetProperty("strategy").GetString());
+        await AssertRefused(Set(id), "approval-used");
+        var entry = Assert.Single(store.ControlPlaneAudit.Read(start, 1000).Where(e => e.Operation == "project.testing.set"));
+        Assert.Equal($"operator-agent:{agentId}/session:{sessionId}", entry.Actor);
+        Assert.Equal("alpha", entry.Target);
+        Assert.Equal("fast", entry.Details!.Value.GetProperty("oldStrategy").GetString());
+        Assert.Equal("strict", entry.Details.Value.GetProperty("newStrategy").GetString());
+        Assert.Equal("Use strict for the release", entry.Details.Value.GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public async Task Testing_approval_preserves_project_scope_and_does_not_authorize_a_plain_bearer()
+    {
+        using var factory = BuildFactory();
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var ownerId = store.ListUsers().Single(u => u.Username == "first.owner").Id;
+        var agent = store.CreateOperatorAgent(new CreateOperatorAgentRequest("project console", null,
+            [new IamGrantRequest(IamRoles.OperatorAgent, IamScope.ForProject("other"))]), ownerId);
+        var session = store.StartOperatorSession(agent.Id, new StartOperatorSessionRequest(null, null), ownerId);
+        using var outside = BearerClient(factory, session.Secret);
+        await AssertRefused(outside.PutAsJsonAsync("/api/projects/alpha/testing", new { strategy = "strict" }), "project-scope-denied");
+        var account = store.CreateServiceAccount(new CreateServiceAccountRequest("plain operator", null,
+            [new IamGrantRequest(IamRoles.OperatorAgent, IamScope.ForProject("alpha"))]), ownerId);
+        var token = store.CreateServiceAccountToken(account.Id, new CreateServiceAccountTokenRequest("test", null), ownerId);
+        using var plain = BearerClient(factory, token.Secret);
+        await AssertRefused(plain.PutAsJsonAsync("/api/projects/alpha/testing", new { strategy = "strict" }), "permission-denied");
+        Assert.DoesNotContain(IamRoles.Find(IamRoles.OperatorAgent)!.Permissions, p => p == IamPermissions.ProjectSettingsWrite);
+        Assert.Empty(store.ControlPlaneAudit.Read(1, 1000).Where(e => e.Operation == "project.testing.set"));
+    }
+
+    [Theory]
+    [InlineData(IamRoles.Admin, HttpStatusCode.OK)]
+    [InlineData(IamRoles.Developer, HttpStatusCode.Forbidden)]
+    [InlineData(IamRoles.Viewer, HttpStatusCode.Forbidden)]
+    public async Task Testing_strategy_is_a_project_setting(string role, HttpStatusCode expected)
+    {
+        using var factory = BuildFactory();
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var invite = store.InviteUser(new InviteUserRequest("project.member", "Member", "", null,
+            [new IamGrantRequest(role, IamScope.ForProject("alpha"))]));
+        store.AcceptInvitation(new AcceptInvitationRequest(invite.Token, Password));
+        var enrollment = store.Login("project.member", Password, "fixture");
+        var principal = store.AuthenticateSession(enrollment.SessionToken)!;
+        var secret = store.BeginTotpEnrollment(principal);
+        store.ConfirmTotpEnrollment(principal, SecondFactorCodes.CurrentTotp(secret, _clock.GetUtcNow().UtcDateTime));
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        using var member = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = true });
+        member.DefaultRequestHeaders.Add("Origin", "https://studio.test");
+        var login = await member.PostAsJsonAsync("/api/auth/login", new { username = "project.member", password = Password,
+            secondFactorCode = SecondFactorCodes.CurrentTotp(secret, _clock.GetUtcNow().UtcDateTime) });
+        login.EnsureSuccessStatusCode();
+        member.DefaultRequestHeaders.Add("X-CSRF-Token", (await login.Content.ReadFromJsonAsync<AuthStatusResponse>())!.CsrfToken!);
+        using var response = await member.PutAsJsonAsync("/api/projects/alpha/testing", new { strategy = "balanced" });
+        Assert.Equal(expected, response.StatusCode);
+        var entries = store.ControlPlaneAudit.Read(1, 1000).Where(e => e.Operation == "project.testing.set").ToList();
+        if (expected == HttpStatusCode.OK)
+        {
+            var entry = Assert.Single(entries);
+            Assert.StartsWith("human:", entry.Actor);
+            Assert.Equal("fast", entry.Details!.Value.GetProperty("oldStrategy").GetString());
+            Assert.Equal("balanced", entry.Details.Value.GetProperty("newStrategy").GetString());
+        }
+        else Assert.Empty(entries);
+        using var owner = await OwnerClientAsync(factory);
+        using var ownerResponse = await owner.PutAsJsonAsync("/api/projects/alpha/testing", new { strategy = "strict" });
+        Assert.Equal(HttpStatusCode.OK, ownerResponse.StatusCode);
+        var ownerEntry = store.ControlPlaneAudit.Read(1, 1000).Last(e => e.Operation == "project.testing.set");
+        Assert.Equal(expected == HttpStatusCode.OK ? "balanced" : "fast",
+            ownerEntry.Details!.Value.GetProperty("oldStrategy").GetString());
+        Assert.Equal("strict", ownerEntry.Details.Value.GetProperty("newStrategy").GetString());
+    }
+
+    [Fact]
     public async Task Preflight_blocker_override_requires_a_redeemed_owner_approval()
     {
         using var factory = BuildFactory();
