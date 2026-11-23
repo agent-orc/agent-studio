@@ -786,8 +786,16 @@ public sealed class AccessSecurityMiddleware
             await Reject(context, 403, "persona-scope-denied", "This persona's scope does not cover the project.");
             return;
         }
-        var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
-        var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
+        // ES-1: only this catalogued operator operation may request a settings
+        // change through SM-5 without holding settings.write. Its own bindings
+        // must still cover the project. The exact approval is consumed below
+        // before the handler runs; no role binding or other request gains rights.
+        var bindingPermission = account.Operator is not null
+            && operation?.Id == OperatorOperationIds.ProjectTestingSet
+            && required.Permission == IamPermissions.ProjectSettingsWrite
+                ? IamPermissions.ProjectRead : required.Permission;
+        var decision = PermissionEvaluator.Evaluate(bindingPermission, subject, bindings, target, SameProject);
+        var projected = PermissionEvaluator.Project(bindingPermission, subject, bindings, target, SameProject);
         if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return;
         if (!decision.Allowed)
         {
@@ -931,7 +939,7 @@ public sealed class AccessSecurityMiddleware
         => context.Request.Headers[OperatorApprovalHeaders.Approval].ToString().Trim() is { Length: > 0 } id ? id : null;
 
     /// <summary>The agent's stated reason: percent-decoded, trimmed, at most 500 characters.</summary>
-    private static string? StatedReason(string header)
+    internal static string? StatedReason(string header)
     {
         if (string.IsNullOrWhiteSpace(header)) return null;
         string decoded;

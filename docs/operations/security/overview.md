@@ -1626,3 +1626,26 @@ with captured evidence in
 [runbook-rehearsal-evidence.md](runbook-rehearsal-evidence.md). The detailed
 target contract and lifecycle matrix are in
 [distributed-agent-studio-target-architecture.md](../../concepts/distributed-agent-studio-target-architecture.md).
+
+## Testing strategy as a project setting (ES-1)
+
+`GET /api/projects/{project}/testing` requires `project.read`.
+`PUT /api/projects/{project}/testing` requires `project.settings.write`, held
+by the Owner and Admins of that project. Developers and Viewers cannot change
+it. Project settings shows the strategy control to project Admins as well as
+the Owner. A successful change still rebuilds queued review plans.
+
+For operator sessions, the catalogue operation `project.testing.set` is T2
+with project scope. A session with read access to the project can request an
+SM-5 approval for the exact strategy request. After the Owner approves with
+step-up, repeat the same request with `X-Operator-Approval`; it runs once.
+Send `X-Operator-Reason` with the stated reason, percent-encoded when needed.
+The operator-agent role does not hold `project.settings.write`; this narrow
+approval path does not grant that permission to other requests. The named
+`project.testing` elevated class remains future ES-7 work.
+
+Each strategy change writes one `project.testing.set` control plane audit
+entry with actor, project, old and new strategy, and the stated reason for an
+operator session. Operator attribution includes the session and delegating
+Owner. Build profile, review package, security file, checkout and gate
+capacity routes retain their existing authorization.

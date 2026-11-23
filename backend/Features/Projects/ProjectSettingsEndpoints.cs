@@ -1327,6 +1327,8 @@ public static class ProjectSettingsEndpoints
 
         app.MapPut("/api/projects/{projectName}/testing", (
             string projectName,
+            HttpContext context,
+            ControlPlaneAuditLog audit,
             TestingStrategyRequest req,
             ProjectSettingsService settings,
             TaskScannerService scanner,
@@ -1348,10 +1350,20 @@ public static class ProjectSettingsEndpoints
                 });
             if (!TestingStrategies.IsKnown(req.Strategy))
                 return Results.BadRequest(new { error = "strategy must be 'fast', 'balanced' or 'strict'." });
-            settings.SetTestingStrategy(projectName, req.Strategy);
+            lock (settings)
+            {
+                var oldStrategy = TestingStrategies.Resolve(settings.Get(projectName));
+                settings.SetTestingStrategy(projectName, req.Strategy);
+                var newStrategy = TestingStrategies.Resolve(settings.Get(projectName));
+                var reason = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal { Operator: not null }
+                    ? AccessSecurityMiddleware.StatedReason(context.Request.Headers[OperatorApprovalHeaders.Reason].ToString()) : null;
+                audit.Append(new ControlPlaneAuditRecord(ControlPlaneAuditStreams.Operator,
+                    AgentStudio.Operator.OperatorEndpoints.Actor(context), OperatorOperationIds.ProjectTestingSet,
+                    "updated", projectName, Details: new { project = projectName, oldStrategy, newStrategy, reason }));
+            }
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             return Results.Ok(TestingView(projectName, settings, postMergeMode, coverage));
-        }).RequireStudioRole(StudioRoles.Owner);
+        }).RequirePermission(IamPermissions.ProjectSettingsWrite);
 
         // AGT-3400 S4: review.package. Shadow forms Dossier wave packages beside
         // the unchanged per-card review; dossier (live, S5) is not accepted yet.

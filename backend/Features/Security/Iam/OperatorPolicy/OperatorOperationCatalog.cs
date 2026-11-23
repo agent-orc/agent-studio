@@ -46,6 +46,7 @@ public static class OperatorOperationIds
     public const string GateRerun = "gate.rerun";
     public const string StageDeploy = "stage.deploy";
     public const string ProductionPromote = "production.promote";
+    public const string ProjectTestingSet = "project.testing.set";
     public const string SecretsChange = "secrets.change";
     public const string ExposureChange = "exposure.change";
     public const string DataDelete = "data.delete";
@@ -164,6 +165,7 @@ public static class OperatorOperationCatalog
             "Deploy a gate-verified commit to stage"),
         new(OperatorOperationIds.ProductionPromote, OperatorTier.T1, OperatorScopeKinds.Environment,
             "Promote a commit with full gate evidence"),
+        new(OperatorOperationIds.ProjectTestingSet, OperatorTier.T2, OperatorScopeKinds.Project, "Set the testing strategy"),
         new(OperatorOperationIds.SecretsChange, OperatorTier.T2, OperatorScopeKinds.Project, "Change secrets"),
         new(OperatorOperationIds.ExposureChange, OperatorTier.T2, OperatorScopeKinds.Project, "Change firewall or exposure"),
         new(OperatorOperationIds.DataDelete, OperatorTier.T2, OperatorScopeKinds.Project, "Delete data"),
@@ -245,6 +247,7 @@ public static class OperatorOperationCatalog
             OperatorRouteRefinement.PersonaOperation),
 
         // --- T2 high risk ----------------------------------------------------
+        new("PUT", "/api/projects/{}/testing", OperatorOperationIds.ProjectTestingSet),
         new("W", "/api/secrets/**", OperatorOperationIds.SecretsChange),
         new("W", "/api/projects/{}/secrets/**", OperatorOperationIds.SecretsChange),
         new("W", "/api/projects/{}/secret-bindings/**", OperatorOperationIds.SecretsChange),
