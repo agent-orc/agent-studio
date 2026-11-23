@@ -138,6 +138,126 @@ public sealed class OperatorApprovalFlowTests : IDisposable
         Assert.True(store.ControlPlaneAudit.VerifyChain().Ok);
     }
 
+    /// <summary>
+    /// ES-2 (ES-D8 A, ES-D9 single-request path): an operator session's
+    /// override acceptance is the T2 operation card.accept-override. After the
+    /// Owner approves it, the replay carries project.cards.override for that
+    /// request and completes the card; the timeline and the audit entry name
+    /// the session, the approving Owner and the reason.
+    /// </summary>
+    [Fact]
+    public async Task An_override_acceptance_by_an_operator_session_completes_after_the_owner_approves()
+    {
+        using var factory = BuildFactory(("alpha-review", TaskStates.HumanReview));
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var (agentId, sessionId, token) = StartSession(factory, new IamGrantRequest(IamRoles.OperatorAgent, IamScope.ForProject("alpha")));
+        using var owner = await OwnerClientAsync(factory);
+        using var agent = BearerClient(factory, token);
+        var ownerId = store.ListUsers().Single(user => user.Username == "first.owner").Id;
+        var actor = $"operator-agent:{agentId}/session:{sessionId}";
+        var auditStart = store.ControlPlaneAudit.HeadSequence + 1;
+        const string reason = "Delivered outside Studio and verified by hand on stage.";
+        var body = new { targetState = TaskStates.Completed, operatorOverride = true, reason };
+
+        var refused = await AssertRefused(Move(agent, "alpha-review", body, source: "owner-chat", reason: "Accept the verified card"),
+            "approval-required");
+        Assert.Equal((OperatorOperationIds.CardAcceptOverride, "T2"),
+            (refused.GetProperty("operation").GetString(), refused.GetProperty("tier").GetString()));
+        var approvalId = refused.GetProperty("approvalId").GetString()!;
+        Assert.Equal(TaskStates.HumanReview, CardState(factory, "alpha-review"));
+
+        await StepUpAsync(factory, owner);
+        await ReadOk(owner.PostAsJsonAsync($"/api/auth/iam/operator-approvals/{approvalId}/approve", new { }));
+        await ReadOk(Move(agent, "alpha-review", body, approvalId));
+
+        Assert.Equal(TaskStates.Completed, CardState(factory, "alpha-review"));
+        var used = await Approval(owner, approvalId);
+        Assert.Equal(("used", 200), (used.GetProperty("state").GetString(), used.GetProperty("resultStatus").GetInt32()));
+        await AssertRefused(Move(agent, "alpha-review", body, approvalId), "approval-used");
+
+        // The timeline names the session as actor, the approving Owner, and the reason.
+        var card = factory.Services.GetRequiredService<TaskScannerService>().FindJob("alpha-review", ProjectPath("alpha"))!;
+        var events = factory.Services.GetRequiredService<TimelineLog>().ReadAll(card.FolderPath)
+            .Where(evt => evt.Details?.GetValueOrDefault("approvalId") == approvalId).ToList();
+        Assert.NotEmpty(events);
+        Assert.All(events, evt => Assert.Equal((actor, "human:" + ownerId), (evt.Actor, evt.Details!["approvedBy"])));
+        Assert.Contains(events, evt => evt.Details!.Values.Contains(reason));
+
+        var executed = store.ControlPlaneAudit.Read(auditStart, 10_000).Single(entry => entry.Stream == ControlPlaneAuditStreams.OperatorAgent
+            && entry.Operation == "POST /api/tasks/alpha-review/move" && entry.Outcome == "200");
+        Assert.Equal(actor, executed.Actor);
+        Assert.Equal((approvalId, ownerId, reason, OperatorOperationIds.CardAcceptOverride),
+            (executed.Details!.Value.GetProperty("approvalId").GetString(), executed.Details.Value.GetProperty("approvedBy").GetString(),
+                executed.Details.Value.GetProperty("reason").GetString(), executed.Details.Value.GetProperty("operation").GetString()));
+    }
+
+    /// <summary>
+    /// ES-2: an archive override by an operator session takes the same
+    /// approval path; without a written reason it is refused with the move
+    /// routes' reason error and opens no approval request. A plain move into
+    /// Archive stays outside the catalogue.
+    /// </summary>
+    [Fact]
+    public async Task An_archive_override_by_an_operator_session_follows_the_approval_path_and_needs_its_reason()
+    {
+        using var factory = BuildFactory(("alpha-done", TaskStates.Completed));
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var (agentId, sessionId, token) = StartSession(factory, new IamGrantRequest(IamRoles.OperatorAgent, IamScope.ForProject("alpha")));
+        using var owner = await OwnerClientAsync(factory);
+        using var agent = BearerClient(factory, token);
+        var ownerId = store.ListUsers().Single(user => user.Username == "first.owner").Id;
+        const string reason = "Duplicate of alpha-card; the delivery is not on a protected branch.";
+
+        using (var missing = await Move(agent, "alpha-done", new { targetState = TaskStates.Archive, archiveOverride = true }))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);
+            Assert.Equal(TaskCrudEndpoints.OverrideReasonRequired, await Error(missing));
+        }
+        Assert.Empty(store.ListOperatorApprovals(agentId));
+        await AssertRefused(Move(agent, "alpha-done", new { targetState = TaskStates.Archive, reason }), "operation-not-catalogued");
+
+        var body = new { targetState = TaskStates.Archive, archiveOverride = true, reason };
+        var refused = await AssertRefused(Move(agent, "alpha-done", body, source: "owner-chat"), "approval-required");
+        Assert.Equal(OperatorOperationIds.CardArchiveOverride, refused.GetProperty("operation").GetString());
+        var approvalId = refused.GetProperty("approvalId").GetString()!;
+        Assert.Equal(TaskStates.Completed, CardState(factory, "alpha-done"));
+
+        await StepUpAsync(factory, owner);
+        await ReadOk(owner.PostAsJsonAsync($"/api/auth/iam/operator-approvals/{approvalId}/approve", new { }));
+        await ReadOk(Move(agent, "alpha-done", body, approvalId));
+
+        Assert.Equal(TaskStates.Archive, CardState(factory, "alpha-done"));
+        var card = factory.Services.GetRequiredService<TaskScannerService>().FindJob("alpha-done", ProjectPath("alpha"))!;
+        var archived = Assert.Single(factory.Services.GetRequiredService<TimelineLog>().ReadAll(card.FolderPath),
+            evt => evt.Kind == "archive_override");
+        Assert.Equal(($"operator-agent:{agentId}/session:{sessionId}", "human:" + ownerId, reason),
+            (archived.Actor, archived.Details!["approvedBy"], archived.Details["reason"]));
+        var row = JsonDocument.Parse(File.ReadLines(Path.Combine(ProjectPath("alpha"), ".audit", "archive-overrides.jsonl")).Single()).RootElement;
+        Assert.Equal((approvalId, "human:" + ownerId, reason),
+            (row.GetProperty("approvalId").GetString(), row.GetProperty("approvedBy").GetString(), row.GetProperty("reason").GetString()));
+    }
+
+    /// <summary>
+    /// ES-2: an operator agent bound on the workspace resolves the card's
+    /// project for a card write, so a requeue under its standing grant
+    /// succeeds instead of reading as an installation-wide change.
+    /// </summary>
+    [Fact]
+    public async Task A_workspace_bound_operator_session_moves_a_card_into_ready()
+    {
+        using var factory = BuildFactory();
+        var (agentId, _, token) = StartSession(factory, installationScope: true);
+        using var owner = await OwnerClientAsync(factory);
+        using var agent = BearerClient(factory, token);
+        await StepUpAsync(factory, owner);
+        await ReadOk(owner.PostAsJsonAsync("/api/auth/iam/standing-grants", new CreateStandingGrantRequest(agentId,
+            [OperatorOperationIds.CardRequeue], new StandingGrantScope(OperatorScopeKinds.Project, "alpha"), 10, null, 7,
+            "Requeue cards in alpha")));
+
+        await ReadOk(Move(agent, "alpha-card", new { targetState = TaskStates.Ready }));
+        Assert.Equal(TaskStates.Ready, CardState(factory, "alpha-card"));
+    }
+
     [Fact]
     public async Task A_changed_parameter_another_session_and_an_expired_approval_are_refused()
     {
@@ -264,6 +384,21 @@ public sealed class OperatorApprovalFlowTests : IDisposable
         string? source = null, string? reason = null)
         => client.SendAsync(Request(HttpMethod.Delete, $"/api/tasks/{card}?project=alpha", approvalId, source, reason));
 
+    private static Task<HttpResponseMessage> Move(HttpClient client, string card, object body, string? approvalId = null,
+        string? source = null, string? reason = null)
+    {
+        var request = Request(HttpMethod.Post, $"/api/tasks/{card}/move?project=alpha", approvalId, source, reason);
+        request.Content = JsonContent.Create(body);
+        return client.SendAsync(request);
+    }
+
+    private string? CardState(WebApplicationFactory<Program> factory, string card)
+    {
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        scanner.InvalidateCache();
+        return scanner.FindJob(card, ProjectPath("alpha"))?.State;
+    }
+
     private static HttpRequestMessage Request(HttpMethod method, string path, string? approvalId = null,
         string? source = null, string? reason = null)
     {
@@ -329,29 +464,32 @@ public sealed class OperatorApprovalFlowTests : IDisposable
 
     private static (string AgentId, string SessionId, string Token) StartSession(WebApplicationFactory<Program> factory,
         bool installationScope = false)
+        => StartSession(factory, installationScope
+            ? new IamGrantRequest(IamRoles.OperatorAgent, IamScope.Workspace)
+            : new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha")));
+
+    private static (string AgentId, string SessionId, string Token) StartSession(WebApplicationFactory<Program> factory,
+        IamGrantRequest grant)
     {
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         var ownerId = store.ListUsers().Single(user => user.Username == "first.owner").Id;
-        var grant = installationScope
-            ? new IamGrantRequest(IamRoles.OperatorAgent, IamScope.Workspace)
-            : new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"));
         var agent = store.CreateOperatorAgent(new CreateOperatorAgentRequest("ops console", null, [grant]), ownerId);
         var started = store.StartOperatorSession(agent.Id, new StartOperatorSessionRequest(null, null), ownerId);
         return (agent.Id, started.Session.Id, started.Secret);
     }
 
-    private WebApplicationFactory<Program> BuildFactory()
+    private WebApplicationFactory<Program> BuildFactory(params (string Name, string State)[] extraCards)
     {
         foreach (var state in TaskStates.All)
             Directory.CreateDirectory(Path.Combine(ProjectPath("alpha"), state));
         var order = 1;
-        foreach (var name in new[] { "alpha-card", "alpha-second" })
+        foreach (var (name, lane) in new[] { ("alpha-card", TaskStates.Backlog), ("alpha-second", TaskStates.Backlog) }.Concat(extraCards))
         {
-            var card = Path.Combine(ProjectPath("alpha"), TaskStates.Backlog, name);
+            var card = Path.Combine(ProjectPath("alpha"), lane, name);
             Directory.CreateDirectory(card);
             File.WriteAllText(Path.Combine(card, "task.json"), JsonSerializer.Serialize(new
             {
-                id = name, title = name, state = TaskStates.Backlog, order = order++, agent = "codex", kind = "task",
+                id = name, title = name, state = lane, order = order++, agent = "codex", kind = "task",
             }));
             File.WriteAllText(Path.Combine(card, "prompt.md"), "Fixture card.");
         }
