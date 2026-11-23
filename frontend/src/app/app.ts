@@ -1574,7 +1574,7 @@ export class App implements OnInit, OnDestroy {
   }
 
   /**
-   * Load (or reload) the backend WatchPaths into `watchPaths`. Runs once at
+   * Load (or reload) watch paths plus registered projects into `watchPaths`. Runs once at
    * boot (no board refresh: boot already reads the board, AGT-3088) and again
    * whenever a project is deleted from the studio shell: the deleted project's
    * entry is gone server-side, so re-pulling drops its name from `projectNames()`
@@ -1582,7 +1582,9 @@ export class App implements OnInit, OnDestroy {
    * lanes. Also re-purges stale board filters and persisted tabs.
    */
   loadWatchPaths(refreshBoard = true): void {
-    this.jobService.getWatchPaths().subscribe({
+    const restoreInitialRoute = !this.watchPathsLoaded();
+    const initialTab = this.studioTabState.activeTab();
+    this.jobService.getProjectPaths().subscribe({
       next: (entries) => {
         this.watchPaths.set(entries);
         this.watchPathsLoaded.set(true);
@@ -1598,8 +1600,10 @@ export class App implements OnInit, OnDestroy {
         // known (e.g. on a hard reload of `#/projects/<slug>`); resolving
         // the slug → project name needs the watch-path list, so re-apply
         // once entries are available.
-        const studioHandled = this.syncStudioRouteFromHash();
-        if (!studioHandled) this.applyProjectShellHash();
+        if (restoreInitialRoute && this.studioTabState.activeTab() === initialTab) {
+          const studioHandled = this.syncStudioRouteFromHash();
+          if (!studioHandled) this.applyProjectShellHash();
+        }
 
         // Refresh the board so a deleted project's jobs disappear right away
         // rather than on the next live-update tick.

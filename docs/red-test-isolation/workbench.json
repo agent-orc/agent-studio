@@ -1,0 +1,397 @@
+{
+  "schemaVersion": 1,
+  "id": "red-test-isolation",
+  "title": "Red test isolation: a failing test stops its area, not the line",
+  "summary": "Owner direction of 23 November 2026: a failing test must be isolated and must not paralyse the whole system. In about 24 hours four repair cards (AGT-3975, AGT-3980, AGT-3981, AGT-3983) were opened and none was a regression of the blamed merge: two flaky, two environment. The single-run bisect without a control at the last green SHA explains why the newest merge was blamed. Proposal: build, prepare and a small base suite stop the line; any other test failing twice at the same SHA becomes a held quarantine (24 h, one renewal, cap 3 held and 8 total, server-side store) that keeps develop green with a count and holds only cards whose paths reach the test\u0027s covering folders (median 15 % of last week\u0027s integrations against 72 % for a test-project hold); flaky and environment failures get a 7-day report-only quarantine. The automatic project-wide pre-merge fallback after two hours is removed in favour of a per-incident ladder with owner items. A line guardian role classifies reds, chooses quarantine, revert or fix forward, puts the repair first with a model rung, and lifts on evidence, reviewed by six weighted criteria. One test envelope with a fingerprint and a canary gives review, gate and post-merge runs the same world. Thirteen decisions, nine slices.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-11-23T08:06:00Z",
+  "sourceTaskKeys": [
+    "AGT-3988"
+  ],
+  "relatedTaskKeys": [
+    "AGT-3965",
+    "AGT-3966",
+    "AGT-3967",
+    "AGT-3969",
+    "AGT-3974",
+    "AGT-3975",
+    "AGT-3976",
+    "AGT-3980",
+    "AGT-3981",
+    "AGT-3983",
+    "AGT-3312",
+    "AGT-2918"
+  ],
+  "buildsOn": [
+    "docs/dispatcher-personas/",
+    "docs/persona-team/",
+    "docs/operations/delivery-chain/"
+  ],
+  "tags": [
+    "post-merge",
+    "quarantine",
+    "flaky-tests",
+    "red-develop",
+    "triage",
+    "persona-team",
+    "environment-parity",
+    "attribution"
+  ],
+  "openDecisions": [
+    {
+      "id": "RT-D1",
+      "decisionId": "line-stop-set",
+      "title": "What stops the line",
+      "question": "Which red results stop all integration of a project?",
+      "options": {
+        "A": "Any red test (today)",
+        "B": "Build, prepare and the base suite confirmed twice",
+        "C": "Nothing after integration"
+      },
+      "recommended": "B",
+      "recommendation": "B. Build, prepare and the base suite confirmed twice",
+      "rationale": "The base suite defines a usable develop; every other red is a fact about one area.",
+      "status": "open"
+    },
+    {
+      "id": "RT-D2",
+      "decisionId": "quarantine-entry",
+      "title": "When a quarantine starts",
+      "question": "Who starts a per-test quarantine and on which evidence?",
+      "options": {
+        "A": "Only the owner",
+        "B": "Held automatically on a routine test failing twice at the same SHA; report-only by the guardian on flaky or environment evidence",
+        "C": "Automatically on any failure"
+      },
+      "recommended": "B",
+      "recommendation": "B. Held automatically on a routine test failing twice at the same SHA; report-only by the guardian on flaky or environment evidence",
+      "rationale": "The double failure is already measured; isolation must take minutes.",
+      "status": "open"
+    },
+    {
+      "id": "RT-D3",
+      "decisionId": "quarantine-store",
+      "title": "Where quarantines live",
+      "question": "Repository file, server store or both?",
+      "options": {
+        "A": "Repository file written by a platform commit",
+        "B": "Server-side store per project, read as a union with the file through one state route",
+        "C": "Both written"
+      },
+      "recommended": "B",
+      "recommendation": "B. Server-side store per project, read as a union with the file through one state route",
+      "rationale": "A commit would need the integration it protects, and .agent-studio/ is a global build input.",
+      "status": "open"
+    },
+    {
+      "id": "RT-D4",
+      "decisionId": "quarantine-bounds",
+      "title": "Duration and cap",
+      "question": "How long may a quarantine last and how many at once?",
+      "options": {
+        "A": "24 h, cap 3, no renewal",
+        "B": "Held 24 h plus one 24 h renewal while the repair is in progress; report-only 7 days; cap 3 held and 8 total",
+        "C": "Expiry only, no cap (today)"
+      },
+      "recommended": "B",
+      "recommendation": "B. Held 24 h plus one 24 h renewal while the repair is in progress; report-only 7 days; cap 3 held and 8 total",
+      "rationale": "Long enough for one repair round, short enough to stay visible.",
+      "status": "open"
+    },
+    {
+      "id": "RT-D5",
+      "decisionId": "quarantine-lift",
+      "title": "Who lifts, on what evidence",
+      "question": "Who lifts a quarantine and what proves it may end?",
+      "options": {
+        "A": "Only the owner",
+        "B": "Guardian on two consecutive passes on tips that contain the repair; owner at any time",
+        "C": "On expiry"
+      },
+      "recommended": "B",
+      "recommendation": "B. Guardian on two consecutive passes on tips that contain the repair; owner at any time",
+      "rationale": "The evidence is mechanical; relapses within 7 days go to the owner.",
+      "status": "open"
+    },
+    {
+      "id": "RT-D6",
+      "decisionId": "hold-scope",
+      "title": "Scope of the hold",
+      "question": "Which cards wait while a test is held?",
+      "options": {
+        "A": "Cards touching the test project",
+        "B": "Cards touching the test\u0027s covering folders or the confirmed suspect\u0027s paths; test project as fallback",
+        "C": "Cards touching suspect paths only (today)"
+      },
+      "recommended": "B",
+      "recommendation": "B. Cards touching the test\u0027s covering folders or the confirmed suspect\u0027s paths; test project as fallback",
+      "rationale": "A median of 15 % against 72 % of last week\u0027s integrations, and not wrong when the attribution is wrong.",
+      "status": "open"
+    },
+    {
+      "id": "RT-D7",
+      "decisionId": "replace-two-hour-fallback",
+      "title": "What replaces the two-hour fallback",
+      "question": "What happens instead of switching the project to pre-merge after two hours of red?",
+      "options": {
+        "A": "Keep it with the AGT-3983 lane fact",
+        "B": "Per-incident ladder with owner items at named points, no automatic project-wide step",
+        "C": "Automatic switch to balanced"
+      },
+      "recommended": "B",
+      "recommendation": "B. Per-incident ladder with owner items at named points, no automatic project-wide step",
+      "rationale": "The fallback stopped all integration overnight for four non-regressions.",
+      "status": "open"
+    },
+    {
+      "id": "RT-D8",
+      "decisionId": "triage-role",
+      "title": "Form of the triage role",
+      "question": "Where does triage live in the persona team?",
+      "options": {
+        "A": "A dispatcher persona strategy",
+        "B": "A separate line guardian role whose holds the dispatcher honours",
+        "C": "Reliability engineer reports, owner triages"
+      },
+      "recommended": "B",
+      "recommendation": "B. A separate line guardian role whose holds the dispatcher honours",
+      "rationale": "Different facts, rights and criteria; one hand-over through typed holds.",
+      "status": "open"
+    },
+    {
+      "id": "RT-D9",
+      "decisionId": "attribution-protocol",
+      "title": "Attribution protocol",
+      "question": "How is a red attributed to a merge?",
+      "options": {
+        "A": "One run per bisect point (today)",
+        "B": "Control at the last green SHA, two runs per point, stop on mixed, build only the failing test project",
+        "C": "Linear scan of every candidate"
+      },
+      "recommended": "B",
+      "recommendation": "B. Control at the last green SHA, two runs per point, stop on mixed, build only the failing test project",
+      "rationale": "Removes the newest-merge bias at a bounded cost.",
+      "status": "open"
+    },
+    {
+      "id": "RT-D10",
+      "decisionId": "environment-parity",
+      "title": "Environment parity",
+      "question": "How do review, gate and post-merge runs see the same world?",
+      "options": {
+        "A": "Fix differences as they appear",
+        "B": "One test envelope with a fingerprint on every receipt and a canary",
+        "C": "Containers for every test command"
+      },
+      "recommended": "B",
+      "recommendation": "B. One test envelope with a fingerprint on every receipt and a canary",
+      "rationale": "Removes this week\u0027s three differences; containers remain possible later.",
+      "status": "open"
+    },
+    {
+      "id": "RT-D11",
+      "decisionId": "develop-state-display",
+      "title": "Develop state display",
+      "question": "How is a quarantined test shown on the develop state?",
+      "options": {
+        "A": "Red, green, running (today)",
+        "B": "Green with a quarantined count, red only on a line stop, isolated-tests panel",
+        "C": "A light per area"
+      },
+      "recommended": "B",
+      "recommendation": "B. Green with a quarantined count, red only on a line stop, isolated-tests panel",
+      "rationale": "Says what is true with the existing status indicator.",
+      "status": "open"
+    },
+    {
+      "id": "RT-D12",
+      "decisionId": "agent-studio-back-to-fast",
+      "title": "When Agent Studio returns to fast",
+      "question": "When should the owner switch Agent Studio from strict back to fast?",
+      "options": {
+        "A": "Now, with AGT-3981 and AGT-3983",
+        "B": "After RT-1, RT-3 and RT-5 are delivered",
+        "C": "After all slices"
+      },
+      "recommended": "B",
+      "recommendation": "B. After RT-1, RT-3 and RT-5 are delivered",
+      "rationale": "Then a flaky or environment red no longer stops the project and attributions are checked.",
+      "status": "open"
+    },
+    {
+      "id": "RT-D13",
+      "decisionId": "guardian-criteria",
+      "title": "Guardian criteria and weights",
+      "question": "How does the owner review the line guardian?",
+      "options": {
+        "A": "False blames only",
+        "B": "Six criteria weighted 25, 20, 20, 15, 10, 10 with one week in shadow",
+        "C": "No score, the owner reads the log"
+      },
+      "recommended": "B",
+      "recommendation": "B. Six criteria weighted 25, 20, 20, 15, 10, 10 with one week in shadow",
+      "rationale": "Comparable with the dispatcher\u0027s DS-D7; the owner adjusts the weights afterwards.",
+      "status": "open"
+    }
+  ],
+  "implementationTasks": [
+    {
+      "id": "RT-1",
+      "title": "RT-1 \u00B7 No automatic project-wide fallback after two hours of red",
+      "dependsOn": [],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "RT-1",
+        "criteria": [
+          "A project in fast or balanced never resolves to pre-merge because of red age or an escalated repair card.",
+          "No timer moves a repair card out of Auto Review, Human Review, waiting for integration or Completed; a red incident of two hours raises one owner item with a recommended answer.",
+          "pipeline.md describes the new behaviour and docs/start/README.md lists the Dossier."
+        ]
+      },
+      "promptMarkdown": "# RT-1 \u00B7 No automatic project-wide fallback after two hours of red\n\nSource: \u0060docs/red-test-isolation/index.html\u0060 (AGT-3988), sections named below, and its \u0060workbench.json\u0060. Decisions: RT-D7 (B), RT-D12 (B, the owner action is not part of this slice). Dependencies: none.\n\n**Area:** \u0060orchestration-decisions/RedDevelopRepairPolicy.cs\u0060, \u0060backend/Features/Pipeline/PostMerge/PostMergeModeService.cs\u0060, \u0060PostMergeIncidentService.cs\u0060, the post-merge attribution branch of \u0060HumanReviewEscalation\u0060, \u0060docs/system/domains/pipeline.md\u0060, \u0060docs/start/README.md\u0060\n\n## Why\nDossier sections What exists and After the first red. \u0060PostMergeModeService.EscalationActive\u0060 resolves a post-merge project to \u0060pre-merge\u0060 when the attribution repair card is Escalated or develop has been red for two hours; \u0060RedDevelopRepairPolicy.Decide\u0060 returns Escalate first at two hours whatever the repair lane, and the escalation moved a repair card out of Auto Review and superseded its review. The two-hour constant exists twice (\u0060RedDevelopRepairPolicy.cs:17\u0060, \u0060PostMergeModeService.cs:47\u0060). AGT-3983 (in delivery when the Dossier was written) adds the repair lane as a fact and removes \u0060ReopenOriginal\u0060; build on it if it has landed, otherwise include the lane fact yourself.\n\n## Deliver\n1. \u0060PostMergeModeService.Resolve\u0060 returns the configured placement. Remove the time rule and the escalated-repair rule and the duplicated constant. \u0060RecordPostMergeAttributionEscalation\u0060 no longer sets a fallback; keep \u0060AttributionEscalatedTaskId\u0060 readable for compatibility but ignore it for placement.\n2. \u0060RedDevelopRepairPolicy\u0060: the facts include the repair card lane and the incident age. The decision vocabulary becomes Revert, FixForward, Hold and AskOwner. A repair in Auto Review (including gate queue and execution), Human Review, waiting for integration, Completed or Archive is Hold. At two hours of incident age the decision is AskOwner, never a lane move.\n3. AskOwner creates one Needs you item per incident (dedupe by fingerprint) with the evidence of the latest red receipt and the options revert the attributed merge, keep fixing forward, or switch the project to \u0060strict\u0060; the recommended option is revert when exactly one clean independent suspect exists, otherwise keep fixing forward. The owner\u0027s answer is applied through existing routes; switching to \u0060strict\u0060 stays an owner action.\n4. No automatic code path moves a card out of Auto Review, Human Review or Completed because of a red develop, and no completed suspect is reopened.\n5. Rewrite the fallback paragraph in \u0060docs/system/domains/pipeline.md\u0060 (Per-project integration test placement, Red develop repair). Add one row for \u0060docs/red-test-isolation/index.html\u0060 to \u0060docs/start/README.md\u0060.\n\n## Acceptance\n- A post-merge project whose develop has been red for three hours resolves to \u0060post-merge\u0060; the batch gate stays off.\n- A repair card in Auto Review at two hours stays in Auto Review, its review attempt is not superseded, and exactly one owner item exists for the incident.\n- A repair card that its own run path escalates does not change the project\u0027s placement.\n- Policy unit tests cover every lane and the revert recommendation; the boundary guard tests stay green.\n\n## Rules\nRead AGENTS.md, docs/start/contribution-and-style-guide.html, docs/system/contracts/orchestration-decisions.md, docs/system/domains/pipeline.md (Testing strategy, Post-merge develop checks, Flaky tests after integration, Red develop repair) and docs/concepts/orchestrator-drive-to-conclusion.html before changing outcome, retry or transition logic. Orchestration rules live only in orchestration-decisions/ as pure policies; hosts collect typed facts and apply returned decisions; keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record in results/status.md which option you implemented. Workspace data only through the application API. Git stays platform-owned: do not commit, push or merge. Update the touched domain docs. No em dashes. Report changed files and exact verification commands."
+    },
+    {
+      "id": "RT-2",
+      "title": "RT-2 \u00B7 Red test triage policy in the decision library",
+      "dependsOn": [
+        "RT-1"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "RT-2",
+        "criteria": [
+          "All triage, quarantine, ladder, hold-scope and bisect-verdict rules are pure policies in orchestration-decisions with named constants.",
+          "The four reds of 22 and 23 November replay as two flaky and two environment classifications without a line stop.",
+          "Base tests, build and prepare failures produce a line stop and are never quarantined automatically."
+        ]
+      },
+      "promptMarkdown": "# RT-2 \u00B7 Red test triage policy in the decision library\n\nSource: \u0060docs/red-test-isolation/index.html\u0060 (AGT-3988), sections named below, and its \u0060workbench.json\u0060. Decisions: RT-D1 (B), RT-D2 (B), RT-D4 (B), RT-D5 (B), RT-D6 (B), RT-D7 (B), RT-D9 (B). Dependencies: RT-1.\n\n**Area:** \u0060orchestration-decisions/\u0060 only (new \u0060RedTestTriagePolicy\u0060, \u0060HoldScopePolicy\u0060, \u0060BisectVerdictPolicy\u0060 or one cohesive set of files) and their tests\n\n## Why\nDossier sections Principle, Quarantine, Scope of the hold, After the first red, Line guardian (classification rules) and Cost. All of the triage behaviour must be pure, replayable and in one place before any host applies it.\n\n## Deliver\n1. Typed facts for one failing test: test id, suite id and category (\u0060base\u0060, \u0060routine\u0060), first result, same-SHA repeat result, envelope canary result, fingerprint equal to the reference envelope, reference-envelope repeat result, control results at the last green SHA (0 to 2), bisect point verdicts, active quarantines of the project (kind, counts), distinct flaky runs in 14 days, relapse information, repair card lane, ages, build or prepare failure.\n2. Classification: Flaky, Environment, Regression, WrongAttribution, Ambiguous, Inconclusive, exactly as the Dossier\u0027s classification table.\n3. Decisions: LineStop (build, prepare, or base test failing twice; never quarantined automatically), StartHeld, StartReportOnly, CountFlaky, MarkInconclusive, Renew (once, 24 h, only while the repair is in progress), Lift (two consecutive passes on tips that contain the repair integration), AskOwner (reason, options, recommended option, for: line stop 60 min, renewal limit 48 h, cap exceeded, relapse within 7 days, T2 request), ProposeRevert, FixForward with a model rung (regression high, environment and flaky medium, one rung up on a second attempt).\n4. Bounds as named constants in one place: held 24 h plus one 24 h renewal, report-only 7 days, cap 3 held and 8 total per project, flaky threshold 3 distinct runs in 14 days, relapse window 7 days, line-stop ask after 60 minutes.\n5. Bisect verdicts: a point is Fail when both runs fail, Pass when both pass, Mixed otherwise; Mixed stops the search with class Flaky; a control that fails at the last green SHA attributes no merge.\n6. \u0060HoldScopePolicy\u0060: hold paths are the covering folders of the failing test file (exact directory match) plus the test file plus the confirmed suspect\u0027s changed paths; no folders or more than 12 means fall back to the suite area; \u0060MayIntegrate(changedPaths, holds, cardId)\u0060 exempts the repair card, a revert card of the attributed merge and an owner-exempt card. Revert independence: a later first-parent merge is coupled when it touches a file the suspect touched.\n7. Keep \u0060RedDevelopRepairPolicy\u0060 callers working (delegate or adapt); no host wiring in this slice.\n\n## Acceptance\n- Table-driven tests reproduce the Dossier\u0027s four reds of 22 and 23 November (AGT-3975, AGT-3980, AGT-3981, AGT-3983) as facts and get Flaky, Flaky, Environment and Environment, none LineStop.\n- A base test failing twice gives LineStop; a fourth held test gives AskOwner with the cap reason; a relapse gives AskOwner.\n- Bisect: control pass, points Pass, Fail gives Regression at the first Fail; any Mixed gives Flaky.\n- Boundary guard tests stay green.\n\n## Rules\nRead AGENTS.md, docs/start/contribution-and-style-guide.html, docs/system/contracts/orchestration-decisions.md, docs/system/domains/pipeline.md (Testing strategy, Post-merge develop checks, Flaky tests after integration, Red develop repair) and docs/concepts/orchestrator-drive-to-conclusion.html before changing outcome, retry or transition logic. Orchestration rules live only in orchestration-decisions/ as pure policies; hosts collect typed facts and apply returned decisions; keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record in results/status.md which option you implemented. Workspace data only through the application API. Git stays platform-owned: do not commit, push or merge. Update the touched domain docs. No em dashes. Report changed files and exact verification commands."
+    },
+    {
+      "id": "RT-3",
+      "title": "RT-3 \u00B7 Attribution protocol, covering folders and envelope fingerprint in the post-merge run",
+      "dependsOn": [
+        "RT-2"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "RT-3",
+        "criteria": [
+          "Attribution runs a double control at the last green SHA and two runs per bisect point, and stops on mixed results.",
+          "Bisect points build only the failing test project.",
+          "Receipts carry per-test verdicts, covering folders, focused-run durations and the envelope fingerprint."
+        ]
+      },
+      "promptMarkdown": "# RT-3 \u00B7 Attribution protocol, covering folders and envelope fingerprint in the post-merge run\n\nSource: \u0060docs/red-test-isolation/index.html\u0060 (AGT-3988), sections named below, and its \u0060workbench.json\u0060. Decisions: RT-D9 (B), RT-D6 (B, covering folders), RT-D10 (B, fingerprint part only). Dependencies: RT-2.\n\n**Area:** \u0060runner/PostMergeRunCommand.cs\u0060, \u0060runner/PostMergeAttributor.cs\u0060, \u0060runner/PostMergeTestRetry.cs\u0060, \u0060runner/PostMergeRunPlan.cs\u0060, \u0060contracts/TaskServer.Contracts/PostMergeRun.cs\u0060, request validation in \u0060backend/Features/Pipeline/PostMerge/PostMergeRunEndpoints.cs\u0060, runner tests\n\n## Why\nDossier sections Four reds (why the newest merge was blamed), Cost and Scope of the hold. Today the bisect runs the focused test once per point, never runs the last green SHA, and rebuilds prepare plus all three build commands (solution, release build check, frontend) at every point.\n\n## Deliver\n1. Per-test verdicts on the receipt: test, suite id, suite category, attempts with results and durations, and the RT-2 classification hint.\n2. Control: before the bisect, check out the last green SHA, build only the failing test project (\u0060dotnet build \u003Ctest project\u003E --no-restore\u0060; the frontend build for a Vitest test) and run the focused tests twice. Bisect points use the same partial build and two runs each, using RT-2\u0027s point verdicts; Mixed stops the search. Keep the reference-graph candidate filter and the docs exclusion.\n3. Revert independence by file overlap (RT-2), replacing \u0022any later first-parent commit\u0022.\n4. Covering folders per failing test: find the test source file by class name in the test project, match identifiers of at least eight characters to tracked repository type files (ignore types defined in more than two folders and the hub types listed in the Dossier\u0027s evidence script), record \u0060coveringFolders\u0060 and \u0060coveringFallback\u0060 per test.\n5. Envelope fingerprint on every window and nightly receipt: allowlist digest, declared-environment digest, cgroup kind and \u0060cpu.max\u0060 when readable, processor count, SDK version, shard plan, load per core at start and the peak of a 15-second sample during the run.\n6. Record the duration of every focused run so that the Dossier\u0027s unmeasured cost can be replaced by data; add a short measurement note to pipeline.md after the first week.\n\n## Acceptance\n- Fixture repository tests: a flaky test (fails then passes at a point) gives Mixed and no attribution; a test failing at the last green SHA attributes no merge; a regression introduced by merge 2 of 4 is attributed to merge 2 with two runs per point.\n- The command log of a bisect shows only the test-project build, not the solution, release check or frontend builds.\n- Receipts with the new fields round-trip through the run endpoint; older runners\u0027 receipts are still accepted.\n\n## Rules\nRead AGENTS.md, docs/start/contribution-and-style-guide.html, docs/system/contracts/orchestration-decisions.md, docs/system/domains/pipeline.md (Testing strategy, Post-merge develop checks, Flaky tests after integration, Red develop repair) and docs/concepts/orchestrator-drive-to-conclusion.html before changing outcome, retry or transition logic. Orchestration rules live only in orchestration-decisions/ as pure policies; hosts collect typed facts and apply returned decisions; keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record in results/status.md which option you implemented. Workspace data only through the application API. Git stays platform-owned: do not commit, push or merge. Update the touched domain docs. No em dashes. Report changed files and exact verification commands."
+    },
+    {
+      "id": "RT-4",
+      "title": "RT-4 \u00B7 Quarantine store, develop state with counts and the incident ladder",
+      "dependsOn": [
+        "RT-2",
+        "RT-3"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "RT-4",
+        "criteria": [
+          "Confirmed red routine tests start held quarantines in a server-side store with bounds, renewal, lift evidence and audit.",
+          "Develop is green with counts unless the line is stopped; releases are blocked while a held quarantine is active.",
+          "Owner items are raised at the ladder points with a recommended option; every decision is logged."
+        ]
+      },
+      "promptMarkdown": "# RT-4 \u00B7 Quarantine store, develop state with counts and the incident ladder\n\nSource: \u0060docs/red-test-isolation/index.html\u0060 (AGT-3988), sections named below, and its \u0060workbench.json\u0060. Decisions: RT-D2 (B), RT-D3 (B), RT-D4 (B), RT-D5 (B), RT-D7 (B), RT-D11 (B, API part). Dependencies: RT-2, RT-3.\n\n**Area:** \u0060backend/Features/Pipeline/PostMerge/\u0060 (store, incident service, endpoints), \u0060backend/Features/Pipeline/TestQuarantine/\u0060, \u0060backend/Features/Deploy/DeployService.cs\u0060 (release hold call only), route permissions\n\n## Why\nDossier sections Quarantine (Where it lives, How it is shown) and After the first red. Today the only quarantine is the repository file with no writer, no cap and no UI; writing it automatically would need a commit and would select every routine suite (\u0060.agent-studio/\u0060 is a global input).\n\n## Deliver\n1. A server-side quarantine store per project beside \u0060PostMergeRunStore\u0060, with the AGT-W57 entry fields plus \u0060kind\u0060 (\u0060held\u0060, \u0060report-only\u0060), \u0060startedBy\u0060, \u0060startedAtUtc\u0060, \u0060incidentFingerprint\u0060, \u0060evidenceRunIds\u0060, \u0060coveringFolders\u0060, \u0060renewals\u0060, \u0060liftedBy\u0060, \u0060liftEvidence\u0060; resolved entries are kept, never deleted. Audit every change.\n2. API: \u0060GET /api/projects/{name}/test-quarantines\u0060, start, renew and lift routes for the system principal (until RT-8) and the owner; lift without evidence is owner-only. The runner state route (\u0060/api/runner/post-merge/projects/{project}\u0060) returns the union of active store entries and active repository-file entries (file entries count as owner report-only).\n3. \u0060PostMergeIncidentService\u0060 applies RT-2 decisions on every terminal receipt: start held or report-only quarantines, create or reuse the repair card (title \u0060Repair red test: \u003Ctest\u003E\u0060, first in Preparation, model rung from the decision), renew, lift, mark inconclusive, and raise owner items per the ladder with options and the recommended option. A line stop keeps today\u0027s behaviour of holding every non-repair delivery.\n4. Develop state: \u0060developState\u0060 is \u0060green\u0060 while only quarantined tests fail and \u0060red\u0060 only on a line stop; \u0060/api/develop-states\u0060 adds \u0060quarantinedCount\u0060, \u0060heldCount\u0060, \u0060lineStop\u0060 and \u0060quarantines[]\u0060. Release creation is refused while a held quarantine is active or the line is stopped; report-only entries do not block.\n5. Every decision writes one incident log entry with the fields of \u0060PersonaLogEntryV1\u0060 (decision id, rule and revision, facts digest, class, actions, held cards, lift condition, reason up to 280 characters).\n\n## Acceptance\n- A receipt with one routine test failing twice yields develop green with \u0060heldCount\u0060 1, one repair card first in Preparation and one log entry; a base test failing twice yields \u0060lineStop\u0060.\n- Two consecutive green covering receipts on tips that contain the repair integration lift the entry; a relapse within 7 days raises an owner item.\n- Renewal is refused the second time; the cap refuses a fourth held entry and raises an owner item; releases are refused while held.\n- The repository file still works for owner entries and its expiry semantics are unchanged.\n\n## Rules\nRead AGENTS.md, docs/start/contribution-and-style-guide.html, docs/system/contracts/orchestration-decisions.md, docs/system/domains/pipeline.md (Testing strategy, Post-merge develop checks, Flaky tests after integration, Red develop repair) and docs/concepts/orchestrator-drive-to-conclusion.html before changing outcome, retry or transition logic. Orchestration rules live only in orchestration-decisions/ as pure policies; hosts collect typed facts and apply returned decisions; keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record in results/status.md which option you implemented. Workspace data only through the application API. Git stays platform-owned: do not commit, push or merge. Update the touched domain docs. No em dashes. Report changed files and exact verification commands."
+    },
+    {
+      "id": "RT-5",
+      "title": "RT-5 \u00B7 Hold on covering folders at integration, one quarantine source for every gate",
+      "dependsOn": [
+        "RT-3",
+        "RT-4"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "RT-5",
+        "criteria": [
+          "Integration holds only deliveries that overlap an active held quarantine\u0027s folders; repair and revert cards pass.",
+          "Gate, Remote Review and post-merge read one quarantine source through one parser.",
+          "Active holds are available to the dispatcher as typed facts."
+        ]
+      },
+      "promptMarkdown": "# RT-5 \u00B7 Hold on covering folders at integration, one quarantine source for every gate\n\nSource: \u0060docs/red-test-isolation/index.html\u0060 (AGT-3988), sections named below, and its \u0060workbench.json\u0060. Decisions: RT-D6 (B), RT-D3 (B, readers). Dependencies: RT-3, RT-4.\n\n**Area:** \u0060runner/RemoteIntegrationDaemon.cs\u0060, the local merge path in \u0060backend/Features/Pipeline/MergeIntoDevelopRunner.cs\u0060, \u0060backend/Features/Pipeline/BuildTestGateRunner.cs\u0060 (quarantine reading only), \u0060runner/PostMergeAttributor.cs\u0060 (parser removal), Remote Review plan and workspace quarantine reading, \u0060BatchGatePilotService\u0060 reason text\n\n## Why\nDossier sections Scope of the hold and What exists. The hold exists as \u0060BlockedFailingArea\u0060, but only while the latest T3 verdict is red and only on suspect paths; three readers and two parsers make three notions of quarantine, and Remote Review ignores the file.\n\n## Deliver\n1. Integration (remote daemon and local merge path) refuses a delivery whose merge-base diff overlaps the hold paths of any active held quarantine, through \u0060HoldScopePolicy.MayIntegrate\u0060, whatever the develop state. Exempt the repair card, a revert card of the attributed merge and owner-exempt cards. Requeue without spending the retry budget, as today, and name the quarantine, test and folder in the outcome.\n2. One quarantine reader: the build-test gate, the post-merge run and Remote Review all read the union served by RT-4 through one parser (\u0060TestQuarantinePolicy\u0060); delete the lenient second parser. A quarantined test failing in a review is reported and does not fail the review.\n3. Rename the batch gate \u0022flaky quarantine\u0022 reason text to \u0022re-run cleared\u0022; keep stored verdict values readable.\n4. Expose active holds as typed hold facts that the dispatcher pick-gate can read (if the dispatcher plan slice DS-6 has landed, its plan treats them as hard holds; otherwise add the facts and a test only).\n\n## Acceptance\n- Integration test: with a held quarantine on \u0060backend/Features/Pipeline/PostMerge\u0060, a delivery touching that folder is requeued with the quarantine named, a delivery touching \u0060frontend/\u0060 integrates, and the repair card integrates.\n- The same quarantined test failing in the gate, in a review and in a post-merge run is reported and non-blocking in all three.\n- No parser of the quarantine file remains outside \u0060TestQuarantinePolicy\u0060.\n\n## Rules\nRead AGENTS.md, docs/start/contribution-and-style-guide.html, docs/system/contracts/orchestration-decisions.md, docs/system/domains/pipeline.md (Testing strategy, Post-merge develop checks, Flaky tests after integration, Red develop repair) and docs/concepts/orchestrator-drive-to-conclusion.html before changing outcome, retry or transition logic. Orchestration rules live only in orchestration-decisions/ as pure policies; hosts collect typed facts and apply returned decisions; keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record in results/status.md which option you implemented. Workspace data only through the application API. Git stays platform-owned: do not commit, push or merge. Update the touched domain docs. No em dashes. Report changed files and exact verification commands."
+    },
+    {
+      "id": "RT-6",
+      "title": "RT-6 \u00B7 One test envelope for review, gate and post-merge runs",
+      "dependsOn": [
+        "RT-5"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "RT-6",
+        "criteria": [
+          "Review, gate and post-merge test commands use one allowlist, one cgroup shape and one processor count.",
+          "Every receipt carries the envelope fingerprint; a base canary makes envelope failures inconclusive instead of red.",
+          "The gate no longer inherits the backend process environment."
+        ]
+      },
+      "promptMarkdown": "# RT-6 \u00B7 One test envelope for review, gate and post-merge runs\n\nSource: \u0060docs/red-test-isolation/index.html\u0060 (AGT-3988), sections named below, and its \u0060workbench.json\u0060. Decisions: RT-D10 (B). Dependencies: RT-5.\n\n**Area:** a shared envelope definition in \u0060contracts/TaskServer.Contracts/\u0060, \u0060backend/Features/Pipeline/BuildTestGateRunner.cs\u0060 (process start), \u0060runner/RemoteReviewWorkspace.cs\u0060, \u0060runner/PostMergeRunCommand.cs\u0060, \u0060runner/WorkerCgroup.cs\u0060, \u0060.agent-studio/project.yml\u0060 (base filter), one new base test\n\n## Why\nDossier section Environment parity. The review clears and allowlists its environment, the gate inherits the backend\u0027s, and post-merge clears with a different allowlist since AGT-3981; cgroups and processor counts differ in all three.\n\n## Deliver\n1. One allowlist builder used by all three: tool and OS variables, the project\u0027s declared \u0060environment\u0060, a run-owned \u0060HOME\u0060 and temp root, no daemon, provider or Git credential variables. The gate\u0027s process start stops inheriting the backend environment.\n2. One resource shape on Linux: a fresh worker cgroup leaf per test command with \u0060cpu.max\u0060 equal to one gate token (3 cores, configurable) and \u0060DOTNET_PROCESSOR_COUNT\u0060 set to the same value in review, gate and post-merge. Where a host cannot delegate, record that in the fingerprint instead of failing.\n3. Envelope fingerprint (RT-3 fields) on review and gate receipts too, and a \u0060reference\u0060 envelope definition used by the RT-3 reference repeat.\n4. A base test (for example \u0060TestEnvelopeCanaryTests\u0060, in the \u0060backend-base\u0060 filter) that asserts from inside the test process: no \u0060RUNNER_*\u0060, \u0060AGENT_HOST_*\u0060 or provider variables, its own \u0060HOME\u0060, a worker cgroup on Linux, the processor count set. A canary failure makes the run Inconclusive through RT-2, never red.\n5. Document the envelope in pipeline.md and runner.md.\n\n## Acceptance\n- A test that prints its environment and cgroup produces the same allowlist digest and resource shape in a review, a gate and a post-merge fixture run.\n- Injecting \u0060RUNNER_SERVER_URL\u0060 into the daemon environment leaves the canary green; forcing it into the declared environment fails the canary and the receipt is inconclusive.\n- Base suite duration stays under its 600-second cap.\n\n## Rules\nRead AGENTS.md, docs/start/contribution-and-style-guide.html, docs/system/contracts/orchestration-decisions.md, docs/system/domains/pipeline.md (Testing strategy, Post-merge develop checks, Flaky tests after integration, Red develop repair) and docs/concepts/orchestrator-drive-to-conclusion.html before changing outcome, retry or transition logic. Orchestration rules live only in orchestration-decisions/ as pure policies; hosts collect typed facts and apply returned decisions; keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record in results/status.md which option you implemented. Workspace data only through the application API. Git stays platform-owned: do not commit, push or merge. Update the touched domain docs. No em dashes. Report changed files and exact verification commands."
+    },
+    {
+      "id": "RT-7",
+      "title": "RT-7 \u00B7 Develop state with quarantine count, isolated-tests panel and owner items",
+      "dependsOn": [
+        "RT-4"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "RT-7",
+        "criteria": [
+          "The header shows green with a quarantined count, and red only for a line stop, using the shared status indicator and defined tokens.",
+          "The project Operations view lists isolated tests with kind, area, card and end time.",
+          "Playwright screenshots at 1280 and 390 px in both themes are in the results folder."
+        ]
+      },
+      "promptMarkdown": "# RT-7 \u00B7 Develop state with quarantine count, isolated-tests panel and owner items\n\nSource: \u0060docs/red-test-isolation/index.html\u0060 (AGT-3988), sections named below, and its \u0060workbench.json\u0060. Decisions: RT-D11 (B). Dependencies: RT-4.\n\n**Area:** \u0060frontend/src/app/features/studio-shell/components/develop-state-indicator/\u0060, the project Operations view, Needs you item rendering, \u0060frontend/e2e/board/develop-state.spec.ts\u0060 and a new spec\n\n## Why\nDossier sections Quarantine (How it is shown) and Evidence. The header pill shows only Develop green, running or red, and red and running render in the neutral text colour because \u0060--studio-danger\u0060 and \u0060--studio-warning\u0060 are not defined tokens.\n\n## Deliver\n1. Build the pill on the shared \u0060\u003Capp-status-indicator\u003E\u0060 (AGT-3402) and the central tokens, no local colours: \u0060Develop green\u0060, \u0060Develop green \u00B7 N quarantined\u0060 (warn tone, not acute), \u0060Develop running\u0060, \u0060Develop stopped \u00B7 \u003Creason\u003E\u0060 (error tone, the only acute state). The tooltip lists quarantined tests with kind and end time.\n2. Project Operations: an Isolated tests panel with test, kind, area held, card link and ends in; empty, loading and error states. Follow the flat-surface admin guideline and the hard rules (no left accent bars, both themes, spacing tokens).\n3. Owner items from RT-1 and RT-4 render with their options and the recommended option marked, using the existing Needs you components.\n4. Playwright: update \u0060develop-state.spec.ts\u0060 and add coverage for the four pill states and the panel at 1280 and 390 px in light and dark, with screenshots in the task results folder.\n\n## Acceptance\n- The four pill states render with the right tone in both themes (screenshots).\n- The panel lists held and report-only entries from a mocked \u0060/api/projects/{name}/test-quarantines\u0060 and links the card.\n- No undefined CSS custom property remains in the indicator (check computed styles in the spec).\n\n## Rules\nRead AGENTS.md, docs/start/contribution-and-style-guide.html, docs/system/contracts/orchestration-decisions.md, docs/system/domains/pipeline.md (Testing strategy, Post-merge develop checks, Flaky tests after integration, Red develop repair) and docs/concepts/orchestrator-drive-to-conclusion.html before changing outcome, retry or transition logic. Orchestration rules live only in orchestration-decisions/ as pure policies; hosts collect typed facts and apply returned decisions; keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record in results/status.md which option you implemented. Workspace data only through the application API. Git stays platform-owned: do not commit, push or merge. Update the touched domain docs. No em dashes. Report changed files and exact verification commands."
+    },
+    {
+      "id": "RT-8",
+      "title": "RT-8 \u00B7 Line guardian role in the persona team, in shadow",
+      "dependsOn": [
+        "RT-5"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "RT-8",
+        "criteria": [
+          "A line guardian role exists with the Dossier\u0027s charter, rights, tiers, budget and log.",
+          "It runs in shadow per project until the owner switches it live.",
+          "Ambiguous reds get one bounded model classification that cannot choose an action."
+        ]
+      },
+      "promptMarkdown": "# RT-8 \u00B7 Line guardian role in the persona team, in shadow\n\nSource: \u0060docs/red-test-isolation/index.html\u0060 (AGT-3988), sections named below, and its \u0060workbench.json\u0060. Decisions: RT-D8 (B), RT-D13 (B, shadow part). Dependencies: RT-5.\n\n**Area:** \u0060backend/Policies/personas/\u0060 (descriptor and revisions lock), \u0060backend/Features/Personas/\u0060 (role, principal, allow list, budget, log, shadow record), model classification call\n\n## Why\nDossier section Line guardian. Until this slice the RT-4 rules act as the system principal; the owner needs a named, reviewable role with rights, budget and a log, separate from the dispatcher.\n\n## Deliver\n1. A role \u0060line-guardian\u0060 (kind \u0060guardian\u0060, aspect \u0060delivery\u0060, project-scoped) with the Dossier\u0027s charter, following the dispatcher role pattern if DS-5 has landed, otherwise the persona descriptor schema with a new kind.\n2. Allow list of operations and tiers exactly as the Dossier\u0027s rights table; T2 operations become owner items with an expiry and use cap; non-grantable operations are refused by the policy step.\n3. Budget: model work at most one classification per incident and 60,000 tokens a week per project; compute for confirmation, control and bisect at most 90 core-minutes per incident and 600 a week per project, counted from receipts; exhaustion stops model work and raises an owner item, the rules keep running.\n4. Ambiguous classification: one schema-bound model call with the excerpt, envelope difference and suspect diff summary; it returns a class and evidence, never an action; the rules then decide.\n5. Shadow mode per project: the guardian computes and logs its decisions on every receipt next to the applied system decisions; a project setting switches it live (owner only), after which its principal applies RT-4\u0027s operations.\n6. Log entries with the \u0060PersonaLogEntryV1\u0060 fields; one feed item per closed incident.\n\n## Acceptance\n- In shadow, every receipt produces a guardian log entry and no applied change; after the owner switches a project live, quarantine and repair operations carry the guardian principal.\n- A T2 request (quarantine a base test) becomes an owner item and is not applied.\n- Budget exhaustion stops the model call and raises one owner item.\n\n## Rules\nRead AGENTS.md, docs/start/contribution-and-style-guide.html, docs/system/contracts/orchestration-decisions.md, docs/system/domains/pipeline.md (Testing strategy, Post-merge develop checks, Flaky tests after integration, Red develop repair) and docs/concepts/orchestrator-drive-to-conclusion.html before changing outcome, retry or transition logic. Orchestration rules live only in orchestration-decisions/ as pure policies; hosts collect typed facts and apply returned decisions; keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record in results/status.md which option you implemented. Workspace data only through the application API. Git stays platform-owned: do not commit, push or merge. Update the touched domain docs. No em dashes. Report changed files and exact verification commands."
+    },
+    {
+      "id": "RT-9",
+      "title": "RT-9 \u00B7 Guardian criteria, weighted value and shadow comparison",
+      "dependsOn": [
+        "RT-7",
+        "RT-8"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "RT-9",
+        "criteria": [
+          "The six guardian criteria are projected weekly per project with provenance and a configurable weighted value.",
+          "Shadow disagreements are listed with outcomes before the owner switches a project live.",
+          "The persona page shows the criteria in both themes with Playwright screenshots."
+        ]
+      },
+      "promptMarkdown": "# RT-9 \u00B7 Guardian criteria, weighted value and shadow comparison\n\nSource: \u0060docs/red-test-isolation/index.html\u0060 (AGT-3988), sections named below, and its \u0060workbench.json\u0060. Decisions: RT-D13 (B). Dependencies: RT-7, RT-8.\n\n**Area:** a persona projection for the guardian criteria, the persona page section, the weekly report template \u0060guardian-v1\u0060, Playwright coverage\n\n## Why\nDossier section Line guardian (How the owner reviews it). The owner reviews the guardian by time to isolate, false blames, time develop was really unusable, escapes, cost of repairs and held-card wait.\n\n## Deliver\n1. Weekly per-project projection from incident logs, receipts and integration refusals: the six criteria as defined in the Dossier, each with its window and provenance.\n2. Normalised scores and a weighted value with configurable weights, defaults 25, 20, 20, 15, 10, 10.\n3. Shadow comparison: guardian decisions against applied decisions, with every disagreement listed and its outcome once known.\n4. Persona page section and weekly report from the template; owner control to switch a project live, showing the shadow week\u0027s numbers next to it.\n5. Playwright coverage with screenshots in both themes at 1280 and 390 px.\n\n## Acceptance\n- A fixture week with one false blame, one escape and two incidents produces the expected criteria values and weighted value.\n- The persona page shows the criteria, the shadow disagreements and the switch-live control in both themes.\n\n## Rules\nRead AGENTS.md, docs/start/contribution-and-style-guide.html, docs/system/contracts/orchestration-decisions.md, docs/system/domains/pipeline.md (Testing strategy, Post-merge develop checks, Flaky tests after integration, Red develop repair) and docs/concepts/orchestrator-drive-to-conclusion.html before changing outcome, retry or transition logic. Orchestration rules live only in orchestration-decisions/ as pure policies; hosts collect typed facts and apply returned decisions; keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record in results/status.md which option you implemented. Workspace data only through the application API. Git stays platform-owned: do not commit, push or merge. Update the touched domain docs. No em dashes. Report changed files and exact verification commands."
+    }
+  ],
+  "key": "AGT-W3465"
+}

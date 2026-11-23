@@ -10,9 +10,9 @@ using AgentStudio.Tasks;
 
 namespace AgentStudio.Quota;
 
-public sealed record QuotaLimits(long? ModelTokensPerWeek, decimal? ComputeCoreHoursPerWeek, int? HostingSlots);
+public sealed record QuotaLimits(long? ModelTokensPerWeek, decimal? ComputeCoreHoursPerWeek, int? HostingSlots, decimal? WeeklyBudgetUsd = null, bool IncludeCacheReads = true);
 public sealed record QuotaUsage(long ModelTokens, decimal ModelCostUsd, decimal ComputeCoreHours, int HostingSlots,
-    int UnpricedRuns = 0);
+    int UnpricedRuns = 0, long UncachedTokens = 0);
 public sealed record QuotaConsumer(string ProjectId, string Project, string? CardId, long ModelTokens, decimal ComputeCoreHours);
 public sealed record QuotaProjectConsumer(string ProjectId, string Project, long ModelTokens, decimal ComputeCoreHours);
 public sealed record QuotaSnapshot(string WorkspaceId, string? ProjectId, DateTime WeekStartUtc, DateTime WeekEndUtc,
@@ -21,12 +21,12 @@ public sealed record QuotaSnapshot(string WorkspaceId, string? ProjectId, DateTi
     IReadOnlyList<QuotaUsage> DailyTrend, bool MeterComplete, bool OverrideActive,
     bool CodingAllowed, bool HostingAllowed, string? Message);
 /// <summary>MeterUnavailable marks a verdict given without a complete meter, so callers can surface it.</summary>
-public sealed record QuotaAdmission(bool Allowed, string? Message, bool MeterUnavailable = false);
+public sealed record QuotaAdmission(bool Allowed, string? Message, bool MeterUnavailable = false, IReadOnlyDictionary<string, string>? CardRefusals = null);
 /// <summary>Board view of one scope; Limited is false when no limit applies and nothing was metered.</summary>
 public sealed record QuotaScopeAdmission(string? ProjectId, string? Project, string Status, string? Message,
     bool OverrideActive, bool CodingAllowed, bool HostingAllowed, bool Limited);
 public sealed record QuotaBoardAdmission(string WorkspaceId, QuotaScopeAdmission Workspace,
-    IReadOnlyList<QuotaScopeAdmission> Projects);
+    IReadOnlyList<QuotaScopeAdmission> Projects, IReadOnlyDictionary<string, string>? CardRefusals = null);
 public sealed record QuotaOverrideAudit(DateTimeOffset At, string WorkspaceId, string? ProjectId,
     string Actor, string Reason, DateTime ExpiresAt);
 public sealed record QuotaDeployExecution(string ProjectId, string JobId, string EnvironmentId,
@@ -50,7 +50,7 @@ public sealed class WorkspaceQuotaService
     private sealed record State(Dictionary<string, QuotaLimits> Workspaces,
         Dictionary<string, QuotaLimits> Projects, Dictionary<string, DateTime> Overrides,
         Dictionary<string, string> Environments, List<QuotaOverrideAudit>? Audits = null,
-        List<QuotaDeployExecution>? Deploys = null, Dictionary<string, QuotaHostingDispatch>? Dispatches = null);
+        List<QuotaDeployExecution>? Deploys = null, Dictionary<string, QuotaHostingDispatch>? Dispatches = null, Dictionary<string, CardBudget>? Cards = null);
 
     /// <summary>StateUnknown: the settings file was never readable since start, so no limits are known.</summary>
     private sealed record StateView(QuotaLimits? WorkspaceLimits, QuotaLimits? ProjectLimits,
@@ -165,7 +165,7 @@ public sealed class WorkspaceQuotaService
     public void SetLimits(string workspaceId, string? projectId, QuotaLimits? limits)
     {
         if (_workspaces.Find(workspaceId) is null) throw new KeyNotFoundException("Unknown workspace.");
-        if (limits is { ModelTokensPerWeek: < 0 } or { ComputeCoreHoursPerWeek: < 0 } or { HostingSlots: < 0 })
+        if (limits is { ModelTokensPerWeek: < 0 } or { ComputeCoreHoursPerWeek: < 0 } or { HostingSlots: < 0 } or { WeeklyBudgetUsd: < 0 })
             throw new ArgumentException("Quota limits must be nonnegative.");
         if (projectId is not null && !_projects.List().Any(p => p.Id == projectId && p.WorkspaceId == workspaceId))
             throw new KeyNotFoundException("Project does not belong to workspace.");
@@ -180,6 +180,77 @@ public sealed class WorkspaceQuotaService
             else map[key] = limits;
             Save();
         }
+    }
+
+    public sealed record CardBudget(decimal? Usd, long? UncachedTokens);
+
+    public CardBudget GetCardBudget(string workspaceId, string projectId, string cardId)
+    {
+        var task = ResolveBudgetCard(workspaceId, projectId, cardId);
+        lock (_gate) { Reload(); return _state.Cards?.GetValueOrDefault(projectId + "/" + task.Id) ?? new(null, null); }
+    }
+
+    public void SetCardBudget(string workspaceId, string projectId, string cardId, CardBudget budget)
+    {
+        if (string.IsNullOrWhiteSpace(cardId) || budget is { Usd: < 0 } or { UncachedTokens: < 0 })
+            throw new ArgumentException("Card id and nonnegative budget are required.");
+        var task = ResolveBudgetCard(workspaceId, projectId, cardId);
+        lock (_gate)
+        {
+            Reload();
+            var cards = _state.Cards ?? new Dictionary<string, CardBudget>();
+            var key = projectId + "/" + task.Id;
+            if (budget is { Usd: null, UncachedTokens: null }) cards.Remove(key);
+            else cards[key] = budget;
+            _state = _state with { Cards = cards };
+            Save();
+        }
+    }
+
+    private TaskInfo ResolveBudgetCard(string workspaceId, string projectId, string cardId)
+    {
+        var project = _projects.List().FirstOrDefault(p => p.Id == projectId && p.WorkspaceId == workspaceId)
+            ?? throw new KeyNotFoundException("Project does not belong to workspace.");
+        return FindCard(_scanner.ScanAllJobsWithArchive(), project, cardId)
+            ?? throw new KeyNotFoundException("Unknown card in project.");
+    }
+
+    private static string?[] CardAliases(TaskInfo? task, string cardId)
+        => task is null ? [cardId] : [task.Id, task.Key, task.TaskKey];
+
+    private static TaskInfo? FindCard(IEnumerable<TaskInfo> tasks, ProjectRecord project, string cardId)
+        => tasks.FirstOrDefault(t => t.ProjectName == project.DisplayName
+            && CardAliases(t, t.Id).Contains(cardId, StringComparer.OrdinalIgnoreCase));
+
+    private QuotaAdmission? CardAdmission(ProjectRecord project, string cardId)
+    {
+        lock (_gate) { Reload(); if (_state.Cards is not { Count: > 0 }) return null; }
+        var task = FindCard(_scanner.ScanAllJobsWithArchive(), project, cardId);
+        return CardAdmission(project, task, cardId);
+    }
+
+    private QuotaAdmission? CardAdmission(ProjectRecord project, TaskInfo? task, string cardId)
+    {
+        CardBudget? budget;
+        lock (_gate) { Reload(); budget = _state.Cards?.GetValueOrDefault(project.Id + "/" + (task?.Id ?? cardId)); }
+        return budget is null ? null : CardAdmission(budget, CardAliases(task, cardId),
+            _tokens.LoadFreshSnapshot(project.DisplayName, project.StorageLocation));
+    }
+
+    private QuotaAdmission? CardAdmission(CardBudget budget, string?[] aliases, ProjectTokenLedgerSnapshot ledger)
+    {
+        if (ledger.Freshness.Status != "complete") return new(false, "card-budget-meter-unavailable: card usage is unavailable.", true);
+        long tokens = 0;
+        decimal cost = 0;
+        foreach (var entry in ledger.Entries.Where(e => aliases.Contains(e.JobId, StringComparer.OrdinalIgnoreCase)))
+        {
+            if (entry.TokenUsage is not { } usage) continue;
+            tokens += WorkspaceQuotaPolicy.ModelTokens(usage.InputTokens, usage.OutputTokens, 0, usage.CacheCreationTokens);
+            cost += Price(usage, AsUtc(entry.Ts)) ?? 0;
+        }
+        if (budget.Usd is { } usd && cost >= usd) return new(false, $"card-budget-usd: {cost:F2} USD priced spend of {usd:F2} USD; owner must raise or clear the card budget.");
+        if (budget.UncachedTokens is { } cap && tokens >= cap) return new(false, $"card-budget-tokens: {tokens:N0} of {cap:N0} tokens excluding cache reads; owner must raise or clear the card budget.");
+        return null;
     }
 
     public void Override(string workspaceId, string? projectId, string actor, string reason)
@@ -215,7 +286,7 @@ public sealed class WorkspaceQuotaService
     }
 
     private static bool IsEmpty(QuotaLimits? limits)
-        => limits is null or { ModelTokensPerWeek: null, ComputeCoreHoursPerWeek: null, HostingSlots: null };
+        => limits is null or { ModelTokensPerWeek: null, ComputeCoreHoursPerWeek: null, HostingSlots: null, WeeklyBudgetUsd: null };
 
     /// <summary>
     /// True when any workspace or project limit exists, or when the settings
@@ -228,7 +299,7 @@ public sealed class WorkspaceQuotaService
         {
             Reload();
             return _state.Workspaces.Values.Any(limits => !IsEmpty(limits))
-                || _state.Projects.Values.Any(limits => !IsEmpty(limits)) || _stateReadError is not null;
+                || (_state.Cards?.Count ?? 0) > 0 || _state.Projects.Values.Any(limits => !IsEmpty(limits)) || _stateReadError is not null;
         }
     }
 
@@ -454,13 +525,59 @@ public sealed class WorkspaceQuotaService
         }
     }
 
-    public QuotaAdmission Admit(string projectName, bool hosting = false)
+    public QuotaAdmission ProjectAdmission(string projectName)
+    {
+        var project = _projects.FindByIdOrDisplayName(projectName);
+        if (project is null) return Admit(projectName);
+        var admission = HasLimits() ? Admit(project, hosting: false) : new QuotaAdmission(true, null);
+        return admission with { CardRefusals = ProjectCardRefusals(project,
+            new Lazy<List<TaskInfo>>(_scanner.ScanAllJobsWithArchive)) };
+    }
+
+    /// <summary>One task snapshot and one fresh project ledger serve all of its card budgets.</summary>
+    private IReadOnlyDictionary<string, string> ProjectCardRefusals(ProjectRecord project, Lazy<List<TaskInfo>> tasks)
+    {
+        List<KeyValuePair<string, CardBudget>> budgets;
+        var prefix = project.Id + "/";
+        lock (_gate)
+        {
+            Reload();
+            budgets = (_state.Cards ?? new Dictionary<string, CardBudget>())
+                .Where(pair => pair.Key.StartsWith(prefix, StringComparison.Ordinal)).ToList();
+        }
+        var refusals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (budgets.Count == 0) return refusals;
+        var cards = tasks.Value.Where(task => task.ProjectName == project.DisplayName)
+            .GroupBy(task => task.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var ledger = _tokens.LoadFreshSnapshot(project.DisplayName, project.StorageLocation);
+        foreach (var (key, budget) in budgets)
+        {
+            var id = key[prefix.Length..];
+            var aliases = CardAliases(cards.GetValueOrDefault(id), id);
+            if (CardAdmission(budget, aliases, ledger) is not { Allowed: false } refusal) continue;
+            foreach (var alias in aliases)
+                if (!string.IsNullOrWhiteSpace(alias)) refusals[alias] = refusal.Message ?? "card-budget-reached";
+        }
+        return refusals;
+    }
+
+    public QuotaAdmission Admit(string projectName, bool hosting = false, string? cardId = null)
     {
         if (!HasLimits()) return new(true, null);
         var project = _projects.FindByIdOrDisplayName(projectName);
         if (project is null)
             return new(true, $"Project '{projectName}' is not registered in Studio; quota admission is off for it.", true);
-        return Admit(project, hosting);
+        return (cardId is null ? null : CardAdmission(project, cardId)) ?? Admit(project, hosting);
+    }
+
+    /// <summary>Admit an already resolved card without another archive-inclusive task lookup.</summary>
+    public QuotaAdmission Admit(TaskInfo task)
+    {
+        if (!HasLimits()) return new(true, null);
+        var project = _projects.FindByIdOrDisplayName(task.ProjectName);
+        if (project is null) return Admit(task.ProjectName);
+        return CardAdmission(project, task, task.Id) ?? Admit(project, hosting: false);
     }
 
     private QuotaAdmission Admit(ProjectRecord project, bool hosting)
@@ -488,6 +605,12 @@ public sealed class WorkspaceQuotaService
                     : snapshot.Message) ?? "Quota reached. An owner can override this week's limit.");
         }
         return new(true, view.ReadError, view.ReadError is not null);
+    }
+
+    public QuotaLimits? Limits(string workspaceId, string? projectId = null)
+    {
+        var view = View(workspaceId, projectId);
+        return projectId is null ? view.WorkspaceLimits : view.ProjectLimits;
     }
 
     public QuotaSnapshot Snapshot(string workspaceId, string? projectId = null)
@@ -522,8 +645,13 @@ public sealed class WorkspaceQuotaService
             return new(project?.Id, project?.DisplayName, snapshot.Status, snapshot.Message,
                 snapshot.OverrideActive, snapshot.CodingAllowed, snapshot.HostingAllowed, true);
         }
+        var cardRefusals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var tasks = new Lazy<List<TaskInfo>>(_scanner.ScanAllJobsWithArchive);
+        foreach (var project in projects)
+            foreach (var refusal in ProjectCardRefusals(project, tasks))
+                cardRefusals[project.DisplayName + "/" + refusal.Key] = refusal.Value;
         return new(workspaceId, Scope(null, workspaceView),
-            projects.Select(project => Scope(project, views[project.Id])).ToList());
+            projects.Select(project => Scope(project, views[project.Id])).ToList(), cardRefusals);
     }
 
     private StateView View(string workspaceId, string? projectId)
@@ -553,6 +681,7 @@ public sealed class WorkspaceQuotaService
             (sum, p) => sum with
             {
                 ModelTokens = sum.ModelTokens + p.Daily[day].ModelTokens,
+                UncachedTokens = sum.UncachedTokens + p.Daily[day].UncachedTokens,
                 ModelCostUsd = sum.ModelCostUsd + p.Daily[day].ModelCostUsd,
                 UnpricedRuns = sum.UnpricedRuns + p.Daily[day].UnpricedRuns,
                 ComputeCoreHours = sum.ComputeCoreHours + p.Daily[day].ComputeCoreHours,
@@ -564,6 +693,8 @@ public sealed class WorkspaceQuotaService
                 daily[day] = daily[day] with
                 {
                     ModelTokens = daily[day].ModelTokens + usage.Unattributed[day].ModelTokens,
+                    UncachedTokens = daily[day].UncachedTokens + usage.Unattributed[day].UncachedTokens,
+                    UnpricedRuns = daily[day].UnpricedRuns + usage.Unattributed[day].UnpricedRuns,
                     ModelCostUsd = daily[day].ModelCostUsd + usage.Unattributed[day].ModelCostUsd,
                 };
             }
@@ -579,8 +710,8 @@ public sealed class WorkspaceQuotaService
         var hostingCount = view.Environments.Count(key => ids.Any(id =>
             key.StartsWith(id + "/", StringComparison.OrdinalIgnoreCase)));
         var total = new QuotaUsage(daily.Sum(d => d.ModelTokens), daily.Sum(d => d.ModelCostUsd),
-            daily.Sum(d => d.ComputeCoreHours), hostingCount, daily.Sum(d => d.UnpricedRuns));
-        var remaining = new QuotaUsage(Math.Max(0, (limits?.ModelTokensPerWeek ?? 0) - total.ModelTokens), 0,
+            daily.Sum(d => d.ComputeCoreHours), hostingCount, daily.Sum(d => d.UnpricedRuns), daily.Sum(d => d.UncachedTokens));
+        var remaining = new QuotaUsage(Math.Max(0, (limits?.ModelTokensPerWeek ?? 0) - (limits?.IncludeCacheReads == false ? total.UncachedTokens : total.ModelTokens)), Math.Max(0, (limits?.WeeklyBudgetUsd ?? 0) - total.ModelCostUsd),
             Math.Max(0, (limits?.ComputeCoreHoursPerWeek ?? 0) - total.ComputeCoreHours),
             Math.Max(0, (limits?.HostingSlots ?? 0) - total.HostingSlots));
         var meterProblems = projects.Where(p => p.MeterWarning is not null)
@@ -592,7 +723,7 @@ public sealed class WorkspaceQuotaService
         var status = meterBlocks ? WorkspaceQuotaPolicy.Blocked : WorkspaceQuotaPolicy.Status(limits, total);
         var message = meterBlocks
             ? "Quota usage is temporarily unavailable. New work waits for the meter. " + string.Join(" ", meterProblems)
-            : WorkspaceQuotaPolicy.Message(status, limits) ?? (limits is null ? null : view.ReadError);
+            : WorkspaceQuotaPolicy.ReachedMessage(limits, total, end) ?? WorkspaceQuotaPolicy.Message(status, limits) ?? (limits is null ? null : view.ReadError);
         return new(workspaceId, projectId, start, end, limits, total, remaining, status,
             consumers.GroupBy(c => (c.ProjectId, c.Project, c.CardId))
                 .Select(g => new QuotaConsumer(g.Key.ProjectId, g.Key.Project, g.Key.CardId,
@@ -719,6 +850,7 @@ public sealed class WorkspaceQuotaService
                 var unpricedRun = count > 0 && price is null
                     && unpricedRunIds.Add(entry.JobId ?? $"receipt:{at.Ticks}:{day}");
                 daily[day] = daily[day] with { ModelTokens = daily[day].ModelTokens + count,
+                    UncachedTokens = daily[day].UncachedTokens + count - Math.Max(0, usage.CacheReadTokens),
                     ModelCostUsd = daily[day].ModelCostUsd + (price ?? 0),
                     UnpricedRuns = daily[day].UnpricedRuns + (unpricedRun ? 1 : 0) };
                 var card = entry.JobId is null ? null : cards.GetValueOrDefault(entry.JobId, entry.JobId);
@@ -752,6 +884,7 @@ public sealed class WorkspaceQuotaService
             unattributedDaily[day] = unattributedDaily[day] with
             {
                 ModelTokens = unattributedDaily[day].ModelTokens + count,
+                UncachedTokens = unattributedDaily[day].UncachedTokens + count - Math.Max(0, usage.CacheReadTokens),
                 ModelCostUsd = unattributedDaily[day].ModelCostUsd + (price ?? 0),
                 UnpricedRuns = unattributedDaily[day].UnpricedRuns + (unpricedRun ? 1 : 0),
             };

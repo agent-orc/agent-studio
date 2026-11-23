@@ -438,7 +438,8 @@ public sealed record ReviewCommandEvidenceDto(
     /// tests (AGT-3650), one of <see cref="ReviewRepeatObservation"/>. Null when
     /// the failure names had no shape the repeat output could be checked for.
     /// </summary>
-    string? RepeatObservation = null);
+    string? RepeatObservation = null,
+    IReadOnlyDictionary<string, string>? FailureMessages = null);
 
 /// <summary>
 /// Evidence levels for a passing clean repeat (AGT-3650). A test-name proof

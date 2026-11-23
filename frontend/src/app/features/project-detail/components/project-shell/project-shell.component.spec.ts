@@ -61,6 +61,18 @@ describe('ProjectShellComponent rail IA', () => {
     clearProjectShellStorage();
   });
 
+  it('collapses the setup rail on phones and lets the owner expand it', () => {
+    const fixture = mount('settings');
+    fixture.componentInstance.collapseSetupOnPhone(390);
+    expect(fixture.componentInstance.railCollapsed()).toBe(true);
+    fixture.componentInstance.setRailCollapsed(false);
+    fixture.componentInstance.collapseSetupOnPhone(1280);
+    expect(fixture.componentInstance.railCollapsed()).toBe(false);
+    fixture.componentRef.setInput('activeRail', 'overview');
+    fixture.componentInstance.collapseSetupOnPhone(390);
+    expect(fixture.componentInstance.railCollapsed()).toBe(false);
+  });
+
   it('shows the registration reason and lets an owner request one reconcile', () => {
     const fixture = mount('quality-studio');
     const auth = TestBed.inject(AuthService);

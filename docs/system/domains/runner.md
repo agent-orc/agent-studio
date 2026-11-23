@@ -3093,4 +3093,7 @@ and reuses the existing Runner credential. Window observations are durable
 facts in `PostMergeRunStore`, independent of green/red receipts, and flow to
 `/api/develop-states` and the project Operations alert. Nightly routine checks
 are retried between 02:15 and 06:15 UTC and deduplicated by terminal receipts
-for the UTC day. See [host setup and legacy timer retirement](../../operations/setup/linux-runner-host.md#post-merge-develop-checks).
+for the UTC day. On Linux each project command receives the same per-worker
+cgroup envelope as coding work, in a sibling leaf of the daemon. Required
+attachment keeps project tests out of the daemon leaf, and command teardown
+kills leftovers. A host without delegation defers execution. See [host setup and legacy timer retirement](../../operations/setup/linux-runner-host.md#post-merge-develop-checks).

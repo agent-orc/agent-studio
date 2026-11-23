@@ -1300,7 +1300,7 @@ public sealed class RemoteTaskRunner
                 ResultsDir(taskKey),
                 artifactLimits);
             var attachments = await TaskAttachmentMaterializer.MaterializeAsync(
-                _client, taskKey, runSpec?.FollowUp?.Prompt,
+                _client, taskKey, (runSpec?.FollowUp?.Prompt ?? "") + "\n" + runSpec?.ModeFraming,
                 workspace.RepoPath, artifactLimits.MaxRequestBodyBytes, shutdown);
             if (attachments.Count > 0)
                 shipper.Add("system", $"[runner] materialized {attachments.Count} continuation attachment(s) in the workspace");

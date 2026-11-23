@@ -441,8 +441,8 @@ public class ProjectRunner
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _selectionIdsByJob = new(StringComparer.Ordinal);
 
     /// <summary>Workspace or project quota refusal for a new local run; null admits it.</summary>
-    internal RunRejection? WorkspaceQuotaRefusal()
-        => _workspaceQuota?.Admit(ProjectName) is { Allowed: false } admission
+    internal RunRejection? WorkspaceQuotaRefusal(TaskInfo? task = null)
+        => (task is null ? _workspaceQuota?.Admit(ProjectName) : _workspaceQuota?.Admit(task)) is { Allowed: false } admission
             ? new RunRejection(RunRejectReason.QuotaCapExceeded, admission.Message ?? "Workspace quota reached.")
             : null;
 
@@ -2771,7 +2771,7 @@ public class ProjectRunner
             // Resolve the run through the canonical admission boundary exactly
             // once. The decision is run-scoped and never mutates job.json, so a
             // recovered provider is selected again on the next launch.
-            if (WorkspaceQuotaRefusal() is { } quotaRefusal)
+            if (WorkspaceQuotaRefusal(info) is { } quotaRefusal)
                 return RunOutcome.Reject(quotaRefusal);
             var admissionPlan = PlanQuotaAdmission(info);
             var route = new CliRouteDecision(
@@ -4874,7 +4874,7 @@ public class ProjectRunner
             NotifyStatus();
 
             var promptPath = Path.Combine(info.FolderPath, "prompt.md");
-            var promptText = ReadPromptText(promptPath);
+            var promptText = DeliveryFailureEvidence.Append(info.FolderPath, ReadPromptText(promptPath));
             var lastAgentText = outcome.Summary ?? "(no agent summary captured)";
             var attachmentsList = BuildAttachmentsList(info.FolderPath);
 
@@ -8768,7 +8768,7 @@ public class ProjectRunner
         if (plan.PromptOverride != null)
         {
             var rewrittenOverride = RewriteMainCheckoutPathsForRun(
-                plan.PromptOverride, runWorkingDir, worktreeCheckout);
+                DeliveryFailureEvidence.Append(info.FolderPath, plan.PromptOverride), runWorkingDir, worktreeCheckout);
             if (dossierFraming.Length > 0)
                 rewrittenOverride = rewrittenOverride.TrimEnd() + "\n\n" + dossierFraming;
             return IsWorktreePath(runWorkingDir)
@@ -8781,7 +8781,7 @@ public class ProjectRunner
         var promptPath = Path.Combine(info.FolderPath, "prompt.md");
         var repositoryPath = string.IsNullOrWhiteSpace(Entry.RepositoryPath) ? Entry.RootPath : Entry.RepositoryPath;
         var effectiveRepositoryPath = IsWorktreePath(runWorkingDir) ? worktreeCheckout : repositoryPath;
-        var promptText = ReadPromptText(promptPath);
+        var promptText = DeliveryFailureEvidence.Append(info.FolderPath, ReadPromptText(promptPath));
         if (ShouldForegroundIntakeEnrichment(plan) && preparedPromptEnrichment is null)
             promptText = PrependIntakeEnrichment(info.FolderPath, promptText);
 

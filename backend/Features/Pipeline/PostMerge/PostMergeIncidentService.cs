@@ -58,7 +58,8 @@ public sealed class PostMergeIncidentService
                 failure?.AttributedMerge is null ? 0 : 1,
                 failure?.RevertAppliesCleanly == true,
                 failure?.LaterMergeDependsOnSuspect == true,
-                _clock.GetUtcNow() - firstRed);
+                _clock.GetUtcNow() - firstRed,
+                existing is null ? null : _scanner.FindJob(existing.RepairCardId, project.StorageLocation)?.State);
             var decision = MonolithTransitionAdapter.RedDevelopRepair(facts);
             if (existing is not null)
             {
@@ -118,13 +119,13 @@ public sealed class PostMergeIncidentService
                 Apply(project, red);
                 state = _store.Read(project.Id);
             }
-            ReopenResolved(project, state);
             if (state.DevelopState != "red") return;
             foreach (var incident in state.Incidents ?? [])
             {
                 if (incident.ResolvedAtUtc is not null || incident.Escalated) continue;
                 var decision = MonolithTransitionAdapter.RedDevelopRepair(new(0, false, false,
-                    _clock.GetUtcNow() - incident.FirstRedAtUtc));
+                    _clock.GetUtcNow() - incident.FirstRedAtUtc,
+                    _scanner.FindJob(incident.RepairCardId, project.StorageLocation)?.State));
                 if (decision.Action == RedDevelopRepairAction.Escalate)
                     Escalate(project, incident);
             }
@@ -135,6 +136,11 @@ public sealed class PostMergeIncidentService
     {
         var card = _scanner.FindJob(incident.RepairCardId, project.StorageLocation);
         if (card is null) throw new InvalidOperationException("The red-develop repair card is missing.");
+        // Recheck immediately before writing. A review can have started since
+        // the caller collected its facts; the move below also fences the lane.
+        if (MonolithTransitionAdapter.RedDevelopRepair(new(0, false, false,
+                _clock.GetUtcNow() - incident.FirstRedAtUtc, card.State)).Action != RedDevelopRepairAction.Escalate)
+            return;
         var note = "Develop has remained red for two hours. Human Operator: review the repair "
             + "and consider switching this project to the pre-merge batch gate until T3 is proven green.";
         if (!_mutations.AppendContinuationNote(card.Id, note, project.StorageLocation))
@@ -153,50 +159,14 @@ public sealed class PostMergeIncidentService
         var open = (state.Incidents ?? []).Where(item => item.ResolvedAtUtc is null).ToArray();
         if (open.Length == 0) return;
         var at = run.FinishedAtUtc ?? _clock.GetUtcNow();
-        var reopened = open.Where(item => item.Action == nameof(RedDevelopRepairAction.Revert))
-            .Where(item => ReopenOriginal(project, item)).Select(item => item.Fingerprint)
-            .ToHashSet(StringComparer.Ordinal);
+        // Attribution and a recommended repair action do not prove that any
+        // published commit reverted the original card. Resolving an incident
+        // must not mutate completed suspects, including historical incidents.
         _store.UpdateIncidents(project.Id, items => items.Select(item => item.ResolvedAtUtc is null
-            ? item with { ResolvedAtUtc = at, OriginalReopened = reopened.Contains(item.Fingerprint) }
+            ? item with { ResolvedAtUtc = at }
             : item).ToArray());
-    }
-
-    private void ReopenResolved(ProjectRecord project, PostMergeProjectState state)
-    {
-        var reopened = (state.Incidents ?? []).Where(item => item.ResolvedAtUtc is not null
-            && item.Action == nameof(RedDevelopRepairAction.Revert) && !item.OriginalReopened)
-            .Where(item => ReopenOriginal(project, item)).Select(item => item.Fingerprint)
-            .ToHashSet(StringComparer.Ordinal);
-        if (reopened.Count > 0)
-            _store.UpdateIncidents(project.Id, items => items.Select(item => reopened.Contains(item.Fingerprint)
-                ? item with { OriginalReopened = true } : item).ToArray());
-    }
-
-    private bool ReopenOriginal(ProjectRecord project, PostMergeIncident incident)
-    {
-        if (incident.AttributedMerge is null) return false;
-        var repair = _scanner.FindJob(incident.RepairCardId, project.StorageLocation);
-        if (repair?.State is not (TaskStates.HumanReview or TaskStates.Completed)) return false;
-        var origin = (incident.OriginalTaskId is null ? null
-                : _scanner.FindJob(incident.OriginalTaskId, project.StorageLocation))
-            ?? _scanner.ScanAllJobsWithArchive().FirstOrDefault(card => card.ProjectName == project.DisplayName
-            && card.IntegrationRecords.Any(record => string.Equals(record.IntegrationSha,
-                incident.AttributedMerge, StringComparison.OrdinalIgnoreCase)));
-        if (origin is null)
-        {
-            _logger.LogWarning("Red-develop revert {Fingerprint} has no matching original card", incident.Fingerprint);
-            return false;
-        }
-        var note = $"Post-merge failure {incident.Fingerprint} attributed to {incident.AttributedMerge}. "
-            + $"Repair card {incident.RepairCardId} reverted the merge. Failing tests: "
-            + string.Join(", ", incident.FailingTests);
-        if (!_mutations.AppendContinuationNote(origin.Id, note, origin.WatchPath))
-            throw new InvalidOperationException("The original card could not receive the post-merge failure.");
-        var moved = _states.MoveJob(origin.Id, TaskStates.Preparation, origin.WatchPath,
-            expectedSourceState: origin.State, reason: note);
-        if (moved.Status != MoveJobStatus.Success)
-            throw new InvalidOperationException("The reverted card could not return to Preparation: " + moved.Message);
-        return true;
+        _logger.LogInformation("Post-merge green resolved {Count} incidents for {Project}; original cards retain their lanes",
+            open.Length, project.Id);
     }
 
     private static string Prompt(ProjectRecord project, PostMergeRunRecord run, string? lastGreen,

@@ -15,10 +15,10 @@ import { StatusIndicatorComponent } from '../../../../components/status-indicato
 })
 export class TaskCardQuotaNoticeComponent {
   private readonly quotaBoard = inject(WorkspaceQuotaBoardState);
-  readonly task = input.required<Pick<TaskInfo, 'projectName' | 'state'>>();
+  readonly task = input.required<Pick<TaskInfo, 'projectName' | 'state'> & Partial<Pick<TaskInfo, 'id'>>>();
   readonly running = input(false);
   readonly message = computed(() => {
     const task = this.task();
-    return this.running() || isTerminalTaskState(task.state) ? null : this.quotaBoard.messageFor(task.projectName);
+    return this.running() || isTerminalTaskState(task.state) ? null : this.quotaBoard.messageFor(task.projectName, task.id);
   });
 }

@@ -40,12 +40,21 @@ internal static class FallbackGateEvidence
             RecordedFailedTests = failedTests,
             Processes = result.Processes.Select(process => new
             {
+                process.Command,
                 process.Phase,
                 process.ExitCode,
                 process.StartedAtUtc,
                 process.CompletedAtUtc,
                 process.Resources,
                 process.TestReport,
+                FailureMessages = (process.TestReport?.FailedTests ?? [])
+                    .Concat(GateFlakyRerunPolicy.ParseFailedTests(process.StandardOutput + "\n" + process.StandardError))
+                    .Distinct(StringComparer.Ordinal).ToDictionary(test => test,
+                        test => process.TestReport?.FailureMessages.GetValueOrDefault(test)
+                            ?? process.FailureMessages.GetValueOrDefault(test)
+                            ?? AgentStudio.Tasks.DeliveryFailureEvidence.FirstError(process.StandardOutput + "\n" + process.StandardError, test)),
+                FirstError = process.FirstError
+                    ?? AgentStudio.Tasks.DeliveryFailureEvidence.FirstError(process.StandardOutput + "\n" + process.StandardError, null),
             }),
             Reruns = result.Processes.Where(process => process.Phase == "flaky-rerun")
                 .Select(process => new
@@ -59,6 +68,7 @@ internal static class FallbackGateEvidence
                 }),
             TestShards = result.TestShards.Select(suite => new
             {
+                suite.Command,
                 suite.SuiteId,
                 suite.ShardCount,
                 suite.WallMs,

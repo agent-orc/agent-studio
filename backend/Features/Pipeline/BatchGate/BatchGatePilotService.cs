@@ -3481,6 +3481,8 @@ public sealed partial class BatchGatePilotService
         string evidence, DateTimeOffset started, string level)
     {
         FallbackGateEvidence.Write(evidence, gate);
+        var task = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);
+        if (task is not null) DeliveryFailureEvidence.RecordGate(task.FolderPath, gate);
         // Every per-task gate that ran costs host minutes, emergency
         // fallbacks included; only the queue mutations depend on recordInStore.
         _store.RecordExecution(new BatchGateExecutionFact(

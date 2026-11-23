@@ -62,15 +62,17 @@ public sealed class PostMergeRunCommand
     private readonly TimeProvider _clock;
     private readonly HttpClient _http;
     private readonly Func<CoverageHostLoad> _probeHost;
+    private readonly RunnerOptions? _hostOptions;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public PostMergeRunCommand(PostMergeRunOptions options, TextWriter output, TimeProvider clock,
-        HttpClient http, Func<CoverageHostLoad>? probeHost = null)
+        HttpClient http, Func<CoverageHostLoad>? probeHost = null, RunnerOptions? hostOptions = null)
     {
         _options = options;
         _output = output;
         _clock = clock;
         _http = http;
+        _hostOptions = hostOptions;
         _probeHost = probeHost ?? (() => CoverageRunCommand.ProbeHost(options.StateDirectories));
     }
 
@@ -429,9 +431,26 @@ public sealed class PostMergeRunCommand
         catch (IOException) { return null; }
     }
 
-    private IReadOnlyDictionary<string, string?> ChildEnvironment(IReadOnlyDictionary<string, string> values)
+    private static IReadOnlyDictionary<string, string?> ChildEnvironment(IReadOnlyDictionary<string, string> values)
     {
-        var environment = values.ToDictionary(pair => pair.Key, pair => (string?)pair.Value);
+        // Like review commands, project commands receive an explicit environment.
+        // The host scheduler also holds runner, provider, and Git credentials.
+        var environment = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var name in new[]
+                 {
+                     "PATH", "HOME", "DOTNET_ROOT", "DOTNET_ROOT_X64", "DOTNET_ROOT_ARM64",
+                     "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP",
+                     "SSL_CERT_FILE", "SSL_CERT_DIR", "PLAYWRIGHT_BROWSERS_PATH",
+                 })
+        {
+            if (Environment.GetEnvironmentVariable(name) is { } value) environment[name] = value;
+        }
+        if (OperatingSystem.IsWindows())
+        {
+            foreach (var name in new[] { "SystemRoot", "windir", "SystemDrive", "ComSpec", "PATHEXT", "USERPROFILE" })
+                if (Environment.GetEnvironmentVariable(name) is { } value) environment[name] = value;
+        }
+        foreach (var (name, value) in values) environment[name] = value;
         environment["RUNNER_AUTH_TOKEN"] = null;
         environment["RUNNER_AUTH_TOKEN_FILE"] = null;
         environment["POST_MERGE_TOKEN_FILE"] = null;
@@ -439,16 +458,20 @@ public sealed class PostMergeRunCommand
         return environment;
     }
 
-    private async Task<(int ExitCode, bool TimedOut, string Output)> RunCommand(string command,
+    internal async Task<(int ExitCode, bool TimedOut, string Output)> RunCommand(string command,
         IReadOnlyDictionary<string, string> environment, CancellationToken ct)
     {
         _output.WriteLine($"post-merge {command}");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromHours(2));
+        using var envelope = PostMergeCommandEnvelope.Prepare(_hostOptions, line => _output.WriteLine(line));
+        var launch = envelope?.Launch("sh", ["-c", command]) ?? new WorkerLaunch("sh", ["-c", command]);
+        var childEnvironment = ChildEnvironment(environment);
+        if (envelope is not null) childEnvironment = envelope.ChildEnvironment(childEnvironment);
         try
         {
-            var result = await ProcessRunner.RunAsync("sh", ["-c", command], _options.Checkout,
-                environment: ChildEnvironment(environment),
+            var result = await ProcessRunner.RunAsync(launch.FileName, launch.Arguments, _options.Checkout,
+                environment: childEnvironment, clearEnvironment: true,
                 onStdOut: line => _output.WriteLine(line),
                 onStdErr: line => _output.WriteLine(line),
                 isolateProcessGroup: OperatingSystem.IsLinux(), ct: timeout.Token);

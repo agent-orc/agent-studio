@@ -11,8 +11,8 @@ public static class WorkspaceQuotaEndpoints
     {
         // An unregistered project is admitted with MeterUnavailable so a name
         // mismatch surfaces as a meter event instead of stopping its claims.
-        app.MapGet("/api/quota/admission/{project}", (string project, WorkspaceQuotaService quotas) =>
-            Results.Ok(quotas.Admit(project)))
+        app.MapGet("/api/quota/admission/{project}", (string project, string? cardId, WorkspaceQuotaService quotas) =>
+            Results.Ok(cardId is null ? quotas.ProjectAdmission(project) : quotas.Admit(project, cardId: cardId)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
         app.MapGet("/api/workspaces/{workspaceId}/quota/admission", (string workspaceId,
             WorkspaceQuotaService quotas) =>
@@ -48,6 +48,21 @@ public static class WorkspaceQuotaEndpoints
                 environments.ReconcileHostingSlots();
                 quotas.SetLimits(workspaceId, projectId, limits);
             }))
+            .RequirePermission(IamPermissions.WorkspaceAdminister)
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+        app.MapGet("/api/workspaces/{workspaceId}/projects/{projectId}/quota/cards/{cardId}",
+            (HttpContext context, string workspaceId, string projectId, string cardId, WorkspaceQuotaService quotas) =>
+            {
+                if (!Owner(context)) return Results.Forbid();
+                try { return Results.Ok(quotas.GetCardBudget(workspaceId, projectId, cardId)); }
+                catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+            })
+            .RequirePermission(IamPermissions.WorkspaceAdminister)
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+        app.MapPut("/api/workspaces/{workspaceId}/projects/{projectId}/quota/cards/{cardId}",
+            (HttpContext context, string workspaceId, string projectId, string cardId,
+                WorkspaceQuotaService.CardBudget budget, WorkspaceQuotaService quotas) =>
+                Set(context, () => quotas.SetCardBudget(workspaceId, projectId, cardId, budget)))
             .RequirePermission(IamPermissions.WorkspaceAdminister)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
         app.MapPost("/api/workspaces/{workspaceId}/quota/override", (HttpContext context,

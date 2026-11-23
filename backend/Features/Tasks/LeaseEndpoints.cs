@@ -3525,7 +3525,8 @@ public static class LeaseEndpoints
             ? null
             : ModelMetadataRegistry.ResolveThinkingLevel(cliType, model, thinkingLevel);
 
-        var modeFraming = BuildModeFraming(task, prompts, dossierMaintenance);
+        var modeFraming = DeliveryFailureEvidence.Append(task.FolderPath,
+            BuildModeFraming(task, prompts, dossierMaintenance) ?? string.Empty);
 
         var emergency = orchestratorDefaults?.ResolveCodingEmergencyLimit(task.ProjectName)
             ?? (AgentStudio.TaskServer.Contracts.CodingEmergencyLimit.DefaultSeconds, "platform");

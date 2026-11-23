@@ -1,0 +1,3 @@
+first-parent integrations with changes 172 (2026-11-16 to 2026-11-23)
+area hold (backend-routine): 124 (72%)
+covering-folder hold over 1312 backend test files (131 fall back to the area): median 15%, p90 49%

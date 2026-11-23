@@ -48,6 +48,7 @@ function cockpit() {
 test('idle ledger remains current while partial coverage names missing prices and sources', async ({ page }) => {
   mkdirSync(shots, { recursive: true });
   await page.clock.setFixedTime(FIXTURE_NOW);
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.route('**/api/v1/studio/auth/status', route => route.fulfill({ json: {
     profile: 'networked', bootstrapRequired: false, authenticated: true,
     user: { id: 'owner', username: 'owner', displayName: 'Owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false },
@@ -57,6 +58,11 @@ test('idle ledger remains current while partial coverage names missing prices an
   await page.route('**/api/usage/cockpit**', route => {
     const snapshot = cockpit();
     const ledger = snapshot.cost!;
+    ledger.weeklyBudgetUsd = 100;
+    ledger.budgetWeekSpentUsd = 25;
+    ledger.unpricedWeekRuns = 1;
+    ledger.projects[0].weeklyBudgetUsd = 50;
+    ledger.projects[0].budgetWeekSpentUsd = 10;
     ledger.coverage = {
       status: 'partial', observedAt, ttlSeconds: 60,
       reason: 'Demo Platform: unknown-model has no historical USD price. Missing Source: The project ledger could not be read.',
@@ -73,10 +79,21 @@ test('idle ledger remains current while partial coverage names missing prices an
   await expect(cost).toHaveAttribute('title', /Demo Platform: unknown-model.*Missing Source/);
   for (const theme of ['dark', 'light'] as const) {
     await setTheme(page, theme);
-    await page.screenshot({ path: join(shots, `partial-ledger-${theme}.png`), animations: 'disabled' });
+    await page.screenshot({ path: join(shots, `partial-ledger-${theme}--mocked.png`), animations: 'disabled' });
   }
   await cost.click();
-  await expect(page.getByTestId('usage-detail-cost')).toContainText('Latest receipt');
+  const detail = page.getByTestId('usage-detail-cost');
+  await expect(detail).toContainText('Latest receipt');
+  await expect(detail).toContainText('$25.00 priced spend / weekly USD budget $100.00, $75.00 remaining');
+  await expect(detail).toContainText('$10.00 priced spend / weekly budget $50.00, $40.00 remaining');
+  await expect(detail).toContainText('Unpriced usage is outside the budget');
+  for (const theme of ['dark', 'light'] as const) {
+    await setTheme(page, theme);
+    const surface = page.getByTestId('usage-detail-surface');
+    await expect(surface).toBeVisible();
+    await surface.getByTestId('usage-detail-jump-cost').click();
+    await surface.screenshot({ path: join(shots, `weekly-budget-${theme}--mocked.png`) });
+  }
 });
 
 test('one footer entry per subscription, honest age, host problem, account and responsive bars', async ({ page }) => {

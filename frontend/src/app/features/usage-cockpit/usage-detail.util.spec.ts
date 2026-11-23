@@ -123,6 +123,18 @@ describe('reconciliation', () => {
     expect(roundingRemainder(null, [4])).toBeNull();
   });
 
+  it('uses admission-week spend for workspace and project budget remaining', () => {
+    const value = snapshot();
+    value.cost.weeklyBudgetUsd = 100;
+    value.cost.budgetWeekSpentUsd = 25;
+    value.cost.projects[1].weeklyBudgetUsd = 50;
+    value.cost.projects[1].budgetWeekSpentUsd = 10;
+    const view = buildUsageDetailView(value, NOW).cost;
+    expect(view.budgetWeeklyRemaining).toBe('$75.00 remaining');
+    expect(view.budgetWeeklySpent).toBe('$25.00');
+    expect(view.projects.find(p => p.key === 'p1')?.budgetRemaining).toBe('$40.00 remaining');
+  });
+
   it('lists unattributed last and marks unknown rows as incomplete', () => {
     const view = buildUsageDetailView(snapshot(), NOW).cost;
     expect(view.projects.map(p => p.name)).toEqual(['Agent Studio', 'Docs', 'Unattributed one-shot jobs']);

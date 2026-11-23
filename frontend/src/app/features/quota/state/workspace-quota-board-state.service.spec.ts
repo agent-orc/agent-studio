@@ -23,6 +23,18 @@ describe('WorkspaceQuotaBoardState', () => {
   });
   afterEach(() => http.verify());
 
+  it('keeps a card budget refusal scoped to that project and card', () => {
+    state.load('ws-a');
+    http.expectOne('/api/workspaces/ws-a/quota/admission').flush({
+      ...board('ws-a', NO_LIMIT), cardRefusals: { 'Alpha/card-a': 'card-budget-usd: reached' },
+    });
+    expect(state.messageFor('Alpha', 'card-a')).toContain('card-budget-usd');
+    expect(state.messageFor('Alpha', 'card-b')).toBeNull();
+    expect(state.messageFor('Beta', 'card-a')).toBeNull();
+    state.reset();
+    expect(state.messageFor('Alpha', 'card-a')).toBeNull();
+  });
+
   it('reads workspace and project admission with one request and keeps only refusals as card messages', () => {
     state.load('ws-a');
     http.expectOne('/api/workspaces/ws-a/quota/admission').flush(board('ws-a', scope(null, 'warning', true, 'Workspace A used 85 % of its weekly model tokens.'), [

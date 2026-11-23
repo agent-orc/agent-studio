@@ -340,7 +340,7 @@ public sealed partial class TaskServerStore
                 // project, not a Task Server card; card quota does not apply.
                 var quota = GateSubjectKinds.IsVerification(candidate.Subject.Kind)
                     ? new WorkspaceQuotaVerdict(true, null)
-                    : CachedWorkspaceQuota(projectName, "Gate card " + candidate.Subject.TaskId);
+                    : CachedWorkspaceQuota(projectName, "Gate card " + candidate.Subject.TaskId, candidate.Subject.TaskId);
                 if (!quota.Allowed)
                 {
                     quotaReason = quota.Message ?? "Workspace quota reached.";

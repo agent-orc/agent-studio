@@ -44,6 +44,26 @@ public sealed class TaskAttachmentMaterializerTests
         }
     }
 
+    [Fact]
+    public async Task Gate_failure_input_is_downloaded_once_from_claim_framing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "runner-gate-input-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, ".git"));
+        var evidence = Encoding.UTF8.GetBytes("Command: dotnet test\n- Example.First: first error\n- Example.Second: second error\n- Example.Third: third error");
+        var handler = new CropHandler(evidence);
+        try
+        {
+            using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+            using var client = new TaskServerClient(http, "runner-1", usesDurableTaskServer: true);
+            var paths = await TaskAttachmentMaterializer.MaterializeAsync(client, "AGT-3985",
+                "Fix the gate.\nReceipt facts: attachments/gate-failure.md\nattachments/gate-failure.md",
+                root, 1024 * 1024, CancellationToken.None);
+            Assert.Equal(evidence, await File.ReadAllBytesAsync(Assert.Single(paths)));
+            Assert.Equal("/api/v1/runner/tasks/AGT-3985/attachments/gate-failure.md", Assert.Single(handler.Paths));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     private sealed class CropHandler(byte[] crop) : HttpMessageHandler
     {
         public List<string> Paths { get; } = [];

@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dismissDevErrorDialog, setTheme, type Theme } from '../helpers/theme';
 
@@ -157,6 +157,7 @@ async function mockBootApis(page: Page, currentProject: () => ProjectFixture): P
     oldestEnteredLaneAt: null,
     items: [],
   }));
+  await page.route('**/api/v1/management/remote-hosts', route => fulfillJson(route, [codingRunnerSnapshot('agent-runner-01')]));
   await page.route('**/api/clients', (route) => fulfillJson(route, [{
     id: 'agent-runner-01',
     displayName: 'agent-runner-01',
@@ -216,6 +217,14 @@ async function openOnboarding(page: Page) {
   return dialog;
 }
 
+function codingRunnerSnapshot(id: string) {
+  return {
+    runnerId: id, name: id, lastSeenAt: new Date().toISOString(),
+    capabilities: [{ key: 'executor:coding', isFresh: true, healthState: 'healthy', advertisedStatus: 'ready' }],
+    hostAdmission: { admissionState: 'open' },
+  };
+}
+
 function runnerClient(id: string) {
   return {
     id,
@@ -247,6 +256,132 @@ test.describe('project onboarding and editable project basics', () => {
     await mockBootApis(page, () => project);
   });
 
+  test('creation opens setup and lists the second project without reloading watch paths', async ({ page }) => {
+    test.setTimeout(120_000);
+    const pageErrors: string[] = [];
+    const consoleErrors: string[] = [];
+    page.on('pageerror', error => pageErrors.push(error.message));
+    page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.location().url + ': ' + message.text()); });
+    // Complete the new project's optional reads so the capture also audits browser errors.
+    const batchSettings = {
+      enabled: false, scope: 'code', planner: 'threshold', minimumSize: 2, maximumSize: 4,
+      deadlineMinutes: 30, lookAheadMinutes: 15, urgentTags: [], riskPolicy: 'balanced',
+      calibration: 'empirical', stacking: 'off', overlap: 'separate', reviewTestLevel: 'work-package',
+      gateTimeoutMinutes: 90, preCheckEnabled: true, advisor: { mode: 'off', cliType: 'codex', timeoutSeconds: 45 },
+    };
+    const usage = { modelTokens: 0, modelCostUsd: 0, computeCoreHours: 0, hostingSlots: 0 };
+    const optionalReads: [string, unknown][] = [
+      ['**/healthz', { status: 'healthy' }],
+      ['**/api/projects/*/deploy/lanes', { projectId: 'PROJ-023', releaseDepth: 0, columns: [] }],
+      ['**/api/integrations/quality-studio/status**', { state: 'not-connected', configured: false, owner: true, repositoryId: null }],
+      ['**/api/projects/*/quality-studio', { connected: false, repositoryId: null, state: 'not-registered', reason: null }],
+      ['**/api/projects/*/workbenches**', { projectName: 'Second Project', includesHistory: true, count: 0, items: [] }],
+      ['**/api/projects/*/quota-wait-policy', { enabled: false, thresholdMinutes: 30, source: 'global', projectEnabled: null,
+        projectThresholdMinutes: null, globalEnabled: false, globalThresholdMinutes: 30 }],
+      ['**/api/projects/*/incident-webhook', { configured: false, destination: '' }],
+      ['**/api/projects/*/batch-gate', { settings: batchSettings, limits: { hardMaximumSize: 8 } }],
+      ['**/api/projects/*/batch-gate/state**', { plan: { decision: 'disabled', reason: 'Batch verification is disabled.',
+        targetSize: 0, proposedMembers: [], upcoming: [] }, pending: [], batches: [], members: {} }],
+      ['**/api/projects/*/autonomy', { level: 2 }],
+      ['**/api/projects/PROJ-024/server-checkout', { projectId: 'PROJ-024', state: 'present', step: null,
+        repositoryUrl: null, repositoryPath: '/work/second-project', branch: 'main', error: null }],
+      ['**/api/projects/PROJ-024/url-suggestions', []],
+      ['**/api/workspaces/ws-default/projects/PROJ-024/quota', { workspaceId: 'ws-default', projectId: 'PROJ-024',
+        weekStartUtc: '2026-11-23T00:00:00Z', weekEndUtc: '2026-11-30T00:00:00Z', limits: null,
+        usage, remaining: usage, status: 'ok', biggestConsumers: [], biggestProjects: [], dailyTrend: [],
+        meterComplete: true, overrideActive: false, codingAllowed: true, hostingAllowed: true, message: null }],
+    ];
+    for (const [pattern, body] of optionalReads) await page.route(pattern, route => fulfillJson(route, body));
+    const first = existingProject();
+    let created: ProjectFixture | null = null;
+    const allProjects = () => created ? [first, created] : [first];
+    await page.route('**/api/projects/settings', route => fulfillJson(route, Object.fromEntries(allProjects().map(item => [item.displayName, {
+      localCodingAdmitted: true, pickupMode: 'manual', executionLocation: 'agent-runner-01',
+    }]))));
+    // Deliberately keep watch paths stale, as they were in the playthrough.
+    await page.route('**/api/watch-paths**', route => fulfillJson(route, [{
+      name: first.displayName, path: first.storageLocation, rootPath: first.rootPath,
+    }]));
+    await page.route('**/api/v1/workspaces**', route => fulfillJson(route, [{
+      ...registryWith(first)[0], projects: allProjects(),
+    }]));
+    await page.route('**/api/v1/projects', route => {
+      if (route.request().method() === 'GET') return fulfillJson(route, allProjects());
+      const body = route.request().postDataJSON();
+      created = { ...first, ...body, id: 'PROJ-024', storageLocation: '/store/projects/PROJ-024/tasks',
+        urls: [], repositoryPath: '/work/second-project', rootPath: '/work/second-project' };
+      return fulfillJson(route, created, 201);
+    });
+    await page.route('**/api/projects/*/build-profile', route => fulfillJson(route, {
+      profile: null, gateApplicable: false, verifyPlan: { source: 'none', commands: [] },
+    }));
+    await page.route('**/api/projects/*/execution', route => fulfillJson(route, {
+      valid: false, issues: [], source: 'integration-branch', repositoryDefinition: null, branch: 'main',
+    }));
+    await page.route('**/api/projects/*/pipeline-definition', route => fulfillJson(route, {
+      exists: false, valid: true, issues: [],
+    }));
+    await page.route('**/api/projects/*/execution/proposal-preview', route => fulfillJson(route, {
+      detectedStacks: ['node'], reasoning: 'Stack detection found package.json.',
+      definition: 'schemaVersion: 1', prepareScript: '#!/bin/sh',
+      reviewCommands: { build: ['npm run build'], test: ['npm test'], lint: ['npm run lint'] },
+    }));
+    await page.route('**/api/projects/*/checkout/status', route => fulfillJson(route, {
+      status: 'up-to-date', branch: 'main', behind: 0, dirtyFiles: [], lockFile: null,
+    }));
+    let savedBranch: unknown;
+    await page.route('**/api/projects/*/integration-branch', route => {
+      savedBranch = route.request().postDataJSON();
+      return fulfillJson(route, { integrationBranch: 'develop' });
+    });
+    const dialog = await openOnboarding(page);
+    await dialog.getByTestId('onboard-project-display-name').fill('Second Project');
+    await dialog.getByTestId('onboard-project-short-code').fill('SP');
+    await dialog.getByTestId('onboard-project-repository-path').fill('/work/second-project');
+    await dialog.getByTestId('onboard-project-runner').selectOption('agent-runner-01');
+    await dialog.getByTestId('onboard-project-submit').click();
+    await expect(dialog).not.toBeVisible();
+    const setup = page.getByTestId('project-settings-panel');
+    await expect(setup).toBeVisible();
+    await expect(page.getByTestId('studio-explorer-project-Second Project')).toBeVisible();
+    await expect(setup.getByTestId('project-basics-display-name')).toHaveValue('Second Project');
+    await expect(setup.getByTestId('project-integration-branch-input')).toHaveAttribute('placeholder', 'origin/HEAD');
+    await expect(setup.getByTestId('execution-definition-preview')).toContainText('Build profile for node');
+    await expect(setup.getByTestId('execution-definition-preview')).toContainText('npm test');
+    await expect(setup.getByTestId('project-pickup-mode-control')).toBeAttached();
+    await expect(setup.getByTestId('project-execution-host-select')).toBeAttached();
+    await setup.getByTestId('project-integration-branch-input').fill('develop');
+    await setup.getByTestId('project-integration-branch-save').click();
+    await expect.poll(() => savedBranch).toEqual({ branch: 'develop' });
+    // The direct Explorer Settings destination is independently usable.
+    const settingsDestination = page.getByTestId('studio-explorer-project-settings-Second Project');
+    if (!await settingsDestination.isVisible())
+      await page.getByTestId('studio-explorer-project-chevron-Second Project').click();
+    await settingsDestination.click();
+    await expect(settingsDestination).toHaveAttribute('aria-current', 'page');
+    await expect(setup).toBeVisible();
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      if (width === 390) await expect(page.getByTestId('project-shell-rail')).toHaveAttribute('data-collapsed', 'true');
+      for (const theme of ['light', 'dark'] satisfies Theme[]) {
+        await setTheme(page, theme);
+        await setup.getByTestId('project-settings-title').scrollIntoViewIfNeeded();
+        await page.screenshot({ path: join(results, `project-setup-round2-${width}-${theme}--mocked.png`) });
+        await setup.getByTestId('project-settings-jump-verify').click();
+        await expect(setup.getByTestId('execution-definition-preview')).toBeInViewport();
+        await page.screenshot({ path: join(results, `project-setup-round2-verify-${width}-${theme}--mocked.png`) });
+        await setup.getByTestId('project-settings-title').scrollIntoViewIfNeeded();
+        await setup.getByTestId('project-settings-jump-execution').click();
+        await expect(setup.getByTestId('project-pickup-mode-control')).toBeInViewport();
+        await page.screenshot({ path: join(results, `project-setup-round2-host-${width}-${theme}--mocked.png`) });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      }
+    }
+    writeFileSync(join(results, 'project-setup-capture-report.json'), JSON.stringify({ pageErrors, consoleErrors, horizontalOverflow: false }, null, 2));
+    expect(pageErrors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+
   for (const registeredRunnerCount of [0, 2]) {
     test(`opening project onboarding stays responsive with ${registeredRunnerCount} registered runners`, async ({ page }) => {
       let countOpeningRequests = false;
@@ -262,6 +397,7 @@ test.describe('project onboarding and editable project basics', () => {
         if (countOpeningRequests) workspaceRequests++;
         return fulfillJson(route, registryWith(project));
       });
+      await page.route('**/api/v1/management/remote-hosts', route => fulfillJson(route, clients.map(client => codingRunnerSnapshot(client.id))));
       await page.route('**/api/clients', async (route) => {
         if (countOpeningRequests) {
           clientRequests++;
@@ -296,7 +432,7 @@ test.describe('project onboarding and editable project basics', () => {
       if (registeredRunnerCount === 2) {
         await expect(runner.locator('option[value="agent-runner-02"]')).toBeAttached();
       } else {
-        await expect(runner.locator('option[value="agent-runner-01"]')).toHaveJSProperty('disabled', true);
+        await expect(runner.locator('option[value="agent-runner-01"]')).toHaveCount(0);
       }
       await expect(dialog.getByTestId('onboard-project-display-name')).toHaveValue('Unfinished project');
       await expect(dialog.getByTestId('onboard-project-short-code')).toHaveValue('UP');
@@ -385,14 +521,16 @@ test.describe('project onboarding and editable project basics', () => {
       localCodingAdmitted: false,
     }));
 
+    await page.route('**/api/clients', route => fulfillJson(route, []));
+    await page.route('**/api/v1/management/remote-hosts', route => fulfillJson(route, []));
     const dialog = await openOnboarding(page);
     const runner = dialog.getByTestId('onboard-project-runner');
     await expect(runner).not.toHaveValue('local');
     await dialog.getByTestId('onboard-project-display-name').fill('Fresh Checkout');
     await dialog.getByTestId('onboard-project-repository-path').fill('C:/Projects/fresh-checkout');
     await dialog.getByTestId('onboard-project-root-path').fill('C:/Projects/fresh-checkout');
-    await runner.selectOption('local');
-    await expect(runner.locator('option[value="local"]')).toHaveText('Local (board and orchestration only)');
+    await expect(runner.locator('option[value="local"]')).toHaveJSProperty('disabled', true);
+    await expect(runner.locator('option[value="local"]')).toHaveText('Local host (Local coding is disabled)');
     await expect(dialog.getByTestId('onboard-project-runner-required')).toContainText(
       'Start a runner host next to the source checkout');
     await expect(dialog.getByTestId('onboard-project-submit')).toBeDisabled();

@@ -2761,6 +2761,8 @@ export interface ParkedDecision {
  * lately. Mirrors backend `ParkedBlockerStatus`; read-time only.
  */
 export interface ParkedBlockerStatus {
+  /** Unabridged command and test facts from the failed gate or review receipt. */
+  failureEvidence?: string | null;
   /** Escalation category, or `operator-decision` for a manual park. */
   blockerType: string;
   /** Absent on board cards; /details/overview carries it. */

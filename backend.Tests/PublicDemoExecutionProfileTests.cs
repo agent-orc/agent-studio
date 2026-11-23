@@ -215,6 +215,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // every profile.
         // AGT-3177 adds workspace quota admission (Claim), quota views/audit
         // (Preview), and quota settings/owner overrides (Start).
+        // AGT-3824 adds per-card budget reads (Preview) and settings (Start).
         // AGT-3229 adds a run-target claim, an observed-state report, a
         // removal confirmation, and a domain-suffix settings mutation.
         // AGT-3239 added the operator candidate verification record on PostStep:
@@ -246,7 +247,18 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // H5 of the playthrough adds the deploy host's container supervision: the
         // container target read on Claim and the observed Docker state on PostStep.
         // Like the run-target routes they serve host work, so public demo denies both.
-        Assert.Equal(169, routes.Count);
+        Assert.Equal(171, routes.Count);
+        foreach (var (method, admissionPath) in new[]
+        {
+            ("GET", ExecutionAdmissionPath.Preview),
+            ("PUT", ExecutionAdmissionPath.Start),
+        })
+        {
+            var route = Assert.Single(routes, candidate => candidate.RoutePattern.RawText ==
+                "/api/workspaces/{workspaceId}/projects/{projectId}/quota/cards/{cardId}"
+                && candidate.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods.Contains(method));
+            Assert.Equal(admissionPath, route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+        }
         foreach (var (routePath, path) in new[]
         {
             ("/api/tasks/{jobId}/content-review", ExecutionAdmissionPath.Review),
@@ -365,11 +377,11 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             new Dictionary<ExecutionAdmissionPath, int>
             {
                 [ExecutionAdmissionPath.Claim] = 15,
-                [ExecutionAdmissionPath.Start] = 39,
+                [ExecutionAdmissionPath.Start] = 40,
                 [ExecutionAdmissionPath.Continue] = 39,
                 [ExecutionAdmissionPath.Review] = 10,
                 [ExecutionAdmissionPath.Chat] = 9,
-                [ExecutionAdmissionPath.Preview] = 32,
+                [ExecutionAdmissionPath.Preview] = 33,
                 [ExecutionAdmissionPath.PostStep] = 25,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)

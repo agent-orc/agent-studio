@@ -72,6 +72,22 @@ describe('TaskService', () => {
     http.verify();
   });
 
+  it('discovers registry projects while their watch paths catch up', () => {
+    let paths: unknown;
+    service.getProjectPaths().subscribe(value => { paths = value; });
+    http.expectOne('/api/watch-paths').flush([{ name: 'Existing', path: '/store/first', rootPath: '/repo/first' }]);
+    expect(paths).toBeUndefined();
+    http.expectOne('/api/v1/projects').flush([
+      { displayName: 'Existing', storageLocation: '/store/first', rootPath: '/repo/first' },
+      { displayName: 'New project', storageLocation: '/store/new', repositoryPath: '/repo/new' },
+      { displayName: 'Archived', storageLocation: '/store/old', archived: true },
+    ]);
+    expect(paths).toEqual([
+      { name: 'Existing', path: '/store/first', rootPath: '/repo/first' },
+      { name: 'New project', path: '/store/new', rootPath: '/repo/new' },
+    ]);
+  });
+
   it('retries a warming detail reply before delivering a TaskDetail', () => {
     vi.useFakeTimers();
     try {

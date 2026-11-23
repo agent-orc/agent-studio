@@ -23,6 +23,31 @@ public sealed class UsageCockpitEndpointTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "usage-cockpit-http-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Owner_saved_workspace_and_project_usd_budgets_reach_footer_contract()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://studio.test") });
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var projectPath = Path.Combine(_root, "budget-project");
+        Directory.CreateDirectory(projectPath);
+        var project = factory.Services.GetRequiredService<ProjectRegistry>()
+            .EnsureProjectForStorage(projectPath, "Budget project", DefaultWorkspace.Id);
+        var workspaceUrl = $"/api/workspaces/{DefaultWorkspace.Id}/quota";
+        var projectUrl = $"/api/workspaces/{DefaultWorkspace.Id}/projects/{project.Id}/quota";
+        Assert.Equal(HttpStatusCode.NoContent, (await client.PutAsJsonAsync(workspaceUrl, new { weeklyBudgetUsd = 100 })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await client.PutAsJsonAsync(projectUrl, new { weeklyBudgetUsd = 25 })).StatusCode);
+        var response = await client.GetFromJsonAsync<JsonElement>("/api/usage/cockpit");
+        var cost = response.GetProperty("cost");
+        Assert.Equal(100, cost.GetProperty("weeklyBudgetUsd").GetDecimal());
+        Assert.Equal(0, cost.GetProperty("budgetWeekSpentUsd").GetDecimal());
+        Assert.Equal(DayOfWeek.Monday, cost.GetProperty("budgetWeekEndUtc").GetDateTime().DayOfWeek);
+        var child = Assert.Single(cost.GetProperty("projects").EnumerateArray(), p => p.GetProperty("projectId").GetString() == project.Id);
+        Assert.Equal(25, child.GetProperty("weeklyBudgetUsd").GetDecimal());
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync(projectUrl, new { weeklyBudgetUsd = -1 })).StatusCode);
+    }
+
+    [Fact]
     public async Task Empty_and_bus_only_ledgers_are_valid_and_bus_failure_is_isolated()
     {
         Directory.CreateDirectory(_root);

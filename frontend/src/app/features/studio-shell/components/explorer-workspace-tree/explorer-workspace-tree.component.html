@@ -169,53 +169,9 @@
             @if (isExpanded(p.name)) {
               <!-- Project destinations stay nested below the project row. -->
               <div class="studio-tree-children">
-                <app-tree-row level="child" glyph="grid"
-                              label="Board · active work" [tooltip]="boardActiveWorkTooltip"
-                              [ariaLabel]="'Board, ' + boardLaneCountsLabel(p)"
-                              [active]="p.isActive && activeProjectSurface() === 'board'"
-                              [ariaCurrent]="p.isActive && activeProjectSurface() === 'board' ? 'page' : null"
-                              [testid]="'studio-explorer-project-board-' + p.name"
-                              (selectRequest)="openBoardRequest.emit(p.name)">
-                  <app-explorer-lane-dashboard
-                    [counts]="laneCountsFor(p)" [view]="metricView()"
-                    [projectName]="p.name" />
-                </app-tree-row>
-                <app-explorer-workbench-list
-                  [projectName]="p.name"
-                  [projectId]="p.projectId"
-                  [activeWorkbenchId]="activeWorkbenchIdFor(p.name)"
-                  [overviewActive]="p.isActive && activeProjectSurface() === 'workbenches'"
-                  (openWorkbench)="openWorkbenchRequest.emit({ projectName: p.name, workbench: $event })"
-                  (openOverview)="openWorkbenchesRequest.emit(p.name)" (openWiki)="openWikiRequest.emit(p.name)" />
-                <app-tree-row level="child" glyph="send"
-                              label="Deploy"
-                              [active]="p.isActive && activeProjectSurface() === 'deploy'"
-                              [ariaCurrent]="p.isActive && activeProjectSurface() === 'deploy' ? 'page' : null"
-                              [testid]="'studio-explorer-project-deploy-' + p.name"
-                              (selectRequest)="openDeployRequest.emit(p.name)" />
-                <app-tree-row level="child" glyph="activity"
-                              label="Operations"
-                              [active]="p.isActive && activeProjectSurface() === 'operations'"
-                              [ariaCurrent]="p.isActive && activeProjectSurface() === 'operations' ? 'page' : null"
-                              [testid]="'studio-explorer-project-operations-' + p.name"
-                              (selectRequest)="openOperationsRequest.emit(p.name)" />
-                <app-tree-row level="child" glyph="book"
-                              label="Wiki"
-                              [tooltip]="'Wiki\n' + p.displayLabel + ' project documentation'"
-                              [active]="p.isActive && activeProjectSurface() === 'wiki'"
-                              [tooltipTestId]="'studio-explorer-project-wiki-tooltip-' + p.name"
-                              [ariaCurrent]="p.isActive && activeProjectSurface() === 'wiki' ? 'page' : null"
-                              [testid]="'studio-explorer-project-wiki-' + p.name"
-                              (selectRequest)="openWikiRequest.emit(p.name)" />
-                <app-tree-row level="child" glyph="deck"
-                              [attr.data-testid]="'studio-explorer-project-deck-' + p.name"
-                              label="Deck"
-                              [active]="p.isActive && activeProjectSurface() === 'hub'"
-                              [ariaCurrent]="p.isActive && activeProjectSurface() === 'hub' ? 'page' : null"
-                              [ariaLabel]="'Deck, ' + p.displayLabel"
-                              [testid]="'studio-explorer-project-hub-' + p.name"
-                              (selectRequest)="openHubRequest.emit(p.name)" />
-                <app-quality-studio-explorer-row [projectName]="p.name" [displayLabel]="p.displayLabel" />
+                <app-explorer-project-destinations [project]="p" [activeSurface]="activeProjectSurface()"
+                  [activeWorkbenchId]="activeWorkbenchIdFor(p.name)" [metricView]="metricView()"
+                  (navigate)="navigateProject(p.name, $event)" (openWorkbench)="openWorkbenchRequest.emit({ projectName: p.name, workbench: $event })" />
                 @for (u of p.urls; track u.id) {
                   <app-tree-row level="child" glyph="link"
                                 [hasActions]="u.id !== 'repo'"

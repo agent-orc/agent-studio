@@ -27,15 +27,15 @@ public static class WorkspaceQuotaPolicy
     }
 
     /// <summary>
-    /// Tokens and core-hours decide warning and blocked. Full hosting slots only
+    /// USD, tokens and core-hours decide warning and blocked. Full hosting slots only
     /// stop deploys, so they have their own state below blocked.
     /// </summary>
     public static string Status(QuotaLimits? limits, QuotaUsage usage)
     {
         if (limits is null) return Ok;
-        var highest = Math.Max(
-            limits.ModelTokensPerWeek is { } tokens ? Ratio(usage.ModelTokens, tokens) : 0,
-            limits.ComputeCoreHoursPerWeek is { } hours ? Ratio(usage.ComputeCoreHours, hours) : 0);
+        var highest = Math.Max(limits.WeeklyBudgetUsd is { } usd ? Ratio(usage.ModelCostUsd, usd) : 0, Math.Max(
+            limits.ModelTokensPerWeek is { } tokens ? Ratio(limits.IncludeCacheReads ? usage.ModelTokens : usage.UncachedTokens, tokens) : 0,
+            limits.ComputeCoreHoursPerWeek is { } hours ? Ratio(usage.ComputeCoreHours, hours) : 0));
         if (highest >= 1) return Blocked;
         if (limits.HostingSlots is { } slots && usage.HostingSlots >= slots) return HostingFull;
         return highest >= .8m ? Warning : Ok;
@@ -50,9 +50,24 @@ public static class WorkspaceQuotaPolicy
         _ => null,
     };
 
+    public static string? ReachedMessage(QuotaLimits? limits, QuotaUsage usage, DateTime reset)
+    {
+        if (limits is null) return null;
+        var reached = new List<string>();
+        if (limits.WeeklyBudgetUsd is { } usd && usage.ModelCostUsd >= usd)
+            reached.Add($"weekly USD budget {usage.ModelCostUsd:F2} / {usd:F2} USD");
+        var tokens = limits.IncludeCacheReads ? usage.ModelTokens : usage.UncachedTokens;
+        if (limits.ModelTokensPerWeek is { } cap && tokens >= cap)
+            reached.Add($"weekly token limit {tokens:N0} / {cap:N0} ({(limits.IncludeCacheReads ? "including" : "excluding")} cache reads)");
+        if (limits.ComputeCoreHoursPerWeek is { } hours && usage.ComputeCoreHours >= hours)
+            reached.Add($"weekly core hours {usage.ComputeCoreHours:F2} / {hours:F2}");
+        return reached.Count == 0 ? null : $"Reached {string.Join("; ", reached)}. Resets {reset:yyyy-MM-dd HH:mm} UTC. New admission paused.";
+    }
+
     public static bool Allows(QuotaLimits? limits, QuotaUsage usage, bool hosting)
         => limits is null
-           || (limits.ModelTokensPerWeek is not { } tokens || usage.ModelTokens < tokens)
+           || (limits.ModelTokensPerWeek is not { } tokens || (limits.IncludeCacheReads ? usage.ModelTokens : usage.UncachedTokens) < tokens)
+           && (limits.WeeklyBudgetUsd is not { } usd || usage.ModelCostUsd < usd)
            && (limits.ComputeCoreHoursPerWeek is not { } hours || usage.ComputeCoreHours < hours)
            && (!hosting || limits.HostingSlots is not { } slots || usage.HostingSlots < slots);
 

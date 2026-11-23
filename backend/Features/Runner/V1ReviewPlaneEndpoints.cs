@@ -1531,6 +1531,9 @@ public static class V1ReviewPlaneEndpoints
                     new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
 
+            if (settled.Status == AttemptWriteStatus.Accepted)
+                DeliveryFailureEvidence.RecordReview(task.FolderPath, request);
+
             // Count the review-side build and test minutes before batch
             // admission, so a failed admission still reports them. Replays
             // find the fact written by the first settlement.
@@ -2863,8 +2866,8 @@ public static class V1ReviewPlaneEndpoints
     }
 
     /// <summary>
-    /// AGT-3177: workspace quota refusals per open review task. Each project is
-    /// admitted once from the task index; without any quota limit nothing is read.
+    /// AGT-3177: workspace quota refusals per open review task. Each card is
+    /// admitted from one task snapshot; without any quota limit nothing is read.
     /// </summary>
     internal static IReadOnlyDictionary<string, string> WorkspaceQuotaBlockedReviews(
         IReadOnlyList<string> taskKeys,
@@ -2874,14 +2877,12 @@ public static class V1ReviewPlaneEndpoints
         var blocked = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (taskKeys.Count == 0 || !workspaceQuota.HasLimits()) return blocked;
         var wanted = taskKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var verdicts = new Dictionary<string, AgentStudio.Quota.QuotaAdmission>(StringComparer.OrdinalIgnoreCase);
         foreach (var task in scanner.ScanAllJobsWithArchive())
         {
             var key = new[] { task.TaskKey, task.Key, task.Id }
                 .FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate) && wanted.Contains(candidate));
             if (key is null) continue;
-            if (!verdicts.TryGetValue(task.ProjectName, out var verdict))
-                verdicts[task.ProjectName] = verdict = workspaceQuota.Admit(task.ProjectName);
+            var verdict = workspaceQuota.Admit(task);
             if (!verdict.Allowed) blocked.TryAdd(key, verdict.Message ?? "Workspace quota reached.");
         }
         return blocked;

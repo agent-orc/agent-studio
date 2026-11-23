@@ -42,6 +42,32 @@ describe('WorkspaceQuotaComponent', () => {
   }
   const text = (root: HTMLElement, testId: string) => root.querySelector(`[data-testid="${testId}"]`)?.textContent?.trim() ?? null;
 
+  it('saves weekly USD and explicit cache policy for a project', async () => {
+    const { fixture, component } = await render('ws-a', 'project-a');
+    http.expectOne('/api/workspaces/ws-a/projects/project-a/quota').flush(snapshot());
+    await fixture.whenStable();
+    component.update('weeklyBudgetUsd', 25);
+    component.setCacheReads(false);
+    component.save();
+    const request = http.expectOne('/api/workspaces/ws-a/projects/project-a/quota');
+    expect(request.request.body.weeklyBudgetUsd).toBe(25);
+    expect(request.request.body.includeCacheReads).toBe(false);
+    request.flush(null);
+    http.expectOne('/api/workspaces/ws-a/projects/project-a/quota').flush(snapshot());
+  });
+
+  it('sets a lifetime card budget with uncached tokens', async () => {
+    const { fixture, component } = await render('ws-a', 'project-a');
+    http.expectOne('/api/workspaces/ws-a/projects/project-a/quota').flush(snapshot());
+    await fixture.whenStable();
+    component.cardId.set('BUD-1');
+    component.cardTokens.set(500);
+    component.saveCardBudget();
+    const request = http.expectOne('/api/workspaces/ws-a/projects/project-a/quota/cards/BUD-1');
+    expect(request.request.body).toEqual({ usd: null, uncachedTokens: 500 });
+    request.flush(null);
+  });
+
   it('marks the priced subtotal and links to unpriced model details', async () => {
     const { fixture, root } = await render();
     http.expectOne('/api/workspaces/ws-a/quota').flush(snapshot({ usage: { ...usage(40), modelCostUsd: 3.5, unpricedRuns: 2 } }));

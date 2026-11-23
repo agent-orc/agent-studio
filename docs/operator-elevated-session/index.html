@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Elevated operator session from the terminal | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #696762;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+<style>
+  nav.contents { margin: 24px 0 36px; font: 0.82rem/1.8 var(--article-sans); }
+  .diagram text { font-family: var(--article-sans); }
+  .diagram .lane { stroke: var(--article-line); stroke-width: 1.5; stroke-dasharray: 6 4; }
+  .diagram .node { fill: var(--article-surface); stroke: var(--article-line); }
+  .diagram .focus { fill: var(--article-link-soft); stroke: var(--article-link); }
+  .diagram .ext { fill: var(--article-surface-strong); stroke: var(--article-line); }
+  .diagram .never { fill: var(--article-bad-soft); stroke: var(--article-bad); }
+  .diagram .confirm { fill: var(--article-warn-soft); stroke: var(--article-warn); }
+  .diagram .named { fill: var(--article-link-soft); stroke: var(--article-link); }
+  .diagram .routine { fill: var(--article-good-soft); stroke: var(--article-good); }
+  .diagram .label { fill: var(--article-ink); font-size: 15px; font-weight: 650; }
+  .diagram .sub { fill: var(--article-muted); font-size: 12.5px; }
+  .diagram .step { fill: var(--article-faint); font-size: 12px; font-weight: 750; }
+  .diagram .edge-label { fill: var(--article-ink); font-size: 12.5px; }
+  .diagram .edge { fill: none; stroke: var(--article-link); stroke-width: 2; }
+  .diagram .edge-muted { fill: none; stroke: var(--article-faint); stroke-width: 1.6; stroke-dasharray: 5 4; }
+  .diagram .arrowhead { fill: var(--article-link); }
+  .diagram .arrowhead-muted { fill: var(--article-faint); }
+  .decision { margin: 24px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font: 0.9rem/1.6 var(--article-sans); }
+  .decision h3 { margin: 0 0 8px; }
+  .decision p { margin-bottom: 8px; }
+</style></head>
+<body><main class="article">
+<header class="page"><p class="kicker">Concept Dossier · AGT-3989 · 23 November 2026</p>
+<h1>Elevated operator session from the terminal</h1>
+<p class="lede">The owner wants to act as admin through the operator agent in his terminal without copying bearer secrets and without handing the agent the whole Owner role. This Dossier proposes a terminal sign-in that the owner confirms in the browser or on the phone with his second factor, a session bound to a key that cannot leave the device and lasting as long as the owner chooses at confirmation, a short list of named elevated action classes, one-tap batch confirmations in Needs you, and the order of work. It extends the security model of AGT-3353.</p>
+<div class="meta"><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>Updated</b> 23 November 2026, lifetime chosen at sign-in</span><span><b>Source</b> AGT-3989</span><span><b>Extends</b> <a href="../security-model/index.html">Security model</a> (AGT-3353)</span><span><b>Scope</b> Terminal sign-in, device binding, session lifetime, elevated scope, step-up, misled agents</span></div></header>
+<nav class="contents" aria-label="Contents"><a href="#scope">Scope</a> · <a href="#current-state">Current state</a> · <a href="#sign-in">Terminal sign-in</a> · <a href="#binding">Device binding</a> · <a href="#lifetime">Session lifetime</a> · <a href="#elevated-scope">Elevated scope</a> · <a href="#step-up">Step-up</a> · <a href="#misled-agents">Misled agents</a> · <a href="#threats">Threat model updates</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#implementation">Implementation</a></nav>
+
+<section id="scope"><h2>Scope</h2>
+<p>On 23 November 2026 the owner asked whether the session token for the operator agent should come from a sign-in with the second factor, so that the security mechanisms of the browser apply too, and how that token can be bound to the device. He also asked how he can be admin safely from an operator session, compared with the browser, and still be fast.</p>
+<p>The trigger was concrete. On 22 and 23 November the operator agent could not carry out three instructions: accept nine integrated cards whose review left small reservations, archive a duplicate card without a delivery, and set the testing strategy of a project. Each refusal was correct under today's rules. The agent then changed the testing strategy by editing the project settings file on the server and restarting the API, on the owner's explicit instruction. That edit bypassed authorization and audit. This Dossier makes the legitimate path faster than the bypass.</p>
+<p>Later the same day the owner added that a fixed eight hours is too short. The lifetime of an elevated session should be chosen when he confirms the sign-in, for example 8 hours, 24 hours, 7 days or until revoked, with a default the installation sets and an upper limit per role. The section <a href="#lifetime">Session lifetime</a> works out what a long lifetime needs to stay safe, and decisions ES-D5 and ES-D14 to ES-D17 cover it. This revision replaces the fixed 8-hour session and the 60-minute elevation window of the first version.</p>
+<p>Terms used throughout:</p>
+<ul>
+<li><b>Operator agent</b> and <b>operator session</b>: as in the <a href="../security-model/index.html">security model</a> and the <a href="../operations/setup/operator-agent.md">operator agent setup guide</a>. A session is a child credential (<code>oas.*</code>) of an operator agent principal (<code>opa_*</code>).</li>
+<li><b>Elevated action class</b>: a named, narrow set of catalogued operations that the owner enables for one session, for example "accept with override". It is not a role.</li>
+<li><b>Device key</b>: a key pair created on the machine where the terminal runs. The private key is meant never to leave that machine.</li>
+<li><b>Step-up</b>: the existing fresh second-factor proof on the owner's Studio session, valid five minutes and used once.</li>
+</ul>
+<p>The repository is public. Like the security model, this Dossier names no host, address or account and describes gaps at class level. It changes no product code; the work is cut into <a href="#implementation">implementation slices</a>.</p>
+</section>
+
+<section id="current-state"><h2>Current state</h2>
+<p>Much of the security model is already delivered: the operator agent principal with sessions of at most 8 hours (SM-1), the kill switch (SM-2), the operation catalogue with tiers and standing grants (SM-4), owner approval of one exact request with step-up (SM-5), host operations and certificates (SM-6), break-glass windows (SM-7), and TOTP, recovery codes and passkeys with session lists (SM-8). The gap is in the last metre: how a session reaches the terminal, what it is bound to, and which owner-level actions it may ever reach.</p>
+<table>
+<thead><tr><th>Topic</th><th>Today, checked on 23 November 2026</th><th>Consequence</th></tr></thead>
+<tbody>
+<tr><td>Credential in the terminal</td><td>The owner's agent reads a named API token (<code>api.*</code>, service account, <code>operator-agent</code> role, all projects) from a file in the user profile. API tokens expire after 30 days by default and at most after 365 days. An operator session (<code>oas.*</code>) is the stronger alternative, but the Owner starts it in Settings &gt; Access and copies the bearer, which is shown once, into a file.</td><td>Both are bearer secrets. Whoever holds the file holds the authority, on any machine, until expiry. Starting a session needs no fresh second factor; the signed-in browser session is enough.</td></tr>
+<tr><td>Accept with override</td><td>A move to Completed with <code>operatorOverride</code> needs a written reason and the Admin or Owner role in the project (handler check on the projected role). For an operator session the policy step also classifies a move into Completed as <code>gate.bypass</code> (T2), so it first opens an approval request.</td><td>An approval cannot help: after the Owner approves, the handler still refuses because the <code>operator-agent</code> role is not Admin or Owner. Each card also needs its own approval and its own step-up.</td></tr>
+<tr><td>Archive override</td><td>A move to Archive with <code>archiveOverride</code> requires a human principal whose role is Owner. For an operator session a move into Archive matches no catalogue rule.</td><td>No delegated path exists at all; the request is refused before any role is read.</td></tr>
+<tr><td>Testing strategy</td><td><code>PUT /api/projects/{project}/testing</code> requires the Owner role (<code>workspace.administer</code>). Its neighbours, such as review host requirement or maximum parallelism, need only <code>project.settings.write</code>.</td><td>For an operator session the route is not in the operation catalogue, so it is refused before any approval could be offered; behind that, no operator session ever reaches <code>workspace.administer</code>. The only paths were the browser or a direct file edit.</td></tr>
+<tr><td>Workspace-bound operator agents</td><td>For a service account whose bindings are all on the workspace, the middleware skips the lookup of a card's project unless the account is an API token. An operator session of such an agent is therefore refused on every card write as "installation-wide".</td><td>The operator agent only works when bound per project. This is a defect next to the topic and is fixed in ES-2.</td></tr>
+<tr><td>Owner-only project routes</td><td>Besides the testing strategy: the build profile (set, delete, validate), the review package, the project security files and their metadata, the server checkout sync and switch, and the gate capacity.</td><td>Some are true installation authority (build profile commands run on gate hosts); others are ordinary project settings that only happen to sit behind Owner.</td></tr>
+<tr><td>Approvals in Needs you</td><td>Approval requests are listed in Settings &gt; Access &gt; Approval requests and announced in the operator feed and an optional push link. Needs you has no class for them.</td><td>The owner must know to look in Settings. On the phone the path is long.</td></tr>
+</tbody></table>
+<p>The settings file edit of 23 November is not a product gap to close with more code; it is the symptom. Whenever the legitimate path is slower than editing a file on the server, an instructed agent will take the file. The recommended path below is designed to take less than two minutes of the owner's time for the whole episode.</p>
+</section>
+
+<section id="sign-in"><h2>Terminal sign-in</h2>
+<p>The terminal asks, the owner confirms where his second factor lives, and the terminal receives a session that only works together with its device key. This is the device authorization pattern (RFC 8628) that command-line tools of large cloud providers use, with two changes: the confirmation is a Studio step-up rather than a password entry, and the issued session is bound to a key (next section).</p>
+<figure class="media-breakout" id="figure-sign-in"><svg class="diagram" viewBox="0 0 1120 560" role="img" aria-labelledby="signin-title signin-desc"><title id="signin-title">Terminal sign-in confirmed in the browser or on the phone</title><desc id="signin-desc">Three lanes: the terminal with studio-op, Studio, and the owner's browser or phone. The terminal creates a device key and starts a sign-in with the public key, a device label and the requested action classes. Studio answers with a short user code and a link. The terminal shows the code and a QR code. The owner opens the confirmation page, compares the code, sees device, binding kind and address, chooses action classes and the lifetime, and confirms with a passkey or an authenticator code. The terminal, polling with a proof signed by its device key, receives a session bound to that key. Every later request carries the session and a fresh proof.</desc>
+<defs><marker id="signin-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead"/></marker><marker id="signin-arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead-muted"/></marker></defs>
+<rect class="node" x="60" y="16" width="240" height="56" rx="8"/><text class="label" x="80" y="40">Terminal</text><text class="sub" x="80" y="59">studio-op, agent's OS user</text>
+<rect class="focus" x="440" y="16" width="240" height="56" rx="8"/><text class="label" x="460" y="40">Studio</text><text class="sub" x="460" y="59">identity, policy, audit</text>
+<rect class="node" x="820" y="16" width="240" height="56" rx="8"/><text class="label" x="840" y="40">Owner</text><text class="sub" x="840" y="59">browser or phone, second factor</text>
+<line class="lane" x1="180" y1="72" x2="180" y2="540"/><line class="lane" x1="560" y1="72" x2="560" y2="540"/><line class="lane" x1="940" y1="72" x2="940" y2="540"/>
+<text class="step" x="20" y="112">1</text><text class="edge-label" x="196" y="104">create device key, start sign-in</text>
+<path class="edge" d="M182 120 L556 120" marker-end="url(#signin-arrow)"/><text class="sub" x="196" y="138">public key, device label, requested classes</text>
+<text class="step" x="20" y="178">2</text><text class="edge-label" x="196" y="170">user code WDJB-MJHT, link, poll handle</text>
+<path class="edge-muted" d="M558 186 L184 186" marker-end="url(#signin-arrow-muted)"/>
+<rect class="ext" x="70" y="202" width="220" height="40" rx="8"/><text class="sub" x="84" y="227">shows code and QR, waits</text>
+<text class="step" x="20" y="284">3</text><text class="edge-label" x="576" y="270">open confirmation page, compare code</text>
+<path class="edge" d="M938 284 L564 284" marker-end="url(#signin-arrow)"/>
+<rect class="ext" x="700" y="300" width="380" height="58" rx="8"/><text class="sub" x="714" y="322">sees device, binding kind, address, classes</text><text class="sub" x="714" y="342">chooses classes and lifetime</text>
+<text class="step" x="20" y="392">4</text><text class="edge-label" x="576" y="382">step-up: passkey tap or authenticator code</text>
+<path class="edge" d="M938 396 L564 396" marker-end="url(#signin-arrow)"/>
+<text class="step" x="20" y="448">5</text><text class="edge-label" x="196" y="438">poll with proof signed by the device key</text>
+<path class="edge" d="M182 452 L556 452" marker-end="url(#signin-arrow)"/>
+<text class="edge-label" x="196" y="486">session bound to the key thumbprint</text>
+<path class="edge-muted" d="M558 498 L184 498" marker-end="url(#signin-arrow-muted)"/>
+<text class="step" x="20" y="532">6</text><text class="sub" x="196" y="532">every request: session plus a fresh proof for method, address and time</text>
+</svg>
+<figcaption>Proposed terminal sign-in. The owner's second factor is used where it already lives, in the browser or on the phone; the terminal never sees a password, a factor or a reusable secret. The example code is illustrative.</figcaption></figure>
+
+<h3>Flow</h3>
+<ol>
+<li><code>studio-op login</code> creates or loads the device key (next section) and calls an anonymous start route with the public key, a device label the owner recognises (OS user and machine name, editable once), and the action classes it asks for. Studio answers with a user code of eight characters from an unambiguous alphabet, the confirmation link, a poll handle and a poll interval of 5 seconds.</li>
+<li>The terminal prints the code and the link and renders the link as a QR code, so the owner can confirm from the phone.</li>
+<li>The owner opens <b>Confirm terminal sign-in</b> in Studio. If he is not signed in, Studio's normal sign-in with password and second factor runs first. The page shows the code, the device label, whether this device key is already known, the binding kind (hardware key or memory key), the requesting address and whether it matches the browser's address, the requested classes and the <a href="#lifetime">lifetime</a>, preselected with the installation default. The owner can remove classes but not add classes the terminal did not request.</li>
+<li>The owner confirms with a fresh step-up: a passkey tap or an authenticator code. A wrong or missing factor confirms nothing.</li>
+<li>The terminal's next poll, signed with the device key, receives the session. The session records the key thumbprint, the device, the classes, the confirming owner and the confirming browser session.</li>
+</ol>
+<p>The code is valid 10 minutes and once. Five wrong code entries per owner within 15 minutes lock the confirmation page for 15 minutes. An unconfirmed start leaves only an expired record. The start route is throttled per address like sign-in.</p>
+
+<h3>Lifetime and renewal</h3>
+<table>
+<thead><tr><th>Item</th><th>Proposed lifetime</th><th>Renewal</th></tr></thead>
+<tbody>
+<tr><td>User code</td><td>10 minutes, single use</td><td>A new <code>studio-op login</code></td></tr>
+<tr><td>Operator session</td><td>Chosen at confirmation: 8 hours, 24 hours, 7 days, 30 days or until revoked; 7 days by default, within the role and binding limits; ends after 24 hours without use</td><td>Not renewed; a new confirmation</td></tr>
+<tr><td>Session key (signs each request)</td><td>60 minutes</td><td>Automatic, signed by the device key, without a second factor</td></tr>
+<tr><td>Direct-action class (testing strategy)</td><td>24 hours per arming, never past the session</td><td>Re-arm by one owner tap with step-up; the agent cannot re-arm</td></tr>
+<tr><td>Batch classes (override acceptance, archive override)</td><td>The session's lifetime</td><td>Every batch needs its own owner tap</td></tr>
+<tr><td>Device key</td><td>Until the owner forgets the device or the key is lost</td><td>Not renewed; a new key is a new device</td></tr>
+</tbody></table>
+<p>The section <a href="#lifetime">Session lifetime</a> explains how these clocks work together.</p>
+
+<h3>Revocation</h3>
+<ul>
+<li>Each of the following is one tap in the <a href="#lifetime">Elevated sessions</a> list, without step-up.</li>
+<li><b>End elevation</b> removes the classes and leaves the session working at T0 and T1.</li>
+<li><b>End session</b> and the kill switch act as today (SM-2); the kill switch additionally ends every elevation and refuses pending sign-in starts.</li>
+<li><b>Forget device</b> removes a device key; a later sign-in from that key counts as an unknown device again.</li>
+<li>Owner password reset, Owner disable, removal of the Owner's last second factor, or revocation of the confirming browser session ends every session that browser session or person confirmed. The browser session's ordinary expiry and a sign-out do not.</li>
+</ul>
+
+<h3>What the owner sees while it is active</h3>
+<ul>
+<li>A quiet header chip in Studio on every page and on the phone, for example "Elevated · ops console · ends in 6 d · testing 18 h", with <b>End elevation</b>, <b>End session</b> and the list of elevated sessions one tap away. Without elevation the chip is absent; routine sessions of at most 8 hours stay listed in Settings only.</li>
+<li>A new-session notice, like the one SM-8 sends for new browser sessions, naming the device and the classes.</li>
+<li>In Settings &gt; Access the session row shows device, binding kind and key thumbprint, address at confirmation and last address, classes, uses per class against the rate limit, the chosen lifetime and its end, the idle end and the last renewal.</li>
+</ul>
+</section>
+
+<section id="binding"><h2>Device binding</h2>
+<p>A bound session is useless without the device key. The server stores the key's thumbprint with the session and, on every request, checks a short proof signed by that key over the method, the address, the time and a hash of the session token. This is the DPoP scheme (RFC 9449). A copied token file, a token pasted into a web page or printed into a log, or a token captured from a proxy no longer grants anything on its own.</p>
+<table>
+<thead><tr><th>Binding</th><th>How it works</th><th>Protects against</th><th>Does not protect against</th><th>Fit for Studio</th></tr></thead>
+<tbody>
+<tr><td>Proof of possession with a hardware key (DPoP)</td><td>Non-exportable key in the TPM (Windows, Linux) or the Secure Enclave (macOS); per-request signed proof; server checks thumbprint, time window and a replay cache.</td><td>Theft of the token file, the backup or the sync copy; leaks into logs, prompts and web pages; reuse on another machine.</td><td>Any process that can use the key on that machine as the agent's OS user, including a misled agent.</td><td>Application level, works through the CDN and the reverse proxy unchanged.</td></tr>
+<tr><td>Proof of possession with a memory key (DPoP)</td><td>A small resident <code>studio-op agent</code> process, like an SSH agent, holds a key generated in memory and signs on request over a socket readable only by the agent's OS user. The key dies with the process.</td><td>As above for copies of files and leaked tokens. The key is never on disk.</td><td>A process dump by the same OS user or root; a misled agent on the machine.</td><td>Same server check as the hardware key; the only option on hosts without a TPM.</td></tr>
+<tr><td>Mutual TLS with a device certificate (RFC 8705)</td><td>Client certificate, ideally with a TPM or Keychain key; token bound to the certificate.</td><td>Same as DPoP.</td><td>Same as DPoP.</td><td>Studio's TLS ends at the CDN edge and again at the reverse proxy. The origin would see only a forwarded header and depend on the edge's certificate handling. Needs a device CA and enrolment.</td></tr>
+<tr><td>Network address</td><td>Session valid only from the confirming address or range.</td><td>Use from a distant network.</td><td>Anyone on the same network or VPN exit; breaks on mobile networks, VPN changes and IPv6 privacy addresses.</td><td>Useful as a signal and as a display field, not as a binding.</td></tr>
+<tr><td>Device fingerprint</td><td>Client-reported properties such as OS, machine name, hardware ids.</td><td>Nothing; the client chooses what it reports.</td><td>Any attacker who copies the values.</td><td>A label for the owner, never a check.</td></tr>
+</tbody></table>
+
+<h3>Per platform</h3>
+<table>
+<thead><tr><th>Platform</th><th>Hardware key</th><th>Practical notes</th></tr></thead>
+<tbody>
+<tr><td>Windows 10 and 11</td><td>TPM 2.0 through the Microsoft Platform Crypto Provider (CNG), ECDSA P-256, non-exportable, per user.</td><td>TPM 2.0 is a requirement of Windows 11, so it is normally present. TPM signatures are slow compared with software keys; the per-request proof therefore uses a session key that the TPM key certifies once at sign-in (see below).</td></tr>
+<tr><td>macOS</td><td>Secure Enclave, P-256 only, non-exportable.</td><td>Available on Apple silicon and on Intel Macs with a T2 chip. Secure Enclave signing is fast enough to sign every request directly. Keychain persistence may need a signed helper binary; the wrapped key form can be stored in the agent user's home without a keychain entitlement.</td></tr>
+<tr><td>Linux workstation</td><td>TPM 2.0 through <code>tpm2-tss</code> or a PKCS#11 module.</td><td>Present on most current laptops; access needs the <code>tss</code> group or a resource manager. Without it, the memory key applies.</td></tr>
+<tr><td>Headless server or VM</td><td>vTPM where the hypervisor offers one (common on major clouds and on current hypervisors); otherwise none.</td><td>The sign-in itself works headless: the code shows in the terminal, the owner confirms on the phone. Binding uses the vTPM or the memory key. A host without either is still far better than today's bearer, because the key is never written to disk.</td></tr>
+</tbody></table>
+
+<h3>Two-level key</h3>
+<p>To keep requests fast on every platform, <code>studio-op agent</code> generates a fresh session key in memory at sign-in. Where a hardware key exists, that key signs a statement over the session key's thumbprint once, and Studio records both thumbprints. Each request is then signed by the session key in microseconds. A stolen session token is useless without the in-memory session key; a stolen session key is useless after the session ends and cannot start a new one, because a new sign-in needs the owner's confirmation and, for a known device, the hardware key.</p>
+<h3>What binding does not do</h3>
+<p>Binding answers "is this request coming from the device the owner confirmed". It does not answer "did the owner want this request". An agent on the same machine that was misled by text in a card, a log or a web page uses the same <code>studio-op agent</code> and produces valid proofs. That threat is handled by scope, confirmation, rate limits and audit in the next three sections.</p>
+</section>
+
+<section id="lifetime"><h2>Session lifetime</h2>
+<p>In this design the owner chooses the lifetime of an elevated session when he confirms the sign-in, from a list that the installation limits. A long lifetime is safe here because it is not one clock. Four things run separately: the session's end, the key that proves the device, the time without use, and the strength of the classes. Each of them can take the session's authority away on its own.</p>
+
+<h3>Lifetimes today</h3>
+<table>
+<thead><tr><th>Credential</th><th>Lifetime today</th><th>Bound to the device</th></tr></thead>
+<tbody>
+<tr><td>Owner's browser session</td><td>8 hours without use, 7 days at most (defaults)</td><td>No; a bearer cookie, protected by the browser's cookie rules</td></tr>
+<tr><td>Operator session (<code>oas.*</code>)</td><td>1 to 8 hours, chosen at Start session, 8 by default; the Owner renews it with Extend without step-up; it does not end when unused</td><td>No</td></tr>
+<tr><td>Operator-role API token in the owner's profile</td><td>30 days by default, at most 365; it does not end when unused</td><td>No</td></tr>
+<tr><td>Standing grant</td><td>7 days by default, at most 30</td><td>Not a credential</td></tr>
+</tbody></table>
+<p>The owner's browser already stays signed in for up to a week with an unbound cookie, and the token the agent uses today lasts a month. A device-bound terminal session of 7 days is therefore no looser than either, provided the controls below are in place.</p>
+
+<figure class="media-breakout" id="figure-lifetime"><svg class="diagram" viewBox="0 0 1120 430" role="img" aria-labelledby="lifetime-title lifetime-desc"><title id="lifetime-title">The separate clocks of a 7-day elevated session</title><desc id="lifetime-desc">A week from Monday 09:00 to the next Monday 09:00. Row 1: the owner chose 7 days; the session would end next Monday. Row 2: every hour the device key renews the in-memory session key without a second factor; renewal does not count as use. Row 3: the batch classes, accept with override and archive override, stay for the whole session, and each batch needs one owner tap; taps on Monday, Wednesday and Thursday. Row 4: the direct-action class, testing strategy, is active for 24 hours from Monday 09:00, lapses on Tuesday, and is re-armed by the owner with one tap and step-up on Wednesday for another 24 hours. Row 5: the last use is on Friday at 18:00; 24 hours later, on Saturday at 18:00, the session ends because it was not used, well before its chosen end.</desc>
+<defs><marker id="lifetime-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead"/></marker></defs>
+<text class="sub" x="200" y="30">Mon</text><text class="sub" x="320" y="30">Tue</text><text class="sub" x="440" y="30">Wed</text><text class="sub" x="560" y="30">Thu</text><text class="sub" x="680" y="30">Fri</text><text class="sub" x="800" y="30">Sat</text><text class="sub" x="920" y="30">Sun</text><text class="sub" x="1022" y="30">Mon</text>
+<line class="lane" x1="200" y1="40" x2="200" y2="400"/><line class="lane" x1="320" y1="40" x2="320" y2="400"/><line class="lane" x1="440" y1="40" x2="440" y2="400"/><line class="lane" x1="560" y1="40" x2="560" y2="400"/><line class="lane" x1="680" y1="40" x2="680" y2="400"/><line class="lane" x1="800" y1="40" x2="800" y2="400"/><line class="lane" x1="920" y1="40" x2="920" y2="400"/><line class="lane" x1="1040" y1="40" x2="1040" y2="400"/>
+<text class="label" x="20" y="72">Lifetime</text><text class="sub" x="20" y="90">chosen: 7 days</text>
+<rect class="focus" x="200" y="58" width="645" height="30" rx="6"/><rect class="node" x="845" y="58" width="195" height="30" rx="6" stroke-dasharray="5 4"/><text class="sub" x="860" y="78">would have run to here</text>
+<text class="label" x="20" y="140">Renewal</text><text class="sub" x="20" y="158">device key, hourly</text>
+<path class="edge-muted" d="M200 140 L845 140"/>
+<text class="sub" x="210" y="166">no second factor; refused once the device key is missing; not counted as use</text>
+<text class="label" x="20" y="210">Batch classes</text><text class="sub" x="20" y="228">whole session</text>
+<rect class="confirm" x="200" y="196" width="645" height="30" rx="6"/>
+<circle class="arrowhead" cx="215" cy="211" r="6"/><circle class="arrowhead" cx="470" cy="211" r="6"/><circle class="arrowhead" cx="575" cy="211" r="6"/><text class="sub" x="600" y="216">one owner tap per batch</text>
+<text class="label" x="20" y="282">Direct action</text><text class="sub" x="20" y="300">24 hours per arming</text>
+<rect class="named" x="200" y="268" width="120" height="30" rx="6"/><rect class="named" x="465" y="268" width="120" height="30" rx="6"/>
+<text class="sub" x="328" y="288">lapsed</text><text class="sub" x="594" y="288">re-armed Wed 14:00 with step-up, lapses Thu 14:00</text>
+<text class="label" x="20" y="352">Use</text><text class="sub" x="20" y="370">idle end 24 hours</text>
+<path class="edge" d="M725 346 L840 346" marker-end="url(#lifetime-arrow)"/>
+<text class="edge-label" x="652" y="374">last use Fri 18:00</text><text class="edge-label" x="806" y="374">ends Sat 18:00</text>
+<text class="sub" x="200" y="412">Schematic. Ticks of the hourly renewal are not drawn individually.</text>
+</svg>
+<figcaption>Proposed clocks of one elevated session that the owner confirmed for 7 days. The chosen lifetime is only the outer limit; idle end, the device key and the 24-hour direct-action class each end authority earlier.</figcaption></figure>
+
+<h3>Choice at confirmation</h3>
+<p>The confirmation page gains a <b>Lifetime</b> choice with the values <b>8 hours</b>, <b>24 hours</b>, <b>7 days</b>, <b>30 days</b> and <b>Until revoked</b>. Studio offers only values up to the effective limit and preselects the installation default. The terminal may ask for a shorter lifetime (<code>studio-op login --lifetime 24h</code>), and the page then preselects that value. The terminal cannot preselect a value longer than the default, so an agent misled into asking for "until revoked" changes nothing unless the owner picks it himself. The owner may pick any offered value, because he confirms the choice with his second factor.</p>
+<p>The effective limit is the shortest of three limits: the limit for the role of the person who confirms, an optional limit on the operator agent, and the limit for the binding kind.</p>
+<table>
+<thead><tr><th>Limit</th><th>Where it is set</th><th>Recommended value</th></tr></thead>
+<tbody>
+<tr><td>Installation default</td><td>Settings &gt; Access &gt; Session limits</td><td>7 days</td></tr>
+<tr><td>Role limit, Owner</td><td>Same place, per role</td><td>Until revoked</td></tr>
+<tr><td>Role limit, Admin</td><td>Same place, per role</td><td>7 days. This applies once Admins may confirm sessions for their projects; today only the Owner confirms.</td></tr>
+<tr><td>Other roles</td><td>Fixed</td><td>They cannot confirm an elevated session</td></tr>
+<tr><td>Operator agent limit</td><td>The agent's row, optional</td><td>None. Set it lower, for example to 24 hours, for an agent on a shared server.</td></tr>
+<tr><td>Binding kind: hardware key</td><td>Fixed</td><td>No extra limit beyond the role limit</td></tr>
+<tr><td>Binding kind: memory key</td><td>Fixed</td><td>24 hours. A memory key dumped from the process is the device key itself, so it could renew from another machine.</td></tr>
+<tr><td>Unbound session (Settings path S1, until ES-9 retires it)</td><td>Fixed</td><td>8 hours, as today</td></tr>
+</tbody></table>
+<p>Only the Owner changes these limits, with step-up, and every change goes to the IAM audit. No token reaches them; they join the hard refusals. When a limit is lowered, running sessions that are already older than the new limit end at their next renewal. When a limit is raised, running sessions keep the lifetime they were confirmed with.</p>
+
+<h3>Renewal while the device key is present</h3>
+<p>The session lasts for the chosen lifetime. The part that stays short is the key that signs each request. The in-memory session key of the <a href="#binding">two-level key</a> is certified for 60 minutes at a time.</p>
+<ol>
+<li>Ten minutes before the certification ends, <code>studio-op agent</code> creates a new session key. The hardware device key signs a renewal statement over the session id, the new key's thumbprint and the time, and the agent sends that statement with a proof from the current key.</li>
+<li>Studio checks the session before it renews. The session must be live, before its chosen end and not ended for lack of use. The device must not be forgotten. The confirming person must still be active and still have a second factor. The kill switch must be off, and no lowered limit may have overtaken the session. Studio then records the new thumbprint, and the old session key stops working at once.</li>
+<li>The renewal needs no second factor, no owner action and no prompt. The owner's step-up at sign-in confirmed the device, and the device key now proves that it is still the same device.</li>
+</ol>
+<p>Without the device key there is no renewal. That covers copied files on another machine, a forgotten device, a reset key store, and a memory-key host whose agent process has ended. The session then stops when the current certification ends, at most 60 minutes later, and <code>studio-op</code> asks for a new sign-in. A session key dumped from memory therefore works for at most an hour, even inside a session that has weeks to run. A fixed 8-hour key, by comparison, gives 8 hours. A TPM signature once an hour costs nothing noticeable; per-request latency was the only reason for the two-level key.</p>
+<p>Renewal is not use. It does not reset the idle clock, so a resident agent that only renews cannot keep a forgotten session alive.</p>
+
+<h3>Automatic end after no use</h3>
+<p>A session ends after 24 hours without a request other than a renewal. The Owner can set this between 1 hour and 7 days in Session limits. The rule is aimed at the forgotten device. If the owner closes his laptop on Friday evening, the session has ended by Saturday evening, and Monday starts with a sign-in from the phone, which takes about 30 seconds.</p>
+<p>The browser's 8 hours would end every terminal session overnight, which is exactly what the owner wants to avoid. The browser's limit protects against an open tab on a shared or public computer. A bound terminal session cannot be used from another computer at all. Idle end does not cover a running agent that polls the board, because polling is use. That case is covered by the class limits below and by the session list.</p>
+
+<h3>Elevated classes in a long session</h3>
+<ul>
+<li><b>Classes confirmed per batch</b> (accept with override, archive override) stay for the whole lifetime. Every use already needs the owner's tap, so a long session adds no authority. It only saves sign-ins.</li>
+<li><b>Direct-action classes</b> (the testing strategy) act without a tap per action. Each one is active for at most 24 hours from confirmation, then lapses while the session continues at T0 and T1 with the batch classes. <b>Re-arm</b> in the session chip or on the phone, with step-up, starts another 24 hours. The agent cannot re-arm a class. Every change made through a direct-action class appears in the operator feed with <b>Undo</b>, which sets the previous value back.</li>
+</ul>
+<p>This replaces the 60-minute elevation window of the first version. The batch classes stay fast for the whole week. The one class that acts without a tap is limited to a working day, and the owner sees every one of its changes.</p>
+
+<h3>Active elevated sessions</h3>
+<p>Settings &gt; Access &gt; <b>Elevated sessions</b> lists every live session that carries a class or runs longer than 8 hours. The header chip and the phone open the same list. Each row shows:</p>
+<ul>
+<li>the operator agent and the device label, and the binding kind (hardware key or memory key);</li>
+<li>who confirmed the session and when, the chosen lifetime and its end ("ends in 5 days" or "until revoked");</li>
+<li>the last use, the last address and when the idle end falls, and the last renewal;</li>
+<li>the classes, with uses against their rate limits and the time left for direct-action classes.</li>
+</ul>
+<p>Each row has four actions, one tap each and without step-up: <b>End session</b>, <b>End elevation</b> (the session keeps T0 and T1), <b>Forget device</b> (ends every session of that device key and makes the key unknown), and, above the list, <b>End all elevated sessions</b>. An action takes effect on the next request. Live connections recheck within 15 seconds, as browser sessions do. Ending needs no second factor because it only takes authority away. Someone with a stolen browser cookie could end sessions, which is a nuisance, not a risk. Starting a session, re-arming a class and every lengthening always need step-up.</p>
+<p>Three notices keep long sessions in view without adding to Needs you, since nothing breaks if the owner ignores them:</p>
+<ul>
+<li>When a renewal comes from a network address that the session has not used before, the row marks it and a quiet notice names the device.</li>
+<li>A session that has run 30 days, or 30 more days since its last review, raises a notice in the installation security view: "Elevated session running 30 days: ops console on workstation", with <b>Keep</b> and <b>End</b>.</li>
+<li>One hour before a direct-action class lapses, the chip shows a quiet notice.</li>
+</ul>
+
+<h3>What ends a session</h3>
+<table>
+<thead><tr><th>Event</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td>Chosen lifetime reached</td><td>The session ends</td></tr>
+<tr><td>No use for the idle limit (24 hours by default)</td><td>The session ends</td></tr>
+<tr><td>Device key absent at renewal</td><td>Requests stop when the current certification ends, at most 60 minutes later; the session ends</td></tr>
+<tr><td>End session, Forget device, End all elevated sessions</td><td>The session ends at once</td></tr>
+<tr><td>End elevation; three rate-limit refusals within 10 minutes</td><td>The classes are removed; the session continues at T0 and T1</td></tr>
+<tr><td>A direct-action class reaches 24 hours</td><td>That class lapses</td></tr>
+<tr><td>Kill switch</td><td>Every session and every pending sign-in ends</td></tr>
+<tr><td>Password reset, disable, or removal of the last second factor of the confirming person</td><td>Every session that person confirmed ends</td></tr>
+<tr><td>Revocation of the confirming browser session from a session list</td><td>Every session it confirmed ends. Its ordinary expiry and a sign-out do not end them; otherwise no terminal session could outlive the browser's 8 hours without use.</td></tr>
+<tr><td>A limit is lowered below the session's age</td><td>The session ends at its next renewal</td></tr>
+<tr><td>Operator agent disabled</td><td>All its sessions end</td></tr>
+</tbody></table>
+
+<h3>Effect of a long lifetime on each threat</h3>
+<table>
+<thead><tr><th>Threat</th><th>Fixed 8 hours</th><th>Lifetime chosen up to "until revoked", with the controls above</th></tr></thead>
+<tbody>
+<tr><td>Token file copied off the device</td><td>Useless (bound)</td><td>Useless (bound)</td></tr>
+<tr><td>Session key dumped from memory (same OS user or root)</td><td>Usable up to 8 hours</td><td>Usable at most 60 minutes on a hardware-key host; at most 24 hours on a memory-key host, because of the binding-kind limit</td></tr>
+<tr><td>Forgotten or unattended device, no agent running</td><td>Until the 8 hours end</td><td>Until 24 hours after the last use</td></tr>
+<tr><td>Lost or stolen laptop</td><td>OS sign-in and disk encryption guard the key; the owner ends the session from the phone</td><td>The same, plus Forget device; idle end applies if the thief cannot sign in as the user</td></tr>
+<tr><td>Misled agent on the machine</td><td>Classes, taps and rate limits</td><td>The same; direct-action classes at most 24 hours per arming. The lifetime is not the control for this threat.</td></tr>
+<tr><td>Owner account taken over (password and factor)</td><td>The attacker can start sessions for 8 hours at a time</td><td>The attacker can confirm one long session for his own device. The new-session notice, the list and the 30-day review make it visible, and a password reset ends it. This is accepted, because the attacker could do much more in the browser.</td></tr>
+</tbody></table>
+</section>
+
+<section id="elevated-scope"><h2>Elevated scope</h2>
+<p>The elevated session is not a stronger role. It is the existing <code>operator-agent</code> role plus a short list of action classes that the owner names at confirmation. Each class maps to catalogued operations, a confirmation mode and a rate limit. Because the operation catalogue already refuses every write it does not name, a class can open exactly the routes it lists and nothing next to them.</p>
+<figure class="media-breakout" id="figure-authority"><svg class="diagram" viewBox="0 0 1120 400" role="img" aria-labelledby="authority-title authority-desc"><title id="authority-title">Authority layers of an elevated operator session</title><desc id="authority-desc">Five layers from bottom to top. Always: observe, T0. Under a standing grant: routine operations, T1. Direct action, at most 24 hours per arming: the testing strategy, with a reason and a rate limit. Confirmed per batch: accept with override and archive override, each with a reason, confirmed by one owner tap per batch. Never available to any token: access management, role bindings, grants, sessions, the kill switch, break-glass, secret values and writes, production deploy and approval, catalogue changes, audit rewrite, session limits, Owner-only installation routes.</desc>
+<rect class="never" x="40" y="20" width="1040" height="78" rx="10"/><text class="label" x="62" y="48">Never available to a token</text><text class="sub" x="62" y="70">access and role bindings, grants, sessions and elevation of itself, kill switch, break-glass, secret values and secret writes,</text><text class="sub" x="62" y="88">production deploy and approval, catalogue changes, audit rewrite, session limits, installation routes (GitHub App, first run, build profile)</text>
+<rect class="confirm" x="40" y="110" width="1040" height="66" rx="10"/><text class="label" x="62" y="138">Confirmed per batch, one owner tap</text><text class="sub" x="62" y="160">accept with override, archive override; written reason per item; at most 25 items per batch</text>
+<rect class="named" x="40" y="188" width="1040" height="66" rx="10"/><text class="label" x="62" y="216">Direct action, at most 24 hours per arming</text><text class="sub" x="62" y="238">testing strategy of a project; reason required; 6 changes per project and hour; re-armed by the owner; each change in the feed with Undo</text>
+<rect class="routine" x="40" y="266" width="1040" height="56" rx="10"/><text class="label" x="62" y="292">Routine under a standing grant (T1, exists)</text><text class="sub" x="62" y="311">requeue, steer, re-run a gate, drain and resume a host, stage deploy of a gate-verified commit</text>
+<rect class="node" x="40" y="334" width="1040" height="50" rx="10"/><text class="label" x="62" y="357">Always (T0, exists)</text><text class="sub" x="62" y="375">read board, cards, runs, logs, metrics, audit metadata</text>
+</svg>
+<figcaption>Proposed authority layers. Only the two middle layers are new; the top layer is a hard refusal in the middleware that no role binding, class, grant or approval can lift.</figcaption></figure>
+
+<h3>First classes</h3>
+<table>
+<thead><tr><th>Class</th><th>Operations</th><th>Mode</th><th>Rate limit</th><th>Conditions</th></tr></thead>
+<tbody>
+<tr><td><code>cards.accept-override</code></td><td>Move from Human Review to Completed with <code>operatorOverride</code> and a reason.</td><td>Batch confirmation</td><td>30 items per hour</td><td>The card's delivery is integrated and its review ran; the item shows the review's reservation. A card without an integrated delivery is not batchable and stays a single T2 approval.</td></tr>
+<tr><td><code>cards.archive-override</code></td><td>Move to Archive with <code>archiveOverride</code> and a reason.</td><td>Batch confirmation</td><td>10 items per hour</td><td>The card has no delivery on a protected branch; the item names the card it duplicates when the reason says so.</td></tr>
+<tr><td><code>project.testing</code></td><td><code>PUT /api/projects/{project}/testing</code></td><td>Direct action, 24 hours per arming</td><td>6 changes per project per hour</td><td>Reason required; the old and new strategy are in the audit entry and in the project's settings history.</td></tr>
+</tbody></table>
+<p>New classes are added only through a card that extends the catalogue, which is itself T2 (security model). Candidates for later: the review package of a project, and the server checkout sync of a project.</p>
+
+<h3>Permission changes</h3>
+<ul>
+<li><b>Testing strategy first.</b> Move <code>PUT /api/projects/{project}/testing</code> from the Owner requirement to <code>project.settings.write</code>, like its neighbouring project settings. Owner and Admin keep it; an operator session reaches it only with <code>project.testing</code>. The route writes an audit entry with old and new value.</li>
+<li><b>Override as a permission.</b> Add <code>project.cards.override</code> (Owner and Admin by role) and let the move handler check it instead of the projected Admin or Owner role. The archive override checks the same permission instead of "human Owner". The written reason stays mandatory. An operator session receives the permission only for an item of a confirmed batch.</li>
+<li><b>Review package</b> may follow the testing strategy to <code>project.settings.write</code>; it changes how reviews are grouped, not what runs.</li>
+<li><b>Stay Owner:</b> the build profile (its commands run on gate hosts), project security files, the server checkout switch, gate capacity, and every installation route. They are not elevated classes.</li>
+</ul>
+</section>
+
+<section id="step-up"><h2>Step-up</h2>
+<p>Today an approval covers one exact HTTP request, needs its own step-up and lapses 15 minutes after the request. That is right for rare, varied T2 actions. It is wrong for nine similar acceptances: nine factor entries, and with an authenticator app at most one usable code per 30 seconds.</p>
+<h3>Batch confirmation</h3>
+<ol>
+<li>The agent submits one batch: a class, a list of typed items (card, target lane, reason) and its instruction source. Studio checks each item's conditions at once and marks items that do not qualify.</li>
+<li>Needs you shows one row, for example "ops console asks to accept 9 cards with override". The row opens a sheet that works on the phone: per item the card key and title, the review's reservation in one line, the agent's reason, and a link to the card. Every item is selected by default; the owner can deselect any.</li>
+<li>One step-up confirms the selected items: a passkey tap on the phone or one authenticator code.</li>
+<li>Studio executes the confirmed items itself, in order, as the operator session with <code>approvedBy</code> the owner and the batch id. Each item is checked again at execution; an item whose card changed since submission is skipped with a reason. The agent reads the result instead of replaying requests.</li>
+</ol>
+<p>A batch holds at most 25 items, lapses 30 minutes after submission if undecided, and is single use. Rejecting a batch, or letting it lapse, executes nothing. The single-request approval of SM-5 stays for everything else in T2.</p>
+<h3>Fit with Needs you</h3>
+<ul>
+<li>A new Needs you class <code>operator-approval.pending</code> counts open batches and open single approvals. It is an acute signal only while something waits for the owner, and it disappears when decided or lapsed.</li>
+<li>The existing operator feed event and the optional push message link to the same sheet. Receiving the push approves nothing.</li>
+<li>The lapse of a direct-action class one hour ahead, a renewal from a new address and the 30-day review of a long session appear as quiet notices in the session chip or the security view, not in Needs you, because nothing breaks if the owner ignores them.</li>
+</ul>
+</section>
+
+<section id="misled-agents"><h2>Misled agents</h2>
+<p>The operator agent reads untrusted text all day. Assume that some of it will tell the agent to do something the owner did not ask for, and that the agent may comply and may even state a false instruction source. The controls therefore do not rely on the agent's honesty.</p>
+<table>
+<thead><tr><th>Control</th><th>Effect on a misled agent</th></tr></thead>
+<tbody>
+<tr><td>Classes named by the owner for this session</td><td>Outside the named classes, an elevated request is refused before any role is read. Injected text cannot add a class; only the owner's confirmation can, and only a class the terminal requested.</td></tr>
+<tr><td>Batch confirmation with visible content</td><td>The owner sees the cards, reservations and reasons before anything happens. A batch that contains an unexpected card is visible as such.</td></tr>
+<tr><td>Direct-action classes limited to 24 hours</td><td>The one kind of authority that acts without a tap per action lapses after 24 hours, even in a session of weeks. Only the owner re-arms it, and every change made with it appears in the feed with Undo. Batch classes last longer but cannot act without the owner's tap.</td></tr>
+<tr><td>Lifetime chosen by the owner, not the agent</td><td>The terminal can only ask for a shorter lifetime than the default. Lengthening, re-arming and starting need the owner's step-up; renewal by the device key cannot extend the chosen end.</td></tr>
+<tr><td>Rate limits per class</td><td>A runaway loop stops at the limit with <code>elevation-rate-exceeded</code>. Three refusals within 10 minutes end the elevation and raise a Needs you row.</td></tr>
+<tr><td>Reason on every elevated action</td><td>Each entry in the audit carries the agent's reason, the instruction source as stated, the batch or class, and the owner who confirmed. The reason is shown, never trusted.</td></tr>
+<tr><td>Audit view per service account</td><td>Settings &gt; Access &gt; Operator activity filters elevated actions per operator agent and session, with device, class, batch, reason and result; exportable from the hash-chained audit.</td></tr>
+<tr><td>Hard refusals</td><td>Access, grants, sessions, kill switch, break-glass, secrets, production, catalogue and audit stay out of reach of every token, whatever the class, grant or approval.</td></tr>
+<tr><td>Device binding</td><td>A token the agent is tricked into printing or sending to a web page is useless elsewhere.</td></tr>
+<tr><td>No file path around Studio</td><td>The agent's OS user has no write access to the Studio data directory. A direct edit of Studio state is break-glass only (SM-7) and a settings change without a matching audit entry raises a security finding.</td></tr>
+</tbody></table>
+<p>The instruction source header stays useful as a display field and for routing (SM-5 marks untrusted sources). It is not a security boundary, because the agent writes it.</p>
+</section>
+
+<section id="threats"><h2>Threat model updates</h2>
+<p>Rows to add to the <a href="../security-model/index.html#threats">security model threat model</a>. "Accepted" names what remains after the recommended controls.</p>
+<table>
+<thead><tr><th>Actor or event</th><th>Must never be possible</th><th>Accepted</th></tr></thead>
+<tbody>
+<tr><td>Token file copied off the device (backup, sync, log, prompt, web page)</td><td>Any request with the copied token from another machine.</td><td>None for off-device use once the session is bound. Until then: the session's authority until expiry.</td></tr>
+<tr><td>Another OS user on the same machine</td><td>Reading the token file, using the device key or the agent socket.</td><td>Root on the machine is out of scope; it equals owning the device.</td></tr>
+<tr><td>Process as the agent's OS user, including a misled agent</td><td>Adding a class, re-arming a direct-action class, choosing or lengthening the lifetime, starting a session, confirming a batch, changing session limits, reaching any hard-refused route.</td><td>Use of the named classes within their rate limits until the owner ends the elevation, at most 24 hours per arming for direct-action classes; batch requests the owner then confirms without reading.</td></tr>
+<tr><td>Sign-in code phishing (an attacker starts a sign-in and sends the owner the code or link)</td><td>A confirmation without the owner's fresh second factor; a confirmed session without its device and classes on display.</td><td>An owner who confirms despite an "unknown device" and "different network" warning gives the attacker a bound session with the classes he left selected, visible in the chip and revocable at once.</td></tr>
+<tr><td>Stolen owner browser cookie</td><td>Confirming a terminal sign-in or a batch, re-arming a class, or raising a session limit with the cookie alone.</td><td>Observation within the stolen browser session, as today, and ending elevated sessions, which needs no step-up.</td></tr>
+<tr><td>Session key dumped from memory of a long session</td><td>Renewing the session without the hardware device key; using the key after its 60-minute certification.</td><td>Use of the session for at most 60 minutes on a hardware-key host, at most 24 hours on a memory-key host.</td></tr>
+<tr><td>Forgotten device with a long session</td><td>The session staying usable for more than the idle limit without use.</td><td>A running agent loop keeps the session alive; the list, the chip and the 30-day review show it.</td></tr>
+<tr><td>Owner account taken over</td><td>A long session confirmed without a notice, or one that survives a password reset.</td><td>A long session for the attacker's device until the owner notices it and ends it or resets the password.</td></tr>
+<tr><td>Replay of a captured request</td><td>Executing it again: the proof's time window is 60 seconds, its id is single use, and it is bound to method and address.</td><td>None.</td></tr>
+<tr><td>Agent driving the owner's browser (rejected option)</td><td>This option is not adopted, because a misled agent would act with the full Owner role under the owner's name.</td><td>Not applicable.</td></tr>
+</tbody></table>
+<p>Security model rows that change: "Operator agent, prompt-injected or hijacked" gains "use an elevated class outside its arming or beyond its rate, or past the lifetime the owner chose" under Must never; Z2 in the trust zone table holds "a bound operator session and its device key; no bearer usable elsewhere"; the credentials table replaces "Operator session token" with "Bound operator session, lifetime chosen at confirmation (7 days by default, limited per role and binding kind), ended after 24 hours without use; session key 60 minutes, renewed by the device key; direct-action classes 24 hours per arming" and retires operator-role API tokens. For bound sessions this supersedes the 8-hour operator session of SM-D7; unbound sessions keep it.</p>
+</section>
+
+<section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives"><h2>Alternatives</h2>
+<h3>How the owner gets owner-level work done</h3>
+<div class="variant-grid">
+<article class="variant"><h3>W1 · Owner acts in the browser</h3><p>The agent prepares the list; the owner opens each card or setting and acts with his own session. Strongest attribution and no delegation at all. Slow for batches, needs the desk or a long phone path, and invites the file-edit shortcut when the owner is busy.</p></article>
+<article class="variant"><h3>W2 · Agent drives the owner's browser session</h3><p>The agent controls a browser profile in which the owner is signed in, through a debugging port or an extension. Fast and needs no product change. Every action carries the owner's name, the agent holds the full Owner role including access management and secrets, and a misled agent inherits all of it. The cookie protections of the browser do not help against a client that controls the browser.</p></article>
+<article class="variant"><h3>W3 · Elevated terminal session</h3><p>Terminal sign-in confirmed with the second factor, device-bound session, named classes, batch confirmation in Needs you. Fast for the routine bursts, attributed to the operator agent with the owner as confirmer, narrow by construction. Needs product work in five places.</p></article>
+</div>
+<table>
+<thead><tr><th>Criterion</th><th>W1 Browser</th><th>W2 Agent drives browser</th><th>W3 Elevated terminal session</th></tr></thead>
+<tbody>
+<tr><td>Owner time for the 22 and 23 November episode (inferred)</td><td>About 12 to 20 minutes: nine cards, one archive, one setting</td><td>About 1 minute</td><td>Under 2 minutes: one sign-in confirmation and one batch tap</td></tr>
+<tr><td>Actor in the audit</td><td>Owner</td><td>Owner, although the agent acted</td><td>Operator session, confirmed by the owner</td></tr>
+<tr><td>Authority a misled agent can reach</td><td>None</td><td>Everything the Owner can do</td><td>Named classes within their rate limits; direct action at most 24 hours per arming</td></tr>
+<tr><td>Theft of a credential file</td><td>Not applicable</td><td>Browser profile theft gives the Owner session</td><td>Useless without the device key</td></tr>
+<tr><td>Works from the phone</td><td>Yes, with long paths</td><td>No</td><td>Yes: confirmation and batches</td></tr>
+<tr><td>Sign-ins per week</td><td>Browser sign-in when its session ends</td><td>As the browser</td><td>One per week with the recommended 7 days, plus one after each day without use</td></tr>
+<tr><td>Product effort</td><td>None</td><td>None, but contradicts SM-1 and D11</td><td>Medium to high, in slices</td></tr>
+</tbody></table>
+
+<h3>Terminal sign-in</h3>
+<div class="variant-grid">
+<article class="variant"><h3>S1 · Copy the bearer from Settings (today)</h3><p>No new code. The secret travels through the clipboard into a file, the start needs no fresh factor, and the token works anywhere.</p></article>
+<article class="variant"><h3>S2 · Terminal-started device sign-in</h3><p>The terminal shows a code; the owner confirms in the browser or on the phone with step-up. Nothing secret travels through the owner's hands. Known pattern; exposed to code phishing, which the device and network display and the typed code mitigate.</p></article>
+<article class="variant"><h3>S3 · Browser-started pairing code</h3><p>The owner starts in Studio and types a short pairing code into the terminal, which exchanges it with its public key. Resistant to code phishing, because the owner starts it; slower, and awkward when the terminal is remote and the owner is on the phone.</p></article>
+</div>
+
+<h3>Device binding</h3>
+<div class="variant-grid">
+<article class="variant"><h3>B1 · None</h3><p>Bearer as today. A copied token works anywhere until it expires.</p></article>
+<article class="variant"><h3>B2 · Proof of possession (DPoP), hardware key where present, memory key otherwise</h3><p>Application-level binding through every proxy; hardware keys on Windows, macOS and most Linux devices; a resident agent with a memory key elsewhere.</p></article>
+<article class="variant"><h3>B3 · Mutual TLS with device certificates</h3><p>Equivalent protection, but TLS ends at the edge, so binding depends on edge configuration, and a device CA must be run.</p></article>
+<article class="variant"><h3>B4 · Address or fingerprint</h3><p>Cheap and weak; breaks legitimate use and stops no one on the same network.</p></article>
+</div>
+
+<h3>Session lifetime</h3>
+<div class="variant-grid">
+<article class="variant"><h3>L1 · Fixed 8 hours (today, SM-D7)</h3><p>Simple and already delivered. Ends every session overnight, so the owner signs in again every working day. A fixed key means a dumped key works for the whole 8 hours.</p></article>
+<article class="variant"><h3>L2 · Chosen at confirmation, with limits</h3><p>8 hours, 24 hours, 7 days, 30 days or until revoked; installation default, role limit and binding-kind limit; hourly renewal by the device key without a second factor; idle end; direct-action classes 24 hours per arming; one list with one-tap ending. The longer session adds speed, and the separate clocks keep authority short where it acts without a tap.</p></article>
+<article class="variant"><h3>L3 · Chosen freely, without limits</h3><p>The same choice without role or binding limits and without idle end. A memory-key or unbound session could run for weeks, and a forgotten device keeps a live session.</p></article>
+</div>
+<table>
+<thead><tr><th>Criterion</th><th>L1 Fixed 8 hours</th><th>L2 Chosen with limits</th><th>L3 Chosen freely</th></tr></thead>
+<tbody>
+<tr><td>Owner sign-ins per working week</td><td>5 or more</td><td>About 1 to 2</td><td>About 1, or none</td></tr>
+<tr><td>Use of a dumped session key</td><td>Up to 8 hours</td><td>At most 60 minutes (hardware key), 24 hours (memory key)</td><td>Until the session ends, possibly weeks</td></tr>
+<tr><td>Forgotten device</td><td>Up to 8 hours</td><td>24 hours after the last use</td><td>Until revoked</td></tr>
+<tr><td>Effort</td><td>None</td><td>One additional slice (ES-6)</td><td>Less than L2, but contradicts the binding limits</td></tr>
+</tbody></table>
+</section>
+
+<section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation"><h2>Recommendation</h2>
+<div class="callout" data-tone="accent"><h3>Make the elevated terminal session the default way, and make it faster than any shortcut</h3>
+<p>Adopt W3 as the default: terminal-started sign-in (S2) confirmed in the browser or on the phone with a passkey or authenticator code; sessions bound by proof of possession (B2) with a hardware key where the platform has one and a memory-held key otherwise; a lifetime the owner chooses at confirmation, 7 days by default and up to "until revoked" for the Owner on a hardware-key device, renewed hourly by the device key without a second factor and ended after 24 hours without use (L2); the elevated authority as named classes on top of the <code>operator-agent</code> role, with direct-action classes limited to 24 hours per arming and one list of elevated sessions to end any of them with one tap; batch confirmation in Needs you for override acceptance and archive override; the testing strategy as the first route moved from Owner to a project permission.</p>
+<p>Keep W1 for everything outside the classes: access, secrets, production, installation. Reject W2.</p>
+<p>The most important reason: the episode that led to a settings file edit becomes a two-minute, fully audited path that a misled agent cannot widen, and a copied token stops being worth anything.</p></div>
+<p>Order: the two permission changes come first because they are small, independent and unblock the owner's current work through the browser and approvals. The bound sign-in follows, then the chosen lifetime with renewal and the list of elevated sessions, then classes and batches, then the retirement of operator-role API tokens. Retirement waits for the chosen lifetime, so the owner never trades a 30-day token for a session that ends every evening.</p>
+</section>
+
+<section id="evidence" data-concept-section="evidence" data-document-section="evidence"><h2>Evidence</h2>
+<p>Evidence is classified as observed (read in the repository or produced by the running product on 23 November 2026), inferred, or proposed. The four figures and the request results come from one Playwright capture on a fresh networked monolith built from this task's worktree (commit <code>801cf4ca9</code>), served by the <code>networked-https</code> profile behind a localhost TLS proxy. The Owner was bootstrapped with a TOTP factor, created the operator agent <code>ops console</code> with the <code>operator-agent</code> role on the project, and started a session in Settings &gt; Access. Two fixture cards were placed in Human Review by the Owner and a third card served as the duplicate. No API response was mocked. The capture spec, the request and response record and the run log are delivered with the task results; the stack and its credentials were discarded after the run.</p>
+
+<figure class="evidence-figure media-breakout" id="figure-bearer">
+<div class="evidence-captures">
+<div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/operator-session-bearer-shown-once-light.png" alt="Settings, Access, Operator agents: after Start session, a tinted panel says to copy the session token now because it is not shown again, valid for eight hours, renewable only by the Owner, with Copy token and Done buttons; below, the ops console agent with an active session row."><span class="figure-annotation">Bearer to copy by hand</span></div>
+<div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/operator-session-bearer-shown-once-dark.png" alt="The same Operator agents panel in the dark theme, with the one-time session token panel above the active session row."></div>
+</div>
+<figcaption><span class="figure-claim"><b>Evidence.</b> Start session issues the operator session as a bearer token that the Owner must copy now, shown once, valid 8 hours; the panel asks for no second factor before issuing it.</span>
+<span class="figure-as-of"><span><b>Light:</b> captured <time datetime="2026-11-23">23 November 2026</time> from the networked-https capture stack described above, element crop of the Operator agents panel. The token line is masked in the image for publication.</span><span><b>Dark:</b> captured <time datetime="2026-11-23">23 November 2026</time>, same stack, crop and mask.</span></span></figcaption>
+</figure>
+
+<figure class="evidence-figure media-breakout" id="figure-approvals">
+<div class="evidence-captures">
+<div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/approval-requests-one-per-card-light.png" alt="Settings, Access, Approval requests: two separate T2 high risk requests titled Bypass a gate from ops console, each with its request line, JSON parameters including operatorOverride true and a reason, parameter digest, target card, session, instruction source Owner chat, the agent's reason, and its own Approve and Reject buttons."><span class="figure-annotation">One request per card</span></div>
+<div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/approval-requests-one-per-card-dark.png" alt="The same two approval requests in the dark theme."></div>
+</div>
+<figcaption><span class="figure-claim"><b>Evidence.</b> Two override acceptances by the operator session appear as two separate "Bypass a gate" approval requests, each with its own Approve button and its own second-factor decision.</span>
+<span class="figure-as-of"><span><b>Light:</b> captured <time datetime="2026-11-23">23 November 2026</time> from the same stack, element crop of the Approval requests panel.</span><span><b>Dark:</b> captured <time datetime="2026-11-23">23 November 2026</time>, same stack and crop.</span></span></figcaption>
+</figure>
+
+<figure class="evidence-figure media-breakout" id="figure-needs-you">
+<div class="evidence-captures">
+<div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/needs-you-without-approval-requests-light.png" alt="The Needs you dialog scrolled to its Human review group with the two fixture cards, followed by Post-merge runs missing and Installation groups; there is no group for approval requests."><span class="figure-annotation">No approval group</span></div>
+<div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/needs-you-without-approval-requests-dark.png" alt="The same Needs you dialog in the dark theme."></div>
+</div>
+<figcaption><span class="figure-claim"><b>Evidence.</b> While the two approval requests wait, Needs you lists the two cards under Human review but has no group or row for the approval requests that block them.</span>
+<span class="figure-as-of"><span><b>Light:</b> captured <time datetime="2026-11-23">23 November 2026</time> from the same stack, element crop of the Needs you dialog scrolled to the cards. The full list of 34 rows, recorded by the spec, contains no approval row; the Dossier rows above come from this repository's own docs.</span><span><b>Dark:</b> captured <time datetime="2026-11-23">23 November 2026</time>, same stack and crop.</span></span></figcaption>
+</figure>
+
+<figure class="evidence-figure media-breakout" id="figure-approval-used">
+<div class="evidence-captures">
+<div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/approval-used-handler-refused-light.png" alt="Decided and expired approvals table: one row, ops console, Bypass a gate, the move request line, source Owner chat, state Executed, decided by Owner, result Ran, refused with 403."><span class="figure-annotation">Approved, then refused</span></div>
+<div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/approval-used-handler-refused-dark.png" alt="The same decided approval row in the dark theme."></div>
+</div>
+<figcaption><span class="figure-claim"><b>Evidence.</b> After the Owner approved one override acceptance with a fresh second factor, the approval was used and the request still ended with 403: "Ran, refused with 403".</span>
+<span class="figure-as-of"><span><b>Light:</b> captured <time datetime="2026-11-23">23 November 2026</time> from the same stack, element crop of the Decided and expired table.</span><span><b>Dark:</b> captured <time datetime="2026-11-23">23 November 2026</time>, same stack and crop.</span></span></figcaption>
+</figure>
+
+<h3>Request results from the capture</h3>
+<table>
+<thead><tr><th>Request by the operator session</th><th>Answer</th></tr></thead>
+<tbody>
+<tr><td>Accept card 1 with <code>operatorOverride</code> and a reason</td><td>403 <code>approval-required</code>, operation <code>gate.bypass</code>, tier T2, an approval id</td></tr>
+<tr><td>Same request again with the approved approval id</td><td>403 <code>operator-authority-required</code>: "operatorOverride needs the Admin or Owner role in this project." The card stayed in Human Review; the approval is recorded as used with result 403.</td></tr>
+<tr><td>Archive the duplicate with <code>archiveOverride</code> and a reason</td><td>403 <code>operation-not-catalogued</code>, no approval offered</td></tr>
+<tr><td>Set the testing strategy to <code>balanced</code></td><td>403 <code>operation-not-catalogued</code>, no approval offered; behind the catalogue the route needs <code>workspace.administer</code>, which no operator session reaches</td></tr>
+<tr><td>The same override acceptance by an operator agent bound on the <b>workspace</b> instead of the project</td><td>403 <code>project-scope-denied</code>: "The operator agent role cannot make installation-wide changes." (first capture attempt)</td></tr>
+</tbody></table>
+
+<div class="evidence-list">
+<a class="evidence" href="#evidence-routes"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-routes">Move routes and override checks</b><small><code>backend/Features/Tasks/TaskCrudEndpoints.cs</code>: <code>operatorOverride</code> needs a usable reason and <code>ProjectAccessAuthorization.HasOperatorAuthority</code> (projected Owner or Admin); <code>archiveOverride</code> needs a human principal with the Owner role. The policy step runs before the handler, so an approval cannot satisfy the handler check.</small></span></a>
+<a class="evidence" href="#evidence-catalogue"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-catalogue">Operation catalogue</b><small><code>OperatorOperationCatalog.cs</code>: a move into Human Review or Completed resolves to <code>gate.bypass</code> (T2); a move into Archive resolves to nothing and is refused as not catalogued; the testing route has no rule.</small></span></a>
+<a class="evidence" href="#evidence-owner-routes"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-owner-routes">Owner-only project routes</b><small><code>RequireStudioRole(StudioRoles.Owner)</code> (which adds <code>workspace.administer</code>) on the testing strategy, review package and build profile routes in <code>ProjectSettingsEndpoints.cs</code>, the security files and metadata in <code>ProjectDocsEndpoints.cs</code>, checkout sync and switch, and gate capacity. Neighbouring project settings declare <code>project.settings.write</code>.</small></span></a>
+<a class="evidence" href="#evidence-roles"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-roles">Roles</b><small><code>IamCatalog.cs</code>: the <code>operator-agent</code> role holds reads, card writes, run operation, review step models, installation operation reads, stage deploys, the security view and magazine writes; no project settings, no review decision, no secrets, production or access. Only Owner and Admin project to the operator authority.</small></span></a>
+<a class="evidence" href="#evidence-session-start"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-session-start">Session start and tokens</b><small><code>OperatorAgentEndpoints.cs</code>: starting a session requires an active Owner (<code>access.manage</code>) and no step-up, and returns the bearer once. API tokens expire after 30 days by default, at most 365 (Security overview).</small></span></a>
+<a class="evidence" href="#evidence-workspace-binding"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-workspace-binding">Workspace-bound operator agents cannot write cards</b><small>For a service account whose bindings are all workspace bindings, <code>AccessSecurityMiddleware</code> skips the card-to-project lookup unless the account is an API token, so a card write by an operator session is treated as installation-wide and refused. API tokens resolve the card and are unaffected. The setup guide's advice to bind per project avoids it; ES-2 fixes the lookup.</small></span></a>
+<a class="evidence" href="#evidence-lifetimes"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-lifetimes">Session lifetimes today</b><small><code>AccessSecurityStore.OperatorAgents.cs</code>: <code>MaxOperatorSessionLifetime</code> is 8 hours; a start or renewal accepts 1 to 8 hours (<code>invalid-lifetime</code> otherwise); renewal needs an active Owner and no step-up; validation checks revocation and expiry and records the last use, with no idle end. Browser sessions: <code>Security:Session:IdleMinutes</code> 480 in <code>AccessSecurityStore.cs</code> and <code>Security:Session:AbsoluteMinutes</code> 10080 in <code>AccessSecurityEndpoints.cs</code>, as the Security overview states (8 hours idle, 7 days absolute). The 8 hours are visible in the first figure below.</small></span></a>
+<a class="evidence" href="#evidence-needs-you"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-needs-you">Needs you classes</b><small><code>operator-attention.model.ts</code> lists the classes; none covers operator approvals. The approval notice reaches the operator feed and an optional push link only.</small></span></a>
+<a class="evidence" href="#evidence-factors"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-factors">Factors and step-up</b><small>Security overview (SM-8): TOTP, recovery codes and WebAuthn passkeys with user verification; step-up is single use within five minutes. Passkeys make a one-tap confirmation on the phone possible today.</small></span></a>
+<a class="evidence" href="#evidence-time"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="evidence-time">Owner time per way</b><small>The minutes in the comparison are estimates from the number of screens and decisions each way needs, not measurements. ES-8 measures the batch path.</small></span></a>
+<a class="evidence" href="#evidence-platforms"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="evidence-platforms">Platform key stores</b><small>Availability of TPM 2.0 on Windows 11, the Secure Enclave on Apple silicon and T2 Macs, and vTPMs on common hypervisors is from platform documentation, not tested here; ES-5 records one run per platform. TPM signing latency is the reason for the two-level key.</small></span></a>
+<a class="evidence" href="#evidence-proposed"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="evidence-proposed">Target</b><small>Terminal sign-in, binding, the chosen lifetime with its limits, renewal, idle end and session list, classes and their arming, batches, permission moves, Needs you class and token retirement are proposals of this Dossier, not current behaviour.</small></span></a>
+<a class="evidence" href="#evidence-related"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-related">Related Dossiers</b><small><a href="../security-model/index.html">Security model</a> (AGT-3353) and its delivered slices SM-1 to SM-9 and SM-11; <a href="../operator-agent-level/index.html">Operator agent level</a> for the operator role and <code>studio-op</code>. This Dossier keeps their decisions and adds to them.</small></span></a>
+</div>
+</section>
+
+<section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions"><h2>Open decisions</h2>
+<p>Each block recommends a working option. Implementation slices use the recommendation unless a recorded operator decision selects another option.</p>
+<div class="decision" id="d1"><h3>ES-D1 · Default way to do owner-level work</h3><p>Options: W1 owner acts in the browser; W2 agent drives the owner's browser session; W3 elevated terminal session.</p><p><b>Recommend W3</b>, with W1 for everything outside the named classes. W2 gives a misled agent the full Owner role under the owner's name and undoes SM-1.</p></div>
+<div class="decision" id="d2"><h3>ES-D2 · Terminal sign-in</h3><p>Options: S1 copy the bearer from Settings; S2 terminal-started device sign-in confirmed with step-up; S3 browser-started pairing code.</p><p><b>Recommend S2</b>, with the device, binding kind, address match and an unknown-device warning on the confirmation page, a 10-minute single-use code and a lockout after five wrong entries. Keep S1 only for a session without elevation classes until the migration slice retires it.</p></div>
+<div class="decision" id="d3"><h3>ES-D3 · Device binding</h3><p>Options: B1 none; B2 proof of possession with a hardware key where present and a memory key otherwise; B3 mutual TLS with device certificates; B4 address or fingerprint.</p><p><b>Recommend B2</b> with the two-level key (hardware key certifies an in-memory session key). Address and device label are display and anomaly signals only.</p></div>
+<div class="decision" id="d4"><h3>ES-D4 · Unbound hosts</h3><p>Options: A allow the memory key on hosts without TPM or Secure Enclave; B require a hardware key for any elevation class; C allow unbound sessions on such hosts.</p><p><b>Recommend A.</b> The memory key never reaches disk and defeats file theft, which is the threat binding addresses. The session row shows the binding kind so the owner knows which he confirmed. Such sessions are limited to 24 hours (ES-D5).</p></div>
+<div class="decision" id="d5"><h3>ES-D5 · Session lifetime chosen at sign-in</h3><p>Options: L1 fixed 8 hours as today (SM-D7); L2 chosen at confirmation from 8 hours, 24 hours, 7 days, 30 days and until revoked, with an installation default, a limit per role of the confirming person, an optional limit per operator agent and a limit per binding kind; L3 chosen freely without limits.</p><p><b>Recommend L2</b> with an installation default of 7 days, role limits Owner until revoked and Admin 7 days, a memory-key limit of 24 hours, and unbound sessions at 8 hours. The terminal may only ask for less than the default. A bound session renewed every hour by the device key is stronger against theft than the owner's 7-day browser cookie, so 7 days is parity rather than loosening. This revision replaces the earlier recommendation of a fixed 8-hour session with a 60-minute window.</p></div>
+<div class="decision" id="d6"><h3>ES-D6 · Shape of the elevated scope</h3><p>Options: A named action classes on the <code>operator-agent</code> role, chosen at confirmation; B a new bindable role "operator elevated"; C bind Admin to the operator agent.</p><p><b>Recommend A.</b> A role is standing authority on every session of the principal; classes are per session and per window. C would add secret writes and production deploys.</p></div>
+<div class="decision" id="d7"><h3>ES-D7 · Routes that move from Owner to a project permission</h3><p>Options: A the testing strategy now and the review package after it, both to <code>project.settings.write</code>; B every Owner-only project route; C none, elevated sessions get <code>workspace.administer</code> for named routes.</p><p><b>Recommend A.</b> The build profile, project security files, checkout switch and gate capacity stay Owner because they decide what runs on gate hosts or what the security record says. C breaks the rule that no token reaches <code>workspace.administer</code>.</p></div>
+<div class="decision" id="d8"><h3>ES-D8 · Override authority</h3><p>Options: A a permission <code>project.cards.override</code> held by Owner and Admin, granted to an operator session only per confirmed item; B keep the role check and the human-Owner check; C let the <code>operator-agent</code> role hold it.</p><p><b>Recommend A.</b> B leaves the approval path dead; C turns a confirmation-level action into standing authority.</p></div>
+<div class="decision" id="d9"><h3>ES-D9 · Confirmation mode per class</h3><p>Options: A batch confirmation for accept with override and archive override, named-for-session for the testing strategy; B batch confirmation for every class; C named-for-session for every class.</p><p><b>Recommend A.</b> Acceptances and archives are many, similar and hard to undo; a strategy change is single, reversible and rate-limited.</p></div>
+<div class="decision" id="d10"><h3>ES-D10 · Who executes a confirmed batch</h3><p>Options: A Studio executes the typed items on confirmation, as the operator session with the owner as approver; B the agent replays each request with an approval id, as SM-5 does.</p><p><b>Recommend A.</b> Items are typed operations, not raw requests, so there is nothing to digest-match; execution is immediate and needs no replay window.</p></div>
+<div class="decision" id="d11"><h3>ES-D11 · Needs you</h3><p>Options: A a class <code>operator-approval.pending</code> for batches and single approvals; B keep approvals in Settings only.</p><p><b>Recommend A.</b> It is the owner's single list of what waits for him, and it works on the phone.</p></div>
+<div class="decision" id="d12"><h3>ES-D12 · Operator-role API tokens</h3><p>Options: A stop issuing new operator-role API tokens once bound sign-in exists, warn on existing ones in the security view, refuse them 30 days later; viewer tokens for scripts remain; B keep both; C refuse at once.</p><p><b>Recommend A.</b> It removes the 30-to-365-day bearer from the owner's profile without breaking scripts that only read. Retirement starts only after the chosen lifetime (ES-D5) is live.</p></div>
+<div class="decision" id="d13"><h3>ES-D13 · Direct edits of Studio state</h3><p>Options: A only inside an SM-7 break-glass window, and a settings change without a matching audit entry raises a security finding; B allowed on owner instruction; C technically prevented on the host.</p><p><b>Recommend A.</b> The owner keeps a recorded emergency path; the everyday shortcut becomes visible instead of silent. C is not possible against a host administrator.</p></div>
+<div class="decision" id="d14"><h3>ES-D14 · Renewal within the lifetime</h3><p>Options: A the session key is certified for 60 minutes and renewed automatically with a statement signed by the device key, without a second factor, and refused once the key is missing or any ending condition holds; B renewal with a step-up once a day; C no renewal, one session key for the whole lifetime.</p><p><b>Recommend A.</b> It meets the owner's request of renewal without a new second factor while the device key is present, and it limits a dumped session key to an hour. B brings back the daily friction the owner objected to. C would let a dumped key work for the whole lifetime.</p></div>
+<div class="decision" id="d15"><h3>ES-D15 · Automatic end after no use</h3><p>Options: A 24 hours without a request other than renewal, settable by the Owner from 1 hour to 7 days; B 8 hours, as the browser; C none.</p><p><b>Recommend A.</b> It ends the session of a forgotten device within a day and survives a night. B ends every session overnight. C keeps a closed laptop's session alive for the whole lifetime. Renewal must not count as use.</p></div>
+<div class="decision" id="d16"><h3>ES-D16 · Elevated classes in a long session</h3><p>Options: A batch classes for the whole session, direct-action classes at most 24 hours per arming and re-armed by the owner with one tap and step-up, each direct change in the feed with Undo; B the 60-minute window of the first version, extendable to 4 hours; C every class for the whole lifetime.</p><p><b>Recommend A.</b> Batch classes cannot act without a tap, so their length adds no authority. The testing strategy changes what the gates require, so the authority that acts without a tap stays within a working day. B costs the owner a step-up every hour; C gives a misled agent a week of silent strategy changes.</p></div>
+<div class="decision" id="d17"><h3>ES-D17 · List of elevated sessions and ending</h3><p>Options: A one list "Elevated sessions" in Settings &gt; Access, opened from the header chip and on the phone, with End session, End elevation, Forget device and End all elevated sessions, each one tap without step-up, plus a 30-day review notice in the security view and a notice on renewal from a new address; B the same list with step-up for ending; C session rows per operator agent only, as today.</p><p><b>Recommend A.</b> Ending only removes authority. A factor prompt at the moment the owner suspects misuse slows the one action that must be fast. C hides long sessions in a per-agent panel.</p></div>
+</section>
+
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation"><h2>Implementation</h2>
+<p>Nine bounded slices are defined in <code>workbench.json</code>, in delivery order; each <code>dependsOn</code> names only earlier slices. Each has a measurable acceptance target. This Dossier changes no product code.</p>
+<table>
+<thead><tr><th>Slice</th><th>Depends on</th><th>Acceptance target</th></tr></thead>
+<tbody>
+<tr><td>ES-1 Testing strategy as a project setting</td><td>none</td><td>An Admin and an Owner set the strategy, an operator session without <code>project.testing</code> gets 403, each change writes an audit entry with old and new value.</td></tr>
+<tr><td>ES-2 Override as a permission</td><td>none</td><td>An approved single T2 override acceptance or archive override of an operator session completes; without approval, without reason, or by a Developer it is refused with a typed reason; a workspace-bound operator session can write cards.</td></tr>
+<tr><td>ES-3 Terminal sign-in confirmed with step-up</td><td>none</td><td><code>studio-op login</code> yields a session only after an Owner confirmation with a fresh factor; expired, reused and wrong codes are refused; lockout after five wrong entries.</td></tr>
+<tr><td>ES-4 Proof-of-possession binding</td><td>ES-3</td><td>A bound session's token without a valid proof is refused; replayed, stale or wrong-address proofs are refused; median added server time per request below 2 ms.</td></tr>
+<tr><td>ES-5 Hardware device keys</td><td>ES-4</td><td>On Windows with TPM, macOS with Secure Enclave and Linux with TPM the device key is non-exportable and certifies the session key; the session row shows the binding kind.</td></tr>
+<tr><td>ES-6 Lifetime chosen at sign-in, renewal and elevated sessions list</td><td>ES-4, ES-5</td><td>The confirmation offers only lifetimes within the role and binding limits and preselects the default; renewal by the device key works without a second factor and is refused once the key is missing or an ending condition holds; 24 hours without use end a session; the Elevated sessions list ends a session, elevation, device or all with one tap.</td></tr>
+<tr><td>ES-7 Elevated action classes and arming</td><td>ES-1, ES-2, ES-6</td><td>Only confirmed classes admit their operations within their rate limits; a direct-action class lapses 24 hours after arming and only the owner re-arms it; each direct change has Undo; header chip, End elevation and kill switch work; audit entries carry class, reason and device.</td></tr>
+<tr><td>ES-8 Batch confirmation in Needs you</td><td>ES-7</td><td>A batch of nine acceptances is confirmed with one step-up from a 390 px viewport and executed by Studio; deselected, changed and non-qualifying items are skipped with reasons.</td></tr>
+<tr><td>ES-9 Retire operator-role API tokens and flag direct edits</td><td>ES-3, ES-4, ES-6, ES-8</td><td>New operator-role API tokens are refused, existing ones are flagged and refused after 30 days; a settings file change without an audit entry raises a security finding within 10 minutes.</td></tr>
+</tbody></table>
+<ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+</ol>
+</section>
+<!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>
