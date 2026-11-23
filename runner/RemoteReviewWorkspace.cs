@@ -2031,7 +2031,12 @@ public sealed class RemoteReviewWorkspace
             !process.Success || signal is not null
                 ? ReviewCommandExitDiagnosis.OutputTail(process.StdOut, process.StdErr)
                 : null,
-            repeatObservation);
+            repeatObservation,
+            ParsedTestFailures(process).Concat(comparison?.NewFailures ?? []).Concat(comparison?.PreExistingFailures ?? [])
+                .Concat(comparison?.InitialFailures ?? []).Distinct(StringComparer.Ordinal)
+                .ToDictionary(test => test, test => ReviewCommandExitDiagnosis.OutputTail(
+                    TestFailureMessages.FirstError(process.StdOut + "\n" + process.StdErr, test), "").Stdout,
+                    StringComparer.Ordinal));
     }
 
     private async Task<ReviewArtifactEvidenceDto> WriteArtifactAsync(

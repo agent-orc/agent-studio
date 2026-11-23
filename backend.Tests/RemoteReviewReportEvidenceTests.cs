@@ -12,6 +12,24 @@ public sealed class RemoteReviewReportEvidenceTests : IDisposable
         Path.GetTempPath(), "remote-review-evidence-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void Red_review_input_retains_all_errors_outside_the_output_tail()
+    {
+        var head = new string('a', 40);
+        var now = new DateTime(2026, 11, 23, 4, 34, 0, DateTimeKind.Utc);
+        var names = new[] { "Example.First", "Example.Second", "Example.Third" };
+        var command = new ReviewCommandEvidenceDto("verify-1", "build-tests", "dotnet",
+            ["test", "Tests.csproj", "--no-build"], head, head, new string('b', 40), now, now,
+            1, null, new string('1', 64), new string('2', 64), NewFailures: names,
+            OutputTail: new("Tail without test messages", "", true, false),
+            FailureMessages: names.ToDictionary(name => name, name => "Assertion for " + name));
+        AgentStudio.Tasks.DeliveryFailureEvidence.RecordReview(_root, Request(head, [command]));
+        var prompt = AgentStudio.Tasks.DeliveryFailureEvidence.Append(_root, "Fix the review.");
+        Assert.Contains("dotnet test Tests.csproj --no-build", prompt);
+        Assert.Contains(head, prompt);
+        foreach (var name in names) Assert.Contains("Assertion for " + name, prompt);
+    }
+
+    [Fact]
     public async Task Grade_reports_each_aspect_cache_usage_and_review_total()
     {
         Directory.CreateDirectory(_root);

@@ -298,6 +298,12 @@ public sealed class PipelineExecutionLog
             }
 
             stepResult = stepResult with { Attempt = current.Attempt };
+            if (stepResult.ConflictReport is { } conflict)
+                AgentStudio.Tasks.DeliveryFailureEvidence.Write(jobFolderPath,
+                    AgentStudio.Tasks.DeliveryFailureEvidence.Heading + "\n\n"
+                    + $"Delivery SHA: {conflict.DeliverySha}\nIntegration tip SHA: {conflict.IntegrationTipSha}\n"
+                    + $"Command: {conflict.FailedCommand ?? "Not recorded in receipt."}\nFirst error: {conflict.FirstError ?? "Not recorded in receipt."}\n"
+                    + conflict.RenderDetail());
 
             var updatedSteps = new List<PipelineStepExecution>(current.Steps.Count);
             var replaced = false;

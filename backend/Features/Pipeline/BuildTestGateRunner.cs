@@ -164,6 +164,8 @@ public sealed record BuildTestGateProcessEvidence
 
     /// <summary>Counts and failed names from the process's TRX report; null without a report.</summary>
     public GateTestReport? TestReport { get; init; }
+    public IReadOnlyDictionary<string, string> FailureMessages { get; init; } = new Dictionary<string, string>();
+    public string? FirstError { get; init; }
     public GateShardHangEvidence? ShardHang { get; init; }
     public long OriginalBudgetMs { get; init; }
 

@@ -71,6 +71,8 @@ internal static class ReviewReportRedaction
             FlakyQuarantinedFailures = TextList(command.FlakyQuarantinedFailures),
             RepeatObservedTests = TextList(command.RepeatObservedTests),
             InitialFailures = TextList(command.InitialFailures),
+            FailureMessages = command.FailureMessages?.ToDictionary(
+                pair => CredentialRedactor.Redact(pair.Key), pair => CredentialRedactor.Redact(pair.Value)),
             Diagnosis = RedactDiagnosis(command.Diagnosis),
         };
 
