@@ -1350,17 +1350,12 @@ public static class ProjectSettingsEndpoints
                 });
             if (!TestingStrategies.IsKnown(req.Strategy))
                 return Results.BadRequest(new { error = "strategy must be 'fast', 'balanced' or 'strict'." });
-            lock (settings)
-            {
-                var oldStrategy = TestingStrategies.Resolve(settings.Get(projectName));
-                settings.SetTestingStrategy(projectName, req.Strategy);
-                var newStrategy = TestingStrategies.Resolve(settings.Get(projectName));
-                var reason = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal { Operator: not null }
-                    ? AccessSecurityMiddleware.StatedReason(context.Request.Headers[OperatorApprovalHeaders.Reason].ToString()) : null;
-                audit.Append(new ControlPlaneAuditRecord(ControlPlaneAuditStreams.Operator,
-                    AgentStudio.Operator.OperatorEndpoints.Actor(context), OperatorOperationIds.ProjectTestingSet,
-                    "updated", projectName, Details: new { project = projectName, oldStrategy, newStrategy, reason }));
-            }
+            var (oldStrategy, newStrategy) = settings.SetTestingStrategy(projectName, req.Strategy);
+            var reason = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal { Operator: not null }
+                ? AccessSecurityMiddleware.StatedReason(context.Request.Headers[OperatorApprovalHeaders.Reason].ToString()) : null;
+            audit.Append(new ControlPlaneAuditRecord(ControlPlaneAuditStreams.Operator,
+                AgentStudio.Operator.OperatorEndpoints.Actor(context), OperatorOperationIds.ProjectTestingSet,
+                "updated", projectName, Details: new { project = projectName, oldStrategy, newStrategy, reason }));
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             return Results.Ok(TestingView(projectName, settings, postMergeMode, coverage));
         }).RequirePermission(IamPermissions.ProjectSettingsWrite);

@@ -833,6 +833,10 @@
 <strong>2026-11-23 · AGT-4011 · ES-1.</strong>
 Implemented ES-D7 option A, first half: the testing strategy uses <code>project.settings.write</code> for the Owner and project Admins, while reads stay <code>project.read</code>. Operator sessions with project read access use the project-scoped T2 operation <code>project.testing.set</code> and one exact SM-5 approval; their role gains no settings permission. Each change audits actor, project, old and new strategy and operator reason, and queued review plans are still rebuilt. The settings control names Owner and project Admin access. Review package and the other Owner-only routes are unchanged; the elevated <code>project.testing</code> class remains ES-7 work.
 </li>
+<li data-implementation-entry="" data-task-key="AGT-4011" data-delivered-at="2026-11-23" data-slice="ES-1 review repair">
+<strong>2026-11-23 · AGT-4011 · ES-1 review repair.</strong>
+Kept ES-D7 option A, first half. The settings service now returns the old and new effective testing strategies from within its private mutation lock. The endpoint audits that snapshot without locking the public service instance or re-reading mutable settings. Concurrent direct writers and endpoint writers share the same synchronization boundary. Permissions, the single SM-5 approval, queued review plan rebuild and Admin control remain unchanged.
+</li>
 <!-- agent-studio:implementation-log:end -->
 </ol>
 </section>

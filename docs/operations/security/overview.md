@@ -1646,6 +1646,8 @@ approval path does not grant that permission to other requests. The named
 
 Each strategy change writes one `project.testing.set` control plane audit
 entry with actor, project, old and new strategy, and the stated reason for an
-operator session. Operator attribution includes the session and delegating
+operator session. The settings service captures both values under its private
+mutation lock, so concurrent writers cannot change the values used by another
+request's audit entry. Operator attribution includes the session and delegating
 Owner. Build profile, review package, security file, checkout and gate
 capacity routes retain their existing authorization.

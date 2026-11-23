@@ -1831,8 +1831,10 @@ public class ProjectSettingsService
     /// chosen, fast included, so a later default change does not move it. Null
     /// clears the section, and the project resolves to the default again. The
     /// former <c>perCard</c> and <c>mode</c> values are derived, never stored.
+    /// Returns the effective values before and after this mutation, captured
+    /// under the settings lock so callers can audit without a separate read.
     /// </summary>
-    public void SetTestingStrategy(string projectName, string? strategy)
+    public (string OldStrategy, string NewStrategy) SetTestingStrategy(string projectName, string? strategy)
     {
         var normalized = strategy is null ? null : TestingStrategies.Normalize(strategy)
             ?? throw new ArgumentException($"Unknown testing strategy '{strategy}'.", nameof(strategy));
@@ -1841,6 +1843,7 @@ public class ProjectSettingsService
         {
             var key = ResolveAliasLocked(projectName);
             var current = _cache.TryGetValue(key, out var settings) ? settings : new ProjectSettings();
+            var oldStrategy = TestingStrategies.Resolve(current);
             _cache[key] = current with
             {
                 Testing = normalized is null ? null : new ProjectTestingSettings { Strategy = normalized },
@@ -1848,6 +1851,7 @@ public class ProjectSettingsService
             Persist();
             _logger.LogInformation("Testing strategy set to {Strategy} for project {Project}",
                 normalized ?? $"default ({TestingStrategies.Default})", projectName);
+            return (oldStrategy, TestingStrategies.Resolve(_cache[key]));
         }
     }
 
