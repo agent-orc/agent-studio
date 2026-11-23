@@ -216,3 +216,9 @@ receipts, the legacy input-semantics boolean alone does not prove that the
 cache field was reported; zero-cache rows require the versioned marker. No cache
 ratio is inferred from neighboring runs or rounded USD estimates. See the
 [token domain](tokens.md#remote-receipt-replay-and-missing-cache-evidence-agt-3973).
+
+Pricing fixtures that expect an OpenAI receipt to be priced must declare their
+known input semantics or normalization provenance. Project and per-card
+summaries keep a cataloged model known when cache evidence is absent, but
+mark its cost unpriced. `TokenSummaryTests` covers missing evidence alongside
+explicit zero-cache input semantics.
