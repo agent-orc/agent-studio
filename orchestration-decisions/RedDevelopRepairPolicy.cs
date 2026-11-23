@@ -5,9 +5,10 @@ public sealed record RedDevelopRepairFacts(
     int SuspectCount,
     bool RevertAppliesCleanly,
     bool LaterMergeDependsOnSuspect,
-    TimeSpan RedAge);
+    TimeSpan RedAge,
+    string? RepairState = null);
 
-public enum RedDevelopRepairAction { Revert, FixForward, Escalate }
+public enum RedDevelopRepairAction { Revert, FixForward, Escalate, Hold }
 
 public sealed record RedDevelopRepairDecision(RedDevelopRepairAction Action, string Reason);
 
@@ -18,6 +19,10 @@ public static class RedDevelopRepairPolicy
 
     public static RedDevelopRepairDecision Decide(RedDevelopRepairFacts facts)
     {
+        if (facts.RepairState is TaskStates.AutoReview or TaskStates.HumanReview
+            or TaskStates.Completed or TaskStates.Archive)
+            return new(RedDevelopRepairAction.Hold,
+                "The repair belongs to review, a gate, or a settled delivery; leave its lane alone.");
         if (facts.RedAge >= EscalationAge)
             return new(RedDevelopRepairAction.Escalate,
                 "Develop has remained red for two hours; offer the pre-merge batch gate.");

@@ -386,6 +386,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-post-merge-daemon-cgroup">
+          <td>2026-11-23</td>
+          <td><code>AGT-3983</code><br><span class="small">post-merge-daemon-cgroup</span></td>
+          <td>No CLI crashed. Host-owned T3 inherited the coding daemon's delegated leaf. A cgroup teardown fixture held stdout open for 600 seconds and failed after each wait. The two-hour incident rule moved repair AGT-3981 out of Auto Review, superseding its running review.</td>
+          <td>The test borrowed the shared service subtree and read a pipe inherited by its orphan fixture. Incident handling treated a revert recommendation as proof of a revert when reopening a completed suspect, and escalation ignored delivery ownership.</td>
+          <td>Project commands use sibling worker envelopes with required attachment and teardown. Real cgroup tests require an owned test scope and MachineBound classification; fixture pipe reads are bounded. Green receipts resolve incidents without moving suspects. Repair cards under review or in a gate keep their delivery owner instead of reaching Escalated through the age rule.</td>
+        </tr>
         <tr id="case-integration-round-loop-and-unattributed-merge-rounds">
           <td>2026-11-22</td>
           <td><code>AGT-3897</code>, <code>AGT-3914</code><br><span class="small">integration-round-loop and unattributed merge-only rounds (fix <code>AGT-3968</code>)</span></td>
