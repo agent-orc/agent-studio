@@ -66,6 +66,9 @@ describe('ProjectSettingsPanelComponent (smoke)', () => {
     fixture.componentInstance.openReviewAspects();
     expect(TestBed.inject(StudioTabStateService).activeTab())
       .toEqual({ kind: 'hub', projectName: 'Library', section: 'pipeline' });
+    fixture.componentInstance.openRelease();
+    expect(TestBed.inject(StudioTabStateService).activeTab())
+      .toEqual({ kind: 'hub', projectName: 'Library', section: 'deploy' });
   });
 
   it('compiles + instantiates without throwing', async () => {

@@ -1,0 +1,54 @@
+@let p = project();
+                <app-tree-row level="child" glyph="grid"
+                              label="Board · active work" [tooltip]="boardActiveWorkTooltip"
+                              [ariaLabel]="'Board, ' + boardLaneCountsLabel(p)"
+                              [active]="p.isActive && activeSurface() === 'board'"
+                              [ariaCurrent]="p.isActive && activeSurface() === 'board' ? 'page' : null"
+                              [testid]="'studio-explorer-project-board-' + p.name"
+                              (selectRequest)="navigate.emit('board')">
+                  <app-explorer-lane-dashboard
+                    [counts]="laneCountsFor(p)" [view]="metricView()"
+                    [projectName]="p.name" />
+                </app-tree-row>
+                <app-explorer-workbench-list
+                  [projectName]="p.name"
+                  [projectId]="p.projectId"
+                  [activeWorkbenchId]="activeWorkbenchId()"
+                  [overviewActive]="p.isActive && activeSurface() === 'workbenches'"
+                  (openWorkbench)="openWorkbench.emit($event)"
+                  (openOverview)="navigate.emit('workbenches')" (openWiki)="navigate.emit('wiki')" />
+                <app-tree-row level="child" glyph="send"
+                              label="Deploy"
+                              [active]="p.isActive && activeSurface() === 'deploy'"
+                              [ariaCurrent]="p.isActive && activeSurface() === 'deploy' ? 'page' : null"
+                              [testid]="'studio-explorer-project-deploy-' + p.name"
+                              (selectRequest)="navigate.emit('deploy')" />
+                <app-tree-row level="child" glyph="activity"
+                              label="Operations"
+                              [active]="p.isActive && activeSurface() === 'operations'"
+                              [ariaCurrent]="p.isActive && activeSurface() === 'operations' ? 'page' : null"
+                              [testid]="'studio-explorer-project-operations-' + p.name"
+                              (selectRequest)="navigate.emit('operations')" />
+                <app-tree-row level="child" glyph="book"
+                              label="Wiki"
+                              [tooltip]="'Wiki\n' + p.displayLabel + ' project documentation'"
+                              [active]="p.isActive && activeSurface() === 'wiki'"
+                              [tooltipTestId]="'studio-explorer-project-wiki-tooltip-' + p.name"
+                              [ariaCurrent]="p.isActive && activeSurface() === 'wiki' ? 'page' : null"
+                              [testid]="'studio-explorer-project-wiki-' + p.name"
+                              (selectRequest)="navigate.emit('wiki')" />
+                <app-tree-row level="child" glyph="deck"
+                              [attr.data-testid]="'studio-explorer-project-deck-' + p.name"
+                              label="Deck"
+                              [active]="p.isActive && activeSurface() === 'hub'"
+                              [ariaCurrent]="p.isActive && activeSurface() === 'hub' ? 'page' : null"
+                              [ariaLabel]="'Deck, ' + p.displayLabel"
+                              [testid]="'studio-explorer-project-hub-' + p.name"
+                              (selectRequest)="navigate.emit('hub')" />
+                <app-tree-row level="child" glyph="settings"
+                              label="Settings"
+                              [active]="p.isActive && activeSurface() === 'settings'"
+                              [ariaCurrent]="p.isActive && activeSurface() === 'settings' ? 'page' : null"
+                              [testid]="'studio-explorer-project-settings-' + p.name"
+                              (selectRequest)="navigate.emit('settings')" />
+                <app-quality-studio-explorer-row [projectName]="p.name" [displayLabel]="p.displayLabel" />
