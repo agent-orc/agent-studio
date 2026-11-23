@@ -13,4 +13,13 @@ Concept Dossier: a failing test stops its area, not the line. Entry point:
 | `evidence/hold-reach.py` and `-801cf4ca9.txt` | Share of 16 to 23 November integrations a hold would stop, by granularity. |
 | `evidence/capture/` | Out-of-tree Playwright config, spec and runner used for the header captures. |
 
-Run the scripts from the repository root with `python3 -I <script>`.
+Run the scripts from the repository root of a checkout at develop 801cf4ca9:
+
+```
+python3 -I docs/red-test-isolation/evidence/test-folder-reach.py
+python3 -I docs/red-test-isolation/evidence/hold-reach.py --since 2026-11-16 --until 2026-11-23
+```
+
+Both reproduce their `-801cf4ca9.txt` outputs exactly at 801cf4ca9. `hold-reach.py` reads the
+first-parent history of `HEAD`, so on a later commit the integration count grows by the commits added
+since.
