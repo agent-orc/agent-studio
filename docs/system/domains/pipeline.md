@@ -27,6 +27,23 @@ pipeline view.
   records the serialized-argument failure mode and the validation and resource
   caps required before parallel work starts.
 
+## Failure evidence for fix rounds
+
+A red integration gate, batch isolation or per-task fallback, and a red Remote
+Review command preserve receipt facts in the task folder at
+`attachments/gate-failure.md`. The input carries the tested SHA, command,
+all recorded failing tests, and each test's first error. TRX messages and
+review command diagnostics are retained before output compaction. A legacy
+receipt that omitted an error says that it was not recorded; a display summary
+is not evidence for an invented diagnostic.
+
+Manual continuations, automatic failure rounds, local execution, and remote
+claims append this same input to the prompt. The remote runner materializes
+it using the existing authenticated attachment path. Conflict step receipts
+also contribute their full delivery and integration SHAs and conflict report.
+A successful integration gate clears the previous failure input. The parked
+card detail shows the receipt's test list and an expandable full reason.
+
 ## Gate economics and integration lane
 
 The batch gate state read reports `phaseAtUtc` for each batch and

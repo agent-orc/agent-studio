@@ -127,6 +127,21 @@ export class ParkedBlockerComponent {
     watchPath: this.info().watchPath,
   })?.href ?? null);
 
+  readonly fullReason = computed(() => {
+    const park = this.info().parkedBlocker;
+    const reason = park?.reason?.trim() || '';
+    return park?.failureEvidence && !reason.includes(park.failureEvidence.trim())
+      ? `${reason}\n\n${park.failureEvidence}` : reason;
+  });
+  readonly failedTests = computed(() => {
+    const reason = this.fullReason();
+    const receipt = this.info().parkedBlocker?.failureEvidence || (reason.includes('## Delivery failure evidence') ? reason : '');
+    const bullets = receipt.split('\n').filter(line => line.startsWith('- ')).map(line => line.slice(2));
+    if (bullets.length) return [...new Set(bullets)];
+    const legacy = /Failing tests: ([\s\S]*?)(?:\. |\n|$)/.exec(reason)?.[1];
+    return legacy ? legacy.split(', ').filter(Boolean) : [];
+  });
+
   readonly actualCli = computed(() => this.sessionRun()?.cli || this.sessionEvent()?.cli || null);
 
   readonly pinnedDifferences = computed(() => {

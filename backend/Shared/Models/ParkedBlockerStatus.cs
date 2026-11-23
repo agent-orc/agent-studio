@@ -69,6 +69,8 @@ public sealed record ParkedBlockerStatus(
     /// failure to triage, so the board can separate the two at a glance and the
     /// decision-card feature knows which parks it owns.</summary>
     public bool RequiresDecisionCard { get; init; }
+
+    public string? FailureEvidence { get; init; }
 }
 
 /// <summary>Board projection of <c>ParkedDecisionRequest</c>.</summary>

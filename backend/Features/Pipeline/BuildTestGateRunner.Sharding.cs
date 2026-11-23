@@ -470,7 +470,12 @@ public sealed partial class BuildTestGateRunner
             BudgetExtension = shardProcesses.Select(process => process.BudgetExtension).FirstOrDefault(extension => extension is not null),
             TestReport = new GateTestReport(
                 runs.Aggregate(GateTestCounts.None, (sum, run) => sum.Add(run.Evidence.Tests)),
-                runs.SelectMany(run => run.Evidence.FailedTests).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray()),
+                runs.SelectMany(run => run.Evidence.FailedTests).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray())
+            {
+                FailureMessages = shardProcesses.SelectMany(process => process.TestReport?.FailureMessages
+                    ?? new Dictionary<string, string>()).GroupBy(pair => pair.Key, StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.First().Value, StringComparer.Ordinal),
+            },
             ShardHang = leadProcess?.ShardHang,
         };
     }

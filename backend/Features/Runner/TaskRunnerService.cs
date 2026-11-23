@@ -838,6 +838,7 @@ public class TaskRunnerService : BackgroundService
 
         // The follow-up joins the task's written record either way; only the
         // question "does a process start here" depends on the admission.
+        followupPrompt = DeliveryFailureEvidence.Append(info.FolderPath, followupPrompt);
         await RecordUserFollowUpAsync(info, jobId, followupPrompt, normalizedMode, watchPath, ct);
 
         var triggerReason = string.IsNullOrWhiteSpace(reason)

@@ -4874,7 +4874,7 @@ public class ProjectRunner
             NotifyStatus();
 
             var promptPath = Path.Combine(info.FolderPath, "prompt.md");
-            var promptText = ReadPromptText(promptPath);
+            var promptText = DeliveryFailureEvidence.Append(info.FolderPath, ReadPromptText(promptPath));
             var lastAgentText = outcome.Summary ?? "(no agent summary captured)";
             var attachmentsList = BuildAttachmentsList(info.FolderPath);
 
@@ -8768,7 +8768,7 @@ public class ProjectRunner
         if (plan.PromptOverride != null)
         {
             var rewrittenOverride = RewriteMainCheckoutPathsForRun(
-                plan.PromptOverride, runWorkingDir, worktreeCheckout);
+                DeliveryFailureEvidence.Append(info.FolderPath, plan.PromptOverride), runWorkingDir, worktreeCheckout);
             if (dossierFraming.Length > 0)
                 rewrittenOverride = rewrittenOverride.TrimEnd() + "\n\n" + dossierFraming;
             return IsWorktreePath(runWorkingDir)
@@ -8781,7 +8781,7 @@ public class ProjectRunner
         var promptPath = Path.Combine(info.FolderPath, "prompt.md");
         var repositoryPath = string.IsNullOrWhiteSpace(Entry.RepositoryPath) ? Entry.RootPath : Entry.RepositoryPath;
         var effectiveRepositoryPath = IsWorktreePath(runWorkingDir) ? worktreeCheckout : repositoryPath;
-        var promptText = ReadPromptText(promptPath);
+        var promptText = DeliveryFailureEvidence.Append(info.FolderPath, ReadPromptText(promptPath));
         if (ShouldForegroundIntakeEnrichment(plan) && preparedPromptEnrichment is null)
             promptText = PrependIntakeEnrichment(info.FolderPath, promptText);
 

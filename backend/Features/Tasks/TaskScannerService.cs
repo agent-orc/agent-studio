@@ -1786,9 +1786,15 @@ public class TaskScannerService : ITaskScanner
     /// human-decision lanes carry it, so a card that has moved on never shows a
     /// stale blocker even if its marker file outlives the park.
     /// </summary>
+    private ParkedBlockerStatus? ReadParkedStatus(string folder)
+    {
+        var status = ParkedBlockerMarker.ToStatus(ParkedBlockerMarker.TryRead(folder, _logger), DateTime.UtcNow);
+        return status is null ? null : status with { FailureEvidence = DeliveryFailureEvidence.Read(folder) };
+    }
+
     private ParkedBlockerStatus? ReadParkedBlocker(string jobFolder, string state)
         => ParkedBlockerCatalog.IsParkedLane(state)
-            ? ParkedBlockerMarker.ToStatus(ParkedBlockerMarker.TryRead(jobFolder, _logger), DateTime.UtcNow)
+            ? ReadParkedStatus(jobFolder)
             : null;
 
     private NeedsInputStatus? ReadNeedsInput(string jobFolder, string state)

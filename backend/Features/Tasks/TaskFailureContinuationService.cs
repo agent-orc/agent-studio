@@ -204,7 +204,7 @@ public sealed class TaskFailureContinuationService
             integrationTip: integrationTip,
             evidenceRef: failed?.EvidenceRef,
             gateEvidence: GateReasonExcerpt(FailedGateStep(steps, failed, subject)));
-        return (stage, reason, prompt);
+        return (stage, reason, DeliveryFailureEvidence.Append(job.FolderPath, prompt));
     }
 
     /// <summary>Upper bound for the gate reason carried into the brief.</summary>

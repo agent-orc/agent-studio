@@ -265,6 +265,7 @@ public static class IntegrationGateReceipts
         long? mergeLockWaitMs = null,
         TimeProvider? time = null)
     {
+        DeliveryFailureEvidence.RecordGate(jobFolderPath, result);
         var dir = Path.Combine(jobFolderPath, "post-steps");
         Directory.CreateDirectory(dir);
         var index = Directory.GetFiles(dir, $"{prefix}-*.log").Length + 1;

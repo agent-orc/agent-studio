@@ -6662,7 +6662,7 @@ public partial class GitService
         var directMergeArgs = new[] { "-c", "rerere.enabled=false", "merge", "--no-ff" }
             .Concat(mergeSubject is null ? ["--no-edit"] : new[] { "-m", mergeSubject })
             .Append(sourceRef).ToArray();
-        var (_, directMergeError, directMergeCode) = RunGitArgs(repoRoot, directMergeArgs);
+        var (directMergeOutput, directMergeError, directMergeCode) = RunGitArgs(repoRoot, directMergeArgs);
         IReadOnlyList<string> directConflicts = directMergeCode == 0 ? [] : ListUnmergedFiles(repoRoot);
         TryCaptureIntegrationConflict(repoRoot, directConflicts);
         var reportOnlyConflict = directMergeCode != 0
@@ -6741,7 +6741,7 @@ public partial class GitService
                     deliveryTip,
                     directConflicts,
                     mechanicalMerge.ConflictedFiles,
-                    recovery);
+                    recovery, directMergeArgs, directMergeOutput + "\n" + directMergeError);
                 return MergeIntoIntegrationResult.RequiresAgentRound(
                     report.ConflictedFiles,
                     report.RenderDetail(),
@@ -6791,7 +6791,7 @@ public partial class GitService
                     deliveryTip,
                     directConflicts,
                     mechanicalMerge.ConflictedFiles,
-                    finalMergeConflict);
+                    finalMergeConflict, directMergeArgs, directMergeOutput + "\n" + directMergeError);
                 return MergeIntoIntegrationResult.RequiresAgentRound(
                     report.ConflictedFiles,
                     report.RenderDetail(),
@@ -7426,7 +7426,9 @@ public partial class GitService
         string deliveryTip,
         IReadOnlyList<string> directConflicts,
         IReadOnlyList<string> mechanicalConflicts,
-        MechanicalRebaseAttempt rebase)
+        MechanicalRebaseAttempt rebase,
+        IReadOnlyList<string> failedArguments,
+        string failedOutput)
     {
         var allConflicts = directConflicts
             .Concat(mechanicalConflicts)
@@ -7442,6 +7444,10 @@ public partial class GitService
             IntegrationBranch = integrationBranch,
             IntegrationTipSha = integrationTip,
             DeliverySha = deliveryTip,
+            FailedCommand = "git " + string.Join(" ", failedArguments),
+            FirstError = failedOutput.Split('\n').Select(line => line.Trim()).FirstOrDefault(line =>
+                line.Contains("CONFLICT", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("error", StringComparison.OrdinalIgnoreCase)),
             Stages =
             [
                 new IntegrationConflictStageReport

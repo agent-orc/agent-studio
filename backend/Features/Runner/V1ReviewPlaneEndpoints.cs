@@ -1531,6 +1531,9 @@ public static class V1ReviewPlaneEndpoints
                     new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
 
+            if (settled.Status == AttemptWriteStatus.Accepted)
+                DeliveryFailureEvidence.RecordReview(task.FolderPath, request);
+
             // Count the review-side build and test minutes before batch
             // admission, so a failed admission still reports them. Replays
             // find the fact written by the first settlement.

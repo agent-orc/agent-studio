@@ -277,6 +277,9 @@
     }
   }
 
+  &__failure { overflow-wrap: anywhere; }
+
+  &__failure pre,
   &__prompt pre {
     max-height: 14rem;
     margin: 0;
