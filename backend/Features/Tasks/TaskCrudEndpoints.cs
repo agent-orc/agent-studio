@@ -710,14 +710,15 @@ public static class TaskCrudEndpoints
             // It needs a written reason, checked here at the boundary.
             if (req.OperatorOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
                 return Results.BadRequest(new { error = OverrideReasonRequired });
-            if (req.OperatorOverride && !ProjectAccessAuthorization.HasOperatorAuthority(ctx))
-                return Results.Json(new { error = "operator-authority-required", message = OperatorAuthorityRequired },
-                    statusCode: StatusCodes.Status403Forbidden);
+            // ES-2 (ES-D8 A): both overrides need project.cards.override in the
+            // card's project, held by Owner and Admin, and by an operator
+            // session only for the one request an Owner approval admitted.
+            if (req.OperatorOverride && !ProjectAccessAuthorization.HoldsCardOverride(ctx, OverrideProject(scanner, jobId, watchPath)))
+                return OverridePermissionRefusal(OperatorAuthorityRequired);
             if (req.ArchiveOverride && req.TargetState != TaskStates.Archive)
                 return Results.BadRequest(new { error = "archiveOverride is valid only for a move to 7-archive." });
-            if (req.ArchiveOverride && (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal owner
-                || owner.User.Role != StudioRoles.Owner))
-                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (req.ArchiveOverride && !ProjectAccessAuthorization.HoldsCardOverride(ctx, OverrideProject(scanner, jobId, watchPath)))
+                return OverridePermissionRefusal(ArchiveOverrideAuthorityRequired);
             if (req.ArchiveOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
                 return Results.BadRequest(new { error = OverrideReasonRequired });
 
@@ -753,14 +754,15 @@ public static class TaskCrudEndpoints
             // It needs a written reason, checked here at the boundary.
             if (req.OperatorOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
                 return Results.BadRequest(new { error = OverrideReasonRequired });
-            if (req.OperatorOverride && !ProjectAccessAuthorization.HasOperatorAuthority(ctx))
-                return Results.Json(new { error = "operator-authority-required", message = OperatorAuthorityRequired },
-                    statusCode: StatusCodes.Status403Forbidden);
+            // ES-2 (ES-D8 A): both overrides need project.cards.override in the
+            // card's project, held by Owner and Admin, and by an operator
+            // session only for the one request an Owner approval admitted.
+            if (req.OperatorOverride && !ProjectAccessAuthorization.HoldsCardOverride(ctx, OverrideProject(scanner, jobId, watchPath)))
+                return OverridePermissionRefusal(OperatorAuthorityRequired);
             if (req.ArchiveOverride && req.TargetState != TaskStates.Archive)
                 return Results.BadRequest(new { error = "archiveOverride is valid only for a move to 7-archive." });
-            if (req.ArchiveOverride && (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal owner
-                || owner.User.Role != StudioRoles.Owner))
-                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (req.ArchiveOverride && !ProjectAccessAuthorization.HoldsCardOverride(ctx, OverrideProject(scanner, jobId, watchPath)))
+                return OverridePermissionRefusal(ArchiveOverrideAuthorityRequired);
             if (req.ArchiveOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
                 return Results.BadRequest(new { error = OverrideReasonRequired });
 
@@ -1640,7 +1642,25 @@ public static class TaskCrudEndpoints
         + "card and shown wherever the card claims completion.";
 
     internal static readonly string OperatorAuthorityRequired =
-        "operatorOverride needs the Admin or Owner role in this project.";
+        "operatorOverride needs project.cards.override in this project: the Admin or Owner role, "
+        + "or for an operator session the Owner's approval of this request.";
+
+    internal static readonly string ArchiveOverrideAuthorityRequired =
+        "archiveOverride needs project.cards.override in this project: the Admin or Owner role, "
+        + "or for an operator session the Owner's approval of this request.";
+
+    /// <summary>
+    /// The typed refusal of an override without <c>project.cards.override</c>.
+    /// The code stays <c>operator-authority-required</c>, which the acceptance
+    /// form already shows with the server's words.
+    /// </summary>
+    private static IResult OverridePermissionRefusal(string message)
+        => Results.Json(new { error = "operator-authority-required", message, permission = IamPermissions.ProjectCardsOverride },
+            statusCode: StatusCodes.Status403Forbidden);
+
+    /// <summary>The project of the card an override addresses; blank when the card is unknown, which fails closed.</summary>
+    private static string? OverrideProject(TaskScannerService scanner, string jobId, string? watchPath)
+        => scanner.FindJob(jobId, watchPath)?.ProjectName;
 
     internal static IResult ProductMoveRefusal(string? currentState, string? targetState)
     {

@@ -23,6 +23,27 @@ public sealed class UsageCockpitEndpointTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "usage-cockpit-http-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    // clock-independent: this scenario uses dates only as request inputs, with no receipt or wall-clock comparison.
+    public async Task Routing_comparison_validates_period_and_serves_priced_model_options()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://studio.test") });
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var at = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc);
+        var invalid = await client.PostAsJsonAsync("/api/token-pricing/what-if", new RoutingWhatIfRequest(at, at, "coding", "claude-sonnet-5"));
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        var valid = await client.PostAsJsonAsync("/api/token-pricing/what-if", new RoutingWhatIfRequest(at, at.AddDays(7), "coding", "claude-sonnet-5"));
+        Assert.Equal(HttpStatusCode.OK, valid.StatusCode);
+        var body = await valid.Content.ReadFromJsonAsync<RoutingWhatIfResult>();
+        Assert.Equal(0, body!.Receipts);
+        Assert.Null(body.SavingUsd);
+        var models = await client.GetFromJsonAsync<JsonElement>("/api/token-pricing/route-models");
+        Assert.Contains(models.GetProperty("models").EnumerateArray(), model => model.GetProperty("model").GetString() == "claude-sonnet-5"
+            && model.GetProperty("price").GetProperty("inputPerMillion").GetDecimal() > 0);
+    }
+
+    [Fact]
     public async Task Owner_saved_workspace_and_project_usd_budgets_reach_footer_contract()
     {
         Directory.CreateDirectory(_root);

@@ -276,8 +276,11 @@ describe('TaskSelectionService · board record reuse', () => {
     const board = tasks.grouped();
 
     open(lane[0]);
-    http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
+    const pinnedCore = makeCore('PROJ-A', 'a');
+    pinnedCore.pins.pinMode = 'hard';
+    http.expectOne(core('PROJ-A', 'a')).flush(pinnedCore);
     expect(selection.selectedCore()).toMatchObject({ id: 'a', projectId: 'PROJ-A' });
+    expect(selection.detailPreview()?.pinMode).toBe('hard');
     await waitForLookahead();
     expect(answerLookahead()).toEqual(['/api/tasks/b/core', '/api/tasks/c/core']);
 

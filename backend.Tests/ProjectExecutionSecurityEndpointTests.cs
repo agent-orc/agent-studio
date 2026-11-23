@@ -5,6 +5,7 @@ using AgentStudio.Registry;
 using AgentStudio.Security;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -22,9 +23,11 @@ public sealed class ProjectExecutionSecurityEndpointTests : IDisposable
     {
         var watchPath = Path.Combine(_root, "projects", ProjectName);
         Directory.CreateDirectory(watchPath);
-        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(host =>
+        using var factory = new TestHostFactory().WithWebHostBuilder(host =>
         {
             host.UseEnvironment("Test");
+            // Only these requests own settings, identities and project state.
+            host.ConfigureTestServices(TestHostFactory.RemoveBackgroundHostedServices);
             host.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {

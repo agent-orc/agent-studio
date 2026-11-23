@@ -48,6 +48,7 @@ export interface TaskCore {
 export interface TaskCorePins {
   model?: string | null;
   modelExplicit: boolean;
+  pinMode?: 'preference' | 'hard';
   thinkingLevel?: string | null;
   thinkingLevelExplicit: boolean;
   cliType?: string | null;

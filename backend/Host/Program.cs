@@ -492,6 +492,7 @@ builder.Services.AddSingleton(sp => new AgentStudio.GitHubApp.GitHubAppHostKeys(
 // the first App tokens; integration waits on the readiness without holding startup.
 builder.Services.AddSingleton<AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness>();
 builder.Services.AddHostedService<AgentStudio.GitHubApp.GitHubAppHostCredentialService>();
+builder.Services.AddSingleton<SecretProjectKeys>();
 builder.Services.AddSingleton<ProjectSecretBindings>();
 builder.Services.AddSingleton<ISecretWorkloadLeases, SecretWorkloadLeases>();
 builder.Services.AddSingleton<ManagementService>();
@@ -1557,7 +1558,10 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGat
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorReviewHostDriftFactSource>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorHostDiskFactSource>();
-builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
+// Resolved per read: the deploy fact titles a job by the Deploy area's names (AGT-3987).
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorDeployFactSource(
+    sp.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>(), sp.GetRequiredService<ProjectRegistry>(),
+    project => sp.GetRequiredService<AgentStudio.Deploy.DeployStore>().JobLabels(project)));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPostMergeCoverageFactSource(
     () => sp.GetRequiredService<AgentStudio.Pipeline.PostMergeCoverageService>().Missing()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPostMergeRedIncidentFactSource(

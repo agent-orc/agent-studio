@@ -896,6 +896,30 @@ or a refusal of the sibling escalates with the provider message; none returns
 the card to Ready on the refused model. Run history stores `{from, to, reason}`,
 and Execution Hosts aggregates refusals per model per UTC day.
 
+## Historical routing cost comparison
+
+CLI Management compares receipts for a UTC period of up to 93 days and a consumer
+(coding, review aspect, or one-shot) against an alternative model. The read-only
+`POST /api/token-pricing/what-if` uses the same permission-filtered merged project
+and workspace receipts as the usage cockpit. It prices both routes at each
+receipt's timestamp, including cache reads and writes. Missing historical prices
+produce unknown totals, and partial ledger coverage is stated. Historical usage
+groups use the shared ledger classifier: coding agents, review aspects, and
+remaining model calls in the one-shot group. A consumer editor outside the first
+two groups labels its comparison as the whole one-shot group, not a forecast
+limited to that individual consumer. A weekly projection
+extrapolates the selected period; it does not predict different token counts,
+quality, reasoning effort, or retries.
+
+Consumer route edits are staged until a weekly preview has been shown. Model
+pickers show current input/output prices per MTok; historical comparison uses the
+prices valid at execution time. Effective routes show each step id once. Card
+setup exposes preference and hard pin modes. Economy changes are staged until a
+preview replays coding receipts through the existing policy recommender using
+current card types, titles, prompts and pins. Missing cards remain unpriced;
+explicit pins retain their recorded model. This projection does not rewrite
+cards, change correctness floors, or guarantee host model availability.
+
 ## Roadmap: what happens next
 
 1. **Policy visible now.** This page is canonical, linked from the documentation

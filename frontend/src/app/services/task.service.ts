@@ -2260,10 +2260,10 @@ export class TaskService {
     );
   }
 
-  setJobModel(jobId: string, model: string | null, watchPath?: string) {
+  setJobModel(jobId: string, model: string | null, watchPath?: string, pinMode?: 'preference' | 'hard') {
     return this.http.put(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/model`,
-      { model },
+      { model, ...(pinMode ? { pinMode } : {}) },
       this.withWatchPath(watchPath),
     ).pipe(this.afterMutation(jobId, watchPath));
   }
@@ -2276,16 +2276,17 @@ export class TaskService {
     );
   }
 
-  setJobThinkingLevel(jobId: string, thinkingLevel: string | null, watchPath?: string) {
+  setJobThinkingLevel(jobId: string, thinkingLevel: string | null, watchPath?: string, pinMode?: 'preference' | 'hard') {
     return this.http.put(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/thinking-level`,
-      { thinkingLevel },
+      { thinkingLevel, ...(pinMode ? { pinMode } : {}) },
       this.withWatchPath(watchPath),
     ).pipe(this.afterMutation(jobId, watchPath));
   }
 
-  setJobCliType(jobId: string, cliType: CliType, watchPath?: string, useOwnSession?: boolean) {
-    const body: { cliType: CliType; useOwnSession?: boolean } = { cliType };
+  setJobCliType(jobId: string, cliType: CliType, watchPath?: string, useOwnSession?: boolean, pinMode?: 'preference' | 'hard') {
+    const body: { cliType: CliType; useOwnSession?: boolean; pinMode?: 'preference' | 'hard' } = { cliType };
+    if (pinMode) body.pinMode = pinMode;
     if (useOwnSession !== undefined) body.useOwnSession = useOwnSession;
     return this.http.put(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/cli-type`,

@@ -796,12 +796,58 @@ public sealed class IamHandlerAccessTests : IClassFixture<IamHandlerAccessTests.
 
         using var refused = await developer.PostAsJsonAsync("/api/tasks/alpha-card/move", request);
         Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
-        Assert.Contains("operator-authority-required", await refused.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        var refusedBody = await refused.Content.ReadAsStringAsync();
+        Assert.Contains("operator-authority-required", refusedBody, StringComparison.Ordinal);
+        Assert.Contains(IamPermissions.ProjectCardsOverride, refusedBody, StringComparison.Ordinal);
         Assert.True(Directory.Exists(Path.Combine(ProjectPath("alpha"), TaskStates.Backlog, "alpha-card")));
 
         using var admitted = await admin.PostAsJsonAsync("/api/tasks/alpha-card/move", request);
         Assert.DoesNotContain("operator-authority-required", await admitted.Content.ReadAsStringAsync(), StringComparison.Ordinal);
         Assert.NotEqual(HttpStatusCode.Forbidden, admitted.StatusCode);
+    }
+
+    /// <summary>
+    /// ES-2 (ES-D8 A): an archive override needs project.cards.override in the
+    /// card's project instead of the human Owner. A Developer is refused with a
+    /// typed reason; a project Admin and the Owner archive directly.
+    /// </summary>
+    [Fact]
+    public async Task Archive_override_needs_the_card_override_permission_which_admin_and_owner_hold()
+    {
+        foreach (var name in new[] { "alpha-done-1", "alpha-done-2" })
+        {
+            var folder = Path.Combine(ProjectPath("alpha"), TaskStates.Completed, name);
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+            {
+                id = name, title = name, state = TaskStates.Completed, kind = "task", order = 3, agent = "codex",
+            }));
+            File.WriteAllText(Path.Combine(folder, "prompt.md"), "Fixture card.");
+        }
+        var factory = Ready();
+        using var developer = Client(factory, Invite(factory, "archive.dev", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+        using var admin = Client(factory, Invite(factory, "archive.admin", new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha"))));
+        using var owner = Client(factory, Login(factory, "first.owner"));
+        var request = new MoveJobRequest
+        {
+            TargetState = TaskStates.Archive, ArchiveOverride = true, Reason = "Duplicate card; nothing was delivered.",
+        };
+
+        using (var refused = await developer.PostAsJsonAsync("/api/tasks/alpha-done-1/move", request))
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+            var body = JsonDocument.Parse(await refused.Content.ReadAsStringAsync()).RootElement;
+            Assert.Equal(("operator-authority-required", IamPermissions.ProjectCardsOverride),
+                (body.GetProperty("error").GetString(), body.GetProperty("permission").GetString()));
+        }
+        Assert.True(Directory.Exists(Path.Combine(ProjectPath("alpha"), TaskStates.Completed, "alpha-done-1")));
+
+        foreach (var (client, card) in new[] { (admin, "alpha-done-1"), (owner, "alpha-done-2") })
+        {
+            using var admitted = await client.PostAsJsonAsync($"/api/tasks/{card}/move", request);
+            Assert.True(admitted.StatusCode == HttpStatusCode.OK, $"{card}: {(int)admitted.StatusCode} {await admitted.Content.ReadAsStringAsync()}");
+            Assert.True(Directory.Exists(Path.Combine(ProjectPath("alpha"), TaskStates.Archive, card)));
+        }
     }
 
     [Theory]
@@ -940,10 +986,14 @@ public sealed class IamHandlerAccessTests : IClassFixture<IamHandlerAccessTests.
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var actor = "service-account:" + account.Id;
         var provider = factory.Services.GetRequiredService<ISecretProvider>();
-        var record = Assert.Single((await provider.ListAsync(SecretScope.ForProject("alpha"))).Records);
+        // AGT-3987: a new project secret is stored under the project's registry id, not its display name.
+        var projectId = factory.Services.GetRequiredService<SecretProjectKeys>().Canonical("alpha");
+        Assert.NotEqual("alpha", projectId);
+        var stored = SecretScope.ForProject(projectId);
+        var record = Assert.Single((await provider.ListAsync(stored)).Records);
         Assert.Equal(actor, record.CreatedBy);
         Assert.Equal(actor, record.UpdatedBy);
-        Assert.Contains(await provider.ReadAuditAsync(SecretScope.ForProject("alpha"), 20),
+        Assert.Contains(await provider.ReadAuditAsync(stored, 20),
             entry => entry.Action == SecretAuditActions.Put && entry.Actor == actor && entry.Outcome == "ok");
     }
 

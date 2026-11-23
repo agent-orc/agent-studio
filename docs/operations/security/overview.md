@@ -320,7 +320,7 @@ through its groups. Code: `backend/Features/Security/Iam/`.
 | Role | Bindable at | Holds |
 |---|---|---|
 | Owner | workspace | every permission; break-glass role, the only one with `access.read`, `access.manage`, and `workspace.administer` |
-| Admin | workspace, project | settings, operation, production deploy and approval, `secrets.write` |
+| Admin | workspace, project | settings, operation, production deploy and approval, `secrets.write`, card overrides (`project.cards.override`) |
 | Developer | workspace, project, environment | cards, runs, chats, documents, magazine articles, non-production deploys, the Human Review decision (`project.cards.review`) |
 | Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys, the security view (`security.posture.read`), magazine publishing (`magazine.write`) |
 | Product (`contributor`) | project | cards and chat, narrowed further by the Product allowlist |
@@ -380,7 +380,10 @@ account role and does not use human sign-in.
   facts without waiting for a workspace scan. A scoped request must have the
   required permission in every project whose card matches the supplied id or
   key, including when a query names one project. Workspace-only bindings can
-  be decided without a task lookup. New ids and keys are reserved across the
+  be decided without a task lookup, except a card write by a principal whose
+  strongest role is `operator-agent`: it resolves the card's project like an
+  API token does, so an operator agent bound on the workspace writes cards as
+  project-addressed requests (ES-2). New ids and keys are reserved across the
   workspace, and a move that would rename a card to a conflicting identity is
   refused.
 - Hub project groups and conversation subscriptions use the current role
@@ -439,7 +442,10 @@ account role and does not use human sign-in.
   request a deployment to another environment. The store refuses any other
   environment key with `invalid-scope`.
 - Deployment status, release, deployment, log, and audit reads require
-  `project.read`. Deployment actions require a deploy permission. Production
+  `project.read`. Editing a release note
+  (`PUT /api/projects/{project}/deploy/releases/{id}/notes/{cardKey}`) requires
+  `project.docs.write`, since notes are product copy. Deployment actions
+  require a deploy permission. Production
   approve and reject routes require `environment.production.deploy.approve`;
   a human Approver bound at the workspace, project, or production environment
   may decide in scope. Service accounts cannot approve. The deployment
@@ -537,9 +543,12 @@ account role and does not use human sign-in.
   `workspace.administer`, and no `project.settings.write`. Only service
   accounts take it. A principal whose strongest granting role is
   `operator-agent` cannot make an installation-wide (unaddressed) write, so
-  `workspace.operate` stays read-only for it. It does not hold operator
-  authority: an operator override completion and the operator decider of a
-  decision card stay with Admin and Owner. `POST /api/runner/secrets/resolve`
+  `workspace.operate` stays read-only for it. Its card writes resolve the
+  card's project even through a workspace binding, so they are
+  project-addressed and not refused as installation-wide. It does not hold
+  operator authority: the operator decider of a decision card stays with Admin
+  and Owner. It does not hold `project.cards.override` either; see
+  [Card overrides](#card-overrides-as-a-permission-es-2). `POST /api/runner/secrets/resolve`
   answers 403 `secret-resolve-denied` to any service-account bearer.
   `GET /api/quota/admission/{project}` stays a Task Server and Runner claim
   route that no session or token reads; operator tokens read quota through
@@ -728,8 +737,12 @@ refused before any role binding is read.
   command passed (D2). Without it the same request is `gate.bypass`.
 - T2 high risk: `secrets.change`, `exposure.change`, `data.delete` (every
   catalogued delete), `history.rewrite`, `gate.bypass` (merge, external
-  completion, a move into Human review or Completed), `keys.rotate`,
-  `host.enrollment`, `access.change`, `grant.change`, and `catalogue.change`.
+  completion, a move into Human review, or into Completed without
+  `operatorOverride`), `card.accept-override` (a move into Completed with
+  `operatorOverride`), `card.archive-override` (a move into Archive with
+  `archiveOverride`), `keys.rotate`, `host.enrollment`, `access.change`,
+  `grant.change`, and `catalogue.change`. A plain move into Archive is not
+  catalogued.
   A T2 request runs only under the Owner's approval of exactly that request
   (SM-5, next section); without one it is refused with `approval-required`.
   A T2 request on access administration or the Task Server plane
@@ -1005,10 +1018,57 @@ with step-up; an optional push notification only links there).
   | `POST /api/auth/iam/operator-approvals/{id}/reject` | `access.manage`, active Owner, fresh step-up | As approve. |
 
   Settled approvals stay in the identity store for 30 days.
-  `OperatorApprovalFlowTests` cover the end-to-end flow, replay, a changed
+  `OperatorApprovalFlowTests` cover the end-to-end flow, the override
+  acceptance and archive override of [ES-2](#card-overrides-as-a-permission-es-2), replay, a changed
   parameter, another session, expiry, a forged actor header, and the push
   link; `OperatorApprovalTests` cover the lifecycle matrix, step-up,
   cancellation, the queue limit, and masking.
+
+### Card overrides as a permission (ES-2)
+
+An override acceptance (`operatorOverride` on a move into Completed) and an
+archive override (`archiveOverride` on a move into Archive) need the
+permission `project.cards.override` in the card's project (Dossier
+operator-elevated-session ES-2, decision ES-D8 option A). Both move routes,
+`PUT /api/tasks/{id}/state` and `POST /api/tasks/{id}/move`, check it in place
+of the former projected Admin or Owner role and the human-Owner check.
+
+- **Who holds it.** Owner and Admin, by role. Developer, Operator agent,
+  Product, Reviewer, Viewer, and Approver do not. A caller without it is
+  refused with 403 `operator-authority-required` and
+  `permission: project.cards.override`. In the local profile without a
+  principal the local operator holds it, as it held the override completion
+  before.
+- **Operator sessions.** The catalogue resolves the two moves to
+  `card.accept-override` and `card.archive-override` (T2, project scope). A
+  request without approval opens an SM-5 approval request (403
+  `approval-required`); after the Owner approves it with step-up, the exact
+  replay carries `project.cards.override` for that one request and completes
+  or archives the card. No other operation, principal, or break-glass window
+  gains the permission. One approval covers one card (ES-D9: the single
+  request path until batch confirmation, ES-8).
+- **Reason.** The written reason stays mandatory (at least eight characters).
+  An operator session's override without a usable reason is refused with the
+  move routes' 400 reason error before it opens an approval request, so the
+  Owner is never asked about a request that cannot run.
+- **Attribution.** Every timeline event of an approved request carries the
+  session as actor, `delegatedBy`, and `details.approvalId` and
+  `details.approvedBy` (`human:<owner id>`). The integration override event
+  and the `archive_override` event carry the reason; the archive override row
+  in `<project>/.audit/archive-overrides.jsonl` names `approvalId` and
+  `approvedBy`. The operator session's control plane audit entry for the move
+  carries `operation`, `approvalId`, `approvedBy` (the Owner's user id), and
+  `reason`.
+- The lane write itself accepts an archive override only from a human actor
+  or from the operator session of an approved request, so an automated actor
+  cannot archive with an override even through an internal caller.
+
+`OperatorApprovalFlowTests` cover both operator paths, the missing reason, the
+uncatalogued plain archive, and the workspace-bound requeue;
+`IamHandlerAccessTests` cover the Developer refusal and the direct Admin and
+Owner overrides; `PermissionEvaluatorTests` and
+`OperatorOperationCatalogInventoryTests` cover the holders and the card move
+refinement.
 
 ### Break-glass windows (SM-7)
 

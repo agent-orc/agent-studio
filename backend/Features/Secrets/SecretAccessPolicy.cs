@@ -52,7 +52,7 @@ public static partial class SecretAccessPolicy
 
         var scope = reference.Scope;
         if (scope.Kind == SecretScopeKind.Workspace) return SecretAccessDecision.Allow;
-        if (!string.Equals(scope.Project, workload.Project, StringComparison.OrdinalIgnoreCase))
+        if (!workload.OwnsProject(scope.Project))
             return SecretAccessDecision.Deny("project-scope-denied", "The reference belongs to another project.");
         if (scope.Kind == SecretScopeKind.Project) return SecretAccessDecision.Allow;
         if (workload.Environment is null)

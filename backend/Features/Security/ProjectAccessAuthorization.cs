@@ -143,6 +143,20 @@ public static class ProjectAccessAuthorization
               || human.User.Role is StudioRoles.Owner or StudioRoles.Operator;
 
     /// <summary>
+    /// ES-2 (ES-D8 A): true when the caller holds
+    /// <see cref="IamPermissions.ProjectCardsOverride"/> in the card's
+    /// <paramref name="project"/>, for an <c>operatorOverride</c> acceptance
+    /// and an <c>archiveOverride</c>. Owner and Admin hold it by role; an
+    /// operator session holds it only for a request an Owner approval
+    /// admitted. Without a captured <see cref="RequestAccess"/> (local
+    /// profile) the operator authority fallback decides.
+    /// </summary>
+    public static bool HoldsCardOverride(HttpContext context, string? project)
+        => context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access
+            ? access.HoldsInProject(IamPermissions.ProjectCardsOverride, project)
+            : HasOperatorAuthority(context);
+
+    /// <summary>
     /// The role a decision card's <c>role:</c> or <c>owner</c> decider is
     /// matched against: owner for the Owner, operator only for Admin, and the
     /// role's own id otherwise, so Developer never decides as operator.

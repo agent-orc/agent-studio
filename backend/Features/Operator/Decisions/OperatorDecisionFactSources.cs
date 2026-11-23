@@ -55,20 +55,52 @@ public sealed class OperatorReviewRetryFactSource(
     }
 }
 
-/// <summary>Completed deploys already metered by workspace quota, without a new event store.</summary>
-public sealed class OperatorDeployFactSource(WorkspaceQuotaService quota, ProjectRegistry projects)
+/// <summary>
+/// Completed deploys already metered by workspace quota, without a new event store.
+/// The title names project, environment and release as the Deploy area does
+/// (AGT-3987); the job id stays in the key only. <paramref name="jobLabels"/>
+/// reads the Deploy area's names of a project's jobs by display name.
+/// </summary>
+public sealed class OperatorDeployFactSource(WorkspaceQuotaService quota, ProjectRegistry projects,
+    Func<string, IReadOnlyDictionary<string, AgentStudio.Deploy.DeployJobLabel>>? jobLabels = null)
     : IOperatorDecisionFactSource
 {
     public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.DeployCompleted];
 
     public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
-        => quota.CompletedDeploys(nowUtc.AddDays(-7)).Select(deploy =>
+    {
+        var labels = new Dictionary<string, IReadOnlyDictionary<string, AgentStudio.Deploy.DeployJobLabel>>(StringComparer.OrdinalIgnoreCase);
+        return quota.CompletedDeploys(nowUtc.AddDays(-7)).Select(deploy =>
         {
             var project = projects.FindById(deploy.ProjectId);
+            var name = project?.DisplayName ?? deploy.ProjectId;
+            if (!labels.TryGetValue(name, out var jobs)) labels[name] = jobs = Labels(name);
             return new OperatorDecisionFact(OperatorDecisionTypes.DeployCompleted,
                 $"{OperatorDecisionTypes.DeployCompleted}|{deploy.ProjectId}|{deploy.JobId}|{deploy.CompletedAt:O}",
-                project?.DisplayName, deploy.JobId, "Deployment completed.", deploy.CompletedAt!.Value, []);
+                project?.DisplayName, null, "Deployment completed.", deploy.CompletedAt!.Value, [])
+            {
+                Title = Title(name, jobs.GetValueOrDefault(deploy.JobId), deploy.EnvironmentId),
+            };
         }).ToArray();
+    }
+
+    /// <summary><c>Shop · Production · 2026.11.2</c>; a job without a release record names its environment only.</summary>
+    public static string Title(string project, AgentStudio.Deploy.DeployJobLabel? label, string environmentId)
+        => label?.ReleaseVersion is { Length: > 0 } version
+            ? $"{project} · {label.Environment} · {version}"
+            : $"{project} · {label?.Environment ?? environmentId}";
+
+    private IReadOnlyDictionary<string, AgentStudio.Deploy.DeployJobLabel> Labels(string project)
+    {
+        if (jobLabels is null) return new Dictionary<string, AgentStudio.Deploy.DeployJobLabel>();
+        try { return jobLabels(project); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                                          or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            AgentStudio.Diagnostics.SilentCatch.Note(exception, "OperatorDeployFactSource: deploy state unreadable");
+            return new Dictionary<string, AgentStudio.Deploy.DeployJobLabel>();
+        }
+    }
 }
 
 /// <summary>

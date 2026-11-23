@@ -1,0 +1,25 @@
+<section data-testid="routing-cost-preview" aria-label="Historical routing cost comparison">
+  <strong>{{ economyMode() === undefined ? 'Compare routing costs' : 'Preview economy policy cost' }}</strong>
+  <div class="controls">
+    <label>From (UTC)<input type="date" [value]="from()" (change)="from.set($any($event.target).value); reset()" /></label>
+    <label>To (UTC, exclusive)<input type="date" [value]="to()" (change)="to.set($any($event.target).value); reset()" /></label>
+    @if (economyMode() === undefined) {
+      <label>Consumer<select [value]="consumer()" (change)="consumer.set($any($event.target).value); reset()">
+        <option value="coding">Coding</option><option value="review-aspect">Review aspect</option><option value="one-shot">One-shot (other model calls)</option>
+      </select></label>
+      <label>Alternative model<select aria-label="Alternative model" [value]="model()" (change)="model.set($any($event.target).value); reset()">
+        <option value="">Choose a model</option>
+        @for (option of models(); track option.cli + ':' + option.model) { <option [value]="option.model">{{ label(option) }}</option> }
+      </select></label>
+    }
+    <button type="button" class="btn" [disabled]="loading() || (economyMode() === undefined && !model())" (click)="preview()">{{ loading() ? 'Calculating…' : 'Preview cost' }}</button>
+  </div>
+  @if (result(); as cost) {
+    <p class="metrics" data-testid="routing-cost-result" aria-live="polite">{{ cost.receipts }} receipts · Actual {{ money(cost.actualUsd) }} · Alternative {{ money(cost.alternativeUsd) }} · Saving {{ money(cost.savingUsd) }}
+      @if (cost.savingPercent !== null) { ({{ cost.savingPercent.toFixed(1) }}%) }
+      · Projected weekly saving {{ money(cost.projectedWeeklySavingUsd) }}</p>
+    <p>Coverage: {{ cost.coverage }} · Missing historical prices: {{ cost.unpricedActual }} actual, {{ cost.unpricedAlternative }} alternative.</p>
+    <p>{{ cost.qualityCaveat }}</p><p>{{ cost.correctnessFloor }}</p>
+  }
+  @if (error()) { <p role="alert">{{ error() }}</p> }
+</section>

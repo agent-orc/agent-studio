@@ -12,6 +12,16 @@ public sealed record OperatorActor(string OperatorAgentId, string SessionId, str
     public string Actor => PersonaId is null ? TimelineActors.OperatorAgent(OperatorAgentId, SessionId)
         : TimelineActors.Persona(PersonaId, SessionId);
     public string DelegatedBy => TimelineActors.Human(OwnerId);
+
+    /// <summary>
+    /// The Owner approval this request runs under (SM-5), or <c>null</c>.
+    /// The access middleware sets it once the approval is redeemed, so every
+    /// event of the request names the approval and the approving Owner (ES-2).
+    /// </summary>
+    public string? ApprovalId { get; init; }
+
+    /// <summary>The user id of the Owner who approved <see cref="ApprovalId"/>.</summary>
+    public string? ApprovedBy { get; init; }
 }
 
 /// <summary>
@@ -35,7 +45,9 @@ public static class OperatorActorScope
 
     /// <summary>
     /// The event as the operator session wrote it: the session's actor and
-    /// delegating Owner. A non-human actor a handler passed (system, agent,
+    /// delegating Owner, and for a request an Owner approval admitted the
+    /// approval id and the approving Owner (<c>details.approvalId</c>,
+    /// <c>details.approvedBy</c>). A non-human actor a handler passed (system, agent,
     /// orchestrator) stays in <c>details.reportedActor</c>; a human actor is
     /// dropped, because a session never acts as a person.
     /// </summary>
@@ -46,6 +58,11 @@ public static class OperatorActorScope
         if (!string.IsNullOrWhiteSpace(evt.Actor) && evt.Actor != actor.Actor && !TimelineActors.IsHuman(evt.Actor)
             && !TimelineActors.IsOperatorAgent(evt.Actor) && !TimelineActors.IsPersona(evt.Actor))
             (details ??= [])["reportedActor"] = evt.Actor;
+        if (actor.ApprovalId is { } approvalId)
+        {
+            (details ??= [])["approvalId"] = approvalId;
+            if (actor.ApprovedBy is { } approvedBy) details["approvedBy"] = TimelineActors.Human(approvedBy);
+        }
         return evt with { Actor = actor.Actor, DelegatedBy = actor.DelegatedBy, Details = details };
     }
 

@@ -412,3 +412,27 @@
     transition-duration: 0s;
   }
 }
+
+// Canonical action classes for standalone components with encapsulated styles.
+@mixin action-buttons {
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 28px;
+    max-width: 100%;
+    padding: var(--studio-spacing-1) var(--studio-spacing-3);
+    border: 1px solid var(--studio-border);
+    border-radius: 6px;
+    color: var(--studio-fg-strong);
+    background: var(--studio-bg-hover);
+    font-size: 12px;
+    line-height: 1.2;
+    cursor: pointer;
+  }
+  .btn:hover:not(:disabled) { background: var(--studio-bg-selected); }
+  .btn:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn--primary { color: var(--studio-on-accent); background: var(--studio-accent); border-color: var(--studio-accent); font-weight: 600; }
+  .btn--primary:hover:not(:disabled) { background: color-mix(in srgb, var(--studio-accent) 90%, var(--studio-fg)); }
+}

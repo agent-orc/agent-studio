@@ -77,6 +77,7 @@ describe('CliModelsPanelComponent', () => {
       hysteresis: { returnBelowCapPoints: 10, minDwellMinutes: 30 },
       migration: { inheritedSteps: 36, explicitSteps: 36, projects: 12, applied: true },
     });
+    http.expectOne('/api/token-pricing/route-models').flush({ models: [] });
     const initialEffective = http.match('/api/model-selection/effective');
     expect(initialEffective).toHaveLength(2);
     for (const request of initialEffective) request.flush({
@@ -149,6 +150,18 @@ describe('CliModelsPanelComponent', () => {
     expect(fixture.nativeElement.querySelector('[data-testid="quota-non-reroutable-callers"]')?.textContent)
       .toContain('quota-probe');
     economy.click();
+    fixture.detectChanges();
+    http.expectNone('/api/cli/model-routing/economy-mode');
+    const saveButton = fixture.nativeElement.querySelector('[data-testid="save-economy-mode"]') as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
+    const previewButton = [...fixture.nativeElement.querySelectorAll('[data-testid="model-routing-policy"] button')]
+      .find((button: unknown) => (button as HTMLButtonElement).textContent?.includes('Preview cost')) as HTMLButtonElement;
+    previewButton.click();
+    http.expectOne('/api/token-pricing/what-if').flush({ receipts: 0, actualUsd: null, alternativeUsd: null,
+      savingUsd: null, savingPercent: null, projectedWeeklySavingUsd: null, unpricedActual: 0, unpricedAlternative: 0,
+      coverage: 'complete', qualityCaveat: 'Quality may vary', correctnessFloor: 'Floor applies' });
+    fixture.detectChanges();
+    saveButton.click();
     const save = http.expectOne('/api/cli/model-routing/economy-mode');
     expect(save.request.method).toBe('PUT');
     expect(save.request.body).toEqual({ enabled: true });
