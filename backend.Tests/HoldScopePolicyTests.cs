@@ -70,4 +70,17 @@ public sealed class HoldScopePolicyTests
     [InlineData("source/A.cs/sub", false)]
     public void Later_first_parent_merge_is_coupled_only_by_file_overlap(string laterPath, bool coupled)
         => Assert.Equal(coupled, HoldScopePolicy.LaterMergeIsCoupled(["source/A.cs"], [laterPath]));
+
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(1, false)]
+    [InlineData(12, false)]
+    [InlineData(13, true)]
+    public void Runner_fallback_flag_matches_the_hold_scope_bound(int folders, bool fallback)
+    {
+        // RT-3: the runner records coveringFallback with the same rule Create applies.
+        var covering = Enumerable.Range(0, folders).Select(i => $"source/F{i}").ToArray();
+        Assert.Equal(fallback, HoldScopePolicy.UsesSuiteAreaFallback(covering));
+        Assert.Equal(fallback, HoldScopePolicy.Create("tests/T.cs", covering, [], ["source"]).SuiteAreas.Count > 0);
+    }
 }

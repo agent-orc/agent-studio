@@ -92,5 +92,110 @@ public sealed class PostMergeHostEndpointsTests : IDisposable
         Assert.Null(states.Single(state => state.Project == "strict").PendingWindow);
     }
 
+    [Fact]
+    public async Task Rt3ReceiptFieldsRoundTripAndOlderReceiptsStayValid()
+    {
+        // RT-3 (AGT-3988): per-test verdicts, focused-run durations, attribution
+        // evidence and the envelope fingerprint pass the run route unchanged.
+        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _root, ["Security:Profile"] = "local", ["AllowedHosts"] = "*",
+            }));
+            builder.ConfigureServices(services =>
+            {
+                services.Replace(ServiceDescriptor.Singleton(new PostMergeRunStore(Path.Combine(_root, "post-merge"))));
+                services.Replace(ServiceDescriptor.Singleton<TimeProvider>(_clock));
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var registry = factory.Services.GetRequiredService<ProjectRegistry>();
+        var path = Path.Combine(_root, "one");
+        Directory.CreateDirectory(path);
+        registry.EnsureProjectForStorage(path, "one", DefaultWorkspace.Id, _clock);
+        factory.Services.GetRequiredService<ProjectSettingsService>().SetTestingStrategy("one", TestingStrategies.Fast);
+        var now = _clock.GetUtcNow();
+        var tip = new string('a', 40);
+        var green = new string('c', 40);
+        var point = new string('d', 40);
+        var envelope = new PostMergeEnvelopeFingerprint("0123456789abcdef", "fedcba9876543210", "worker",
+            "300000 100000", 3, "10.0.100", "runner-routine=1", 0.4, 1.25);
+        var running = new PostMergeRunRecord("rt3", "one", "window", tip, green, now, now, 2,
+            ["dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build"], [], "running", now, null,
+            StartLoadPerCore: 0.4, StartOccupiedSlots: 0) { Envelope = envelope with { PeakLoadPerCore = null } };
+        (await client.PostAsJsonAsync("/api/runner/post-merge/projects/one/runs", running)).EnsureSuccessStatusCode();
+        var test = new PostMergeTestVerdict("Runner.Tests.FeatureTests.Works", "runner-routine", "routine",
+            [new(PostMergeRunPhases.Initial, PostMergeTestResults.Fail, null, tip),
+             new(PostMergeRunPhases.Repeat, PostMergeTestResults.Fail, 812, tip),
+             new(PostMergeRunPhases.Control, PostMergeTestResults.Pass, 790, green),
+             new(PostMergeRunPhases.Bisect, PostMergeTestResults.Fail, 801, point)],
+            PostMergeClassificationHints.Regression)
+        {
+            TestFile = "runner.Tests/FeatureTests.cs", CoveringFolders = ["runner/Services"], CoveringFallback = false,
+        };
+        var failure = new PostMergeFailureEvidence("fingerprint", [test.Test], "Failed Runner.Tests.FeatureTests.Works",
+            ["runner/Feature.cs"], [point], point, true, false)
+        {
+            Attribution = new(green, ["pass", "pass"], [new(point, ["fail", "fail"], "fail")],
+                PostMergeClassificationHints.Regression) { BuildCommand = "dotnet build runner.Tests/AgentRunner.Tests.csproj --no-restore" },
+        };
+        var terminal = running with
+        {
+            Status = "red", FinishedAtUtc = now.AddMinutes(9), Failure = failure, Envelope = envelope,
+            Verdicts = [new(running.Commands[0], 1, false, "Failed Runner.Tests.FeatureTests.Works",
+                [test.Test], [], true) { DurationMs = 61_000 }],
+            TestVerdicts = [test],
+            FocusedRuns = [new(PostMergeRunPhases.Repeat, tip, 1, 1, false, 812),
+                new(PostMergeRunPhases.ControlBuild, green, 0, 0, false, 14_000),
+                new(PostMergeRunPhases.Control, green, 1, 0, false, 790)],
+        };
+        var invalid = terminal with { TestVerdicts = [test with { ClassificationHint = "guess" }] };
+        using (var rejected = await client.PostAsJsonAsync("/api/runner/post-merge/projects/one/runs", invalid))
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, rejected.StatusCode);
+        using (var rejected = await client.PostAsJsonAsync("/api/runner/post-merge/projects/one/runs",
+                   terminal with { FocusedRuns = [new(PostMergeRunPhases.Bisect, "not-a-sha", 1, 0, false, -1)] }))
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, rejected.StatusCode);
+        (await client.PostAsJsonAsync("/api/runner/post-merge/projects/one/runs", terminal)).EnsureSuccessStatusCode();
+
+        var state = await client.GetFromJsonAsync<PostMergeProjectState>("/api/runner/post-merge/projects/one");
+        var stored = state!.Runs.Single(run => run.Id == "rt3");
+        Assert.Equal(envelope, stored.Envelope);
+        Assert.Equal(61_000, stored.Verdicts[0].DurationMs);
+        var verdict = Assert.Single(stored.TestVerdicts!);
+        Assert.Equal(test.Attempts, verdict.Attempts);
+        Assert.Equal(["runner/Services"], verdict.CoveringFolders);
+        Assert.False(verdict.CoveringFallback);
+        Assert.Equal("runner.Tests/FeatureTests.cs", verdict.TestFile);
+        Assert.Equal(PostMergeClassificationHints.Regression, verdict.ClassificationHint);
+        Assert.Equal(terminal.FocusedRuns, stored.FocusedRuns);
+        var attribution = stored.Failure!.Attribution!;
+        Assert.Equal(["pass", "pass"], attribution.ControlResults);
+        Assert.Equal("fail", Assert.Single(attribution.Points).Verdict);
+        Assert.Equal(failure.Attribution.BuildCommand, attribution.BuildCommand);
+
+        // A receipt without any RT-3 field, as an older runner posts it, is still accepted.
+        var old = new string('b', 40);
+        const string started = "2026-11-22T03:30:00+00:00";
+        foreach (var json in new[]
+                 {
+                     $$"""{"id":"old","project":"one","kind":"window","tipSha":"{{old}}","mergeCount":1,"commands":["dotnet test"],"verdicts":[],"status":"running","startedAtUtc":"{{started}}"}""",
+                     $$"""{"id":"old","project":"one","kind":"window","tipSha":"{{old}}","mergeCount":1,"commands":["dotnet test"],"verdicts":[{"command":"dotnet test","exitCode":0,"timedOut":false}],"status":"green","startedAtUtc":"{{started}}","finishedAtUtc":"2026-11-22T03:40:00+00:00"}""",
+                 })
+        {
+            using var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+            using var response = await client.PostAsync("/api/runner/post-merge/projects/one/runs", content);
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        }
+        var after = await client.GetFromJsonAsync<PostMergeProjectState>("/api/runner/post-merge/projects/one");
+        var legacy = after!.Runs.Single(run => run.Id == "old");
+        Assert.Equal("green", legacy.Status);
+        Assert.Null(legacy.TestVerdicts);
+        Assert.Null(legacy.Envelope);
+        Assert.Null(legacy.Verdicts[0].DurationMs);
+    }
+
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 }
