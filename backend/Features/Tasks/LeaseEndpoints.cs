@@ -991,20 +991,24 @@ public static class LeaseEndpoints
                             liveSnapshot, task.ProjectName, overlapWindow, TaskScopePrediction.Predict);
                         overlapSets[task.ProjectName] = overlapSet;
                     }
-                    var overlap = ParallelSlotPolicy.Decide(
+                    var overlap = ParallelSlotPolicy.DecideOverlap(
                         task.Id,
                         TaskScopePrediction.Predict(task),
                         overlapSet.Running,
-                        int.MaxValue,
                         OverlapComparisonSet.For(task, overlapSet.InFlight),
                         overlapWindow);
                     if (!overlap.Admitted)
                     {
                         RecordRejection(task, RunnerPickupWaitCodes.ParallelConflict, overlap.Reason);
-                        logger.LogInformation(
-                            "overlap-serialize path=remote-claim window={Window} project={Project} candidate={TaskKey} conflict={Conflict} lane={Lane} prefix={Prefix} runner={Runner}",
-                            overlap.Window, task.ProjectName, readyKey, overlap.ConflictTaskId,
-                            overlap.ConflictLane, overlap.SharedPrefix, req.RunnerName);
+                        if (overlap.IsScopeConflict)
+                            logger.LogInformation(
+                                "[taskboard] overlap-serialize path=remote-claim window={Window} project={Project} candidate={Candidate} conflict={Conflict} lane={Lane} prefix={Prefix} runner={Runner}",
+                                overlap.Window, task.ProjectName, task.Id, overlap.ConflictTaskId,
+                                overlap.ConflictLane, overlap.SharedPrefix, req.RunnerName);
+                        else
+                            logger.LogInformation(
+                                "[taskboard] remote claim skipping {Candidate} on {Project} for {Runner}: {Reason}",
+                                task.Id, task.ProjectName, req.RunnerName, overlap.Reason);
                         continue;
                     }
                     var buildProfileGate = BuildProfileGate.Evaluate(taskProjectSettings.BuildProfile);

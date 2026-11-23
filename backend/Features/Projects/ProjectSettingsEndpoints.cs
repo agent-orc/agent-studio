@@ -1881,6 +1881,19 @@ public static class ProjectSettingsEndpoints
     }
 
     /// <summary>
+    /// The answer of the <c>dispatch.overlapWindow</c> routes (DS-0): the
+    /// effective window, the stored value (null when unset), the default and
+    /// the known windows.
+    /// </summary>
+    private static object OverlapWindowView(ProjectSettings projectSettings) => new
+    {
+        window = OverlapWindows.Resolve(projectSettings),
+        stored = projectSettings.DispatchOverlapWindow,
+        @default = OverlapWindows.Default,
+        windows = OverlapWindows.All,
+    };
+
+    /// <summary>
     /// AGT-2827: a build-profile or pipeline-step edit lands here so every
     /// ReviewAttempt still queued for this project gets its frozen Plan rebuilt
     /// from the settings that were just written, instead of running the plan
@@ -1890,14 +1903,6 @@ public static class ProjectSettingsEndpoints
     /// diverge from what a fresh ReviewAttempt would have received.
     /// </summary>
     /// <summary>The testing answer of the settings routes (AGT-3965).</summary>
-    private static object OverlapWindowView(ProjectSettings projectSettings) => new
-    {
-        window = OverlapWindows.Resolve(projectSettings),
-        stored = projectSettings.DispatchOverlapWindow,
-        @default = OverlapWindows.Default,
-        windows = OverlapWindows.All,
-    };
-
     private static object TestingView(string projectName, ProjectSettingsService settings,
         PostMergeModeService postMergeMode, PostMergeCoverageService coverage)
     {

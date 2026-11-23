@@ -1657,44 +1657,52 @@ public class ProjectRunner
                     skippedForConflict.Add(reason);
                     _lastPickReason = $"parallel-conflict-skip: {reason}";
                     skips.Add(new RunnerPickupSkip(candidate.Info.Id, RunnerPickupWaitCodes.ParallelConflict, adm.Reason));
-                    if (adm.IsScopeConflict)
-                        _logger.LogInformation(
-                            "[taskboard] overlap-serialize path=local window={Window} project={Project} candidate={Job} conflict={Conflict} lane={Lane} prefix={Prefix}",
-                            adm.Window, ProjectName, candidate.Info.Id, adm.ConflictTaskId, adm.ConflictLane, adm.SharedPrefix);
-                    else
-                        _logger.LogInformation(
-                            "[taskboard] skipping visible pickup candidate {Job} on {Project}: {Reason}",
-                            candidate.Info.Id, ProjectName, adm.Reason);
+                    LogPickupSerialize(candidate.Info.Id, adm);
                     continue;
                 }
 
-                // Nothing runs locally and no in-flight card overlaps: the pick
-                // is the plain display-order pick it was before DS-0.
-                if (_activeRuns.Count == 0)
+                if (_activeRuns.Count > 0)
                 {
-                    var idlePickReason = skippedForConflict.Count == 0
-                        ? $"display-order: {candidate.State} {candidate.Info.Id}"
-                        : $"display-order: {candidate.State} {candidate.Info.Id}; skipped earlier conflicting candidate(s): {string.Join("; ", skippedForConflict)}";
-                    _lastPickReason = idlePickReason;
-                    _pendingPickReasons[candidate.Info.Id] = idlePickReason;
+                    var pickReason = WithSkippedConflicts(adm.Reason, skippedForConflict);
+                    _lastPickReason = pickReason;
+                    _pendingPickReasons[candidate.Info.Id] = pickReason;
                     return PublishPickupSkips(skips, candidate.Info);
                 }
-
-                var pickReason = skippedForConflict.Count == 0
-                    ? adm.Reason
-                    : $"{adm.Reason}; skipped earlier conflicting candidate(s): {string.Join("; ", skippedForConflict)}";
-                _lastPickReason = pickReason;
-                _pendingPickReasons[candidate.Info.Id] = pickReason;
-                return PublishPickupSkips(skips, candidate.Info);
+                // Nothing runs locally and no in-flight card overlaps: the pick
+                // is the plain display-order pick below, as before DS-0.
             }
 
-            var firstPickReason = $"display-order: {candidate.State} {candidate.Info.Id}";
+            var firstPickReason = WithSkippedConflicts(
+                $"display-order: {candidate.State} {candidate.Info.Id}", skippedForConflict);
             _lastPickReason = firstPickReason;
             _pendingPickReasons[candidate.Info.Id] = firstPickReason;
             return PublishPickupSkips(skips, candidate.Info);
         }
 
         return PublishPickupSkips(skips, null);
+    }
+
+    private static string WithSkippedConflicts(string reason, IReadOnlyList<string> skippedForConflict)
+        => skippedForConflict.Count == 0
+            ? reason
+            : $"{reason}; skipped earlier conflicting candidate(s): {string.Join("; ", skippedForConflict)}";
+
+    /// <summary>
+    /// DS-0: one runner log line per serialize. A scope serialize names the
+    /// window, the conflicting card, its lane and the shared prefix, with the
+    /// same fields as the remote claim's line, so over-serialization can be
+    /// counted per window on both claim paths.
+    /// </summary>
+    private void LogPickupSerialize(string candidateId, SlotAdmission adm)
+    {
+        if (adm.IsScopeConflict)
+            _logger.LogInformation(
+                "[taskboard] overlap-serialize path=local window={Window} project={Project} candidate={Candidate} conflict={Conflict} lane={Lane} prefix={Prefix}",
+                adm.Window, ProjectName, candidateId, adm.ConflictTaskId, adm.ConflictLane, adm.SharedPrefix);
+        else
+            _logger.LogInformation(
+                "[taskboard] skipping visible pickup candidate {Job} on {Project}: {Reason}",
+                candidateId, ProjectName, adm.Reason);
     }
 
     /// <summary>AGT-3579: replaces the skip list whole, so a status read never sees a half-built pass.</summary>

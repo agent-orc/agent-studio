@@ -31,7 +31,7 @@ public static class TaskScopePrediction
             var pf = Path.Combine(info.FolderPath, "prompt.md");
             if (File.Exists(pf)) text += "\n" + File.ReadAllText(pf);
         }
-        catch (Exception __ex) { SilentCatch.Note(__ex, "ProjectRunner: best-effort"); /* best-effort */ }
+        catch (Exception __ex) { SilentCatch.Note(__ex, "TaskScopePrediction: prompt.md read is best-effort"); }
         return FromText(text);
     }
 

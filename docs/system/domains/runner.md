@@ -40,9 +40,13 @@ A scope serialize is a `parallel-conflict` pickup skip on the local pickup and a
 `parallel-conflict` dispatch rejection on the remote claim. Its reason names
 the window, the conflicting card, its lane and the shared prefix, for example
 `scope conflict with 'AGT-1' on 'backend/features/runner' (window in-flight,
-4-auto-review)`. Each serialize also writes one `overlap-serialize` log line
-with `path`, `window`, `project`, `candidate`, `conflict`, `lane` and `prefix`,
-so over-serialization can be counted per window.
+4-auto-review)`. Each scope serialize also writes one `overlap-serialize` log line
+with `path` (`local` or `remote-claim`), `window`, `project`, `candidate`,
+`conflict`, `lane` and `prefix`, all card ids, so over-serialization can be
+counted per window. A serialize without a scope conflict (no free slot, a
+running exclusive card) keeps its plain skip line. The remote claim asks
+`ParallelSlotPolicy.DecideOverlap`, the same rules without the slot count,
+because it checks host and project concurrency before.
 
 ## Persona occurrences, PT-4
 

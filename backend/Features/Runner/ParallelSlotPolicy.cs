@@ -81,7 +81,8 @@ public sealed record SlotAdmission(SlotDecision Decision, string Reason)
 /// Rules, in order: (1) no free slot -&gt; serialize; (2) an exclusive task is
 /// running -&gt; serialize everyone; (3) the candidate is exclusive -&gt; run
 /// alone if the project is idle, else wait for it to drain; (4) scope overlap
-/// with any running task -&gt; serialize (no cross-talk); (5) otherwise admit as
+/// with any running task or, under the <c>in-flight</c> overlap window, any
+/// card that started and has not integrated -&gt; serialize (no cross-talk); (5) otherwise admit as
 /// parallel-ok. Scope comparison is path-prefix based. Unknown (empty) scopes
 /// are admitted optimistically because coding runs are worktree-isolated; only
 /// two declared, overlapping scopes conflict.
@@ -130,6 +131,21 @@ public static class ParallelSlotPolicy
         return DecideInWindow(candidateId, candidate, running, maxParallelism, inFlight, window)
             with { Window = window };
     }
+
+    /// <summary>
+    /// DS-0: the scope rule alone, for a host that admits slots itself (the
+    /// remote claim checks host and project concurrency before it asks). The
+    /// slot count never serializes here; a running exclusive card and the
+    /// scope overlap over the window do, as in
+    /// <see cref="Decide(string, TaskParallelism, IReadOnlyList{RunningTask}, int, IReadOnlyList{InFlightTask}, string?)"/>.
+    /// </summary>
+    public static SlotAdmission DecideOverlap(
+        string candidateId,
+        TaskParallelism candidate,
+        IReadOnlyList<RunningTask> running,
+        IReadOnlyList<InFlightTask> inFlight,
+        string? overlapWindow)
+        => Decide(candidateId, candidate, running, int.MaxValue, inFlight, overlapWindow);
 
     private static SlotAdmission DecideInWindow(
         string candidateId,

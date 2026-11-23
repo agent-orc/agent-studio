@@ -195,6 +195,23 @@ public sealed class OverlapWindowTests
         Assert.Equal(OverlapWindows.Running, admission.Window);
     }
 
+    [Fact]
+    public void Decide_overlap_leaves_the_slot_count_to_the_host_and_keeps_the_scope_rule()
+    {
+        var running = Enumerable.Range(0, 40)
+            .Select(i => new RunningTask($"busy-{i}", Scope($"frontend/area{i}")))
+            .ToArray();
+        var inFlight = new[] { new InFlightTask("in-review", Scope("backend/Features"), TaskStates.HumanReview) };
+
+        var disjoint = ParallelSlotPolicy.DecideOverlap("c", Scope("tools/x"), running, inFlight, OverlapWindows.InFlight);
+        Assert.Equal(SlotDecision.Admit, disjoint.Decision);
+
+        var overlap = ParallelSlotPolicy.DecideOverlap("c", Scope("backend/Features/Runner"), running, inFlight, OverlapWindows.InFlight);
+        Assert.Equal(SlotDecision.Serialize, overlap.Decision);
+        Assert.Equal("in-review", overlap.ConflictTaskId);
+        Assert.Equal(TaskStates.HumanReview, overlap.ConflictLane);
+    }
+
     // ---- OverlapComparisonSet membership
 
     private static TaskInfo Card(string id, string state, Action<TaskProvenanceBuilder>? provenance = null,

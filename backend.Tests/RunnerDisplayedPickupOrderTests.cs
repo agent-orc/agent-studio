@@ -92,7 +92,10 @@ public sealed class RunnerDisplayedPickupOrderTests : IDisposable
         Assert.Equal(
             "scope conflict with 'still-in-review' on 'backend/services/runner' (window in-flight, 4-auto-review)",
             skip.Detail);
-        Assert.Contains("skipped earlier conflicting candidate", runner.GetStatus().LastPickReason);
+        Assert.Equal(
+            "display-order: 2-ready disjoint-next; skipped earlier conflicting candidate(s): overlaps-review: "
+            + "scope conflict with 'still-in-review' on 'backend/services/runner' (window in-flight, 4-auto-review)",
+            runner.GetStatus().LastPickReason);
     }
 
     [Fact]
