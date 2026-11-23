@@ -1,3 +1,5 @@
+using AgentStudio.Registry;
+
 namespace AgentStudio.Pipeline;
 
 /// <summary>
@@ -11,12 +13,30 @@ namespace AgentStudio.Pipeline;
 /// </summary>
 public sealed class PostMergeModeService
 {
+    private readonly ProjectRegistry? projects;
+    private readonly PostMergeRunStore? runs;
+
+    /// <summary>A service without a run store; <see cref="ReadState"/> answers null.</summary>
+    public PostMergeModeService() { }
+
+    /// <summary>
+    /// A service that can read the project's T3 state for the window-coverage
+    /// evidence of fast and balanced integrations (AGT-4020). The placement
+    /// itself stays the configured one.
+    /// </summary>
+    public PostMergeModeService(ProjectRegistry projects, PostMergeRunStore runs)
+    {
+        this.projects = projects;
+        this.runs = runs;
+    }
+
     public string Resolve(string project, ProjectSettings? settings)
         => IntegrationTestModes.Resolve(settings);
 
     /// <summary>The project's T3 state (last window tip, runs), or null when it cannot be read.</summary>
     public AgentStudio.TaskServer.Contracts.PostMergeProjectState? ReadState(string project)
     {
+        if (projects is null || runs is null) return null;
         var record = projects.FindByIdOrDisplayName(project);
         if (record is null) return null;
         try { return runs.Read(record.Id); }

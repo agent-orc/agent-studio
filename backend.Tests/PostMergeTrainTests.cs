@@ -209,7 +209,7 @@ public sealed class PostMergeTrainTests : IDisposable
         var project = projects.EnsureProjectForStorage(Path.Combine(_root, "store", "Fixture"), "Fixture",
             DefaultWorkspace.Id, clock);
         var runs = new PostMergeRunStore(Path.Combine(_root, "post-merge"));
-        var mode = new PostMergeModeService(projects, runs, scanner, clock);
+        var mode = new PostMergeModeService(projects, runs);
         var gate = new RecordingGate();
         var runner = new MergeIntoDevelopRunner(git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
             projectSettings: settings, preDevelopBuildGate: new PreDevelopBuildGate(gate), postMergeMode: mode);
