@@ -386,6 +386,35 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-red-develop-project-fallback">
+          <td>2026-11-23</td>
+          <td><code>AGT-4002</code><br><span class="small">red-develop-project-fallback</span> (Dossier AGT-3988, RT-1)</td>
+          <td>No CLI crashed. After two hours of red develop the project resolved to pre-merge, the batch gate came back and every review ran the full suite with baseline and clean repeat; nothing integrated between 23:00Z and 04:00Z for four reds that were not regressions.</td>
+          <td>One project-wide timer (<code>PostMergeModeService.EscalationActive</code>, plus a second copy of the two-hour constant in <code>RedDevelopRepairPolicy</code>) mixed incident age with the need for a human, and an escalated repair card also switched the placement.</td>
+          <td>Placement is the configured one. <code>RedDevelopRepairPolicy</code> returns Revert, FixForward, Hold or AskOwner from the repair lane and the per-incident age; at two hours it raises one <code>post-merge.red-incident</code> Needs you item per incident and moves no card. Terminal: the incident waits in Needs you for the owner's answer while integration keeps flowing. RT-2 (AGT-4003) adds pure per-test classification, bounded quarantine, controlled attribution and hold-scope policies for later host adoption. It preserves this compatibility flow and adds no CLI retry or lane movement.</td>
+        </tr>
+        <tr id="case-post-merge-daemon-cgroup">
+          <td>2026-11-23</td>
+          <td><code>AGT-3983</code><br><span class="small">post-merge-daemon-cgroup</span></td>
+          <td>No CLI crashed. Host-owned T3 inherited the coding daemon's delegated leaf. A cgroup teardown fixture held stdout open for 600 seconds and failed after each wait. The two-hour incident rule moved repair AGT-3981 out of Auto Review, superseding its running review.</td>
+          <td>The test borrowed the shared service subtree and read a pipe inherited by its orphan fixture. Incident handling treated a revert recommendation as proof of a revert when reopening a completed suspect, and escalation ignored delivery ownership.</td>
+          <td>Project commands use sibling worker envelopes with required attachment and teardown. Real cgroup tests require an owned test scope and MachineBound classification; fixture pipe reads are bounded. Green receipts resolve incidents without moving suspects. Repair cards under review or in a gate keep their delivery owner instead of reaching Escalated through the age rule.</td>
+        </tr>
+        <tr>
+          <td>2026-11-23</td>
+          <td><strong>AGT-3794</strong> quota-cost-budget (fix <strong>AGT-3824</strong>)</td>
+          <td>No CLI crashed. The 15 November playthrough found that a cache-read-dominated weekly token limit refused new admission and repeated an acute notice on idle cards, including cards waiting for the owner.</td>
+          <td>Every token column counted toward the limit, USD budget fields had no writer, and card notices inferred a refusal from the workspace limit. There was no card spend budget.</td>
+          <td>Workspace and project USD budgets use priced spend, token limits declare their cache-read policy, and lifetime card budgets refuse new coding, review and gate admission with named reasons. Local aspects and grades record Pending with the same reason until the owner raises or clears the card budget. See <a href="../system/domains/tokens.md#spend-and-admission-budgets">spend and admission budgets</a>.</td>
+        </tr>
+
+        <tr id="case-integration-round-loop-and-unattributed-merge-rounds">
+          <td>2026-11-22</td>
+          <td><code>AGT-3897</code>, <code>AGT-3914</code><br><span class="small">integration-round-loop and unattributed merge-only rounds (fix <code>AGT-3968</code>)</span></td>
+          <td>No CLI crashed. AGT-3897 took eight "include latest develop" rounds on 17 and 18 November, each a full coding run and a full review that passed, under an automatic round limit of one. The first of them (17 November 22:39 local) had no conflict with develop. AGT-3914, AGT-3905 and AGT-3820 passed review and were escalated with "Commit attribution is missing for this reviewed delivery". Terminal: Escalated.</td>
+          <td>The batch replay ejected AGT-3897 as a conflict when it only conflicted with the sibling AGT-3891 admitted ahead of it; an agent cannot resolve that. The recovery budget was keyed by result ref and SHA, and every round publishes a new one. A refused batch conflict round only logged a warning and left the card queued. The runner reports its start head, which already holds its develop merge, as the pickup base, so a round without a commit of its own had an empty attribution range; the repair sweep skipped empty ranges and then recorded no unresolved row, so it never ran again.</td>
+          <td>Sibling-only conflicts are deferred to the next batch; the budget counts per card and integration target; a refused round parks the card naming the files and the other cards; add/add hunks are kept by union in the batch replay; a merge-only round is reviewed on its resolution; an empty pickup range is attributed through the integration merge-base range, and sweep v3 restores the parked cards without a coding run.</td>
+        </tr>
         <tr id="case-document-key-amend-push-blocked">
           <td>2026-11-10</td>
           <td><code>AGT-3649</code> playthrough<br><span class="small">document-key-amend-push-blocked (fix <code>AGT-3695</code>)</span></td>
@@ -798,6 +827,20 @@
             every command cwd from that absolute root. Each command now records its repository and working directory, and a
             regression fixture proves a root <code>.slnx</code> with nested-only projects executes at the repository root.
           </td>
+        </tr>
+        <tr id="case-post-merge-theory-false-red">
+          <td>2026-11-22</td>
+          <td><code>AGT-3976</code><br><span class="small">post-merge-theory-false-red</span></td>
+          <td>No coding CLI crashed. The reported first T3 run on <code>d3c4eed65</code> reached red after a runner theory could not start its fake Docker script, creating repair card AGT-3975.</td>
+          <td>The failure parser retained theory arguments that the focused-filter builder rejected. The common retry loop then skipped that failure. The attribution path treated unowned documentation paths as affecting every suite.</td>
+          <td>T3 now strips theory arguments, repeats failures in every suite kind once, records recovered test names as flaky, and keeps a fail-twice result red. Docs-only changes are excluded from suspects; no relevant merge produces an environmental or flaky suspect repair prompt. Admission load and occupied slots are retained in the receipt. Focused regression fixtures pin both terminal outcomes.</td>
+        </tr>
+        <tr id="case-codex-integration-fresh-session-rework">
+          <td>2026-11-22</td>
+          <td><code>AGT-3970</code><br><span class="small">codex-integration-fresh-session-rework</span></td>
+          <td>No CLI crashed. Retained 17 and 18 November sessions for AGT-3914, AGT-3915 and AGT-3901 show new Codex UUIDs in the same worktrees for integration follow-ups, all at high reasoning. Claude comparison rounds also started fresh.</td>
+          <td>The automatic integration-round queue persisted a steer without the mechanical delta required by the remote runner's guarded resume path. Each fresh launch received the original task and accumulated continuation notes.</td>
+          <td>The observed path repeatedly returned delivered work to review and then integration recovery. The queue now saves the delta and qualified reasoning route before Ready, retains the existing bounded resume and fresh fallback, and records resumed/fresh provenance in the usage ledger.</td>
         </tr>
         <tr>
           <td>2026-07-11</td>
@@ -2185,8 +2228,8 @@
           <td>
             <span class="pill ok">fixed in dev</span> the merge step now persists one structured report for direct merge,
             mechanical merge, and rebase fallback, including capped conflict files and both tips. Passed-review conflicts
-            enter the same two-round per-delivery recovery budget even with a generic decision marker. Exhaustion parks with
-            a reason such as <em>automatic recovery budget used: 2/2 for delivery 5cd6b1d4bc07</em>, and the steer prompt prefers resolving a merge of the integration
+            enter the same recovery budget even with a generic decision marker; since AGT-3968 it counts per card and integration target, not per delivery. Exhaustion parks with
+            a reason such as <em>automatic recovery budget used: 1/1 for this card on develop</em>, and the steer prompt prefers resolving a merge of the integration
             branch into the delivery branch over rewriting history. Each round now records an immutable-result-ref and
             delivered-SHA chain identifier. Re-reviewing that delivery shares its budget across review epochs, while a new
             delivery starts a fresh budget. Identifier-less legacy rounds count conservatively and are named in the exhausted
@@ -3290,6 +3333,29 @@
           <td>The pilot's disk admission measured the real file system behind <code>TaskRepository</code>; the test factories pointed it at a temp folder on the gate host, so every pilot tick returned early once the suite's own writes crossed 5 % free. Neither the verdict nor the parked reason named the disk, and nothing on the gate host pruned the compile cache that Angular CLI, Vite and ESLint enable.</td>
           <td>Observed terminal: <span class="lane">5e-escalated</span> (<code>gate-infrastructure</code>) for the three members. Disk consumers now measure through <code>IHostFilesystemProbe</code>; every test project pins it to a fixed healthy probe at module load and <code>DiskProbeIsolationGuardTests</code> keeps it so. A gate that fails under critical disk on the gate host or the API host is <code>DiskFull</code> with verdict <code>disk-pressure</code>, and its pause and parked reason name the path, free bytes and percent. The gate worker prunes the Node compile cache and gate workspaces older than <code>RemoteGate:CachePruneAgeHours</code>.</td>
         </tr>
+        <tr id="case-weekly-quota-refusal-as-cli-crash">
+          <td>2026-11-17</td>
+          <td><code>AGT-3972</code><br><span class="small">weekly-quota-refusal-as-cli-crash</span></td>
+          <td>AGT-3891, AGT-3904, AGT-3905, AGT-3906 and AGT-3908 each had two attempts end after Claude refused the weekly quota.
+            All ten retained provider sessions report <code>error: rate_limit</code> and
+            <code>You've hit your weekly limit · resets 1pm (Europe/Berlin)</code>. Original central CLI-output logs were
+            unavailable on the coding host; the task evidence records session paths, line numbers and runner journal attempt IDs.</td>
+          <td>The provider-access classifier omitted weekly-limit wording and Claude assistant error frames. Its clock reset
+            parser required minutes and ignored the provider zone. The failed attempts could therefore be classified as
+            <code>CliCrash</code> without closing provider admission. The recovery probe's separate account-quota signature
+            also omitted weekly refusals; it now recognizes them and reuses the shared reset parser.</td>
+          <td>Observed terminal: legacy <code>Unknown</code>, handed back to <code>2-ready</code> with salvage, then claimed again
+            on Claude. The fix selects <code>QuotaExceeded</code> and <code>WaitForCapabilityRecovery</code>, preserves the reason,
+            and records the provider as Limited until the reported reset. Focused regressions cover coding and review,
+            no same-session crash retry, admission hold after a login probe, and narrative false positives.</td>
+        </tr>
+        <tr id="case-review-host-disk-full">
+          <td>2026-11-23</td>
+          <td><code>AGT-3986</code><br><span class="small">review-host-disk-full</span></td>
+          <td>The operator reported review lease renewal failures with <code>No space left on device</code>, a 98% full review VM, and AGT-3952 escalated as ReviewInfra / ReviewWorkerFailed.</td>
+          <td>The ordinary review claim path bypassed the disk admission check. Retention had no size budget or stale-sibling sweep, and partial temp deletion could remove the ownership receipt before a locked child. Historical host contents were unavailable for independent verification.</td>
+          <td>Observed terminal: Escalated or a review lasting over an hour. Disk exhaustion now selects <code>DiskFull</code>, waits for recovery above warning, and schedules an infrastructure successor without consuming the card retry budget. New claims stop at critical pressure; Needs you names the host disk. No product finding is opened for this cause.</td>
+        </tr>
       </tbody>
     </table>
 
@@ -3310,6 +3376,9 @@
        checks for an accepted stop before it writes the Human Review marker or moves
        the card. An accepted stop settles the attempt as <code>Stopped</code>, while a
        released lease cannot accept a new stop.</p>
+
+    <h3>Configured spend admission</h3>
+    <p>Workspace and project weekly USD or token limits and lifetime card spend limits are checked at new execution admission. A refused local aspect or grade records a Pending step with the named budget reason. The owner can raise or clear a card limit; weekly limits also resume on their documented UTC reset. Already admitted work keeps its current unit. The <a href="../system/domains/tokens.md#spend-and-admission-budgets">token domain contract</a> defines the accounting and settings.</p>
 
     <h3>Cancelled verification gates</h3>
     <p>A gate cancellation first checks delivery SHA, lane ownership, and pending continue intent.
@@ -3352,6 +3421,12 @@
        <span class="filelist"><code>backend/Features/Runner/CauseBreaker/</code></span></p>
 
     <h3>Session-resume preference</h3>
+    <p><strong>Integration continuation provenance (AGT-3970).</strong> Automatic integration rounds
+      save their typed recovery delta before Ready becomes claimable. This routes a valid same-worktree
+      continuation through the existing bounded clean-home session resume. The worker's launch choice
+      is recorded as <code>sessionMode=resumed|fresh</code> in continuation evidence and remote token
+      receipts. Explicit pins and correctness floors govern any reasoning reduction.</p>
+
     <p>Remote integration-recovery rounds use a separate, single-use continuation rule. A task ledger preserves session and usage evidence; the next claim carries only a compact rebase delta. Task, provider, clean-context, repository, worktree and delivery-lineage mismatches select a typed fresh run. The resumed worker is bounded at 1,211,213 observed tokens and 300 seconds. A semantic conflict or invalid session returns to Ready for a policy-qualified fresh claim without resetting the ordinary infrastructure retry budget.</p>
     <p>Each retry uses <code>RunIntent.UserContinue</code> + <code>ContinueModes.Continue</code> so it <strong>resumes the live
        session first</strong> (the <code>RunPlanner</code> resume path) and only falls back to recovery-from-job-folder when the
@@ -3375,6 +3450,8 @@
       <li>Positive sentinel present &rarr; <strong>Succeeded</strong> (sentinel always wins).</li>
       <li><code>[[TASK_BLOCKED]]</code> / <code>[[TASK_NEEDS_INPUT]]</code> &rarr; <strong>NeedsReview</strong>.</li>
       <li><code>RunStopReason</code> in {UserStop, FollowupPause} &rarr; not terminal (existing pause/continue path, untouched).</li>
+      <li>Remote provider quota refusals are <strong>QuotaExceeded</strong> with <code>WaitForCapabilityRecovery</code>;
+          they do not enter the CLI-crash resume path. The legacy configured-cap stop reason below is separate.</li>
       <li><code>RunStopReason</code> in {Watchdog, Cancelled, QuotaCapExceeded} <em>or</em> (<code>exitCode &lt; 0</code>/non-zero
           AND no agent terminal text AND no commits) &rarr; <strong>infra crash</strong> &rarr; CooldownRetry if budget remains,
           else GaveUpToHuman. This is the ASS-1757 path.</li>
@@ -3458,8 +3535,11 @@
     <ul>
       <li><strong>Cooldown shape.</strong> Reuse <code>RapidCrashBreaker.Backoff</code> as-is (15s / 60s / 240s) for zero delta,
           or a gentler infra-specific curve (e.g. 30s / 120s) that is cleaner semantically?</li>
-      <li><strong>QuotaCapExceeded.</strong> Should it count as an infra crash (retry) or escalate immediately? A quota cap will
-          just re-hit on an immediate retry, so it may deserve its own category rather than burning 3 attempts.</li>
+      <li><strong>Quota refusal (resolved, AGT-3972).</strong> A provider refusal is <code>QuotaExceeded</code> with
+          <code>WaitForCapabilityRecovery</code>. It holds the provider capability until reset and uses configured quota
+          admission or fallback instead of the infrastructure-crash retry budget.</li>
+      <li><strong>Configured cap stop.</strong> The local <code>RunStopReason.QuotaCapExceeded</code> retry treatment is
+          a separate open question; AGT-3972 changes remote provider refusals and recovery probes.</li>
       <li><strong>Inconclusive track.</strong> Does <code>OrchestratorInconclusive</code> deserve its own card track / reason
           string distinct from a plain logical NeedsReview, or is one honest reason text enough? (Affects the UI step.)</li>
       <li><strong>Budget across resume-fallback.</strong> Should a retry that had to rebuild-from-job-folder (session genuinely

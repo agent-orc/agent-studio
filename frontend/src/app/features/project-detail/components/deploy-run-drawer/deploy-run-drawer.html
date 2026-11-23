@@ -3,6 +3,9 @@
     <p class="run-drawer__outcome">
       <app-status-indicator [tone]="runTone(run().state)" [label]="stateLabel[run().state]" testId="deploy-run-outcome" />
     </p>
+    @if (run().state === 'awaiting-approval' || run().state === 'queued') {
+      <app-deploy-secret-gaps [readiness]="secrets()" (bind)="openSecrets.emit($event)" />
+    }
     @if (actions().length) {
       <div class="run-drawer__actions" role="group" aria-label="Run actions">
         @for (item of actions(); track item.kind) {
@@ -24,13 +27,19 @@
     }
     @if (run().interventionDecision; as decision) {
       <p class="run-drawer__muted" data-testid="deploy-run-intervention-decision">
-        Intervention: {{ decision }} by {{ run().interventionDecidedBy ?? 'system' }}.
+        Intervention: {{ decision }} by {{ (run().interventionDecidedBy | principalName) ?? 'system' }}.
       </p>
+    }
+    @if (rollbackOffer(); as offer) {
+      <section class="run-drawer__rollback" aria-labelledby="deploy-run-rollback-title" data-testid="deploy-run-rollback">
+        <h3 id="deploy-run-rollback-title">Roll back {{ offer.environmentName }}</h3>
+        <app-rollback-offer [offer]="offer" [now]="now()" [busy]="rollbackBusy()" (rollback)="rollback.emit($event)" />
+      </section>
     }
     @if (action().error; as error) { <p class="run-drawer__error" role="alert" data-testid="deploy-run-action-error">{{ error }}</p> }
     <dl class="run-drawer__facts">
       <dt>Release</dt><dd>{{ run().releaseVersion ?? 'Not in the release list' }} <code class="run-drawer__muted">{{ run().releaseId }}</code></dd>
-      <dt>Requested by</dt><dd>{{ run().requestedBy ?? 'Not recorded' }}</dd>
+      <dt>Requested by</dt><dd>{{ (run().requestedBy | principalName) ?? 'Not recorded' }}</dd>
       <dt>Approval</dt><dd data-testid="deploy-run-approval"><app-status-indicator [tone]="approval().tone" [label]="approval().label" [compact]="true" [wrap]="true" testId="deploy-run-approval-state" /></dd>
       <dt>Queued</dt><dd><time [attr.datetime]="run().createdAt">{{ run().createdAt | date:'medium' }}</time></dd>
       <dt>Started</dt><dd>@if (run().startedAt; as started) { <time [attr.datetime]="started">{{ started | date:'medium' }}</time> } @else { Not started }</dd>

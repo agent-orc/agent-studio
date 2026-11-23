@@ -69,7 +69,7 @@ public static class TaskCoreEndpoints
                 Mode = core.Mode, Released = core.Released, PendingIntent = core.PendingIntent,
                 Pins = new TaskCorePins
                 {
-                    Model = core.Model, ModelExplicit = core.ModelExplicit,
+                    Model = core.Model, ModelExplicit = core.ModelExplicit, PinMode = core.PinMode,
                     ThinkingLevel = core.ThinkingLevel, ThinkingLevelExplicit = core.ThinkingLevelExplicit,
                     CliType = core.CliType, ContextMode = core.ContextMode,
                     UseOwnSession = core.UseOwnSession, AllowWebAccess = core.AllowWebAccess,

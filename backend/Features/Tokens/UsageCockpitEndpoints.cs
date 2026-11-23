@@ -40,7 +40,7 @@ public static class UsageCockpitEndpoints
             AttemptAuthorityService reviews,
             RemoteChatWorkBroker chatWork,
             LocalChatUsageTracker localChatWork,
-            IConfiguration configuration) =>
+            IConfiguration configuration, AgentStudio.Quota.WorkspaceQuotaService workspaceQuotas) =>
         {
             var workspace = string.IsNullOrWhiteSpace(workspaceId)
                 ? workspaces.List().FirstOrDefault(item => item.IsDefault) ?? workspaces.List().FirstOrDefault()
@@ -83,59 +83,22 @@ public static class UsageCockpitEndpoints
                     "The workspace calendar could not be read; UTC was used.");
             }
             sourceStates.TryAdd("calendar", new UsageSourceState("complete", now, null));
-            var costInputs = new List<UsageCostInput>();
-            foreach (var project in visibleProjects)
-            {
-                try
-                {
-                    var snapshot = ledger.LoadSnapshot(project.DisplayName, project.StorageLocation);
-                    costInputs.Add(new UsageCostInput(project.Id, project.DisplayName,
-                        snapshot.Entries, snapshot.Freshness,
-                        snapshot.ReceiptSummaries.Values
-                            .Select(summary => (DateTime?)summary.LastUpdate).Max()));
-                }
-                catch (Exception)
-                {
-                    costInputs.Add(new UsageCostInput(project.Id, project.DisplayName, [],
-                        new ProjectTokenDataFreshness { Status = "unavailable",
-                            Warning = "The project ledger could not be read." }));
-                }
-            }
-            // Workspace-scoped one-shot usage lands on its project when the row
-            // names one (bus project, ad-hoc project tag, or owning job;
-            // TokenUsageAttribution). The rest is a visible child, never a
-            // hidden addition to the workspace total.
-            try
-            {
-                var root = configuration["TaskRepository"];
-                if (string.IsNullOrWhiteSpace(root)) throw new InvalidOperationException();
-                var workspaceUsage = WorkspaceBusUsage.Read(bus, root, allProjects, scanner, calendar.WeekStartUtc);
-                var canAssignUnattributed = workspace.IsDefault
-                    && (human is null || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User));
-                IReadOnlyList<OrchestratorLogEntry> unattributed = canAssignUnattributed ? workspaceUsage.Unattributed : [];
-                var unassignedCount = canAssignUnattributed ? 0 : workspaceUsage.Unattributed.Count;
-                for (var index = 0; index < costInputs.Count; index++)
-                {
-                    var current = costInputs[index];
-                    if (current.ProjectId is null) continue;
-                    costInputs[index] = current with { Entries = workspaceUsage.MergeInto(current.ProjectId, current.Entries) };
-                }
-                costInputs.Add(new UsageCostInput(null, "Unattributed one-shot jobs", unattributed,
-                    new ProjectTokenDataFreshness
-                    {
-                        Status = unassignedCount == 0 ? "complete" : "partial",
-                        Sources = ["workspace-token-bus"],
-                        Warning = unassignedCount == 0 ? null
-                            : "Projectless workspace bus events cannot be assigned to this view."
-                    }));
-            }
-            catch (Exception)
-            {
-                costInputs.Add(new UsageCostInput(null, "Unattributed one-shot jobs", [],
-                    new ProjectTokenDataFreshness { Status = "unavailable",
-                        Warning = "The workspace token bus could not be read." }));
-            }
+            var canAssignUnattributed = workspace.IsDefault
+                && (human is null || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User));
+            var costInputs = UsageCostInputReader.Read(allProjects, visibleProjects, ledger, bus,
+                scanner, configuration, calendar.WeekStartUtc, canAssignUnattributed);
             var cost = UsageCockpitProjection.Cost(pricing, calendar, costInputs, DateTime.UtcNow);
+            var budget = (human is null || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User))
+                && workspaceQuotas.Limits(workspace.Id)?.WeeklyBudgetUsd is not null
+                ? workspaceQuotas.Snapshot(workspace.Id) : null;
+            cost = cost with { WeeklyBudgetUsd = budget?.Limits?.WeeklyBudgetUsd,
+                BudgetWeekSpentUsd = budget?.Usage.ModelCostUsd, BudgetWeekEndUtc = budget?.WeekEndUtc, BudgetWeekStartUtc = budget?.WeekStartUtc,
+                Projects = cost.Projects.Select(child => {
+                    if (child.ProjectId is null || workspaceQuotas.Limits(workspace.Id, child.ProjectId)?.WeeklyBudgetUsd is null) return child;
+                    var projectBudget = workspaceQuotas.Snapshot(workspace.Id, child.ProjectId);
+                    return child with { WeeklyBudgetUsd = projectBudget.Limits?.WeeklyBudgetUsd,
+                        BudgetWeekSpentUsd = projectBudget.Usage.ModelCostUsd };
+                }).ToList() };
             sourceStates["cost"] = cost.Coverage;
 
             var runnerState = TryRead(() => runner.GetStatus(), now);

@@ -64,6 +64,21 @@
       </ul>
     }
 
+    @if (info().parkedBlocker?.failureEvidence || failedTests().length > 0) {
+      <div class="park__failure" data-testid="parked-failure-evidence">
+        @if (failedTests().length > 0) {
+          <strong>Failing tests</strong>
+          <ul data-testid="parked-failed-tests">
+            @for (test of failedTests(); track test) { <li>{{ test }}</li> }
+          </ul>
+        }
+        <details>
+          <summary>Full failure reason</summary>
+          <pre data-testid="parked-full-reason">{{ fullReason() }}</pre>
+        </details>
+      </div>
+    }
+
     <dl class="park__facts">
       @if (nextStep(); as step) {
         <div class="park__fact">

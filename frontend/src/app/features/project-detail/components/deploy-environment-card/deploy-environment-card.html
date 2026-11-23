@@ -4,6 +4,7 @@
     <p class="env-card__health"><span class="env-card__sr">Health: </span><app-status-indicator [tone]="health().tone" [label]="health().label" testId="deploy-environment-health" /></p>
   </header>
   @if (environment().address; as address) { <p class="env-card__address">{{ address }}</p> }
+  @if (healthProblem(); as problem) { <p class="env-card__problem" data-testid="deploy-environment-health-problem">{{ problem }}</p> }
   <dl class="env-card__facts">
     <dt>Release</dt>
     <dd data-testid="deploy-environment-release">
@@ -40,14 +41,15 @@
   @if (newer(); as newer) { <p class="env-card__muted env-card__newer" data-testid="deploy-environment-newer">{{ newer }}</p> }
   @if (environment().awaitingApproval; as approval) {
     <p class="env-card__note" data-testid="deploy-environment-approval">
-      Awaiting approval: {{ approval.subject }}@if (approval.requestedBy) { <span class="env-card__muted">, requested by {{ approval.requestedBy }}</span> }
+      Awaiting approval: {{ approval.subject }}@if (approval.requestedBy) { <span class="env-card__muted">, requested by {{ approvalRequester() }}</span> }
     </p>
   }
+  <app-deploy-secret-gaps [readiness]="environment().secrets" (bind)="openSecrets.emit($event)" />
   @if (environment().intervention; as intervention) {
     <button type="button" class="env-card__note" data-testid="deploy-environment-intervention"
             (click)="openRun.emit(intervention.deploymentId)">
       @if (intervention.decision) {
-        {{ intervention.failedStep }}: {{ intervention.decision }} by {{ intervention.decidedBy ?? 'system' }}.
+        {{ intervention.failedStep }}: {{ intervention.decision }} by {{ interventionDecider() ?? 'system' }}.
       } @else {
         {{ intervention.failedStep }} failed. Waiting for intervention
         @if (intervention.expiresAtUtc) { until <time [attr.datetime]="intervention.expiresAtUtc">{{ intervention.expiresAtUtc | date:'medium' }}</time> }.
@@ -55,16 +57,31 @@
       Open run
     </button>
   }
-  <div class="env-card__actions">
-    @if (environment().lastRun?.deploymentId; as runId) {
-      <button type="button" data-testid="deploy-environment-open-run"
-              [attr.aria-label]="'Open last run for ' + environment().name"
-              (click)="openRun.emit(runId)">Open last run</button>
-    }
-    @if (environment().awaitingApproval) {
-      <button type="button" data-testid="deploy-environment-review-approval"
-              [attr.aria-label]="'Review the pending approval for ' + environment().name"
-              (click)="reviewApproval()">Review approval</button>
-    }
+  @if (rollbackOffer(); as offer) {
+    <app-rollback-offer [offer]="offer" [now]="now()" [busy]="rollbackBusy()" (rollback)="rollback.emit($event)" />
+  }
+  <div class="env-card__footer">
+    <app-deploy-actions [options]="ownActions()" [environmentNames]="names()" [state]="actionState()"
+      [groupLabel]="'Deploy actions for ' + environment().name" (startAction)="startAction.emit($event)" />
+    <div class="env-card__actions">
+      @if (environment().lastRun?.deploymentId; as runId) {
+        <button type="button" data-testid="deploy-environment-open-run"
+                [attr.aria-label]="'Open last run for ' + environment().name"
+                (click)="openRun.emit(runId)">Open last run</button>
+      }
+      @if (environment().awaitingApproval) {
+        <button type="button" data-testid="deploy-environment-review-approval"
+                [attr.aria-label]="'Review the pending approval for ' + environment().name"
+                (click)="reviewApproval()">Review approval</button>
+      }
+      @if (environment().artifact) {
+        <button type="button" data-testid="deploy-environment-stop" [attr.aria-label]="'Stop ' + environment().name"
+                [appPendingButton]="busy()" pendingLabel="Working…"
+                (click)="stop.emit(environment().id)">Stop</button>
+      }
+      <button type="button" data-testid="deploy-environment-remove" [attr.aria-label]="'Remove ' + environment().name"
+              [appPendingButton]="busy()" pendingLabel="Working…"
+              (click)="remove.emit(environment().id)">Remove</button>
+    </div>
   </div>
 </article>

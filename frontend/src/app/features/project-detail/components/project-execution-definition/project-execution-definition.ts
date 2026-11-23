@@ -1,5 +1,5 @@
 import { HttpClient } from '@angular/common/http';
-import { ChangeDetectionStrategy, Component, OnInit, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, effect, inject, input, signal, untracked } from '@angular/core';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import { ProjectPipelineDefinitionComponent } from '../project-pipeline-definition/project-pipeline-definition';
@@ -99,6 +99,7 @@ interface DefinitionPreview {
 })
 export class ProjectExecutionDefinitionComponent implements OnInit {
   readonly projectName = input.required<string>();
+  readonly detectOnOpen = input(false);
 
   private readonly http = inject(HttpClient);
   readonly loading = signal(true);
@@ -111,6 +112,12 @@ export class ProjectExecutionDefinitionComponent implements OnInit {
   readonly justification = signal('');
   readonly message = signal<string | null>(null);
   readonly error = signal<string | null>(null);
+
+  constructor() {
+    effect(() => {
+      if (this.detectOnOpen()) untracked(() => this.previewDefinition());
+    });
+  }
 
   ngOnInit(): void {
     this.load();

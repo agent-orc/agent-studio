@@ -1,0 +1,21 @@
+@use '../../../../../styles/mixins' as m;
+@include m.action-buttons;
+
+:host { display: block; min-width: 0; }
+section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--studio-spacing-3);
+  padding: var(--studio-spacing-3);
+  margin-bottom: var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  color: var(--studio-fg);
+  font-size: 12px;
+}
+p { margin: var(--studio-spacing-1) 0; color: var(--studio-fg-muted); }
+span { color: var(--studio-fg-muted); font-variant-numeric: tabular-nums; }
+label { display: grid; grid-template-columns: auto auto; gap: var(--studio-spacing-1); align-content: start; }
+small { grid-column: 2; color: var(--studio-fg-muted); }
+app-routing-cost-preview, .basis, button { grid-column: 1 / -1; }
+button { justify-self: start; }
+@media (max-width: 600px) { section { grid-template-columns: minmax(0, 1fr); } }

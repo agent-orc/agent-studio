@@ -16,6 +16,7 @@ public sealed class HostTelemetrySampler
     }
     private CpuCounters? _previousCpu;
     private (long InPages, long OutPages, DateTime At)? _previousSwap;
+    private (HostNetworkCounters Counters, DateTime At)? _previousNetwork;
     private DateTime _nextAt = DateTime.MinValue;
 
     public HostTelemetrySample? SampleIfDue(
@@ -59,7 +60,27 @@ public sealed class HostTelemetrySampler
                 [("runner worktrees", _options?.WorkDir ?? Environment.CurrentDirectory),
                  ("logs", _options?.StateDir ?? Environment.CurrentDirectory),
                  ("result archives", _options?.SalvageDir ?? Environment.CurrentDirectory)]);
-        return WithConnectivity(sample with { Filesystems = filesystems }, connectivity);
+        var network = OperatingSystem.IsLinux() ? NetworkRate(now) : null;
+        return WithConnectivity(sample with
+        {
+            Filesystems = filesystems,
+            Placement = HostPlacementLocator.Current(_options),
+            NetworkReceiveBytesPerSecond = network?.Receive,
+            NetworkTransmitBytesPerSecond = network?.Transmit,
+        }, connectivity);
+    }
+
+    /// <summary>Bytes per second over every interface except loopback since the previous sample.</summary>
+    private (long Receive, long Transmit)? NetworkRate(DateTime now)
+    {
+        HostNetworkCounters? current;
+        try { current = HostNetworkCounters.Parse(File.ReadLines("/proc/net/dev")); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { current = null; }
+        if (current is null) { _previousNetwork = null; return null; }
+        var rate = _previousNetwork is { } previous
+            ? HostNetworkCounters.Rate(previous.Counters, previous.At, current.Value, now) : null;
+        _previousNetwork = (current.Value, now);
+        return rate;
     }
 
     private HostTelemetrySample SampleLinux(DateTime now, int activeSlots)

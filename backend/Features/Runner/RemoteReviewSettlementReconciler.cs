@@ -199,6 +199,8 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
                 _timeline, task.FolderPath, entry.AttemptId, cardBudget,
                 budgetDecision.DegradedAspects, CardRoundBudgetAction.DegradeToFollowUp);
 
+        DeliveryFailureEvidence.RecordReview(task.FolderPath, entry.Report);
+
         if (entry.Continuation is not null)
         {
             if (_mutations is null || _transitions is null || _timeline is null)

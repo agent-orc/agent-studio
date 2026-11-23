@@ -95,9 +95,7 @@ describe('ReviewHostUpdateComponent', () => {
     http.expectOne('/api/clients/review-1/drain-status').flush({ draining: true, drained: true, running: [] });
     await start;
     const cancel = component.cancel();
-    http.expectOne('/api/clients/review-1/resume').flush({});
-    await Promise.resolve();
-    http.expectOne('/api/clients/review-1/drain-status').flush({ draining: false, drained: false, running: [] });
+    http.expectOne('/api/clients/review-1/deploy-cancel').flush({ draining: false, drained: false, running: [] });
     await cancel;
     expect(component.stage()).toBe('ready');
     expect(component.switchStartedAt()).toBeNull();
@@ -213,9 +211,7 @@ describe('ReviewHostUpdateComponent', () => {
     expect(element.textContent).toContain('Cancel and resume');
 
     const cancel = component.cancel();
-    http.expectOne('/api/clients/review-1/resume').flush({});
-    await Promise.resolve();
-    http.expectOne('/api/clients/review-1/drain-status').flush(notDraining);
+    http.expectOne('/api/clients/review-1/deploy-cancel').flush(notDraining);
     await cancel;
     expect(component.stage()).toBe('ready');
     http.verify();
@@ -242,6 +238,39 @@ describe('ReviewHostUpdateComponent', () => {
     expect(first.component.stage()).toBe('switching');
     expect(second.componentInstance.stage()).toBe('switching');
     expect(second.componentInstance.switchStartedAt()).toBe(switchedAt);
+    first.http.verify();
+  });
+
+  it('refuses a stale cancel after the other operator started the switch and adopts that switch', async () => {
+    const quiet = { draining: true, drained: true, running: [], drainRequestedAt: '2026-11-15T09:00:00Z' };
+    const first = mount();
+    await restore(first.http, quiet);
+    const second = TestBed.createComponent(ReviewHostUpdateComponent);
+    second.componentRef.setInput('target', target);
+    second.detectChanges();
+    await restore(first.http, quiet);
+
+    const switchedAt = '2026-11-15T09:05:00Z';
+    const started = first.component.beginSwitch();
+    first.http.expectOne('/api/clients/review-1/deploy-switch').flush({ ...quiet, switchStartedAt: switchedAt });
+    await started;
+    second.detectChanges();
+    expect(second.nativeElement.textContent).toContain('Cancel and resume');
+
+    const cancel = second.componentInstance.cancel();
+    first.http.expectNone('/api/clients/review-1/resume');
+    first.http.expectOne('/api/clients/review-1/deploy-cancel').flush(
+      { error: 'client-switch-started', status: { ...quiet, switchStartedAt: switchedAt } },
+      { status: 409, statusText: 'Conflict' });
+    await cancel;
+    second.detectChanges();
+    const element = second.nativeElement as HTMLElement;
+    expect(second.componentInstance.stage()).toBe('switching');
+    expect(second.componentInstance.switchStartedAt()).toBe(switchedAt);
+    expect(second.componentInstance.message()).toContain('Another operator started the host switch');
+    expect(element.querySelector('[data-testid="review-host-update-verify"]')).not.toBeNull();
+    expect(element.textContent).not.toContain('Cancel and resume');
+    first.http.expectNone('/api/clients/review-1/resume');
     first.http.verify();
   });
 

@@ -159,6 +159,29 @@ Stage P1 of the [deployment Dossier](../operations/bereitstellung/index.html)
 adds a release layer in `backend/Features/Deploy/`. The host deploy queue above
 stays the only executor; releases and runs describe and steer it.
 
+- **Integration release (AGT-3891).** A project without the promotion train
+  needs no shell and no `runner.release` credential. After a card is integrated
+  and the project's own gate is green on the integration branch tip (a
+  `integrated-verified` integration record naming the tip, or a green
+  post-merge run on it), Studio packs the tip's committed tree (or the
+  declared static artifact `path`) into a `release-package@sha256:` package,
+  registers it in the artifact registry with builder `studio-integration`,
+  and creates the release, which queues the automatic Staging run. A
+  reconciler checks every project each 15 seconds; a refused attempt for the
+  same commit repeats after 5 minutes. The Releases tab reads
+  `GET /api/projects/{project}/deploy/integration-release` (state, reason and
+  next step) and offers `POST` on the same route as "Create release" when
+  the tip is ready or a refusal can be retried. The POST needs the
+  environment deploy permission for Staging. Studio packs committed files
+  only: a container environment, an artifact path that is build output, a
+  symbolic link in the package, or an explicit `delivery.fullSuite: required`
+  without a green full-suite verdict blocks the release with its reason. A
+  repository that contains `scripts/release/promote-develop-to-main.sh` keeps
+  releasing through the train; Studio creates no integration release for it.
+  A green merge-window run counts as the gate only when project.yml sets
+  `delivery.deployAfterGreenWindow: true` (AGT-3966); a window runs only the
+  base suite and the affected routine suites, while a nightly run counts
+  without the opt-in.
 - **Release.** A green gate release (`POST /api/deploy/gate-releases`, or the
   operator route `POST /api/projects/{project}/environments/releases`) records an
   immutable release: version `yyyy.MM.dd.N`, commit, artifact digests, a process
@@ -260,6 +283,11 @@ stays the only executor; releases and runs describe and steer it.
   invalid, with their pending promotions: an approved release supersedes waiting
   deploys of older releases and waiting redeploys and rollbacks. The AGT-3176
   promotion and rollback routes answer through the same rules.
+- **Staging started by a person.** A Staging deploy or redeploy that a person
+  starts opens the same Production promotion as the automatic Staging run,
+  unless one is already open for the artifact or Production already runs this
+  release or a newer one. Its success therefore asks for the same Production
+  approval, with the same 24-hour window.
 - **Deploy run.** Each run of a release in an environment has the state
   `queued`, `running`, `succeeded`, `failed`, `cancelled` or `awaiting-approval`,
   and the steps `approval` (when protected), the ordered schema 2
@@ -273,8 +301,26 @@ stays the only executor; releases and runs describe and steer it.
   failed deploy gets no automatic rollback when a newer job already waits for
   the environment, so the rollback cannot replace that newer release.
 - **Redeploy and rollback.** Redeploy runs the environment's current release
-  again. Rollback runs the latest successful release older than the current one.
-  Both follow the same approval rule. When the environment's first release has
+  again. Rollback runs the latest successful release older than the current one
+  that had no incident while it ran in that environment; the releases it skips
+  are named. The runtime health ledger (`release-runtime-health.json`, written
+  by `ReleaseRuntimeHealthPolicy`) records a release as `incident` when a
+  health-check incident started while it was current, or when the host
+  reported a crash loop or crash rollback of its artifact, and as `healthy`
+  after a passing probe. The deploy-time health step alone never marks a
+  release healthy. When every older release had an incident, the target is
+  the release before the current one, marked as such, and the rollback runs
+  only with `acceptIncidentTarget`; the UI asks the owner to type its version.
+  `GET /deploy/status` names the target per environment (`rollbackTarget`).
+  The UI offers the rollback on the environment card, in the run drawer, on an
+  open health incident and in deployment tools, always through the lifecycle
+  route after a confirmation that names current and target release. For
+  Production the confirmation is the Owner or Maintainer approval
+  (`approve: true`). Both follow the same approval rule. While
+  `releaseUncertain` is set, the confirmation does not name the lifecycle
+  baseline as the current release, and the run drawer offers no rollback. A
+  refused rollback shows the server reason and the choice to redeploy a known
+  release or fix forward. When the environment's first release has
   no older release to return to, the AGT-3176 rollback route falls back to the
   artifact history (the artifact deployed before releases existed), only while
   the environment is idle and only when the history target belongs to no
@@ -326,13 +372,43 @@ matching `tenantStatuses` and drops rows without one; project access filtering
 still applies. The workspace dashboard uses these statuses to show each
 tenant's current release, deployment age, state and health.
 
+The matrix has one row per project this instance watches (AGT-3949). A project
+whose repository declares no environment has `environmentsDeclared: false` and
+no statuses; the dashboard lists it as "No environments declared" with the way
+to declare them. A project the workspace registers but this instance does not
+watch has no row, and the dashboard requests delivery lanes only for the rows
+it received. The source project of the running Studio carries the instance as
+a Production status even without declarations (see
+[instance deploy records](../operations/instance-deploy-records.md)). That
+status has `instance: {liveSinceUtc, lastRun}`; `lastRun` is `{id, state,
+version, commitSha, startedAtUtc, atUtc, step}` with `state` `running`,
+`succeeded`, `failed` or `stalled`. The generic `currentDeployment.state` of
+the same run reads a stalled run as `failed`. `instance` is null for every
+declared environment. `GET /api/projects/{project}/deploy/delivery-lanes` of
+the source project places cards by the live commit: the instance lane holds the
+cards that commit contains, "Waiting for release" the cards integrated after
+it. The dashboard renders the first twelve cards of a lane and a "Show all"
+control for the rest.
+
 Routes, under `/api/projects/{project}/deploy`: `GET environments`, `status`
 (one EnvironmentStatus per environment), `releases`, `releases/{id}`,
 `releases/{id}/notes`, `cards`, `deployments[?environmentId=]`,
-`deployments/{id}`, `deployments/{id}/log[?step=]` and `audit`;
+`deployments/{id}`, `deployments/{id}/log[?step=]`, `audit`, `actions` and
+`releases/{id}/actions`;
 `POST releases/{id}/deployments` (`{environmentId, approve, tenant?, guidedFailure?}`),
 `deployments/{id}/approve`, `deployments/{id}/reject`, `deployments/{id}/cancel`,
-`environments/{id}/redeploy` and `environments/{id}/rollback` (`{approve, tenant?, guidedFailure?}`).
+`environments/{id}/redeploy` and `environments/{id}/rollback` (`{approve, tenant?, guidedFailure?}`);
+`PUT releases/{id}/notes/{cardKey}` (`{text}`) rewrites one card's note of a
+release (AGT-3908).
+`actions` returns, per environment, the deploy of the next release and the
+redeploy of the current one; `releases/{id}/actions` returns, per environment,
+the deploy of that release or its redeploy where it is current. Each
+`DeployActionOption` has `environmentId`, `action` (`deploy` or `redeploy`),
+`releaseId`, `releaseVersion`, `allowed`, `needsApproval` and `reason`, as the
+lifecycle decides them for the caller: `needsApproval` means the request waits
+for an Owner or Maintainer, and a refused action carries the lifecycle's
+reason. The Deploy overview cards and the release detail render these options
+as Deploy to, Request approval and Redeploy buttons.
 `GET /api/deploy/matrix` returns the workspace dashboard rows, filtered to the
 caller's projects. `GET /api/deploy/cards` returns card environment badges across
 the caller's projects. The project-scoped `cards` route returns the same badges
@@ -345,7 +421,26 @@ including divergent release histories. `rolled-back` marks a card withdrawn by
 a successful rollback and stays visible through later queued or failed attempts;
 `not-deployed` means the card has no deployment in that environment. The
 release notes response has `releaseId`, `version`, `preview` and `notes` entries
-with `cardKey` and product-facing `text` captured from the included cards.
+with `cardKey`, product-facing `text`, `maintenance` and `edited`. `text` is the
+edited note, else the card title; `edited` says which. `maintenance` marks a
+chore card, which sorts last and is left out of the notes the release view
+shows.
+
+`PUT releases/{id}/notes/{cardKey}` requires `project.docs.write` on the project
+(`RoutePermissionCatalog`): release notes are product copy, written like project
+documentation, so Developer, Admin and Owner may edit them and a deploy
+permission is not needed. The body is `{text}` with at most 500 characters after
+trimming; longer text returns 400. Empty or missing text removes the edit, and
+the note shows the card title again. An unknown release, or a card key the
+release does not contain, returns 404; the card key matches case-insensitively.
+The response is the release's notes response after the edit. Each edit appends
+a `release-note-edited` entry with the actor to `audit.jsonl`.
+
+Edits live in
+`<TaskRepository>/deployments/projects/<project>/release-notes.json`, next to
+the releases, so release files stay write-once. The file maps release id to an
+object of card key to edited text, and holds only edited notes. It is written
+as a flushed temporary file and moved into place.
 Deployment `state` uses `queued`, `running`, `succeeded`, `failed`, `cancelled`
 and `awaiting-approval`. Step `state` also permits `pending` and `skipped`.
 EnvironmentStatus `health` is `healthy`, `unhealthy` or `unknown`.

@@ -24,9 +24,11 @@ export interface OperatorAttentionResponse {
 
 /** The decision-event classes of the operator stream, in the order the list shows them. */
 export type AttentionClass =
-  | 'incident' | 'decision' | 'dossier' | 'escalation' | 'human-review' | 'push-blocked' | 'gate-host' | 'batch' | 'batch-record' | 'push'
+  | 'incident' | 'decision' | 'dossier' | 'escalation' | 'human-review' | 'push-blocked' | 'gate-host' | 'post-merge'
+  | 'red-develop'
+  | 'batch' | 'batch-record' | 'push'
   | 'quota'
-  | 'host' | 'review-host' | 'installation' | 'other';
+  | 'host' | 'disk' | 'review-host' | 'installation' | 'other';
 
 /** Where a row's primary action leads. */
 export type AttentionTarget = 'card' | 'operations' | 'dossiers' | 'backups' | 'credentials' | 'batch-gate' | 'cli-usage' | 'hosts' | 'activity';
@@ -47,10 +49,15 @@ const CLASSES: readonly AttentionClassSpec[] = [
   { key: 'push-blocked', label: 'Push blocked', action: 'Open card', target: 'card' },
   // AGT-3792: the gate host itself, or the RemoteGate:SshHost setting, is the repair.
   { key: 'gate-host', label: 'Gate host unreachable', action: 'Open environment', target: 'hosts' },
+  // AGT-3965: a fast or balanced project integrates untested while no post-merge run reports.
+  { key: 'post-merge', label: 'Post-merge runs missing', action: 'Open operations', target: 'operations' },
+  // RT-1 (AGT-3988): a red develop incident of two hours asks the owner; the repair card holds the evidence.
+  { key: 'red-develop', label: 'Develop red for two hours', action: 'Open repair card', target: 'card' },
   { key: 'batch', label: 'Batch needs attention', action: 'Open batch panel', target: 'batch-gate' },
   { key: 'batch-record', label: 'Batch record unreadable', action: 'Open batch gate', target: 'batch-gate' },
   { key: 'push', label: 'Overdue pending push', action: 'Open batch gate', target: 'batch-gate' },
   { key: 'quota', label: 'Quota exhausted or fallback active', action: 'Open CLI usage', target: 'cli-usage' },
+  { key: 'disk', label: 'Host disk space low', action: 'Open hosts', target: 'hosts' },
   { key: 'host', label: 'Host not claiming', action: 'Open hosts', target: 'hosts' },
   { key: 'review-host', label: 'Review host differs from Stable', action: 'Update review host', target: 'hosts' },
   { key: 'installation', label: 'Installation', action: 'Open settings', target: 'backups' },
@@ -66,6 +73,8 @@ const CLASS_OF_TYPE: Readonly<Record<string, AttentionClass>> = {
   'escalation.opened': 'escalation',
   'human-review.ready': 'human-review',
   'gate-host.unreachable': 'gate-host',
+  'post-merge.missing': 'post-merge',
+  'post-merge.red-incident': 'red-develop',
   'batch.red': 'batch',
   'batch.isolating': 'batch',
   'batch.running-without-gate': 'batch',
@@ -77,6 +86,7 @@ const CLASS_OF_TYPE: Readonly<Record<string, AttentionClass>> = {
   'quota.fallback-active': 'quota',
   'backend.stalled': 'host',
   'progress.idle-with-ready': 'host',
+  'host.disk-pressure': 'disk',
   'review-host.drift': 'review-host',
 };
 

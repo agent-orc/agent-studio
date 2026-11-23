@@ -109,7 +109,11 @@ const DOCK_POLL_MS = 250;
 const DOCK_TOAST_ROOM_PX = 200;
 
 /** Surfaces under the tab bar that a below-toolbar toast must not cover. */
-const DOCK_BELOW = ['[data-testid="task-move-refusal"]', '[data-testid="acceptance-refusal-form"]'];
+const DOCK_BELOW = [
+  '[data-testid="task-move-refusal"]',
+  'app-mobile-lane-primary [data-testid="acceptance-refusal"]',
+  '[data-testid="acceptance-refusal-form"]',
+];
 
 /**
  * The viewport y below which a below-toolbar toast may sit: under the task

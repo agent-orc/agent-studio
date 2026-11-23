@@ -71,11 +71,18 @@ describe('RemoteHostsPanelComponent', () => {
       host: 'studio-api', observedAt: '2026-11-10T12:00:00Z', level: 'warning',
       reason: 'Instance data is low.', filesystems: [{ purpose: 'instance data', path: '/data',
         freeBytes: 12, totalBytes: 100 }],
+      remoteHosts: [{ id: 'gate-ssh:gate-host', host: 'gate-host', observedAt: '2026-11-10T12:00:00Z',
+        level: 'critical', reason: 'Gate disk is critical; admission paused.',
+        filesystems: [{ purpose: 'gate work', path: '/srv/gates', freeBytes: 6, totalBytes: 246 }] }],
     });
     for (const request of http.match('/api/clients')) request.flush([]);
     http.expectOne('/api/v1/management/remote-hosts').flush([]);
     fixture.detectChanges();
-    expect(hosts().map(host => host.id)).toEqual(['api-host']);
+    expect(hosts().map(host => host.id)).toEqual(['api-host', 'gate-ssh:gate-host']);
+    const gate = hosts().find(host => host.id === 'gate-ssh:gate-host')!;
+    expect(gate.status).toBe('degraded');
+    expect(gate.diskPressureReason).toContain('admission paused');
+    expect(gate.filesystems?.[0].path).toBe('/srv/gates');
     fixture.destroy();
   });
 

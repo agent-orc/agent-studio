@@ -70,7 +70,7 @@ public sealed class WorkspaceQuotaRunnerLaunchTests : IDisposable
         // Refused at the launch boundary: no CLI execution, and the card stays in Ready.
         Assert.Null(outcome.Execution);
         Assert.Equal(RunRejectReason.QuotaCapExceeded, outcome.Rejection!.Reason);
-        Assert.Contains("Weekly quota reached", outcome.Rejection.Message, StringComparison.Ordinal);
+        Assert.Contains("weekly core hours", outcome.Rejection.Message, StringComparison.Ordinal);
         Assert.True(Directory.Exists(job));
         Assert.Null(runner.WorkspaceQuotaRefusal());
     }

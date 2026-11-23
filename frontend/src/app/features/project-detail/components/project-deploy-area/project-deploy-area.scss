@@ -29,6 +29,7 @@
 .deploy-area__refusal { border-radius: 8px; background: color-mix(in srgb, var(--studio-warn) 10%, var(--studio-surface)); padding: var(--studio-spacing-3); margin-bottom: var(--studio-spacing-4); }
 .deploy-area__refusal h2 { font-size: 1rem; margin-bottom: var(--studio-spacing-2); }
 .deploy-area__refusal p + p { margin-top: var(--studio-spacing-2); }
+.deploy-area__rollback-error { border-radius: 8px; background: color-mix(in srgb, var(--studio-error) 10%, var(--studio-surface)); color: var(--studio-fg); padding: var(--studio-spacing-3); margin: 0 0 var(--studio-spacing-4); }
 
 .deploy-section { @include deploy.panel; }
 .deploy-section h2 { margin-bottom: var(--studio-spacing-4); }

@@ -1,14 +1,14 @@
 # Loop Inventory
 
-Every place in the codebase where work can re-enter itself is registered here. The inventory has 13 stable entries. Exhaustion closes repeat admission and raises a named signal; the measured counter does not select a recovery action. Card-scoped callers submit bounded signals to the ReviewDecision engine occurrence. The two host tick loops hold for an explicit operator resume token; the non-card engine occurrence is assigned to OD-S6. The two pickup diagnosis entries have no runtime implementation. The inventory is the single source of truth for the loop-guard layer documented in [agent-contract-pattern.md](./agent-contract-pattern.md) and decided by [ADR-0032](../architecture/decisions/adr-archive.md).
+Every place in the codebase where work can re-enter itself is registered here. The inventory has 13 stable recovery entries and one observation scheduler. Recovery exhaustion closes repeat admission and raises a named signal; the measured counter does not select a recovery action. Card-scoped callers submit bounded signals to the ReviewDecision engine occurrence. The two recovery host tick loops hold for an explicit operator resume token; the non-card engine occurrence is assigned to OD-S6. The two pickup diagnosis entries have no runtime implementation. The inventory is the single source of truth for the loop-guard layer documented in [agent-contract-pattern.md](./agent-contract-pattern.md) and decided by [ADR-0032](../architecture/decisions/adr-archive.md).
 
 When you add a new loop, the same commit must add:
 
-1. An entry below in **Entries** with all fields filled.
+1. An entry below in **Entries** for a recovery loop, or **Observation schedulers** for periodic fact collection and bounded test admission, with all fields filled.
 2. A budget constant in code (named in the entry's `Budget` field).
 3. A breaker test under `backend.Tests/Architecture/` (named in the entry's `Breaker test` field).
 
-CI fails if any entry is missing one of the three. The check runs in `backend.Tests/Architecture/LoopInventoryConsistencyTest.cs` (every CI run, fast, no LLM).
+The registration checks run in `backend.Tests/Architecture/LoopExhaustionSignalBreakerTest.cs` (every guard run, no LLM). The recovery-signal contract and observation registration are checked separately; each observation budget also has its focused behavior tests.
 
 A weekly LLM-driven discovery run (`LoopDiscoveryTest`, `[Trait("Category","Weekly")]`, gated on `LOOP_DISCOVERY=1`) scans the diff since the last green run for new candidate loops and writes proposals to `loop-inventory.md.candidates`. Proposals are committed by a human review, never auto-applied.
 
@@ -105,11 +105,11 @@ Each entry uses the same fields:
 - **Kind:** Post-Guard
 - **Where:** [`backend/Features/Pipeline/IntegrationAgentRoundService.cs`](../../../backend/Features/Pipeline/IntegrationAgentRoundService.cs) (`RemoteIntegrationContinuationPolicy` and `IntegrationAgentRoundService`), invoked by `RemoteDeliveryIntegrationCoordinator` after `MergeIntoIntegrationOutcome.AgentRoundRequired`.
 - **Re-entry trigger:** Direct merge and mechanical three-way/rerere merge both conflict, then the fallback rebase conflicts or cannot preserve a one-to-one delivery commit mapping.
-- **Budget:** `RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds` (exactly 1 automatic agent round per fenced delivery chain). Prior firings are counted from durable automatic `integration_recovery_queued` timeline events with the same `deliveryChainId`, including rounds started by immediate integration and the acceptance rail. The identifier binds the immutable result ref and delivered SHA. A repeated review of that delivery does not replenish the budget; a new fenced delivery does. Legacy events without the identifier count conservatively.
+- **Budget:** `RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds` (exactly 1 automatic agent round per card and integration target, AGT-3968). Prior firings are counted from every durable automatic `integration_recovery_queued` timeline event of the card, including rounds started by immediate integration, the batch gate and the acceptance rail; an event recorded for another `integrationBranch` does not count. A new fenced delivery does not replenish the budget: every round publishes one, which is how AGT-3897 took eight rounds under a limit of one while the budget was keyed by `deliveryChainId`. Legacy events without a delivery identifier still count and are named in the park reason. When the budget is spent the card parks with the conflicting files and the other cards whose integrated commits touched them.
 - **Signal raised:** `loop.integration.attribution-agent-round.exhausted` with measured count, window and attempt; candidate actions: retry, prepare conflict resolution, ask. Re-entry is blocked pending a model or Human Operator decision. When no model is available, the occurrence stays held for the operator.
 - **Breaker test:** [`backend.Tests/Architecture/IntegrationAgentRoundBreakerTest.cs`](../../../backend.Tests/Architecture/IntegrationAgentRoundBreakerTest.cs)
 - **Last fired:** 2026-08-11, AGT-2563 follow-up. A mechanical rebase changed delivery commit cardinality and correctly refused ambiguous SHA attribution, but the card remained in Review until manual requeue.
-- **Notes:** The automatic round saves a `steer` pending intent, retains the prior delivery as superseded history, and queues the original card at the front of Ready. Its prompt lists the structured conflict report's files and prefers merging the integration branch into the delivery branch over rewriting delivery history. Each automatic round records `deliveryChainId`, `deliveryRef`, and `resultSha`. Review epochs remain observable but do not reset this budget.
+- **Notes:** The automatic round saves a `steer` pending intent, retains the prior delivery as superseded history, and queues the original card at the front of Ready. Its prompt lists the structured conflict report's files and prefers merging the integration branch into the delivery branch over rewriting delivery history. Each automatic round records `deliveryChainId`, `deliveryRef`, `resultSha`, `integrationBranch`, `conflictedFiles` and `involvedCards`. Review epochs remain observable but do not reset this budget. A batch conflict with a sibling admitted ahead in the same batch is deferred and never fires this loop.
 
 ### completion.run-timeout-salvage-continuation
 
@@ -180,3 +180,18 @@ Each entry uses the same fields:
 ## Candidates (LLM-proposed, human-reviewed)
 
 This section mirrors `loop-inventory.md.candidates` once the weekly `LoopDiscoveryTest` starts running. Items move from candidates to **Entries** above only after a human review confirms the loop is real and assigns a budget + test. Empty for now.
+
+## Observation schedulers
+
+These loops collect facts and admit bounded work. They do not re-enter card recovery or choose a lifecycle action. Admission remains closed while capacity is unavailable, but the observation poll continues so overdue work stays visible. Their typed attention facts are separate from the thirteen recovery exhaustion signals above.
+
+### post-merge.host-poll
+
+- **Kind:** Tick
+- **Where:** `runner/PostMergeHostScheduler.cs`, `RunForHostAsync` and `TickAsync`.
+- **Re-entry trigger:** One-minute coding-host poll discovers registered post-merge projects and observes their fetched integration branches before and during sequential test execution.
+- **Budget:** `PostMergeHostScheduler.DefaultWindowMinutes = 30` (overridden by project look-ahead minutes); `NightlyRunsPerDay = 1` terminal nightly receipt per UTC date, with admission retries only from 02:15 to 06:15 UTC.
+- **Signal raised:** `pendingWindow.starved` on `/api/develop-states` with fetched tip, opening time, observation time and admission reason; shown on project Operations. This is an observation poll, not a card recovery loop: starvation raises attention without bypassing occupied-slot or load admission. Nightly terminal evidence closes same-day re-entry.
+- **Breaker test:** `backend.Tests/Architecture/PostMergeWindowBudgetTests.cs`; real fake-host execution and restart coverage in `runner.Tests/PostMergeHostSchedulerTests.cs`.
+- **Last fired:** Not yet deployed; AGT-3967 fake-host busy-window reproduction.
+- **Notes:** Project discovery and state use the existing Runner principal. Per-project exceptions are logged and do not skip other projects. Host drain closes new admission; shutdown cancels the poll. Durable run fencing and checkout locks remain in force, including for legacy manual timers.

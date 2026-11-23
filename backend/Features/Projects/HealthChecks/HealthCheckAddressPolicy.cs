@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Projects;
 
@@ -146,5 +147,32 @@ public sealed class HealthCheckConnector
             socket.Dispose();
             throw;
         }
+    }
+}
+
+/// <summary>
+/// The declaration problem behind an <c>address-blocked</c> check and its fix (F16). A refused
+/// target is not an outage: the environment card names the target and where to change it.
+/// </summary>
+public static class HealthAddressProblems
+{
+    private const string NeverProbed = "Loopback, link-local and cloud metadata addresses are never probed.";
+
+    public static string Describe(EnvironmentDeclaration environment, HealthCheckDefinition check)
+    {
+        var target = HealthTargets.Display(check.Target);
+        var host = check.Kind == "http" && Uri.TryCreate(check.Url, UriKind.Absolute, out var uri) ? uri.Host : check.Host ?? "";
+        var literal = IPAddress.TryParse(host.Trim('[', ']'), out var address);
+        var where = environment.Template == "ssh-v2"
+            ? $"healthChecksAllowPrivateNetwork: true on {environment.Name} under environments in {ProjectPreparationPaths.Definition}"
+            : $"\"healthChecksAllowPrivateNetwork\": true in {ProjectEnvironmentService.DeclarationDirectory}/{environment.Id}.json";
+        if (check.AllowPrivateNetwork || literal && HealthCheckAddressPolicy.Classify(address!) == HealthAddressClass.Blocked)
+            return $"Health check {check.Id} targets {target}, which the control plane never probes. {NeverProbed} "
+                + "Point the check at an address the control plane can reach.";
+        if (literal && HealthCheckAddressPolicy.Classify(address!) == HealthAddressClass.Private)
+            return $"Health check {check.Id} targets {target}, a private network address the control plane probes only on opt-in. "
+                + $"If {environment.Name} is hosted on a LAN or VPN the control plane can reach, set {where}.";
+        return $"Health check {check.Id} targets {target}, which resolves only to addresses the control plane does not probe. "
+            + $"If it is a private LAN or VPN address the control plane can reach, set {where}. {NeverProbed}";
     }
 }

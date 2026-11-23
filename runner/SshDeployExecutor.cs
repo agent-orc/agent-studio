@@ -75,8 +75,10 @@ public sealed class SshDeployExecutor
                     || item.Value.Contains('\n') || item.Value.Contains('\r')))
                     throw new InvalidOperationException("Invalid deploy variable.");
                 Digest(artifact);
+                // M5: Studio's telemetry variables reach the container even when the compose file does not map them.
+                var inject = DeployTelemetryVocabulary.Variables.Where(variables.ContainsKey).ToArray();
                 await Remote(host, new { action = "compose", file = step.ComposeFile, service = step.Service,
-                    image = artifact, variables, project = composeProject }, limit.Token, log, variables);
+                    image = artifact, variables, project = composeProject, inject }, limit.Token, log, variables);
             }
             await log($"Completed {step.Step} on {host}.");
         }
@@ -232,6 +234,9 @@ public sealed class SshDeployExecutor
                 with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.yml', delete=False) as override:
                     os.chmod(override.name, 0o600)
                     override.write('services:\n  ' + json.dumps(p['service']) + ':\n    image: ' + json.dumps(p['image']) + '\n')
+                    inject = p.get('inject') or []
+                    if inject:
+                        override.write('    environment:\n' + ''.join('      - ' + json.dumps(name) + '\n' for name in inject))
                     overridefile = override.name
                 try:
                     base = ['docker', 'compose']

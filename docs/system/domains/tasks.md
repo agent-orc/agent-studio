@@ -813,6 +813,13 @@ The repository URL is stored as the well-known `repo` project URL. New projects
 never place task data in the product checkout; legacy in-repository stores stay
 in place until an explicit migration.
 
+Archiving a registry project removes its storage path from live watch-path
+discovery even when a legacy `WatchPaths` entry still names that store. The
+project then leaves the board, Explorer, picker, and operator attention list.
+Open task tabs retain their task identity and show an archived-project notice;
+Workspace Settings owns Restore. Restoring the project makes its registry path
+eligible for scanning again.
+
 The same basic values remain editable after creation in Project Settings.
 `PUT /api/projects/{PROJ-NNN}` is the canonical update mutation for display
 name, short code, workspace, colour, repository checkout, working directory,
@@ -1197,12 +1204,13 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   cards remain for human review. A recoverable `conflict-skipped` card
   in `5-human-review` or `5e-escalated` receives the shared integration-recovery
   steer and is promoted to the top of `2-ready`. A generic decision-card marker
-  cannot suppress this recovery after a passed review. After two automatic
-  recovery rounds for the same fenced delivery it stays escalated with a reason
-  such as `automatic recovery budget used: 2/2 for delivery 5cd6b1d4bc07`.
-  Re-reviewing one delivery shares that budget across review epochs, while a new
-  result ref and delivered SHA start a fresh one. Identifier-less legacy rounds
-  count conservatively and are named in the park reason. The `orchestrator-hold` tag and entries
+  cannot suppress this recovery after a passed review. Once the card's
+  automatic recovery rounds for its integration target are spent it stays
+  escalated with a reason such as
+  `automatic recovery budget used: 1/1 for this card on develop`. Neither a
+  repeated review nor a new result ref and delivered SHA restart the budget
+  (AGT-3968). Identifier-less legacy rounds count conservatively and are named
+  in the park reason. The `orchestrator-hold` tag and entries
   in `AcceptanceRail:HoldList` match task id, key, or tag and suppress every
   automatic action. The first eligible reviewed conflict in an operator review
   epoch also writes a task-owned `logs/integration-bounce/<idempotency-key>.json`

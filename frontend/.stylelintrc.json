@@ -121,6 +121,7 @@
         "src/app/features/board/components/job-column/job-column.scss",
         "src/app/features/board/components/task-card/task-card.component.scss",
         "src/app/features/board/components/task-column/task-column.scss",
+        "src/app/features/project-detail/components/integration-conflicts/integration-conflicts.scss",
         "src/app/features/project-detail/components/project-proposals-panel/project-proposals-panel.component.scss",
         "src/app/features/cli/components/cli-admin-panel/cli-admin-panel.scss",
         "src/app/features/cli/components/cli-console/cli-console.scss",
@@ -188,6 +189,9 @@
     {
       "comment": "Scoped spacing-token enforcement for the lane rail and new components. Padding/margin/gap must source --studio-spacing-* tokens. If a raw value is structurally necessary, use a targeted disable with rationale.",
       "files": [
+        "src/app/features/cli/components/routing-cost-preview/routing-cost-preview.component.scss",
+        "src/app/features/cli/components/economy-routing-preview/economy-routing-preview.component.scss",
+        "src/app/features/task-detail/components/prompt-pane/overview-pane/card-pin-mode/card-pin-mode.component.scss",
         "src/app/features/retention/**/*.scss",
         "src/app/features/batch-gate/batch-phase-metrics/batch-phase-metrics.scss",
         "src/app/components/error-dialog/error-dialog.component.scss",
@@ -233,6 +237,7 @@
         "src/app/features/quota/components/quota-curve/quota-curve.scss",
         "src/app/features/quota/components/quota-forecast-panel/quota-forecast-panel.scss",
         "src/app/features/board/components/task-column/task-column.scss",
+        "src/app/features/project-detail/components/project-setup-header/project-setup-header.scss",
         "src/app/features/studio-shell/_studio-tab.scss",
         "src/app/features/studio-shell/components/explorer-workspace-tree/_row-actions.scss",
         "src/app/features/secrets/project-secrets-page/project-secrets-page.component.scss",
@@ -355,7 +360,8 @@
         "src/app/features/project-detail/components/quality-studio-connection-settings/quality-studio-connection-settings.component.scss",
         "src/app/features/board/components/lane-card-window/lane-card-window.scss",
         "src/app/features/board/components/task-column/_task-column-drop-zone.scss",
-        "src/app/features/board/components/board-group-switcher/board-group-switcher.scss"
+        "src/app/features/board/components/board-group-switcher/board-group-switcher.scss",
+        "src/app/features/project-detail/components/rollback-offer/rollback-offer.scss"
       ],
       "rules": {
         "color-no-hex": null,

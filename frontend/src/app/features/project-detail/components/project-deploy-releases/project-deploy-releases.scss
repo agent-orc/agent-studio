@@ -42,6 +42,30 @@
   &[aria-current='true'] { background: var(--studio-nav-active-bg); border-color: var(--studio-accent); }
 }
 
+.releases__next {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  justify-items: start;
+  margin-bottom: var(--studio-spacing-4);
+  padding: var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: 6px;
+  background: var(--studio-surface-muted);
+
+  p { margin: 0; overflow-wrap: anywhere; }
+  [role='alert'] { color: var(--studio-error); }
+}
+.releases__create {
+  @include deploy.button;
+  margin-top: var(--studio-spacing-1);
+  border-color: var(--studio-accent);
+  background: var(--studio-accent);
+  color: var(--studio-on-accent);
+
+  &:hover:not(:disabled) { background: var(--studio-accent); filter: brightness(1.06); }
+  &:disabled { cursor: progress; opacity: 0.7; }
+}
+
 .releases__detail h3 { margin: 0 0 var(--studio-spacing-3); color: var(--studio-fg-strong); font-size: 1rem; }
 .releases__verdict { margin: 0 0 var(--studio-spacing-3); color: var(--studio-fg-muted); overflow-wrap: anywhere; }
 .releases__quality { margin-bottom: var(--studio-spacing-4); }
@@ -51,10 +75,19 @@
 .releases__quality-cards li { display: flex; justify-content: space-between; gap: var(--studio-spacing-3); border-bottom: 1px solid var(--studio-border); padding: var(--studio-spacing-1) 0; }
 .releases__quality button { @include deploy.button; }
 .releases__facts { @include deploy.fact-list; }
+.releases__deploy { margin-top: var(--studio-spacing-4); }
+.releases__deploy h4 { margin: 0 0 var(--studio-spacing-2); color: var(--studio-fg-strong); }
+.releases__deploy p { margin: 0; }
 .releases__digests { margin: 0; padding: 0; list-style: none; }
 .releases__pages { display: flex; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-3); }
 .releases__pages button { @include deploy.button; }
 
 @media (max-width: 1100px) {
   .releases__layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+.releases__secret-gaps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
 }

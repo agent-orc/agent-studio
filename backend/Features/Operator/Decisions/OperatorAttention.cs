@@ -33,13 +33,15 @@ public sealed record OperatorAttentionResponse(IReadOnlyList<OperatorAttentionIt
 public static class OperatorAttention
 {
     public static OperatorAttentionResponse Project(
-        IEnumerable<OperatorDecisionFact> facts, OperatorDecisionReader reader)
+        IEnumerable<OperatorDecisionFact> facts, OperatorDecisionReader reader,
+        Func<string, bool>? activeProject = null)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var items = facts
             .Where(fact => fact.Type != OperatorDecisionTypes.WatcherHeartbeat
                 && fact.Type != OperatorDecisionTypes.DeployCompleted
                 && OperatorDecisionPolicy.Shows(fact.Type, fact.Project, reader)
+                && (fact.Project is null || activeProject is null || activeProject(fact.Project))
                 && seen.Add(fact.Key))
             .OrderBy(fact => fact.Type == OperatorDecisionTypes.EnvironmentIncidentOpen ? 0 : 1)
             .ThenBy(fact => fact.ObservedAtUtc)

@@ -948,6 +948,9 @@ public static class LeaseEndpoints
                 // same order the local runner and the board use.
                 var eligible = LaneSortApplier.PickupOrder(routable, settings.Get);
                 var occupiedByProject = ProjectExecutionPolicy.ProjectOccupancy(liveSnapshot);
+                // DS-0: the scope comparison set per project, built once per
+                // claim and only for a project that has a candidate.
+                var overlapSets = new Dictionary<string, OverlapComparisonSet.ProjectSet>(StringComparer.OrdinalIgnoreCase);
 
                 TaskInfo? candidate = null;
                 QuotaAdmissionPlan? candidateQuotaPlan = null;
@@ -974,6 +977,38 @@ public static class LeaseEndpoints
                     if (!projectSlot.HasSlot)
                     {
                         RecordRejection(task, "project-concurrency-full", projectSlot.Detail);
+                        continue;
+                    }
+                    // DS-0 (DS-D10 B): the remote claim applies the pick-gate
+                    // scope rule as the local pickup does, against the leased
+                    // running cards of the project and, under the in-flight
+                    // window, every card that started and has not integrated.
+                    // Slots stay with the host and project checks above.
+                    var overlapWindow = OverlapWindows.Resolve(taskProjectSettings);
+                    if (!overlapSets.TryGetValue(task.ProjectName, out var overlapSet))
+                    {
+                        overlapSet = OverlapComparisonSet.ForProject(
+                            liveSnapshot, task.ProjectName, overlapWindow, TaskScopePrediction.Predict);
+                        overlapSets[task.ProjectName] = overlapSet;
+                    }
+                    var overlap = ParallelSlotPolicy.DecideOverlap(
+                        task.Id,
+                        TaskScopePrediction.Predict(task),
+                        overlapSet.Running,
+                        OverlapComparisonSet.For(task, overlapSet.InFlight),
+                        overlapWindow);
+                    if (!overlap.Admitted)
+                    {
+                        RecordRejection(task, RunnerPickupWaitCodes.ParallelConflict, overlap.Reason);
+                        if (overlap.IsScopeConflict)
+                            logger.LogInformation(
+                                "[taskboard] overlap-serialize path=remote-claim window={Window} project={Project} candidate={Candidate} conflict={Conflict} lane={Lane} prefix={Prefix} runner={Runner}",
+                                overlap.Window, task.ProjectName, task.Id, overlap.ConflictTaskId,
+                                overlap.ConflictLane, overlap.SharedPrefix, req.RunnerName);
+                        else
+                            logger.LogInformation(
+                                "[taskboard] remote claim skipping {Candidate} on {Project} for {Runner}: {Reason}",
+                                task.Id, task.ProjectName, req.RunnerName, overlap.Reason);
                         continue;
                     }
                     var buildProfileGate = BuildProfileGate.Evaluate(taskProjectSettings.BuildProfile);
@@ -1971,15 +2006,14 @@ public static class LeaseEndpoints
                 task,
                 attemptId,
                 req.RunnerId,
-                req.OutcomeDecision?.RawFacts.EffectiveModel);
+                req.OutcomeDecision?.RawFacts.EffectiveModel,
+                req.SessionContinuation);
             if (req.SessionContinuation is { } completedSession)
             {
                 AgentStudio.Runner.SessionContinuationLedgerStore.Append(
                     task.FolderPath,
                     AgentStudio.Runner.SessionContinuationLedgerStore.WithReceiptFallback(
                         completedSession, tokenReceipt.TotalTokens));
-                if (!string.IsNullOrWhiteSpace(completedSession.CapturedSessionId))
-                    sessions.BackfillLatestSessionEventCapturedId(task.Id, completedSession.CapturedSessionId, task.WatchPath);
             }
             if (!tokenReceipt.Persisted && !string.IsNullOrWhiteSpace(tokenReceipt.Warning))
             {
@@ -2158,6 +2192,25 @@ public static class LeaseEndpoints
                     }
                     else
                     {
+                        // AGT-3968: the runner reports the round's start head as
+                        // its base, and that head already holds the runner's
+                        // develop merge. A round that adds no commit of its own
+                        // (AGT-3905, AGT-3914) has an empty pickup range and its
+                        // result SHA would never be recorded for this attempt.
+                        var continuationRange = false;
+                        if (deliveryRange.Commits.Count == 0 && task.Commits.Count > 0)
+                        {
+                            var widened = git.InspectRemoteDeliveryCommitRange(
+                                repoRoot, deliveryBranch, resultSha, req.IntegrationBranch,
+                                expectedBaseSha: null, ct, taskKey: req.TaskKey);
+                            if (widened.Success && widened.Commits.Count > 0)
+                            {
+                                deliveryRange = widened;
+                                continuationRange = true;
+                            }
+                        }
+                        var integrationRefForParents = "refs/remotes/origin/"
+                            + TaskIntegrationBranch.Name(deliveryRange.IntegrationBranch);
                         remoteAttribution = RemoteCommitAttributionGuard.Attribute(
                             req.TaskKey,
                             deliveryBranch,
@@ -2165,8 +2218,8 @@ public static class LeaseEndpoints
                             req.Repository,
                             RemoteCommitAttributionGuard.CardReferencedKeys(task),
                             task.Commits,
-                            parent => git.IsAncestor(repoRoot, parent,
-                                "refs/remotes/origin/" + TaskIntegrationBranch.Name(deliveryRange.IntegrationBranch)));
+                            parent => git.IsAncestor(repoRoot, parent, integrationRefForParents),
+                            continuationRange);
                         attributionWarning = string.Join(" ", new[]
                             { deliveryRange.Warning, remoteAttribution.Warning }
                             .Where(value => !string.IsNullOrWhiteSpace(value)));
@@ -3507,7 +3560,8 @@ public static class LeaseEndpoints
             ? null
             : ModelMetadataRegistry.ResolveThinkingLevel(cliType, model, thinkingLevel);
 
-        var modeFraming = BuildModeFraming(task, prompts, dossierMaintenance);
+        var modeFraming = DeliveryFailureEvidence.Append(task.FolderPath,
+            BuildModeFraming(task, prompts, dossierMaintenance) ?? string.Empty);
 
         var emergency = orchestratorDefaults?.ResolveCodingEmergencyLimit(task.ProjectName)
             ?? (AgentStudio.TaskServer.Contracts.CodingEmergencyLimit.DefaultSeconds, "platform");

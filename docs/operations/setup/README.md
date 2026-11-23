@@ -40,12 +40,14 @@ and one review runner.
 | [docker.md](./docker.md) | The recommended one-box installation from this checkout, plus its operations: credentials, backup, update, and network binding. |
 | [contributor-setup.md](./contributor-setup.md) | Development seat for contributors who edit, test, or debug Agent Studio itself on Linux or Windows. Not a product installation path. |
 | [onboard-a-project.md](./onboard-a-project.md) | Product workflow for project creation through the UI or API, central task-store rules, runtime activation, and troubleshooting. |
+| [library-releases.md](./library-releases.md) | Declare a project release command and branch, preview it, and release after verification. |
 | [onboard-an-agent-cli.md](./onboard-an-agent-cli.md) | A new CLI (Claude, Codex, Copilot, Gemini) needs to be installed and made auto-runnable on this machine. Includes the load-bearing **Codex on Windows sandbox quirk**. |
 | [your-first-task.md](./your-first-task.md) | First use after installation: first-run checklist, project creation, execution location, pickup mode, `project.yml`, review, and Accept. |
 | [troubleshooting.md](./troubleshooting.md) | FAQ-style: sandbox errors, pickup mode changed after failures, a pickup mode change refused, crash recovery, quota probe stuck on onboarding. |
 | [linux-runner-host.md](./linux-runner-host.md) | Running a task on a remote Linux host with the standalone `agent-runner` (RM-5): provision, configure, and drive one task end-to-end via the Task Server API. |
 | [workstation-runner-host.md](./workstation-runner-host.md) | Publish the same runner host for a Windows workstation, configure bounded local roots, tools and preview evidence, and verify the claim contract. |
 | [preparation-isolation-orchestrator.md](./preparation-isolation-orchestrator.md) | Repository-owned project preparation, content-addressed executor caches, stable checkouts, leased worktrees, and the M1 boundary with later isolation and healing stages. |
+| [structure-placement.md](./structure-placement.md) | Operations / Structure: which hosts show without a declaration, how container, VM and physical nesting comes from the hosts, the placement file apart from connectivity, the facts per node and link, and live updates. |
 | [multi-machine.md](./multi-machine.md) | Guided Linux setup across a Control Plane machine and one or more Agent Hosts, including the join-token flow, topology diagram, and verification. |
 | [website-onboarding-template.md](./website-onboarding-template.md) | Source copy for the marketing website download page and remote topology. Website integration remains owned by MKT/AOW. |
 | [remote-runner-persistent-connection.md](./remote-runner-persistent-connection.md) | Unattended remote operation: configure the Task Server-owned SSH reverse link, inspect its resource and operator-feed transitions, and use the runner's `--health-check`. The scheduled keeper is an emergency path. |

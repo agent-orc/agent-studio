@@ -65,6 +65,7 @@ import {
   type MergeAcceptView,
   type TriageButton,
 } from './features/task-detail/runtime';
+import { AcceptanceReadinessStore } from './features/acceptance-readiness';
 import {
   buildComposerLocationContext,
   OrchestratorFeedStore,
@@ -170,7 +171,6 @@ import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
 import { ServerCheckoutBoardNoticeComponent } from './features/server-checkout';
-import { AcceptanceReadinessStore } from './features/acceptance-readiness';
 const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   prompt: false,
   protocol: false,
@@ -395,8 +395,9 @@ export class App implements OnInit, OnDestroy {
    * the "+ Add workspace" affordance fires.
    */
   readonly workspaceManager = inject(WorkspaceManagerService);
-  private readonly projectRegistryChangedFx = effect(() => {
-    if (this.workspaceManager.registryChanged() > 0) this.loadWatchPaths();
+  private readonly registryWatchPathRefresh = effect(() => {
+    if (this.workspaceManager.registryChanged() === 0) return;
+    untracked(() => this.loadWatchPaths());
   });
   readonly workspaceTokensOpen = this.workspaceOverlays.tokensOpen;
   readonly workspaceScreenshotsOpen = this.workspaceOverlays.screenshotsOpen;
@@ -1291,12 +1292,14 @@ export class App implements OnInit, OnDestroy {
   // review panel carries its one decision.
   readonly studioTriagePrimary = computed<TriageButton | null>(() => {
     const sel = this.selectedJob();
+    if (sel?.info.creationSource === 'environment-health' && sel.info.id.startsWith('health-')) return null;
     return sel && sel.info.parkedBlocker?.blockerType !== 'gate-infrastructure'
       && !this.reviewerSession.reviewsOnly(sel.info.projectName)
       ? primaryActionForTask(sel.info) : null;
   });
   readonly studioTriageOverflow = computed<TriageButton[]>(() => {
     const sel = this.selectedJob();
+    if (sel?.info.creationSource === 'environment-health' && sel.info.id.startsWith('health-')) return [];
     return sel && sel.info.parkedBlocker?.blockerType !== 'gate-infrastructure'
       && !this.reviewerSession.reviewsOnly(sel.info.projectName)
       ? overflowActionsFor(sel.info.state) : [];
@@ -1346,7 +1349,7 @@ export class App implements OnInit, OnDestroy {
   readonly studioAcceptanceRefusal = computed(() => {
     const info = this.selectedJob()?.info;
     if (!info || this.studioTriagePrimary()?.id !== 'mark-done' || this.studioPrimaryDecisionRefusal()) return null;
-    return acceptanceRefusalFor(info, this.acceptanceRefusals.forTask(info.taskKey),
+    return acceptanceRefusalFor(info, this.acceptanceRefusals.forCard(info),
       this.studioPrimaryAwaitingGit(), this.acceptanceReadiness.itemFor(info));
   });
   /** AGT-2795: the decision lane guard's refusal for the studio primary move. */
@@ -1365,7 +1368,9 @@ export class App implements OnInit, OnDestroy {
   readonly studioTabActionsTask = computed<TaskDetail | null>(() => {
     if (this.studioTabState.activeTab()?.kind !== 'task') return null;
     if (this.detailPreview() || this.detailLoading() || this.detailLoadError()) return null;
-    return this.selectedJob();
+    const selected = this.selectedJob();
+    return selected?.info.creationSource === 'environment-health' && selected.info.id.startsWith('health-')
+      ? null : selected;
   });
 
   readonly studioTabActionsPager = computed<StudioTabPager>(() => ({
@@ -1448,7 +1453,7 @@ export class App implements OnInit, OnDestroy {
     // Hold git-dependent acceptance until the branch/merge status has loaded, so
     // a click cannot trigger a merge while the label is still a guess (AGT-2006).
     if (this.studioPrimaryAwaitingGit() || this.studioPrimaryBlockedByIntegration()
-      || this.studioPrimaryDecisionRefusal()) return;
+      || this.studioPrimaryDecisionRefusal() || this.studioAcceptanceRefusal()?.replacesAccept) return;
     this.dispatchStudioTriage(sel.info, p);
   }
 
@@ -1569,7 +1574,7 @@ export class App implements OnInit, OnDestroy {
   }
 
   /**
-   * Load (or reload) the backend WatchPaths into `watchPaths`. Runs once at
+   * Load (or reload) watch paths plus registered projects into `watchPaths`. Runs once at
    * boot (no board refresh: boot already reads the board, AGT-3088) and again
    * whenever a project is deleted from the studio shell: the deleted project's
    * entry is gone server-side, so re-pulling drops its name from `projectNames()`
@@ -1577,7 +1582,9 @@ export class App implements OnInit, OnDestroy {
    * lanes. Also re-purges stale board filters and persisted tabs.
    */
   loadWatchPaths(refreshBoard = true): void {
-    this.jobService.getWatchPaths().subscribe({
+    const restoreInitialRoute = !this.watchPathsLoaded();
+    const initialTab = this.studioTabState.activeTab();
+    this.jobService.getProjectPaths().subscribe({
       next: (entries) => {
         this.watchPaths.set(entries);
         this.watchPathsLoaded.set(true);
@@ -1593,8 +1600,10 @@ export class App implements OnInit, OnDestroy {
         // known (e.g. on a hard reload of `#/projects/<slug>`); resolving
         // the slug → project name needs the watch-path list, so re-apply
         // once entries are available.
-        const studioHandled = this.syncStudioRouteFromHash();
-        if (!studioHandled) this.applyProjectShellHash();
+        if (restoreInitialRoute && this.studioTabState.activeTab() === initialTab) {
+          const studioHandled = this.syncStudioRouteFromHash();
+          if (!studioHandled) this.applyProjectShellHash();
+        }
 
         // Refresh the board so a deleted project's jobs disappear right away
         // rather than on the next live-update tick.
@@ -1948,6 +1957,12 @@ export class App implements OnInit, OnDestroy {
     const projectName = 'projectSlug' in route && route.projectSlug
       ? this.watchPaths().find(entry => studioProjectSlug(entry.name) === route.projectSlug)?.name ?? null : null;
     if ('projectSlug' in route && route.projectSlug && !projectName) {
+      if (this.watchPathsLoaded()) {
+        this.studioTabState.activateAllProjectsBoard();
+        this.notifications.info('This project is unavailable or archived. Restore an archived project in Workspace Settings.',
+          'Project unavailable');
+        this.studioRouteReady.set(true);
+      }
       return true;
     }
 

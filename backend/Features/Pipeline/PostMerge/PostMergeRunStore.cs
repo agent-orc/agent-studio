@@ -20,6 +20,17 @@ public sealed class PostMergeRunStore
         lock (_gate) return ReadLocked(projectId);
     }
 
+    public void ObserveWindow(string projectId, PostMergeWindowObservation observation)
+    {
+        lock (_gate)
+        {
+            var state = ReadLocked(projectId);
+            if (state.PendingWindow?.ObservedAtUtc > observation.ObservedAtUtc
+                || state.ActiveRun?.TipSha == observation.TipSha) return;
+            WriteLocked(projectId, state with { PendingWindow = observation });
+        }
+    }
+
     public PostMergeProjectState UpdateIncidents(string projectId,
         Func<IReadOnlyList<PostMergeIncident>, IReadOnlyList<PostMergeIncident>> update)
     {
@@ -54,7 +65,7 @@ public sealed class PostMergeRunStore
                         Status = "red", FinishedAtUtc = run.StartedAtUtc,
                         Reason = "runner claim expired before a terminal receipt",
                     }] };
-                state = state with { DevelopState = "running", ActiveRun = run };
+                state = state with { DevelopState = "running", ActiveRun = run, PendingWindow = null };
             }
             else if (run.Status == "skipped")
             {
@@ -83,6 +94,10 @@ public sealed class PostMergeRunStore
                     LastWindowTipSha = run.Kind == "window" || run.Status == "green"
                         ? run.TipSha : state.LastWindowTipSha,
                     ActiveRun = null,
+                    FlakyHistory = [.. (state.FlakyHistory ?? [])
+                        .Where(item => item.AtUtc >= run.FinishedAtUtc.Value.AddDays(-14)),
+                        .. run.FlakyTests.Select(test => new PostMergeFlakyOccurrence(test, run.Id,
+                            run.FinishedAtUtc.Value))],
                     Runs = [.. state.Runs.TakeLast(511), run],
                 };
             }
@@ -92,7 +107,7 @@ public sealed class PostMergeRunStore
         }
     }
 
-    /// <summary>Records the repair card after its escalation move succeeds.</summary>
+    /// <summary>Records the repair card after its own escalation move succeeds; evidence only, never a placement input.</summary>
     public void RecordAttributionEscalation(string projectId, string taskId)
     {
         if (string.IsNullOrWhiteSpace(taskId))

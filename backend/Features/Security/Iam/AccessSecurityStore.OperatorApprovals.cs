@@ -124,10 +124,10 @@ public sealed partial class AccessSecurityStore
             if (refusal is not null)
                 return OperatorPolicyDecision.Refuse(refusal, operation, OperatorApprovalPolicy.RefusalMessage(refusal, operation))
                     with { ApprovalId = refusal == OperatorApprovalReasons.NotFound ? null : approval!.Id };
-            if (!consume) return OperatorPolicyDecision.AdmitApproved(operation, approval!.Id);
+            if (!consume) return OperatorPolicyDecision.AdmitApproved(operation, approval!.Id, approval.DecidedBy);
             state.OperatorApprovals[state.OperatorApprovals.IndexOf(approval!)] = approval! with { UsedAt = now };
             SaveLocked(state);
-            return OperatorPolicyDecision.AdmitApproved(operation, approval!.Id);
+            return OperatorPolicyDecision.AdmitApproved(operation, approval!.Id, approval.DecidedBy);
         }
     }
 

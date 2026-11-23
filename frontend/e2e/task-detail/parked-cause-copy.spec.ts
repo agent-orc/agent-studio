@@ -27,7 +27,7 @@ function json(route: Route, body: unknown): Promise<void> {
   return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 }
 
-async function installRoutes(page: Page): Promise<void> {
+async function installRoutes(page: Page, failureEvidence?: string): Promise<void> {
   await page.clock.setFixedTime(new Date(NOW));
   await page.route('**:5039/update/status', route => json(route, { isRunning: false, behindBy: 0 }));
   await page.route('**/api/**', route => json(route, []));
@@ -84,7 +84,8 @@ async function installRoutes(page: Page): Promise<void> {
         lane: '5e-escalated',
         parkedAt: PARKED_AT,
         // The reason the acceptance audit wrote before AGT-3586.
-        reason: 'missing-delivery: Recover the delivery, resolve the integration failure and rerun the gate.',
+        reason: failureEvidence ? 'Batch isolation proved this delivery red.' : 'missing-delivery: Recover the delivery, resolve the integration failure and rerun the gate.',
+        failureEvidence,
         cause: 'acceptance-integration-failed',
         causeDetail: 'missing-delivery',
         recallStatus: 'blocked',
@@ -285,4 +286,33 @@ test('Auto Review watchdog park links its receipt and retries the same delivery'
   await page.getByTestId('parked-watchdog-undo').click();
   await expect(page.getByTestId('parked-watchdog-undo')).toHaveCount(0);
   expect(undoCalls).toBe(1);
+});
+
+
+test('red gate detail shows all receipt tests and the unabridged reason', async ({ page }, testInfo) => {
+  const names = ['Example.Tests.First_failure', 'Example.Tests.Second_failure', 'Example.Tests.Third_failure'];
+  const command = 'dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound';
+  const evidence = `## Delivery failure evidence\n\nTested SHA: ${'a'.repeat(40)}\nCommand: ${command}\n`
+    + names.map((name, index) => `- ${name}: Expected ${index + 1}`).join('\n');
+  await installRoutes(page, evidence);
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.goto(`/?job=${JOB_ID}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await page.addStyleTag({ content: HIDE_DEV_DIALOG });
+  await dismissDevErrorDialog(page);
+  const list = page.getByTestId('parked-failed-tests');
+  await expect(list.getByRole('listitem')).toHaveCount(3);
+  for (const name of names) await expect(list).toContainText(name);
+  await page.getByText('Full failure reason', { exact: true }).click();
+  await expect(page.getByTestId('parked-full-reason')).toContainText(command);
+  await expect(page.getByTestId('parked-full-reason')).toContainText('a'.repeat(40));
+  mkdirSync(RESULTS, { recursive: true });
+  for (const theme of ['dark', 'light'] as const) {
+    await setTheme(page, theme);
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const path = join(RESULTS, `gate-failure-${theme}-${width}--mocked.png`);
+      await page.getByTestId('parked-failure-evidence').screenshot({ path });
+      await testInfo.attach(`Gate failure ${theme} ${width}`, { path, contentType: 'image/png' });
+    }
+  }
 });

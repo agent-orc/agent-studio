@@ -1,6 +1,6 @@
 import { Injectable, signal, inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse, HttpHeaders, HttpParams } from '@angular/common/http';
-import { Subject, catchError, finalize, map, switchMap, tap, throwError, timer, type Observable } from 'rxjs';
+import { Subject, catchError, finalize, forkJoin, map, switchMap, tap, throwError, timer, type Observable } from 'rxjs';
 import { isGitFactsWarming, retryWhileWarming } from '../utils/git-facts-warming';
 import { sortLaneLikeBoard } from './lane-sort.util';
 import type { TaskCore, TaskResource, ResourceName } from '../models/task-core.model';
@@ -49,6 +49,8 @@ import type {
   ReviewProjectionView,
   TaskDeliveryClaimAnswer,
   DecisionActionResponse,
+  ProjectTesting,
+  TestingStrategy,
 } from '../models/task.model';
 import { TaskState } from '../models/task.model';
 import type { CouncilFindingAction, CouncilReactionDisposition } from '../models/council-review.model';
@@ -1093,6 +1095,19 @@ export class TaskService {
   getWatchPaths() {
     return this.http.get<WatchPathEntry[]>(`${this.baseUrl}/watch-paths`);
   }
+
+  /** Reconcile registry membership before resolving routes or cleaning project tabs. */
+  getProjectPaths(): Observable<WatchPathEntry[]> {
+    return forkJoin({ paths: this.getWatchPaths(), projects: this.getRegistryProjects() }).pipe(
+      map(({ paths, projects }) => {
+        const knownNames = new Set(paths.map(path => path.name));
+        return [...paths, ...projects.filter(project => !project.archived && !knownNames.has(project.displayName))
+          .map(project => ({ name: project.displayName, path: project.storageLocation,
+            rootPath: project.rootPath ?? project.repositoryPath ?? '' }))];
+      }),
+    );
+  }
+
 
   /**
    * F45a / ADR-0042 — list workspaces with their embedded projects.
@@ -2245,10 +2260,10 @@ export class TaskService {
     );
   }
 
-  setJobModel(jobId: string, model: string | null, watchPath?: string) {
+  setJobModel(jobId: string, model: string | null, watchPath?: string, pinMode?: 'preference' | 'hard') {
     return this.http.put(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/model`,
-      { model },
+      { model, ...(pinMode ? { pinMode } : {}) },
       this.withWatchPath(watchPath),
     ).pipe(this.afterMutation(jobId, watchPath));
   }
@@ -2261,16 +2276,17 @@ export class TaskService {
     );
   }
 
-  setJobThinkingLevel(jobId: string, thinkingLevel: string | null, watchPath?: string) {
+  setJobThinkingLevel(jobId: string, thinkingLevel: string | null, watchPath?: string, pinMode?: 'preference' | 'hard') {
     return this.http.put(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/thinking-level`,
-      { thinkingLevel },
+      { thinkingLevel, ...(pinMode ? { pinMode } : {}) },
       this.withWatchPath(watchPath),
     ).pipe(this.afterMutation(jobId, watchPath));
   }
 
-  setJobCliType(jobId: string, cliType: CliType, watchPath?: string, useOwnSession?: boolean) {
-    const body: { cliType: CliType; useOwnSession?: boolean } = { cliType };
+  setJobCliType(jobId: string, cliType: CliType, watchPath?: string, useOwnSession?: boolean, pinMode?: 'preference' | 'hard') {
+    const body: { cliType: CliType; useOwnSession?: boolean; pinMode?: 'preference' | 'hard' } = { cliType };
+    if (pinMode) body.pinMode = pinMode;
     if (useOwnSession !== undefined) body.useOwnSession = useOwnSession;
     return this.http.put(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/cli-type`,
@@ -2446,10 +2462,10 @@ export class TaskService {
     );
   }
 
-  publishPackage(projectName: string, targetId: string, version: string) {
+  publishPackage(projectName: string, targetId: string, version: string, dryRun = false) {
     return this.http.post<PublishWorkflowRun>(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/publish/package`,
-      { targetId, version },
+      { targetId, version, dryRun },
     );
   }
 
@@ -2698,6 +2714,14 @@ export class TaskService {
     );
   }
 
+  /** AGT-3965: Owner only; the server rebuilds queued review plans for the new tier. */
+  setProjectTestingStrategy(projectName: string, strategy: TestingStrategy) {
+    return this.http.put<ProjectTesting>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/testing`,
+      { strategy },
+    );
+  }
+
   setProjectAutoCommit(projectName: string, enabled: boolean) {
     return this.http.put(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/auto-commit`,
@@ -2928,18 +2952,9 @@ export class TaskService {
     return this.http.get<ProjectEnvironments>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments`);
   }
 
-  getProjectEnvironmentReleaseStatuses(projectName: string) {
-    return this.http.get<import('../features/project-detail/state/deploy-area.model').EnvironmentStatus[]>(
-      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/deploy/status`);
-  }
-
   decideProjectPromotion(projectName: string, artifact: string, approve: boolean) {
     const action = approve ? 'approve' : 'reject';
     return this.http.post<void>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments/promotions/${action}`, { artifact });
-  }
-
-  rollbackProjectEnvironment(projectName: string, environmentId: string) {
-    return this.http.post<void>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/environments/${encodeURIComponent(environmentId)}/rollback`, {});
   }
 
   /** Project-wide planned/running/completed test-run pipeline with derived card attachments. */

@@ -1564,7 +1564,12 @@
     // the tab list shrinks (overflow-x: auto), the actions don't.
     white-space: nowrap;
 
-    &:empty {
+    // The projected `[studioTabActions]` wrapper is always present, so the
+    // strip is empty when the actions component inside it rendered nothing
+    // (a task route before its card resolves). An empty strip on a phone
+    // stacked into a blank band under the tab bar (the playthrough).
+    &:empty,
+    &:not(:has(> * > :not(:empty))) {
       display: none;
     }
   }
@@ -1895,6 +1900,16 @@
   position: relative;
   display: flex;
   flex-direction: column;
+}
+
+.studio-archived-project-notice {
+  @include m.deck-panel;
+  @include m.deck-panel-muted;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+  margin: var(--studio-spacing-3);
+  color: var(--studio-fg);
 }
 
 // Inline Workspace settings owns its own panel scroll. Keep the outer editor

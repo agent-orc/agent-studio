@@ -1603,7 +1603,8 @@ public sealed partial class AttemptAuthorityService
         lock (_gate)
         {
             var review = FindReview(attemptId);
-            return review is not null && ReviewInfrastructureRetryCountLocked(review) < ReviewInfrastructureRetryBudget;
+            return review is not null && (string.Equals(review.FailureClassification, "DiskFull", StringComparison.OrdinalIgnoreCase)
+                || ReviewInfrastructureRetryCountLocked(review) < ReviewInfrastructureRetryBudget);
         }
     }
 
@@ -1718,9 +1719,15 @@ public sealed partial class AttemptAuthorityService
         while (!Blank(cursor.SourceReviewAttemptId)
                && retryCount < ReviewInfrastructureRetryBudget)
         {
-            retryCount++;
             var source = FindReview(cursor.SourceReviewAttemptId!);
-            if (source is null || !visited.Add(source.AttemptId)) break;
+            if (source is null || !visited.Add(source.AttemptId))
+            {
+                retryCount++;
+                break;
+            }
+            // Disk recovery waits for host admission, not the card's retry budget.
+            if (!string.Equals(source.FailureClassification, "DiskFull", StringComparison.OrdinalIgnoreCase))
+                retryCount++;
             cursor = source;
         }
         return retryCount;
@@ -1749,7 +1756,8 @@ public sealed partial class AttemptAuthorityService
                 return new ReviewInfrastructureRetryScheduleResult(
                     AttemptWriteStatus.InvalidState, attemptId, ReviewAttempt: ToDto(review));
 
-            var retryCount = ReviewInfrastructureRetryCountLocked(review);
+            var retryCount = string.Equals(review.FailureClassification, "DiskFull", StringComparison.OrdinalIgnoreCase)
+                ? 0 : ReviewInfrastructureRetryCountLocked(review);
             if (retryCount >= ReviewInfrastructureRetryBudget)
                 return new ReviewInfrastructureRetryScheduleResult(
                     AttemptWriteStatus.InvalidState, attemptId,

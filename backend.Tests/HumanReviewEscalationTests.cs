@@ -246,7 +246,7 @@ public sealed class HumanReviewEscalationTests : IDisposable
     }
 
     [Fact]
-    public async Task PostMergeRepairEscalationFallsBackWhileCardIsEscalated()
+    public async Task PostMergeRepairEscalationKeepsTheConfiguredPlacement()
     {
         const string jobId = "post-merge-repair";
         WriteJob(TaskStates.Progress, jobId,
@@ -255,10 +255,10 @@ public sealed class HumanReviewEscalationTests : IDisposable
         var clock = new FakeTimeProvider();
         var project = projects.EnsureProjectForStorage(_watchPath, ProjectName, DefaultWorkspace.Id, clock);
         var runs = new PostMergeRunStore(Path.Combine(_workspaceRoot, "post-merge-state"));
-        var mode = new PostMergeModeService(projects, runs, _scanner, clock);
+        var mode = new PostMergeModeService();
         var settings = new ProjectSettings
         {
-            Testing = new ProjectTestingSettings { Mode = IntegrationTestModes.PostMerge },
+            Testing = new ProjectTestingSettings { Strategy = TestingStrategies.Fast },
         };
         Assert.Equal(IntegrationTestModes.PostMerge, mode.Resolve(ProjectName, settings));
 
@@ -276,12 +276,14 @@ public sealed class HumanReviewEscalationTests : IDisposable
             HumanReviewEscalationCategories.AgentBlocked, "repair needs operator help");
 
         Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        // RT-1 (AGT-3988): the record stays as evidence, but a repair card that
+        // its own run path escalates no longer changes the project's placement.
         Assert.Equal(jobId, runs.Read(project.Id).AttributionEscalatedTaskId);
-        Assert.Equal(IntegrationTestModes.PreMerge, mode.Resolve(ProjectName, settings));
+        Assert.Equal(IntegrationTestModes.PostMerge, mode.Resolve(ProjectName, settings));
         Assert.Equal(IntegrationTestModes.PreMerge, mode.Resolve(ProjectName,
             new ProjectSettings
             {
-                Testing = new ProjectTestingSettings { Mode = IntegrationTestModes.PreMerge },
+                Testing = new ProjectTestingSettings { Strategy = TestingStrategies.Strict },
             }));
     }
 

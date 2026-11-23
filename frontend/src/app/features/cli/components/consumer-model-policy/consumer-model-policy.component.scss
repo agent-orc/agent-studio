@@ -1,3 +1,6 @@
+@use '../../../../../styles/mixins' as m;
+@include m.action-buttons;
+
 :host { display: block; }
 .consumer-policy {
   margin-bottom: var(--studio-spacing-4);
@@ -21,7 +24,7 @@
     outline-offset: -2px;
   }
 }
-.consumer-policy table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.consumer-policy table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .consumer-policy th, .consumer-policy td {
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border-bottom: 1px solid var(--studio-border);
@@ -30,9 +33,10 @@
 }
 .consumer-policy th { color: var(--studio-fg-muted); }
 .consumer-policy td { color: var(--studio-fg); }
-.consumer-policy td small { display: block; color: var(--studio-fg-muted); }
-.consumer-policy input {
-  width: min(100%, 250px);
+.consumer-policy td small { display: block; font-size: 11px; color: var(--studio-fg-muted); }
+.consumer-policy select {
+  width: 100%;
+  min-width: 0;
   color: var(--studio-fg);
   background: var(--studio-bg-selected);
   border: 1px solid var(--studio-border);
@@ -40,3 +44,17 @@
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
 }
 .consumer-policy p { padding: var(--studio-spacing-3); color: var(--studio-fg); }
+
+.consumer-policy table { table-layout: fixed; }
+.consumer-policy th:first-child { width: 22%; }
+.consumer-policy td { overflow-wrap: anywhere; }
+.consumer-policy td select + select { margin-top: var(--studio-spacing-2); }
+.consumer-policy td label { display: grid; gap: var(--studio-spacing-1); margin-top: var(--studio-spacing-2); }
+.consumer-policy td button { margin-top: var(--studio-spacing-2); }
+.consumer-policy td small { font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) {
+  .consumer-policy table, .consumer-policy tbody, .consumer-policy tr, .consumer-policy td { display: block; width: auto; }
+  .consumer-policy thead { display: none; }
+  .consumer-policy td { border-bottom: none; }
+  .consumer-policy tr { border-bottom: 1px solid var(--studio-border); }
+}

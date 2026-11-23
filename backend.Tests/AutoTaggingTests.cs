@@ -38,7 +38,7 @@ public sealed class AutoTaggingTests
     {
         var defaultRoute = AutoTagClassifier.ResolveRoute(null);
         Assert.Equal(CliTypes.Claude, defaultRoute.Cli);
-        Assert.Equal(ModelFamilyResolver.Resolve(ModelFamilies.ClaudeSonnet), defaultRoute.Model);
+        Assert.Equal(ModelIds.ClaudeHaiku55, defaultRoute.Model);
         Assert.Equal(defaultRoute, AutoTagClassifier.ResolveRoute(new ProjectSettings
         {
             OrchestratorModel = ModelFamilyResolver.Resolve(ModelFamilies.GptMini),

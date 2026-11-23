@@ -266,6 +266,23 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task IncidentCard_IsCreatedBySystem_AndStaysOutOfOwnerActivity()
+    {
+        var fixture = Build();
+        await Sequence(fixture, false, false, false);
+        var card = Assert.Single(fixture.Cards());
+
+        var created = Assert.Single(fixture.Timeline.ReadAll(card.FolderPath),
+            item => item.Kind == TimelineEventKinds.PromptCreated);
+        Assert.Equal(TimelineActors.System, created.Actor);
+        Assert.Empty(OwnerActivityProjection.FromTimeline(card, fixture.Timeline.ReadAll(card.FolderPath)));
+
+        var environment = Assert.Single(fixture.Service.Read(Project)!.Environments);
+        Assert.NotNull(card.Key);
+        Assert.Equal(card.Key, environment.IncidentCardKey);
+    }
+
+    [Fact]
     public async Task Recovery_ClosesTheIncident_CommentsOnTheCard_AndRaisesAnEvent()
     {
         var fixture = Build();
@@ -302,17 +319,18 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CardCreation_IsIdempotent_AcrossTicksReopeningAndALostCardId()
+    public async Task CardCreation_IsIdempotent_AcrossTicksRecurrenceAndALostCardId()
     {
         var fixture = Build();
         await Sequence(fixture, false, false, false, false, false);
         var card = Assert.Single(fixture.Cards());
 
-        // A quick recurrence reopens the resolved card instead of creating a second one.
+        // A recurrence inside the recovery cool-down has its own current incident record.
         await Sequence(fixture, true, true, false, false, false);
-        Assert.Equal(card.Id, Assert.Single(fixture.Cards()).Id);
-        Assert.Equal(TaskStates.Backlog, Assert.Single(fixture.Cards()).State);
-        Assert.Equal(["recovered", "reopened"], fixture.Comments(card).Select(item => item.Details!["change"]));
+        Assert.Equal(2, fixture.Cards().Count);
+        Assert.Equal(TaskStates.Completed, fixture.Scanner.FindJob(card.Id, fixture.WatchPath)!.State);
+        Assert.NotEqual(card.Id, fixture.Store.Load(Project).Environments["stage"].OpenIncident!.CardId);
+        Assert.Equal(["recovered"], fixture.Comments(card).Select(item => item.Details!["change"]));
 
         // A tick that created the card but stopped before saving its id adopts the card by slug.
         var store = fixture.Store;
@@ -330,18 +348,53 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
             Id = slug, Title = "lost", PromptMarkdown = "lost", WatchPath = fixture.WatchPath, TargetState = TaskStates.Backlog,
         });
         await Sequence(fixture, false);
-        Assert.Equal(2, fixture.Cards().Count);
+        Assert.Equal(3, fixture.Cards().Count);
         Assert.Equal(lost, store.Load(Project).Environments["stage"].OpenIncident!.CardId);
 
-        // After the cool-down, the next incident gets its own card.
+        // A later incident gets its own card even when the prior one is complete.
         await Sequence(fixture, true, true);
         new TaskStateMachine(fixture.Scanner, NullLogger<TaskStateMachine>.Instance)
             .MoveJob(lost!, TaskStates.Completed, fixture.WatchPath, reason: "test: incident handled");
         Assert.Equal(TaskStates.Completed, fixture.Scanner.FindJob(lost!, fixture.WatchPath)!.State);
-        _clock.Advance(TimeSpan.FromMinutes(31));
         await Sequence(fixture, false, false, false, false);
-        Assert.Equal(3, fixture.Cards().Count);
+        Assert.Equal(4, fixture.Cards().Count);
         Assert.Equal(4, fixture.Activity().Count(entry => entry.Topic == OrchestratorLogTopics.EnvironmentIncidentOpened));
+    }
+
+    [Fact]
+    public async Task IncidentCard_CapturesRunningReleaseTelemetryAndOperatorRoutes()
+    {
+        var deployment = new DateTime(2026, 10, 19, 7, 30, 0, DateTimeKind.Utc);
+        var credential = "secret-" + Guid.NewGuid().ToString("N");
+        var context = new FixedIncidentContext(new HealthIncidentContext("PROJ-002", "v1.4.2", deployment,
+            ["CARD-1", "CARD-2"], 4,
+            [new OperationsLogLine(_clock.GetUtcNow(), "error", $"process crashed password={credential}", "release-1")]));
+        var fixture = Build(context: context);
+
+        await Sequence(fixture, false, false, false);
+
+        var card = Assert.Single(fixture.Cards());
+        var prompt = File.ReadAllText(Path.Combine(card.FolderPath, "prompt.md"));
+        Assert.Contains("Running release: v1.4.2", prompt);
+        Assert.Contains("Deployed: 2026-10-19 07:30 UTC", prompt);
+        Assert.Contains("Release cards: CARD-1, CARD-2", prompt);
+        Assert.Contains("Restart count: 4", prompt);
+        Assert.Contains("process crashed", prompt);
+        Assert.DoesNotContain(credential, prompt);
+        Assert.Contains("#/projects/PROJ-002/deploy?view=operations&environmentId=stage&since=", prompt);
+        Assert.Contains("#/projects/PROJ-002/deploy?view=tools&environmentId=stage", prompt);
+        Assert.Contains("#/projects/PROJ-002/deploy?view=runbooks&environmentId=stage", prompt);
+        Assert.Equal("environment-health", card.CreationSource);
+    }
+
+    [Fact]
+    public async Task IncidentCard_IsStillCreatedWhenTelemetryCannotBeRead()
+    {
+        var fixture = Build(context: new ThrowingIncidentContext());
+        await Sequence(fixture, false, false, false);
+        var prompt = File.ReadAllText(Path.Combine(Assert.Single(fixture.Cards()).FolderPath, "prompt.md"));
+        Assert.Contains("Restart count: Telemetry unavailable", prompt);
+        Assert.Contains("No crash or error lines available", prompt);
     }
 
     [Fact]
@@ -536,6 +589,43 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         Assert.Null(environment.CurrentIncident);
         Assert.Empty(fixture.Cards());
         Assert.Empty(fixture.Activity());
+        // F16: the environment names each refused target and its fix instead of a bare Misconfigured.
+        Assert.Contains("Health check meta targets http://169.254.169.254/latest/meta-data/, which the control plane never probes",
+            environment.Error);
+        Assert.Contains("Health check local targets localhost:5030", environment.Error);
+    }
+
+    [Fact]
+    public async Task PrivateTargets_NameTheOptIn_AndProbeOnceItIsDeclared()
+    {
+        var connects = new List<IPEndPoint>();
+        var connector = new HealthCheckConnector(
+            (_, _) => throw new InvalidOperationException("an address literal is never resolved"),
+            (endpoint, _) =>
+            {
+                lock (connects) connects.Add(endpoint);
+                return Task.FromException<Socket>(new SocketException((int)SocketError.ConnectionRefused));
+            });
+        var fixture = Build(checks: """[ { "id": "lan", "kind": "tcp", "host": "172.17.0.1", "port": 8080 } ]""",
+            probe: new NetworkHealthCheckProbe(new FakeHttpClients(_target), connector, _clock));
+
+        await Ticks(fixture, 1);
+
+        var blocked = Assert.Single(fixture.Service.Read(Project)!.Environments);
+        Assert.Equal("invalid", blocked.Status);
+        Assert.Contains("Health check lan targets 172.17.0.1:8080, a private network address", blocked.Error);
+        Assert.Contains("\"healthChecksAllowPrivateNetwork\": true in docs/deployments/environments/stage.json", blocked.Error);
+        Assert.Empty(connects);
+
+        File.WriteAllText(Path.Combine(fixture.Declarations, "stage.json"), Stage(
+            """[ { "id": "lan", "kind": "tcp", "host": "172.17.0.1", "port": 8080 } ]""")
+            .Replace("\"id\": \"stage\",", "\"id\": \"stage\", \"healthChecksAllowPrivateNetwork\": true,", StringComparison.Ordinal));
+        await Ticks(fixture, 1);
+
+        var probed = Assert.Single(fixture.Service.Read(Project)!.Environments);
+        Assert.Equal(new IPEndPoint(IPAddress.Parse("172.17.0.1"), 8080), Assert.Single(connects));
+        Assert.NotEqual("invalid", probed.Status);
+        Assert.Null(probed.Error);
     }
 
     [Fact]
@@ -638,7 +728,7 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         probe.Set("http", false);
         await Ticks(fixture, 3);
         var card = Assert.Single(fixture.Cards());
-        Assert.Equal("Health incident: Stage is failing", card.Title);
+        Assert.StartsWith("Health incident: Stage · ", card.Title);
         Assert.Contains("## Check `http`", File.ReadAllText(Path.Combine(card.FolderPath, "prompt.md")));
 
         probe.Set("tls", false);
@@ -656,6 +746,64 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
             fixture.Activity().Select(entry => entry.Topic));
         var environment = Assert.Single(fixture.Service.Read(Project)!.Environments);
         Assert.Equal(("up", card.Id), (environment.Status, environment.LastIncident!.CardId));
+    }
+
+    [Fact]
+    public async Task An_environment_without_a_healthy_deploy_report_is_not_probed_and_opens_no_incident()
+    {
+        var fixture = Build(deployed: false);
+        _target.Respond(HttpStatusCode.BadGateway);
+
+        for (var tick = 0; tick < 5; tick++)
+        {
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            Assert.Equal(new HealthRunSummary(0, 0, 0, 0), await fixture.Service.RunDueAsync());
+        }
+
+        Assert.Empty(_target.Requests);
+        var environment = Assert.Single(fixture.Service.Read(Project)!.Environments);
+        Assert.Equal((EnvironmentHealthService.NotDeployed, null, null, null),
+            (environment.Status, environment.Uptime24h, environment.Uptime7d, environment.Uptime30d));
+        Assert.All(environment.Checks, check => Assert.Equal(EnvironmentHealthService.NotDeployed, check.Status));
+        Assert.Null(environment.CurrentIncident);
+        Assert.Empty(fixture.Cards());
+        Assert.Empty(fixture.Store.Load(Project).Checks);
+
+        // A failed deploy report does not start the probes either; the first healthy one does.
+        Report(fixture.Configuration, Project, ("stage", "failed"));
+        await Ticks(fixture, 1);
+        Assert.Empty(_target.Requests);
+
+        Report(fixture.Configuration, Project, ("stage", "healthy"));
+        _target.Respond(HttpStatusCode.OK, "ok");
+        await Ticks(fixture, 1);
+        Assert.Single(_target.Requests);
+        environment = Assert.Single(fixture.Service.Read(Project)!.Environments);
+        Assert.Equal(("up", 1.0), (environment.Status, environment.Uptime24h));
+    }
+
+    [Fact]
+    public async Task A_stopped_environment_stops_probing_and_closes_its_open_incident()
+    {
+        var fixture = Build();
+        await Sequence(fixture, false, false, false);
+        var card = Assert.Single(fixture.Cards());
+        Assert.NotNull(fixture.Store.Load(Project).Environments["stage"].OpenIncident);
+        var probes = _target.Requests.Count;
+
+        Report(fixture.Configuration, Project, ("stage", "stopped"));
+        await Sequence(fixture, false, false, false, false);
+
+        Assert.Equal(probes, _target.Requests.Count);
+        var environment = Assert.Single(fixture.Service.Read(Project)!.Environments);
+        Assert.Equal((EnvironmentHealthService.NotDeployed, null), (environment.Status, environment.CurrentIncident));
+        var comment = Assert.Single(fixture.Comments(card));
+        Assert.Contains("stopped", comment.Summary);
+        Assert.Single(fixture.Cards());
+        var state = fixture.Store.Load(Project);
+        Assert.Null(state.Environments["stage"].OpenIncident);
+        Assert.Empty(state.Checks);
+        Assert.NotNull(Assert.Single(state.Environments["stage"].IncidentHistory).EndedAt);
     }
 
     [Fact]
@@ -732,6 +880,52 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task ProductionWebhook_SendsOpenedAndRecoveredOnce_AndRetriesFailedDelivery()
+    {
+        var fixture = Build(extraDeclaration: """
+            { "id": "production", "name": "Production", "kind": "production", "targetHostId": "prod-host",
+              "address": "https://prod.example", "template": "container", "destination": "8082",
+              "healthUrl": "https://prod.example/health",
+              "healthChecks": [ { "id": "api", "kind": "http", "url": "https://user:password@prod.example/health?token=secret", "failureThreshold": 1, "recoveryThreshold": 1 } ] }
+            """);
+        fixture.Webhooks.Set(Project, "https://hooks.example/incident", "https://studio.example");
+        fixture.WebhookTarget.Status = HttpStatusCode.BadGateway;
+
+        await Sequence(fixture, false);
+        Assert.Single(fixture.WebhookTarget.Bodies);
+        Assert.False(fixture.Store.Load(Project).Environments["production"].OpenIncident!.OpenedWebhookDelivered);
+
+        fixture.WebhookTarget.Status = HttpStatusCode.OK;
+        await Sequence(fixture, false, false);
+        Assert.Equal(2, fixture.WebhookTarget.Bodies.Count);
+        Assert.True(fixture.Store.Load(Project).Environments["production"].OpenIncident!.OpenedWebhookDelivered);
+        Assert.DoesNotContain("password", fixture.WebhookTarget.Bodies[1]);
+        Assert.DoesNotContain("secret", fixture.WebhookTarget.Bodies[1]);
+        Assert.Contains("\"signal\":\"api\"", fixture.WebhookTarget.Bodies[1]);
+
+        await Sequence(fixture, true, true);
+        Assert.Equal(3, fixture.WebhookTarget.Bodies.Count);
+        Assert.Contains("\"event\":\"recovered\"", fixture.WebhookTarget.Bodies[2]);
+        Assert.True(fixture.Store.Load(Project).Environments["production"].LastIncident!.RecoveryWebhookDelivered);
+    }
+
+    /// <summary>Appends deploy reports to the project's deploy history, as a host's report does.</summary>
+    private void Report(IConfiguration configuration, string project, params (string Environment, string Status)[] reports)
+    {
+        var path = Path.Combine(configuration["TaskRepository"]!, "deployments", project + ".json");
+        var state = File.Exists(path)
+            ? JsonSerializer.Deserialize<ProjectEnvironmentService.State>(File.ReadAllText(path), Web)!
+            : new ProjectEnvironmentService.State();
+        var at = _clock.GetUtcNow().UtcDateTime;
+        state.History.AddRange(reports.Select(report => new ProjectEnvironmentService.EnvironmentHistoryRow(
+            report.Environment, at, new DeploymentHistoryItem(at, report.Status, "app:1", null, null))));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, JsonSerializer.Serialize(state, Web));
+    }
+
+    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
+
     private async Task Ticks(Fixture fixture, int count)
     {
         for (var tick = 0; tick < count; tick++)
@@ -752,7 +946,8 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
     }
 
     private Fixture Build(string? checks = null, IHealthCheckProbe? probe = null, string? extraDeclaration = null,
-        string? otherDeclaration = null, bool withTelemetry = false)
+        string? otherDeclaration = null, IHealthIncidentContext? context = null, bool withTelemetry = false,
+        bool deployed = true)
     {
         var repo = Path.Combine(_root, "repo");
         var watch = Path.Combine(_root, "workspace", "projects", Project);
@@ -782,6 +977,11 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
             ["WatchPaths:1:RootPath"] = otherRepo, ["WatchPaths:1:RepositoryPath"] = otherRepo,
             ["HealthChecks:MaxConcurrency"] = "2",
         }).Build();
+        if (deployed)
+        {
+            Report(configuration, Project, ("stage", "healthy"), ("production", "healthy"));
+            Report(configuration, "other", ("stage", "healthy"));
+        }
         var scanner = new TaskScannerService(configuration, NullLogger<TaskScannerService>.Instance,
             new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, configuration));
         var git = new GitService(NullLogger<GitService>.Instance, scanner, configuration);
@@ -797,17 +997,20 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         var stateMachine = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance,
             timeline: timeline, configuration: configuration);
         var alerts = new HealthAlerts(scanner, mutations, timeline, activity, _clock,
-            NullLogger<HealthAlerts>.Instance, stateMachine, new AgentStudio.Deploy.DeployStore(configuration));
+            NullLogger<HealthAlerts>.Instance, stateMachine, new AgentStudio.Deploy.DeployStore(configuration), context);
+        var webhookTarget = new WebhookTarget();
+        var webhooks = new IncidentWebhookService(configuration, new FakeHttpClients(webhookTarget),
+            NullLogger<IncidentWebhookService>.Instance);
         var store = new HealthCheckStore(configuration);
         var logger = new CapturingLogger<EnvironmentHealthService>();
         var connector = new HealthCheckConnector();
         var telemetryStore = withTelemetry ? new TelemetryStore(new TelemetryOptions { StoreRoot = Path.Combine(_root, "telemetry") },
             NullLogger<TelemetryStore>.Instance) : null;
         var service = new EnvironmentHealthService(scanner, environments, store,
-            probe ?? new NetworkHealthCheckProbe(new FakeHttpClients(_target), connector, _clock), alerts, configuration,
+            probe ?? new NetworkHealthCheckProbe(new FakeHttpClients(_target), connector, _clock), alerts, webhooks, configuration,
             _clock, logger, telemetryStore is null ? null : new TelemetryAlertReader(telemetryStore));
         return new(service, scanner, mutations, timeline, activity, configuration, watch, store, logger, declarations,
-            telemetryStore);
+            webhooks, webhookTarget, telemetryStore);
     }
 
     private static string Stage(string? checks) => $$"""
@@ -819,7 +1022,7 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
     private sealed record Fixture(EnvironmentHealthService Service, TaskScannerService Scanner,
         TaskMutationService Mutations, TimelineLog Timeline, OrchestratorLog Log, IConfiguration Configuration,
         string WatchPath, HealthCheckStore Store, CapturingLogger<EnvironmentHealthService> Logger, string Declarations,
-        TelemetryStore? Telemetry)
+        IncidentWebhookService Webhooks, WebhookTarget WebhookTarget, TelemetryStore? Telemetry)
     {
         public IReadOnlyList<TaskInfo> Cards() => Scanner.ScanAllJobs()
             .Where(card => card.Tags.Contains(HealthAlerts.Tag) || card.Id.StartsWith("health-", StringComparison.Ordinal)).ToArray();
@@ -831,6 +1034,29 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         public IReadOnlyList<OrchestratorLogEntry> Activity() => Log.Read(WatchPath);
 
         public void Declare(string checks) => File.WriteAllText(Path.Combine(Declarations, "stage.json"), Stage(checks));
+    }
+
+    private sealed class FixedIncidentContext(HealthIncidentContext context) : IHealthIncidentContext
+    {
+        public HealthIncidentContext Read(string project, string environmentId, DateTimeOffset startedAt) => context;
+    }
+
+    private sealed class ThrowingIncidentContext : IHealthIncidentContext
+    {
+        public HealthIncidentContext Read(string project, string environmentId, DateTimeOffset startedAt)
+            => throw new IOException("telemetry unavailable");
+    }
+
+    private sealed class WebhookTarget : HttpMessageHandler
+    {
+        public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
+        public List<string> Bodies { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Bodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
+            return new HttpResponseMessage(Status);
+        }
     }
 
     private sealed class FakeHttpTarget(FakeTimeProvider clock) : HttpMessageHandler

@@ -3,7 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ProjectOperationsComponent } from './project-operations';
-import type { ProjectOperations } from './project-operations.model';
+import { ratio, type ProjectOperations } from './project-operations.model';
 
 const snapshot: ProjectOperations = {
   project: 'demo', since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
@@ -23,11 +23,28 @@ describe('ProjectOperationsComponent', () => {
     }).compileComponents();
   });
 
+  it('shows host restarts and crash output when application telemetry is absent', async () => {
+    const fixture = TestBed.createComponent(ProjectOperationsComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    TestBed.inject(HttpTestingController).expectOne('/api/projects/demo/deploy/operations').flush({
+      ...snapshot, environments: [{ ...snapshot.environments[0], observed: {
+        state: 'crash-loop', restarts: 102, crashOutput: ['FATAL: missing configuration'],
+      } }],
+    });
+    await fixture.whenStable();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="operations-host-restarts"]')?.textContent).toContain('102');
+    expect(host.querySelector('[data-testid="operations-crash-output"]')?.textContent).toContain('FATAL: missing configuration');
+    expect(host.querySelector<HTMLElement>('[data-testid="operations-host-state"]')?.dataset['tone']).toBe('danger');
+  });
+
   it('shows slow traces, their span waterfall, and a log link to the same trace', async () => {
     const fixture = TestBed.createComponent(ProjectOperationsComponent);
     fixture.componentRef.setInput('projectName', 'demo');
     fixture.detectChanges();
     const requests = TestBed.inject(HttpTestingController);
+    requests.match('/api/develop-states').forEach(request => request.flush([]));
     requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
     await fixture.whenStable();
     fixture.componentInstance.searchTraces();
@@ -55,14 +72,58 @@ describe('ProjectOperationsComponent', () => {
     expect(host.textContent).toContain('inventory HTTP');
   });
 
+  it('shows the overdue post-merge window with its admission reason', async () => {
+    const fixture = TestBed.createComponent(ProjectOperationsComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    const requests = TestBed.inject(HttpTestingController);
+    requests.expectOne('/api/develop-states').flush([{ project: 'demo', pendingWindow: {
+      starved: true, openedAtUtc: '2026-11-22T00:00:00Z', admissionReason: '2 occupied slots',
+    } }]);
+    requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
+    await fixture.whenStable();
+    const alert = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="operations-starved-window"]');
+    expect(alert?.textContent).toContain('Post-merge tests overdue');
+    expect(alert?.textContent).toContain('2 occupied slots');
+  });
+
+  it('warns while develop moved without a post-merge run and clears once a run reports', async () => {
+    const fixture = TestBed.createComponent(ProjectOperationsComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    const requests = TestBed.inject(HttpTestingController);
+    const host = fixture.nativeElement as HTMLElement;
+    const coverage = {
+      project: 'demo', strategy: 'fast', state: 'missing', developTipSha: 'a'.repeat(40),
+      lastReportedTipSha: null, lastReportedAtUtc: null, missing: true,
+      message: 'No post-merge run was ever reported for demo, while develop moved to aaaaaaaaaaaa.',
+    };
+    requests.match('/api/develop-states').forEach(request => request.flush([]));
+    requests.expectOne('/api/projects/demo/testing').flush({ strategy: 'fast', postMergeCoverage: coverage });
+    requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
+    await fixture.whenStable();
+    const warning = () => host.querySelector('[data-testid="operations-post-merge-warning"]');
+    expect(warning()?.textContent).toContain('No post-merge run was ever reported for demo');
+    expect(warning()?.querySelector('a')?.getAttribute('href')).toBe('#/projects/demo/settings');
+
+    fixture.componentInstance.load('demo');
+    requests.match('/api/develop-states').forEach(request => request.flush([]));
+    requests.expectOne('/api/projects/demo/testing').flush({ strategy: 'fast',
+      postMergeCoverage: { ...coverage, state: 'current', missing: false, message: 'covered' } });
+    requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
+    await fixture.whenStable();
+    expect(warning()).toBeNull();
+  });
+
   it('shows unavailable telemetry without invented numbers and links a rollback to release and card', async () => {
     const fixture = TestBed.createComponent(ProjectOperationsComponent);
     fixture.componentRef.setInput('projectName', 'demo');
     fixture.detectChanges();
+    TestBed.inject(HttpTestingController).match('/api/develop-states').forEach(request => request.flush([]));
     TestBed.inject(HttpTestingController).expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
     await fixture.whenStable();
     const host = fixture.nativeElement as HTMLElement;
-    expect(host.textContent).toContain('Telemetry is not available yet');
+    expect(host.textContent).toContain('Telemetry is turned off in this Studio');
     expect(host.textContent).toContain('rollback · succeeded');
     expect(host.querySelector<HTMLElement>('[data-testid="operations-marker-state"]')?.dataset['tone']).toBe('success');
     expect(host.textContent).toContain('0.5 per week');
@@ -82,6 +143,7 @@ describe('ProjectOperationsComponent', () => {
     fixture.componentRef.setInput('projectName', 'demo');
     fixture.detectChanges();
     const requests = TestBed.inject(HttpTestingController);
+    requests.match('/api/develop-states').forEach(request => request.flush([]));
     requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
     await fixture.whenStable();
     const view = fixture.componentInstance;
@@ -100,11 +162,61 @@ describe('ProjectOperationsComponent', () => {
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="operations-logs-empty"]')).not.toBeNull();
   });
 
+  it('opens the incident window from an Operations link', async () => {
+    const previousHash = window.location.hash;
+    window.history.replaceState(null, '', '#/projects/PROJ-002/deploy?view=operations&environmentId=prod&since=2026-10-19T08%3A00%3A00Z');
+    try {
+      const fixture = TestBed.createComponent(ProjectOperationsComponent);
+      fixture.componentRef.setInput('projectName', 'demo');
+      fixture.detectChanges();
+      const requests = TestBed.inject(HttpTestingController);
+      requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
+      const logs = requests.expectOne(req => req.url.endsWith('/deploy/operations/logs'));
+      expect(logs.request.params.get('environmentId')).toBe('prod');
+      expect(logs.request.params.get('since')).toBe('2026-10-19T08:00:00.000Z');
+      logs.flush({ telemetryAvailable: true, lines: [] });
+      fixture.destroy();
+    } finally {
+      window.history.replaceState(null, '', previousHash || '/');
+    }
+  });
+
+  it('loads another log page without losing the first page and names a failed store read', async () => {
+    const fixture = TestBed.createComponent(ProjectOperationsComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    const requests = TestBed.inject(HttpTestingController);
+    requests.match('/api/develop-states').forEach(request => request.flush([]));
+    requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
+    await fixture.whenStable();
+    const view = fixture.componentInstance;
+    view.search();
+    requests.expectOne(req => req.url.endsWith('/deploy/operations/logs')).flush({
+      telemetryAvailable: true, nextCursor: 'page-2',
+      lines: [{ at: '2026-10-20T10:00:00Z', level: 'ERROR', message: 'First error', releaseId: null }],
+    });
+    await fixture.whenStable();
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="operations-more-logs"]')!.click();
+    const next = requests.expectOne(req => req.url.endsWith('/deploy/operations/logs'));
+    expect(next.request.params.get('cursor')).toBe('page-2');
+    next.flush({ telemetryAvailable: true, nextCursor: null,
+      lines: [{ at: '2026-10-20T09:00:00Z', level: 'ERROR', message: 'Second error', releaseId: null }] });
+    await fixture.whenStable();
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('First error');
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Second error');
+    view.search();
+    requests.expectOne(req => req.url.endsWith('/deploy/operations/logs')).flush(
+      { error: 'Operations telemetry store read failed.' }, { status: 503, statusText: 'Service Unavailable' });
+    await fixture.whenStable();
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Operations telemetry store read failed.');
+  });
+
   it('searches logs for a long-running release whose arrival predates the trend window', async () => {
     const fixture = TestBed.createComponent(ProjectOperationsComponent);
     fixture.componentRef.setInput('projectName', 'demo');
     fixture.detectChanges();
     const requests = TestBed.inject(HttpTestingController);
+    requests.match('/api/develop-states').forEach(request => request.flush([]));
     requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
     await fixture.whenStable();
     const release = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>('[data-testid="operations-log-release"]')!;
@@ -126,6 +238,7 @@ describe('ProjectOperationsComponent', () => {
     fixture.componentRef.setInput('projectName', 'demo');
     fixture.detectChanges();
     const requests = TestBed.inject(HttpTestingController);
+    requests.match('/api/develop-states').forEach(request => request.flush([]));
     requests.expectOne('/api/projects/demo/deploy/operations').flush({ ...snapshot, environments: [
       ...snapshot.environments, { ...snapshot.environments[0], environment: { id: 'stage', name: 'Staging', kind: 'staging' } },
     ] });
@@ -175,6 +288,7 @@ describe('ProjectOperationsComponent', () => {
       samples: [{ at: '2026-10-19T00:00:00Z', responseP95Ms: 80, errorRate: 0.02,
         requests: 500, cpuCores: 1, memoryBytes: 1024, diskBytes: 4096 }],
     };
+    TestBed.inject(HttpTestingController).match('/api/develop-states').forEach(request => request.flush([]));
     TestBed.inject(HttpTestingController).expectOne('/api/projects/demo/deploy/operations')
       .flush({ ...snapshot, environments: [{ ...snapshot.environments[0], telemetryAvailable: true, metrics }] });
     await fixture.whenStable();
@@ -189,5 +303,11 @@ describe('ProjectOperationsComponent', () => {
     fixture.componentInstance.openRelease.subscribe(id => releases.push(id));
     host.querySelector<SVGGElement>('.trend__marker-link')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(releases).toEqual(['rel-1']);
+  });
+
+  it('shows used CPU and memory when the intake reports no reservation', () => {
+    expect(ratio(0.25, null, ' cores')).toBe('0.3 cores');
+    expect(ratio(null, 2, ' cores')).toBe('No data');
+    expect(ratio(1, 2, ' cores')).toBe('1 cores / 2 cores');
   });
 });

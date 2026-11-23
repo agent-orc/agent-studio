@@ -128,6 +128,7 @@ export class AcceptanceNextStepsComponent {
     this.tasks.reviewContentAgainstCurrentBrief(this.job().id, this.job().watchPath).subscribe({
       next: () => {
         this.busy.set(false);
+        this.store.markAddressed(this.job());
         this.notifications.success('Content review requested for the current brief.');
         this.tasks.refresh(true);
       },

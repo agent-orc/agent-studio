@@ -294,11 +294,11 @@ public sealed class SummaryAssessmentTests
     // --- step configuration ---------------------------------------------------
 
     [Fact]
-    public void Step_defaults_to_claude_opus_5_5_low()
+    public void Step_defaults_to_claude_haiku_5_5_low()
     {
         var selection = SummaryGenerationService.ResolveStepSelection(settings: null);
         Assert.Equal(CliTypes.Claude, selection.Cli);
-        Assert.Equal(ModelIds.ClaudeOpus55, selection.Model);
+        Assert.Equal(ModelIds.ClaudeHaiku55, selection.Model);
         Assert.Equal("low", selection.ThinkingLevel);
         Assert.Equal(PipelineStepConfigResolver.ModelSourceCatalogue, selection.ModelSource);
     }
@@ -328,7 +328,7 @@ public sealed class SummaryAssessmentTests
         var settings = new ProjectSettings { OrchestratorModel = ModelIds.Gpt55 };
         var selection = SummaryGenerationService.ResolveStepSelection(settings);
         Assert.Equal(CliTypes.Claude, selection.Cli);
-        Assert.Equal(ModelIds.ClaudeOpus55, selection.Model);
+        Assert.Equal(ModelIds.ClaudeHaiku55, selection.Model);
     }
 
     [Fact]
@@ -339,7 +339,7 @@ public sealed class SummaryAssessmentTests
             var step = Assert.Single(pipeline.Post, s => s.Id == PipelineCatalogue.SummaryAssessmentStepId);
             Assert.False(PipelineStepConfigResolver.CanDisable(step));
             Assert.True(PipelineStepModelDefaults.UsesModel(step));
-            Assert.Equal(ModelIds.ClaudeOpus55, PipelineStepModelDefaults.RuntimeDefaultFor(step));
+            Assert.Equal(ModelIds.ClaudeHaiku55, PipelineStepModelDefaults.RuntimeDefaultFor(step));
             Assert.Equal(CliTypes.Claude, PipelineStepModelDefaults.RuntimeDefaultCliFor(step));
             Assert.Equal("low", PipelineStepModelDefaults.RuntimeDefaultThinkingLevelFor(step));
         }
@@ -432,7 +432,7 @@ public sealed class SummaryAssessmentTests
 
             Assert.Equal(TaskSummaryStatus.Ready, service.GetState("LOCAL-2")!.Status);
             var request = Assert.Single(oneShot.Requests);
-            Assert.Equal(ModelIds.ClaudeOpus55, request.Model);
+            Assert.Equal(ModelIds.ClaudeHaiku55, request.Model);
             Assert.Equal("low", request.ThinkingLevel);
             Assert.Contains("EVIDENCE", request.Prompt);
             Assert.Contains("\"taskKey\": \"LOCAL-2\"", request.Prompt);

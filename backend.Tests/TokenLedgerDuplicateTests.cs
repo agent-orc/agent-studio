@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using AgentStudio.Registry;
 using AgentStudio.Tasks;
@@ -108,6 +109,47 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         Assert.Equal(bytesBefore, File.ReadAllText(TaskJsonPath()));
         Assert.Equal(totalsBefore, ProjectTotals());
         Assert.NotNull(mutations);
+    }
+
+    [Theory]
+    [InlineData(null, "fresh")]
+    [InlineData("prior-session", "resumed")]
+    public void Remote_receipt_preserves_launch_mode_through_the_merged_ledger(
+        string? inputSessionId, string mode)
+    {
+        var (scanner, _, receipts) = BuildWriteServices();
+        WriteTask(tokenSummary: null);
+        WriteCliLog([ResultFrame(turnInput: 10, session: "s-1")]);
+        var task = scanner.FindJob(JobId, _watchPath)!;
+        var sessions = new TaskSessionLog(scanner, NullLogger<TaskSessionLog>.Instance);
+        sessions.AppendSessionEvent(JobId, new SessionEvent
+        {
+            Ts = SessionAt.AddSeconds(-1), RunAttemptId = Attempt, Cli = "claude",
+        }, _watchPath);
+        sessions.AppendSessionEvent(JobId, new SessionEvent
+        {
+            Ts = SessionAt.AddMinutes(10), RunAttemptId = LaterAttempt,
+            CapturedSessionId = "newer-session", Cli = "claude",
+        }, _watchPath);
+        var continuation = new SessionContinuationLedgerEntry(
+            Attempt, JobId, "claude", "repo", "/work", "branch",
+            "result", new string('a', 40), "host|home", inputSessionId,
+            inputSessionId ?? "fresh-session", mode, null, inputSessionId is not null,
+            inputSessionId is null ? 0 : 1, null, null, null, null, 1, SessionAt);
+
+        Assert.True(receipts.PersistFromLog(task, Attempt, "agent-runner-01",
+            sessionContinuation: continuation).Persisted);
+
+        Assert.Equal(mode, Assert.Single(ReadReceipt().Entries).SessionMode);
+        var ledger = Assert.Single(new ProjectTokenReceiptReader().Read(_watchPath).Entries);
+        Assert.Equal(mode, ledger.TokenUsage!.SessionMode);
+        Assert.Equal(mode, Assert.Single(TaskTokenSummaryFold.PerJob(
+            TokenTestServices.Pricing().Price([ledger]))[JobId].Entries).SessionMode);
+        var events = sessions.ReadSessionEvents(JobId, _watchPath);
+        var completed = Assert.Single(events, entry => entry.RunAttemptId == Attempt);
+        Assert.Equal(inputSessionId is not null, completed.Resumed);
+        Assert.Equal(inputSessionId, completed.InputSessionId);
+        Assert.Equal("newer-session", Assert.Single(events, entry => entry.RunAttemptId == LaterAttempt).CapturedSessionId);
     }
 
     [Fact]
@@ -304,8 +346,7 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
     {
         WriteTask(Agt3004Receipt());
         var (scanner, _, _) = BuildWriteServices();
-        var service = new ProjectPipelineCostService(TokenTestServices.Pricing(),
-            scanner, new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance), new ProjectTokenReceiptReader());
+        var service = BuildPipelineCost(scanner);
 
         var timeline = service.Build(ProjectName, _watchPath, 30, CodexAt.AddDays(1));
 
@@ -380,8 +421,7 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         Assert.Equal(expected.Total, lifetime.EstimatedApiCostUsd);
 
         var (scanner, _, _) = BuildWriteServices();
-        var timeline = new ProjectPipelineCostService(TokenTestServices.Pricing(),
-                scanner, new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance), new ProjectTokenReceiptReader())
+        var timeline = BuildPipelineCost(scanner)
             .Build(ProjectName, _watchPath, 30, CodexAt.AddDays(1));
         Assert.Equal(1_100, timeline.TotalTokens);
         Assert.Equal(decimal.Round(expected.Total, 2), decimal.Round(timeline.TotalCostUsd, 2));
@@ -544,6 +584,18 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
                 ["WatchPaths:0:Path"] = _watchPath,
             })
             .Build();
+
+    private ProjectPipelineCostService BuildPipelineCost(TaskScannerService scanner)
+    {
+        var config = BuildConfig();
+        var pricing = TokenTestServices.Pricing();
+        var store = new AgentMessageBusStore();
+        var analysis = new TokenAnalysisService(pricing, scanner,
+            new PipelineExecutionLog(pricing, NullLogger<PipelineExecutionLog>.Instance),
+            new ProjectTokenLedger(store, config, new ProjectTokenReceiptReader()), store, config,
+            new FakeTimeProvider(new DateTimeOffset(CodexAt.AddDays(1))));
+        return new ProjectPipelineCostService(pricing, analysis);
+    }
 
     private TokenAggregationService BuildProjectReader(AgentMessageBusStore? store = null)
     {

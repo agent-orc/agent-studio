@@ -66,6 +66,16 @@ public static class TimelineEventKinds
     public const string AgentRunFinished = "agent_run_finished";
     /// <summary>A passing review regained commit attribution after imported integration commits were excluded.</summary>
     public const string IntegrationHistoryAttributionRepaired = "integration_history_attribution_repaired";
+    /// <summary>
+    /// AGT-3968: the batch replay resolved add/add conflict hunks of this card's
+    /// delivery by keeping both sides; the details name each hunk.
+    /// </summary>
+    public const string IntegrationUnionResolved = "integration_union_resolved";
+    /// <summary>
+    /// AGT-3968: the delivery conflicted only with another card admitted ahead
+    /// of it in the same batch and waits for the next batch, without an agent round.
+    /// </summary>
+    public const string IntegrationSiblingDeferred = "integration_sibling_deferred";
     /// <summary>A passing review regained commit attribution after a subject key was no longer read as another card's work.</summary>
     public const string CommitSubjectKeyAttributionRepaired = "commit_subject_key_attribution_repaired";
     /// <summary>An operator move fenced a remote attempt while retaining its work as reference.</summary>
@@ -228,6 +238,9 @@ public static class TimelineEventKinds
     /// release-gated dependents the decision unblocks.
     /// </summary>
     public const string TaskReleased = "task_released";
+
+    /// <summary>A repository package release containing this card was pushed.</summary>
+    public const string PackageReleased = "package_released";
     /// <summary>The task's lane changed (any move).</summary>
     public const string LaneChanged = "lane_changed";
     /// <summary>An owner tried to move a card, but the transition refused it with a reason.</summary>

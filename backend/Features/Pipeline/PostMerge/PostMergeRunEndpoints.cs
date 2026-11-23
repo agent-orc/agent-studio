@@ -1,4 +1,5 @@
 using AgentStudio.Registry;
+using AgentStudio.Tasks;
 using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
 
@@ -9,7 +10,7 @@ public static class PostMergeRunEndpoints
     public static void MapPostMergeRunEndpoints(this WebApplication app)
     {
         app.MapGet("/api/develop-states", (HttpContext context, ProjectRegistry registry,
-            PostMergeRunStore store) =>
+            PostMergeRunStore store, TimeProvider clock) =>
         {
             var allowed = GateEconomicsEndpoints.AccessFilter(context, registry);
             return Results.Ok(registry.List().Where(project => !project.Archived
@@ -19,8 +20,35 @@ public static class PostMergeRunEndpoints
                     var state = store.Read(project.Id);
                     return new DevelopStateSummary(project.DisplayName,
                         state.Runs.Count == 0 && state.ActiveRun is null ? null : state.DevelopState,
-                        state.LastGreenSha);
+                        state.LastGreenSha, state.PendingWindow, state.FlakyCount,
+                        (state.FlakyHistory ?? []).Where(item => item.AtUtc >= clock.GetUtcNow().AddDays(-14)
+                            && item.AtUtc <= clock.GetUtcNow())
+                            .GroupBy(item => item.Test, StringComparer.Ordinal)
+                            .Select(group => new PostMergeFlakyTest(group.Key,
+                                group.Select(item => item.RunId).Distinct().Count(), group.Max(item => item.AtUtc)))
+                            .OrderByDescending(item => item.Runs).ThenBy(item => item.Test, StringComparer.Ordinal)
+                            .ToArray());
                 }).ToArray());
+        });
+        app.MapGet("/api/runner/post-merge/projects", (ProjectRegistry registry,
+            ProjectSettingsService settings) => Results.Ok(registry.List()
+            .Where(project => !project.Archived
+                && IntegrationTestModes.Resolve(settings.Get(project.DisplayName)) == IntegrationTestModes.PostMerge)
+            .Select(project => (Project: project, Repository: RemoteProjectRepositoryResolver.Resolve(
+                project, settings.Get(project.DisplayName).IntegrationBranch)))
+            .Where(item => item.Repository is not null)
+            .Select(item => new PostMergeProjectTarget(item.Project.Id, item.Project.DisplayName,
+                item.Repository!.RepositoryUrl, item.Repository.DefaultBranch)).ToArray()));
+        app.MapPost("/api/runner/post-merge/projects/{project}/window", (string project,
+            PostMergeWindowObservation observation, ProjectRegistry registry, PostMergeRunStore store) =>
+        {
+            var record = registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project);
+            if (record is null) return Results.NotFound();
+            if (observation.TipSha is not { Length: 40 } || !observation.TipSha.All(Uri.IsHexDigit)
+                || observation.WindowMinutes < 0 || observation.AdmissionReason?.Length > 256)
+                return Results.BadRequest(new { error = "invalid post-merge window observation" });
+            store.ObserveWindow(record.Id, observation);
+            return Results.NoContent();
         });
         app.MapGet("/api/runner/post-merge/projects/{project}", (string project,
             ProjectRegistry registry, PostMergeRunStore store, ProjectSettingsService settings) =>
@@ -29,11 +57,14 @@ public static class PostMergeRunEndpoints
             if (record is null) return Results.NotFound();
             var state = store.Read(record.Id);
             var projectSettings = settings.Get(record.DisplayName);
-            if (IntegrationTestModes.Resolve(projectSettings) == IntegrationTestModes.PostMerge)
+            var strategy = TestingStrategies.Resolve(projectSettings);
+            if (TestingStrategies.ExpectsPostMergeRuns(strategy))
                 state = state with
                 {
                     WindowMaxMerges = projectSettings.BatchGate.MaximumSize,
                     WindowMinutes = Math.Max(0, projectSettings.BatchGate.LookAheadMinutes),
+                    // AGT-3965: fast selects the affected routine suites, balanced every routine suite.
+                    WindowSuites = TestingStrategies.WindowSuites(strategy),
                 };
             return Results.Ok(state);
         });
@@ -42,7 +73,7 @@ public static class PostMergeRunEndpoints
         {
             var record = registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project);
             if (record is null) return Results.NotFound();
-            incidents.EscalateOverdue(record);
+            incidents.AskOwnerWhenOverdue(record);
             return Results.NoContent();
         });
         app.MapPost("/api/runner/post-merge/projects/{project}/runs", (string project,
@@ -57,8 +88,12 @@ public static class PostMergeRunEndpoints
                 || run.Kind is not ("window" or "nightly")
                 || run.Status is not ("running" or "green" or "red" or "skipped")
                 || run.Commands is null || run.Verdicts is null
+                || run.StartOccupiedSlots < 0
+                || run.StartLoadPerCore is { } load && (!double.IsFinite(load) || load < 0)
                 || run.Commands.Count > 64 || run.Verdicts.Count > 64
                 || run.Verdicts.Any(verdict => verdict.OutputTail?.Length > 2000
+                    || verdict.FlakyTests?.Count > 64
+                    || verdict.FlakyTests?.Any(test => string.IsNullOrWhiteSpace(test) || test.Length > 256) == true
                     || verdict.FailedTests?.Count > 64
                     || verdict.FailedTests?.Any(test => test.Length > 256) == true)
                 || run.Failure is { } failure && (string.IsNullOrWhiteSpace(failure.Fingerprint)
@@ -84,4 +119,6 @@ public static class PostMergeRunEndpoints
     }
 }
 
-public sealed record DevelopStateSummary(string Project, string? DevelopState, string? LastGreenSha);
+public sealed record DevelopStateSummary(string Project, string? DevelopState, string? LastGreenSha,
+    PostMergeWindowObservation? PendingWindow = null, int FlakyCount = 0,
+    IReadOnlyList<PostMergeFlakyTest>? MostFlakyTests14Days = null);

@@ -240,12 +240,10 @@
       </details>
     }
 
-    @if (publishTargets().length > 0) {
-      <details class="operator-dashboard__publishing" data-testid="project-overview-publishing-actions">
-        <summary>Package and workflow publishing actions</summary>
-        <app-project-publish-panel [projectName]="projectName()" [targets]="publishTargets()" />
-      </details>
-    }
+    <details class="operator-dashboard__publishing" [open]="publishTargets().length === 0" data-testid="project-overview-publishing-actions">
+      <summary>Package and workflow publishing actions</summary>
+      <app-project-publish-panel [projectName]="projectName()" [targets]="publishTargets()" />
+    </details>
   </section>
 
   @if (unavailable().size > 0) {

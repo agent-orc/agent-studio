@@ -196,7 +196,9 @@ export class BatchPanelComponent implements OnDestroy {
   }
   isolationRows(batch: BatchGateBatch) { return batchIsolationRows(this.state(), batch); }
   isolationState(batch: BatchGateBatch) { return batchIsolationState(batch); }
-  flakySuspectLabel(suspect: BatchFlakySuspect): string { return batchFlakySuspectLabel(suspect); }
+  flakySuspectLabel(suspect: BatchFlakySuspect, batch: BatchGateBatch): string {
+    return batchFlakySuspectLabel(suspect, batch.phase !== 'red');
+  }
   /** The members a failed run proved red, joined for display, or null. */
   provenBy(failure: { batchId: string; runId: string }): string | null {
     const culprits = (this.state()?.isolationFindings ?? []).filter(finding => finding.status === 'proven-red'

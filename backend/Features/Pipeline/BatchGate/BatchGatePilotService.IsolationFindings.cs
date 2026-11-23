@@ -68,7 +68,7 @@ public sealed partial class BatchGatePilotService
                     BatchGatePolicy.CandidateRef(green, run.CoordinatorFence), run.CandidateSha, admitted,
                     child ? [] : outcomes.Where(item => item.Value is "conflict" or "unattributable")
                         .Select(item => item.Key).ToArray(),
-                    child ? [] : outcomes.Where(item => item.Value == "cascade-deferred")
+                    child ? [] : outcomes.Where(item => BatchReplayOutcomes.IsDeferred(item.Value))
                         .Select(item => item.Key).ToArray(), false);
                 // Ejected members of a published batch leave through the
                 // published-batch recovery of the same tick.
@@ -206,6 +206,7 @@ public sealed partial class BatchGatePilotService
             var task = _scanner.FindJob(item.Subject.TaskKey, item.WatchPath);
             if (task?.State != TaskStates.AutoReview) continue;
             var reason = FailureSummary(finding.EvidencePath);
+            DeliveryFailureEvidence.Write(task.FolderPath, reason);
             await EscalateFallbackAsync(task, item, reason, false, true, ct)
                 .ConfigureAwait(false);
         }
@@ -239,15 +240,8 @@ public sealed partial class BatchGatePilotService
             var line = File.ReadLines(evidencePath).LastOrDefault(value => !string.IsNullOrWhiteSpace(value));
             var gate = line is null ? null : JsonSerializer.Deserialize<BuildTestGateResult>(line,
                 new JsonSerializerOptions(JsonSerializerDefaults.Web));
-            var failed = gate?.Output.Split('\n').Where(value =>
-                value.Contains("Failed", StringComparison.OrdinalIgnoreCase)
-                || value.Contains("Error", StringComparison.OrdinalIgnoreCase)).Take(12);
-            var excerpt = failed is null ? string.Empty : string.Join("\n", failed);
-            var tests = gate is null ? [] : BatchGateProbeClassifier.FailedTests(gate);
-            return "Batch isolation proved this delivery red. "
-                + (tests.Count == 0 ? string.Empty : "Failing tests: " + string.Join(", ", tests) + ". ")
-                + gate?.Reason
-                + (excerpt.Length == 0 ? string.Empty : "\n" + excerpt[..Math.Min(excerpt.Length, 2000)])
+            return "Batch isolation proved this delivery red.\n"
+                + (gate is null ? string.Empty : DeliveryFailureEvidence.Gate(gate))
                 + "\nEvidence: " + evidencePath;
         }
         catch (Exception)

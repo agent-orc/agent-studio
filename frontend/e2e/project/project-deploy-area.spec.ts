@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { ProjectEnvironments } from '../../src/app/models/project-overview.model';
 import { setTheme } from '../helpers/theme';
 import {
   ARTIFACT_A,
@@ -12,7 +13,13 @@ import {
   deployStatusFixture,
   deploymentLogFixture,
   pipelineDefinitionFixture,
+  productionDownHealthFixture,
+  productionRollbackFixture,
+  RELEASE_1,
+  RELEASE_2,
+  RELEASE_3,
 } from '../../src/app/features/project-detail/testing/deploy-fixtures';
+import { healthResponse } from '../../src/testing/environment-health';
 
 /**
  * Project Deploy area on a fully mocked backend (AGT-3226).
@@ -31,6 +38,13 @@ const DEPLOY = `/api/projects/${PROJECT}/deploy`;
 const results = process.env.JOB_RESULTS_DIR ?? path.resolve(__dirname, '..', '..', 'test-results', 'project-deploy-area');
 
 const MISSING = Symbol('missing route');
+// AGT-3879 running Studio instance fixtures; imports hoist, so this sits apart from the shared import block.
+import { instanceDeployFixture } from '../../src/app/features/project-detail/testing/instance-deploy-fixtures';
+/** Refreshes the area after moving the pinned clock: the AGT-3879 instance section re-reads when the area clock moves. */
+async function refreshLater(page: Page, seconds: number): Promise<void> {
+  await page.clock.setFixedTime(new Date(DEPLOY_FIXTURE_NOW + seconds * 1000));
+  await page.getByTestId('deploy-refresh').click();
+}
 type Answer = unknown | typeof MISSING | { status: number; body: unknown };
 interface DeployMocks {
   environments: unknown;
@@ -41,6 +55,10 @@ interface DeployMocks {
   health?: Answer;
   /** POST approve, reject, or cancel; records each call. */
   act?: (action: string, deploymentId: string, body?: unknown, csrf?: string) => Answer;
+  /** POST the lifecycle rollback route of an environment (F13). */
+  rollback?: (environmentId: string, body?: unknown) => Answer;
+  /** Called when anything posts the older AGT-3176 rollback route. */
+  legacyRollback?: (environmentId: string) => void;
 }
 
 const json = (body: unknown, status = 200) => ({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -110,7 +128,14 @@ async function mockApp(page: Page, deploy: DeployMocks, missingCheckout = false)
   await page.route(`**/api/projects/${PROJECT}/environments/health`, route => answer(route, deploy.health ?? {
     capturedAt: new Date(DEPLOY_FIXTURE_NOW).toISOString(), probeOrigin: 'mock', environments: [],
   }));
+  await page.route(`**${DEPLOY}/secret-readiness**`, route => answer(route, {
+    project: PROJECT, releaseId: null, environments: [],
+  }));
   await page.route(`**${DEPLOY}/status`, route => answer(route, deploy.status));
+  // F14: every environment has its secrets bound unless a test says otherwise; the catch-all `[]` is no answer here.
+  await page.route(url => url.pathname === `${DEPLOY}/secret-readiness`, route => answer(route, {
+    project: PROJECT, releaseId: new URL(route.request().url()).searchParams.get('releaseId'), environments: [],
+  }));
   // A predicate, not a glob: the artifact query value contains "/", which a glob "*" does not match.
   await page.route(url => url.pathname === `${DEPLOY}/releases/page`, route => {
     if (deploy.releases === MISSING || (deploy.releases && typeof deploy.releases === 'object' && 'status' in deploy.releases))
@@ -169,6 +194,15 @@ async function mockApp(page: Page, deploy: DeployMocks, missingCheckout = false)
       ? deploy.act(action, id, route.request().postDataJSON(), route.request().headers()['x-csrf-token']) : MISSING);
   });
   await page.route(`**/api/projects/${PROJECT}/pipeline-definition`, route => answer(route, deploy.pipelineDefinition));
+  await page.route(new RegExp(`${DEPLOY}/environments/[^/]+/rollback$`), route => {
+    const id = route.request().url().split('/').at(-2)!;
+    return answer(route, route.request().method() === 'POST' && deploy.rollback
+      ? deploy.rollback(id, route.request().postDataJSON()) : MISSING);
+  });
+  await page.route(new RegExp(`/api/projects/${PROJECT}/environments/[^/]+/rollback$`), route => {
+    deploy.legacyRollback?.(route.request().url().split('/').at(-2)!);
+    return answer(route, { status: 202, body: {} });
+  });
 }
 
 async function openDeploy(page: Page, deploy: DeployMocks, navigationTimeoutMs = 30_000, missingCheckout = false): Promise<void> {
@@ -197,6 +231,46 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('Stop and Remove explain retention and require a later host confirmation', async ({ page }) => {
+    const environments: ProjectEnvironments = deployEnvironmentsFixture();
+    const calls: string[] = [];
+    await openDeploy(page, fullMocks({ environments }));
+    await page.route(`**/api/projects/${PROJECT}/environments/stage/stop`, async route => {
+      calls.push('stop');
+      await route.fulfill(json({}));
+    });
+    await page.route(`**/api/projects/${PROJECT}/environments/stage/run-target-removal/confirm`, async route => {
+      calls.push('host-removal');
+      await route.fulfill(json({}));
+    });
+    await page.route('**/api/tasks', async route => {
+      calls.push('card');
+      expect(route.request().postDataJSON().promptMarkdown).toContain('Do not add a removal tombstone');
+      await route.fulfill(json({ id: 'WEB-100' }));
+    });
+
+    const stage = page.getByRole('article', { name: 'Staging' });
+    await expect(stage.getByRole('button', { name: 'Stop Staging' })).toBeVisible();
+    await expect(stage.getByRole('button', { name: 'Remove Staging' })).toBeVisible();
+    await stage.getByRole('button', { name: 'Stop Staging' }).click();
+    await expect(page.getByTestId('deploy-environment-action-message')).toContainText('Stop queued');
+    await stage.getByRole('button', { name: 'Remove Staging' }).click();
+    await expect(page.getByTestId('deploy-environment-action-message')).toContainText('WEB-100');
+    expect(calls).toEqual(['stop', 'card']);
+
+    environments.runTargetRemovals = [{ environmentId: 'stage', hostId: 'run-host', kind: 'stage', status: 'pending-confirmation' }];
+    await page.getByTestId('deploy-refresh').click();
+    await expect(page.getByTestId('deploy-pending-removal')).toContainText('app stays on the host');
+    await setTheme(page, 'light');
+    await capture(page, 'deploy-environment-removal-pending-light');
+    await page.getByTestId('deploy-pending-removal').screenshot({ path: path.join(results, 'deploy-pending-removal-light--mocked.png') });
+    await setTheme(page, 'dark');
+    await capture(page, 'deploy-environment-removal-pending-dark');
+    await page.getByTestId('deploy-pending-removal').screenshot({ path: path.join(results, 'deploy-pending-removal-dark--mocked.png') });
+    await page.getByTestId('deploy-pending-removal').getByRole('button', { name: 'Confirm host removal' }).click();
+    expect(calls).toEqual(['stop', 'card', 'host-removal']);
+  });
+
   test('persists signed-in cookies across a browser restart and approves Production', async ({ browser, baseURL }) => {
     const first = await browser.newContext({ baseURL });
     const signInPage = await first.newPage();
@@ -381,6 +455,69 @@ test.describe('Project Deploy area (mocked)', () => {
     await capture(page, 'runbooks-tab-dark');
   });
 
+  test('names people in deploy history, the run drawer, and runbooks by display name (the playthrough)', async ({ page }) => {
+    test.setTimeout(240_000);
+    const OWNER = 'usr_ecaff70110';
+    const MAINTAINER = 'usr_0b1d2c3e4f';
+    const deployments = deployDeploymentsFixture().map(item => item.id === 'run-a-production'
+      ? { ...item, requestedBy: MAINTAINER, approvedBy: OWNER } : item);
+    await openDeploy(page, fullMocks({ deployments }), 90_000);
+    const person = (id: string, displayName: string) => ({
+      id, displayName, emoji: null, colour: null, kind: 'human', registeredAt: '2026-10-01T00:00:00Z',
+      lastSeenAt: null, tokenBudgetMonthly: null, notes: null,
+    });
+    await page.route('**/api/clients/', route => route.fulfill(json([person(OWNER, 'Ada Owner'), person(MAINTAINER, 'Sam Maintainer')])));
+    await page.route(`**${DEPLOY}/runbooks`, route => route.fulfill(json([
+      { name: 'restart', steps: ['restart-container'], environments: [] },
+    ])));
+    await page.route(`**${DEPLOY}/runbooks/runs?*`, route => route.fulfill(json([
+      { id: 'runbook-1', name: 'restart', state: 'succeeded', requestedBy: MAINTAINER, approvedBy: OWNER, steps: [] },
+    ])));
+    await page.route(url => url.pathname === `${DEPLOY}/secret-readiness`, route => route.fulfill(json({
+      project: PROJECT, releaseId: null, environments: [],
+    })));
+    await page.route(`**${DEPLOY}/operations`, route => route.fulfill(json({
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z', environments: [],
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: 0, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    })));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('project-deploy-area')).toBeVisible({ timeout: 60_000 });
+
+    await page.getByTestId('deploy-tab-history').click();
+    await expect(page.getByTestId('deploy-run-row-run-a-production')).toContainText('Sam Maintainer');
+    await page.getByTestId('deploy-run-open-run-a-production').click();
+    const drawer = page.getByTestId('deploy-run-drawer');
+    await expect(drawer.getByTestId('deploy-run-approval')).toHaveText('Approved by Ada Owner');
+    await expect(drawer).not.toContainText('usr_');
+    await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
+    for (const theme of ['light', 'dark'] as const) {
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await setTheme(page, theme);
+      await page.screenshot({ path: path.join(results, `deploy-run-display-names-1280-${theme}--mocked.png`) });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await setTheme(page, 'light');
+    await page.screenshot({ path: path.join(results, 'deploy-run-display-names-390--mocked.png') });
+    await page.keyboard.press('Escape');
+    await expect(drawer).toHaveCount(0);
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.getByTestId('deploy-tab-runbooks').click();
+    const runbooks = page.getByTestId('project-deploy-area').getByTestId('environment-runbooks').first();
+    await expect(runbooks).toContainText('requested by Sam Maintainer');
+    await expect(runbooks).toContainText('approved by Ada Owner');
+    await expect(runbooks).not.toContainText('usr_');
+    await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await capture(page, `runbooks-display-names-1280-${theme}`);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await setTheme(page, 'light');
+    await capture(page, 'runbooks-display-names-390');
+  });
+
   test('Operations rail opens an older release on a fresh Deploy mount without fetching the first page', async ({ page }) => {
     const base = deployReleasesFixture()[0];
     const releases = Array.from({ length: 40 }, (_, index) => ({ ...base,
@@ -452,6 +589,56 @@ test.describe('Project Deploy area (mocked)', () => {
     await page.getByTestId('project-operations').screenshot({ path: path.join(results, 'operations-trace-light--mocked.png') });
     await setTheme(page, 'dark');
     await page.getByTestId('project-operations').screenshot({ path: path.join(results, 'operations-trace-dark--mocked.png') });
+  });
+
+  test('Operations renders stored trends and a paged log hit in both themes and at 390 px', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    const metrics = {
+      responseP50Ms: 24, responseP95Ms: 91, errorRate: 0.25, restarts: null, requests: 12,
+      sessions: null, activeUsers: null, cpuCores: 0.4, cpuReservedCores: null,
+      memoryBytes: 4096, memoryReservedBytes: null, diskBytes: 8192, diskReservedBytes: null,
+      networkBytes: null, topEndpoints: [{ path: '/orders', requests: 12 }], dailyUsage: [],
+      samples: [
+        { at: '2026-10-19T09:00:00Z', responseP95Ms: 51, errorRate: 0, requests: 3, cpuCores: 0.2, memoryBytes: 3072, diskBytes: 7168 },
+        { at: '2026-10-19T10:00:00Z', responseP95Ms: 91, errorRate: 0.25, requests: 9, cpuCores: 0.4, memoryBytes: 4096, diskBytes: 8192 },
+      ],
+    };
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
+      environments: ['stage', 'production'].map(id => ({
+        environment: { id, name: id === 'stage' ? 'Staging' : 'Production', kind: id },
+        telemetryAvailable: true, metrics, markers: [],
+      })),
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: null, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    await page.route(`**${DEPLOY}/operations/logs?*`, route => {
+      const cursor = new URL(route.request().url()).searchParams.get('cursor');
+      return answer(route, cursor ? { telemetryAvailable: true, nextCursor: null,
+        lines: [{ at: '2026-10-19T10:10:00Z', level: 'ERROR', message: 'upstream timeout', releaseId: 'v2' }] }
+        : { telemetryAvailable: true, nextCursor: 'next-page', lines: [] });
+    });
+    await page.getByTestId('deploy-tab-operations').click();
+    const operations = page.getByTestId('project-operations');
+    await expect(operations.getByTestId('operations-production')).toContainText('12');
+    await expect(operations.getByRole('img', { name: /Response p95 trend/ })).toHaveCount(2);
+    await operations.getByTestId('operations-search-logs').click();
+    await operations.getByTestId('operations-more-logs').click();
+    await expect(operations).toContainText('upstream timeout');
+    fs.mkdirSync(results, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await operations.getByRole('img', { name: /Response p95 trend/ }).first().scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(results, `operations-telemetry-trends-1280-${theme}.png`) });
+      await operations.getByTestId('operations-logs').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(results, `operations-telemetry-logs-1280-${theme}.png`) });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await operations.getByRole('img', { name: /Response p95 trend/ }).first().scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(results, 'operations-telemetry-trends-390-dark.png') });
+    await operations.getByTestId('operations-logs').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(results, 'operations-telemetry-logs-390-dark.png') });
+    await expect(operations.getByTestId('operations-logs')).toContainText('upstream timeout');
   });
 
   test('project Operations links to installation backups in Settings with backup and host CA warnings in both themes and at 390 px (AGT-3574, AGT-3736)', async ({ page }) => {
@@ -673,6 +860,67 @@ test.describe('Project Deploy area (mocked)', () => {
     await backups.screenshot({ path: path.join(results, 'operations-backups-write-only-target-light--mocked.png') });
   });
 
+  test('Telemetry tab creates an ingest token shown once, shows last use and revokes in both themes', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    // Fake credential-shaped values are built at runtime.
+    const secret = ['otl', 'stage-new', Math.random().toString(36).slice(2)].join('.');
+    const created: unknown[] = [];
+    const revoked: string[] = [];
+    const token = (overrides: Record<string, unknown>) => ({
+      id: 'stage-deploy', name: 'Studio deploy', project: PROJECT, environment: 'stage', signals: ['metrics', 'logs'],
+      createdAt: '2026-10-18T08:00:00Z', createdBy: 'studio:deploy', expiresAt: null,
+      lastUsedAt: '2026-10-20T09:55:00Z', revokedAt: null, ...overrides,
+    });
+    let tokens = [token({})];
+    await page.route(`**/api/projects/${PROJECT}/environments/*/telemetry/tokens**`, route => {
+      const request = route.request();
+      if (request.method() === 'POST') {
+        created.push(request.postDataJSON());
+        const added = token({ id: 'stage-new', name: 'shop-api', createdBy: 'owner', lastUsedAt: null, createdAt: '2026-10-20T10:00:00Z' });
+        tokens = [...tokens, added];
+        return answer(route, { token: added, secret, otlpEndpoint: 'https://studio.example/api/telemetry/otlp',
+          otlpHeaders: `Authorization=Bearer ${secret}` });
+      }
+      if (request.method() === 'DELETE') {
+        const id = request.url().split('/').at(-1)!;
+        revoked.push(id);
+        tokens = tokens.map(item => item.id === id ? { ...item, revokedAt: '2026-10-20T10:05:00Z' } : item);
+        return route.fulfill({ status: 204, body: '' });
+      }
+      return answer(route, request.url().includes('/environments/stage/') ? tokens : []);
+    });
+    await page.getByTestId('deploy-tab-telemetry').click();
+    const panel = page.getByTestId('project-telemetry-tokens');
+    await expect(panel.getByTestId('telemetry-tokens-environment')).toHaveValue('stage');
+    const managed = panel.getByTestId('telemetry-token-stage-deploy');
+    await expect(managed.getByTestId('telemetry-token-managed')).toHaveText('Managed by deploys');
+    await expect(managed.getByTestId('telemetry-token-last-seen')).toContainText('Oct 20, 2026');
+
+    await panel.getByTestId('telemetry-token-name').fill('shop-api');
+    await panel.getByTestId('telemetry-token-logs').uncheck();
+    await panel.getByTestId('telemetry-token-create').click();
+    await expect(panel.getByTestId('telemetry-token-settings')).toContainText(`OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer ${secret}`);
+    await expect(panel.getByTestId('telemetry-token-settings')).toContainText('OTEL_EXPORTER_OTLP_ENDPOINT=https://studio.example/api/telemetry/otlp');
+    expect(created).toEqual([{ name: 'shop-api', signals: ['metrics'], expiresAt: null }]);
+    await expect(panel.getByTestId('telemetry-token-stage-new').getByTestId('telemetry-token-last-seen')).toHaveText('Never');
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      fs.mkdirSync(results, { recursive: true });
+      await panel.screenshot({ path: path.join(results, `telemetry-tokens-created-${theme}--mocked.png`) });
+    }
+    await panel.getByTestId('telemetry-token-dismiss').click();
+    await expect(panel.getByTestId('telemetry-token-created')).toHaveCount(0);
+    await expect(panel).not.toContainText(secret);
+
+    await managed.getByTestId('telemetry-token-revoke').click();
+    await managed.getByTestId('telemetry-token-confirm-revoke').click();
+    await expect(managed).toHaveAttribute('data-state', 'revoked');
+    expect(revoked).toEqual(['stage-deploy']);
+    await panel.getByTestId('telemetry-tokens-environment').selectOption('production');
+    await expect(panel.getByTestId('telemetry-tokens-empty')).toContainText('No ingest tokens for production yet.');
+    await panel.screenshot({ path: path.join(results, 'telemetry-tokens-production-dark--mocked.png') });
+  });
+
   test('Operations shows deploy markers, DORA and telemetry empty state in both themes', async ({ page }) => {
     await openDeploy(page, fullMocks());
     const release = deployReleasesFixture()[0];
@@ -691,7 +939,7 @@ test.describe('Project Deploy area (mocked)', () => {
     await page.route(`**${DEPLOY}/operations/logs?*`, route => answer(route, { telemetryAvailable: false, lines: [] }));
     await page.getByTestId('deploy-tab-operations').click();
     const operations = page.getByTestId('project-operations');
-    await expect(operations).toContainText('Telemetry is not available yet');
+    await expect(operations).toContainText('Telemetry is turned off in this Studio');
     await expect(operations.getByTestId('operations-dora')).toContainText('0.5 per week');
     await expect(page.getByTestId('hosted-data-panel')).toContainText('No persistent volumes declared.');
     await operations.getByTestId('operations-search-logs').click();
@@ -722,6 +970,47 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(operations).not.toContainText('Stale stage error');
     await operations.getByTestId(`operations-release-${release.id}`).click();
     await expect(page.getByTestId('deploy-release-detail')).toContainText(release.version);
+  });
+
+  test('host crash is visible without application telemetry at desktop and phone widths', async ({ page }) => {
+    const environments = deployEnvironmentsFixture();
+    const production = environments.environments.find(item => item.declaration.id === 'production')!;
+    production.declaration.template = 'container';
+    production.declaration.destination = '8080';
+    production.observed = { state: 'crash-loop', restarts: 102, crashOutput: ['FATAL: configuration missing'] };
+    production.runtimeIncident = { id: 'production/crash', kind: 'crash-loop',
+      startedAt: '2026-10-19T12:00:00Z', updatedAt: '2026-10-19T12:01:00Z', restarts: 102, endedAt: null };
+    await openDeploy(page, fullMocks({ environments }));
+    await expect(page.getByTestId('deploy-environment-production').getByTestId('deploy-environment-health'))
+      .toContainText('Crash loop');
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
+      environments: [{ environment: { id: 'production', name: 'Production', kind: 'production' },
+        telemetryAvailable: false, metrics: null, markers: [], observed: production.observed,
+        runtimeIncident: production.runtimeIncident }],
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: null, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    await page.getByTestId('deploy-tab-operations').click();
+    await expect(page.getByTestId('operations-host-restarts')).toContainText('102');
+    await expect(page.getByTestId('operations-crash-output')).toContainText('FATAL: configuration missing');
+    for (const [width, height, theme] of [[1280, 800, 'light'], [1280, 800, 'dark'],
+      [390, 844, 'light'], [390, 844, 'dark']] as const) {
+      await page.setViewportSize({ width, height });
+      await setTheme(page, theme);
+      fs.mkdirSync(results, { recursive: true });
+      await page.getByTestId('operations-crash-output').scrollIntoViewIfNeeded();
+      await expect(page.getByTestId('operations-crash-output')).toBeInViewport();
+      await page.screenshot({ path: path.join(results,
+        `host-crash-operations-${width}-${theme}--mocked.png`) });
+      await page.getByTestId('deploy-tab-overview').click();
+      await expect(page.getByTestId('deploy-environment-production')).toContainText('Crash loop');
+      await page.getByTestId('deploy-environment-production').scrollIntoViewIfNeeded();
+      await expect(page.getByTestId('deploy-environment-production')).toBeInViewport();
+      await page.screenshot({ path: path.join(results,
+        `host-crash-card-${width}-${theme}--mocked.png`) });
+      await page.getByTestId('deploy-tab-operations').click();
+    }
   });
 
   test('shows guided failure on the environment card and sends a reasoned skip', async ({ page }) => {
@@ -784,6 +1073,65 @@ test.describe('Project Deploy area (mocked)', () => {
     await capture(page, 'older-guided-failure-dark');
   });
 
+  test('shows the running Studio instance, its live release, and what the next deploy brings (AGT-3879)', async ({ page }) => {
+    // The Studio's own project declares no environments; the instance is its Production.
+    const empty = { project: PROJECT, environments: [], promotions: [], jobs: [], hosts: [] };
+    await openDeploy(page, fullMocks({ environments: empty, status: [], releases: [], deployments: [] }));
+    await page.route(`**${DEPLOY}/instance`, route => answer(route, instanceDeployFixture()));
+    await refreshLater(page, 1);
+    const panel = page.getByTestId('instance-deploy');
+    await expect(panel).toBeVisible();
+    await expect(page.getByTestId('instance-deploy-version')).toHaveText('0.9.5-5faca674a');
+    await expect(page.getByTestId('instance-deploy-live-since')).toContainText('2026-11-16 03:35 UTC');
+    await expect(page.getByTestId('instance-deploy-brought')).toContainText('AGT-3839');
+    await expect(page.getByTestId('instance-deploy-pending').locator('li')).toHaveText([
+      /AGT-3861/, /AGT-3870/, /AGT-3879/,
+    ]);
+    for (const width of [1280, 390] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        const overflow = await panel.evaluate(element => {
+          const box = element.getBoundingClientRect();
+          return [...element.querySelectorAll('*')].filter(child => child.getBoundingClientRect().right > box.right + 1)
+            .map(child => `${child.tagName.toLowerCase()}.${child.className}`).slice(0, 3);
+        });
+        expect(overflow).toEqual([]);
+        fs.mkdirSync(results, { recursive: true });
+        await panel.screenshot({ path: path.join(results, `agt-3879-instance-deploy-${width}-${theme}.png`) });
+      }
+    }
+  });
+
+  test('names the step a failed or stalled Studio deploy stopped at (AGT-3879)', async ({ page }) => {
+    let run: 'failed' | 'stalled' = 'failed';
+    await openDeploy(page, fullMocks());
+    await page.route(`**${DEPLOY}/instance`, route => answer(route, instanceDeployFixture(run)));
+    await refreshLater(page, 1);
+    await expect(page.getByTestId('instance-deploy-run-state')).toContainText('Deploy failed at host:runner-1');
+    for (const width of [1280, 390] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.getByTestId('instance-deploy').screenshot({ path: path.join(results, `agt-3879-instance-deploy-failed-${width}-${theme}.png`) });
+      }
+    }
+    run = 'stalled';
+    await refreshLater(page, 2);
+    await expect(page.getByTestId('instance-deploy-run-state')).toContainText('Deploy stalled after host:runner-1 · no report for 30 min');
+    await page.getByTestId('instance-deploy').screenshot({ path: path.join(results, 'agt-3879-instance-deploy-stalled-390-dark.png') });
+  });
+
+  test('shows no Studio instance panel for another project (AGT-3879)', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    await page.route(`**${DEPLOY}/instance`, route => answer(route,
+      { status: 404, body: { error: `'${PROJECT}' is not the source project of this Studio instance.` } }));
+    await refreshLater(page, 1);
+    await expect(page.getByTestId('deploy-environments')).toBeVisible();
+    await expect(page.getByTestId('instance-deploy')).toHaveCount(0);
+    await expect(page.getByTestId('instance-deploy-notice')).toHaveCount(0);
+  });
+
   test('works with partial data: AGT-3176 environments only, AGT-3201 and AGT-3221 routes missing', async ({ page }) => {
     await openDeploy(page, { environments: deployEnvironmentsFixture(), ...HOST_ONLY, pipelineDefinition: MISSING });
     const area = page.getByTestId('project-deploy-area');
@@ -820,6 +1168,10 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(production.getByTestId('deploy-environment-approval')).toContainText('Release 2026.10.19.2, requested by local.dev');
 
     await staging.getByRole('button', { name: 'Open last run for Staging' }).focus();
+    await page.keyboard.press('Tab');
+    await expect(staging.getByRole('button', { name: 'Stop Staging' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(staging.getByRole('button', { name: 'Remove Staging' })).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(production.getByRole('button', { name: 'Open last run for Production' })).toBeFocused();
     await page.keyboard.press('Tab');
@@ -994,6 +1346,68 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect.poll(() => calls).toEqual(['approve:run-c-production']);
   });
 
+  test('M2: every environment surface reads Production down from the open incident, with release version and age', async ({ page }) => {
+    test.setTimeout(180_000);
+    // Every deploy report and /deploy/status still say healthy; the control plane has an open incident on Production.
+    await openDeploy(page, fullMocks({ health: productionDownHealthFixture() }), 90_000);
+    await page.route(`**/api/projects/${PROJECT}/deployment/summary`, route => route.fulfill(json({
+      project: PROJECT, available: false, reason: 'No deploy-stable history is available for this project.',
+      source: 'logs/stable-restarts.jsonl', lastDeployment: null, history: [], pendingCount: null, pendingCommits: [],
+      targets: [], defaultEvidenceRun: null,
+    })));
+    await page.route(`**${DEPLOY}/runbooks`, route => route.fulfill(json([{ name: 'restart', steps: ['restart-container'], environments: [] }])));
+    await page.route(`**${DEPLOY}/runbooks/runs?*`, route => route.fulfill(json([])));
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z', environments: [],
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: 0, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    const area = page.getByTestId('project-deploy-area');
+    const expectProductionDown = async (production: ReturnType<Page['getByTestId']>, healthId: string) => {
+      await expect(production.getByTestId(healthId)).toHaveText('Down');
+      await expect(production.getByTestId(healthId)).toHaveAttribute('data-tone', 'danger');
+      await expect(production).not.toContainText('Healthy');
+    };
+
+    const surfaces: { name: string; production: string; open: () => Promise<void>; check: () => Promise<void> }[] = [
+      { name: 'overview', production: 'deploy-environment-production', open: () => page.getByTestId('deploy-tab-overview').click(), check: async () => {
+        await expectProductionDown(area.getByTestId('deploy-environment-production'), 'deploy-environment-health');
+        await expect(area.getByTestId('deploy-environment-production').getByTestId('deploy-environment-release')).toHaveText('Release 2026.10.18.1');
+      } },
+      { name: 'tools', production: 'environment-production', open: async () => { await page.getByTestId('deploy-tab-overview').click(); await page.getByTestId('deploy-open-tools').click(); }, check: async () => {
+        const production = area.getByTestId('environment-production');
+        await expectProductionDown(production, 'environment-state-health');
+        await expect(production.getByTestId('environment-state-release')).toHaveText('Release 2026.10.18.1 deployed 13 h ago');
+        await expect(production.getByTestId('environment-state-digest')).toHaveText('website@sha256:aaaaaaaaaaaa');
+        await expect(area.getByTestId('environment-stage').getByTestId('environment-state-health')).toHaveText('Up');
+      } },
+      { name: 'runbooks', production: 'project-environment-production', open: () => page.getByTestId('deploy-tab-runbooks').click(), check: async () => {
+        const production = area.getByTestId('project-environment-production');
+        await expectProductionDown(production, 'environment-state-health');
+        await expect(production.getByTestId('environment-state-release')).toHaveText('Release 2026.10.18.1 deployed 13 h ago');
+        await expect(production.getByTestId('environment-runbooks')).toContainText('restart');
+        await expect(production).not.toContainText('registry.example/website@sha256');
+      } },
+      { name: 'operations', production: 'environment-health-production', open: () => page.getByTestId('deploy-tab-operations').click(), check: async () => {
+        await expect(area.getByTestId('environment-health-production').getByTestId('environment-health-status')).toHaveText('Down');
+      } },
+    ];
+
+    for (const [width, height] of [[1280, 900], [390, 844]] as const) {
+      await page.setViewportSize({ width, height });
+      for (const theme of width === 1280 ? (['light', 'dark'] as const) : (['light'] as const)) {
+        await setTheme(page, theme);
+        for (const surface of surfaces) {
+          await surface.open();
+          await surface.check();
+          if (width === 390) expect((await area.boundingBox())?.width).toBeLessThanOrEqual(390);
+          await area.getByTestId(surface.production).scrollIntoViewIfNeeded();
+          await capture(page, `m2-production-down-${surface.name}-${width}-${theme}`);
+        }
+      }
+    }
+  });
+
   test('F17: after approval and the host report, the Production card follows without a reload', async ({ page }) => {
     let environments = deployEnvironmentsFixture();
     let status = deployStatusFixture();
@@ -1069,6 +1483,130 @@ test.describe('Project Deploy area (mocked)', () => {
     }
   });
 
+  test.describe('rollback (F13)', () => {
+    const rollbackMocks = (incidentOnly: boolean, posts: unknown[], legacy: string[], extra: Partial<DeployMocks> = {}) => {
+      const scenario = productionRollbackFixture(incidentOnly);
+      const target = incidentOnly ? RELEASE_2 : RELEASE_1;
+      const queued = { ...scenario.deployments[0], id: 'run-production-rollback', releaseId: target.id, trigger: 'rollback',
+        state: 'queued', startedAtUtc: null, finishedAtUtc: null, approvedBy: 'local.owner', createdAtUtc: '2026-10-19T12:00:00Z',
+        steps: [{ name: 'approval', state: 'succeeded', startedAtUtc: '2026-10-19T12:00:00Z', finishedAtUtc: '2026-10-19T12:00:00Z', logRef: '' },
+          { name: 'publish-static', state: 'pending', startedAtUtc: null, finishedAtUtc: null, logRef: '' }] };
+      const deployments = [...scenario.deployments];
+      return fullMocks({
+        environments: scenario.environments, status: scenario.statuses, deployments,
+        rollback: (_id, body) => { posts.push(body); deployments.unshift(queued); return { status: 202, body: queued }; },
+        legacyRollback: id => legacy.push(id),
+        ...extra,
+      });
+    };
+
+    test('Production card names target, age and runtime health; the rollback asks first and uses the lifecycle route', async ({ page }) => {
+      const posts: unknown[] = [];
+      const legacy: string[] = [];
+      const nativeDialogs: string[] = [];
+      page.on('dialog', dialog => nativeDialogs.push(dialog.message()));
+      await openDeploy(page, rollbackMocks(false, posts, legacy));
+
+      const card = page.getByTestId('deploy-environment-production');
+      const offer = card.getByTestId('rollback-offer-production');
+      await expect(offer.getByTestId('rollback-offer-target')).toHaveText(`Release ${RELEASE_1.version}`);
+      await expect(offer.getByTestId('rollback-offer-age')).toHaveText('1 d ago');
+      await expect(offer.getByTestId('rollback-offer-health')).toHaveText('Ran without incident');
+      await expect(offer.getByTestId('rollback-offer-skipped')).toHaveText(`Skips Release ${RELEASE_2.version}: incident while running.`);
+      await expect(offer.getByTestId('rollback-offer-health')).toHaveAttribute('data-tone', 'success');
+
+      for (const [width, height] of [[1280, 800], [390, 844]] as const) {
+        await page.setViewportSize({ width, height });
+        for (const theme of ['light', 'dark'] as const) {
+          await setTheme(page, theme);
+          if (width === 390) expect((await card.boundingBox())?.width).toBeLessThanOrEqual(390);
+          await capture(page, `deploy-rollback-card-${width}-${theme}`);
+          await offer.getByTestId('rollback-offer-button').click();
+          const dialog = page.locator('[role="alertdialog"]:visible');
+          await expect(dialog).toContainText(`Roll back Production to Release ${RELEASE_1.version}?`);
+          await expect(dialog.getByTestId('confirm-dialog-items')).toContainText(`Current: Release ${RELEASE_3.version}`);
+          await expect(dialog.getByTestId('confirm-dialog-items')).toContainText(`Target: Release ${RELEASE_1.version}, created 1 d ago`);
+          await expect(dialog.getByTestId('confirm-dialog-items')).toContainText('Runtime health of the target: ran without incident');
+          fs.mkdirSync(results, { recursive: true });
+          await page.screenshot({ path: path.join(results, `deploy-rollback-confirm-${width}-${theme}--mocked.png`) });
+          await dialog.getByTestId('confirm-dialog-cancel').click();
+          await expect(dialog).toBeHidden();
+        }
+      }
+      expect(posts).toEqual([]);
+
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await offer.getByTestId('rollback-offer-button').click();
+      await page.locator('[role="alertdialog"]:visible').getByTestId('confirm-dialog-confirm').click();
+      await expect.poll(() => posts).toEqual([{ approve: true, acceptIncidentTarget: false }]);
+      const drawer = page.getByTestId('deploy-run-drawer');
+      await expect(drawer).toContainText('Rollback to Production');
+      await expect(drawer).toContainText(`Release ${RELEASE_1.version}`);
+      expect(legacy).toEqual([]);
+      expect(nativeDialogs).toEqual([]);
+    });
+
+    test('run drawer and deployment tools offer the same confirmed rollback', async ({ page }) => {
+      const posts: unknown[] = [];
+      const legacy: string[] = [];
+      await openDeploy(page, rollbackMocks(false, posts, legacy));
+      await page.getByTestId('deploy-environment-production').getByTestId('deploy-environment-open-run').click();
+      const drawer = page.getByTestId('deploy-run-drawer');
+      await expect(drawer.getByTestId('deploy-run-rollback')).toContainText(`Release ${RELEASE_1.version}`);
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await capture(page, `deploy-rollback-drawer-1280-${theme}`);
+      }
+      await page.setViewportSize({ width: 390, height: 844 });
+      await capture(page, 'deploy-rollback-drawer-390-dark');
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await drawer.getByTestId('sidesheet-close').click();
+
+      await page.getByTestId('deploy-open-tools').click();
+      const tools = page.getByTestId('environment-production');
+      await expect(tools.getByTestId('rollback-offer-target')).toHaveText(`Release ${RELEASE_1.version}`);
+      await expect(page.getByTestId('environment-stage').getByRole('button', { name: 'Roll back' })).toHaveCount(0);
+      await tools.getByTestId('rollback-offer-button').click();
+      await expect(page.locator('[role="alertdialog"]:visible')).toContainText(`Roll back Production to Release ${RELEASE_1.version}?`);
+      await page.locator('[role="alertdialog"]:visible').getByTestId('confirm-dialog-confirm').click();
+      await expect.poll(() => posts).toEqual([{ approve: true, acceptIncidentTarget: false }]);
+      expect(legacy).toEqual([]);
+    });
+
+    test('an open incident offers the rollback; a target that had an incident must be typed out', async ({ page }) => {
+      const posts: unknown[] = [];
+      await openDeploy(page, rollbackMocks(true, posts, [], { health: { ...healthResponse, capturedAt: '2026-10-19T12:00:00Z' } }));
+      await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+        project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z', environments: [],
+        dora: { successfulProductionDeploys: 0, deploysPerWeek: 0, medianCardToProductionHours: null,
+          cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+      }));
+      await page.getByTestId('deploy-tab-operations').click();
+      const incident = page.getByTestId('environment-health-production');
+      await expect(incident.getByTestId('environment-health-incident')).toBeVisible();
+      const offer = incident.getByTestId('rollback-offer-production');
+      await expect(offer.getByTestId('rollback-offer-target')).toHaveText(`Release ${RELEASE_2.version}`);
+      await expect(offer.getByTestId('rollback-offer-health')).toHaveText('Had an incident while running');
+      await expect(offer.getByTestId('rollback-offer-health')).toHaveAttribute('data-tone', 'warning');
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await incident.screenshot({ path: path.join(results, `deploy-rollback-incident-1280-${theme}--mocked.png`) });
+      }
+      await page.setViewportSize({ width: 390, height: 844 });
+      await incident.screenshot({ path: path.join(results, 'deploy-rollback-incident-390-dark--mocked.png') });
+      await page.setViewportSize({ width: 1280, height: 800 });
+
+      await offer.getByTestId('rollback-offer-button').click();
+      const dialog = page.locator('[role="alertdialog"]:visible');
+      await expect(dialog.getByTestId('confirm-dialog-typed-prompt')).toContainText(`Release ${RELEASE_2.version} had an incident while running`);
+      await expect(dialog.getByTestId('confirm-dialog-confirm')).toBeDisabled();
+      await page.screenshot({ path: path.join(results, 'deploy-rollback-incident-confirm-1280-dark--mocked.png') });
+      await dialog.getByTestId('confirm-dialog-typed-input').fill(RELEASE_2.version);
+      await dialog.getByTestId('confirm-dialog-confirm').click();
+      await expect.poll(() => posts).toEqual([{ approve: true, acceptIncidentTarget: true }]);
+    });
+  });
+
   test('explains every empty panel for a project without deploy data', async ({ page }) => {
     await openDeploy(page, {
       environments: { project: PROJECT, environments: [], promotions: [], failureCards: [] },
@@ -1085,6 +1623,45 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(page.getByTestId('deploy-history-empty')).toContainText('No deploy runs yet');
     await setTheme(page, 'light');
     await capture(page, 'deploy-history-empty-light');
+  });
+
+  test('shows project.yml environments without deploy steps and offers the deploy-step form (F5)', async ({ page }) => {
+    const environment = (name: string, order: number, isProtected: boolean) => ({
+      path: `environments[${order}]`, name, order, protected: isProtected, automatic: !isProtected,
+      approval: isProtected ? ['Owner', 'Maintainer'] : [], requires: isProtected ? 'staging' : null, steps: [], variables: [],
+    });
+    await openDeploy(page, {
+      environments: { project: PROJECT, environments: [], promotions: [], failureCards: [] },
+      status: [], releases: [], deployments: [],
+      pipelineDefinition: {
+        project: PROJECT, path: '.agent-studio/project.yml', exists: true, schemaVersion: 2, valid: true, issues: [],
+        definitionSha256: 'a'.repeat(64), migrationAvailable: false, deployStepsAvailable: true,
+        diagram: {
+          schemaVersion: 2, gate: { source: 'commands', build: ['npm run build'], test: ['npm test'], testSuites: [] },
+          artifacts: [], environmentsDefaulted: false, lifecycleDefaulted: false,
+          environments: [environment('staging', 0, false), environment('production', 1, true)],
+        },
+      },
+    });
+
+    await expect(page.getByTestId('deploy-environments-empty')).toHaveCount(0);
+    await expect(page.getByTestId('deploy-environment-declared-staging')).toContainText('No deploy step yet');
+    await expect(page.getByTestId('deploy-environment-declared-production')).toContainText('protected');
+    await expect(page.getByTestId('deploy-environments')).not.toContainText('docs/deployments/environments');
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await capture(page, `deploy-overview-declared-no-steps-1440-${theme}`);
+    }
+    await page.getByTestId('deploy-add-deploy-step').click();
+    const form = page.getByTestId('deploy-steps-form');
+    await expect(form.getByTestId('deploy-steps-env-staging')).toBeVisible();
+    await expect(form.getByTestId('deploy-steps-env-production')).toBeVisible();
+    await form.getByTestId('deploy-steps-type-container').check();
+    await expect(form.getByTestId('deploy-steps-env-staging').getByTestId('deploy-steps-compose')).toBeVisible();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await capture(page, `deploy-overview-deploy-step-form-1440-${theme}`);
+    }
   });
 });
 
@@ -1110,7 +1687,8 @@ test('Project Secrets shows approval for a custom-id Production environment and 
   await expect(secrets).toBeVisible();
   await secrets.getByTestId('project-secrets-environment').selectOption('live-eu');
   await expect(secrets.getByTestId('project-secrets-missing')).toContainText('not-bound');
-  await secrets.getByRole('button', { name: 'Bind DATABASE_URL' }).click();
+  await expect(secrets.getByTestId('project-secrets-bind-DATABASE_URL')).toHaveText('Bind and approve DATABASE_URL');
+  await secrets.getByTestId('project-secrets-edit-DATABASE_URL').click();
   await secrets.getByTestId('project-secrets-approve').check();
   await expect(secrets.getByTestId('project-secrets-reference')).toHaveValue(`secret://${PROJECT}/live-eu/DATABASE_URL`);
   await expect(secrets.getByTestId('project-secrets-bind')).toBeEnabled();

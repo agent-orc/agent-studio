@@ -1,10 +1,13 @@
 # Token pricing
 
-> **Status (2026-10-11):** Live on exactly pinned `TokenEconomy` 0.3.7,
+> **Status (2026-11-18):** Live on exactly pinned `TokenEconomy` 0.3.9,
 > including historical prices for the GPT-5.6 family, the GPT-5.5 family
 > (GPT-5.5, GPT-5.5 Pro, the GPT-5.5 Cyber preview), and the Claude 5 /
-> Sonnet 4.6 family. A dated Fable 5.2 seed supplements this version until
-> Token Economy TE-82 is available in the pinned package.
+> Sonnet 4.6 family. Dated Fable 5.2 and GPT-6.2 seeds supplement this
+> version until Token Economy TE-82 is available in the pinned package.
+> Studio contains no model rates. Haiku 5.5 aliases resolve through the
+> shared model registry; the catalog owns its historical prices and
+> prompt-size tiers.
 
 ## Contract
 
@@ -24,6 +27,25 @@ Standard API list-price estimate and does not infer fast mode from a model ID.
 Fable 5.2 has a 1M context window and 128K maximum output.
 [Provider pricing](https://platform.claude.com/docs/en/about-claude/pricing).
 
+GPT-6.2 uses the published catalogue entry when present. TokenEconomy 0.3.7
+(and the newer 0.3.8 and 0.3.9) carry none, so `TokenEconomyPriceProvider`
+adds one local listing per model effective 2026-11-17, verified 2026-11-18
+against the [provider pricing page](https://developers.openai.com/api/docs/pricing).
+Per million tokens, standard short-context tariff (up to 272K input):
+
+| Model | Input | Cached input | Cache write (30 min) | Output |
+|---|---:|---:|---:|---:|
+| `gpt-6.2-sol` | 2.00 | 0.10 | 2.50 | 10.00 |
+| `gpt-6.2-astra` | 8.00 | 0.40 | 10.00 | 40.00 |
+
+The long-context tariff above 272K input (Sol 4 / 0.20 / 5 / 15, Astra
+16 / 0.80 / 20 / 60) is recorded in the price note and not priced, as for
+GPT-6.1 Sol. Ultrafast service tiers (3x the standard rate until 2027-02-28)
+are not inferred from a model id. Each note also states the Codex credit rate,
+list price x `TokenEconomyPriceProvider.CodexCreditsPerUsd` (25). Studio has no
+Codex credit meter, so the rate is carried on the price basis only. Calls
+before 2026-11-17 stay `NoPriceForDate`.
+
 The adapter is exposed through `ITokenPriceProvider`. `AddTokenUsage` registers
 one singleton provider and one singleton `ITokenPricing` service. There is no
 static pricing facade or independently constructed runtime pricing instance.
@@ -37,8 +59,12 @@ catalog ids, aliases, display labels, and bare `sonnet` / `opus` aliases.
 Per-project, workspace, and ad-hoc `byModel` rows carry `modelId` and `cli`;
 `model` is a display label. Historical receipts that stored labels resolve on
 read, without changing `task.json`. `GET /api/token-pricing/unpriced-models`
-returns ids for models with at least one unpriced historical call, including
-`NoPriceForDate`. GPT-4.1 and GPT-4o are absent from the curated CLI
+returns ids for models with an unpriced call in the current workspace calendar
+week, including `NoPriceForDate` and attributed or unattributed workspace
+one-shot receipts. Its `weekStartUtc`, `weekEndUtc`, and `timeZone` describe the
+same period as the usage cost detail. Row calls and tokens include only the
+unpriced receipts, even when that model has priced calls in the same week.
+GPT-4.1 and GPT-4o are absent from the curated CLI
 registry because the pinned catalog has no listings for them; old usage
 remains explicitly unpriced.
 
@@ -154,3 +180,26 @@ the shared consumers.
 3. Restore and build the backend so any `ITokenPriceProvider` or `TokenEconomyPriceProvider` API change fails at the adapter boundary.
 4. Run `TokenPricingTests` plus the token-summary and pipeline-cost regressions, including a historical timestamp for each newly priced family.
 5. Run the focused task-detail Playwright proof and preserve light- and dark-theme screenshots when aggregate rendering changes.
+
+## Diagnostic HTTP reads (AGT-3952)
+
+Project token summaries and the unpriced-model diagnostic share a bounded,
+single-flight read cache. Requests wait up to five seconds. A scan that is
+still running returns HTTP 503 with a JSON Problem Details body; retrying
+joins the same scan. Successful results remain cached for thirty seconds.
+The unpriced-model key includes the visible project set, so restricted
+callers never reuse another permission scope's result. Failures are evicted
+and can be retried. Neither a slow scan nor an empty model list produces an
+empty success body.
+
+Prompt-size tariffs require the size of one request's prompt. The pricing
+adapter can safely price an aggregate below the catalog's first tier because
+all its constituent prompts fit the base tariff. A larger aggregate without
+request-size evidence remains `AmbiguousPromptSize`. The pricing calculation
+endpoint accepts optional `promptTokens` for a known request and reports the
+applied tariff in `priceBasis`; it does not use a session total as prompt length.
+
+Catalog updates also carry routing knowledge. Automatic Codex equivalence
+candidates remain restricted to Studio's versioned routing tiers and declared
+provider-rejection fallbacks; a new model in TokenEconomy does not grant it
+an automatic Studio route.

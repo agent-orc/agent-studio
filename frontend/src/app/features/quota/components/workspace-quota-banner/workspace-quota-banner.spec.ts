@@ -45,5 +45,10 @@ describe('WorkspaceQuotaBannerComponent', () => {
     board.workspaceQuota.set(workspace({ status: 'ok', message: null, overrideActive: false, codingAllowed: true }));
     await fixture.whenStable();
     expect(status()).toBeNull();
+
+    board.projectQuotas.set([{ ...workspace({ status: 'blocked', message: 'weekly USD budget 10 / 10 USD. Resets Monday 00:00 UTC.', overrideActive: false, codingAllowed: false }), project: 'Alpha', projectId: 'alpha' }]);
+    await fixture.whenStable();
+    expect(status()?.textContent).toContain('Alpha: weekly USD budget 10 / 10 USD');
+    expect(root.querySelectorAll('[data-testid="workspace-quota-status"]')).toHaveLength(1);
   });
 });

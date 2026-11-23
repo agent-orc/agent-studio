@@ -93,6 +93,14 @@ public record SetRequireDifferentReviewHostRequest
 
 /// <summary><c>review.package</c> mode (AGT-3400 S4): <c>off</c> or <c>shadow</c>.</summary>
 public sealed record ReviewPackageSettingRequest(string? Mode);
+
+/// <summary>
+/// Body of <c>PUT /api/projects/{name}/testing</c> (AGT-3965). Only
+/// <see cref="Strategy"/> is written; <see cref="PerCard"/> and
+/// <see cref="Mode"/> are named so a client of the former switches gets a clear
+/// refusal instead of a silent no-op.
+/// </summary>
+public sealed record TestingStrategyRequest(string? Strategy, string? PerCard = null, string? Mode = null);
 public sealed record ModelSelectionOverrideRequest(string? PipelineType, ModelSelectionOverride? Override);
 
 /// <summary>AGT-W57 cause breaker parameters for one project.</summary>
@@ -407,6 +415,9 @@ public static class ProjectSettingsEndpoints
                     pipelineSteps = PipelineTypeSettings.ForType(kv.Value, PipelineTypes.Task)?.PipelineSteps
                         ?? new Dictionary<string, PipelineStepSetting>(),
                     testExecution = kv.Value.TestExecution,
+                    // AGT-3965: the strategy is the switch; perCard and mode
+                    // are derived and stay readable for one release.
+                    testingStrategy = TestingStrategies.Resolve(kv.Value),
                     testingPerCard = PerCardTestModes.Resolve(kv.Value),
                     testingMode = IntegrationTestModes.Resolve(kv.Value),
                     reviewPackage = ReviewPackageSetting.Resolve(kv.Value),
@@ -1297,33 +1308,49 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(new { cleared = true });
         });
 
-        // AGT-3310: per-card test placement (testing.perCard). The settings page
-        // shows it read-only; the operator switches it here. Queued review
-        // plans are rebuilt so the next claim runs the chosen tier.
+        // AGT-3965: testing.strategy is the one test placement switch. The
+        // former testing.perCard and testing.mode stay readable for one release
+        // and are derived from it. Queued review plans are rebuilt so the next
+        // claim runs the chosen tier.
+        app.MapGet("/api/projects/{projectName}/testing", (
+            string projectName,
+            ProjectSettingsService settings,
+            TaskScannerService scanner,
+            PostMergeModeService postMergeMode,
+            PostMergeCoverageService coverage) =>
+        {
+            var known = scanner.GetWatchPaths().Any(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            return Results.Ok(TestingView(projectName, settings, postMergeMode, coverage));
+        });
+
         app.MapPut("/api/projects/{projectName}/testing", (
             string projectName,
-            ProjectTestingSettings req,
+            TestingStrategyRequest req,
             ProjectSettingsService settings,
             TaskScannerService scanner,
             ProjectRegistry projects,
             GitService git,
             RemoteReviewPlanBuilder remoteReviewPlans,
-            ReviewAttemptTaskLifecycleService reviewLifecycle) =>
+            ReviewAttemptTaskLifecycleService reviewLifecycle,
+            PostMergeModeService postMergeMode,
+            PostMergeCoverageService coverage) =>
         {
             var known = scanner.GetWatchPaths().Any(entry =>
                 string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
-            if (req.PerCard is not null && !PerCardTestModes.IsKnown(req.PerCard))
-                return Results.BadRequest(new { error = "perCard must be 'affected' or 'full'." });
-            if (req.Mode is not null && !IntegrationTestModes.IsKnown(req.Mode))
-                return Results.BadRequest(new { error = "mode must be 'pre-merge' or 'post-merge'." });
-            settings.SetTesting(projectName, req);
+            if (req.Strategy is null && (req.PerCard is not null || req.Mode is not null))
+                return Results.BadRequest(new
+                {
+                    error = "perCard and mode are derived from testing.strategy since AGT-3965; "
+                        + "send {\"strategy\": \"fast\"}, \"balanced\" or \"strict\".",
+                });
+            if (!TestingStrategies.IsKnown(req.Strategy))
+                return Results.BadRequest(new { error = "strategy must be 'fast', 'balanced' or 'strict'." });
+            settings.SetTestingStrategy(projectName, req.Strategy);
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
-            return Results.Ok(new
-            {
-                perCard = PerCardTestModes.Resolve(settings.Get(projectName)),
-                mode = IntegrationTestModes.Resolve(settings.Get(projectName)),
-            });
+            return Results.Ok(TestingView(projectName, settings, postMergeMode, coverage));
         }).RequireStudioRole(StudioRoles.Owner);
 
         // AGT-3400 S4: review.package. Shadow forms Dossier wave packages beside
@@ -1782,6 +1809,25 @@ public static class ProjectSettingsEndpoints
             });
         });
 
+        // DS-0: dispatch.overlapWindow selects which cards the pick-gate compares
+        // a candidate's scope with, on the local pickup and the remote claim.
+        app.MapGet("/api/projects/{projectName}/dispatch/overlap-window", (string projectName, ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            return Results.Ok(OverlapWindowView(settings.Get(projectName)));
+        });
+
+        app.MapPut("/api/projects/{projectName}/dispatch/overlap-window", (string projectName, SetDispatchOverlapWindowRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (req.Window is not null && !OverlapWindows.IsKnown(req.Window))
+                return Results.BadRequest(new { error = "window must be 'running' or 'in-flight'." });
+            settings.SetDispatchOverlapWindow(projectName, req.Window);
+            return Results.Ok(OverlapWindowView(settings.Get(projectName)));
+        }).RequireStudioRole(StudioRoles.Owner);
+
         // Per-project orchestrator intake toggle (ready-orchestrator-intake-lane).
         // When enabled, the coding runner waits for intake to mark a 2-ready
         // card as intake-passed before picking it up. Default off so existing
@@ -1835,6 +1881,19 @@ public static class ProjectSettingsEndpoints
     }
 
     /// <summary>
+    /// The answer of the <c>dispatch.overlapWindow</c> routes (DS-0): the
+    /// effective window, the stored value (null when unset), the default and
+    /// the known windows.
+    /// </summary>
+    private static object OverlapWindowView(ProjectSettings projectSettings) => new
+    {
+        window = OverlapWindows.Resolve(projectSettings),
+        stored = projectSettings.DispatchOverlapWindow,
+        @default = OverlapWindows.Default,
+        windows = OverlapWindows.All,
+    };
+
+    /// <summary>
     /// AGT-2827: a build-profile or pipeline-step edit lands here so every
     /// ReviewAttempt still queued for this project gets its frozen Plan rebuilt
     /// from the settings that were just written, instead of running the plan
@@ -1843,6 +1902,30 @@ public static class ProjectSettingsEndpoints
     /// task's resolved repository path and baseline ref) so a re-plan can never
     /// diverge from what a fresh ReviewAttempt would have received.
     /// </summary>
+    /// <summary>The testing answer of the settings routes (AGT-3965).</summary>
+    private static object TestingView(string projectName, ProjectSettingsService settings,
+        PostMergeModeService postMergeMode, PostMergeCoverageService coverage)
+    {
+        var projectSettings = settings.Get(projectName);
+        var strategy = TestingStrategies.Resolve(projectSettings);
+        return new
+        {
+            strategy,
+            stored = projectSettings.Testing?.Strategy is not null,
+            sentence = TestingStrategies.Sentence(strategy),
+            perCard = PerCardTestModes.Resolve(projectSettings),
+            mode = IntegrationTestModes.Resolve(projectSettings),
+            effectiveMode = postMergeMode.Resolve(projectName, projectSettings),
+            postMergeCoverage = coverage.Read(projectName),
+            strategies = TestingStrategies.All.Select(id => new
+            {
+                id,
+                sentence = TestingStrategies.Sentence(id),
+                isDefault = id == TestingStrategies.Default,
+            }).ToArray(),
+        };
+    }
+
     private static void ReplanQueuedReviewAttempts(
         string projectName,
         ProjectSettingsService settings,

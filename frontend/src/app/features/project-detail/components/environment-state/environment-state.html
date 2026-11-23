@@ -1,0 +1,21 @@
+<div class="environment-state" data-testid="environment-state">
+  <span class="environment-state__health"><span class="environment-state__sr">Health: </span><app-status-indicator [tone]="health().tone" [label]="health().label" testId="environment-state-health" /></span>
+  <p class="environment-state__release" data-testid="environment-state-release">
+    @if (release().uncertain) {
+      <strong>Running release uncertain.</strong> A failed release may be running.
+    } @else if (release().version; as version) {
+      <strong>Release {{ version }}</strong>
+    } @else if (release().digest) {
+      <strong>No release record</strong>
+    } @else {
+      <strong>Nothing deployed yet</strong>
+    }
+    @if (release().age; as age) {
+      &ngsp;<span class="environment-state__muted" data-testid="environment-state-age">deployed
+        <time [attr.datetime]="release().deployedAt" [title]="release().deployedAt | date:'medium'">{{ age }}</time></span>
+    }
+  </p>
+  @if (release().digest; as digest) {
+    <p class="environment-state__digest" data-testid="environment-state-digest"><code [title]="release().artifact ?? ''">{{ digest }}</code></p>
+  }
+</div>

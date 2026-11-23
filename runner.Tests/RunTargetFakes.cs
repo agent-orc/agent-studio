@@ -14,6 +14,7 @@ internal sealed class FakeRunTargetDocker : IRunTargetDocker
     public bool EdgeFails { get; set; }
     public bool DownFails { get; set; }
     public bool NetworkRemoveFails { get; set; }
+    public string CrashLog { get; set; } = "";
 
     /// <summary>Compose projects whose <c>down</c> fails while the others succeed.</summary>
     public HashSet<string> DownFailsFor { get; } = new(StringComparer.Ordinal);
@@ -79,6 +80,12 @@ internal sealed class FakeRunTargetDocker : IRunTargetDocker
     public Task<RunTargetContainerStatus> InspectAsync(string container, CancellationToken ct)
         => Task.FromResult(Containers.TryGetValue(container, out var status)
             ? status : new RunTargetContainerStatus(RunTargetContainerState.Missing, 0));
+
+    public Task<RunTargetDockerResult> LogsAsync(string container, CancellationToken ct)
+    {
+        Calls.Add("logs " + container);
+        return Task.FromResult(new RunTargetDockerResult(true, CrashLog));
+    }
 
     public Task<bool> ProbeAsync(string url, CancellationToken ct)
     {

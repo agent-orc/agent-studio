@@ -13,6 +13,7 @@
     "src/app/features/github-app/github-app-panel/github-app-panel.component.html", "src/app/components/section-header/section-header.component.html",
     "src/app/components/error-dialog/error-dialog.component.html",
     "src/app/features/board/components/delivery-section/delivery-section.html",
+    "src/app/features/deployments/components/delivery-lanes/delivery-lanes.html",
     "src/app/features/cli/components/cli-models-panel/cli-models-panel.html",
     "src/app/features/cli/components/model-selection-view/model-selection-view.component.html",
     "src/app/features/project-detail/components/project-branch-sweep/project-branch-sweep.component.html",
@@ -145,9 +146,9 @@
       "kind": "popup-trigger",
       "reason": "Move-to-workspace menu trigger (aria-haspopup=\"menu\")."
     },
-    "src/app/features/studio-shell/components/acceptance-refusal/acceptance-refusal.component.html": {
+    "src/app/features/task-detail/components/acceptance-refusal/acceptance-refusal.component.html": {
       "kind": "popup-trigger",
-      "reason": "AGT-3704: Accept with override opens the written-reason form as a connected overlay (aria-haspopup=\"dialog\"), not an in-place body."
+      "reason": "AGT-3704: Accept with override (and AGT-3830 Accept with a reason) opens the written-reason form as a connected overlay (aria-haspopup=\"dialog\"), not an in-place body."
     },
     "src/app/features/studio-shell/components/diff-tab-view/diff-tab-view.component.html": {
       "kind": "staged-adoption",

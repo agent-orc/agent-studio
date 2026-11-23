@@ -34,7 +34,7 @@ public sealed partial class GitProcessBoundaryGuardTests
     {
         [Boundary] = "The boundary itself.",
         ["backend/Features/Publishing/PublishActionService.cs"] =
-            "gh borrows the bounded runner; its Git calls choose GitProcessBoundary.Run.",
+            "gh and repository release shells borrow the bounded runner; Git calls choose GitProcessBoundary.Run.",
     };
 
     [Fact]

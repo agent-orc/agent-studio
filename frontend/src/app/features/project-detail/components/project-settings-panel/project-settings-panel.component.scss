@@ -1,45 +1,11 @@
 @use '../../../../../styles/mixins' as m;
 
 :host { display: block; }
-
 .ps-settings {
   display: flex;
   flex-direction: column;
   gap: var(--studio-spacing-5);
 }
-
-.ps-settings__head {
-  padding-bottom: var(--studio-spacing-3);
-  border-bottom: 1px solid var(--studio-border-strong);
-}
-.ps-settings__title-row {
-  display: flex;
-  align-items: center;
-  gap: var(--studio-spacing-2);
-  flex-wrap: wrap;
-}
-.ps-settings__title {
-  margin: 0;
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--studio-fg-strong);
-}
-.ps-settings__chip {
-  font-size: 0.72rem;
-  letter-spacing: 0.02em;
-  padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 999px;
-  background: var(--studio-bg-selected);
-  color: var(--studio-fg);
-  text-transform: uppercase;
-}
-.ps-settings__desc {
-  margin: var(--studio-spacing-2) 0 0;
-  color: var(--studio-fg-dim);
-  font-size: 0.85rem;
-  max-width: 64ch;
-}
-
 .ps-settings__section {
   display: flex;
   flex-direction: column;
@@ -67,7 +33,6 @@
   font-size: 0.8rem;
   max-width: 64ch;
 }
-
 .ps-settings__cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));

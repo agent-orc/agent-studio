@@ -145,4 +145,59 @@ describe('ProjectPipelineDefinitionComponent', () => {
 
     expect(root.querySelector('[role="alert"]')?.textContent).toContain('changed since the dry run');
   });
+  it('offers the deploy-step form for schema 2 without steps and writes only the reviewed preview', async () => {
+    const migrated: PipelineDefinitionResponse = {
+      ...SCHEMA_ONE, schemaVersion: 2, migrationAvailable: false, deployStepsAvailable: true, diagram: PROPOSAL.diagram,
+    };
+    fixture.detectChanges();
+    http.expectOne(URL).flush(migrated);
+    await settle();
+    expect(root.querySelector('[data-testid="pipeline-migration-preview"]')).toBeNull();
+
+    (root.querySelector('[data-testid="pipeline-add-deploy-steps"]') as HTMLButtonElement).click();
+    await settle();
+    const preview = () => root.querySelector('[data-testid="deploy-steps-preview-button"]') as HTMLButtonElement;
+    expect(preview().disabled).toBe(true);
+    const type = (environment: string, field: string, value: string) => {
+      const input = root.querySelector(`[data-testid="deploy-steps-env-${environment}"] [data-testid="deploy-steps-${field}"]`) as HTMLInputElement;
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+    };
+    for (const [environment, directory, url] of [
+      ['staging', '/srv/www/_staging/site', 'https://example.test/_staging/'],
+      ['production', '/srv/www/site', 'https://example.test/'],
+    ]) {
+      type(environment, 'target', 'web-vm');
+      type(environment, 'directory', directory);
+      type(environment, 'health-url', url);
+    }
+    await settle();
+    expect(preview().disabled).toBe(false);
+
+    preview().click();
+    const dryRun = http.expectOne(`${URL}/deploy-steps/preview`);
+    expect(dryRun.request.body.artifactType).toBe('static');
+    expect(dryRun.request.body.artifactPath).toBe('dist');
+    expect(dryRun.request.body.environments).toEqual([
+      { name: 'staging', target: 'web-vm', directory: '/srv/www/_staging/site', composeFile: null, service: null,
+        healthUrl: 'https://example.test/_staging/', healthTimeoutSeconds: 120 },
+      { name: 'production', target: 'web-vm', directory: '/srv/www/site', composeFile: null, service: null,
+        healthUrl: 'https://example.test/', healthTimeoutSeconds: 120 },
+    ]);
+    dryRun.flush({ ...PROPOSAL, proposedYaml: 'deploy:\n  - step: static-site\n' });
+    await settle();
+    expect(root.querySelector('[data-testid="deploy-steps-yaml"]')?.textContent).toContain('step: static-site');
+
+    (root.querySelector('[data-testid="deploy-steps-confirm"]') as HTMLButtonElement).click();
+    const write = http.expectOne(request => request.method === 'POST' && request.url === `${URL}/deploy-steps`);
+    expect(write.request.body.baseSha256).toBe('a'.repeat(64));
+    expect(write.request.body.proposalSha256).toBe('b'.repeat(64));
+    write.flush({ changed: true, commitSha: 'fedcba9876543210', pushQueued: true,
+      definition: { ...migrated, deployStepsAvailable: false } });
+    await settle();
+
+    expect(root.querySelector('[role="status"]')?.textContent).toContain('commit fedcba9');
+    expect(root.querySelector('[data-testid="deploy-steps-form"]')).toBeNull();
+    expect(root.querySelector('[data-testid="pipeline-add-deploy-steps"]')).toBeNull();
+  });
 });

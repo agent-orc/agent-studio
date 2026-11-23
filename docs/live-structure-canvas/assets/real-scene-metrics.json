@@ -1,0 +1,14 @@
+{
+  "measuredAt": "2026-11-20T18:05:26.340Z",
+  "scene": "the installation of this Dossier, 1440 px, headless Chromium",
+  "panFrameMsP50": 4.7,
+  "panFrameMsP95": 9,
+  "idleFrames": 0,
+  "hiddenFrames": 0,
+  "idleSeconds": 3,
+  "flowFps": 29,
+  "flowCpuPct": 4,
+  "deltas": 53,
+  "updates": 12,
+  "replaySeconds": 45
+}

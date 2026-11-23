@@ -1,6 +1,7 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { DeployEnvironmentCardComponent } from './deploy-environment-card';
+import { ClientService } from '../../../../services/client.service';
 import { buildEnvironmentCards, type EnvironmentCardView } from '../../state/deploy-area.model';
 import {
   DEPLOY_FIXTURE_NOW,
@@ -56,6 +57,13 @@ describe('DeployEnvironmentCardComponent', () => {
     expect(host().querySelector('[data-testid="deploy-environment-age"] time')?.getAttribute('datetime')).toBe('2026-10-19T11:48:00Z');
   });
 
+  it('shows an open host crash loop ahead of an older healthy deploy', async () => {
+    const card = { ...fullCards()[0], health: { status: 'reported', state: 'crash-loop' } } as EnvironmentCardView;
+    await render(card);
+    expect(text('deploy-environment-health')).toBe('Crash loop');
+    expect(tone('deploy-environment-health')).toBe('danger');
+  });
+
   it('labels a production environment without telemetry as not observed', async () => {
     await render({ ...fullCards()[1], health: { status: 'reported', state: 'not-observed' } });
     expect(text('deploy-environment-health')).toBe('Not observed');
@@ -101,6 +109,18 @@ describe('DeployEnvironmentCardComponent', () => {
     expect(text('deploy-environment-intervention')).toBe('health: skip by local.owner. Open run');
   });
 
+  it('names the approval requester and the intervention decider by display name, not by user id', async () => {
+    TestBed.inject(ClientService).humanNames.set({ usr_ecaff70110: 'Ada Owner', usr_0b1d2c3e4f: 'Sam Maintainer' });
+    await render({ ...fullCards()[0],
+      awaitingApproval: { deploymentId: 'pending-run', subject: 'Release 2026.10.19.3', requestedBy: 'usr_0b1d2c3e4f' },
+      intervention: { deploymentId: 'failed-run', failedStep: 'health', expiresAtUtc: null,
+        decision: 'skip', decidedBy: 'usr_ecaff70110' } });
+
+    expect(text('deploy-environment-approval')).toBe('Awaiting approval: Release 2026.10.19.3, requested by Sam Maintainer');
+    expect(text('deploy-environment-intervention')).toBe('health: skip by Ada Owner. Open run');
+    expect(host().textContent).not.toContain('usr_');
+  });
+
   it('opens an older pending intervention while the last run is newer', async () => {
     await render({ ...fullCards()[0], intervention: {
       deploymentId: 'older-run', failedStep: 'health', expiresAtUtc: '2026-10-19T13:00:00Z',
@@ -144,6 +164,17 @@ describe('DeployEnvironmentCardComponent', () => {
     expect(tone('deploy-environment-health')).toBe('danger');
   });
 
+  it('shows a misconfigured check as a declaration problem with its fix, not as a red failure (F16)', async () => {
+    const problem = 'Health check http targets http://172.17.0.1:8080/health. Set healthChecksAllowPrivateNetwork: true.';
+    await render({ ...fullCards()[0], health: { status: 'reported', state: 'invalid', problem } });
+    expect(text('deploy-environment-health')).toBe('Misconfigured');
+    expect(tone('deploy-environment-health')).toBe('warning');
+    expect(text('deploy-environment-health-problem')).toBe(problem);
+
+    await render(fullCards()[0]);
+    expect(host().querySelector('[data-testid="deploy-environment-health-problem"]')).toBeNull();
+  });
+
   it('renders without a deployment and offers no run action', async () => {
     const environments = deployEnvironmentsFixture();
     environments.environments[1] = { ...environments.environments[1], deployedArtifact: null, history: [] };
@@ -153,7 +184,8 @@ describe('DeployEnvironmentCardComponent', () => {
     expect(text('deploy-environment-release')).toBe('Nothing deployed yet');
     expect(text('deploy-environment-age')).toBe('Never');
     expect(text('deploy-environment-last-run')).toBe('No runs yet');
-    expect(host().querySelectorAll('button')).toHaveLength(0);
+    expect(button('deploy-environment-stop')).toBeNull();
+    expect(button('deploy-environment-remove')).not.toBeNull();
   });
 
   describe('accessibility', () => {
@@ -173,6 +205,8 @@ describe('DeployEnvironmentCardComponent', () => {
       expect(buttons.map(item => item.getAttribute('aria-label'))).toEqual([
         'Open last run for Production',
         'Review the pending approval for Production',
+        'Stop Production',
+        'Remove Production',
       ]);
       expect(buttons.every(item => item.type === 'button' && item.tabIndex === 0)).toBe(true);
     });
@@ -184,5 +218,19 @@ describe('DeployEnvironmentCardComponent', () => {
       expect(terms).toEqual(['Release', 'Deployed', 'Cards', 'Last run', 'Run host']);
       expect(host().querySelector('.env-card__health')?.textContent?.trim()).toBe('Health: Healthy');
     });
+  });
+
+  it('offers stop for a deployed app and removal for a declared environment', async () => {
+    await render(fullCards()[1]);
+    const stopped: string[] = [];
+    const removed: string[] = [];
+    fixture.componentInstance.stop.subscribe(id => stopped.push(id));
+    fixture.componentInstance.remove.subscribe(id => removed.push(id));
+
+    button('deploy-environment-stop')!.click();
+    button('deploy-environment-remove')!.click();
+
+    expect(stopped).toEqual(['production']);
+    expect(removed).toEqual(['production']);
   });
 });

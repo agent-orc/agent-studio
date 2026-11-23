@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-11-02
+Version: 2026-11-22
 Status: System-of-record map for runner-side changes.
 
 Review role release drift becomes operator attention as soon as that role has
@@ -8,6 +8,45 @@ claimed a review. The attention fact names its claimed and graded cards and
 compares the role's commit and image with Stable. An idle role still uses the
 host release watchdog's grace period. A fresh heartbeat reporting the expected
 commit and image clears the attention fact.
+
+## Overlap window of the pick-gate, DS-0
+
+`ParallelSlotPolicy.Decide` runs on both claim paths: the local pickup in
+`ProjectRunner` and the remote claim in `LeaseEndpoints`, which walks
+`LaneSortApplier.PickupOrder`. Both read the card scope from
+`TaskScopePrediction`: the parent directory of every `backend/`, `frontend/`,
+`src/`, `docs/` or `tools/` path named in the title and `prompt.md`, at most
+24. A card without such a path has unknown scope and is admitted
+optimistically.
+
+The project setting `dispatch.overlapWindow` (`GET` and `PUT
+/api/projects/{project}/dispatch/overlap-window`) selects the comparison set.
+`in-flight` is the default (Dossier decision DS-D10 B in
+[dispatcher personas](../../dispatcher-personas/index.html)). It compares a
+candidate with the running cards and with every card of the project that
+started a coding run and has not integrated yet: Progress, Auto Review
+(including cards waiting for the batch gate), Human Review (cards waiting for
+the acceptance integration) and queued merge rounds (a started card back in
+Ready with a pending follow-up). `OverlapComparisonSet` collects that set from
+the card snapshot without git: a card stops being exposed when a provenance
+merge record or an integrated-class integration record is newer than its last
+entry into Progress. Escalated, Failed pickup, Code not complete, Completed,
+planning and research cards are not in the set. A candidate that already
+started is compared only with running and post-coding cards, so two started
+cards never hold each other. `running` keeps the local behaviour before DS-0.
+
+In-flight cards take no slot, and an exclusive card blocks only while it runs.
+A scope serialize is a `parallel-conflict` pickup skip on the local pickup and a
+`parallel-conflict` dispatch rejection on the remote claim. Its reason names
+the window, the conflicting card, its lane and the shared prefix, for example
+`scope conflict with 'AGT-1' on 'backend/features/runner' (window in-flight,
+4-auto-review)`. Each scope serialize also writes one `overlap-serialize` log line
+with `path` (`local` or `remote-claim`), `window`, `project`, `candidate`,
+`conflict`, `lane` and `prefix`, all card ids, so over-serialization can be
+counted per window. A serialize without a scope conflict (no free slot, a
+running exclusive card) keeps its plain skip line. The remote claim asks
+`ParallelSlotPolicy.DecideOverlap`, the same rules without the slot count,
+because it checks host and project concurrency before.
 
 ## Persona occurrences, PT-4
 
@@ -507,7 +546,10 @@ It then reports each answered AGT-3176 deploy job on
 `POST /api/deploy/jobs/{project}/{jobId}/report`, and the observed state and
 events on `POST /api/deploy/run-targets/{hostId}/observed-state`. All routes
 require `runner.deploy`, and in the networked profile the caller's Runner ID
-must equal `hostId`. The desired-state read claims the open deploy job, or
+must equal `hostId`. The host also sends a bounded, masked tail of Docker stdout
+and stderr after a restart. Studio keeps that tail with the restart count, opens
+or updates a runtime incident for a crash loop or crash rollback, and writes an
+Activity alert. The desired-state read claims the open deploy job, or
 renews its lease. A run target holds one job for at most 30 minutes from its
 first claim; after that Studio records it as `deploy-step-failed` and queues
 the usual automatic rollback. Without an open job, an environment keeps its
@@ -538,6 +580,15 @@ sends it in `removals` only on a decision:
   `POST /api/projects/{project}/environments/{id}/run-target-removal/confirm`
   (optional body `{ "hostId": ... }`). The actor is recorded.
 - `grace`: kind `other` only, after 10 minutes missing.
+
+The Deploy overview offers Stop for a deployed app and Remove for a declared
+environment. Stop queues a host stop and keeps the declaration. Remove queues a
+card to delete the repository declaration and its `project.yml` references.
+The overview then shows the pending placement with a separate host removal
+confirmation. Each confirmation explains that deploy history, health samples,
+and environment secrets stay stored. Open health incidents
+close as `check-removed` when their checks disappear. The host app is deleted only
+after the second confirmation and the host's next poll.
 
 Deleting, renaming, or retargeting a `production` or `stage` declaration
 therefore removes nothing by itself. It stays `pending-confirmation`, and
@@ -1184,6 +1235,19 @@ unreported claim expires with its lease and is queued again.
   1,211,213-token observation threshold. Semantic conflicts and invalid
   sessions return to Ready for a policy-qualified fresh claim. The original
   task prompt is never resent on the resume path.
+  Both automatic integration recovery (`IntegrationAgentRoundService`, including
+  batch replay conflicts) and acceptance-rail recovery persist that delta before
+  promoting a card to Ready. Saving only a follow-up prompt does not authorize
+  resume. Automatic recovery uses the lowest supported low/medium reasoning
+  route that clears the existing correctness floor; explicit operator pins are
+  retained. Claim admission still applies its mechanical recovery floor and can
+  raise a queued low selection to medium. A missing session, changed worktree or changed lineage still starts
+  fresh with the recorded rejection reason.
+  Completion evidence carries `sessionMode` (`resumed` or `fresh`), which also
+  travels into the remote coding token receipt and merged usage ledger. It
+  describes the worker's launch choice; captured session IDs provide the
+  independent provider evidence. Historical rows without that evidence remain
+  unknown.
   On the standalone Task Server plane, both direct claims and accepted host
   permits carry a policy-qualified route with the mechanical delta. A resumed
   fallback completes as typed `MechanicalFallback`, records its reason with the
@@ -2964,7 +3028,20 @@ execution admission as deployment mutations. Production approval and rejection
 require an Owner or Maintainer. `GET /audit` under the same prefix includes
 runbook request, approval, rejection and completion events. A run response
 includes its `id`, `environmentId`, `state`, `steps` and `definitionCommit`;
-each step has a `logRef` for its filtered log.
+each step has a `logRef` for its filtered log. `requestedByName` and
+`approvedByName` carry the Studio display name of the stored user id, and the
+log lines name people the same way.
+
+A runbook may set `verify: health:<check id>` (an environment health check) or
+`verify: alert:<rule id>` (a telemetry alert rule). The request is refused when
+the environment declares no such check or rule. The run then carries a final
+`verification` step: after the host reports success the run stays `running`
+while the control plane probes the check (up to `Runbooks:VerifyAttempts`,
+default 6, every `Runbooks:VerifyIntervalSeconds`, default 10) or evaluates
+the rule, which must be observed and not firing. Only a passing check makes the
+run `succeeded`; otherwise it is `failed`. The run's `verifies` names the
+target, and `verification` holds the target, the result and one sentence of
+what was observed, which the `verification` step log repeats.
 
 The target host keeps operator-owned scripts at
 `/etc/agent-host/runbooks/<project>/<step>.sh`. The host runs each script with
@@ -2976,8 +3053,14 @@ steer the loader or shell (`LD_*`, `DYLD_*`, `BASH_FUNC_*`, `PATH`, `IFS`,
 `ENV`, `BASH_ENV` and the libc loading variables) are rejected by the
 `project.yml` validator as `variable-name-reserved` and again by the host
 before any script starts. Scripts must exit zero to advance; failure stops the
-remaining steps. The host drains output locally and reports only step success
-or failure, so logs do not expose secret values. A step times out after nine
+remaining steps. The host keeps the last 200 lines of each step's stdout and
+stderr, masks every secret value it passed to the script (and each line of a
+multi-line one) before cutting a line to 400 characters, and reports that tail
+with the step result. A non-zero exit, a timeout and a missing script add a
+line that says so; a missing script names the path the host looked for. The
+control plane applies the credential patterns of `CredentialRedactor` and the
+same bounds again and writes the lines to the step's log before its
+`Operation succeeded.` or `Operation failed.` line. A step times out after nine
 minutes, and the whole run after ten. On Linux, `setsid` gives each script its
 own process group; timeout or host cancellation also applies while draining
 output after the script exits and kills that group. Descendants that start a
@@ -3034,3 +3117,22 @@ seam.
   tests around `ProjectRunner` or the service that owns the transition.
 - Prompt-template changes under `prompts/runtime/` require the matching live CLI
   probe, not only rendered-string tests.
+
+## Automatic post-merge checks
+
+The coding daemon owns `PostMergeHostScheduler`, discovering the projects
+whose testing strategy is `fast` or `balanced` (derived `testingMode`
+`post-merge`, AGT-3965) through Studio's Runner-scoped
+`GET /api/runner/post-merge/projects`. Registry repository URLs and configured
+integration branches are authoritative. Window facts are posted to
+`POST /api/runner/post-merge/projects/{project}/window` with the existing Runner
+completion scope. It maintains dedicated clones under
+its state root, observes every eligible window before and during sequential execution,
+and reuses the existing Runner credential. Window observations are durable
+facts in `PostMergeRunStore`, independent of green/red receipts, and flow to
+`/api/develop-states` and the project Operations alert. Nightly routine checks
+are retried between 02:15 and 06:15 UTC and deduplicated by terminal receipts
+for the UTC day. On Linux each project command receives the same per-worker
+cgroup envelope as coding work, in a sibling leaf of the daemon. Required
+attachment keeps project tests out of the daemon leaf, and command teardown
+kills leftovers. A host without delegation defers execution. See [host setup and legacy timer retirement](../../operations/setup/linux-runner-host.md#post-merge-develop-checks).

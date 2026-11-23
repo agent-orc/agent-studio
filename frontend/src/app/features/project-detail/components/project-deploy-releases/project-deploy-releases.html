@@ -1,8 +1,20 @@
 <section class="releases" data-testid="deploy-releases" aria-labelledby="deploy-releases-title">
   <header class="releases__head">
     <h2 id="deploy-releases-title">Releases</h2>
-    <p>Immutable snapshots from green integration builds.</p>
+    <p>Deployable artifacts from green integration builds. Package releases use the Deck publishing actions and the project release command.</p>
   </header>
+  @if (nextRelease(); as next) {
+    <section class="releases__next" data-testid="deploy-next-release" [attr.data-state]="next.state" aria-label="Next release">
+      <app-status-indicator [tone]="nextTone()!.tone" [label]="nextTone()!.label" [compact]="true" testId="deploy-next-release-state" />
+      <p data-testid="deploy-next-release-message">{{ next.message }}</p>
+      @if (next.nextStep) { <p class="releases__muted" data-testid="deploy-next-release-step">{{ next.nextStep }}</p> }
+      @if (next.canCreate) {
+        <button type="button" class="releases__create" data-testid="deploy-next-release-create" [disabled]="creating()" (click)="create()">
+          {{ creating() ? 'Creating release…' : 'Create release' }}</button>
+      }
+      @if (createError(); as error) { <p role="alert" data-testid="deploy-next-release-error">{{ error }}</p> }
+    </section>
+  }
   @switch (panel().status) {
     @case ('loading') { <app-loading-surface kind="list" label="Loading releases…" /> }
     @case ('error') {
@@ -15,7 +27,7 @@
     @default {
       @if (releases().length === 0) {
         <app-empty-state icon="archive" title="No releases yet" testid="deploy-releases-empty"
-          body="The next green build of the integration branch creates the first release." />
+          [body]="nextRelease() ? 'The first release appears here as soon as it exists; what creates it is shown above.' : 'A release is created after a card is integrated and the project gate passes on the integration branch.'" />
       } @else {
         <div class="releases__layout">
           <ul class="releases__list" aria-label="Releases, newest first">
@@ -67,7 +79,36 @@
                 <dt>Artifacts</dt>
                 <dd><ul class="releases__digests">@for (digest of release.artifactDigests; track digest) { <li><code>{{ digest }}</code></li> }</ul></dd>
                 <dt>Running in</dt><dd data-testid="deploy-release-live-in">{{ liveIn().length ? liveIn().join(', ') : 'No environment' }}</dd>
+                <dt>Secrets</dt>
+                <dd data-testid="deploy-release-secrets">
+                  @switch (secrets().status) {
+                    @case ('loading') { <span class="releases__muted">Checking secret bindings…</span> }
+                    @case ('unavailable') { <span class="releases__muted">This server does not check secret bindings.</span> }
+                    @case ('error') { <span class="releases__muted">{{ secrets().message }}</span> }
+                    @default {
+                      @if (secretGaps().length) {
+                        <div class="releases__secret-gaps">
+                          @for (gap of secretGaps(); track gap.environmentId) {
+                            <app-deploy-secret-gaps [readiness]="gap" [named]="true" (bind)="openSecrets.emit($event)" />
+                          }
+                        </div>
+                      } @else { Every environment has its secrets bound }
+                    }
+                  }
+                </dd>
               </dl>
+              <section class="releases__deploy" data-testid="deploy-release-actions" aria-labelledby="deploy-release-actions-title">
+                <h4 id="deploy-release-actions-title">Deploy</h4>
+                @switch (actions().status) {
+                  @case ('loading') { <p class="releases__muted">Checking where this release may deploy…</p> }
+                  @case ('error') { <p class="releases__muted" data-testid="deploy-release-actions-error">{{ actionsError() }}</p> }
+                  @case ('unavailable') { <p class="releases__muted">This server does not offer deploy actions yet.</p> }
+                  @default {
+                    <app-deploy-actions [options]="releaseActions()" [environmentNames]="environmentNames()" [state]="actionState()"
+                      [groupLabel]="'Deploy actions for release ' + release.version" (startAction)="startAction.emit($event)" />
+                  }
+                }
+              </section>
               @defer (on immediate) { <app-project-deploy-release-notes [release]="release" /> }
             </article>
           }

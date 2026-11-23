@@ -258,7 +258,8 @@ public sealed class AccessSecurityMiddleware
         {
             var status = faulted ? StatusCodes.Status500InternalServerError : context.Response.StatusCode;
             _store.AppendServiceAccountAudit(serviceAccount, context.Request.Method, path, status,
-                AuditTarget(context, path), parameterDigest.Value, context.Items[OperatorPolicyItem] as OperatorPolicyDecision);
+                AuditTarget(context, path), parameterDigest.Value, context.Items[OperatorPolicyItem] as OperatorPolicyDecision,
+                context.Items[OperatorRequestClassifier.OverrideReasonItem] as string);
             if (breakGlass is not null)
                 _store.AppendBreakGlassRequestAudit(breakGlass, serviceAccount.ActorId,
                     context.Request.Method + " " + path, status < 400 ? "ok" : "refused",
@@ -281,6 +282,14 @@ public sealed class AccessSecurityMiddleware
         // (TelemetryIntakeService). A Studio session or Runner credential
         // grants nothing there, and the intake needs neither.
         if (IsTelemetryIntake(context.Request.Method, path))
+        {
+            await _next(context);
+            return;
+        }
+
+        // The instance deploy record API authenticates its own deploy reporter
+        // token (AGT-3879); no session or other credential reaches it.
+        if (AgentStudio.Deploy.InstanceDeployEndpoints.IsReportRoute(context.Request.Method, path))
         {
             await _next(context);
             return;
@@ -701,6 +710,20 @@ public sealed class AccessSecurityMiddleware
                 await Reject(context, 403, gate.Reason!, gate.Message, policy: gate);
                 return;
             }
+            // ES-2: an override without a usable written reason can never run,
+            // so it is refused with the move routes' reason error before it
+            // opens an approval request the Owner would decide in vain.
+            if (awaitsApproval && OperatorOperationIds.CardOverride.Contains(operation!.Id)
+                && !AgentStudio.Tasks.CompletionContractPolicy.IsUsableReason(
+                    context.Items[OperatorRequestClassifier.OverrideReasonItem] as string))
+            {
+                context.Items[OperatorPolicyItem] = OperatorPolicyDecision.Refuse(OverrideReasonRequiredReason, operation,
+                    AgentStudio.Tasks.TaskCrudEndpoints.OverrideReasonRequired);
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                context.Response.Headers.CacheControl = "no-store";
+                await context.Response.WriteAsJsonAsync(new { error = AgentStudio.Tasks.TaskCrudEndpoints.OverrideReasonRequired });
+                return;
+            }
             // A request naming an approval that cannot admit it (used, changed, expired, another session's)
             // is refused here, whatever became of its target; the approval is consumed only below.
             if (awaitsApproval && ApprovalHeader(context) is { } approvalId)
@@ -748,7 +771,12 @@ public sealed class AccessSecurityMiddleware
         }
         var safeMethod = IsSafe(context.Request.Method, path);
         var (subject, bindings) = _store.PrincipalBindings(IamPrincipalKind.ServiceAccount, account.AccountId);
-        context.Items[SkipTaskResolutionItem] = (safeMethod || account.Origin != ServiceAccountOrigins.ApiToken)
+        // ES-2: a card write by a principal whose strongest role is the
+        // operator agent role resolves the card's project like an API token
+        // does; otherwise a workspace-bound operator agent's card writes read
+        // as installation-wide and are refused below.
+        context.Items[SkipTaskResolutionItem] = (safeMethod
+                || (account.Origin != ServiceAccountOrigins.ApiToken && !StrongestRoleIsOperatorAgent(subject, bindings)))
             && WorkspaceBindingsDecide(subject, bindings);
         var target = await TargetAsync(context, path, required, safeMethod);
         context.Items[AuditTargetItem] = target;
@@ -816,8 +844,22 @@ public sealed class AccessSecurityMiddleware
         }
         if (breakGlass is null && operation is { Tier: OperatorTier.T2 }
             && !await AdmitOperatorApprovalAsync(context, account, operation, path)) return;
+        // ES-2 (ES-D8 A): the Owner's approval of an override acceptance or an
+        // archive override adds project.cards.override to this one request of
+        // the operator session; no other operation or principal gains it.
+        var approval = breakGlass is null && account.Operator is not null && operation is { Tier: OperatorTier.T2 }
+            && context.Items[OperatorPolicyItem] is OperatorPolicyDecision { Admitted: true, ApprovalId: not null } admitted
+                ? admitted : null;
+        IReadOnlySet<string>? approvedPermissions = approval is not null
+            && OperatorOperationIds.CardOverride.Contains(operation!.Id)
+                ? new HashSet<string>(StringComparer.Ordinal) { IamPermissions.ProjectCardsOverride } : null;
         context.Items[HumanPrincipalItem] = new HumanPrincipal(user, session);
-        context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject, projected.Role);
+        context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject, projected.Role,
+            approvedPermissions);
+        // Every timeline event of an approved request names the approval and the approving Owner.
+        using var approvalScope = approval is not null
+            ? OperatorActorScope.Enter(account.Operator! with { ApprovalId = approval.ApprovalId, ApprovedBy = approval.ApprovedBy })
+            : null;
         await _next(context);
     }
 
@@ -881,6 +923,9 @@ public sealed class AccessSecurityMiddleware
         context.Items[OperatorApprovalItem] = decision.ApprovalId;
         return true;
     }
+
+    /// <summary>The audit entry's policy reason for an override refused for its missing written reason (ES-2).</summary>
+    private const string OverrideReasonRequiredReason = "override-reason-required";
 
     private static string? ApprovalHeader(HttpContext context)
         => context.Request.Headers[OperatorApprovalHeaders.Approval].ToString().Trim() is { Length: > 0 } id ? id : null;
@@ -1109,6 +1154,9 @@ public sealed class AccessSecurityMiddleware
         if ((HttpMethods.IsGet(method) || HttpMethods.IsPost(method))
             && path.StartsWith("/api/deploy/run-targets/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Deploy;
+        if ((HttpMethods.IsGet(method) || HttpMethods.IsPost(method))
+            && path.StartsWith("/api/deploy/hosts/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Deploy;
         if (path.StartsWith("/api/pull-gates/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Gate;
         if (HttpMethods.IsGet(method)
@@ -1216,7 +1264,8 @@ public sealed class AccessSecurityMiddleware
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/complete", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         if (HttpMethods.IsPost(method) && path.StartsWith("/api/clients/", StringComparison.OrdinalIgnoreCase)
             && path.EndsWith("/runner-git-capability", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
-        if (path.StartsWith("/api/runner/post-merge/projects/", StringComparison.OrdinalIgnoreCase))
+        if (path.Equals("/api/runner/post-merge/projects", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/runner/post-merge/projects/", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsGet(method) ? RunnerScopes.Claim : RunnerScopes.Completion;
         return GateRunnerScope(method, path);
     }
@@ -1553,6 +1602,12 @@ public sealed class AccessSecurityMiddleware
         return matches.Count == 0 ? new string?[] { null }
             : matches.Select(task => (string?)task.ProjectName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
+
+    /// <summary>True when the strongest role among the principal's own bindings is the operator agent role.</summary>
+    private static bool StrongestRoleIsOperatorAgent(IamSubject subject, IReadOnlyList<RoleBinding> bindings)
+        => bindings.Where(binding => PermissionEvaluator.AppliesTo(binding, subject))
+            .Select(binding => IamRoles.Find(binding.Role)).OfType<RoleDefinition>()
+            .MaxBy(role => role.Rank)?.Id == IamRoles.OperatorAgent;
 
     private static bool WorkspaceBindingsDecide(IamSubject subject, IReadOnlyList<RoleBinding> bindings)
     {

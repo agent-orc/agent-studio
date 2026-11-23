@@ -459,6 +459,8 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         var report = Assert.IsType<IntegrationConflictReport>(result.ConflictReport);
         Assert.Equal(developTipBefore, report.IntegrationTipSha);
         Assert.Equal(taskTipBefore, report.DeliverySha);
+        Assert.Contains("git -c rerere.enabled=false merge --no-ff --no-edit", report.FailedCommand);
+        Assert.Contains("CONFLICT", report.FirstError);
         Assert.Equal(1, report.ConflictedFileCount);
         Assert.Equal(["shared.txt"], report.ConflictedFiles);
         Assert.False(report.ConflictedFilesTruncated);

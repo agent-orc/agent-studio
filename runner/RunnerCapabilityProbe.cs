@@ -74,22 +74,22 @@ internal static class RunnerCapabilityProbe
         }).Where(route => providers.Contains(route.Item1))
             : Enumerable.Empty<(string, string)>();
         baseline = baseline.Concat(fallbackCandidates).Distinct().ToArray();
-        // Include these two in cached host probes before routing switches to
-        // them. Old CLIs cannot serve them, so skip the paid calls.
+        // Include the version-gated models in cached host probes before routing
+        // switches to them. Old CLIs cannot serve them, so skip the paid calls.
         var codex = CodingCliBinaries(options).FirstOrDefault(item => item.CliType == CliSelection.CodexCli);
         var installation = codex.Binary is null ? null : InspectCli(codex.Binary);
         if (configured is null && installation is not null && CodexModels(installation) is not null
             && CodexModelCatalogs.TryGetValue($"{installation.Path}\0{installation.Version}", out var catalogue))
             RunnerModelAcceptanceProbe.Shared.NoteCatalogueRefresh(
                 CliSelection.CodexCli, $"{installation.Version}:{catalogue.ObservedAt.Ticks}");
-        if (installation is null || !CodexCliRelease.OffersGpt61(installation.Version))
-            return baseline.Where(route => route.Provider != CliSelection.CodexCli
-                || route.Model is not (CodexCliRelease.Gpt61Sol or CodexCliRelease.Gpt61Terra)).ToArray();
-        return baseline.Concat(new[]
-        {
-            (CliSelection.CodexCli, CodexCliRelease.Gpt61Sol),
-            (CliSelection.CodexCli, CodexCliRelease.Gpt61Terra),
-        }).Distinct().ToArray();
+        var offered = CodexCliRelease.VersionGatedModels
+            .Where(model => installation is not null && CodexCliRelease.Offers(model, installation.Version))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return baseline.Where(route => route.Provider != CliSelection.CodexCli
+                || CodexCliRelease.MinimumVersionForModel(route.Model) is null || offered.Contains(route.Model))
+            .Concat(CodexCliRelease.VersionGatedModels.Where(offered.Contains)
+                .Select(model => (CliSelection.CodexCli, model)))
+            .Distinct().ToArray();
     }
 
     private static IReadOnlyList<(string Provider, string Model)> BuiltInModelCandidates(RunnerOptions options)
@@ -98,7 +98,7 @@ internal static class RunnerCapabilityProbe
             if (item.CliType == CliSelection.CodexCli)
             {
                 var installation = InspectCli(item.Binary);
-                string[] routes = ["gpt-6-sol", "gpt-6.1-sol", "gpt-5.6-sol",
+                string[] routes = ["gpt-6-sol", "gpt-6.1-sol", "gpt-6.2-sol", "gpt-6.2-astra", "gpt-5.6-sol",
                     "gpt-5.5", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna",
                     "gpt-6-astra"];
                 var offered = installation is null ? null : CodexModels(installation);
@@ -418,7 +418,10 @@ internal static class RunnerCapabilityProbe
                 BuildNodeSweep.Latest?.ObservedAt,
                 ClaimLoadGate: claimLoadGate,
                 OneShotClaimRoute: oneShotClaimRoute,
-                Filesystems: sample.Filesystems);
+                Filesystems: sample.Filesystems,
+                Placement: sample.Placement,
+                NetworkReceiveBytesPerSecond: sample.NetworkReceiveBytesPerSecond,
+                NetworkTransmitBytesPerSecond: sample.NetworkTransmitBytesPerSecond);
 
     /// <summary>A missing Docker daemon leaves the optional inventory absent for older hosts.</summary>
     public static async Task<IReadOnlyList<HostContainerSummaryDto>?> ContainersAsync(CancellationToken ct)
@@ -435,15 +438,17 @@ internal static class RunnerCapabilityProbe
             if (ids.Length == 0) return [];
             if (ids.Length > 200) return null;
             var inspected = await ProcessRunner.RunAsync("docker",
-                ["inspect", "--format", "{{.Name}}\t{{.Image}}\t{{.State.Status}}", .. ids],
+                ["inspect", "--format", "{{.Name}}\t{{.Image}}\t{{.State.Status}}\t{{.Id}}", .. ids],
                 ct: deadline.Token);
             if (!inspected.Success) return null;
             return inspected.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Select(line => line.TrimEnd('\r').Split('\t'))
-                .Where(parts => parts.Length == 3 && parts[0].Length > 0)
+                .Where(parts => parts.Length is 3 or 4 && parts[0].Length > 0)
                 .Select(parts => new HostContainerSummaryDto(parts[0].TrimStart('/'),
                     parts[1].StartsWith("sha256:", StringComparison.Ordinal) ? parts[1] : null,
-                    parts[2]))
+                    parts[2],
+                    // The short id is the default host name inside the container (AGT-3954).
+                    parts.Length == 4 && parts[3].Length >= 12 ? parts[3][..12] : null))
                 .ToArray();
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException
@@ -649,13 +654,13 @@ internal static class RunnerCapabilityProbe
                 capabilities.Add(modelCapability);
             if (cliType == CliSelection.CodexCli && installation is not null)
             {
-                foreach (var model in new[] { CodexCliRelease.Gpt61Sol, CodexCliRelease.Gpt61Terra })
+                foreach (var model in CodexCliRelease.VersionGatedModels)
                 {
-                    if (CodexCliRelease.OffersGpt61(installation.Version)) continue;
+                    if (CodexCliRelease.Offers(model, installation.Version)) continue;
                     capabilities.Add(new AdvertisedCapabilityDto(
                         CapabilityProtocol.ModelAcceptance(cliType, model), "model-acceptance", "unavailable",
                         Identity: $"{cliType}/{model}",
-                        Detail: $"This CLI version does not offer {model}: codex-cli {installation.Version} requires {CodexCliRelease.Gpt61MinimumVersion} or newer."));
+                        Detail: $"This CLI version does not offer {model}: codex-cli {installation.Version} requires {CodexCliRelease.MinimumVersionForModel(model)} or newer."));
                 }
             }
         }

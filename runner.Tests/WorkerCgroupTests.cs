@@ -44,6 +44,7 @@ internal static class RunnerOptionsFixture
 /// </summary>
 public sealed class WorkerCgroupTests : IDisposable
 {
+    private const string DetachedFixtureScript = "sleep 60 </dev/null >/dev/null 2>&1 & echo $!";
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
         "worker-cgroup-tests",
@@ -439,18 +440,20 @@ public sealed class WorkerCgroupTests : IDisposable
     /// The runaway case the card asks for, proven against the kernel rather than
     /// a fake: a worker that forks more tasks than its envelope allows is refused
     /// by <c>pids.max</c> instead of filling the host's process table. Runs only
-    /// where this process can really create a cgroup below its own, which is the
-    /// delegated agent-host unit on a runner host.
+    /// where the run explicitly owns a delegated transient test scope. A shared
+    /// agent-host service subtree is never owned by this test.
     /// </summary>
     [SkippableFact]
     [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
     public void A_runaway_child_tree_is_contained_by_pids_max()
     {
         PlatformGate.LinuxOnly("pids.max containment is a cgroup v2 controller");
         var delegated = WritableDelegatedSubtree();
         Skip.If(
             delegated is null,
-            "No writable cgroup v2 subtree: run on an agent-host unit with 'Delegate=cpu pids'.");
+            "No owned test cgroup: run in a dedicated delegated run-*.scope and set AGENT_STUDIO_TEST_CGROUP_ROOT.");
 
         var workerDirectory = Path.Combine(_root, "worker");
         var envelope = WorkerResourceEnvelope.Compute(12, 2, 2) with { TasksMax = 8 };
@@ -503,9 +506,12 @@ public sealed class WorkerCgroupTests : IDisposable
     /// <c>worker-envelope</c> line.
     /// </summary>
     [SkippableFact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
     public void Teardown_without_cgroup_kill_signals_every_listed_leftover()
     {
-        PlatformGate.RequiresPosixShell();
+        PlatformGate.LinuxOnly("the fallback signals cgroup resident processes");
         var delegated = FakeDelegatedRoot("legacy-kernel");
         var workerDirectory = Path.Combine(_root, "worker");
         var cgroup = WorkerCgroup.TryCreate(
@@ -516,16 +522,25 @@ public sealed class WorkerCgroupTests : IDisposable
             Ignore)!;
         using var leftover = Process.Start(new ProcessStartInfo(PosixShell.RequirePath())
         {
-            ArgumentList = { "-c", "sleep 60" },
+            ArgumentList = { "-c", "exec sleep 60" },
             UseShellExecute = false,
             CreateNoWindow = true,
         })!;
         File.WriteAllText(cgroup.ProcsPath, $"{leftover.Id}\n");
 
-        var killed = WorkerCgroup.ReleaseFor(workerDirectory);
-
-        Assert.Equal(1, killed);
-        Assert.True(leftover.WaitForExit(10_000));
+        try
+        {
+            // Exercise the old-kernel fallback directly. ReleaseFor validates a
+            // persisted marker against the real daemon root, not this fake root.
+            var killed = WorkerCgroup.KillResidents(cgroup.CgroupDirectory);
+            Assert.Equal(1, killed);
+            Assert.True(leftover.WaitForExit(10_000));
+        }
+        finally
+        {
+            if (!leftover.HasExited) leftover.Kill(entireProcessTree: true);
+            leftover.WaitForExit(10_000);
+        }
     }
 
     /// <summary>
@@ -539,13 +554,15 @@ public sealed class WorkerCgroupTests : IDisposable
     /// </summary>
     [SkippableFact]
     [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
-    public void Teardown_kills_a_fixture_that_outlived_the_worker_that_started_it()
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Teardown_kills_a_fixture_that_outlived_the_worker_that_started_it()
     {
         PlatformGate.LinuxOnly("cgroup membership is what the teardown acts on");
         var delegated = WritableDelegatedSubtree();
         Skip.If(
             delegated is null,
-            "No writable cgroup v2 subtree: run on an agent-host unit with 'Delegate=cpu pids'.");
+            "No owned test cgroup: run in a dedicated delegated run-*.scope and set AGENT_STUDIO_TEST_CGROUP_ROOT.");
 
         var workerDirectory = Path.Combine(_root, "worker");
         var cgroup = WorkerCgroup.TryCreate(
@@ -563,7 +580,7 @@ public sealed class WorkerCgroupTests : IDisposable
             var launch = WorkerCgroup.Wrap(
                 cgroup!.ProcsPath,
                 "/bin/sh",
-                ["-c", "sleep 600 & echo $!"]);
+                ["-c", DetachedFixtureScript]);
             var start = new ProcessStartInfo
             {
                 FileName = launch.FileName,
@@ -574,8 +591,11 @@ public sealed class WorkerCgroupTests : IDisposable
             };
             foreach (var argument in launch.Arguments) start.ArgumentList.Add(argument);
             using var worker = Process.Start(start)!;
-            var fixturePid = int.Parse(worker.StandardOutput.ReadToEnd().Trim());
-            worker.WaitForExit(30_000);
+            // A fixture must not keep the worker's stdout pipe open. Bound the
+            // protocol read as well, so a regression cannot wait for the sleep.
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var fixturePid = int.Parse((await worker.StandardOutput.ReadToEndAsync(deadline.Token)).Trim());
+            Assert.True(worker.WaitForExit(5_000));
 
             var residents = File.ReadAllLines(cgroup.ProcsPath)
                 .Where(line => line.Trim().Length > 0)
@@ -587,12 +607,72 @@ public sealed class WorkerCgroupTests : IDisposable
 
             Assert.Equal(residents.Length, killed);
             Assert.False(Directory.Exists(cgroup.CgroupDirectory));
-            Assert.False(Directory.Exists($"/proc/{fixturePid}"));
+            // A killed orphan can remain as an init-owned zombie. It must no
+            // longer be running or counted in the cgroup, rather than reaped by
+            // an unrelated init within this test's scheduling window.
+            Assert.True(SpinWait.SpinUntil(() => IsGoneOrZombie(fixturePid), TimeSpan.FromSeconds(5)));
         }
         finally
         {
             WorkerCgroup.ReleaseFor(workerDirectory);
         }
+    }
+
+    [SkippableFact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public async Task Detached_fixture_closes_the_worker_pipe_while_it_is_still_alive()
+    {
+        PlatformGate.LinuxOnly("the fixture reports a POSIX process id");
+        using var worker = Process.Start(new ProcessStartInfo(PosixShell.RequirePath())
+        {
+            ArgumentList = { "-c", DetachedFixtureScript },
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        })!;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var fixturePid = int.Parse((await worker.StandardOutput.ReadLineAsync(deadline.Token))!);
+        try
+        {
+            Assert.Equal(string.Empty, await worker.StandardOutput.ReadToEndAsync(deadline.Token));
+            Assert.True(worker.WaitForExit(5_000));
+            using var fixture = Process.GetProcessById(fixturePid);
+            Assert.False(fixture.HasExited);
+        }
+        finally
+        {
+            ProcessSignalGuard.TryKillSingle(fixturePid, "test-owned-detached-fixture");
+        }
+    }
+
+    [Theory]
+    [InlineData("/cg/agent-runner.service", "/cg/agent-runner.service", false)]
+    [InlineData("/cg/worker-test", "/cg/worker-test", false)]
+    [InlineData("/cg/session-1.scope", "/cg/session-1.scope", false)]
+    [InlineData("/cg/run-test.scope", null, false)]
+    [InlineData("/cg/run-test.scope", "/cg/run-other.scope", false)]
+    [InlineData("/cg/run-test.scope", "/cg/run-test.scope", true)]
+    public void Only_an_explicitly_owned_transient_test_scope_can_be_reshaped(string root, string? owned, bool expected)
+        => Assert.Equal(expected, OwnsTestScope(root, owned));
+
+    private static bool IsGoneOrZombie(int pid)
+    {
+        try
+        {
+            var stat = File.ReadAllText($"/proc/{pid}/stat");
+            return stat[(stat.LastIndexOf(')') + 1)..].TrimStart().StartsWith("Z", StringComparison.Ordinal);
+        }
+        catch (FileNotFoundException) { return true; }
+        catch (DirectoryNotFoundException) { return true; }
+    }
+
+    private static bool OwnsTestScope(string root, string? ownedRoot)
+    {
+        var name = Path.GetFileName(root);
+        return name.StartsWith("run-", StringComparison.Ordinal)
+            && name.EndsWith(".scope", StringComparison.Ordinal)
+            && string.Equals(root, ownedRoot, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -620,21 +700,10 @@ public sealed class WorkerCgroupTests : IDisposable
     }
 
     /// <summary>
-    /// The real cgroup subtree this process may carve workers out of, if any.
-    ///
-    /// <para>This deliberately does not go through
-    /// <see cref="WorkerCgroup.EnsureDelegationRoot"/>: that one refuses anything
-    /// that is not a systemd <c>.service</c> cgroup, which is the right
-    /// production guard and has its own tests, but it would also refuse the one
-    /// place a test host can legitimately get a delegated subtree. Two hosts
-    /// qualify: an agent-host unit with <c>Delegate=cpu pids</c>, and a run
-    /// wrapped in <c>systemd-run --user --scope -p Delegate=yes</c>.</para>
-    ///
-    /// <para>The subtree is only reshaped when it was created for this run: an
-    /// agent-host <c>.service</c> or a <c>run-*.scope</c> transient unit. A
-    /// plain <c>dotnet test</c> from a login shell lands in the session's own
-    /// scope and skips, rather than moving the shell that started it into a
-    /// leaf cgroup.</para>
+    /// The explicitly owned transient test scope. A daemon's service subtree is
+    /// shared with live workers and must never be reshaped by a test. A dedicated
+    /// run-*.scope with AGENT_STUDIO_TEST_CGROUP_ROOT set to its absolute cgroup
+    /// path opts into moving that test run into a leaf and enabling controllers.
     /// </summary>
     private static string? WritableDelegatedSubtree()
     {
@@ -654,11 +723,8 @@ public sealed class WorkerCgroupTests : IDisposable
                 ? Path.GetDirectoryName(own)!
                 : own;
 
-            var name = Path.GetFileName(root);
-            var ours = name.EndsWith(".service", StringComparison.Ordinal)
-                       || (name.StartsWith("run-", StringComparison.Ordinal)
-                           && name.EndsWith(".scope", StringComparison.Ordinal));
-            if (!ours) return null;
+            if (!OwnsTestScope(root, Environment.GetEnvironmentVariable("AGENT_STUDIO_TEST_CGROUP_ROOT")))
+                return null;
 
             var leaf = Path.Combine(root, WorkerCgroup.DaemonLeafName);
             Directory.CreateDirectory(leaf);

@@ -1,0 +1,768 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Red test isolation | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #696762;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+  <style data-dossier="red-test-isolation">
+    /* Diagram classes: only the article template variables, no own colours. */
+    nav.toc { margin: 24px 0 8px; color: var(--article-muted); font-size: 0.82rem; line-height: 1.8; }
+    .header-strip .evidence-capture { padding-bottom: 36px; }
+    .header-strip .capture-theme { top: auto; bottom: 7px; left: 10px; }
+    .header-strip .figure-annotation { bottom: 7px; right: 10px; }
+    svg .d-box { fill: var(--article-surface); stroke: var(--article-line); }
+    svg .d-new { fill: var(--article-link-soft); stroke: var(--article-link); }
+    svg .d-good-box { fill: var(--article-good-soft); stroke: var(--article-good); }
+    svg .d-warn-box { fill: var(--article-warn-soft); stroke: var(--article-warn); }
+    svg .d-bad-box { fill: var(--article-bad-soft); stroke: var(--article-bad); }
+    svg .d-good-dot { fill: var(--article-good); }
+    svg .d-warn-dot { fill: var(--article-warn); }
+    svg .d-bad-dot { fill: var(--article-bad); }
+    svg .d-dot { fill: var(--article-link); }
+    svg .d-line { fill: none; stroke: var(--article-muted); stroke-width: 1.5; }
+    svg .d-rule { fill: none; stroke: var(--article-line); stroke-width: 1; }
+    svg .d-text { fill: var(--article-ink); font: 600 13px var(--article-sans); }
+    svg .d-head { fill: var(--article-faint); font: 700 11px var(--article-sans); letter-spacing: 0.06em; text-transform: uppercase; }
+    svg .d-small { fill: var(--article-muted); font: 12px var(--article-sans); }
+    svg .d-link { fill: var(--article-link); font: 600 13px var(--article-sans); }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept · Delivery chain · Persona team</p>
+    <h1>Red test isolation</h1>
+    <p class="lede">A red test is a fact about that test and the code it covers, not about the whole integration branch. A small base suite still stops the line. Every other confirmed red test goes into a bounded quarantine, only the cards whose paths reach that test's area wait, and a line guardian in the persona team classifies the red, picks quarantine, revert or fix forward, and lifts the quarantine on evidence. The project-wide fallback after two hours of red goes away.</p>
+    <div class="meta">
+      <span><b>Pattern</b> concept</span>
+      <span><b>Status</b> decision-pending</span>
+      <span><b>Phase</b> decision-ready</span>
+      <span><b>Source card</b> AGT-3988</span>
+      <span><b>As of</b> 23 November 2026, develop 801cf4ca9</span>
+      <span><b>Builds on</b> <a href="../dispatcher-personas/index.html">Dispatcher personas</a>, <a href="../persona-team/index.html">Persona team</a>, <a href="../operations/delivery-chain/index.html">Delivery chain</a> D4</span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Contents">
+    <a href="#scope">Scope</a> · <a href="#paragraph">In one paragraph</a> · <a href="#exists">What exists</a> · <a href="#reds">Four reds</a> · <a href="#principle">Principle</a> · <a href="#quarantine">Quarantine</a> · <a href="#hold">Scope of the hold</a> · <a href="#ladder">After the first red</a> · <a href="#guardian">Line guardian</a> · <a href="#parity">Environment parity</a> · <a href="#cost">Cost</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#slices">Slices</a> · <a href="#implementation">Implementation</a>
+  </nav>
+
+  <section id="scope">
+    <h2><span class="number">01</span> Scope</h2>
+    <p>On 23 November 2026 the owner asked: "A failing test must be able to be isolated. It must not paralyse the whole system. How can that work efficiently?" The question follows two days in which the integrate-first strategy (AGT-3965, AGT-3967, AGT-3976, live since Deploy 57) reported Agent Studio red several times for reasons that were not regressions, and each red stopped the whole project.</p>
+    <ul>
+      <li>Post-merge commands inherited the daemon's environment, and all 22 <code>RunnerOptionsTests</code> failed (repaired by AGT-3981).</li>
+      <li>A cgroup test hung for ten minutes, but only inside the daemon's delegated cgroup (AGT-3983, in delivery at the time of writing).</li>
+      <li>Before that, single flaky tests turned develop red (AGT-3975, AGT-3980).</li>
+      <li>After two hours of red the project fell back to pre-merge. In that fallback every review ran the full suite with baseline and clean repeat. The owner reports that nothing was integrated between 23:00Z and 04:00Z.</li>
+      <li>The two-hour rule moved the repair card itself from Auto Review to Escalated, which superseded its running review. It also reopened a completed card (AGT-3966) that was only a suspect.</li>
+      <li>The operator set Agent Studio to <code>strict</code> by hand at 07:23Z on 23 November to stop the switching back and forth.</li>
+    </ul>
+    <p>This is a concept. It changes no product code. It defines what stops the line, the per-test quarantine, the scope of a hold, what replaces the two-hour fallback, a triage role, environment parity and the cost of each step. It ends with decisions and nine slices that can be promoted to cards.</p>
+    <table>
+      <thead><tr><th>Card item</th><th>Where it is worked out</th></tr></thead>
+      <tbody>
+        <tr><td>1 · Principle, base suite</td><td><a href="#principle">Principle</a>; decision RT-D1</td></tr>
+        <tr><td>2 · Quarantine per test, display</td><td><a href="#quarantine">Quarantine</a>; decisions RT-D2 to RT-D5, RT-D11</td></tr>
+        <tr><td>3 · Scope of the hold</td><td><a href="#hold">Scope of the hold</a>; decision RT-D6</td></tr>
+        <tr><td>4 · Replace the two-hour fallback</td><td><a href="#ladder">After the first red</a>; decision RT-D7</td></tr>
+        <tr><td>5 · Triage role</td><td><a href="#guardian">Line guardian</a>; decisions RT-D8, RT-D9, RT-D13</td></tr>
+        <tr><td>6 · Environment parity</td><td><a href="#parity">Environment parity</a>; decision RT-D10</td></tr>
+        <tr><td>7 · Cost</td><td><a href="#cost">Cost</a>; decision RT-D9</td></tr>
+        <tr><td>8 · Decisions and slices</td><td><a href="#open-decisions">Open decisions</a> RT-D1 to RT-D13; <a href="#slices">Slices</a> RT-1 to RT-9 with <code>dependsOn</code> in <code>workbench.json</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="paragraph">
+    <h2><span class="number">02</span> In one paragraph</h2>
+    <p>Only build, prepare and the base suite stop the line: they answer whether the product still builds, starts and serves its main paths, and when one of them is confirmed red nothing but the repair integrates. Every other test that fails twice at the same SHA, in the same test environment, and is not explained by a flaky repeat, becomes a <em>held</em> quarantine. The test keeps running and is reported, but it no longer makes develop red. Instead, the cards whose changed paths reach the folders that test covers wait at integration, and so do the paths of the merge it is attributed to. Everything else keeps flowing. Develop shows "green, 1 quarantined". A repair card goes to the front of the project's Ready lane with a model chosen for its class. A held quarantine lasts 24 hours and may be renewed once while a repair is in progress. At most three are held per project. It is lifted when the test passes twice in a row on tips that contain the repair. Flaky and environment failures get a <em>report-only</em> quarantine that holds nothing and expires after seven days. The automatic switch of the whole project to pre-merge after two hours is removed. In its place there is a ladder of narrower steps, and the owner is asked at named points with a recommended answer. A new persona role, the line guardian, carries these decisions as pure rules in the decision library, with one bounded model call for ambiguous classifications, its own log and budget, and criteria the owner reviews it by. Attribution gets a control run at the last green SHA and a double run at each bisect point, because a single run at each point is how a flaky failure ends up blamed on the newest merge. One declared test envelope makes review, gate and post-merge runs see the same world, and every receipt records its fingerprint.</p>
+  </section>
+
+  <section id="exists">
+    <h2><span class="number">03</span> What exists</h2>
+    <p>Most parts exist. They are not connected, and two of them act on the whole project where they should act on one test.</p>
+    <table>
+      <thead><tr><th>Building block</th><th>State at 801cf4ca9</th><th>What this Dossier takes from it</th></tr></thead>
+      <tbody>
+        <tr><td>Test quarantine file (AGT-W57 D4 A, AGT-2918)</td><td><code>.agent-studio/test-quarantine.json</code>, entries <code>test</code>, <code>card</code>, <code>expiresOn</code>, optional <code>resolvedOn</code> and <code>reason</code>; no author field (<code>TestQuarantinePolicy.cs:17-22</code>). No code writes it, so a person or a card commits it. Agent Studio's list is empty. There is no limit on the number of entries or on how long one lasts. <code>TestQuarantineReport</code> exists, but no production code calls it. No UI shows it.</td><td>The entry shape, expiry semantics (active through <code>expiresOn</code>, armed again the day after) and "resolved, never deleted".</td></tr>
+        <tr><td>Who reads the file</td><td>The build-test gate (<code>BuildTestGateRunner.cs:1448</code>, integration, batch and per-task fallback gates): quarantined tests still run, failures are logged with <code>testQuarantined=</code> and a step whose failures are all quarantined passes. Post-merge reads it through a separate, looser parser (<code>PostMergeAttributor.BlockingTests</code>, <code>runner/PostMergeAttributor.cs:47-80</code>). The Remote Review suite does not read it. It uses the xUnit trait <code>Category=ReviewFlaky</code> instead (<code>runner/ReviewFlakyTestIndex.cs</code>).</td><td>Three readers, two parsers and one trait make up three separate notions of quarantine. RT-4 makes one store the source for all of them.</td></tr>
+        <tr><td>Batch gate "flaky quarantine"</td><td>A different mechanism with the same name. A failure cleared by the AGT-2853 re-run pauses the batch ("flaky quarantine requires a fresh gate verdict") and hands members to per-task gates (<code>BatchGatePilotService.cs:2063-2081</code>). It does not read the file.</td><td>Renamed in RT-5 to "re-run cleared", so that "quarantine" means one thing.</td></tr>
+        <tr><td>Post-merge repeat (AGT-3976)</td><td>Every failed suite gets one same-tip repeat. Each failed .NET method repeats once with a focused filter. A test that recovers is flaky and does not make develop red. A test that fails twice stays red. Receipts carry <code>flakyTests</code>, <code>flakyCount</code> and the start load sample. <code>/api/develop-states</code> exposes <code>mostFlakyTests14Days</code>.</td><td>The "failed twice at the same SHA" signal that starts a held quarantine.</td></tr>
+        <tr><td>Attribution and bisect</td><td><code>AttributeFailureAsync</code> (<code>runner/PostMergeRunCommand.cs:316-423</code>). The suspects are the first-parent commits since the last green SHA, filtered by the test project's reference graph (<code>PostMergeProjectMap.CouldAffect</code>, with docs excluded). A binary search runs prepare, all three build commands and the focused test once at each point. Revert counts as independent only when no first-parent commit follows the suspect.</td><td>The filter is kept. Three gaps are fixed in RT-3: there is no control run at the last green SHA, a single run decides each point, and every point rebuilds the whole solution and the frontend.</td></tr>
+        <tr><td>Red develop repair (AGT-3312)</td><td><code>RedDevelopRepairPolicy</code>: escalate when red for two hours or more (checked first), revert for one clean independent suspect, otherwise fix forward. The repair card is a Bug at <code>Order = 0</code> in Preparation with no model set. AGT-3983, still in delivery, adds the repair card's lane as a fact so that a repair in Auto Review is held, not escalated. It also removes the automatic reopening of suspects.</td><td>The revert and fix-forward choice. The time rule is replaced by the ladder in RT-1.</td></tr>
+        <tr><td>Project-wide fallback</td><td><code>PostMergeModeService.EscalationActive</code> resolves the project to <code>pre-merge</code> when the attribution repair card is Escalated, or when develop has been red or running for two hours since the first red run. That turns the batch gate on again and makes integration use the full pre-merge gate. The two-hour constant exists twice (<code>RedDevelopRepairPolicy.cs:17</code>, <code>PostMergeModeService.cs:47</code>).</td><td>Removed as an automatic step (RT-1).</td></tr>
+        <tr><td>Hold at integration</td><td>While the latest T3 verdict is red, <code>RemoteIntegrationDaemon</code> refuses a delivery whose changed paths overlap an open incident's <code>FailingPaths</code> with <code>BlockedFailingArea</code>. The repair card is exempt (<code>runner/RemoteIntegrationDaemon.cs:199-213</code>). <code>FailingPaths</code> are the attributed merge's paths, or every candidate's paths when nothing is attributed.</td><td>This is already a scoped hold. RT-5 widens its input from suspect paths to the failing test's covering folders, and keeps it while develop is otherwise green.</td></tr>
+        <tr><td>Folder to test-project map</td><td>Configured <code>testExecution.folderToTestProjects</code> (<code>TestFolderMapping</code>), the generated map from <code>ProjectReference</code> closures (<code>GeneratedTestProjectMap</code>, AGT-3310) and post-merge's own prefix table <code>PostMergeRunPlan.Areas</code>. Their unit is a test project. <code>backend.Tests</code> is one project with 1,312 files and about 12,000 test methods.</td><td>The fallback scope when a failing test cannot be mapped more finely.</td></tr>
+        <tr><td>Conflict record (AGT-3969)</td><td>One record per project, card, delivery SHA and integration tip, with conflicted files, the cards whose commits touched each file in the base-to-tip range and the resolution route. Read API with <code>topFiles</code> and <code>cardPairs</code>.</td><td>Revert independence (does a later merge touch the suspect's files) and the hold list of in-flight cards coupled to a suspect.</td></tr>
+        <tr><td>Develop state display</td><td><code>DevelopStateIndicatorComponent</code> in the studio shell header polls <code>/api/develop-states</code> every 30 s and shows "Develop green", "Develop running" or "Develop red". Its row type has no flaky or quarantine field. Red and running render in the neutral text colour, because the two tokens it uses are not defined.</td><td>The surface RT-7 extends with the shared <code>&lt;app-status-indicator&gt;</code> (see <a href="#evidence">Evidence</a>).</td></tr>
+        <tr><td>Dispatcher and persona team</td><td>Dispatcher personas (AGT-3974) propose <code>dispatch.hold</code> with a reason code, at most 24 hours. The persona team has T1 and T2 tiers, <code>PersonaLogEntryV1</code> and the budget ledger. The reliability engineer persona observes red batches and must never retry or requeue anything.</td><td>The role frame, the hold operation and the log format for the line guardian.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="reds">
+    <h2><span class="number">04</span> Four reds of 22 and 23 November</h2>
+    <p>Four repair cards were opened in about 24 hours. Their own result reports name the causes. None of the four was a product regression caused by the merge it was attributed to.</p>
+    <table>
+      <thead><tr><th>Card</th><th>What failed</th><th>Real cause, from the repair report</th><th>Class</th><th>Under the proposal</th></tr></thead>
+      <tbody>
+        <tr><td>AGT-3975</td><td>Runner Docker fixtures and four backend tests</td><td>The suspect merge changed documentation only. The fixtures and host factories had test races.</td><td>Flaky, wrong attribution</td><td>Attribution now excludes docs and repeats each failure (AGT-3976, integrated after this red). A recovering test is flaky and blames no merge. A race that fails twice would also fail the control run at the last green SHA, so no merge is blamed. Report-only quarantine, fix at medium.</td></tr>
+        <tr><td>AGT-3980</td><td><code>EngineReportReviewTests</code>, one theory</td><td>A race between the lane move and the timeline event. Failed in 4 of 90 cases alone and 11 of 90 under load. The fix was a bounded poll in the test.</td><td>Flaky (load dependent)</td><td>At a failure rate of 4 to 12 %, the same-SHA repeat recovers it in about nine of ten runs, so it counts as flaky. If it fails twice, mixed results at a double-run bisect point stop the search. Report-only quarantine after three flaky runs. No line stop, no hold.</td></tr>
+        <tr><td>AGT-3981</td><td>All 22 <code>RunnerOptionsTests</code></td><td>Post-merge commands inherited the daemon's <code>RUNNER_*</code> and <code>AGENT_HOST_*</code> variables, and the options parser read them.</td><td>Environment</td><td>The envelope canary in the base suite fails first, so the run is inconclusive, not red. The tests stay green in the review and gate envelopes.</td></tr>
+        <tr><td>AGT-3983</td><td>A cgroup test that hung for ten minutes</td><td>A detached <code>sleep</code> kept stdout open, and real cgroup tests accepted the daemon's service subtree as their own. The repair also covers the two card effects of the two-hour rule.</td><td>Environment and fixture</td><td>The envelope fingerprint differs from the gate's (daemon leaf, not worker leaf), so the run is classified as environment. The test is held only while it is classified, then report-only.</td></tr>
+      </tbody>
+    </table>
+    <p>The code shows why the newest merge kept being blamed. The bisect runs the focused test <em>once</em> at each point. It treats a pass as "this point is good" and moves towards newer merges. A test that fails one time in eight under load passes at the older points, and the search ends at the newest candidate, where the failure was first recorded. A test that fails at every point because of its environment ends at the oldest candidate. Neither run checks the last green SHA. The independence rule then allows a revert only when the blamed merge is the newest. So the only automatic action that reopens a card was available exactly in the case that a flaky failure produces most often.</p>
+  </section>
+
+  <section id="principle">
+    <h2><span class="number">05</span> Principle</h2>
+    <div class="callout" data-tone="accent"><p><b>A red test is a fact about that test and the code it covers.</b> It stops the cards that can change that code. It stops the whole line only if it says that the product no longer builds, starts or serves its main paths.</p></div>
+    <table>
+      <thead><tr><th>Signal</th><th>Effect</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>Prepare or build failure, confirmed by one repeat at the same SHA</td><td><b>Line stop.</b> Only the repair or revert integrates. Release blocked.</td><td>Nothing after it can be tested.</td></tr>
+        <tr><td>A base-suite test (<code>category: base</code>) failing twice at the same SHA</td><td><b>Line stop.</b> Never quarantined automatically.</td><td>The base suite is the definition of "develop is usable": the product starts, and the architecture, guard, transition-boundary, task-list and release paths hold (Agent Studio: 3 suites, 376 s measured, cap 600 s).</td></tr>
+        <tr><td>A routine test failing twice at the same SHA, not explained by the repeat</td><td><b>Held quarantine.</b> Develop stays green with a count. Cards whose paths reach the test's area wait at integration. A repair card is created. Releases are blocked while a held quarantine is active.</td><td>The failure is real at this SHA, but it says something about one area.</td></tr>
+        <tr><td>A test that fails and then recovers at the same SHA</td><td><b>Flaky.</b> Counted, as today. From three distinct runs in 14 days the guardian opens a report-only quarantine with a card.</td><td>The repeat already answered the question for this run.</td></tr>
+        <tr><td>Envelope canary failure, fingerprint mismatch, or the failure reproduces at the last green SHA</td><td><b>Inconclusive.</b> Neither red nor green. The run is repeated in the reference envelope, and an environment card is opened if it recurs.</td><td>The world was wrong, not the code.</td></tr>
+        <tr><td>Machine-bound suites (<code>frontend-e2e</code>, budgets)</td><td>Unchanged. Not part of window runs.</td><td>Out of scope.</td></tr>
+      </tbody>
+    </table>
+    <p>The base suite has to earn its power to stop the line, so it needs a stability rule. A base test with any flaky occurrence in 14 days moves to its routine suite by a card, and the base suite keeps the 600-second cap it has today. Flakiness in the line-stopping set is the one place where a single bad test still paralyses everything.</p>
+    <figure>
+      <svg viewBox="0 0 760 300" role="img" aria-labelledby="flow-title flow-desc">
+        <title id="flow-title">Proposed handling of a failed test after integration</title>
+        <desc id="flow-desc">A failed test is repeated at the same SHA. Recovery means flaky. An envelope problem means inconclusive. A base test failing twice stops the line. A routine test failing twice becomes a held quarantine with an area hold and a repair card.</desc>
+        <rect class="d-box" x="16" y="120" width="130" height="56" rx="8"/><text class="d-text" x="81" y="144" text-anchor="middle">Test failed</text><text class="d-small" x="81" y="162" text-anchor="middle">window or nightly</text>
+        <rect class="d-box" x="186" y="120" width="140" height="56" rx="8"/><text class="d-text" x="256" y="144" text-anchor="middle">Repeat at same SHA</text><text class="d-small" x="256" y="162" text-anchor="middle">exists (AGT-3976)</text>
+        <rect class="d-new" x="366" y="120" width="140" height="56" rx="8"/><text class="d-text" x="436" y="144" text-anchor="middle">Envelope check</text><text class="d-small" x="436" y="162" text-anchor="middle">canary, fingerprint</text>
+        <rect class="d-good-box" x="186" y="22" width="140" height="50" rx="8"/><text class="d-text" x="256" y="44" text-anchor="middle">Flaky</text><text class="d-small" x="256" y="61" text-anchor="middle">green, counted</text>
+        <rect class="d-warn-box" x="366" y="22" width="140" height="50" rx="8"/><text class="d-text" x="436" y="44" text-anchor="middle">Inconclusive</text><text class="d-small" x="436" y="61" text-anchor="middle">rerun, env card</text>
+        <rect class="d-bad-box" x="560" y="40" width="184" height="64" rx="8"/><text class="d-text" x="652" y="64" text-anchor="middle">Base test: line stop</text><text class="d-small" x="652" y="83" text-anchor="middle">only repair integrates</text>
+        <rect class="d-new" x="560" y="128" width="184" height="64" rx="8"/><text class="d-text" x="652" y="152" text-anchor="middle">Routine test: held quarantine</text><text class="d-small" x="652" y="171" text-anchor="middle">develop green · 1 quarantined</text>
+        <rect class="d-new" x="560" y="218" width="184" height="64" rx="8"/><text class="d-text" x="652" y="242" text-anchor="middle">Area hold + repair first</text><text class="d-small" x="652" y="261" text-anchor="middle">other cards flow</text>
+        <path class="d-line" d="M146 148 H186"/><path class="d-line" d="M326 148 H366"/>
+        <path class="d-line" d="M256 120 V72"/><path class="d-line" d="M436 120 V72"/>
+        <path class="d-line" d="M506 140 L560 80"/><path class="d-line" d="M506 152 L560 160"/><path class="d-line" d="M652 192 V218"/>
+        <text class="d-small" x="262" y="100">recovers</text><text class="d-small" x="442" y="100">env wrong</text><text class="d-small" x="512" y="190">fails twice</text>
+      </svg>
+      <figcaption>Proposed flow. Blue boxes are new. The repeat exists today; the envelope check, the split between base and routine tests and the held quarantine are proposed.</figcaption>
+    </figure>
+  </section>
+
+  <section id="quarantine">
+    <h2><span class="number">06</span> Quarantine</h2>
+    <h3>Two kinds</h3>
+    <table>
+      <thead><tr><th></th><th>Held</th><th>Report-only</th></tr></thead>
+      <tbody>
+        <tr><td>Starts</td><td>Automatically, when a routine test fails twice at the same SHA in the standard envelope and the repeat did not recover it. Starting needs no model.</td><td>Set by the guardian when a test is classified flaky (three distinct flaky runs in 14 days, or mixed bisect results) or environment-caused. The owner may also set it.</td></tr>
+        <tr><td>Means</td><td>The test still runs everywhere and its result is reported. Its failure does not make develop red and does not fail a gate. Cards whose paths reach its area wait at integration (see <a href="#hold">Scope of the hold</a>). Releases are blocked.</td><td>Runs and is reported. Holds nothing and blocks nothing, including releases. This is today's AGT-W57 meaning.</td></tr>
+        <tr><td>Lasts</td><td>24 hours. The guardian may renew it once for 24 hours while the repair card is in progress, that is in Progress, Auto Review or waiting for integration. After that the owner decides.</td><td>7 days. Only the owner renews it. On expiry the test is armed again, as today.</td></tr>
+        <tr><td>Card</td><td>Always the repair card.</td><td>Always a card that owns the fix.</td></tr>
+        <tr><td>Lifted</td><td>By the guardian when the test passed in two consecutive covering runs in the standard envelope, on tips that contain the repair card's integration. A window, nightly or focused verification run counts. The owner may lift it at any time.</td><td>By the guardian when the owning card is integrated and the test passed in two covering runs. Otherwise on expiry.</td></tr>
+        <tr><td>Never</td><td colspan="2">A base test, a build or a prepare failure. A test that is already in quarantine and fails for a new reason (a new fingerprint) opens a new incident and does not extend the old one.</td></tr>
+      </tbody>
+    </table>
+    <h3>How many at once</h3>
+    <p>At most 3 held and 8 quarantined in total per project. The cap keeps quarantine from becoming a second, quieter red. When a fourth test would be held, the line stops and the owner is asked, because four unrelated reds in one project are no longer isolated facts. Relapse counts as well: a test confirmed red again within 7 days after a lift re-enters quarantine and raises an owner item.</p>
+    <h3>Where it lives</h3>
+    <p>Today's quarantine file sits in the repository under <code>.agent-studio/</code>. Writing it automatically would need a commit, and that commit would have to integrate while develop is in trouble. It would also be a global build input that selects every routine suite in the next window (<code>PostMergeRunPlan.IsGlobalInput</code>, <code>GeneratedTestProjectMap.GlobalInput</code>). So the proposal keeps the file as the owner's curated long-term list and adds a server-side quarantine store per project next to <code>PostMergeRunStore</code>. The store keeps the AGT-W57 entry fields plus <code>kind</code>, <code>startedBy</code>, <code>startedAtUtc</code>, <code>incidentFingerprint</code>, <code>evidenceRunIds</code>, <code>coveringFolders</code>, <code>renewals</code>, <code>liftedBy</code> and <code>liftEvidence</code>. Every gate, review and post-merge run reads the union of the file and the store through one state route. The Remote Review suite reads it too, which it does not do today.</p>
+    <h3>How it is shown</h3>
+    <p>Develop stays green with a count, and turns red only on a line stop. The proposed header states and the panel on the project Operations view are drawn below. They follow the hard rules: status by tint and dot, no left accent bar, and acute signals only for the line stop.</p>
+    <figure class="media-breakout">
+      <svg viewBox="0 0 1100 250" role="img" aria-labelledby="ui-title ui-desc">
+        <title id="ui-title">Mockup of the proposed develop state and the isolated tests panel</title>
+        <desc id="ui-desc">Header pills: Develop green, Develop green with two quarantined, Develop stopped. Below, a panel lists two quarantined tests with kind, area, card and expiry.</desc>
+        <text class="d-small" x="20" y="26">Header (proposed)</text>
+        <rect class="d-good-box" x="20" y="38" width="150" height="30" rx="15"/><circle class="d-good-dot" cx="38" cy="53" r="5"/><text class="d-text" x="52" y="58">Develop green</text>
+        <rect class="d-warn-box" x="186" y="38" width="250" height="30" rx="15"/><circle class="d-warn-dot" cx="204" cy="53" r="5"/><text class="d-text" x="218" y="58">Develop green · 2 quarantined</text>
+        <rect class="d-bad-box" x="452" y="38" width="250" height="30" rx="15"/><circle class="d-bad-dot" cx="470" cy="53" r="5"/><text class="d-text" x="484" y="58">Develop stopped · base suite</text>
+        <text class="d-small" x="20" y="104">Project Operations · Isolated tests (proposed)</text>
+        <rect class="d-box" x="20" y="114" width="1060" height="122" rx="10"/>
+        <text class="d-head" x="40" y="140">Test</text><text class="d-head" x="470" y="140">Kind</text><text class="d-head" x="580" y="140">Area held</text><text class="d-head" x="840" y="140">Card</text><text class="d-head" x="960" y="140">Ends</text>
+        <path class="d-rule" d="M40 150 H1060"/>
+        <text class="d-text" x="40" y="176">PostMergeIncidentServiceTests.Green_closes_incident</text><text class="d-text" x="470" y="176">Held</text><text class="d-text" x="580" y="176">Pipeline/PostMerge, contracts</text><text class="d-link" x="840" y="176">Repair (Auto Review)</text><text class="d-text" x="960" y="176">in 19 h</text>
+        <path class="d-rule" d="M40 190 H1060"/>
+        <text class="d-text" x="40" y="216">EngineReportReviewTests.Engine_create_review</text><text class="d-text" x="470" y="216">Report-only</text><text class="d-text" x="580" y="216">none (flaky, 3 runs in 14 d)</text><text class="d-link" x="840" y="216">Fix card (Ready)</text><text class="d-text" x="960" y="216">in 6 d</text>
+      </svg>
+      <figcaption>Mockup, not a capture. Rows are illustrative: <code>EngineReportReviewTests</code> is the AGT-3980 test, the first row is an invented method of an existing class, and its real covering folders would be wider than shown. The real header today is shown in <a href="#evidence">Evidence</a>.</figcaption>
+    </figure>
+    <p><code>/api/develop-states</code> gains <code>quarantinedCount</code>, <code>heldCount</code>, <code>lineStop</code> (null or the reason) and <code>quarantines[]</code>. <code>developState</code> keeps its three values for one release, so existing readers do not break, and it is <code>green</code> while only quarantined tests fail.</p>
+  </section>
+
+  <section id="hold">
+    <h2><span class="number">07</span> Scope of the hold</h2>
+    <p>A hold should stop the cards that can change the code the failing test covers, and only those. The hold already exists as <code>BlockedFailingArea</code> at integration. What is missing is the right set of paths. It is wide enough when it includes the failing test's code, and narrow enough when an unrelated backend card is not caught.</p>
+    <table>
+      <thead><tr><th>Granularity</th><th>Paths in the hold</th><th>Measured reach</th></tr></thead>
+      <tbody>
+        <tr><td>Test project (the folder to test-project map)</td><td>All of <code>backend/</code>, <code>backend.Tests/</code> and the shared libraries for any backend test</td><td>124 of 172 first-parent integrations between 16 and 23 November touched them (72 %). That is almost the whole project again.</td></tr>
+        <tr><td>Suspect paths only (today's <code>FailingPaths</code>)</td><td>The attributed merge's changed paths, or every candidate's paths</td><td>Narrow, but wrong whenever the attribution is wrong. That was the case for all four reds above.</td></tr>
+        <tr><td><b>Covering folders</b> (proposed)</td><td>The folders of the repository types the failing test file names, plus the test file itself, plus the attributed merge's paths once the attribution protocol confirms it</td><td>A backend test file names types in a median of 2 of 192 source folders (p90 8), a runner or task-server test in 1. Over all 1,312 backend test files, a hold on the file's covering folders would have held a median of 15 % of those 172 integrations (p90 49 %, which includes the files that fall back to the area).</td></tr>
+      </tbody>
+    </table>
+    <p>Covering folders are a static name match, not runtime coverage. A test file that names no repository type, or more than 12 folders, falls back to its test project's area (131 of 1,312 backend test files). That fallback is coarse and visible as such. Hub folders such as <code>backend/Features/Tasks</code> and <code>backend/Features/Runner</code> carry most of the remaining reach. Once the attribution protocol confirms a suspect, the guardian may narrow the hold to the covering folders that changed since the last green SHA. The script and its output are in <code>evidence/test-folder-reach.py</code> and <code>evidence/hold-reach.py</code>.</p>
+    <h3>Where the hold applies</h3>
+    <ul>
+      <li><b>Integration</b> (hard). <code>RemoteIntegrationDaemon</code> and the local merge path refuse a delivery whose merge-base diff overlaps an active held quarantine's folders. The delivery is requeued without spending its retry budget, as today. The repair card, a revert card of the attributed merge and a card the owner marks exempt pass.</li>
+      <li><b>Start</b> (soft). The live dispatcher reads active holds as a typed hold reason. It does not start Ready cards whose touch forecast reaches a held folder while other admissible cards exist (<a href="../dispatcher-personas/index.html">DS-D3</a> hold rules, at most 24 hours). Cards that are already coding continue; they wait only at integration.</li>
+      <li><b>Not</b> review. Reviews run as usual. Their affected tests read the quarantine store, so a held test that fails in a review is reported and does not fail it.</li>
+    </ul>
+    <h3>What the conflict record adds</h3>
+    <p>Today a revert counts as independent only when no first-parent commit follows the suspect. With the conflict record and the git range, the question becomes whether a later merge touches a file the suspect touched. Any later merge that does is coupled and keeps fix forward. Any later merge that does not is independent, and the revert check runs. The record's <code>files[].cardKeys</code> and <code>cardPairs</code> also name the in-flight cards that recently collided with the suspect's files. Those cards join the hold list for the time of the revert, so that the revert does not turn into the next conflict.</p>
+  </section>
+
+  <section id="ladder">
+    <h2><span class="number">08</span> After the first red</h2>
+    <p>The two-hour rule mixes two things: how long develop has been red, and whether a human is needed. The proposal keeps a clock for each incident, not for the project. It replaces "switch the whole project to pre-merge" with narrower steps, and none of these steps moves a card that is in Auto Review, Human Review or Completed.</p>
+    <figure>
+      <svg viewBox="0 0 760 210" role="img" aria-labelledby="ladder-title ladder-desc">
+        <title id="ladder-title">Escalation ladder for one incident</title>
+        <desc id="ladder-desc">Time line: at the red receipt, confirm and isolate; within 15 minutes, hold and repair card first; at 2 hours, guardian re-evaluates and may revert; at 24 hours, the owner is asked; at 48 hours, a final owner decision.</desc>
+        <path class="d-line" d="M30 70 H740"/>
+        <circle class="d-dot" cx="40" cy="70" r="6"/><circle class="d-dot" cx="200" cy="70" r="6"/><circle class="d-dot" cx="380" cy="70" r="6"/><circle class="d-dot" cx="560" cy="70" r="6"/><circle class="d-dot" cx="720" cy="70" r="6"/>
+        <text class="d-head" x="40" y="46" text-anchor="start">0</text><text class="d-head" x="200" y="46" text-anchor="middle">15 min</text><text class="d-head" x="380" y="46" text-anchor="middle">2 h</text><text class="d-head" x="560" y="46" text-anchor="middle">24 h</text><text class="d-head" x="720" y="46" text-anchor="end">48 h</text>
+        <text class="d-small" x="40" y="100">Repeat, envelope</text><text class="d-small" x="40" y="116">check, classify</text>
+        <text class="d-small" x="200" y="100" text-anchor="middle">Held quarantine,</text><text class="d-small" x="200" y="116" text-anchor="middle">area hold, repair first</text>
+        <text class="d-small" x="380" y="100" text-anchor="middle">Guardian re-evaluates:</text><text class="d-small" x="380" y="116" text-anchor="middle">revert if clean, model</text><text class="d-small" x="380" y="132" text-anchor="middle">one rung up</text>
+        <text class="d-small" x="560" y="100" text-anchor="middle">Expiry: renew once</text><text class="d-small" x="560" y="116" text-anchor="middle">if repair in progress,</text><text class="d-small" x="560" y="132" text-anchor="middle">else ask the owner</text>
+        <text class="d-small" x="720" y="100" text-anchor="end">Owner decides,</text><text class="d-small" x="720" y="116" text-anchor="end">no automatic step</text>
+        <text class="d-small" x="40" y="180">Line stop (base suite, build): repair first at once; owner asked after 60 minutes.</text>
+      </svg>
+      <figcaption>Proposed ladder. A line stop has its own shorter clock, because then nothing but the repair integrates.</figcaption>
+    </figure>
+    <h3>When the owner is asked</h3>
+    <p>Each case becomes one Needs you item with a recommended answer and the guardian's evidence:</p>
+    <table>
+      <thead><tr><th>Trigger</th><th>Options offered</th><th>Recommended</th></tr></thead>
+      <tbody>
+        <tr><td>A line stop has lasted 60 minutes</td><td>Revert the attributed merge; keep fixing forward; switch the project to <code>strict</code> until green</td><td>Revert when the protocol confirmed one clean independent suspect, otherwise keep fixing forward</td></tr>
+        <tr><td>A held quarantine reaches its renewal limit (48 h)</td><td>Extend 24 h; revert the suspect; turn it into report-only with a card; stop the line</td><td>Report-only with a card if the area has seen no new failure, otherwise revert</td></tr>
+        <tr><td>The cap would be exceeded (a fourth held test)</td><td>Stop the line; raise the cap once; switch to <code>strict</code></td><td>Stop the line</td></tr>
+        <tr><td>A relapse within 7 days after a lift</td><td>Re-hold with the same card; new card at a higher rung; report-only</td><td>Re-hold with a new card one rung up</td></tr>
+        <tr><td>A T2 request from the guardian (for example quarantining a base test)</td><td>Grant with an expiry; refuse</td><td>Refuse, unless the base test is already moving to its routine suite</td></tr>
+      </tbody>
+    </table>
+    <p>Switching a project to <code>strict</code> stays an owner setting. The guardian may recommend it, but it may never do it, which the dispatcher Dossier already settled for test placement. The automatic <code>PostMergeModeService</code> fallback and the second copy of the two-hour constant are removed. The repair card's lane is a fact in the decision, as AGT-3983 started. A repair that is already in Auto Review, Human Review or waiting for integration is held, never escalated by a timer.</p>
+  </section>
+
+  <section id="guardian">
+    <h2><span class="number">09</span> Line guardian</h2>
+    <h3>Why a separate role</h3>
+    <p>The dispatcher decides which Ready card starts and what runs alongside what, based on forecasts and the conflict ledger. Triage decides what a red result means, based on run receipts, envelopes and bisect points. The two have different facts, different rights and different criteria. Putting triage into the dispatcher would make one persona responsible both for avoiding conflicts and for judging tests, and the owner could not tell from its numbers which of the two it did well. The two roles meet in one place: the guardian writes typed holds, and every dispatcher persona must honour them as hard constraints.</p>
+    <h3>Charter</h3>
+    <div class="box"><p><b>Line guardian.</b> Keep develop usable. When a test turns red, find out within minutes whether it is flaky, the environment, a real regression or a wrong attribution. Isolate it so that only the cards that can affect it wait. Put the repair first with the right model. Lift the isolation on evidence. Explain every decision. Never change test or product code yourself. Never move a card out of Auto Review, Human Review or Completed. Never reopen a completed card. Never change a project's testing strategy. Never quarantine a base test or exceed the cap without an owner grant.</p></div>
+    <h3>How it runs</h3>
+    <p>Like the dispatcher, the hot path is pure rules in <code>orchestration-decisions/</code> (<code>RedTestTriagePolicy</code>). The host collects typed facts (the run receipt, repeat results, envelope fingerprints, the control run, bisect points, covering folders, active quarantines and holds, the repair card's lane, conflict-record coupling) and applies the returned decision. One model call is used per incident, and only when the rules end in <code>ambiguous</code>, for example a failure that reproduces at the tip but whose excerpt names a timeout or an external process. It gets the excerpt, the envelope difference and the suspect diff summary. It returns one class with its evidence. It cannot choose an action. The rules choose the action from the class.</p>
+    <h3>Classification rules</h3>
+    <table>
+      <thead><tr><th>Class</th><th>Rule (all at the same SHA unless named)</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td>Flaky</td><td>Recovers on the repeat; or mixed results at a bisect point</td><td>Count. From 3 distinct runs in 14 days, a report-only quarantine and a fix card at medium.</td></tr>
+        <tr><td>Environment</td><td>The canary fails; or the fingerprint differs from the reference envelope and the test passes in the reference envelope; or the failure reproduces at the last green SHA in the same envelope</td><td>Mark the run inconclusive. An environment card for the run host or fixture. Report-only quarantine if it recurs.</td></tr>
+        <tr><td>Real regression</td><td>Passes twice at the last green SHA, fails twice at the tip, and the bisect finds a first failing point (fails twice) whose parent passes twice</td><td>Held quarantine on its covering folders and the suspect's paths. Revert card when the revert is clean and independent, otherwise a fix-forward card at high.</td></tr>
+        <tr><td>Wrong attribution</td><td>An earlier suspect's revert integrated and the test is still red; or a later control run contradicts the earlier bisect</td><td>Withdraw the attribution, release the cards held only on suspect paths, record a false blame, and reclassify.</td></tr>
+        <tr><td>Ambiguous</td><td>None of the above is decided by the facts</td><td>Held quarantine on covering folders only (no suspect), one model classification, then the rules again.</td></tr>
+      </tbody>
+    </table>
+    <h3>Rights</h3>
+    <table>
+      <thead><tr><th>Operation</th><th>Tier</th><th>Bounds</th></tr></thead>
+      <tbody>
+        <tr><td><code>observe</code></td><td>T0</td><td>Run receipts, envelope fingerprints, quarantine store, conflict record, card metadata. Not run logs beyond the 2,000-character excerpt, not secrets.</td></tr>
+        <tr><td><code>triage.classify</code></td><td>T1</td><td>Writes the class and its evidence for an incident.</td></tr>
+        <tr><td><code>quarantine.hold.start</code></td><td>T1, rule-driven</td><td>Only for a routine test confirmed red. Only within the cap (3 held, 8 total).</td></tr>
+        <tr><td><code>quarantine.report-only.start</code></td><td>T1</td><td>Needs class flaky or environment and a card.</td></tr>
+        <tr><td><code>quarantine.renew</code></td><td>T1 once</td><td>24 hours, only while the repair card is in progress.</td></tr>
+        <tr><td><code>quarantine.lift</code></td><td>T1</td><td>Only with lift evidence (two consecutive passes on tips that contain the repair).</td></tr>
+        <tr><td><code>hold.area</code></td><td>T1</td><td>Tied to an active held quarantine. It ends with the quarantine.</td></tr>
+        <tr><td><code>repair.create</code>, <code>repair.first</code></td><td>T1</td><td>Creates or reuses the repair card, places it first in the project's Preparation and Ready lanes, and sets its model rung from its class (regression high, environment and flaky medium, one rung up on a second attempt), within the economy dial positions.</td></tr>
+        <tr><td><code>revert.propose</code></td><td>T1</td><td>A revert card, only for one confirmed, clean and independent suspect. The revert goes through the normal integration path.</td></tr>
+        <tr><td>Quarantine a base test, exceed the cap, renew past 48 h, lift without evidence</td><td>T2</td><td>Explicit owner grant with an expiry and a use cap.</td></tr>
+        <tr><td>Change the testing strategy, move or reopen reviewed or completed cards, supersede reviews, edit tests</td><td>Not grantable</td><td>Owner settings and the normal card flow.</td></tr>
+      </tbody>
+    </table>
+    <h3>Budget and log</h3>
+    <p>The rules cost no tokens. Model work is capped at one classification per incident (about 8,000 tokens) and 60,000 tokens a week per project. Compute for confirmation, control and bisect runs is capped at 90 core-minutes per incident and 600 per week per project, counted from the receipts. When the compute cap is reached, the incident stays held and the owner is asked. Every decision writes one entry with the fields of <code>PersonaLogEntryV1</code>: decision id, rule and revision, facts digest (run id, SHA, test, fingerprint), class and confidence, actions, held cards, lift condition, and a templated reason of at most 280 characters. Every incident gets one feed item when it closes.</p>
+    <h3>How the owner reviews it</h3>
+    <table>
+      <thead><tr><th>Criterion</th><th>Measured as</th><th>Target</th><th>Weight</th></tr></thead>
+      <tbody>
+        <tr><td>False blames</td><td>Attributions withdrawn, plus cards held only on paths that turned out unrelated, per 10 incidents</td><td>0</td><td>25</td></tr>
+        <tr><td>Time develop was really unusable</td><td>Line-stop minutes, plus minutes in which a card outside every held area was refused integration</td><td>Line stop &lt; 60 min per incident; refusals 0</td><td>20</td></tr>
+        <tr><td>Escapes</td><td>Quarantines that expired unresolved, relapses within 7 days, and regressions first classified flaky or environment</td><td>0</td><td>20</td></tr>
+        <tr><td>Time to isolate</td><td>From the terminal red receipt to an active hold, report-only quarantine or line-stop decision</td><td>p50 15 min, p95 45 min</td><td>15</td></tr>
+        <tr><td>Cost of repairs</td><td>Tokens and core-minutes per incident: confirmation, bisect, classification and the repair card's runs</td><td>Falls week on week</td><td>10</td></tr>
+        <tr><td>Held-card wait</td><td>Minutes cards waited at integration in a held area</td><td>Reported, used to tune scope</td><td>10</td></tr>
+      </tbody>
+    </table>
+    <p>Scores are normalised and weighted as in the dispatcher's DS-D7. The guardian starts in shadow for one week. It computes and logs its decisions next to today's rules, and the owner sees both sets before it takes over.</p>
+  </section>
+
+  <section id="parity">
+    <h2><span class="number">10</span> Environment parity</h2>
+    <p>A test that is green in the review, green in the gate and red after integration has seen three different worlds. The differences found:</p>
+    <table>
+      <thead><tr><th>Difference</th><th>Remote Review</th><th>Build-test gate</th><th>Post-merge run</th></tr></thead>
+      <tbody>
+        <tr><td>Process environment</td><td>Cleared, with an allowlist of its own (<code>RemoteReviewWorkspace.ProcessEnvironment</code>)</td><td>Inherits the backend's environment. Only listener variables are removed, and a few are added (<code>BuildTestGateRunner.RunProcessAsync</code>)</td><td>Inherited the daemon's until AGT-3981. Now cleared, with a different allowlist</td></tr>
+        <tr><td>Home and caches</td><td>Own <code>HOME</code>, <code>TMPDIR</code>, <code>NUGET_PACKAGES</code></td><td>The host's</td><td>The host's <code>HOME</code></td></tr>
+        <tr><td>cgroup</td><td>Worker leaf with <code>cpu.max</code> and <code>pids.max</code></td><td>The gate host process</td><td>The daemon's delegated leaf; AGT-3983 moves it to a <code>worker-*</code> leaf</td></tr>
+        <tr><td>CPU and threads</td><td><code>-maxcpucount:2</code>; xUnit threads not capped</td><td><code>DOTNET_PROCESSOR_COUNT</code> 6 on the remote gate; lanes = cores / 6</td><td>Nothing set; load admission at start only (reported: load 34 on 12 cores during one run)</td></tr>
+        <tr><td>Partitioning</td><td>Affected T1 plan</td><td>4 backend shards by class</td><td>One process per suite in a window; class partitions at night</td></tr>
+      </tbody>
+    </table>
+    <p>AGT-3980 shows what partitioning and load do. The same theory failed in 4 of 90 cases alone and 11 of 90 under load. The gate's four shards and the post-merge single process schedule it differently.</p>
+    <h3>One test envelope</h3>
+    <ul>
+      <li><b>One allowlist.</b> A shared helper builds the environment for every test command in all three places: tool and OS variables, the project's declared <code>environment</code>, a run-owned <code>HOME</code> and temp root, and nothing else. The gate stops inheriting the backend's environment.</li>
+      <li><b>One resource shape.</b> On Linux every test command runs in a fresh worker cgroup leaf with <code>cpu.max</code> equal to one gate token (3 cores), and <code>DOTNET_PROCESSOR_COUNT</code> is set to the same value. Real cgroup tests require a dedicated scope, as AGT-3983 started.</li>
+      <li><b>One fingerprint.</b> Every review, gate and post-merge receipt records <code>envelope</code>: allowlist digest, declared-environment digest, cgroup kind and <code>cpu.max</code>, processor count, SDK version, shard plan, and the load per core at start and at peak. Triage compares fingerprints. The same test with a different fingerprint is an environment question before it is a code question.</li>
+      <li><b>One canary.</b> A base test asserts the envelope from inside: no <code>RUNNER_*</code>, <code>AGENT_HOST_*</code> or provider variables, its own <code>HOME</code>, a worker cgroup on Linux, the processor count set. If the canary fails, the run is inconclusive, never red.</li>
+      <li><b>Repeat in the failing shape.</b> A confirmation repeat uses the same shard partition as the failing run, then once in the reference envelope (one process, idle token). This tells "fails under this partition or load" apart from "fails".</li>
+    </ul>
+    <p>Containers for every test command would give the strongest parity (alternative C of RT-D10). They are a larger change for the runner hosts and are not needed to remove the three differences that turned develop red this week.</p>
+  </section>
+
+  <section id="cost">
+    <h2><span class="number">11</span> Cost</h2>
+    <table>
+      <thead><tr><th>Step</th><th>Today</th><th>Proposed</th></tr></thead>
+      <tbody>
+        <tr><td>Confirm a red</td><td>One focused repeat per failed .NET method; whole suite for other kinds</td><td>Unchanged, plus one reference-envelope repeat only for tests that fail twice</td></tr>
+        <tr><td>Control at the last green SHA</td><td>None</td><td>Two focused runs of the failing tests at the last green SHA, after a build of the failing test project only</td></tr>
+        <tr><td>Bisect point</td><td>Prepare, solution build, release build check and frontend build, then one focused run</td><td>Build only the failing test project's closure (<code>dotnet build &lt;project&gt; --no-restore</code>, or the frontend for a Vitest test), then two focused runs. Mixed results stop the search</td></tr>
+        <tr><td>Candidates</td><td>First-parent merges since the last green SHA, filtered by the reference graph, docs excluded</td><td>Unchanged filter; the window closes at 6 merges or 30 minutes, so at most 3 points</td></tr>
+        <tr><td>Red for two hours</td><td>Project to pre-merge: every card gets the full suite with baseline and clean repeat; the batch gate is back</td><td>No project-wide step; only the cards in the held area wait</td></tr>
+      </tbody>
+    </table>
+    <p>To put the numbers in proportion: Agent Studio's routine suites declare 2,040 expected seconds in total (backend 1,440 in 4 shards, frontend unit 360, task server 150, runner 90). The base suite declares 600 seconds and measured 376. A focused run of one method skips the build, but for <code>backend.Tests</code> it still starts the test host and discovers about 12,000 test methods. This Dossier did not measure that time. RT-3 records it on every receipt and replaces the estimate. Even when one focused run costs a full minute, the whole protocol costs at most 8 focused runs and 4 test-project builds per incident: 2 control runs and 3 bisect points with 2 runs each. The pre-merge fallback instead costs up to three routine suites for every card the project reviews while it lasts. The fallback also stopped integration for five hours, by the owner's report.</p>
+    <p>The base suite has to stay small. Its tests stop the line, and it runs in every window. The proposal keeps the 600-second cap and the selection rules of AGT-3966. It adds the stability rule from <a href="#principle">Principle</a> and the envelope canary (a few seconds).</p>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+    <h2><span class="number">12</span> Alternatives</h2>
+    <p>Three overall shapes were considered. The per-decision alternatives are in <a href="#open-decisions">Open decisions</a>.</p>
+    <div class="variant-grid">
+      <article class="variant"><h3>A · Keep the project-wide red, fix its triggers</h3><p>Keep "any red makes develop red" and the two-hour fallback. Fix the causes one by one, as AGT-3981 and AGT-3983 did, and rely on the AGT-3983 lane fact for the card effects. Cheapest in code. The next flaky or environment failure still stops the whole project, and three of this week's four reds would have done so again with a new cause.</p></article>
+      <article class="variant"><h3>B · Isolate per test with a base line stop (recommended)</h3><p>The base suite and the build stop the line. Every other confirmed red becomes a bounded, held quarantine, with a hold on the folders the test covers and a repair card first. A line guardian classifies the red and lifts the quarantine on evidence. There is no automatic project-wide fallback, the attribution protocol gets a control run and double runs, and one test envelope makes the three runs comparable. It costs more code, but a red hits only what it is about.</p></article>
+      <article class="variant"><h3>C · Report everything, block nothing after integration</h3><p>Treat every post-merge result as information. The Production release full suite remains the only hard gate. This gives the most flow, but develop stops being a usable base: a real regression in the main paths would only be seen at release, and every card built on it pays for that.</p></article>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+    <h2><span class="number">13</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Recommended default</h3>
+      <p>Adopt B. Remove the automatic project-wide fallback first (RT-1), because it is the step that stopped all integration overnight, and it is the smallest change. Then build the triage policy, the attribution protocol, the quarantine store and the scoped hold (RT-2 to RT-5). Next come envelope parity and the visible develop state (RT-6, RT-7). The line guardian comes last, after a shadow week (RT-8, RT-9). The owner returns Agent Studio from <code>strict</code> to <code>fast</code> once RT-1, RT-3 and RT-5 are delivered (RT-D12).</p>
+    </div>
+    <ul>
+      <li><b>Why.</b> None of the four reds of 22 and 23 November was a regression of the blamed merge. Under B, two would have been classified flaky, two environment, and none would have stopped the project. A real regression still stops its area at once, and still stops everything when it reaches the base suite.</li>
+      <li><b>What it keeps.</b> Integrate-first, the AGT-3976 repeat, the reference-graph filter, the AGT-W57 entry shape, the <code>BlockedFailingArea</code> hold, revert or fix forward, the decision library as the only home of the rules.</li>
+      <li><b>What it removes.</b> <code>PostMergeModeService</code>'s automatic fallback, the timer escalation of a repair card that is under review, single-run bisect points, the whole-solution rebuild at every bisect point, and the gate's inherited environment.</li>
+      <li><b>Risk.</b> A quarantine can hide a real regression. Against that: held quarantines block releases, they last at most 48 hours, the cap is 3, relapses go to the owner, and escapes are the second-heaviest criterion of the guardian.</li>
+    </ul>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+    <h2><span class="number">14</span> Evidence</h2>
+    <p>Observed facts are read from code at develop 801cf4ca9, from git, or from the repair cards' own result reports. Inferences and proposals are labelled as such.</p>
+    <figure class="evidence-figure media-breakout">
+      <div class="evidence-captures header-strip">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/studio-header-develop-red-light--mocked-route.png" alt="Left part of the studio header at a 1280-pixel viewport: a pill reads Develop red with a dark dot in the same grey-black as the header text, followed by the project picker and the search field.">
+          <span class="figure-annotation">One state, no count</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/studio-header-develop-red-dark--mocked-route.png" alt="The same part of the header in the dark theme: the pill reads Develop red with a white dot in the header's text colour.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence.</b> With a red post-merge receipt, the studio header shows the single state "Develop red", with no count of flaky or quarantined tests and no area. Develop can only be shown as wholly red, running or green; the component's row type (<code>project</code>, <code>developState</code>, <code>lastGreenSha</code>) has no other field. In both themes the pill also renders in the neutral header text colour, not in a red tone: its stylesheet uses <code>--studio-danger</code> and <code>--studio-warning</code>, which no theme defines (the defined tokens are <code>--studio-error</code> and <code>--studio-warn</code>). RT-7 fixes this with the shared status indicator.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-11-23">23 November 2026</time> on develop 801cf4ca9 in this task worktree, from the prebuilt Playwright stack (standard profile), 1280 px viewport, cropped to the left 640 px of the header. <code>/api/develop-states</code> was answered by a route mock with one red row, the same mock as <code>frontend/e2e/board/develop-state.spec.ts</code>, so the product state is mocked and the rendering is real. Spec and runner: <code>evidence/capture/</code>.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-11-23">23 November 2026</time> in the same run, after the title-bar theme toggle, with the same mocked response.</span>
+        </span>
+      </figcaption>
+    </figure>
+    <div class="evidence-list">
+      <a class="evidence" href="#ev-reds"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-reds">Four repair cards, no blamed regression</b><small>Result reports of AGT-3975 (docs-only suspect, fixture races), AGT-3980 (race: 4/90 failures alone, 11/90 under load), AGT-3981 (daemon <code>RUNNER_*</code>/<code>AGENT_HOST_*</code> inherited), AGT-3983 (pipe held by a detached sleep, cgroup ownership; <code>ReopenOriginal</code> and the two-hour escalation identified as the card movers).</small></span></a>
+      <a class="evidence" href="#ev-bisect"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-bisect">Single-run bisect without a control point</b><small><code>runner/PostMergeRunCommand.cs:346-382</code>: one focused run per point; a pass moves the search to newer merges; the last green SHA is never run. <code>:389-390</code>: a revert counts as independent only if no first-parent commit follows the suspect. <code>:355-366</code>: prepare and every build command run at each point.</small></span></a>
+      <a class="evidence" href="#ev-fallback"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-fallback">Project-wide fallback and duplicated constant</b><small><code>PostMergeModeService.cs:9-48</code> resolves the project to pre-merge when the repair card is Escalated or red has lasted two hours. <code>RedDevelopRepairPolicy.cs:17-29</code> escalates first, whatever the lane. The batch gate re-enables at <code>BatchGatePilotService.cs:3982</code>.</small></span></a>
+      <a class="evidence" href="#ev-quarantine"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-quarantine">Three notions of quarantine</b><small>File read by the gate (<code>BuildTestGateRunner.cs:1448</code>) and by post-merge through a second parser (<code>PostMergeAttributor.cs:47-80</code>); Remote Review uses <code>Category=ReviewFlaky</code>; the batch "flaky quarantine" is a re-run pause. No writer, no cap, no UI; <code>TestQuarantineReport</code> uncalled.</small></span></a>
+      <a class="evidence" href="#ev-hold"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-hold">Hold reach by granularity</b><small><code>evidence/hold-reach.py</code> on 801cf4ca9, 16 to 23 November: 172 first-parent integrations with changes; 124 (72 %) touch the backend routine area; a hold on one backend test file's covering folders would have held a median of 15 % (p90 49 %). Output: <code>evidence/hold-reach-801cf4ca9.txt</code>.</small></span></a>
+      <a class="evidence" href="#ev-reach"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-reach">Covering folders per test class</b><small><code>evidence/test-folder-reach.py</code>: a backend test file names types in a median of 2 of 192 source folders (p90 8); runner and task-server 1. This is a static name match, not coverage; 96 backend test files map to none, and with those over 12 folders 131 would fall back to the test project.</small></span></a>
+      <a class="evidence" href="#ev-env"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-env">Three environments</b><small>Review clears and allowlists (<code>RemoteReviewWorkspace.cs:129-159</code>, <code>:1593</code>); the gate inherits (<code>BuildTestGateRunner.cs:2391-2445</code>); post-merge clears with its own allowlist since AGT-3981 (<code>PostMergeRunCommand.cs:432-468</code>). CPU caps differ as tabled in Environment parity.</small></span></a>
+      <a class="evidence" href="#ev-gap"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-gap">Integration gap in git</b><small>No first-parent commit on develop between 21:51Z on 22 November and 02:05Z on 23 November. The commits dated 02:05Z to 04:35Z carry committer times, which record creation, not publication. The owner's account (nothing integrated 23:00Z to 04:00Z) is taken as reported, because the publication receipts were not readable from this worktree.</small></span></a>
+      <a class="evidence" href="#ev-cost"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-cost">Protocol cost bound</b><small>From the window close rule (6 merges) and the proposed protocol: at most 2 control runs, 3 points with 2 runs each, 4 test-project builds. The per-run time of a focused <code>backend.Tests</code> method is not measured here; RT-3 records it.</small></span></a>
+      <a class="evidence" href="#ev-proposed"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="ev-proposed">Bounds and weights</b><small>24 h plus one renewal, cap 3 held and 8 total, 7-day report-only, 60-minute line-stop ask, criteria weights 25/20/20/15/10/10. These are starting values for the owner to adjust, not measurements.</small></span></a>
+    </div>
+    <p>Recorded outputs at develop 801cf4ca9: <a href="evidence/hold-reach-801cf4ca9.txt">hold reach</a> and <a href="evidence/test-folder-reach-801cf4ca9.txt">covering folders per test project</a>. The <a href="README.md">Dossier README</a> lists every file and the exact commands that reproduce both outputs.</p>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+    <h2><span class="number">15</span> Open decisions</h2>
+    <p>Each decision has a recommended option. The slices use the recommendation unless the owner records another choice.</p>
+    <table>
+      <thead><tr><th>Decision</th><th>Options</th><th>Recommended</th></tr></thead>
+      <tbody>
+        <tr><td><b>RT-D1</b> What stops the line</td><td>A any red test (today); B build, prepare and the base suite confirmed twice; C nothing after integration</td><td><b>B.</b> The base suite is the definition of "usable"; everything else is an area fact.</td></tr>
+        <tr><td><b>RT-D2</b> When a quarantine starts</td><td>A only by the owner; B held automatically on a routine test failing twice at the same SHA, report-only by the guardian on flaky or environment evidence; C automatically on any failure</td><td><b>B.</b> The double failure is already measured; isolation must take minutes, not an owner's morning.</td></tr>
+        <tr><td><b>RT-D3</b> Where quarantines live</td><td>A the repository file, written by a platform commit; B a server-side store per project, read as a union with the file through one state route; C both written</td><td><b>B.</b> A commit would need the integration it is trying to protect, and <code>.agent-studio/</code> is a global build input.</td></tr>
+        <tr><td><b>RT-D4</b> Duration and cap</td><td>A 24 h, cap 3, no renewal; B held 24 h plus one 24 h renewal while the repair is in progress, report-only 7 days, cap 3 held and 8 total; C expiry only, no cap (today)</td><td><b>B.</b> Long enough for one repair round, short enough to stay visible.</td></tr>
+        <tr><td><b>RT-D5</b> Who lifts, on what evidence</td><td>A only the owner; B the guardian on two consecutive passes on tips that contain the repair, the owner at any time; C on expiry</td><td><b>B.</b> The evidence is mechanical; a relapse within 7 days goes to the owner.</td></tr>
+        <tr><td><b>RT-D6</b> Scope of the hold</td><td>A the test project; B covering folders plus confirmed suspect paths, test project as fallback; C suspect paths only (today)</td><td><b>B.</b> A median of 15 % against 72 % of last week's integrations, and not wrong when the attribution is wrong.</td></tr>
+        <tr><td><b>RT-D7</b> What replaces the two-hour fallback</td><td>A keep it with the AGT-3983 lane fact; B per-incident ladder, owner asked at named points, no automatic project-wide step; C automatic switch to <code>balanced</code></td><td><b>B.</b> The fallback stopped all integration overnight for four non-regressions.</td></tr>
+        <tr><td><b>RT-D8</b> Form of the triage role</td><td>A a dispatcher persona strategy; B a separate line guardian role whose holds the dispatcher honours; C the reliability engineer reports and the owner triages</td><td><b>B.</b> Different facts, rights and criteria; one clean hand-over through typed holds.</td></tr>
+        <tr><td><b>RT-D9</b> Attribution protocol</td><td>A one run per bisect point (today); B a control run at the last green SHA, two runs per point, stop on mixed results, build only the failing test project; C a linear scan of every candidate</td><td><b>B.</b> It removes the newest-merge bias at a bounded cost.</td></tr>
+        <tr><td><b>RT-D10</b> Environment parity</td><td>A fix differences as they appear; B one test envelope (allowlist, worker cgroup, processor count) with a fingerprint on every receipt and a canary; C containers for every test command</td><td><b>B.</b> It removes this week's three differences; C stays possible later.</td></tr>
+        <tr><td><b>RT-D11</b> Develop state display</td><td>A red, green, running (today); B green with a quarantined count, red only on a line stop, an isolated-tests panel; C a light per area</td><td><b>B.</b> It says what is true without a new colour system.</td></tr>
+        <tr><td><b>RT-D12</b> When Agent Studio returns to <code>fast</code></td><td>A now, with AGT-3981 and AGT-3983; B after RT-1, RT-3 and RT-5 are delivered; C after all slices</td><td><b>B.</b> Then a flaky or environment red no longer stops the project, and attributions are checked.</td></tr>
+        <tr><td><b>RT-D13</b> Guardian criteria and weights</td><td>A false blames only; B six criteria weighted 25, 20, 20, 15, 10, 10 with one week in shadow; C no score, owner reads the log</td><td><b>B.</b> Comparable with the dispatcher's DS-D7; the owner adjusts the weights afterwards.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="slices">
+    <h2><span class="number">16</span> Slices</h2>
+    <p>Nine slices. Slices in the same area never run at the same time, and the <code>dependsOn</code> edges in <code>workbench.json</code> enforce this. RT-7 (frontend) may run alongside RT-5 and RT-6, and RT-8 (personas) alongside RT-6.</p>
+    <table>
+      <thead><tr><th>Slice</th><th>Area</th><th>Depends on</th><th>Delivers</th></tr></thead>
+      <tbody>
+        <tr><td>RT-1</td><td><code>orchestration-decisions/</code> (repair policy), <code>backend/Features/Pipeline/PostMerge/</code></td><td>none</td><td>No automatic project-wide fallback; the repair lane is a fact; owner items for a line stop and an expired incident</td></tr>
+        <tr><td>RT-2</td><td><code>orchestration-decisions/</code></td><td>RT-1</td><td><code>RedTestTriagePolicy</code>: classes, quarantine lifecycle, caps, ladder, hold scope, bisect verdicts</td></tr>
+        <tr><td>RT-3</td><td><code>runner/</code> post-merge, <code>contracts/</code></td><td>RT-2</td><td>Control run, double runs, test-project builds, covering folders, envelope fingerprint and per-test verdicts on receipts</td></tr>
+        <tr><td>RT-4</td><td><code>backend/Features/Pipeline/PostMerge/</code>, <code>TestQuarantine/</code></td><td>RT-2, RT-3</td><td>Quarantine store and API, union with the file, develop state with counts, incident service on the ladder</td></tr>
+        <tr><td>RT-5</td><td><code>runner/RemoteIntegrationDaemon.cs</code>, merge path, gate quarantine reading</td><td>RT-3, RT-4</td><td>Hold on covering folders, revert independence by file overlap, one quarantine source for gate and review</td></tr>
+        <tr><td>RT-6</td><td>Gate runner, review workspace, post-merge envelope</td><td>RT-5</td><td>One test envelope, fingerprints on review and gate receipts, canary in the base suite</td></tr>
+        <tr><td>RT-7</td><td><code>frontend/</code></td><td>RT-4</td><td>Develop state with count and line stop, isolated-tests panel, Needs you items</td></tr>
+        <tr><td>RT-8</td><td><code>backend/Features/Personas/</code>, <code>backend/Policies/personas/</code></td><td>RT-5</td><td>Line guardian role, rights, budget, log, model classification, shadow mode</td></tr>
+        <tr><td>RT-9</td><td>Persona projection and persona page</td><td>RT-7, RT-8</td><td>Criteria, weighted value, weekly report, shadow comparison, switch to live</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">17</span> Implementation</h2>
+    <p>Delivery slices append their current implementation status here. Decision content above remains unchanged.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+      <li>RT-2, AGT-4003: implemented the pure per-test triage, double-run bisect
+        verdict and hold-scope policies with focused tests. Working choices:
+        RT-D1 B, RT-D2 B, RT-D4 B, RT-D5 B, RT-D6 B, RT-D7 B and RT-D9 B.
+        Existing repair callers remain compatible. Host adoption belongs to
+        later slices; the recommendations and evidence above are unchanged.</li>
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+
+</body>
+</html>

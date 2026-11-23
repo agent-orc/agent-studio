@@ -24,6 +24,22 @@ public sealed record SecretMetadataResponse(
     string? LastUsedPurpose,
     IReadOnlyList<SecretVersionResponse> Versions)
 {
+    /// <summary>
+    /// The scope as the UI routes and groups it: the project's display name in
+    /// place of its id (AGT-3987). <see cref="Scope"/> stays the stored key.
+    /// </summary>
+    public string? RouteScope { get; init; }
+
+    public static SecretMetadataResponse From(SecretRecord record, SecretProjectKeys keys)
+        => From(record) with { RouteScope = RouteKey(record.ParsedScope, keys) };
+
+    private static string RouteKey(SecretScope scope, SecretProjectKeys keys) => scope.Kind switch
+    {
+        SecretScopeKind.Workspace => scope.Key,
+        SecretScopeKind.Project => keys.DisplayName(scope.Project!),
+        _ => keys.DisplayName(scope.Project!) + "/" + scope.Environment
+    };
+
     public static SecretMetadataResponse From(SecretRecord record)
     {
         var current = SecretVersionPolicy.CurrentVersion(record);

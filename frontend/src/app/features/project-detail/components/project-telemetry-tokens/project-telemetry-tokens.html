@@ -1,0 +1,94 @@
+<section class="telemetry-tokens" data-testid="project-telemetry-tokens" aria-labelledby="telemetry-tokens-title">
+  <header class="telemetry-tokens__head">
+    <div>
+      <h2 id="telemetry-tokens-title">Telemetry ingest tokens</h2>
+      <p>Applications send OpenTelemetry metrics and logs to Studio with a token scoped to one environment.
+        Container deploys of an environment with <code>telemetry: true</code> receive their own token automatically.</p>
+    </div>
+    <button type="button" class="telemetry-tokens__ghost" data-testid="telemetry-tokens-refresh" [disabled]="!environment()" (click)="load()">Refresh</button>
+  </header>
+  @if (environments().length) {
+    <label class="telemetry-tokens__field">Environment
+      <select data-testid="telemetry-tokens-environment" [value]="environment()" (change)="selectEnvironment($any($event.target).value)">
+        @for (item of environments(); track item.id) { <option [value]="item.id">{{ item.id }}</option> }
+      </select>
+    </label>
+  } @else {
+    <p role="status" data-testid="telemetry-tokens-no-environments">No application environments are declared. Declare one before creating ingest tokens.</p>
+  }
+  @if (error(); as problem) { <p role="alert" class="telemetry-tokens__error">{{ problem }}</p> }
+
+  @if (created(); as result) {
+    <div class="telemetry-tokens__created" role="status" data-testid="telemetry-token-created">
+      <h3>Token {{ result.token.name }} created</h3>
+      <p>Copy these settings now. Studio stores only a hash and will not show the token again.</p>
+      <pre data-testid="telemetry-token-settings">{{ settings() }}</pre>
+      <div class="telemetry-tokens__actions">
+        <button type="button" class="telemetry-tokens__primary" data-testid="telemetry-token-copy" (click)="copy()">{{ copied() ? 'Copied' : 'Copy settings' }}</button>
+        <button type="button" class="telemetry-tokens__ghost" data-testid="telemetry-token-dismiss" (click)="dismiss()">Done</button>
+      </div>
+    </div>
+  }
+
+  @if (canWrite() && environment()) {
+    <form class="telemetry-tokens__form" data-testid="telemetry-token-form" (submit)="$event.preventDefault(); create()">
+      <label class="telemetry-tokens__field">Name
+        <input data-testid="telemetry-token-name" [value]="name()" (input)="name.set($any($event.target).value)" maxlength="80" placeholder="shop-api" autocomplete="off" />
+      </label>
+      <fieldset class="telemetry-tokens__signals">
+        <legend>Signals</legend>
+        <label><input type="checkbox" data-testid="telemetry-token-metrics" [checked]="metrics()" (change)="metrics.set($any($event.target).checked)" /> Metrics</label>
+        <label><input type="checkbox" data-testid="telemetry-token-logs" [checked]="logs()" (change)="logs.set($any($event.target).checked)" /> Logs</label>
+      </fieldset>
+      <label class="telemetry-tokens__field">Expires on (optional)
+        <input type="date" data-testid="telemetry-token-expiry" [value]="expiresOn()" (change)="expiresOn.set($any($event.target).value)" />
+      </label>
+      <button type="submit" class="telemetry-tokens__primary" data-testid="telemetry-token-create" [disabled]="!canCreate()">Create token</button>
+    </form>
+  }
+
+  @if (environment()) {
+    @if (tokens(); as list) {
+      @if (!list.length) {
+        <p role="status" data-testid="telemetry-tokens-empty">No ingest tokens for {{ environment() }} yet.</p>
+      } @else {
+        <div class="telemetry-tokens__table-wrap">
+          <table data-testid="telemetry-tokens-table">
+            <thead><tr><th scope="col">Name</th><th scope="col">Signals</th><th scope="col">Created</th><th scope="col">Last seen</th><th scope="col">Expires</th><th scope="col">State</th><th scope="col"><span class="telemetry-tokens__sr">Actions</span></th></tr></thead>
+            <tbody>
+              @for (token of list; track token.id) {
+                <tr [attr.data-testid]="'telemetry-token-' + token.id" [attr.data-state]="state(token)">
+                  <th scope="row">{{ token.name }}
+                    @if (token.createdBy === deployCreator) { <small data-testid="telemetry-token-managed">Managed by deploys</small> }
+                  </th>
+                  <td>{{ token.signals.join(', ') }}</td>
+                  <td><time [attr.datetime]="token.createdAt">{{ token.createdAt | date:'medium':'UTC' }} UTC</time></td>
+                  <td data-testid="telemetry-token-last-seen">
+                    @if (token.lastUsedAt) { <time [attr.datetime]="token.lastUsedAt">{{ token.lastUsedAt | date:'medium':'UTC' }} UTC</time> } @else { Never }
+                  </td>
+                  <td>@if (token.expiresAt) { <time [attr.datetime]="token.expiresAt">{{ token.expiresAt | date:'mediumDate':'UTC' }}</time> } @else { Never }</td>
+                  <td><span class="telemetry-tokens__state" [attr.data-state]="state(token)">{{ state(token) === 'active' ? 'Active' : state(token) === 'revoked' ? 'Revoked' : 'Expired' }}</span></td>
+                  <td class="telemetry-tokens__row-actions">
+                    @if (canWrite() && state(token) === 'active') {
+                      @if (confirming() === token.id) {
+                        <button type="button" class="telemetry-tokens__danger" data-testid="telemetry-token-confirm-revoke" [disabled]="busy()" (click)="revoke(token)">Revoke now</button>
+                        <button type="button" class="telemetry-tokens__ghost" (click)="confirming.set(null)">Cancel</button>
+                      } @else {
+                        <button type="button" class="telemetry-tokens__danger" data-testid="telemetry-token-revoke" [disabled]="busy()" (click)="revoke(token)">Revoke</button>
+                      }
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        @if (confirming()) {
+          <p role="status" class="telemetry-tokens__hint">A revoked token is refused at once. A deploy-managed token is replaced at the next deploy.</p>
+        }
+      }
+    } @else if (!error()) {
+      <p role="status">Loading tokens…</p>
+    }
+  }
+</section>

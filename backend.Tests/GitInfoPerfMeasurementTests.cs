@@ -92,7 +92,7 @@ public sealed class GitInfoPerfMeasurementTests : IDisposable
         var warm = Measure(15, () => git.GetStatus(jobId, watchPath, preferRunLocation: true));
         var cold = Measure(15, () =>
         {
-            GitService.InvalidateToplevelCache();
+            GitService.InvalidateToplevelCache(repoRoot);
             git.InvalidateStatusCache();
             git.GetStatus(jobId, watchPath, preferRunLocation: true);
         });
@@ -115,7 +115,7 @@ public sealed class GitInfoPerfMeasurementTests : IDisposable
         var newWarm = Measure(15, () => { git.GetStatus(jobId, watchPath, preferRunLocation: true); });
         var newCold = Measure(15, () =>
         {
-            GitService.InvalidateToplevelCache();
+            GitService.InvalidateToplevelCache(repoRoot);
             git.InvalidateStatusCache();
             git.GetStatus(jobId, watchPath, preferRunLocation: true);
         });

@@ -298,6 +298,16 @@ public record ProjectSettings
     public int MaxParallelism { get; init; } = 1;
 
     /// <summary>
+    /// <c>dispatch.overlapWindow</c> (DS-0, decision DS-D10 B of
+    /// <c>docs/dispatcher-personas/index.html</c>): which cards the pick-gate
+    /// compares a candidate's scope with, on the local pickup and the remote
+    /// claim. Null resolves to <see cref="OverlapWindows.Default"/>
+    /// (<c>in-flight</c>); see <see cref="OverlapWindows"/>.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonPropertyName("dispatch.overlapWindow")]
+    public string? DispatchOverlapWindow { get; init; }
+
+    /// <summary>
     /// ADR-0052: branch that parallel task worktrees branch off and merge back
     /// into (the project's integration line). Blank means the repository's
     /// <c>origin/HEAD</c> branch. When parallelism is off
@@ -344,8 +354,8 @@ public record ProjectSettings
     public TestExecutionPolicy? TestExecution { get; init; }
 
     /// <summary>
-    /// Per-card test placement (<c>testing.perCard</c>, AGT-3310). Null keeps
-    /// <see cref="PerCardTestModes.Full"/>, so the Remote Review plan stays as it was.
+    /// Test placement (<c>testing.strategy</c>, AGT-3965). Null resolves to
+    /// <see cref="TestingStrategies.Fast"/>; see <see cref="TestingStrategies"/>.
     /// </summary>
     public ProjectTestingSettings? Testing { get; init; }
 
@@ -1204,13 +1214,95 @@ public sealed record TestExecutionPolicy
     public string? TestHubHistoryPath { get; init; }
 }
 
-/// <summary>Project-level test placement settings (pipeline Dossier AGT-3276, decision D1).</summary>
+/// <summary>Project-level test placement settings (pipeline Dossier AGT-3276, decision D1; AGT-3965).</summary>
 public sealed record ProjectTestingSettings
 {
-    /// <summary><c>affected</c> or <c>full</c> (default); see <see cref="PerCardTestModes"/>.</summary>
-    public string? PerCard { get; init; }
-    /// <summary>Integration verification placement; absent means pre-merge.</summary>
-    public string? Mode { get; init; }
+    /// <summary>
+    /// <c>fast</c>, <c>balanced</c> or <c>strict</c>; absent means <c>fast</c>.
+    /// The former <c>perCard</c> and <c>mode</c> switches are derived from it
+    /// (<see cref="TestingStrategies"/>); a stored legacy value is ignored.
+    /// </summary>
+    public string? Strategy { get; init; }
+}
+
+/// <summary>
+/// The named test placement of a project (AGT-3965). Each strategy selects
+/// existing mechanisms; it adds none. The model review aspects run before
+/// integration in every strategy.
+/// <list type="bullet">
+/// <item><see cref="Fast"/> (default): build and affected tests per card, the
+/// post-merge integration path right after the review passed, a merge-window
+/// run of the affected routine suites, the full routine suite nightly and the
+/// release full suite before Production.</item>
+/// <item><see cref="Balanced"/>: as fast, but the merge-window run executes
+/// every routine suite.</item>
+/// <item><see cref="Strict"/>: the full per-card plan, the pre-merge
+/// integration and batch gates, no post-merge expectation (the behaviour
+/// before AGT-3965).</item>
+/// </list>
+/// </summary>
+public static class TestingStrategies
+{
+    public const string Fast = "fast";
+    public const string Balanced = "balanced";
+    public const string Strict = "strict";
+    public const string Default = Fast;
+
+    public static readonly IReadOnlyList<string> All = [Fast, Balanced, Strict];
+
+    /// <summary>The known strategy for a stored or requested value, or null.</summary>
+    public static string? Normalize(string? value)
+    {
+        var trimmed = value?.Trim();
+        return All.FirstOrDefault(known => string.Equals(known, trimmed, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public static bool IsKnown(string? value) => Normalize(value) is not null;
+
+    /// <summary>The effective strategy; a project without a stored value is <see cref="Fast"/>.</summary>
+    public static string Resolve(ProjectSettings? settings) => Normalize(settings?.Testing?.Strategy) ?? Default;
+
+    /// <summary>The derived <c>testing.perCard</c> value.</summary>
+    public static string PerCard(string strategy)
+        => Normalize(strategy) == Strict ? PerCardTestModes.Full : PerCardTestModes.Affected;
+
+    /// <summary>The derived <c>testing.mode</c> value, before the red-develop fallback.</summary>
+    public static string Mode(string strategy)
+        => Normalize(strategy) == Strict ? IntegrationTestModes.PreMerge : IntegrationTestModes.PostMerge;
+
+    /// <summary>The project expects scheduled post-merge runs on its integration branch.</summary>
+    public static bool ExpectsPostMergeRuns(string strategy) => Mode(strategy) == IntegrationTestModes.PostMerge;
+
+    /// <summary>
+    /// What a merge-window run executes: <see cref="PostMergeWindowSuites.Affected"/>
+    /// for fast, <see cref="PostMergeWindowSuites.Routine"/> for balanced, and
+    /// null for strict, which has no window run.
+    /// </summary>
+    public static string? WindowSuites(string strategy) => Normalize(strategy) switch
+    {
+        Fast => PostMergeWindowSuites.Affected,
+        Balanced => PostMergeWindowSuites.Routine,
+        _ => null,
+    };
+
+    /// <summary>One sentence per strategy, shown on the project settings page.</summary>
+    public static string Sentence(string strategy) => Normalize(strategy) switch
+    {
+        Balanced => "Each card runs its build and affected tests, integrates right after the review passed, "
+            + "and every routine suite runs on develop after each merge window.",
+        Strict => "Each card runs its build in review and the full suite in the batch gate, "
+            + "and integrates only after a green batch.",
+        _ => "Each card runs its build and affected tests, integrates right after the review passed, "
+            + "and develop gets affected tests per merge window, the full routine suite nightly "
+            + "and the full suite before a Production release.",
+    };
+}
+
+/// <summary>What a T3 merge-window run selects (<c>PostMergeProjectState.WindowSuites</c>).</summary>
+public static class PostMergeWindowSuites
+{
+    public const string Affected = AgentStudio.TaskServer.Contracts.PostMergeWindowSuiteModes.Affected;
+    public const string Routine = AgentStudio.TaskServer.Contracts.PostMergeWindowSuiteModes.Routine;
 }
 
 /// <summary>Project-level review settings (review Dossier AGT-3400).</summary>
@@ -1228,6 +1320,35 @@ public static class ReviewPackageSetting
             ?? AgentStudio.TaskServer.Contracts.ReviewPackageModes.Off;
 }
 
+/// <summary>
+/// Values of <c>dispatch.overlapWindow</c> (DS-0). A card stays exposed from
+/// its start until it integrates, so the default compares a candidate with
+/// every card of the project that started a coding run and has not integrated
+/// yet. <see cref="Running"/> keeps the comparison with running cards only, the
+/// local behaviour before DS-0.
+/// </summary>
+public static class OverlapWindows
+{
+    public const string Running = "running";
+    public const string InFlight = "in-flight";
+    public const string Default = InFlight;
+
+    public static readonly IReadOnlyList<string> All = [Running, InFlight];
+
+    /// <summary>The known window for a stored or requested value, or null.</summary>
+    public static string? Normalize(string? value)
+    {
+        var trimmed = value?.Trim();
+        return All.FirstOrDefault(known => string.Equals(known, trimmed, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public static bool IsKnown(string? value) => Normalize(value) is not null;
+
+    /// <summary>The effective window; an unset or unknown value is <see cref="Default"/>.</summary>
+    public static string Resolve(ProjectSettings? settings)
+        => Normalize(settings?.DispatchOverlapWindow) ?? Default;
+}
+
 public static class IntegrationTestModes
 {
     public const string PreMerge = "pre-merge";
@@ -1241,8 +1362,9 @@ public static class IntegrationTestModes
         => string.Equals(value?.Trim(), PostMerge, StringComparison.OrdinalIgnoreCase)
             ? PostMerge : PreMerge;
 
+    /// <summary>Derived from <see cref="TestingStrategies"/> (AGT-3965); fast and balanced are post-merge.</summary>
     public static string Resolve(ProjectSettings? settings)
-        => Normalize(settings?.Testing?.Mode);
+        => TestingStrategies.Mode(TestingStrategies.Resolve(settings));
 }
 
 /// <summary>
@@ -1259,7 +1381,9 @@ public static class PerCardTestModes
     public static string Normalize(string? value)
         => string.Equals(value?.Trim(), Affected, StringComparison.OrdinalIgnoreCase) ? Affected : Full;
 
-    public static string Resolve(ProjectSettings? settings) => Normalize(settings?.Testing?.PerCard);
+    /// <summary>Derived from <see cref="TestingStrategies"/> (AGT-3965); only strict is full.</summary>
+    public static string Resolve(ProjectSettings? settings)
+        => TestingStrategies.PerCard(TestingStrategies.Resolve(settings));
 
     public static bool IsKnown(string? value)
         => string.Equals(value?.Trim(), Affected, StringComparison.OrdinalIgnoreCase)

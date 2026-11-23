@@ -7,14 +7,18 @@
   "status": "active",
   "phase": "decision-ready",
   "pattern": "architecture",
-  "updatedAt": "2026-10-16T21:00:00Z",
+  "updatedAt": "2026-11-22T13:00:00Z",
   "sourceTaskKeys": [],
   "relatedTaskKeys": [
     "AGT-3176",
     "AGT-3177",
     "AGT-3180",
     "WEB-35",
-    "AOW-15"
+    "AOW-15",
+    "AGT-3949"
+  ],
+  "relatedTo": [
+    "AGT-3949"
   ],
   "implementationTasks": [
     {
@@ -35,6 +39,11 @@
     {
       "id": "BD-4",
       "title": "Workspace deployment dashboard: projects by environments with release, age and status",
+      "implementation": {
+        "taskKey": "AGT-3949",
+        "state": "delivered",
+        "note": "Follow-up to the delivered dashboard, data only: the running Studio instance (AGT-3879 records) as the Production cell of its source project, a row for every watched project including those without environment declarations, delivery lanes only for watched projects and placed by the live commit for the source project, and long lane columns bounded to twelve cards with a Show all control. The visual redesign with charts is left to AGT-3950."
+      },
       "promptMarkdown": "# Workspace deployment dashboard: projects by environments with release, age and status\n\nSource: docs/operations/bereitstellung/index.html (Programm-Dossier \u0022Bereitstellung nach Octopus-Muster\u0022, stage P1) and docs/operations/integrierte-plattform/index.html section 6. Read AGENTS.md first. Robert, 16.10.2026: \u0022Wir wollen den Octopus-Teil ziemlich vollst\u00E4ndig abbilden\u0022, every project gets an environment and a pipeline view, rethought; two environments for now: Staging and Production.\n\nFrontend for stage P1 (section 2 Dashboard): a workspace dashboard with projects as rows and environments as columns; each cell shows release version, age, deploy state and health, with markers for pending approvals and newer releases; filters by project group and environment; a click opens the project area \u0022Bereitstellung\u0022. Work against a typed service with fixture data until the BD-1 API is on develop. Tests: component tests, browser-qa screenshots.\n\nShared data contract for P1 (use these names in API and UI): Environment {id, projectId, name, order, kind: staging|production}; Release {id, projectId, version, commitSha, artifactDigests[], processVersion, variablesVersion, cardKeys[], createdAtUtc, channel}; Deployment {id, releaseId, environmentId, state: queued|running|succeeded|failed|cancelled|awaiting-approval, startedAtUtc, finishedAtUtc, approvedBy, steps: [{name, state, startedAtUtc, finishedAtUtc, logRef}]}; EnvironmentStatus {environment, currentRelease, currentDeployment, newerRelease, cardsSinceLastDeploy[], health: healthy|unhealthy|unknown}.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise, new execution routes registered in PublicDemoExecutionProfileTests. Report the result SHA in status.md."
     },
     {

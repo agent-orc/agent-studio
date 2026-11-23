@@ -11,7 +11,7 @@ public sealed record UsageCalendar(
 public sealed record UsageSourceState(string Status, DateTime? ObservedAt, int? TtlSeconds, string? Reason = null);
 
 public sealed record UsageProjectCost(string? ProjectId, string Name, decimal? TodayUsd, decimal? WeekUsd,
-    UsageSourceState Coverage, DateTime? LatestReceiptAt = null, int UnpricedTodayRuns = 0, int UnpricedWeekRuns = 0);
+    UsageSourceState Coverage, DateTime? LatestReceiptAt = null, int UnpricedTodayRuns = 0, int UnpricedWeekRuns = 0, decimal? WeeklyBudgetUsd = null, decimal? BudgetWeekSpentUsd = null);
 
 public sealed record UsageOneShotCost(string Source, decimal TodayUsd, decimal WeekUsd);
 
@@ -21,7 +21,7 @@ public sealed record UsageCostProjection(
     string PricingVersion, string NormalizationVersion, string LedgerEndpointTemplate,
     DateTime? LatestReceiptAt = null, decimal? DailyBudgetUsd = null, decimal? WeeklyBudgetUsd = null,
     int UnpricedTodayRuns = 0, int UnpricedWeekRuns = 0,
-    IReadOnlyList<UsageOneShotCost>? OneShotSources = null);
+    IReadOnlyList<UsageOneShotCost>? OneShotSources = null, decimal? BudgetWeekSpentUsd = null, DateTime? BudgetWeekEndUtc = null, DateTime? BudgetWeekStartUtc = null);
 
 public sealed record UsageCostInput(string? ProjectId, string Name,
     IReadOnlyList<OrchestratorLogEntry> Entries, ProjectTokenDataFreshness Freshness,
@@ -30,7 +30,7 @@ public sealed record UsageCostInput(string? ProjectId, string Name,
 /// <summary>Calendar and accounting rules shared by the endpoint and contract fixtures.</summary>
 public static class UsageCockpitProjection
 {
-    private static DateTime AsUtc(DateTime value) => value.Kind switch
+    internal static DateTime AsUtc(DateTime value) => value.Kind switch
     {
         DateTimeKind.Utc => value,
         DateTimeKind.Unspecified => DateTime.SpecifyKind(value, DateTimeKind.Utc),

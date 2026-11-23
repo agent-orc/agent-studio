@@ -45,6 +45,8 @@ public sealed class DiskProbeIsolationGuardTests
             var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
 
             Assert.IsNotType<SystemHostFilesystemProbe>(pilot.DiskProbe);
+            Assert.Same(factory.Services.GetRequiredService<SshGateHostProbe>(),
+                factory.Services.GetRequiredService<IGateHostProbe>());
             Assert.IsNotType<SystemHostFilesystemProbe>(
                 factory.Services.GetRequiredService<IHostFilesystemProbe>());
         }

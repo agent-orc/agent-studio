@@ -57,6 +57,7 @@ public static class DeployJobReleaseBinding
                 != JsonSerializer.Serialize(job.SshSteps)
             || !SameVariables(plain, job.ResolvedVariables)
             || !SameVariables(secrets, job.SecretVariableRefs)
+            || DeployTelemetryPolicy.For(expected) != job.Telemetry
             || !expectedSecretRefs.SetEquals(job.SecretRefs)) return null;
         return job with { ReleaseId = releaseId };
     }

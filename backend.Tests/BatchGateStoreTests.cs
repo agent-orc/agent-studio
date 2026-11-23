@@ -626,6 +626,62 @@ public sealed class BatchGateStoreTests : IDisposable
         Assert.True(result.CascadeStopped);
     }
 
+    /// <summary>
+    /// AGT-3968: AGT-3897 merged cleanly onto develop on 17 November, but the
+    /// batch replayed AGT-3891 ahead of it and the conflict with that sibling
+    /// opened an agent round that could not resolve anything. A member that
+    /// merges onto the batch base is deferred, names the sibling and does not
+    /// count toward the conflict cascade.
+    /// </summary>
+    [Fact]
+    public void SiblingOnlyConflictIsDeferredNotEjectedAndNamesTheSibling()
+    {
+        var manifest = Close();
+        var assembler = new BatchGateAssembler(_store,
+            (member, tip) => member.TaskKey == "task-1" && tip != Base
+                ? BatchReplayResult.Conflict(["src/shared.ts"], "conflict", BatchReplayRoute.Rebase)
+                : new BatchReplayResult(true, Next, [new RebasedCommitReplacement(Base, Next)], [], null),
+            (_, _, _) => new BatchCandidateRefResult(true, null), new FakeTimeProvider(Now),
+            (_, _, files) => files.SequenceEqual(["src/shared.ts"]) ? ["task-0", "OTHER-1"] : []);
+
+        var result = assembler.Assemble(manifest.BatchId, 1);
+
+        Assert.Equal(["task-0", "task-2", "task-3"], result.AdmittedKeys);
+        Assert.Empty(result.EjectedKeys);
+        Assert.Empty(result.DeferredKeys);
+        Assert.Equal(["task-1"], result.SiblingDeferredKeys);
+        Assert.False(result.CascadeStopped);
+        var deferred = _store.ReadReplay(manifest.BatchId, "task-1");
+        Assert.Equal(BatchReplayOutcomes.SiblingDeferred, deferred.Outcome);
+        Assert.Equal(["src/shared.ts"], deferred.ConflictedFiles);
+        Assert.Equal(["task-0"], deferred.SiblingKeys);
+        Assert.Contains("task-0", deferred.Reason);
+
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var card = state.GetProperty("members").GetProperty("task-1");
+        Assert.Equal("pending", card.GetProperty("status").GetString());
+        Assert.Equal(BatchReplayOutcomes.SiblingDeferred, card.GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public void ConflictWithTheBatchBaseIsStillEjectedBehindAnAdmittedSibling()
+    {
+        var manifest = Close(3);
+        var assembler = new BatchGateAssembler(_store,
+            (member, _) => member.TaskKey == "task-1"
+                ? BatchReplayResult.Conflict(["src/shared.ts"], "conflict", BatchReplayRoute.Rebase)
+                : new BatchReplayResult(true, Next, [new RebasedCommitReplacement(Base, Next)], [], null),
+            (_, _, _) => new BatchCandidateRefResult(true, null), new FakeTimeProvider(Now));
+
+        var result = assembler.Assemble(manifest.BatchId, 1);
+
+        Assert.Equal(["task-1"], result.EjectedKeys);
+        Assert.Empty(result.SiblingDeferredKeys);
+        Assert.Equal("conflict", _store.ReadReplay(manifest.BatchId, "task-1").Outcome);
+    }
+
     [Fact]
     public void UnattributableMemberIsEjectedAloneWithItsReasonAndTheBatchAssembles()
     {

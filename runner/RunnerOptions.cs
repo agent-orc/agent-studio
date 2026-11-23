@@ -87,6 +87,9 @@ public sealed class RunnerOptions
     /// <summary>Directory the runner checks the repo out into on the runner host.</summary>
     public required string WorkDir { get; init; }
 
+    /// <summary>Combined inactive attempt budget for the review root and its stale sibling.</summary>
+    public long ReviewRetentionBytes { get; init; } = ReviewWorkspaceRetention.MaximumRetainedBytes;
+
     /// <summary>Disposable workspace root used only by the Remote Review Executor.</summary>
     public string ReviewWorkDir { get; init; } = Path.Combine(Path.GetTempPath(), "agent-review-work");
 
@@ -169,6 +172,16 @@ public sealed class RunnerOptions
 
     /// <summary>Hours between retention sweeps; the first sweep runs five minutes after start.</summary>
     public int SalvageSweepHours { get; init; } = 6;
+
+    /// <summary>
+    /// AGT-3954: enclosing machines of this host as a slash-separated path,
+    /// outermost first (<c>home-lab/linux-vm</c>). The structure view nests
+    /// this host under them without a manifest. Empty leaves the host flat.
+    /// </summary>
+    public string ParentMachine { get; init; } = "";
+
+    /// <summary>AGT-3954: name of the container this daemon runs in; empty when it runs on the machine itself.</summary>
+    public string ContainerName { get; init; } = "";
 
     internal static string DefaultSalvageDir
         => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "salvage");
@@ -562,6 +575,7 @@ public sealed class RunnerOptions
             WorkspaceGitRequiresPush = Val("workspace-git-requires-push", "RUNNER_WORKSPACE_GIT_REQUIRES_PUSH")
                 .Trim().ToLowerInvariant() is "1" or "true",
             WorkDir = Val("workdir", "RUNNER_WORKDIR", Path.Combine(Path.GetTempPath(), "agent-runner-work")),
+            ReviewRetentionBytes = (long)EnvInt("RUNNER_REVIEW_RETENTION_GIB", 20) * 1024 * 1024 * 1024,
             ReviewWorkDir = Val(
                 "review-workdir",
                 "RUNNER_REVIEW_WORKDIR",
@@ -667,6 +681,8 @@ public sealed class RunnerOptions
             Force = force,
             HoldAdmission = holdAdmission,
             SalvageDir = Val("salvage-dir", "RUNNER_SALVAGE_DIR", DefaultSalvageDir),
+            ParentMachine = Val("parent-machine", "RUNNER_PARENT_MACHINE").Trim(),
+            ContainerName = Val("container-name", "RUNNER_CONTAINER_NAME").Trim(),
             SalvageRetentionMode = Val(
                     "salvage-retention",
                     "RUNNER_SALVAGE_RETENTION",

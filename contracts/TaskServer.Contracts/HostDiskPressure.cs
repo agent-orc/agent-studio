@@ -6,7 +6,7 @@ public sealed record HostFilesystemUsageDto(string Purpose, string Path, long Fr
 
 public enum HostDiskPressureLevel { Healthy, Warning, Critical }
 
-public sealed record HostDiskPressureThresholds(long WarningFreeBytes = 30L * 1024 * 1024 * 1024,
+public sealed record HostDiskPressureThresholds(long WarningFreeBytes = 20L * 1024 * 1024 * 1024,
     double WarningFreePercent = 15, long CriticalFreeBytes = 8L * 1024 * 1024 * 1024,
     double CriticalFreePercent = 5);
 

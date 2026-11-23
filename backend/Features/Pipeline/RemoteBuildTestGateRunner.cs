@@ -54,7 +54,7 @@ public sealed class RemoteBuildTestGateRunner(
     IRemoteGateTransport transport,
     ILogger<RemoteBuildTestGateRunner> logger,
     TaskGateCancellationRegistry? cancellationRegistry = null,
-    GateHostOutageMonitor? hostHealth = null) : IBuildTestGateRunner
+    GateHostOutageMonitor? hostHealth = null, SshGateHostProbe? diskMonitor = null) : IBuildTestGateRunner
 {
     internal const int MaxTransportAttempts = 3;
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -85,6 +85,9 @@ public sealed class RemoteBuildTestGateRunner(
             try
             {
                 gateToken.ThrowIfCancellationRequested();
+                if (diskMonitor is not null)
+                    await diskMonitor.WaitForDiskRecoveryAsync(
+                        reason => logger.LogWarning("gate-disk-admission {Reason}", reason), gateToken);
                 var result = await transport.RunAsync(request, changedFiles, profile, mode, timeout, gateToken);
                 if (!string.Equals(result.ExpectedSha, request.ExpectedSha, StringComparison.OrdinalIgnoreCase)
                     || !string.Equals(result.GateId, request.GateId, StringComparison.Ordinal)

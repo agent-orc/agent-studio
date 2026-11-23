@@ -14,6 +14,8 @@ public sealed record GateSlowTest(string Name, double DurationMs, string Source)
 /// </summary>
 public sealed record GateTestReport(GateTestCounts Counts, IReadOnlyList<string> FailedTests)
 {
+    public IReadOnlyDictionary<string, string> FailureMessages { get; init; } = new Dictionary<string, string>();
+
     /// <summary>Feeds the next shard plan; kept off the serialized process evidence.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public IReadOnlyDictionary<string, double> ClassDurationsMs { get; init; } =
@@ -44,6 +46,7 @@ internal sealed class GateTestTiming
     private readonly object _sync = new();
     private readonly List<GateSlowTest> _slowest = [];
     private readonly Dictionary<string, double> _classDurations = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _failureMessages = new(StringComparer.Ordinal);
     private readonly SortedSet<string> _failedTests = new(StringComparer.Ordinal);
     private readonly SortedSet<string> _classes = new(StringComparer.Ordinal);
     private GateTestCounts? _counts;
@@ -66,6 +69,7 @@ internal sealed class GateTestTiming
                         ClassDurationsMs = new Dictionary<string, double>(_classDurations, StringComparer.Ordinal),
                         Classes = _classes.ToArray(),
                         AbortedOutcome = _abortedOutcome,
+                        FailureMessages = new Dictionary<string, string>(_failureMessages, StringComparer.Ordinal),
                     };
             }
         }
@@ -158,7 +162,12 @@ internal sealed class GateTestTiming
                     var name = (string?)result.Attribute("testName") ?? "unnamed test";
                     var failed = outcome is not null && FailedOutcomes.Contains(outcome);
                     _failed |= string.Equals(outcome, "Failed", StringComparison.OrdinalIgnoreCase);
-                    if (failed) _failedTests.Add(name);
+                    if (failed)
+                    {
+                        _failedTests.Add(name);
+                        var message = result.Descendants().FirstOrDefault(element => element.Name.LocalName == "Message")?.Value;
+                        if (!string.IsNullOrWhiteSpace(message)) _failureMessages.TryAdd(name, message.Split('\n')[0].Trim());
+                    }
                     counts = counts.Add(failed ? new(1, 0, 1, 0)
                         : string.Equals(outcome, "Passed", StringComparison.OrdinalIgnoreCase) ? new(1, 1, 0, 0)
                         : new(1, 0, 0, 1));

@@ -253,6 +253,13 @@ refresh, TE policy `2026-09-25`):
   about eight runs on 2026-09-18 keep it explicit-pin only. `gpt-6.1-sol`
   is priced and selectable with TokenEconomy `0.3.7` when the installed CLI
   offers it. It is not a default route.
+- `gpt-6.2-sol` and `gpt-6.2-astra` (released 2026-11-17, AGT-3958) are
+  explicit-pin only. No tier, default, family resolver, migration or
+  provider-rejection fallback points at either: 6.2 Sol's coding-agent index
+  is reported three points below 6.1 Sol, and the owner decides after the
+  Studio's own comparison. A provider refusal of a 6.2 pin is therefore not
+  rerouted to a sibling, so a blind comparison never silently runs another
+  model.
 
 **Unpriced legacy pins (2026-10-11).** GPT-4.1 and GPT-4o are absent from
 TokenEconomy 0.3.7. Studio no longer includes them in the curated CLI registry
@@ -366,6 +373,13 @@ being silently replaced by a policy recommendation.
 
 A fresh coding claim after a resumed mechanical integration round is qualified
 again when the round found a semantic conflict or the deterministic gate failed.
+Automatic integration recovery, including batch replay conflicts, first reuses
+the acceptance-rail recovery selector. For an unpinned model with a declared low
+route it selects low or medium within the task's correctness floor, keeping the
+model. Explicit pins, unknown routes and stronger floors retain the existing
+route. This selection is saved before Ready becomes claimable. Claim admission
+remains authoritative: its mechanical recovery floor can raise a queued low
+selection to medium. No correctness floor is relaxed for session reuse.
 An integration recovery claim with a pending mechanical delta is qualified before
 admission at the stronger of its correctness floor and Terra/medium. This also
 covers a fresh run when the runner rejects the resume for a missing or stale
@@ -557,10 +571,21 @@ a default route or family resolver:
 | Model | Picker availability | Thinking ladder | Context window |
 |---|---|---|---:|
 | `gpt-6.1-sol` | Codex live discovery | CLI reported `minimal, low, medium, high, xhigh`; default `xhigh` | 1,050,000 |
+| `gpt-6.2-sol` | Codex live discovery at codex-cli `0.166.0` or later | `low, medium, high, xhigh, max, ultra`; default `low` | 500,000 |
+| `gpt-6.2-astra` | Codex live discovery at codex-cli `0.166.0` or later | `low, medium, high, xhigh, max, ultra`; default `low` | 272,000 |
 | `claude-sonnet-5-5` | Claude live discovery at `2.1.284` or later | `low, medium, high, xhigh, max`; default `medium` | 1,000,000 |
 
-Both start unavailable in the registry and use TokenEconomy `0.3.7` prices at
-ledger read time.
+All start unavailable in the registry. GPT-6.1 Sol and Sonnet 5.5 use
+TokenEconomy `0.3.7` prices at ledger read time; GPT-6.2 uses the dated local
+seed described in [token pricing](token-pricing.md).
+
+The GPT-6.2 ladder comes from `codex debug models` on 0.166.0 and the
+[Codex models page](https://learn.chatgpt.com/docs/models). Studio stores the
+CLI value; the Codex app's names map as Light = `low`, Medium = `medium`,
+High = `high`, Extra High = `xhigh`, Max = `max`, Ultra = `ultra` (Ultra adds
+automatic subagent delegation). The API has no `none` effort for 6.2, so a
+stored `none` resolves to the model default. The context column is the Codex
+default window; both models support 1M through `model_context_window`.
 
 Every former hardcoded `ModelIds.ClaudeHaiku45` / `ModelIds.Gpt54Mini` runtime
 default (`OrchestratorRunner.DefaultModel`, `SummaryGenerationService`,
@@ -870,6 +895,30 @@ sibling and records that change. A missing sibling, a sibling below the floor,
 or a refusal of the sibling escalates with the provider message; none returns
 the card to Ready on the refused model. Run history stores `{from, to, reason}`,
 and Execution Hosts aggregates refusals per model per UTC day.
+
+## Historical routing cost comparison
+
+CLI Management compares receipts for a UTC period of up to 93 days and a consumer
+(coding, review aspect, or one-shot) against an alternative model. The read-only
+`POST /api/token-pricing/what-if` uses the same permission-filtered merged project
+and workspace receipts as the usage cockpit. It prices both routes at each
+receipt's timestamp, including cache reads and writes. Missing historical prices
+produce unknown totals, and partial ledger coverage is stated. Historical usage
+groups use the shared ledger classifier: coding agents, review aspects, and
+remaining model calls in the one-shot group. A consumer editor outside the first
+two groups labels its comparison as the whole one-shot group, not a forecast
+limited to that individual consumer. A weekly projection
+extrapolates the selected period; it does not predict different token counts,
+quality, reasoning effort, or retries.
+
+Consumer route edits are staged until a weekly preview has been shown. Model
+pickers show current input/output prices per MTok; historical comparison uses the
+prices valid at execution time. Effective routes show each step id once. Card
+setup exposes preference and hard pin modes. Economy changes are staged until a
+preview replays coding receipts through the existing policy recommender using
+current card types, titles, prompts and pins. Missing cards remain unpriced;
+explicit pins retain their recorded model. This projection does not rewrite
+cards, change correctness floors, or guarantee host model availability.
 
 ## Roadmap: what happens next
 

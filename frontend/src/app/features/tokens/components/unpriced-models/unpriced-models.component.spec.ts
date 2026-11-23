@@ -19,9 +19,12 @@ describe('UnpricedModelsComponent', () => {
     (fixture.nativeElement.querySelector('button') as HTMLButtonElement).click();
     TestBed.inject(HttpTestingController).expectOne('/api/token-pricing/unpriced-models').flush({
       models: [{ model: 'gpt-6.2-nova', calls: 3, totalTokens: 2420000 }], checkedAt: '2026-11-16T00:00:00Z',
+      weekStartUtc: '2026-11-15T23:00:00Z', weekEndUtc: '2026-11-22T23:00:00Z', timeZone: 'Europe/Berlin',
     });
     await fixture.whenStable();
     expect(fixture.nativeElement.querySelector('table')?.textContent).toContain('gpt-6.2-nova');
     expect(fixture.nativeElement.querySelector('table')?.textContent).toContain('2,420,000');
+    expect(fixture.nativeElement.textContent).toContain('Nov 16, 2026 to Nov 22, 2026 (Europe/Berlin)');
+    expect(fixture.nativeElement.querySelector('table')?.textContent).toContain('Unpriced calls');
   });
 });

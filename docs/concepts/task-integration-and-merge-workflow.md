@@ -105,12 +105,13 @@ If all three stages fail, the merge step persists one structured conflict report
   from Human Review or Escalated through the same recovery service used by
   the operator endpoint even when a generic park marker says a decision card is
   required. The shared two-round budget is counted from durable automatic
-  recovery events for the fenced delivery chain, identified by its immutable
-  result ref and delivered SHA. Re-reviewing that delivery shares the budget;
-  publishing a new delivery starts a new one. Identifier-less legacy events
-  count conservatively. Once the budget is spent, the park reason names both
-  the usage and delivery, for example
-  `automatic recovery budget used: 2/2 for delivery 5cd6b1d4bc07`. Concept and report-only cards
+  recovery events for the card and its integration target (AGT-3968).
+  Re-reviewing a delivery or publishing a new one does not restart the
+  budget; an event recorded for another integration branch does not count.
+  Identifier-less legacy events count conservatively. Once the budget is
+  spent, the park reason names the usage, the conflicting files and the other
+  cards involved, for example
+  `automatic recovery budget used: 1/1 for this card on develop. Conflicting files: backend/Features/Deploy/DeployService.cs. Other cards involved: AGT-3904.` Concept and report-only cards
   remain in Human Review. The rail emits one action event per mutation plus a
   structured sweep summary and a last-run/lane-depth read endpoint. A durable
   bounce obligation records each eligible conflict before action, including its

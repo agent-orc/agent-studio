@@ -218,6 +218,49 @@ public sealed class SecretEndpointTests : IDisposable
         Assert.Equal("BROKEN", flagged.GetProperty("name").GetString());
     }
 
+    /// <summary>
+    /// AGT-3987: routes name the project by display name, the store by id. A
+    /// secret stored under the display name before then stays listed and
+    /// rotates in place; a member sees both.
+    /// </summary>
+    [Fact]
+    public async Task Project_routes_store_new_secrets_under_the_project_id_and_keep_display_name_secrets()
+    {
+        using var factory = Networked();
+        using var client = Client(factory);
+        var owner = Owner(factory);
+        var workspace = factory.Services.GetRequiredService<AgentStudio.Registry.WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>()
+            .EnsureProjectForStorage(ProjectPath, Project, workspace.Id, _clock);
+        await factory.Services.GetRequiredService<ISecretProvider>().PutAsync(
+            SecretScope.ForEnvironment(Project, "prod"), "LEGACY_KEY", NewValue(), SecretActor.Human("first.owner"));
+        var route = $"/api/projects/{Project}/environments/prod/secrets";
+
+        var created = await Send(client, "POST", route, new { name = "NEW_KEY", value = NewValue() }, owner);
+        Assert.Equal(HttpStatusCode.Created, created.Status);
+        using (var json = JsonDocument.Parse(created.Body))
+        {
+            Assert.Equal($"secret://{project.Id}/prod/NEW_KEY", json.RootElement.GetProperty("reference").GetString());
+            Assert.Equal($"{Project}/prod", json.RootElement.GetProperty("routeScope").GetString());
+        }
+        var rotated = await Send(client, "POST", route + "/LEGACY_KEY/rotate", new { value = NewValue() }, owner);
+        using (var json = JsonDocument.Parse(rotated.Body))
+        {
+            Assert.Equal("secret://memowikis/prod/LEGACY_KEY", json.RootElement.GetProperty("reference").GetString());
+            Assert.Equal(2, json.RootElement.GetProperty("currentVersion").GetInt32());
+        }
+
+        using (var listed = JsonDocument.Parse((await Send(client, "GET", route, null, owner)).Body))
+            Assert.Equal(
+                [$"secret://{project.Id}/prod/NEW_KEY", "secret://memowikis/prod/LEGACY_KEY"],
+                listed.RootElement.EnumerateArray().Select(item => item.GetProperty("reference").GetString()).Order(StringComparer.Ordinal));
+        var member = SignIn(factory, "team.operator", StudioRoles.Operator, [Project]);
+        using var overview = JsonDocument.Parse((await Send(client, "GET", "/api/secrets", null, member)).Body);
+        Assert.Equal(
+            [$"{Project}/prod", $"{Project}/prod"],
+            overview.RootElement.GetProperty("secrets").EnumerateArray().Select(item => item.GetProperty("routeScope").GetString()));
+    }
+
     [Fact]
     public async Task Project_scoped_operator_writes_only_member_projects_and_sees_no_foreign_metadata()
     {
@@ -393,7 +436,9 @@ public sealed class SecretEndpointTests : IDisposable
 
         var log = File.ReadAllText(Assert.Single(Directory.GetFiles(ProjectPath, "cli-output.log", SearchOption.AllDirectories)));
         Assert.DoesNotContain(value, log, StringComparison.Ordinal);
-        Assert.Contains($"[secret:secret://{Project}/API_TOKEN]", log, StringComparison.Ordinal);
+        // The registry knows the watched project, so the put stored the secret under its id (AGT-3987).
+        var projectId = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>().FindByIdOrDisplayName(Project)!.Id;
+        Assert.Contains($"[secret:secret://{projectId}/API_TOKEN]", log, StringComparison.Ordinal);
         Assert.DoesNotContain(Directory.EnumerateFiles(ProjectPath, "*", SearchOption.AllDirectories),
             file => File.ReadAllText(file).Contains(value, StringComparison.Ordinal));
     }

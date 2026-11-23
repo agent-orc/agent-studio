@@ -25,6 +25,8 @@ public sealed record IntegrationConflictReport
     public string IntegrationBranch { get; init; } = "develop";
     public string IntegrationTipSha { get; init; } = "";
     public string DeliverySha { get; init; } = "";
+    public string? FailedCommand { get; init; }
+    public string? FirstError { get; init; }
     public List<IntegrationConflictStageReport> Stages { get; init; } = [];
     public int ConflictedFileCount { get; init; }
     public List<string> ConflictedFiles { get; init; } = [];

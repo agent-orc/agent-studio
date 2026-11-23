@@ -8,13 +8,18 @@ namespace AgentStudio.Management;
 public sealed record StructureDeploymentFact(string ProjectId, ProjectEnvironmentView View);
 public sealed record StructureHealthFact(string ProjectId, EnvironmentHealthView View);
 
-/// <summary>Joins read-only observations to declared stable identities. Every clock is supplied by the caller.</summary>
-public static class ObservedStructureProjection
+/// <summary>
+/// Joins read-only observations to declared stable identities and, with a
+/// <see cref="StructureObservedContext"/>, adds every host that reports without
+/// being declared (AGT-3954). Every clock is supplied by the caller.
+/// </summary>
+public static partial class ObservedStructureProjection
 {
     public static StructureResponse Apply(StructureResponse declared, IReadOnlyList<RunnerCapabilitySnapshotDto> hosts,
         IReadOnlyList<RunnerLinkResource> links, IReadOnlyList<StructureDeploymentFact> deployments,
         IReadOnlyList<StructureHealthFact> health, HostReleaseDriftSnapshot? releases,
-        string engineState, DateTime now, IReadOnlyList<PullGateHost>? gates = null)
+        string engineState, DateTime now, IReadOnlyList<PullGateHost>? gates = null,
+        StructureObservedContext? context = null)
     {
         var hostReports = hosts.GroupBy(h => h.HostId, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(h => h.LastSeenAt).ToArray(), StringComparer.Ordinal);
@@ -144,38 +149,117 @@ public static class ObservedStructureProjection
             return node with { Observation = observation };
         }).ToList();
 
+        var observedLinks = declared.Links.Select(link => ObserveLink(link, hostReports, links, now)).ToList();
+        var observing = context is { IncludeObservedHosts: true };
+        if (observing)
+            AddObserved(nodes, observedLinks, hostReports, links, byGate, releases, engineState, now, context!);
+
+        // Containers a host's container runtime reports. On the Studio server they
+        // are its components where the name says so; the rest shows as it is.
+        var studio = observing ? context!.Studio : null;
+        var studioId = studio is null ? null : $"machine:{studio.MachineId}";
+        var hostOfContainer = hostReports.SelectMany(item => item.Value.Select(report => report.Telemetry?.Placement)
+                .Where(placement => placement?.Kind == HostPlacementKinds.Container)
+                .SelectMany(placement => new[] { placement!.ContainerName, placement.MachineName })
+                .Where(key => !string.IsNullOrWhiteSpace(key)).Select(key => (Key: key!, Host: item.Key)))
+            .GroupBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Host, StringComparer.OrdinalIgnoreCase);
         foreach (var host in hosts.Where(host => host.Containers is not null))
         {
-            var parent = $"machine:{host.HostId}";
-            if (!nodes.Any(node => node.Id == parent)) continue;
+            var reporter = nodes.FirstOrDefault(node => node.Id == $"machine:{host.HostId}");
+            if (reporter is null) continue;
+            // An agent host on the Studio server reports that machine's containers.
+            var parent = reporter.Kind == "host" && reporter.ParentId == studioId && studioId is not null
+                ? studioId : reporter.Id;
+            var stale = now - host.LastSeenAt > TimeSpan.FromSeconds(90);
+            var components = parent == studioId
+                ? MatchStudioContainers(host.Containers!, studio!.Placement?.Kind == HostPlacementKinds.Container
+                    ? studio.Placement.MachineName : null)
+                : null;
             foreach (var container in host.Containers!)
             {
                 if (nodes.Any(node => HostFor(node) == host.HostId && node.Kind == "container" &&
                     (string.Equals(node.UnitId, container.Name, StringComparison.OrdinalIgnoreCase) ||
                      string.Equals(node.Label, container.Name, StringComparison.OrdinalIgnoreCase)))) continue;
                 if (nodes.Any(node => node.Id == $"observed-container:{host.HostId}:{container.Name}")) continue;
-                var stale = now - host.LastSeenAt > TimeSpan.FromSeconds(90);
+                var observation = new StructureObservation(stale ? "stale" : "undeclared",
+                    stale ? "stale" : container.State == "running" ? "up" : "down",
+                    host.LastSeenAt, container.ImageDigest, Detail: container.State);
+                if (components?.FirstOrDefault(item => item.Value == container).Key is { } role)
+                {
+                    var position = nodes.FindIndex(node => node.ParentId == studioId
+                        && node.Id.StartsWith("component:", StringComparison.Ordinal)
+                        && (string.Equals(node.Role, role, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(node.UnitId, role, StringComparison.OrdinalIgnoreCase)));
+                    if (position >= 0)
+                    {
+                        // The API keeps its own answer; the report adds the image and the container name.
+                        var component = nodes[position];
+                        var isDeclared = component.Provenance == "declared";
+                        var known = component.Observation;
+                        nodes[position] = component with
+                        {
+                            Kind = isDeclared ? component.Kind : "container",
+                            Detail = component.Detail ?? container.Name,
+                            Observation = role == "api" && known is { Health: "up" }
+                                ? known with { Detail = $"{container.Name} · {container.State}" }
+                                : role == "engine" && known is { Health: "up" or "down" }
+                                    ? known with { Version = container.ImageDigest }
+                                    : isDeclared && !stale ? observation with { Difference = "matched" } : observation,
+                        };
+                        continue;
+                    }
+                }
+                // A container that reports as a host itself is that host's node, placed here.
+                var reportingHost = new[] { container.Name, container.Id }.Where(key => key is { Length: > 0 })
+                    .Select(key => hostOfContainer.GetValueOrDefault(key!)).FirstOrDefault(value => value is not null);
+                if (reportingHost == host.HostId) continue;
+                if (reportingHost is not null)
+                {
+                    var position = nodes.FindIndex(node => node.Id == $"machine:{reportingHost}");
+                    if (position >= 0)
+                    {
+                        if (nodes[position] is { Provenance: "observed", ParentId: "installation" })
+                            nodes[position] = nodes[position] with { ParentId = parent };
+                        continue;
+                    }
+                }
                 nodes.Add(new($"observed-container:{host.HostId}:{container.Name}", "container", container.Name,
-                    parent, null, null, null, "observed", "host capability report", Observation:
-                    new(stale ? "stale" : "undeclared", stale ? "stale" : container.State == "running" ? "up" : "down",
-                        host.LastSeenAt, container.ImageDigest, Detail: container.State)));
+                    parent, null, null, null, "observed", "host capability report", Observation: observation));
             }
         }
 
-        var observedLinks = declared.Links.Select(link =>
+        if (observing)
         {
-            var hostId = link.From.StartsWith("machine:", StringComparison.Ordinal) ? link.From[8..]
-                : link.To.StartsWith("machine:", StringComparison.Ordinal) ? link.To[8..] : null;
-            var state = hostId is null || !hostReports.TryGetValue(hostId, out var reports) ? null
-                : links.FirstOrDefault(linkState => reports.Any(report => report.RunnerId == linkState.RunnerId));
-            if (state is null) return link with { Observation = new("declared-only", "not observed") };
-            var stale = state.LastHeartbeatAt is { } at && now - at > TimeSpan.FromSeconds(90);
-            var unknown = state.LastHeartbeatAt is null && state.State == RunnerLinkStates.Up;
-            return link with { Observation = new(stale ? "stale" : unknown ? "declared-only" : "matched",
-                stale ? "stale" : unknown ? "not observed" : state.State == RunnerLinkStates.Up ? "up" : "down",
-                state.LastHeartbeatAt, Detail: state.State) };
-        }).ToArray();
+            // Declared links that end at a host which only reports resolve now.
+            var ids = nodes.Select(node => node.Id).ToHashSet(StringComparer.Ordinal);
+            foreach (var link in declared.UnresolvedLinks ?? [])
+                if (ids.Contains(link.From) && ids.Contains(link.To) && observedLinks.All(existing => existing.Id != link.Id))
+                    observedLinks.Add(ObserveLink(link, hostReports, links, now));
+            MarkLinksDown(nodes, observedLinks);
+        }
         return new(nodes, observedLinks);
+    }
+
+    private static StructureLink ObserveLink(StructureLink link,
+        IReadOnlyDictionary<string, RunnerCapabilitySnapshotDto[]> hostReports,
+        IReadOnlyList<RunnerLinkResource> links, DateTime now)
+    {
+        link = link with { Id = link.Id ?? StructureLink.IdFor(link.From, link.To, link.Kind) };
+        var hostId = link.From.StartsWith("machine:", StringComparison.Ordinal) ? link.From[8..]
+            : link.To.StartsWith("machine:", StringComparison.Ordinal) ? link.To[8..] : null;
+        var state = hostId is null || !hostReports.TryGetValue(hostId, out var reports) ? null
+            : links.FirstOrDefault(linkState => reports.Any(report => report.RunnerId == linkState.RunnerId));
+        if (state is null) return link with { Observation = new("declared-only", "not observed") };
+        var stale = state.LastHeartbeatAt is { } at && now - at > TimeSpan.FromSeconds(90);
+        var unknown = state.LastHeartbeatAt is null && state.State == RunnerLinkStates.Up;
+        var health = stale ? "stale" : unknown ? "not observed" : state.State == RunnerLinkStates.Up ? "up" : "down";
+        return link with
+        {
+            Observation = new(stale ? "stale" : unknown ? "declared-only" : "matched", health,
+                state.LastHeartbeatAt, Detail: state.State),
+            Facts = new(health, null, state.LastProbe?.At, state.Transport ?? state.Kind),
+        };
     }
 
     private static string ProbeDescription(this EnvironmentHealthView value)

@@ -80,6 +80,7 @@ export function buildExplorerWorkspaceGroups(
   registryWorkspaces: readonly RegistryWorkspaceListItem[],
   flatRegistryProjects: readonly RegistryProjectSummary[],
   storageByName: ReadonlyMap<string, string>,
+  activeProjectName: string | null = null,
 ): ExplorerWorkspaceGroup[] {
   const workspaces = [...registryWorkspaces].sort((a, b) => a.sortOrder - b.sortOrder);
   const registryById = new Map<string, RegistryProjectSummary>();
@@ -88,6 +89,20 @@ export function buildExplorerWorkspaceGroups(
   }
   for (const project of flatRegistryProjects) registryById.set(project.id, project);
   const registryProjects = [...registryById.values()];
+  // Registry membership is authoritative even before watch paths load the new project.
+  const visibleRows = [...rows];
+  for (const project of registryProjects.filter(project => !project.archived)) {
+    if (rows.some(row => matchingRegistryProject(row, [project], storageByName))) continue;
+    visibleRows.push({
+      name: project.displayName,
+      initial: project.displayName[0]?.toUpperCase() ?? '?',
+      color: project.color ?? '',
+      totalJobs: 0,
+      isActive: project.displayName === activeProjectName,
+    });
+  }
+  rows = visibleRows;
+
 
   if (workspaces.length === 0) {
     return rows.length
@@ -147,4 +162,11 @@ export function buildExplorerWorkspaceGroups(
     });
   }
   return groups;
+}
+
+/** Accessible destination label for a registered project URL. */
+export function explorerUrlAriaLabel(project: ExplorerProjectNode, url: RegistryProjectUrl): string {
+  return url.id === 'repo'
+    ? `Repository, open Git View for ${project.displayLabel}`
+    : `${url.label}, opens ${url.url} as an embedded preview tab`;
 }

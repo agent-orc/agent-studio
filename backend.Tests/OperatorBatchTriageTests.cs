@@ -416,7 +416,11 @@ public sealed class OperatorBatchTriageTests : IDisposable
         });
         var settings = factory.Services.GetRequiredService<ProjectSettingsService>();
         foreach (var project in new[] { "alpha", "beta" })
+        {
             settings.SetBatchGate(project, new BatchGateFormationOptions(Enabled: true, Scope: "code"));
+            // AGT-3965: batch triage needs the pre-merge batch gate, which only strict keeps.
+            settings.SetTestingStrategy(project, TestingStrategies.Strict);
+        }
         var environment = factory.Services.GetRequiredService<IWebHostEnvironment>();
         _reservationRoot = BatchGateStorageRoot.ForInstance(environment.ContentRootPath, _workspace, "batch-push-reservations");
         var security = factory.Services.GetRequiredService<AccessSecurityStore>();

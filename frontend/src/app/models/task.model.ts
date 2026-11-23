@@ -657,6 +657,7 @@ export interface TaskInfo {
   model: string | null;
   /** False when model qualification derives the route from task type + policy. */
   modelExplicit?: boolean;
+  pinMode?: 'preference' | 'hard';
   thinkingLevel?: string | null;
   /** False when the policy supplies the reasoning level together with the model tier. */
   thinkingLevelExplicit?: boolean;
@@ -2476,7 +2477,13 @@ export interface ProjectSnapshot {
     maxReviewConcernRounds?: number;
     scopedReviewAfterFinding?: boolean;
     scopedReviewMaximumDeltaFiles?: number;
-    /** AGT-3310: effective per-card test placement (testing.perCard), read-only here. */
+    /** AGT-3965: the project's testing strategy; a project without a stored value is fast. */
+    testingStrategy?: TestingStrategy;
+    /** AGT-3965: every strategy with the one sentence the settings page shows. */
+    testingStrategies?: TestingStrategyOption[];
+    /** AGT-3965: whether develop gets the post-merge runs fast and balanced rely on. */
+    postMergeCoverage?: PostMergeCoverage | null;
+    /** AGT-3310: per-card test placement, derived from testingStrategy since AGT-3965. */
     testingPerCard?: 'affected' | 'full';
     /** F35: every lane resolved to its effective sort strategy (defaults filled in). */
     laneSortStrategies?: Record<string, string>;
@@ -2491,6 +2498,39 @@ export interface ProjectSnapshot {
   queueHealth: ProjectQueueHealth;
 }
 
+/** AGT-3965: testing.strategy values. */
+export type TestingStrategy = 'fast' | 'balanced' | 'strict';
+
+export interface TestingStrategyOption {
+  id: TestingStrategy;
+  sentence: string;
+  isDefault: boolean;
+}
+
+/** AGT-3965: answer of the post-merge coverage check (PostMergeCoverage on the backend). */
+export interface PostMergeCoverage {
+  project: string;
+  strategy: TestingStrategy;
+  state: 'not-expected' | 'current' | 'missing' | 'unknown';
+  developTipSha: string | null;
+  lastReportedTipSha: string | null;
+  lastReportedAtUtc: string | null;
+  message: string;
+  missing: boolean;
+}
+
+/** AGT-3965: answer of GET /api/projects/{name}/testing. */
+export interface ProjectTesting {
+  strategy: TestingStrategy;
+  stored: boolean;
+  sentence: string;
+  perCard: 'affected' | 'full';
+  mode: 'pre-merge' | 'post-merge';
+  effectiveMode: 'pre-merge' | 'post-merge';
+  postMergeCoverage: PostMergeCoverage | null;
+  strategies: TestingStrategyOption[];
+}
+
 /**
  * PUB-1 - a derived publish target for a project, rendered as a Hub badge like
  * "NuGet 0.3.1 -> 4 commits pending". Repo-fact-derived and read-only. A package
@@ -2499,6 +2539,8 @@ export interface ProjectSnapshot {
  * null when no baseline could be derived from git (see `referenceKind === 'none'`).
  */
 export interface PublishTarget {
+  releaseCommand?: string | null;
+  releaseBranch?: string | null;
   /** Stable id: 'package:npm', 'package:nuget', or 'website'. */
   id: string;
   /** Wire value is the camelCase enum name (JsonStringEnumConverter). */
@@ -2720,6 +2762,8 @@ export interface ParkedDecision {
  * lately. Mirrors backend `ParkedBlockerStatus`; read-time only.
  */
 export interface ParkedBlockerStatus {
+  /** Unabridged command and test facts from the failed gate or review receipt. */
+  failureEvidence?: string | null;
   /** Escalation category, or `operator-decision` for a manual park. */
   blockerType: string;
   /** Absent on board cards; /details/overview carries it. */

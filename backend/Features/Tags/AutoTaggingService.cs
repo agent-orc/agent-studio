@@ -73,7 +73,7 @@ public sealed class AutoTagClassifier(CliOneShotRegistry oneShots, RuntimePrompt
         var fallback = ModelMetadataRegistry.DefaultForCli(cli)
             ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeSonnet);
         var model = PipelineStepConfigResolver.Lookup(settings, StepId)?.Model
-            ?? (cli == CliTypes.Claude ? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeSonnet) : fallback);
+            ?? (cli == CliTypes.Claude ? ModelIds.ClaudeHaiku55 : fallback);
         if (!ModelMetadataRegistry.IsCompatibleWithCli(cli, model))
             throw new InvalidOperationException("Auto-tag step model is incompatible with its CLI.");
         return new(cli, model);

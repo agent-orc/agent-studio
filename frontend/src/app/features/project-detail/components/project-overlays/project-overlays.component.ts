@@ -1,10 +1,10 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, HostListener, computed, effect, inject, output, signal } from '@angular/core';
 import { ProjectOverlaysService } from '../../state/project-overlays.service';
 import { ModalStackService } from '../../../../services/modal-stack.service';
 import { OrchestratorFeedComponent, PromptAdminPanelComponent } from '../../../orchestrator/lazy';
 import { ProjectDetailComponent } from '../project-detail/project-detail';
 import { ProjectOverviewDashboardComponent } from '../project-overview-dashboard/project-overview-dashboard';
-import { ProjectDeployAreaComponent } from '../project-deploy-area/project-deploy-area';
+import { ProjectDeployAreaComponent, type DeployView } from '../project-deploy-area/project-deploy-area';
 import { ProjectUrlsPanelComponent } from '../project-urls-panel/project-urls-panel.component';
 import { ProjectGraphComponent } from '../project-graph/project-graph.component';
 import { ProjectSettingsPanelComponent } from '../project-settings-panel/project-settings-panel.component';
@@ -96,7 +96,18 @@ export class ProjectOverlaysComponent {
   readonly railChangeNeedsWatchPaths = output<ProjectRailKey>();
 
   /** Retired Deck sections (`pipeline`, `observability`) open the Deploy and Operations areas. */
-  readonly section = computed(() => resolveProjectSection(this.overlays.projectShellRail()));
+  private readonly hashRevision = signal(0);
+  @HostListener('window:hashchange') onHashChange(): void { this.hashRevision.update(value => value + 1); }
+  readonly section = computed(() => {
+    this.hashRevision();
+    const section = resolveProjectSection(this.overlays.projectShellRail());
+    if (section.rail !== 'deploy') return section;
+    const query = window.location.hash.split('?')[1] ?? '';
+    const requested = new URLSearchParams(query).get('view');
+    const view: DeployView = requested === 'operations' || requested === 'runbooks' || requested === 'tools'
+      ? requested : section.deployView;
+    return { ...section, deployView: view };
+  });
 
   hasCustomPanel(rail: ProjectRailKey): boolean {
     const resolved = resolveProjectSection(rail).rail;

@@ -50,17 +50,21 @@ path either under `app/` or registered in `WikiProducerTargets`.
 
 | Topic | Start here |
 |---|---|
+| Library release commands and branches | [operations/setup/library-releases.md](../operations/setup/library-releases.md) |
 | Product installer for Windows and Linux (for published releases; none exists yet) | [operations/setup/install.md](../operations/setup/install.md) |
 | Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
 | Managed PostgreSQL databases for hosted apps: project.yml `databases`, run-zone provisioning, generated credentials, retention and owner deletion (IP-D5 option B, AGT-3877); backups, restore runbook, liveness, size and connection metrics (AGT-3878) | [operations/managed-databases/](../operations/managed-databases/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
+| [CLI rollout](../operations/cli-rollout.md) | German operator runbook for CLI rollout, legacy launcher adoption, KORI image pins, drift alerts, and rollback. |
 | Server-first networked deploy, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
 | Deploy without lost work: host drain, quiet point, server then hosts one by one, resume; review relaunch and gate refund across restarts (AGT-3647) | [operations/deploy-drain-procedure.md](../operations/deploy-drain-procedure.md) |
+| Report Studio deploys to the Studio: deploy reporter token, `curl` recipe for start, steps and end, live release and "integrated, not live yet" in Bereitstellung (AGT-3879) | [operations/instance-deploy-records.md](../operations/instance-deploy-records.md) |
 | Studio website scheduled encrypted backups, off-host copy (SFTP, S3, mounted directory), Operations page state, backup and secret store key escrow, restore onto a new host (AGT-3574), and the host-level timer (AGT-3365) | [operations/setup/studio-backup-restore.md](../operations/setup/studio-backup-restore.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
 | Runner | [domains/runner.md](../system/domains/runner.md) |
 | Pipeline | [domains/pipeline.md](../system/domains/pipeline.md) |
+| Integration conflict history, record version 1, rates and selection evidence (AGT-3969) | [contract](../system/contracts/integration-conflicts.md) |
 | Orchestrator | [domains/orchestrator.md](../system/domains/orchestrator.md) |
 | Orchestration decision library, action vocabulary and architecture guard | [contracts/orchestration-decisions.md](../system/contracts/orchestration-decisions.md) |
 | Monolith hosted services: decide / apply-recover inventory, the per-transition switch that selects who decides, AI Operator deciders and the monolith decision guard (AGT-3060) | [architecture/monolith-hosted-services.md](../system/architecture/monolith-hosted-services.md) |
@@ -113,6 +117,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Product scenario: a product manager, a designer and a manager evolve Click Counter through the product chat, card previews and the Product role, with a run report (AGT-3183) | [operations/testing/product-scenario.md](../operations/testing/product-scenario.md) |
 | Deployment story: operator and administrator journeys from one box to many runner hosts, current availability, option C reconciliation and recovery gates (AGT-2906) | [decision dossier](../operations/deployment-story/index.html) |
 | Credentials and logins: host inventory, incident classification, guided renewal, rotation and typed recovery runbooks (AGT-2968) | [decision Dossier](../credentials-and-logins/index.html) |
+| Red test isolation: base suite stops the line, bounded quarantine and scoped hold for other red tests, line guardian, no automatic project-wide fallback after two hours of red (AGT-3988, RT-1 to RT-9) | [decision Dossier](../red-test-isolation/index.html) |
 | Dynamic placement: work containers placed by load across hosts, one host agent and budget, pulled gates, per-work-item credentials (AGT-3171) | [decision Dossier](../dynamic-placement/index.html) |
 | Workload identity for runs, hosts, deployments and apps: signed identities, federation and staged adoption for IP-D10 | [decision Dossier](../workload-identitaet/index.html) |
 | Restart continuity release drill for one local and one Remote in-flight run (AGT-2780) | [operations/testing/restart-continuity-drill.md](../operations/testing/restart-continuity-drill.md) |
@@ -233,10 +238,11 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Operator API reference: routes for the operator agent, cross-project batch triage and next safe member operation (AGT-3462 OP-4) | [operations/operator-api.md](../operations/operator-api.md) |
 | studio-op operator CLI: installation, Owner token file setup, commands and their routes, watcher lock and lease, accept check, stable exit codes (AGT-3462 OP-8) | [operations/setup/studio-op.md](../operations/setup/studio-op.md) |
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
+| Structure view: observed hosts without a manifest, placement file apart from connectivity, facts per node and link, live deltas (AGT-3954) | [operations/setup/structure-placement.md](../operations/setup/structure-placement.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
 | Update Service operations: loopback bind, owner-only trigger token file, allowed Studio origins, forced triggers (AGT-3713) | [operations/setup/update-service.md](../operations/setup/update-service.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |
-| Application telemetry intake: OTLP metrics and logs per project environment, ingest tokens, retention, query API (IP-15) | [operations/setup/app-telemetry-intake.md](../operations/setup/app-telemetry-intake.md) |
+| Application telemetry intake: OTLP metrics and logs per project environment, ingest tokens and the Telemetry tab, deploy injection with `telemetry: true`, the Operations reader, retention, query API (IP-15, M5) | [operations/setup/app-telemetry-intake.md](../operations/setup/app-telemetry-intake.md) |
 | Project definition v2 proposal (inactive; shared AGT/QS/Voice properties, quality applicability and rollout) | [plan](../operations/docker-ausfuehrungswelt-migration/project-definition-v2-plan.md) · [draft schema](../operations/docker-ausfuehrungswelt-migration/project-execution.v2.draft.schema.json) |
 | GitHub repository metadata recommendations | [repo-metadata.md](../repo-metadata.md) |
 | Setup | [operations/setup/README.md](../operations/setup/README.md) |

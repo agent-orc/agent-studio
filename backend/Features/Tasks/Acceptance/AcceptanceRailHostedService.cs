@@ -790,9 +790,13 @@ public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperator
     }
 
     private IntegrationRecoveryBudgetUsage CountConflictRequeues(TaskInfo job)
-        => IntegrationRecoveryBudget.Count(
+    {
+        var subject = ReviewSubjectStore.Read(job.FolderPath);
+        return IntegrationRecoveryBudget.Count(
             _timeline.ReadAll(job.FolderPath),
-            ReviewSubjectStore.Read(job.FolderPath));
+            subject,
+            subject?.IntegrationBranch ?? job.IntegrationBranch);
+    }
 
     /// <summary>
     /// Infrastructure replays already spent on this card, plus the instant of the

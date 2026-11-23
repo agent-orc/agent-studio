@@ -39,11 +39,12 @@ import { ProjectBuildProfileContradictionNoticeComponent } from '../project-buil
 import { RetentionRulesTableComponent } from '../../../retention/components/retention-rules-table/retention-rules-table.component';
 import { ProjectExecutionDefinitionComponent } from '../project-execution-definition/project-execution-definition';
 import { BatchSettingsComponent } from '../../../batch-gate/batch-settings/batch-settings';
-import { SettingsJumpLinksComponent } from '../settings-jump-links/settings-jump-links';
+import { ProjectSetupHeaderComponent } from '../project-setup-header/project-setup-header';
 import { AUTONOMY_STOPS } from '../autonomy-slider/autonomy-slider';
 // By path, not the barrel: the editor renders only inside @defer (initial bundle budget).
 import { WorkspaceQuotaComponent } from '../../../quota/components/workspace-quota/workspace-quota.component';
 import { QualityStudioConnectionSettingsComponent } from '../quality-studio-connection-settings/quality-studio-connection-settings.component';
+import { IncidentWebhookSettingsComponent } from '../incident-webhook-settings/incident-webhook-settings.component';
 import { ServerCheckoutStore } from '../../../server-checkout';
 const STORAGE_DEFAULT_CLI = 'defaultCliType';
 const STORAGE_DEFAULT_MODEL_PREFIX = 'defaultModel:';
@@ -82,9 +83,10 @@ interface WorkspaceListItemLite {
     ProjectBuildProfileContradictionNoticeComponent,
     RetentionRulesTableComponent,
     ProjectExecutionDefinitionComponent,
-    BatchSettingsComponent, SettingsJumpLinksComponent,
+    BatchSettingsComponent, ProjectSetupHeaderComponent,
     WorkspaceQuotaComponent,
     QualityStudioConnectionSettingsComponent,
+    IncidentWebhookSettingsComponent,
   ],
   templateUrl: './project-settings-panel.component.html',
   styleUrl: './project-settings-panel.component.scss',
@@ -98,6 +100,9 @@ export class ProjectSettingsPanelComponent implements OnInit {
   private readonly tabs = inject(StudioTabStateService);
   openReviewAspects(): void {
     this.tabs.open({ kind: 'hub', projectName: this.projectName(), section: 'pipeline' });
+  }
+  openRelease(): void {
+    this.tabs.open({ kind: 'hub', projectName: this.projectName(), section: 'deploy' });
   }
   private readonly http = inject(HttpClient);
   private readonly serverCheckout = inject(ServerCheckoutStore);
@@ -215,6 +220,7 @@ export class ProjectSettingsPanelComponent implements OnInit {
       error: () => { /* Do not infer an empty gate when project discovery failed. */ },
     });
   }
+
 
   /**
    * AGT-1812: resolve this project's owning workspace, then load its default

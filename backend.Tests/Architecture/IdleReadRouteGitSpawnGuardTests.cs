@@ -76,7 +76,6 @@ public sealed class IdleReadRouteGitSpawnGuardTests : IAsyncLifetime
         Git("add", "-A");
         Git("commit", "-q", "-m", "seed");
 
-        GitService.InvalidateToplevelCache();
         _factory = new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");

@@ -158,6 +158,23 @@ describe('ParkedBlockerComponent', () => {
     await TestBed.compileComponents();
   });
 
+  it('lists all receipt failures without shortening the command, errors, or SHA', () => {
+    const names = ['Example.First', 'Example.Second', 'Example.Third'];
+    const evidence = `## Delivery failure evidence\nTested SHA: ${'a'.repeat(40)}\nCommand: dotnet test --no-build\n`
+      + names.map((name, index) => `- ${name}: Expected ${index}`).join('\n');
+    const el = render(park({ reason: evidence, failureEvidence: evidence }));
+    expect(el.querySelectorAll('[data-testid="parked-failed-tests"] li')).toHaveLength(3);
+    for (const name of names) expect(text(el, 'parked-failed-tests')).toContain(name);
+    expect(text(el, 'parked-full-reason')).toContain('dotnet test --no-build');
+    expect(text(el, 'parked-full-reason')).toContain('a'.repeat(40));
+    expect(text(el, 'parked-full-reason')).toContain('Expected 2');
+  });
+
+  it('does not label operator notes as failing tests', () => {
+    const el = render(park({ reason: 'Wait for the operator.\n- Confirm the deployment window.' }));
+    expect(el.querySelector('[data-testid="parked-failed-tests"]')).toBeNull();
+  });
+
   it('renders nothing when the card is not parked', () => {
     expect(render(null).querySelector('[data-testid="parked-blocker"]')).toBeNull();
   });

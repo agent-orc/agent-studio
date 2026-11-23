@@ -295,60 +295,105 @@ public sealed class RemoteReviewAspectParallelismTests : IDisposable
         Assert.Equal(4, evidence.Verdicts.Count);
     }
 
-    [Fact]
-    public async Task Claude_shared_prefix_is_written_by_first_aspect_before_siblings_start()
-    {
-        var runner = new FakeAspectRunner(_time);
-        runner.Usage = command => command.StepId == "aspect-1"
-            ? new RemoteAgentUsage("claude-opus-5", 0, 0, 0, 1000, false) : null;
-        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseRest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        runner.Work = (command, ct) => command.StepId == "aspect-1"
-            ? releaseFirst.Task.WaitAsync(ct) : releaseRest.Task.WaitAsync(ct);
-        var plan = Aspects(4).Select(command => command with
+    private static ReviewCommandDto[] ClaudeAspects(int count)
+        => Aspects(count).Select(command => command with
         {
             FileName = "claude",
             CliType = "claude",
-            Model = "claude-opus-5",
+            Model = "claude-opus-5-5",
             Prompt = "Shared brief\n<!-- remote-review-shared-material-v1 -->\nAspect " + command.Aspect,
         }).ToArray();
-        var workspace = await PreparedAsync("attempt-cache-prefix", plan, runner);
+
+    [Fact]
+    public async Task Claude_siblings_start_on_the_lead_aspects_first_streamed_usage_not_on_its_end()
+    {
+        var runner = new FakeAspectRunner(_time) { SharesPrefix = _ => true };
+        var leadStreams = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        runner.FirstEvent = (command, ct) => command.StepId == "aspect-1"
+            ? leadStreams.Task.WaitAsync(ct) : Task.CompletedTask;
+        runner.StreamedUsage = _ => new RemoteAgentUsage("claude-opus-5-5", 3, 1, 10_700, 52_000, false);
+        runner.Work = (_, ct) => release.Task.WaitAsync(ct);
+        var workspace = await PreparedAsync("attempt-cache-lead", ClaudeAspects(4), runner);
 
         var attempt = workspace.ExecutePlanAsync(default);
         await runner.InFlightReached(1).WaitAsync(Patience);
         Assert.Equal(["aspect-1"], runner.Started);
-        releaseFirst.SetResult();
+        leadStreams.SetResult();
+        // The lead is still running: its siblings start on its first usage.
+        await runner.InFlightReached(4).WaitAsync(Patience);
+        Assert.Equal(4, runner.MaxInFlight);
+        release.SetResult();
+        var evidence = await attempt.WaitAsync(Patience);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        var launches = runner.Launches.ToArray();
+        Assert.Equal(4, launches.Length);
+        Assert.All(launches, launch => Assert.True(launch.SharedPrefixLength > 0));
+        var shared = launches.Select(launch => launch.Prompt[..launch.SharedPrefixLength]).ToArray();
+        Assert.All(shared, prefix => Assert.Equal(shared[0], prefix));
+        Assert.StartsWith("Shared brief", shared[0]);
+        Assert.Contains("feature.txt", shared[0]);
+        Assert.DoesNotContain("remote-review-shared-material-v1", shared[0]);
+        Assert.DoesNotContain("Aspect aspect-", shared[0]);
+        foreach (var launch in launches)
+            Assert.Contains("Aspect " + launch.StepId, launch.Prompt[launch.SharedPrefixLength..]);
+    }
+
+    [Fact]
+    public async Task Claude_siblings_start_when_the_lead_ends_without_streamed_usage()
+    {
+        var runner = new FakeAspectRunner(_time) { SharesPrefix = _ => true };
+        var releaseLead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        runner.Work = (command, ct) => command.StepId == "aspect-1"
+            ? releaseLead.Task.WaitAsync(ct) : releaseRest.Task.WaitAsync(ct);
+        var workspace = await PreparedAsync("attempt-cache-no-usage", ClaudeAspects(4), runner);
+
+        var attempt = workspace.ExecutePlanAsync(default);
+        await runner.InFlightReached(1).WaitAsync(Patience);
+        Assert.Equal(["aspect-1"], runner.Started);
+        releaseLead.SetResult();
+        // No serial fallback: the siblings run in parallel.
         await runner.InFlightReached(3).WaitAsync(Patience);
-        Assert.Equal(3, runner.MaxInFlight);
         releaseRest.SetResult();
         var evidence = await attempt.WaitAsync(Patience);
 
         Assert.Equal("Pass", evidence.Outcome);
-        Assert.Equal(4, evidence.Verdicts.Count);
-        var prefixes = runner.Prompts.Select(prompt => prompt[..prompt.IndexOf("Aspect aspect-", StringComparison.Ordinal)]).ToArray();
-        Assert.All(prefixes, prefix => Assert.Equal(prefixes[0], prefix));
-        Assert.Contains("Shared brief", prefixes[0]);
-        Assert.Contains("feature.txt", prefixes[0]);
-        Assert.DoesNotContain("remote-review-shared-material-v1", prefixes[0]);
+        Assert.Equal(3, runner.MaxInFlight);
     }
 
     [Fact]
-    public async Task Claude_aspects_remain_serial_when_first_call_reports_no_cache_usage()
+    public async Task Aspects_start_together_when_the_runner_cannot_share_the_prefix()
     {
         var runner = new FakeAspectRunner(_time);
-        var plan = Aspects(4).Select(command => command with
-        {
-            CliType = "claude",
-            Model = "claude-opus-5",
-            Prompt = "Shared brief\n<!-- remote-review-shared-material-v1 -->\nAspect " + command.Aspect,
-        }).ToArray();
-        var workspace = await PreparedAsync("attempt-cache-unconfirmed", plan, runner);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        runner.Work = (_, ct) => release.Task.WaitAsync(ct);
+        var workspace = await PreparedAsync("attempt-cache-unsupported", ClaudeAspects(4), runner);
 
-        var evidence = await workspace.ExecutePlanAsync(default).WaitAsync(Patience);
+        var attempt = workspace.ExecutePlanAsync(default);
+        await runner.InFlightReached(4).WaitAsync(Patience);
+        release.SetResult();
+        await attempt.WaitAsync(Patience);
 
-        Assert.Equal("Pass", evidence.Outcome);
-        Assert.Equal(1, runner.MaxInFlight);
-        Assert.Equal(["aspect-1", "aspect-2", "aspect-3", "aspect-4"], runner.Started);
+        Assert.Equal(4, runner.MaxInFlight);
+    }
+
+    [Fact]
+    public async Task An_aspect_on_another_model_does_not_wait_for_the_lead()
+    {
+        var runner = new FakeAspectRunner(_time) { SharesPrefix = _ => true };
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        runner.Work = (_, ct) => release.Task.WaitAsync(ct);
+        var plan = ClaudeAspects(3);
+        plan[2] = plan[2] with { Model = "claude-sonnet-5-5" };
+        var workspace = await PreparedAsync("attempt-cache-other-model", plan, runner);
+
+        var attempt = workspace.ExecutePlanAsync(default);
+        await runner.InFlightReached(2).WaitAsync(Patience);
+        Assert.Equal(["aspect-1", "aspect-3"], runner.Started.Order());
+        release.SetResult();
+        await attempt.WaitAsync(Patience);
     }
 
     [Theory]
@@ -489,6 +534,10 @@ public sealed class RemoteReviewAspectParallelismTests : IDisposable
         public Func<ReviewCommandDto, CancellationToken, Task> Work { get; set; } = (_, _) => Task.CompletedTask;
         public Func<ReviewCommandDto, ProcessResult?> Reply { get; set; } = _ => null;
         public Func<ReviewCommandDto, RemoteAgentUsage?> Usage { get; set; } = _ => null;
+        public Func<ReviewCommandDto, bool> SharesPrefix { get; set; } = _ => false;
+        public Func<ReviewCommandDto, CancellationToken, Task> FirstEvent { get; set; } = (_, _) => Task.CompletedTask;
+        public Func<ReviewCommandDto, RemoteAgentUsage?> StreamedUsage { get; set; } = _ => null;
+        public ConcurrentQueue<(string StepId, string Prompt, int SharedPrefixLength)> Launches { get; } = new();
         public ConcurrentQueue<string> Started { get; } = new();
         public ConcurrentQueue<string> Prompts { get; } = new();
         public ConcurrentQueue<string> Cancelled { get; } = new();
@@ -497,6 +546,19 @@ public sealed class RemoteReviewAspectParallelismTests : IDisposable
         public Task InFlightReached(int count) => Await(_inFlightWaiters, count, () => Volatile.Read(ref _inFlight));
 
         public string PlannedExecutable(ReviewCommandDto command) => command.FileName;
+
+        public bool SharesReviewPrefix(ReviewCommandDto command) => SharesPrefix(command);
+
+        public Task<CommandExecution> RunAsync(ReviewCommandDto command, ReviewAspectLaunch launch, CancellationToken ct)
+        {
+            Launches.Enqueue((command.StepId, command.Prompt ?? string.Empty, launch.SharedPrefixLength));
+            if (launch.OnFirstUsage is { } notify)
+                _ = FirstEvent(command, ct).ContinueWith(task =>
+                {
+                    if (task.IsCompletedSuccessfully && StreamedUsage(command) is { } usage) notify(usage);
+                }, TaskScheduler.Default);
+            return RunAsync(command, ct);
+        }
 
         public async Task<CommandExecution> RunAsync(ReviewCommandDto command, CancellationToken ct)
         {

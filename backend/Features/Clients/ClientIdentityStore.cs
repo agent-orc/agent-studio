@@ -358,6 +358,32 @@ public class ClientIdentityStore
     }
 
     /// <summary>
+    /// AGT-3930: cancels a deploy drain only while no host switch start is
+    /// recorded, in one step, so a cancel cannot erase the verification
+    /// baseline another operator recorded. <see cref="DeployCancelResult.Refused"/>
+    /// keeps the drain and the switch start. Null when the identity is unknown,
+    /// retired, or retiring.
+    /// </summary>
+    public DeployCancelResult? CancelDrainBeforeSwitch(string id)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            if (!_byId.TryGetValue(id, out var existing)
+                || existing.Kind == ClientIdentityKind.Retired
+                || existing.RetireRequestedAt is not null) return null;
+            if (existing.DrainRequestedAt is not null && existing.DeploySwitchStartedAt is not null)
+                return new DeployCancelResult(existing, Refused: true);
+            if (existing.DrainRequestedAt is null && existing.DeploySwitchStartedAt is null)
+                return new DeployCancelResult(existing, Refused: false);
+            var updated = existing with { DrainRequestedAt = null, DeploySwitchStartedAt = null };
+            WriteLocked(updated);
+            SetRecordLocked(updated);
+            return new DeployCancelResult(updated, Refused: false);
+        }
+    }
+
+    /// <summary>
     /// AGT-3852: records the start of the deploy host switch on a drained
     /// identity. The first recorded start stays, so a second operator or a
     /// retry cannot move the verification baseline. Null when the identity is
@@ -841,3 +867,6 @@ public sealed record ClientIdentityFileDiagnostic(
     DateTime ModifiedAt,
     long SizeBytes,
     string RestoreHint);
+
+/// <summary>AGT-3930: the identity after a deploy cancel, and whether a recorded switch start refused it.</summary>
+public sealed record DeployCancelResult(ClientIdentity Record, bool Refused);

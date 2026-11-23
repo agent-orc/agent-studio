@@ -84,6 +84,24 @@ public sealed class OwnerActivityProjectionTests
         });
     }
 
+    [Theory]
+    [InlineData("system")]
+    [InlineData("pipeline")]
+    [InlineData("Orchestrator")]
+    public void SystemCreatedCardIsNotAnOwnerAction_EvenWithALegacyOwnerActor(string createdBy)
+    {
+        var task = new TaskInfo { Id = "health-production-1", Key = "NS-2", Title = "Health incident", ProjectName = "Demo" };
+        var events = new[]
+        {
+            Event(TimelineEventKinds.PromptCreated, "Created", new()
+            {
+                ["creationSource"] = "environment-health", ["createdBy"] = createdBy,
+            }, actor: "human:local-default"),
+        };
+
+        Assert.Empty(OwnerActivityProjection.FromTimeline(task, events));
+    }
+
     [Fact]
     public void ProjectsConfirmedDossierDecisionWithItsDossierLink()
     {

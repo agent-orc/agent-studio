@@ -35,7 +35,8 @@ public sealed class OperatorAttentionTests : IDisposable
         state.Environments["production"] = new EnvironmentHealthState { OpenIncident = incident };
         state.Checks[HealthCheckStore.Key("production", "http")] = new HealthCheckState { OpenIncident = check };
         store.Save("alpha", state);
-        var source = new OperatorEnvironmentIncidentFactSource(store, () => ["alpha"]);
+        var source = new OperatorEnvironmentIncidentFactSource(store, () => ["alpha"],
+            (project, cardId) => project == "alpha" && cardId == "health-production-1" ? "NS-2" : null);
 
         var facts = source.Collect(At)!.Concat([
             Fact(OperatorDecisionTypes.DeployCompleted, "alpha", "raw-job-id", At),
@@ -44,7 +45,8 @@ public sealed class OperatorAttentionTests : IDisposable
         var projected = OperatorAttention.Project(facts, OperatorDecisionReader.Everything);
         var item = Assert.Single(projected.Items.Where(item => item.Type == OperatorDecisionTypes.EnvironmentIncidentOpen));
         Assert.Equal(item, projected.Items[0]);
-        Assert.Equal("health-production-1", item.CardKey);
+        Assert.Equal("NS-2", item.CardKey);
+        Assert.Contains(item.Evidence, link => link.Href == "/#/tasks/NS-2");
         Assert.Contains("Production", item.Title);
         Assert.Contains("HTTP 503", item.Reason);
         Assert.Contains(item.Evidence, link => link.Href.Contains("/operations"));
@@ -78,6 +80,23 @@ public sealed class OperatorAttentionTests : IDisposable
         Assert.DoesNotContain(all.Items, item => item.Type == OperatorDecisionTypes.WatcherHeartbeat);
         Assert.Equal(["A-2"], scoped.Items[1].Cards);
         Assert.Equal(OperatorOperations.For(OperatorDecisionTypes.HumanReviewReady), scoped.Items[1].SuggestedOperations);
+    }
+
+    [Fact]
+    public void Archived_project_facts_do_not_need_attention()
+    {
+        var facts = new[]
+        {
+            Fact(OperatorDecisionTypes.HumanReviewReady, "archived", "TLY-1", At),
+            Fact(OperatorDecisionTypes.HumanReviewReady, "active", "ACT-1", At),
+            Fact(OperatorDecisionTypes.QuotaExhausted, null, null, At),
+        };
+
+        var result = OperatorAttention.Project(facts, OperatorDecisionReader.Everything,
+            project => project != "archived");
+
+        Assert.Equal(2, result.Count);
+        Assert.DoesNotContain(result.Items, item => item.CardKey == "TLY-1");
     }
 
     [Fact]

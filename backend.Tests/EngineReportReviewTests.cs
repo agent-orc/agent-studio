@@ -106,14 +106,25 @@ public sealed class EngineReportReviewTests : IDisposable
         Assert.Null(authority.GetTaskProjection(Card).CurrentReviewAttempt);
         Assert.Single(_calls);
         Assert.Equal(verdict, CompletionContentEvidence.Read(card, authority).ContentStatus);
-        var timeline = factory.Services.GetRequiredService<TimelineLog>().ReadAll(card.FolderPath);
+        bool IsReportReviewLaneChange(TimelineEvent entry) => entry.Kind == TimelineEventKinds.LaneChanged
+            && entry.Details?.GetValueOrDefault(LaneChangeCauses.DetailQualifierKey) == "report-review"
+            && entry.Details?.GetValueOrDefault("reason")?.Contains(verdict, StringComparison.OrdinalIgnoreCase) == true;
+
+        // The folder reaches Human Review before the move appends its lane-change
+        // event. Wait for the evidence we assert, not just the observable lane.
+        var timelineLog = factory.Services.GetRequiredService<TimelineLog>();
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        var timeline = timelineLog.ReadAll(card.FolderPath);
+        while (!timeline.Any(IsReportReviewLaneChange) && waited.Elapsed < Deadline)
+        {
+            await Task.Delay(50);
+            timeline = timelineLog.ReadAll(card.FolderPath);
+        }
         Assert.Contains(timeline, entry => entry.Kind == TimelineEventKinds.PostStepStarted
             && entry.Summary.Contains("Report review started (engine-create-review)", StringComparison.Ordinal));
         Assert.Contains(timeline, entry => entry.Kind == TimelineEventKinds.PostStepFinished
             && entry.Summary.Contains($"Requirement fit of the report: {verdict}", StringComparison.Ordinal));
-        Assert.Contains(timeline, entry => entry.Kind == TimelineEventKinds.LaneChanged
-            && entry.Details?.GetValueOrDefault(LaneChangeCauses.DetailQualifierKey) == "report-review"
-            && entry.Details?.GetValueOrDefault("reason")?.Contains(verdict, StringComparison.OrdinalIgnoreCase) == true);
+        Assert.Contains(timeline, IsReportReviewLaneChange);
     }
 
     [Fact]

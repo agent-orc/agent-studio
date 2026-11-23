@@ -212,7 +212,7 @@
     }
     @if (isolationState(batch); as state) { <p data-testid="batch-isolation-state">{{ state }}</p> }
     @if (batch.flakySuspect; as suspect) {
-      <p data-testid="batch-flaky-suspect">@if (suspect.active) { <span class="batch-panel__suspect">Flaky suspect</span> } {{ flakySuspectLabel(suspect) }}</p>
+      <p data-testid="batch-flaky-suspect">@if (suspect.active) { <span class="batch-panel__suspect">Flaky suspect</span> } {{ flakySuspectLabel(suspect, batch) }}</p>
     }
     @if (batch.sameCodeRerunOfRunId) { <p data-testid="batch-same-code-rerun">Same-code re-gate of red run {{ batch.sameCodeRerunOfRunId }}</p> }
     @if (batch.phaseHistory?.length) {

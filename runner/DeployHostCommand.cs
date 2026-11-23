@@ -40,7 +40,10 @@ public static class DeployHostCommand
         public ProjectDeployStep[] SshSteps { get; init; } = [];
         public ProjectVariableDefinition[] Variables { get; init; } = [];
         public ProjectArtifactDefinition[] Artifacts { get; init; } = [];
+        public JobTelemetry? Telemetry { get; init; }
     }
+    /// <summary>M5: the workload's OTLP connection; the token is the bound secret <see cref="SecretName"/>.</summary>
+    private sealed record JobTelemetry(string SecretName, string Protocol, string? Endpoint, string? ResourceAttributes);
     private sealed record Provenance(string Project, string Commit, string Artifact, string Digest,
         string GateRunId, string Template, string BuilderIdentity, string Location, string SourceDigest);
     private sealed record IssuedSecret(string Value);
@@ -76,7 +79,11 @@ public static class DeployHostCommand
         }
         claimed.EnsureSuccessStatusCode();
         var job = await claimed.Content.ReadFromJsonAsync<Job>(cancellationToken);
-        if (job is null) return 0;
+        if (job is null)
+        {
+            await DeployHostContainerObserver.ObserveAsync(client, args[1], cancellationToken);
+            return 0;
+        }
         using var lease = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var leaseLost = false;
         var renewal = RenewWhileRunning(client, job, clock ?? TimeProvider.System, () =>
@@ -412,6 +419,16 @@ public static class DeployHostCommand
         if (job.SshSteps.Length > 0 || job.SecretBindings is not null)
             foreach (var mapping in job.SecretVariableRefs)
                 resolved.Add(mapping.Key, await ResolveSecret(mapping.Value));
+        if (job.Telemetry is { } telemetry)
+        {
+            // Add throws on a name the release already sets: Studio owns these, so the token cannot go elsewhere.
+            resolved.Add(DeployTelemetryVocabulary.EndpointVariable, telemetry.Endpoint
+                ?? new Uri(client.BaseAddress!, "api/telemetry/otlp").ToString());
+            resolved.Add(DeployTelemetryVocabulary.ProtocolVariable, telemetry.Protocol);
+            resolved.Add(DeployTelemetryVocabulary.HeadersVariable, "Authorization=Bearer " + await ResolveSecret(telemetry.SecretName));
+            if (!string.IsNullOrEmpty(telemetry.ResourceAttributes))
+                resolved.Add(DeployTelemetryVocabulary.ResourceAttributesVariable, telemetry.ResourceAttributes);
+        }
         return resolved;
     }
 

@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 
 using Xunit;
@@ -198,6 +199,105 @@ public sealed class LeasePlacementEndpointsTests : IDisposable
         Assert.Equal(3, poll.DesiredMaxParallelism);
     }
 
+    // DS-0 (decision DS-D10 B of docs/dispatcher-personas/index.html): the
+    // claim applies the pick-gate scope rule in PickupOrder, against the
+    // project's leased running cards and, under the default in-flight window,
+    // every card that started and has not integrated. A conflicting candidate
+    // gets a parallel-conflict rejection naming window, card and prefix.
+
+    [Fact]
+    public async Task Claim_skips_a_candidate_that_overlaps_a_card_in_review_by_default()
+    {
+        SeedTask(TaskStates.AutoReview, "OW-REV-1", 1, prompt: "Edit backend/Features/Runner/ProjectRunner.cs.");
+        SeedTask(TaskStates.Ready, "OW-OVL-2", 1, prompt: "Edit backend/Features/Runner/ActiveRuns.cs.");
+        SeedTask(TaskStates.Ready, "OW-FREE-3", 2, prompt: "Edit frontend/src/app/app.ts.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http, platformClass: null);
+        await AssignAsync(http, ProjectName);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/lease-placement.git");
+
+        var claimed = await ClaimWithSuccessfulPreflightAsync(client, Claim("in-flight-1"));
+
+        Assert.Equal(RClaimStatus.Claimed, claimed.Status);
+        Assert.Equal("OW-FREE-3", claimed.JobId);
+        var rejection = AgentStudio.Runner.RemoteDispatchRejectionStore.Read(
+            Path.Combine(_watchPath, TaskStates.Ready, "OW-OVL-2"));
+        Assert.Equal(RunnerPickupWaitCodes.ParallelConflict, rejection?.Code);
+        Assert.Equal(
+            "scope conflict with 'OW-REV-1' on 'backend/features/runner' (window in-flight, 4-auto-review)",
+            rejection?.Reason);
+    }
+
+    [Fact]
+    public async Task Running_window_claims_in_order_past_a_card_in_review()
+    {
+        SeedTask(TaskStates.AutoReview, "OW-REV-1", 1, prompt: "Edit backend/Features/Runner/ProjectRunner.cs.");
+        SeedTask(TaskStates.Ready, "OW-OVL-2", 1, prompt: "Edit backend/Features/Runner/ActiveRuns.cs.");
+        SeedTask(TaskStates.Ready, "OW-FREE-3", 2, prompt: "Edit frontend/src/app/app.ts.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http, platformClass: null);
+        await AssignAsync(http, ProjectName);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/lease-placement.git");
+        var set = await http.PutAsJsonAsync(
+            $"/api/projects/{ProjectName}/dispatch/overlap-window", new { window = "running" });
+        set.EnsureSuccessStatusCode();
+        Assert.Contains("\"window\":\"running\"", await set.Content.ReadAsStringAsync());
+
+        var claimed = await ClaimWithSuccessfulPreflightAsync(client, Claim("running-1"));
+
+        Assert.Equal(RClaimStatus.Claimed, claimed.Status);
+        Assert.Equal("OW-OVL-2", claimed.JobId);
+    }
+
+    [Fact]
+    public async Task Claim_skips_a_candidate_that_overlaps_a_leased_running_card()
+    {
+        SeedTask(TaskStates.Ready, "OW-RUN-1", 1, prompt: "Edit docs/system/domains/runner.md.");
+        SeedTask(TaskStates.Ready, "OW-SAME-2", 2, prompt: "Edit docs/system/domains/pipeline.md.");
+        SeedTask(TaskStates.Ready, "OW-TOOLS-3", 3, prompt: "Edit tools/scripts/run.sh.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http, platformClass: null);
+        await AssignAsync(http, ProjectName);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/lease-placement.git");
+        var set = await http.PutAsJsonAsync(
+            $"/api/projects/{ProjectName}/dispatch/overlap-window", new { window = "running" });
+        set.EnsureSuccessStatusCode();
+
+        var first = await ClaimWithSuccessfulPreflightAsync(client, Claim("lease-1"));
+        Assert.Equal("OW-RUN-1", first.JobId);
+        var second = await client.ClaimAsync(Claim("lease-2"), CancellationToken.None);
+
+        Assert.Equal(RClaimStatus.Claimed, second.Status);
+        Assert.Equal("OW-TOOLS-3", second.JobId);
+        var rejection = AgentStudio.Runner.RemoteDispatchRejectionStore.Read(
+            Path.Combine(_watchPath, TaskStates.Ready, "OW-SAME-2"));
+        Assert.Equal(RunnerPickupWaitCodes.ParallelConflict, rejection?.Code);
+        Assert.Equal(
+            "scope conflict with 'OW-RUN-1' on 'docs/system/domains' (window running, running)",
+            rejection?.Reason);
+    }
+
+    [Fact]
+    public async Task Overlap_window_route_rejects_an_unknown_window()
+    {
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await client.RegisterAsync(ProjectName, "service", CancellationToken.None);
+
+        var read = await http.GetStringAsync($"/api/projects/{ProjectName}/dispatch/overlap-window");
+        Assert.Contains("\"window\":\"in-flight\"", read);
+        var bad = await http.PutAsJsonAsync(
+            $"/api/projects/{ProjectName}/dispatch/overlap-window", new { window = "everything" });
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+    }
+
     private static async Task<Runner::AgentRunner.RunnerClaimResponse> ClaimWithSuccessfulPreflightAsync(
         RClient client, RClaim request)
     {
@@ -291,7 +391,7 @@ public sealed class LeasePlacementEndpointsTests : IDisposable
         response.EnsureSuccessStatusCode();
     }
 
-    private void SeedTask(string state, string key, int order = 1)
+    private void SeedTask(string state, string key, int order = 1, string prompt = "Do the placed work.")
     {
         var dir = Path.Combine(_watchPath, state, key);
         Directory.CreateDirectory(dir);
@@ -305,7 +405,7 @@ public sealed class LeasePlacementEndpointsTests : IDisposable
             kind = TaskKinds.Task,
             cliType = CliTypes.Claude,
         }));
-        File.WriteAllText(Path.Combine(dir, "prompt.md"), "Do the placed work.");
+        File.WriteAllText(Path.Combine(dir, "prompt.md"), prompt);
         File.WriteAllText(Path.Combine(dir, "status.md"), "Result: pending.");
     }
 
@@ -321,10 +421,16 @@ public sealed class LeasePlacementEndpointsTests : IDisposable
     }
 
     private WebApplicationFactory<Program> BuildFactory() =>
-        new WebApplicationFactory<Program>()
+        new TestHostFactory()
             .WithWebHostBuilder(b =>
             {
                 b.UseEnvironment("Test");
+                b.ConfigureTestServices(services =>
+                {
+                    // These requests own claim and completion state. Background
+                    // reconciliation must not race their assertions or teardown.
+                    TestHostFactory.RemoveBackgroundHostedServices(services);
+                });
                 b.ConfigureAppConfiguration((_, cfg) =>
                 {
                     cfg.AddInMemoryCollection(new Dictionary<string, string?>

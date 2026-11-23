@@ -10,14 +10,28 @@ public sealed record StructureNode(string Id, string Kind, string Label, string?
     string? Role = null, string? OwnerLabel = null, bool OtherProject = false,
     string? SystemBoundaryId = null, string? Detail = null, int? Replicas = null,
     string? ProbeObservation = null, string? Probe = null, string? Status = null,
-    StructureObservation? Observation = null);
+    StructureObservation? Observation = null, StructureNodeFacts? Facts = null);
+/// <param name="Id">Stable across reports and restarts: <c>link:{from}&gt;{to}:{kind}</c> (AGT-3954).</param>
 public sealed record StructureLink(string From, string To, string Kind, string Label, string SourceRef,
-    StructureObservation? Observation = null);
+    StructureObservation? Observation = null, string? Id = null, StructureLinkFacts? Facts = null)
+{
+    public static string IdFor(string from, string to, string kind) => $"link:{from}>{to}:{kind}";
+}
 public sealed record StructureObservation(string Difference, string Health, DateTime? ObservedAt = null,
     string? Version = null, string? ExpectedVersion = null, bool Behind = false,
     double? CpuPercent = null, long? MemoryUsedBytes = null, long? MemoryTotalBytes = null,
     int? ActiveGates = null, string? Detail = null);
-public sealed record StructureResponse(IReadOnlyList<StructureNode> Nodes, IReadOnlyList<StructureLink> Links);
+/// <param name="Revision">Increases whenever a node or link of this scope changes; deltas name the revision they start from.</param>
+public sealed record StructureResponse(IReadOnlyList<StructureNode> Nodes, IReadOnlyList<StructureLink> Links,
+    long Revision = 0, DateTime? GeneratedAt = null, int SchemaVersion = StructureResponse.CurrentSchemaVersion)
+{
+    /// <summary>2 adds facts, link ids, revision and observed hosts (AGT-3954). Fields are only ever added.</summary>
+    public const int CurrentSchemaVersion = 2;
+
+    /// <summary>Declared links whose ends are not declared; never serialized.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyList<StructureLink>? UnresolvedLinks { get; init; }
+}
 /// <summary>The control-plane health check that observes a managed service: its kind and current status.</summary>
 public sealed record StructureProbe(string Kind, string Status);
 
@@ -36,42 +50,60 @@ public static class StructureProjection
         string? projectId, string? environmentId,
         Func<ProjectRecord, string?>? repositoryRoot = null,
         IReadOnlyList<WorkspaceSystem>? systems = null,
-        Func<ProjectRecord, string, string, StructureProbe?>? probes = null)
+        Func<ProjectRecord, string, string, StructureProbe?>? probes = null,
+        StructurePlacement? placement = null)
     {
         var nodes = new List<StructureNode>();
         var links = new List<StructureLink>();
         const string manifestRef = "Connectivity:ManifestPath";
+        var known = new HashSet<string>(StringComparer.Ordinal);
         void Add(string id, string kind, string label, string? parent, string? unit = null,
             string? environment = null, string? project = null, string source = manifestRef,
             string? role = null)
-            => nodes.Add(new(id, kind, label, parent, unit, environment, project, "declared", source, role));
+        {
+            known.Add(id);
+            nodes.Add(new(id, kind, label, parent, unit, environment, project, "declared", source, role));
+        }
 
         Add("installation", "boundary", manifest?.InstallationId ?? "Installation", null);
-        if (manifest is not null)
+        // The placement file is the dedicated source and wins; a manifest keeps
+        // declaring whatever the placement file does not name (AGT-3954).
+        void AddPlacement(IReadOnlyList<ConnectivityMachine>? machines, IReadOnlyList<ConnectivityExternal>? externals,
+            IReadOnlyList<ConnectivityStructureLink>? structureLinks, string sourceRef)
         {
-            foreach (var location in (manifest.Machines ?? []).Select(m => m.Location)
+            var added = (machines ?? []).Where(machine => !known.Contains($"machine:{machine.Id}")).ToArray();
+            foreach (var location in added.Select(m => m.Location)
                          .Where(l => !string.IsNullOrWhiteSpace(l)).Distinct(StringComparer.OrdinalIgnoreCase))
-                Add($"location:{location}", "location", location!, "installation");
-            foreach (var machine in manifest.Machines ?? [])
+                if (!known.Contains($"location:{location}"))
+                    Add($"location:{location}", "location", location!, "installation", source: sourceRef);
+            foreach (var machine in added)
                 Add($"machine:{machine.Id}", machine.Kind ?? "physical", machine.Name,
                     machine.ParentId is { Length: > 0 } ? $"machine:{machine.ParentId}" :
                     machine.Location is { Length: > 0 } ? $"location:{machine.Location}" : "installation",
-                    source: $"{manifestRef}#machines/{machine.Id}");
-            foreach (var machine in manifest.Machines ?? [])
+                    source: $"{sourceRef}#machines/{machine.Id}");
+            foreach (var machine in added)
                 foreach (var component in machine.Components ?? [])
                     Add($"component:{machine.Id}:{component.Id}", component.Kind, component.Name,
                         $"machine:{machine.Id}", component.Id, component.EnvironmentId, component.ProjectId,
-                        $"{manifestRef}#machines/{machine.Id}/components/{component.Id}", component.Role);
-            foreach (var external in manifest.Externals ?? [])
+                        $"{sourceRef}#machines/{machine.Id}/components/{component.Id}", component.Role);
+            foreach (var external in (externals ?? []).Where(external => !known.Contains($"external:{external.Id}")))
                 Add($"external:{external.Id}", external.Kind ?? "external", external.Name, null,
-                    source: $"{manifestRef}#externals/{external.Id}");
-            foreach (var link in manifest.StructureLinks ?? [])
+                    source: $"{sourceRef}#externals/{external.Id}");
+            var index = 0;
+            foreach (var link in structureLinks ?? [])
             {
                 static string Resolve(string id) => id.Contains(':') ? id : $"machine:{id}";
-                links.Add(new(Resolve(link.From), Resolve(link.To), link.Kind,
-                    link.Label ?? link.Kind, $"{manifestRef}#structureLinks/{links.Count}"));
+                var id = StructureLink.IdFor(Resolve(link.From), Resolve(link.To), link.Kind);
+                if (links.All(existing => existing.Id != id))
+                    links.Add(new(Resolve(link.From), Resolve(link.To), link.Kind,
+                        link.Label ?? link.Kind, $"{sourceRef}#structureLinks/{index}", Id: id));
+                index++;
             }
         }
+        if (placement is not null)
+            AddPlacement(placement.Machines, placement.Externals, placement.StructureLinks, StructurePlacement.PathKey);
+        if (manifest is not null)
+            AddPlacement(manifest.Machines, manifest.Externals, manifest.StructureLinks, manifestRef);
 
         foreach (var project in projects.Where(p => !p.Archived))
         {
@@ -189,8 +221,14 @@ public static class StructureProjection
             }
             nodes.RemoveAll(n => !keep.Contains(n.Id));
         }
-        return new(nodes, links.Where(l => nodes.Any(n => n.Id == l.From)
-                                       && nodes.Any(n => n.Id == l.To)).ToArray());
+        bool Resolved(StructureLink link) => nodes.Any(n => n.Id == link.From) && nodes.Any(n => n.Id == link.To);
+        // A declared link may end at a host that only reports. The whole picture keeps it
+        // for the observed projection, which knows those nodes (AGT-3954).
+        return new(nodes, links.Where(Resolved).ToArray())
+        {
+            UnresolvedLinks = projectId is null && environmentId is null
+                ? links.Where(link => !Resolved(link)).ToArray() : null,
+        };
     }
 
     /// <summary>

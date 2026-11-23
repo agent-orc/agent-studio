@@ -30,6 +30,12 @@ public sealed record EnvironmentDeclaration(
     public ManagedDatabaseEnvironmentPolicy EffectiveDatabasePolicy => DatabasePolicy ?? ManagedDatabaseEnvironmentPolicy.For(Kind);
     public TelemetryAlertDeclarations TelemetryAlerts { get; init; } = new(TelemetryAlertDeclarations.Defaults, null);
     public bool? Protected { get; init; }
+
+    /// <summary>
+    /// Container deploys receive the Studio OTLP endpoint and an ingest token
+    /// scoped to this environment (M5); see <see cref="DeployTelemetryPolicy"/>.
+    /// </summary>
+    public bool Telemetry { get; init; }
     public bool? Automatic { get; init; }
     public string? Requires { get; init; }
 
@@ -53,7 +59,12 @@ public sealed record DeploymentHistoryItem(DateTime At, string Status, string Ar
 
 public sealed record ProjectEnvironmentView(EnvironmentDeclaration Declaration, string? DeployedArtifact,
     string Health, string? PendingArtifact, IReadOnlyList<DeploymentHistoryItem> History,
-    RunTargetObservation? Observed = null);
+    RunTargetObservation? Observed = null, RuntimeIncident? RuntimeIncident = null);
+
+/// <summary>Incident driven by a host's container observation, independent of application telemetry.</summary>
+public sealed record RuntimeIncident(string Id, string Kind, DateTime StartedAt, DateTime UpdatedAt,
+    int Restarts, DateTime? EndedAt = null, bool OpenedEventRaised = false, bool RecoveryEventRaised = false,
+    string? AlertedKind = null);
 
 public sealed record DeployJob(string Id, string Project, string EnvironmentId, string HostId,
     string Artifact, string Template, string Destination, string? HealthUrl,
@@ -85,6 +96,9 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
 
     /// <summary>The approved managed databases; the run zone provisions or upgrades them only through a deploy job.</summary>
     public IReadOnlyList<ProjectDatabaseDefinition> Databases { get; init; } = [];
+
+    /// <summary>Set when the declaration enables telemetry; the claim adds the endpoint (M5).</summary>
+    public DeployJobTelemetry? Telemetry { get; init; }
     public IReadOnlyList<DeployStepResult> StepResults { get; init; } = [];
     /// <summary>Preview jobs share the normal claim, lease and report queue.</summary>
     public string Kind { get; init; } = "standard";
@@ -111,10 +125,38 @@ public sealed record PreviewJobSpec(string Project, string CardKey, string Sourc
     public string? Dockerfile { get; init; }
 }
 
-public sealed record RunbookStepResult(int Index, bool Success);
+/// <param name="Output">The host's masked output tail of the step, bounded again by <see cref="RunbookStepOutput"/>.</param>
+public sealed record RunbookStepResult(int Index, bool Success, string? Output = null);
+
+/// <summary>
+/// The control plane's bound on reported runbook output. The host masks the secret values it
+/// passed to the script; this applies the credential patterns and the line limits once more,
+/// so a host that sends more cannot grow the run log.
+/// </summary>
+public static class RunbookStepOutput
+{
+    public const int MaxLines = 200;
+    public const int MaxLineLength = 400;
+
+    public static IReadOnlyList<string> Lines(string? output)
+    {
+        if (string.IsNullOrEmpty(output)) return [];
+        var lines = output.Split('\n');
+        return lines.Skip(Math.Max(0, lines.Length - MaxLines))
+            .Select(line => new string(line.Select(ch => ch == '\t' ? ' ' : ch).Where(ch => !char.IsControl(ch))
+                .Take(MaxLineLength * 4).ToArray()))
+            .Select(line => AgentStudio.Security.CredentialRedactor.Redact(line))
+            .Select(line => line.Length > MaxLineLength ? line[..MaxLineLength] + "…" : line)
+            .ToArray();
+    }
+}
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
-    DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
+    DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null)
+{
+    /// <summary>The release the Staging job deployed; null on promotions written before releases named it.</summary>
+    public string? ReleaseId { get; init; }
+}
 
 public sealed record DeploymentFailureCard(string EnvironmentId, string Artifact, DateTime At,
     string Evidence, string? RollbackArtifact);
@@ -135,7 +177,7 @@ public sealed record DeployLeaseRequest(string LeaseToken);
 public sealed record DeployClaimRequest(string HostId);
 public sealed record ReleaseArtifactRequest(string Artifact, string Commit, string? VersionTag = null,
     string? Branch = null, string? Channel = null);
-public sealed record PromotionDecisionRequest(string Artifact);
+public sealed record PromotionDecisionRequest(string Artifact, bool ConfirmMissingSecrets = false);
 public sealed record GateArtifactRequest(string Project, string Artifact, string Commit, string? VersionTag = null,
     string? Branch = null, string? Channel = null);
 
@@ -336,11 +378,14 @@ public sealed partial class ProjectEnvironmentService
                 environment.Protected ? "person" : "stage-healthy-10m",
                 variables.Where(item => item.Secret is not null && item.Tenants.Count == 0
                     && item.TenantTags.Count == 0 && item.Channels.Count == 0)
-                    .Select(item => item.Secret!).ToArray(), 8080)
+                    .Select(item => item.Secret!).ToArray(), 8080,
+                HealthChecksAllowPrivateNetwork: environment.HealthChecksAllowPrivateNetwork)
             {
                 SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
                 Protected = environment.Protected, Automatic = phase.Automatic, Requires = phase.Requires,
+                Telemetry = environment.Telemetry,
             };
+            DeployTelemetryPolicy.RequireNoDeclaredVariables(declaration);
             output.Add(new(id, declaration, null));
         }
         foreach (var file in files)
@@ -370,24 +415,31 @@ public sealed partial class ProjectEnvironmentService
                     Error = $"{file.EnvironmentId}.json diverges from schema 2 project.yml; migrate the declaration before deploying." });
                 continue;
             }
+            // Either file may opt into private-network health checks; the JSON key predates schema 2.
+            var privateNetwork = legacy.HealthChecksAllowPrivateNetwork || environment.HealthChecksAllowPrivateNetwork;
             // The run zone, not SSH, executes an edge-hosted environment (AGT-3877): the host
             // reports health without SSH step results, so its job carries no SSH steps.
             if (legacy.Hosting is not null)
             {
                 output.Add(file with { Declaration = legacy with
                 {
+                    HealthChecksAllowPrivateNetwork = privateNetwork,
                     Variables = variables, Artifacts = definition.Artifacts, Protected = environment.Protected,
                     Automatic = phase.Automatic, Requires = phase.Requires,
+                    Telemetry = legacy.Telemetry || environment.Telemetry,
                 } });
                 continue;
             }
-            output.Add(file with { Declaration = legacy with
+            var migrated = legacy with
             {
-                Template = "ssh-v2",
+                Template = "ssh-v2", HealthChecksAllowPrivateNetwork = privateNetwork,
                 SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
                 Protected = environment.Protected,
                 Automatic = phase.Automatic, Requires = phase.Requires,
-            } });
+                Telemetry = legacy.Telemetry || environment.Telemetry,
+            };
+            DeployTelemetryPolicy.RequireNoDeclaredVariables(migrated);
+            output.Add(file with { Declaration = migrated });
         }
         return InLifecycleOrder(WithDatabases(output, definition.Databases));
     }
@@ -618,6 +670,9 @@ public sealed partial class ProjectEnvironmentService
             : orderValue.ValueKind == JsonValueKind.Number && orderValue.TryGetInt32(out var parsedOrder)
                 && parsedOrder is >= 0 and <= 1000
                 ? parsedOrder : throw new JsonException("order must be a whole number from 0 to 1000.");
+        var telemetry = !value.TryGetProperty("telemetry", out var telemetryValue) ? false
+            : telemetryValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? telemetryValue.GetBoolean()
+            : throw new JsonException("telemetry must be a boolean.");
         return new(id, Required("name"), kind, host, Required("address"), template,
             destination, healthUrl, approval, secrets, containerPort,
             HealthCheckDeclarations.Parse(value, Path.GetFileName(file)),
@@ -626,6 +681,7 @@ public sealed partial class ProjectEnvironmentService
             edgeHosted ? RunTargetHostingDeclaration.Parse(value, Path.GetFileName(file), healthUrl, secrets) : null)
         {
             TenantTargets = targets, Data = HostedDataDeclaration.Parse(value, template, id, Path.GetFileName(file)), Order = order,
+            Telemetry = telemetry,
             DatabasePolicy = edgeHosted ? ManagedDatabaseEnvironmentPolicy.Parse(value, kind, Path.GetFileName(file))
                 : value.TryGetProperty("managedDatabases", out _)
                     ? throw new JsonException("managedDatabases applies only to environments hosted in the run zone (destination \"edge\").")
@@ -649,6 +705,7 @@ public sealed partial class ProjectEnvironmentService
                 Promotions = [.. persisted.Promotions],
                 History = [.. persisted.History],
                 Observed = persisted.Observed,
+                RuntimeIncidents = persisted.RuntimeIncidents,
                 Placements = persisted.Placements,
                 RunTargetRemovals = persisted.RunTargetRemovals,
             };
@@ -660,10 +717,12 @@ public sealed partial class ProjectEnvironmentService
                 var latest = history.FirstOrDefault();
                 var pending = state.Jobs.LastOrDefault(job => job.EnvironmentId == item.Id && !job.IsStop && job.RunbookName is null
                     && (job.Status is "queued" or "claimed"));
+                var observed = state.Observed.LastOrDefault(row => row.EnvironmentId == item.Id)?.Observation;
+                var runtimeIncident = state.RuntimeIncidents.LastOrDefault(row => row.EnvironmentId == item.Id)?.Incident;
                 return new ProjectEnvironmentView(item, latest?.Artifact,
-                    latest is null ? "unknown" : latest.Status is "failed" or "stopped" ? latest.Status : "healthy",
-                    pending?.Artifact, history,
-                    state.Observed.LastOrDefault(row => row.EnvironmentId == item.Id)?.Observation);
+                    runtimeIncident is { EndedAt: null } ? "crash-loop"
+                    : latest is null ? "unknown" : latest.Status is "failed" or "stopped" ? latest.Status : "healthy",
+                    pending?.Artifact, history, observed, runtimeIncident);
             }).ToArray(), state.Promotions.ToArray(), state.Jobs.Select(Sanitize).ToArray(),
                 state.History.Where(row => row.Item.Status == "failed").AsEnumerable().Reverse()
                     .Take(20).Select(row => new DeploymentFailureCard(row.EnvironmentId,
@@ -741,7 +800,8 @@ public sealed partial class ProjectEnvironmentService
             var state = Load(project);
             if (HasOpenPromotion(state, artifact)) return null;
             RequireQuota(project, stage.Id);
-            state.Promotions.Add(new(artifact, stage.Id, production.Id, DateTime.MinValue, "stage-queued"));
+            state.Promotions.Add(new(artifact, stage.Id, production.Id, DateTime.MinValue, "stage-queued")
+                { ReleaseId = releaseId });
             var job = Queue(project, RouteToCurrentHost(stage, current!), artifact, state,
                 actor: "release-gate", releaseId: releaseId) with
             { Variables = [], ResolvedVariables = variables ?? new Dictionary<string, string>(),
@@ -758,12 +818,15 @@ public sealed partial class ProjectEnvironmentService
     /// Queues an already released artifact into one environment with the
     /// release's snapshot of its declaration, on the host the current
     /// declaration names. The caller (the BD-1 lifecycle) has decided that the
-    /// deployment may start.
+    /// deployment may start. With <paramref name="promoteTo"/> a Staging job
+    /// opens the same promotion into that environment as the automatic Staging
+    /// job of <see cref="QueueReleaseJob"/>, unless one is already open for the
+    /// artifact, so its success asks for the same Production approval.
     /// </summary>
     public DeployJob? QueueDeployment(string project, EnvironmentDeclaration target, string artifact, string actor,
         bool rollback, string? tenant = null, string? releaseId = null, string? retryStep = null,
         IReadOnlyDictionary<string, string>? variables = null,
-        IReadOnlyDictionary<string, string>? secretVariableRefs = null)
+        IReadOnlyDictionary<string, string>? secretVariableRefs = null, string? promoteTo = null)
     {
         if (!Digest.IsMatch(artifact)) return null;
         lock (_gate)
@@ -774,6 +837,10 @@ public sealed partial class ProjectEnvironmentService
             if (target.Template == "static" && (variables?.Count > 0 || secretVariableRefs?.Count > 0)) return null;
             var state = Load(project);
             RequireQuota(project, target.Id);
+            if (promoteTo is not null && tenant is null && !rollback && target.Kind == "stage"
+                && IsDeclared(current, promoteTo) && !HasActivePromotion(state, artifact, _clock.GetUtcNow().UtcDateTime))
+                state.Promotions.Add(new(artifact, target.Id, promoteTo, DateTime.MinValue, "stage-queued")
+                    { ReleaseId = releaseId });
             var routed = RouteToCurrentHost(target, current!);
             if (tenant is not null)
                 routed = RouteTenant(routed, tenant, target.TenantTargets[tenant]);
@@ -947,6 +1014,33 @@ public sealed partial class ProjectEnvironmentService
     {
         if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit)) return false;
         if (!HasIndependentReleaseEvidence(project, artifact, commit)) return false;
+        return RecordBuiltArtifact(project, artifact, commit,
+            () => _registry.PushVerified(project, commit, artifact, builderIdentity));
+    }
+
+    /// <summary>
+    /// An integration release: Studio packed <paramref name="packagePath"/>
+    /// from <paramref name="commit"/> after the project's own gate passed on
+    /// it (<paramref name="gateRunId"/>). Records it like a gate-built
+    /// artifact and returns the artifact, or null when the commit is not on
+    /// the integration branch or the package cannot be stored.
+    /// </summary>
+    public string? RegisterIntegrationArtifact(string project, string commit, string packagePath, string gateRunId)
+    {
+        if (!Commit.IsMatch(commit)) return null;
+        string artifact;
+        using (var stream = File.OpenRead(packagePath))
+            artifact = "release-package@sha256:" + Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        return RecordBuiltArtifact(project, artifact, commit,
+            () => _registry.PushStudioPackage(project, commit, packagePath, gateRunId, IntegrationReleaseBuilder))
+            ? artifact : null;
+    }
+
+    /// <summary>Builder identity of packages Studio packs from its own gate verdict.</summary>
+    public const string IntegrationReleaseBuilder = "studio-integration";
+
+    private bool RecordBuiltArtifact(string project, string artifact, string commit, Func<bool> register)
+    {
         var repo = _git.ResolveRepoRootForProject(project);
         if (repo is null || !_git.IsGitRepo(repo)) return false;
         var branch = _git.ResolveIntegrationBranch(repo, _settings.Get(project).IntegrationBranch);
@@ -955,7 +1049,7 @@ public sealed partial class ProjectEnvironmentService
             return false;
         lock (_gate)
         {
-            if (!_registry.PushVerified(project, commit, artifact, builderIdentity)) return false;
+            if (!register()) return false;
             var path = ArtifactPath(project, commit, artifact);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             if (File.Exists(path))
@@ -1460,6 +1554,8 @@ public sealed partial class ProjectEnvironmentService
             }
             var results = job.RunbookName is null ? Array.Empty<RunbookStepResult>() : report.RunbookResults?
                 .Take(job.RunbookSteps.Count).Where(item => item.Index >= 0 && item.Index < job.RunbookSteps.Count)
+                .Select(item => item with { Output = item.Output is null ? null
+                    : string.Join('\n', RunbookStepOutput.Lines(item.Output)) })
                 .ToArray() ?? [];
             var validResults = job.RunbookName is null || results.Select((item, index) => item.Index == index).All(value => value);
             var expectedSteps = job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}").ToArray();
@@ -1649,6 +1745,8 @@ public sealed partial class ProjectEnvironmentService
                 Hosting = deployed.Hosting ?? current.Hosting,
                 SshSteps = deployed.SshSteps, Variables = deployed.Variables, Artifacts = deployed.Artifacts,
                 Databases = deployed.Databases,
+                // The release the rollback returns to decided whether its workload sends telemetry.
+                Telemetry = deployed.Telemetry is not null,
             }
             : current;
 
@@ -1735,12 +1833,36 @@ public sealed partial class ProjectEnvironmentService
             && item.Status is not ("rejected" or "failed" or "cancelled"));
 
     /// <summary>
+    /// A promotion of the artifact that is still on its way to Production. A
+    /// pending one past its window counts as expired, even before the queue
+    /// has written that.
+    /// </summary>
+    private static bool HasActivePromotion(State state, string artifact, DateTime now)
+        => state.Promotions.Any(item => item.Artifact == artifact
+            && (item.Status is "stage-queued" or "production-queued"
+                || item.Status == "pending" && !(item.ExpiresAt <= now)));
+
+    /// <summary>
     /// A failed redeploy leaves the last healthy deployment running. Only a
     /// confirmed stop ends that deployment.
     /// </summary>
     internal static bool IsRunning(IEnumerable<EnvironmentHistoryRow> history, string environmentId)
         => history.LastOrDefault(row => row.EnvironmentId == environmentId
             && row.Item.Status is "healthy" or "rolled-back" or "stopped")?.Item.Status is "healthy" or "rolled-back";
+
+    /// <summary>
+    /// The environments a host runs now: a healthy deploy report (or rollback) without a
+    /// confirmed stop after it. Health checks watch only these. Null when the deploy state is unreadable.
+    /// </summary>
+    public IReadOnlySet<string>? RunningEnvironments(string project)
+    {
+        lock (_gate)
+        {
+            if (TryLoad(project) is not { } state) return null;
+            return state.History.Select(row => row.EnvironmentId).Distinct(StringComparer.Ordinal)
+                .Where(id => IsRunning(state.History, id)).ToHashSet(StringComparer.Ordinal);
+        }
+    }
 
     private static bool IsDeclared(IReadOnlyList<EnvironmentDeclaration>? declarations, string environmentId)
         => declarations?.Any(item => item.Id == environmentId) == true;
@@ -1776,7 +1898,8 @@ public sealed partial class ProjectEnvironmentService
             GuidedFailure: declaration.GuidedFailure, RetryStep: retryStep, RetryOfJobId: retryOfJobId,
             Hosting: declaration.Hosting, EnvironmentKind: declaration.Kind)
         { Tenant = tenant, Data = declaration.Data, SshSteps = OnHost(declaration.SshSteps, declaration.TargetHostId),
-            Variables = declaration.Variables, Artifacts = declaration.Artifacts, Databases = declaration.Databases };
+            Variables = declaration.Variables, Artifacts = declaration.Artifacts, Databases = declaration.Databases,
+            Telemetry = DeployTelemetryPolicy.For(declaration) };
         state.Jobs.Add(job);
         return job;
     }
@@ -1849,6 +1972,7 @@ public sealed partial class ProjectEnvironmentService
         public List<EnvironmentPromotion> Promotions { get; set; } = [];
         public List<EnvironmentHistoryRow> History { get; set; } = [];
         public List<RunTargetObservedRow> Observed { get; set; } = [];
+        public List<RuntimeIncidentRow> RuntimeIncidents { get; set; } = [];
         public List<RunTargetPlacement> Placements { get; set; } = [];
         public List<RunTargetRemovalRecord> RunTargetRemovals { get; set; } = [];
         public List<ManagedDatabaseRecord> Databases { get; set; } = [];
@@ -1856,4 +1980,5 @@ public sealed partial class ProjectEnvironmentService
     }
     public sealed record EnvironmentHistoryRow(string EnvironmentId, DateTime At, DeploymentHistoryItem Item);
     public sealed record RunTargetObservedRow(string EnvironmentId, RunTargetObservation Observation);
+    public sealed record RuntimeIncidentRow(string EnvironmentId, RuntimeIncident Incident);
 }

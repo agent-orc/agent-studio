@@ -12,6 +12,7 @@ import {
   ViewChild, ViewEncapsulation,
 } from '@angular/core';
 import { ModalStackService } from '../../services/modal-stack.service';
+import { NotificationService } from '../../services/notification.service';
 import { FormsModule } from '@angular/forms';
 import type {
   TaskDetail,
@@ -78,6 +79,7 @@ import { CardEnvironmentBadgesComponent } from '../deployments/components/card-e
 import { TASK_REFERENCE_CHAT_PROVIDER } from '../../services/task-reference-chat.provider';
 import { MobileLanePrimaryComponent, type MobileLanePrimary } from './components/mobile-lane-primary/mobile-lane-primary.component';
 import { MobilePaneSwitcherComponent } from './components/mobile-pane-switcher/mobile-pane-switcher.component';
+import { HealthIncidentCardComponent } from './components/health-incident-card/health-incident-card.component';
 
 @Component({
   selector: 'app-task-detail, app-job-detail',
@@ -100,9 +102,8 @@ import { MobilePaneSwitcherComponent } from './components/mobile-pane-switcher/m
     ArchivedTaskNoticeComponent,
     TooltipDirective,
     OlderBriefOfferComponent,
-    TaskResourceStatusComponent,
-    BatchDetailComponent, CardEnvironmentBadgesComponent,
-    MobileLanePrimaryComponent, MobilePaneSwitcherComponent,
+    TaskResourceStatusComponent, BatchDetailComponent, CardEnvironmentBadgesComponent,
+    MobileLanePrimaryComponent, MobilePaneSwitcherComponent, HealthIncidentCardComponent,
   ],
   providers: [
     TASK_REFERENCE_CHAT_PROVIDER,
@@ -137,9 +138,9 @@ export class TaskDetailComponent implements OnDestroy {
   private clientService = inject(ClientService);
   private undo = inject(UndoController);
   readonly detail = input.required<TaskDetail>();
+  readonly isHealthIncident = computed(() => this.detail().info.creationSource === 'environment-health' && this.detail().info.id.startsWith('health-'));
   readonly defaultThinkingLevel = computed(() =>
-    this.clientService.resolve(this.detail().info.ownerClientId).defaultThinkingLevel ?? null
-  );
+    this.clientService.resolve(this.detail().info.ownerClientId).defaultThinkingLevel ?? null);
   readonly watchPaths = input<WatchPathEntry[]>([]);
   /** Peers in the same on-disk lane as the current job, in kanban order. */
   readonly lanePeers = input<TaskInfo[]>([]);
@@ -390,6 +391,7 @@ export class TaskDetailComponent implements OnDestroy {
   // re-opening the detail view (or the 2s board refresh re-emitting the same
   // failed snapshot) does not re-pop the dialog. Keyed by `${taskKey}|${startedAt}`.
   private lastShownFailureKey: string | null = null;
+  private readonly notificationService = inject(NotificationService);
 
   constructor() {
     // Load the initial catalog for whatever CLI the current job uses; the effect below
@@ -411,6 +413,7 @@ export class TaskDetailComponent implements OnDestroy {
         // `(keydown.escape)` on the title input then runs and cancels
         // the edit; closing the whole panel would feel broken.
         if (this.editingTitle() || this.editingPrompt()) return false;
+        if (this.notificationService.dismissNewestPersistent()) return true; // AGT-3830: close a sticky notice before the card under it.
         if (this.showLogOverlay()) {
           this.showLogOverlay.set(false);
           return true;
@@ -464,7 +467,7 @@ export class TaskDetailComponent implements OnDestroy {
     this.loadModelCatalog(next);
 
     this.jobService
-      .setJobCliType(this.detail().info.id, next, this.detail().info.watchPath)
+      .setJobCliType(this.detail().info.id, next, this.detail().info.watchPath, undefined, this.detail().info.pinMode ?? 'preference')
       .subscribe({
         next: () => this.fileSaved.emit(),
         error: (err) => this.showError(err),
@@ -932,34 +935,18 @@ export class TaskDetailComponent implements OnDestroy {
   onModelDraftChange(value: string): void {
     const trimmed = (value ?? '').trim();
     this.modelDraft.set(trimmed);
-    const current = this.detail().info.model ?? '';
-    if (trimmed === current) return;
-
-    this.jobService
-      .setJobModel(
-        this.detail().info.id,
-        trimmed === '' ? null : trimmed,
-        this.detail().info.watchPath,
-      )
-      .subscribe({
-        error: (err) => this.showError(err),
-      });
+    const info = this.detail().info;
+    if (trimmed === (info.model ?? '')) return;
+    this.jobService.setJobModel(info.id, trimmed || null, info.watchPath, info.pinMode ?? 'preference')
+      .subscribe({ error: err => this.showError(err) });
   }
 
   onThinkingLevelDraftChange(value: string | null): void {
     this.thinkingLevelDraft.set(value);
-    const current = this.detail().info.thinkingLevel ?? null;
-    if (value === current) return;
-
-    this.jobService
-      .setJobThinkingLevel(
-        this.detail().info.id,
-        value,
-        this.detail().info.watchPath,
-      )
-      .subscribe({
-        error: (err) => this.showError(err),
-      });
+    const info = this.detail().info;
+    if (value === (info.thinkingLevel ?? null)) return;
+    this.jobService.setJobThinkingLevel(info.id, value, info.watchPath, info.pinMode ?? 'preference')
+      .subscribe({ error: err => this.showError(err) });
   }
 
   /**
@@ -1016,6 +1003,7 @@ export class TaskDetailComponent implements OnDestroy {
           info.id,
           change.model === '' ? null : change.model,
           info.watchPath,
+          info.pinMode ?? 'preference',
         )
         .subscribe({
           next: () => {
@@ -1031,7 +1019,7 @@ export class TaskDetailComponent implements OnDestroy {
 
     const thinkingPut = () => {
       this.jobService
-        .setJobThinkingLevel(info.id, change.thinkingLevel, info.watchPath)
+        .setJobThinkingLevel(info.id, change.thinkingLevel, info.watchPath, info.pinMode ?? 'preference')
         .subscribe({
           next: () => this.fileSaved.emit(),
           error: (err) => {
@@ -1043,7 +1031,7 @@ export class TaskDetailComponent implements OnDestroy {
 
     if (cliChanged) {
       this.jobService
-        .setJobCliType(info.id, change.cliType, info.watchPath)
+        .setJobCliType(info.id, change.cliType, info.watchPath, undefined, info.pinMode ?? 'preference')
         .subscribe({
           next: () => {
             if (modelChanged) modelPut();

@@ -36,7 +36,7 @@
           <dd class="usage-detail__muted">From <time [attr.datetime]="s.iso">{{ s.local }}</time></dd>
           <dd class="usage-detail__utc" data-testid="usage-detail-week-utc">Start {{ s.utc }}; reset {{ c.weekEnd?.utc }}</dd>
         }
-        @if (c.budgetWeekly) { <dd class="usage-detail__muted">Budget {{ c.budgetWeekly }}, {{ c.budgetWeeklyRemaining }}</dd> }
+        @if (c.budgetWeekly) { <dd class="usage-detail__muted">{{ c.budgetWeeklySpent }} priced spend / weekly USD budget {{ c.budgetWeekly }}, {{ c.budgetWeeklyRemaining }}. Budget resets Monday 00:00 UTC. Unpriced usage is outside the budget.</dd> }
       </div>
     </dl>
 
@@ -54,6 +54,7 @@
                 <app-status-indicator tone="warning" [label]="p.coverageLabel" [compact]="true"
                                       testId="usage-detail-project-coverage" />
               }
+              @if (p.budget) { <small class="usage-detail__budget">{{ p.budgetSpent }} priced spend / weekly budget {{ p.budget }}, {{ p.budgetRemaining }}. Resets Monday 00:00 UTC.</small> }
             </th>
             <td class="usage-detail__num" data-testid="usage-detail-project-today">{{ p.today }}</td>
             <td class="usage-detail__num" data-testid="usage-detail-project-week">{{ p.week }}</td>

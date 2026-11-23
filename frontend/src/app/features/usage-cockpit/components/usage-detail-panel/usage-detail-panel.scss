@@ -222,3 +222,10 @@ time + .usage-detail__muted,
   outline: 2px solid var(--studio-accent-strong);
   outline-offset: 2px;
 }
+
+.usage-detail__budget {
+  display: block;
+  color: var(--studio-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: normal;
+}
