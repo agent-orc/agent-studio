@@ -135,12 +135,12 @@ public static class UsageCockpitProjection
                     if (at >= calendar.DayStartUtc && at < calendar.DayEndUtc && unpricedTodayIds.Add(runId)) unpricedTodayRuns++;
                     continue;
                 }
-                if (ReceiptTokenPricing.MissingCacheSplit(usage.Model, usage.InputTokens, usage.CacheReadTokens,
-                    usage.InputIncludesCached, usage.UsageNormalization)) cacheSplitMissing = true;
+                var missingCacheSplit = ReceiptTokenPricing.MissingCacheSplit(usage.Model, usage.InputTokens,
+                    usage.CacheReadTokens, usage.InputIncludesCached, usage.UsageNormalization);
+                cacheSplitMissing |= missingCacheSplit;
                 if (!estimate.ModelKnown) {
                     unpriced = true;
-                    if (!ReceiptTokenPricing.MissingCacheSplit(usage.Model, usage.InputTokens, usage.CacheReadTokens,
-                        usage.InputIncludesCached, usage.UsageNormalization)) unpricedModels.Add(usage.Model ?? "Unknown model");
+                    if (!missingCacheSplit) unpricedModels.Add(usage.Model ?? "Unknown model");
                     var runId = entry.JobId ?? $"receipt:{at.Ticks}";
                     if (unpricedWeekIds.Add(runId)) unpricedWeekRuns++;
                     if (at >= calendar.DayStartUtc && at < calendar.DayEndUtc && unpricedTodayIds.Add(runId)) unpricedTodayRuns++;

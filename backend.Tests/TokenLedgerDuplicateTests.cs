@@ -58,6 +58,43 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         catch { /* best-effort */ }
     }
 
+    [Fact]
+    public void Receipt_collapse_preserves_input_order_without_duplicates()
+    {
+        TaskTokenCall[] calls =
+        [
+            new() { Ts = CodexAt, InputTokens = 100 },
+            new() { Ts = SessionAt, InputTokens = 200 },
+        ];
+
+        var kept = TokenLedgerDuplicates.CollapseCalls(calls, out var collapsed);
+
+        Assert.Same(calls, kept);
+        Assert.Equal(TokenLedgerCollapseCount.None, collapsed);
+    }
+
+    [Fact]
+    public void Receipt_collapse_keeps_earliest_attribution_without_sorting_unrelated_calls()
+    {
+        var original = new TaskTokenCall
+        {
+            Ts = SessionAt, Model = "gpt-6-sol", InputTokens = 100,
+            ParticipantId = $"agent:remote-runner:{Attempt}:usage:turn:00000000:00",
+        };
+        var replay = original with
+        {
+            Ts = SessionAt.AddDays(1), Model = "claude-opus-5-5",
+            ParticipantId = $"agent:remote-runner:{LaterAttempt}:usage:turn:00000000:00",
+        };
+        var unrelated = new TaskTokenCall { Ts = CodexAt, InputTokens = 200 };
+
+        var kept = TokenLedgerDuplicates.CollapseCalls([replay, unrelated, original], out var collapsed);
+
+        Assert.Equal(new[] { unrelated, original }, kept);
+        Assert.Equal(1, collapsed.Entries);
+        Assert.Equal(100, collapsed.Tokens);
+    }
+
     [Theory]
     [InlineData("AGT-3897", 23_140_000, 9, 31)]
     [InlineData("AGT-3891", 15_340_000, 9, 16)]

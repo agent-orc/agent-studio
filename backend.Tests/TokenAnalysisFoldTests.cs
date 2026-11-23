@@ -99,6 +99,9 @@ public sealed class TokenAnalysisFoldTests
         Assert.Equal(2, events.Count);
         Assert.Equal(T0, events[0].At);
         Assert.Equal(T1, events[1].At);
+        Assert.All(events, item => Assert.Equal(1, item.Attempt));
+        Assert.Equal(TokenUsageKinds.Coding, events[0].Kind);
+        Assert.Equal(TokenUsageKinds.FixRound, events[1].Kind);
         Assert.Single(TokenAnalysisFold.DuplicateCodingEvents(events));
     }
 
