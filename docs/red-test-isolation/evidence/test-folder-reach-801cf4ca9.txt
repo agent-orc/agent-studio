@@ -1,0 +1,4 @@
+source folders total 192
+backend.Tests files 1312 mapped 1216 unmapped 96 median folders 2.0 p90 8 max 25
+runner.Tests files 193 mapped 182 unmapped 11 median folders 1.0 p90 2 max 6
+task-server.Tests files 124 mapped 105 unmapped 19 median folders 1 p90 2 max 3
