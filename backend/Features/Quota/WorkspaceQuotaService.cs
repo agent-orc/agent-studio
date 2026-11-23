@@ -186,23 +186,15 @@ public sealed class WorkspaceQuotaService
 
     public CardBudget GetCardBudget(string workspaceId, string projectId, string cardId)
     {
-        var project = _projects.List().FirstOrDefault(p => p.Id == projectId && p.WorkspaceId == workspaceId)
-            ?? throw new KeyNotFoundException("Project does not belong to workspace.");
-        var task = _scanner.ScanAllJobsWithArchive().FirstOrDefault(t => t.ProjectName == project.DisplayName
-            && new[] { t.Id, t.Key, t.TaskKey }.Contains(cardId, StringComparer.OrdinalIgnoreCase))
-            ?? throw new KeyNotFoundException("Unknown card in project.");
+        var task = ResolveBudgetCard(workspaceId, projectId, cardId);
         lock (_gate) { Reload(); return _state.Cards?.GetValueOrDefault(projectId + "/" + task.Id) ?? new(null, null); }
     }
 
     public void SetCardBudget(string workspaceId, string projectId, string cardId, CardBudget budget)
     {
-        var project = _projects.List().FirstOrDefault(p => p.Id == projectId && p.WorkspaceId == workspaceId)
-            ?? throw new KeyNotFoundException("Project does not belong to workspace.");
         if (string.IsNullOrWhiteSpace(cardId) || budget is { Usd: < 0 } or { UncachedTokens: < 0 })
             throw new ArgumentException("Card id and nonnegative budget are required.");
-        var task = _scanner.ScanAllJobsWithArchive().FirstOrDefault(t => t.ProjectName == project.DisplayName
-            && new[] { t.Id, t.Key, t.TaskKey }.Contains(cardId, StringComparer.OrdinalIgnoreCase))
-            ?? throw new KeyNotFoundException("Unknown card in project.");
+        var task = ResolveBudgetCard(workspaceId, projectId, cardId);
         lock (_gate)
         {
             Reload();
@@ -215,17 +207,33 @@ public sealed class WorkspaceQuotaService
         }
     }
 
+    private TaskInfo ResolveBudgetCard(string workspaceId, string projectId, string cardId)
+    {
+        var project = _projects.List().FirstOrDefault(p => p.Id == projectId && p.WorkspaceId == workspaceId)
+            ?? throw new KeyNotFoundException("Project does not belong to workspace.");
+        return FindCard(_scanner.ScanAllJobsWithArchive(), project, cardId)
+            ?? throw new KeyNotFoundException("Unknown card in project.");
+    }
+
+    private static string?[] CardAliases(TaskInfo? task, string cardId)
+        => task is null ? [cardId] : [task.Id, task.Key, task.TaskKey];
+
+    private static TaskInfo? FindCard(IEnumerable<TaskInfo> tasks, ProjectRecord project, string cardId)
+        => tasks.FirstOrDefault(t => t.ProjectName == project.DisplayName
+            && CardAliases(t, t.Id).Contains(cardId, StringComparer.OrdinalIgnoreCase));
+
     private QuotaAdmission? CardAdmission(ProjectRecord project, string cardId)
     {
         lock (_gate) { Reload(); if (_state.Cards is not { Count: > 0 }) return null; }
-        var task = _scanner.ScanAllJobsWithArchive().FirstOrDefault(t => t.ProjectName == project.DisplayName
-            && new[] { t.Id, t.Key, t.TaskKey }.Contains(cardId, StringComparer.OrdinalIgnoreCase));
-        var aliases = task is null ? new[] { cardId } : new[] { task.Id, task.Key, task.TaskKey };
-        cardId = task?.Id ?? cardId;
+        var task = FindCard(_scanner.ScanAllJobsWithArchive(), project, cardId);
         CardBudget? budget;
-        lock (_gate) { Reload(); budget = _state.Cards?.GetValueOrDefault(project.Id + "/" + cardId); }
-        if (budget is null) return null;
-        var ledger = _tokens.LoadFreshSnapshot(project.DisplayName, project.StorageLocation);
+        lock (_gate) { Reload(); budget = _state.Cards?.GetValueOrDefault(project.Id + "/" + (task?.Id ?? cardId)); }
+        return budget is null ? null : CardAdmission(budget, CardAliases(task, cardId),
+            _tokens.LoadFreshSnapshot(project.DisplayName, project.StorageLocation));
+    }
+
+    private QuotaAdmission? CardAdmission(CardBudget budget, string?[] aliases, ProjectTokenLedgerSnapshot ledger)
+    {
         if (ledger.Freshness.Status != "complete") return new(false, "card-budget-meter-unavailable: card usage is unavailable.", true);
         long tokens = 0;
         decimal cost = 0;
@@ -514,23 +522,39 @@ public sealed class WorkspaceQuotaService
 
     public QuotaAdmission ProjectAdmission(string projectName)
     {
-        var admission = Admit(projectName);
         var project = _projects.FindByIdOrDisplayName(projectName);
-        if (project is null) return admission;
-        List<string> ids;
-        lock (_gate) { Reload(); ids = (_state.Cards?.Keys ?? Enumerable.Empty<string>())
-            .Where(key => key.StartsWith(project.Id + "/", StringComparison.Ordinal))
-            .Select(key => key[(project.Id.Length + 1)..]).ToList(); }
-        if (ids.Count == 0) return admission;
+        if (project is null) return Admit(projectName);
+        var admission = HasLimits() ? Admit(project, hosting: false) : new QuotaAdmission(true, null);
+        return admission with { CardRefusals = ProjectCardRefusals(project,
+            new Lazy<List<TaskInfo>>(_scanner.ScanAllJobsWithArchive)) };
+    }
+
+    /// <summary>One task snapshot and one fresh project ledger serve all of its card budgets.</summary>
+    private IReadOnlyDictionary<string, string> ProjectCardRefusals(ProjectRecord project, Lazy<List<TaskInfo>> tasks)
+    {
+        List<KeyValuePair<string, CardBudget>> budgets;
+        var prefix = project.Id + "/";
+        lock (_gate)
+        {
+            Reload();
+            budgets = (_state.Cards ?? new Dictionary<string, CardBudget>())
+                .Where(pair => pair.Key.StartsWith(prefix, StringComparison.Ordinal)).ToList();
+        }
         var refusals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var id in ids)
-            if (CardAdmission(project, id) is { Allowed: false } refusal)
-            {
-                var task = _scanner.ScanAllJobsWithArchive().FirstOrDefault(t => t.Id == id && t.ProjectName == project.DisplayName);
-                foreach (var alias in task is null ? new[] { id } : new[] { task.Id, task.Key, task.TaskKey })
-                    if (!string.IsNullOrWhiteSpace(alias)) refusals[alias] = refusal.Message ?? "card-budget-reached";
-            }
-        return admission with { CardRefusals = refusals };
+        if (budgets.Count == 0) return refusals;
+        var cards = tasks.Value.Where(task => task.ProjectName == project.DisplayName)
+            .GroupBy(task => task.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var ledger = _tokens.LoadFreshSnapshot(project.DisplayName, project.StorageLocation);
+        foreach (var (key, budget) in budgets)
+        {
+            var id = key[prefix.Length..];
+            var aliases = CardAliases(cards.GetValueOrDefault(id), id);
+            if (CardAdmission(budget, aliases, ledger) is not { Allowed: false } refusal) continue;
+            foreach (var alias in aliases)
+                if (!string.IsNullOrWhiteSpace(alias)) refusals[alias] = refusal.Message ?? "card-budget-reached";
+        }
+        return refusals;
     }
 
     public QuotaAdmission Admit(string projectName, bool hosting = false, string? cardId = null)
@@ -608,8 +632,9 @@ public sealed class WorkspaceQuotaService
                 snapshot.OverrideActive, snapshot.CodingAllowed, snapshot.HostingAllowed, true);
         }
         var cardRefusals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var tasks = new Lazy<List<TaskInfo>>(_scanner.ScanAllJobsWithArchive);
         foreach (var project in projects)
-            foreach (var refusal in ProjectAdmission(project.DisplayName).CardRefusals ?? new Dictionary<string, string>())
+            foreach (var refusal in ProjectCardRefusals(project, tasks))
                 cardRefusals[project.DisplayName + "/" + refusal.Key] = refusal.Value;
         return new(workspaceId, Scope(null, workspaceView),
             projects.Select(project => Scope(project, views[project.Id])).ToList(), cardRefusals);

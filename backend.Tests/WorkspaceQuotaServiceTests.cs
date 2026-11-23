@@ -25,6 +25,49 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "workspace-quota-" + Guid.NewGuid().ToString("N"));
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 16, 12, 0, 0, TimeSpan.Zero));
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Admission_projection_reads_one_task_snapshot_for_multiple_card_budgets(bool board)
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "batch-cards"), "Batch cards", workspace.Id, _clock);
+        SeedTask(project.StorageLocation, "first-card", key: "BAT-1");
+        SeedTask(project.StorageLocation, "second-card", key: "BAT-2", state: TaskStates.Archive);
+        var scanner = new CountingScanner(services);
+        var quota = ActivatorUtilities.CreateInstance<WorkspaceQuotaService>(services, scanner);
+        quota.SetCardBudget(workspace.Id, project.Id, "BAT-1", new(null, 0));
+        quota.SetCardBudget(workspace.Id, project.Id, "BAT-2", new(null, 0));
+        scanner.FolderReads = 0;
+
+        var refusals = board ? quota.BoardAdmission(workspace.Id).CardRefusals!
+            : quota.ProjectAdmission(project.DisplayName).CardRefusals!;
+
+        Assert.Equal(2, scanner.FolderReads);
+        var prefix = board ? project.DisplayName + "/" : "";
+        foreach (var alias in new[] { "first-card", "BAT-1", "second-card", "BAT-2" })
+            Assert.Contains("card-budget-tokens", refusals[prefix + alias]);
+    }
+
+    private sealed class CountingScanner(IServiceProvider services) : TaskScannerService(
+        services.GetRequiredService<IConfiguration>(),
+        services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<TaskScannerService>>(),
+        services.GetRequiredService<AgentStudio.Review.SummaryGenerationService>(),
+        projectRegistry: services.GetRequiredService<ProjectRegistry>())
+    {
+        public int FolderReads;
+
+        public override TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state, bool bypassMemo = false)
+        {
+            Interlocked.Increment(ref FolderReads);
+            return base.ScanJobFolder(jobDir, entry, state, bypassMemo);
+        }
+    }
+
     [Fact]
     public async Task Weekly_usd_and_cache_policy_persist_and_use_priced_receipts()
     {
