@@ -235,6 +235,7 @@
 /api/projects/{projectName}/design/overview	free	-	-	-
 /api/projects/{projectName}/design/references	free	-	-	-
 /api/projects/{projectName}/design/references/{fileName}	free	-	-	-
+/api/projects/{projectName}/dispatch/overlap-window	free	-	-	-
 /api/projects/{projectName}/environments	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/health	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/databases/	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
