@@ -251,6 +251,22 @@ public sealed class TestQuarantineGateBehaviorTests : IDisposable
         Assert.All(File.ReadAllLines(Invocations), line => Assert.Contains("Architecture", line));
     }
 
+    [Fact]
+    public async Task A_guard_step_that_fails_without_a_failing_guard_test_is_no_guard_violation()
+    {
+        // AGT-4020: on 23 November a guard step that did not get to a red guard
+        // test still reported "guard violation, full suite not run", twice.
+        WriteFakeDotNet(guardFails: false, suiteFailures: [], guardExitWithoutTests: 2);
+
+        var result = await RunGateAsync();
+
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.False(result.GuardViolation);
+        Assert.StartsWith("guard step failed without a failing guard test (exit 2 before any test failed), full suite not run",
+            result.Reason);
+        Assert.DoesNotContain("guard violation", result.Reason);
+    }
+
     private Task<BuildTestGateResult> RunGateAsync()
     {
         var runner = new BuildTestGateRunner(
@@ -287,7 +303,7 @@ public sealed class TestQuarantineGateBehaviorTests : IDisposable
     /// fails with one guard test when asked to, the full suite prints the given
     /// failures in the VSTest console shape on every run.
     /// </summary>
-    private void WriteFakeDotNet(bool guardFails, IReadOnlyList<string> suiteFailures)
+    private void WriteFakeDotNet(bool guardFails, IReadOnlyList<string> suiteFailures, int? guardExitWithoutTests = null)
     {
         var suite = suiteFailures.Count == 0
             ? "exit 0\n"
@@ -299,7 +315,9 @@ public sealed class TestQuarantineGateBehaviorTests : IDisposable
             "  *Architecture*)\n" +
             (guardFails
                 ? "    echo \"  Failed Product.Tests.Architecture.FeatureFolderBoundaryTests.NoCrossFeatureImports [3 ms]\"\n    exit 1;;\n"
-                : "    exit 0;;\n") +
+                : guardExitWithoutTests is { } code
+                    ? $"    echo \"Test run aborted: the test host stopped before discovery\"\n    exit {code};;\n"
+                    : "    exit 0;;\n") +
             "esac\n" +
             suite);
         if (!OperatingSystem.IsWindows())

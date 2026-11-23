@@ -103,6 +103,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     private readonly Func<RemoteDeliveryIntegrationRequest, bool> _isCurrentReview;
     private readonly Func<RemoteDeliveryIntegrationRequest, bool> _isAdmissibleDelivery;
     private readonly Action<RemoteDeliveryIntegrationRequest> _reclaimAfterIntegration;
+    private readonly Func<IReadOnlyList<RemoteDeliveryIntegrationRequest>, Task>? _planTrain;
+    private readonly DeliveryIntegrationQueueBoard _board;
     private long _sequence;
 
     /// <summary>Error prefix of a review-driven delivery refused at dequeue because its card was reissued (AGT-3091).</summary>
@@ -120,7 +122,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         GitService? git = null,
         BranchReclaimTriggerService? branchReclaim = null,
         IConfiguration? configuration = null,
-        ConceptDeliveryPostSteps? conceptDelivery = null)
+        ConceptDeliveryPostSteps? conceptDelivery = null,
+        DeliveryIntegrationQueueBoard? queueBoard = null)
         : this(
             request => IntegrateDeliveryAsync(
                 request,
@@ -150,9 +153,26 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                        == request.ReviewAttemptId,
             request => OwnsRequest(request, configuration)
                 && IsReviewedDeliveryAdmissible(request, scanner, authority),
-            request => ReclaimBranchesAfterIntegration(request, scanner, git, branchReclaim))
+            request => ReclaimBranchesAfterIntegration(request, scanner, git, branchReclaim),
+            configuration: null,
+            planTrain: queue => PlanTrainAsync(runner, queue),
+            queueBoard: queueBoard)
     {
     }
+
+    /// <summary>
+    /// AGT-4020: hands the head and every delivery waiting behind it on the
+    /// same integration branch to the runner's post-merge train, which compiles
+    /// their combined tree once in strategy fast and does nothing otherwise.
+    /// </summary>
+    private static Task PlanTrainAsync(MergeIntoDevelopRunner runner, IReadOnlyList<RemoteDeliveryIntegrationRequest> queue)
+        => runner.PlanPostMergeTrainAsync(
+            queue[0].Project,
+            queue[0].WatchPath,
+            queue[0].IntegrationBranch,
+            queue.Select(request => new PostMergeTrainRequest(
+                request.JobId, request.JobFolderPath, request.ReviewedResultSha)).ToArray(),
+            CancellationToken.None);
 
     /// <summary>
     /// A concept card takes the same task-branch merge, bracketed by its
@@ -195,8 +215,12 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         Func<RemoteDeliveryIntegrationRequest, bool>? isCurrentReview = null,
         Func<RemoteDeliveryIntegrationRequest, bool>? isAdmissibleDelivery = null,
         Action<RemoteDeliveryIntegrationRequest>? reclaimAfterIntegration = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        Func<IReadOnlyList<RemoteDeliveryIntegrationRequest>, Task>? planTrain = null,
+        DeliveryIntegrationQueueBoard? queueBoard = null)
     {
+        _planTrain = planTrain;
+        _board = queueBoard ?? new DeliveryIntegrationQueueBoard();
         _integrate = integrate;
         _startAgentRound = startAgentRound ?? ((_, _) => Task.FromResult(
             new IntegrationAgentRoundStartResult(false, "No automatic agent-round boundary was configured.")));
@@ -317,6 +341,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 projectQueue.Running = true;
                 startDrain = true;
             }
+            PublishBoard(request.Project, projectQueue);
         }
 
         var reenter = discardCompletedReplay && IntegrationLaneEvents.Read(request.JobFolderPath)
@@ -338,6 +363,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 if (projectQueue.Pending.Count == 0)
                 {
                     projectQueue.Running = false;
+                    projectQueue.Current = null;
+                    _board.Clear(project);
                     if (_projectQueues.TryGetValue(project, out var current)
                         && ReferenceEquals(current, projectQueue))
                     {
@@ -358,6 +385,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 }
                 delivery = projectQueue.Pending[nextIndex];
                 projectQueue.Pending.RemoveAt(nextIndex);
+                projectQueue.Current = delivery;
+                projectQueue.CurrentSinceUtc = DateTimeOffset.UtcNow;
+                PublishBoard(project, projectQueue);
             }
 
             try
@@ -397,6 +427,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 IntegrationLaneEvents.Append(delivery.Request.JobFolderPath,
                     delivery.Request.Project, delivery.Request.JobId, "dequeued",
                     sequence: delivery.Sequence);
+                await PlanTrainBehindAsync(project, projectQueue, delivery).ConfigureAwait(false);
                 MergeIntoIntegrationResult result;
                 using (IntegrationLaneEvents.BeginDelivery(delivery.Sequence))
                     result = await _integrate(delivery.Request).ConfigureAwait(false);
@@ -439,6 +470,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     sequence: delivery.Sequence, outcome: result.Outcome.ToString(),
                     reason: result.Error,
                     receipt: result.Outcome.IsSuccessfulIntegration() ? result.MergedSha : null);
+                _board.RecordOutcome(project, delivery.Request.JobId,
+                    result.Outcome.IsSuccessfulIntegration() ? null : result.Error ?? result.Outcome.ToString());
                 CompleteDelivery(delivery, result);
                 if (result.Outcome.IsSuccessfulIntegration()) ReclaimAfterIntegration(delivery);
             }
@@ -455,6 +488,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     AcceptedIntegrationFailureCodes.IntegrationError,
                     "Immediate Remote delivery integration failed.",
                     ex.Message);
+                _board.RecordOutcome(project, delivery.Request.JobId, ex.Message);
                 CompleteDelivery(delivery, MergeIntoIntegrationResult.Failed(
                     AcceptedIntegrationFailureCodes.IntegrationError,
                     ex.Message));
@@ -582,6 +616,67 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     {
         public List<QueuedDelivery> Pending { get; } = [];
         public bool Running { get; set; }
+        public QueuedDelivery? Current { get; set; }
+        public DateTimeOffset? CurrentSinceUtc { get; set; }
+        public string CurrentActivity { get; set; } = DeliveryIntegrationQueueBoard.Integrating;
+    }
+
+    /// <summary>Called under <c>_gate</c>: the board shows the running delivery first, then the queue in drain order.</summary>
+    private void PublishBoard(string project, ProjectQueue queue)
+    {
+        var rows = new List<DeliveryIntegrationQueueRow>();
+        if (queue.Current is { } current)
+            rows.Add(new DeliveryIntegrationQueueRow(current.Request.JobId, queue.CurrentActivity,
+                queue.CurrentSinceUtc));
+        rows.AddRange(queue.Pending.OrderBy(item => item, QueuedDeliveryComparer.Instance)
+            .Select(item => new DeliveryIntegrationQueueRow(item.Request.JobId,
+                DeliveryIntegrationQueueBoard.Waiting, item.Request.DeliveredAtUtc)));
+        _board.Publish(project, rows);
+    }
+
+    /// <summary>
+    /// AGT-4020: before the head merges, the deliveries waiting behind it on
+    /// the same branch are offered to the post-merge train, so their combined
+    /// tree compiles once instead of once per card. A train failure never
+    /// blocks the head; every card then keeps its own compile.
+    /// </summary>
+    private async Task PlanTrainBehindAsync(string project, ProjectQueue projectQueue, QueuedDelivery head)
+    {
+        if (_planTrain is null) return;
+        RemoteDeliveryIntegrationRequest[] behind;
+        lock (_gate)
+        {
+            behind = projectQueue.Pending.OrderBy(item => item, QueuedDeliveryComparer.Instance)
+                .Select(item => item.Request)
+                .Where(request => string.Equals(request.IntegrationBranch, head.Request.IntegrationBranch,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+        }
+        behind = behind.Where(request => request.ReviewAttemptId is null || _isAdmissibleDelivery(request)).ToArray();
+        if (behind.Length == 0) return;
+        lock (_gate)
+        {
+            projectQueue.CurrentActivity = DeliveryIntegrationQueueBoard.CompilingTrain(behind.Length + 1);
+            PublishBoard(project, projectQueue);
+        }
+        try
+        {
+            await _planTrain([head.Request, .. behind]).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "remote-delivery-integration post-merge train failed project={Project} head={JobId} waiting={Waiting}",
+                project, head.Request.JobId, behind.Length);
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                projectQueue.CurrentActivity = DeliveryIntegrationQueueBoard.Integrating;
+                PublishBoard(project, projectQueue);
+            }
+        }
     }
 
     private sealed record QueuedDelivery(

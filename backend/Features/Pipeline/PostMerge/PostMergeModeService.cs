@@ -26,6 +26,15 @@ public sealed class PostMergeModeService(ProjectRegistry projects, PostMergeRunS
         }
     }
 
+    /// <summary>The project's T3 state (last window tip, runs), or null when it cannot be read.</summary>
+    public AgentStudio.TaskServer.Contracts.PostMergeProjectState? ReadState(string project)
+    {
+        var record = projects.FindByIdOrDisplayName(project);
+        if (record is null) return null;
+        try { return runs.Read(record.Id); }
+        catch (IOException) { return null; }
+    }
+
     /// <summary>
     /// The effective placement through <paramref name="service"/> (AGT-3965).
     /// A host built without the service has no post-merge store and no
