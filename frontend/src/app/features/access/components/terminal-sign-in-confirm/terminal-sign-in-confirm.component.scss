@@ -1,0 +1,109 @@
+@use '../../access-controls' as access;
+@use '../../../../../styles/mixins' as m;
+
+// A consent page like sign-in: the page fills the viewport, the form is one
+// flat panel. Status reads from tokens in both themes; no left accent line (R1).
+:host {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: block;
+}
+
+@include access.controls;
+
+.tsi {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  align-items: safe center;
+  overflow-y: auto;
+  padding: var(--studio-spacing-6) var(--studio-spacing-4);
+  background: var(--studio-bg-editor);
+  color: var(--studio-fg);
+}
+
+.tsi__panel {
+  width: min(560px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-4);
+  @include m.deck-panel(var(--studio-spacing-6));
+}
+
+.tsi__head { display: flex; flex-direction: column; gap: var(--studio-spacing-1); }
+.tsi__eyebrow { @include m.type-label; }
+h1 { margin: 0; color: var(--studio-fg-strong); font-size: 1.35rem; }
+h2 { margin: 0; color: var(--studio-fg-strong); font-size: 0.85rem; font-weight: 600; }
+.tsi__lead { color: var(--studio-fg-dim); font-size: 0.85rem; line-height: 1.5; }
+.tsi__lead code, .tsi__outcome code, .tsi__mono { font-family: var(--font-mono); font-size: 0.75rem; color: var(--studio-mono); }
+
+.tsi__step { display: flex; flex-direction: column; gap: var(--studio-spacing-2); }
+.tsi__code {
+  align-self: flex-start;
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border-radius: 6px;
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg-strong);
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.12em;
+}
+.tsi__lookup { display: flex; flex-wrap: wrap; align-items: end; gap: var(--studio-spacing-2); }
+.tsi__lookup label { flex: 1 1 12rem; }
+.tsi__code-input { font-family: var(--font-mono); letter-spacing: 0.08em; }
+.tsi__switch { align-self: flex-start; }
+
+// Checkbox rows read as text, not as form captions.
+label.tsi__check { flex-direction: row; align-items: center; gap: var(--studio-spacing-2); color: var(--studio-fg); font-size: 0.8rem; }
+label.tsi__check input { min-height: auto; width: 1rem; height: 1rem; margin: 0; accent-color: var(--studio-accent); }
+
+// The phishing signal is acute while it stands: whole-surface warning tint.
+.tsi__warning {
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border: 1px solid var(--studio-card-border);
+  border-radius: 6px;
+  @include m.deck-panel-attention(var(--studio-warn));
+  color: var(--studio-fg-strong);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.tsi__facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--studio-spacing-2) var(--studio-spacing-4);
+  margin: 0;
+  font-size: 0.8rem;
+}
+.tsi__facts dt { color: var(--studio-fg-dim); }
+.tsi__facts dd { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-spacing-1) var(--studio-spacing-2); min-width: 0; margin: 0; color: var(--studio-fg); overflow-wrap: anywhere; }
+.tsi__numeric { font-variant-numeric: tabular-nums; }
+
+.tsi__choices { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-3); }
+.tsi__choices label { flex: 1 1 12rem; }
+.tsi__choices .access-hint { flex-basis: 100%; }
+
+.tsi__classes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+  margin: 0;
+  padding: var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: 6px;
+}
+.tsi__classes legend { padding: 0 var(--studio-spacing-1); color: var(--studio-fg-dim); font-size: 0.72rem; }
+
+.tsi__factor { display: flex; flex-direction: column; gap: var(--studio-spacing-1); }
+.tsi__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-spacing-2); }
+.tsi__outcome { display: flex; flex-direction: column; gap: var(--studio-spacing-3); font-size: 0.85rem; line-height: 1.5; }
+
+@media (max-width: 480px) {
+  .tsi { padding: var(--studio-spacing-3) var(--studio-spacing-2); align-items: start; }
+  .tsi__panel { @include m.deck-panel(var(--studio-spacing-4)); }
+  .tsi__facts { grid-template-columns: minmax(0, 1fr); gap: var(--studio-spacing-1); }
+  .tsi__facts dd { margin-bottom: var(--studio-spacing-2); }
+  .tsi__actions button:not(.access-quiet) { flex: 1 1 auto; }
+}

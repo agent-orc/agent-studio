@@ -25,6 +25,9 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
 const READ_ONLY_POST_URLS = new Set([
   '/api/tasks/reference-status',
   '/api/token-pricing/calculate',
+  // ES-3: the confirmation page looks a terminal code up right after sign-in,
+  // before the live-update socket connects. The lookup changes nothing.
+  '/api/auth/iam/operator-sign-ins/lookup',
 ]);
 // Every request the sign-in gate can issue must pass: the live-update socket
 // is not connected while the gate is shown, so the offline signal turns true

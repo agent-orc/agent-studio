@@ -5,7 +5,7 @@ import { ConfirmDialogService } from '../../../../services/confirm-dialog.servic
 import { AccessService } from '../../services/access.service';
 import { OperatorAgentsService } from '../../services/operator-agents.service';
 import { fakeAccessService } from '../../testing/access-fixtures';
-import { fakeOperatorAgentsService } from '../../testing/operator-fixtures';
+import { fakeOperatorAgentsService, signedInOperatorAgent } from '../../testing/operator-fixtures';
 import { AccessOperatorAgentsComponent } from './access-operator-agents.component';
 import { preserveOwnProperty } from '../../../../../testing/preserve-own-property';
 
@@ -53,6 +53,34 @@ describe('AccessOperatorAgentsComponent', () => {
     expect(byTestId('access-operator-session-renew-ses_old')).toBeNull();
     const rows = Array.from(element.querySelectorAll('[data-testid="access-operator-sessions-opa_ops"] tbody tr'));
     expect(rows.map(row => row.getAttribute('data-state'))).toEqual(['active', 'expired']);
+  });
+
+  it('shows the device label, key thumbprint and address at confirmation of a terminal sign-in session', () => {
+    operators.agents.set([signedInOperatorAgent()]);
+    fixture.detectChanges();
+    const device = byTestId('access-operator-session-device-ses_term')?.textContent ?? '';
+    expect(device).toContain('opsagent@workstation');
+    expect(byTestId('access-operator-session-thumbprint-ses_term')?.getAttribute('title')).toBe('NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs');
+    expect(byTestId('access-operator-session-thumbprint-ses_term')?.textContent).toBe('NzbLsXh8uDCcd-6M…');
+    expect(byTestId('access-operator-session-address-ses_term')?.textContent).toContain('From 198.51.100.7 at confirmation');
+    expect(byTestId('access-operator-session-address-ses_term')?.getAttribute('title')).toContain('203.0.113.20');
+    expect(byTestId('access-operator-login-hint-opa_term')?.textContent).toContain('studio-op login --agent "ops console"');
+  });
+
+  it('lists known devices and forgets one only after confirmation', async () => {
+    operators.agents.set([signedInOperatorAgent()]);
+    fixture.detectChanges();
+    const row = byTestId('access-operator-device-dev_1')?.textContent ?? '';
+    expect(row).toContain('opsagent@workstation');
+    expect(row).toContain('1');
+    confirm.confirm.mockResolvedValueOnce(false);
+    byTestId('access-operator-device-forget-dev_1')!.click();
+    await settle();
+    expect(operators.forgetDevice).not.toHaveBeenCalled();
+    byTestId('access-operator-device-forget-dev_1')!.click();
+    await settle();
+    expect(confirm.confirm).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'Forget this device?', kind: 'danger' }));
+    expect(operators.forgetDevice).toHaveBeenCalledWith('opa_term', 'dev_1');
   });
 
   it('shows a disabled agent quietly without session controls', () => {

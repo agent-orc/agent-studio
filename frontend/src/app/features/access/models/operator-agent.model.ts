@@ -4,7 +4,33 @@
  * those sessions leave (`/api/auth/iam/operator-agents`, `/api/auth/audit`).
  */
 
-export type OperatorSessionState = 'active' | 'expired' | 'revoked';
+/** `pending`: confirmed in a terminal sign-in, the terminal has not collected its bearer yet. */
+export type OperatorSessionState = 'active' | 'expired' | 'revoked' | 'pending';
+
+/** The device of a session a terminal sign-in created (ES-3). */
+export interface OperatorSessionDevice {
+  deviceId: string;
+  label: string;
+  /** RFC 7638 thumbprint of the device key; stored now, enforced from ES-4 on. */
+  keyThumbprint: string;
+  requestedAddress: string | null;
+  /** The Owner's browser address when confirming. */
+  confirmedAddress: string | null;
+  signInId: string;
+}
+
+/** A device whose key the Owner confirmed for an operator agent. */
+export interface OperatorDevice {
+  id: string;
+  label: string;
+  keyThumbprint: string;
+  firstConfirmedAt: string;
+  lastConfirmedAt: string;
+  lastConfirmedBy: string | null;
+  lastAddress: string | null;
+  lastUsedAt: string | null;
+  activeSessions: number;
+}
 
 export interface OperatorSession {
   id: string;
@@ -20,6 +46,9 @@ export interface OperatorSession {
   lastUsedAt: string | null;
   revokedAt: string | null;
   state: OperatorSessionState;
+  /** Null for a session started in Settings > Access. */
+  device?: OperatorSessionDevice | null;
+  classes?: readonly string[] | null;
 }
 
 export interface OperatorAgent {
@@ -30,6 +59,7 @@ export interface OperatorAgent {
   createdBy: string | null;
   disabledAt: string | null;
   sessions: readonly OperatorSession[];
+  devices?: readonly OperatorDevice[] | null;
 }
 
 /** The bearer token of a new session; the server keeps only its hash. */
@@ -95,7 +125,7 @@ export function isOperatorAgentAccount(account: { origin?: string | null }): boo
 }
 
 export function sessionStateLabel(state: OperatorSessionState): string {
-  return state === 'active' ? 'Active' : state === 'expired' ? 'Expired' : 'Revoked';
+  return state === 'active' ? 'Active' : state === 'expired' ? 'Expired' : state === 'pending' ? 'Waiting for terminal' : 'Revoked';
 }
 
 /** The first 12 characters of a parameter digest; the full value goes into a title attribute. */
@@ -105,8 +135,9 @@ export function shortDigest(digest: string | null | undefined): string {
 
 /** Newest session first, active sessions ahead of settled ones. */
 export function orderedSessions(sessions: readonly OperatorSession[]): OperatorSession[] {
+  const live = (session: OperatorSession) => Number(session.state === 'active' || session.state === 'pending');
   return [...sessions].sort((left, right) =>
-    Number(right.state === 'active') - Number(left.state === 'active')
+    live(right) - live(left)
     || right.createdAt.localeCompare(left.createdAt));
 }
 
