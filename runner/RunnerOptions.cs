@@ -87,6 +87,9 @@ public sealed class RunnerOptions
     /// <summary>Directory the runner checks the repo out into on the runner host.</summary>
     public required string WorkDir { get; init; }
 
+    /// <summary>Combined inactive attempt budget for the review root and its stale sibling.</summary>
+    public long ReviewRetentionBytes { get; init; } = ReviewWorkspaceRetention.MaximumRetainedBytes;
+
     /// <summary>Disposable workspace root used only by the Remote Review Executor.</summary>
     public string ReviewWorkDir { get; init; } = Path.Combine(Path.GetTempPath(), "agent-review-work");
 
@@ -572,6 +575,7 @@ public sealed class RunnerOptions
             WorkspaceGitRequiresPush = Val("workspace-git-requires-push", "RUNNER_WORKSPACE_GIT_REQUIRES_PUSH")
                 .Trim().ToLowerInvariant() is "1" or "true",
             WorkDir = Val("workdir", "RUNNER_WORKDIR", Path.Combine(Path.GetTempPath(), "agent-runner-work")),
+            ReviewRetentionBytes = (long)EnvInt("RUNNER_REVIEW_RETENTION_GIB", 20) * 1024 * 1024 * 1024,
             ReviewWorkDir = Val(
                 "review-workdir",
                 "RUNNER_REVIEW_WORKDIR",

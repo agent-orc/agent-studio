@@ -4006,6 +4006,11 @@ public sealed partial class BatchGatePilotService
 
     private HostDiskPressureDecision DiskPressure()
     {
+        if (_services?.GetService<SshGateHostProbe>()?.LatestDisk is { Level: "critical" } remote)
+        {
+            _diskPauseReason = DiskPauseReasonPrefix + $"Gate host {remote.Host}: {remote.Reason}";
+            return new(HostDiskPressureLevel.Critical, _diskPauseReason, remote.Filesystems.FirstOrDefault());
+        }
         if (_configuration is null)
             return new(HostDiskPressureLevel.Healthy, "Disk monitor is not configured.", null);
         var data = _configuration["TaskRepository"];
@@ -4018,7 +4023,7 @@ public sealed partial class BatchGatePilotService
         if (!string.IsNullOrWhiteSpace(containers)) paths.Add(("container storage", containers));
         var disks = _diskProbe.Measure(paths);
         var thresholds = new HostDiskPressureThresholds(
-            _configuration.GetValue("DiskPressure:WarningFreeBytes", 30L * 1024 * 1024 * 1024),
+            _configuration.GetValue("DiskPressure:WarningFreeBytes", 20L * 1024 * 1024 * 1024),
             _configuration.GetValue("DiskPressure:WarningFreePercent", 15d),
             _configuration.GetValue("DiskPressure:CriticalFreeBytes", 8L * 1024 * 1024 * 1024),
             _configuration.GetValue("DiskPressure:CriticalFreePercent", 5d));

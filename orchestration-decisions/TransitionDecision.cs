@@ -67,7 +67,8 @@ public static class TransitionDecisionPolicy
         {
             action = RetryInfrastructure(facts.Gate.InfrastructureRetryAvailable,
                 facts.Gate.AspectRetryExhausted, facts.Gate.InterventionActive, facts.Gate.ProbeFailed,
-                ReviewReportDiagnosisPolicy.RetriesOnUnchangedSubject(facts.Review.FailureClassification))
+                ReviewReportDiagnosisPolicy.RetriesOnUnchangedSubject(facts.Review.FailureClassification),
+                facts.Review.FailureClassification)
                 ? TransitionAction.ReviewInfrastructureRetry : TransitionAction.Escalate;
             reason = "Review infrastructure requires a bounded retry or operator intervention.";
         }
@@ -178,8 +179,9 @@ public static class TransitionDecisionPolicy
             || string.Equals(outcome, ReviewOutcomeKinds.IntegrationBranchDefect, StringComparison.OrdinalIgnoreCase));
 
     public static bool RetryInfrastructure(bool budgetAvailable, bool aspectRetryExhausted,
-        bool interventionActive, bool probeFailed, bool diagnosisSupported)
-        => budgetAvailable && !aspectRetryExhausted && !interventionActive && !probeFailed && diagnosisSupported;
+        bool interventionActive, bool probeFailed, bool diagnosisSupported, string? failureClassification = null)
+        => string.Equals(failureClassification, "DiskFull", StringComparison.OrdinalIgnoreCase)
+           || (budgetAvailable && !aspectRetryExhausted && !interventionActive && !probeFailed && diagnosisSupported);
 
     public static bool OpensFindingRound(string outcome, ReviewFollowUpAction action)
         => outcome is ReviewOutcomeKinds.Pass or ReviewOutcomeKinds.ProductFailure or ReviewOutcomeKinds.IntegrationBranchDefect

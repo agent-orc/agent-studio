@@ -35,6 +35,7 @@ describe('operator attention model', () => {
     expect(attentionClassOf('push.blocked')).toBe('push-blocked');
     expect(attentionClassOf('quota.exhausted')).toBe('quota');
     expect(attentionClassOf('quota.fallback-active')).toBe('quota');
+    expect(attentionClassOf('host.disk-pressure')).toBe('disk');
     expect(attentionClassOf('backend.stalled')).toBe('host');
     expect(attentionClassOf('progress.idle-with-ready')).toBe('host');
     expect(attentionClassOf('something.new')).toBe('other');

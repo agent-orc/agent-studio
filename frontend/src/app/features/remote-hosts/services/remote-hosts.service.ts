@@ -189,7 +189,7 @@ export class RemoteHostsService {
         this.hosts.update(hosts => {
           const projected = (this.auth?.status()?.profile === 'networked'
             ? hosts.filter(host => this.listed(host.clientId)) : hosts).map(host => {
-          if (host.clientId === 'api-host') return host;
+          if (host.clientId === 'api-host' || host.clientId.startsWith('gate-ssh:')) return host;
           const client = byId.get(host.clientId);
           if (!client) return {
             ...host,
@@ -441,7 +441,7 @@ export class RemoteHostsService {
   }
 
   private listed(clientId: string): boolean {
-    return this.capabilityRunnerIds.has(clientId) || this.runHostIds.has(clientId);
+    return clientId.startsWith('gate-ssh:') || this.capabilityRunnerIds.has(clientId) || this.runHostIds.has(clientId);
   }
 
   /** Legacy networked monoliths expose enrolled runners but no Task Server capability route. */
@@ -452,7 +452,8 @@ export class RemoteHostsService {
           .map(runner => [runner.id, runner]));
         this.capabilityRunnerIds = new Set(enrolled.keys());
         const now = Date.now();
-        this.hosts.set(this.monolithClients.filter(client => enrolled.has(client.id)).map(client => {
+        this.hosts.update(current => [...current.filter(host => host.clientId === 'api-host'
+          || host.clientId.startsWith('gate-ssh:')), ...this.monolithClients.filter(client => enrolled.has(client.id)).map(client => {
           const runner = enrolled.get(client.id)!;
           return projectClient({
             id: client.id, name: runner.name, role: 'remote', address: null,
@@ -461,7 +462,7 @@ export class RemoteHostsService {
             uptimeLabel: null, capabilities: [], cliQuotas: [], stats: null,
           }, client, client.kind === 'retired' ? 'retired'
             : client.drainRequestedAt ? 'draining' : statusFor(client.lastSeenAt, now));
-        }));
+        })]);
       },
       error: error => this.log('monolith-runners-hydrate-failed', { message: error?.message ?? 'unknown' }),
     });

@@ -36,6 +36,11 @@ public sealed class TransitionDecisionGoldenTests
         yield return Case("infra retry", Facts("ReviewInfra")
             with { Gate = new(InfrastructureRetryAvailable: true) }, TransitionAction.ReviewInfrastructureRetry);
         yield return Case("infra exhausted", Facts("ReviewInfra"), TransitionAction.Escalate);
+        yield return Case("disk recovery", Facts("ReviewInfra") with
+        {
+            Review = new("ReviewInfra", [], new ReviewPlanDto([], []), FailureClassification: "DiskFull"),
+            Gate = new(InfrastructureRetryAvailable: false, InterventionActive: true),
+        }, TransitionAction.ReviewInfrastructureRetry);
         yield return Case("integration branch defect", Facts("IntegrationBranchDefect"), TransitionAction.AcceptAndIntegrate);
         yield return Case("deferred to batch", Facts("Pass")
             with { Gate = new(DeferredToBatch: true) }, TransitionAction.DeferToBatch);
