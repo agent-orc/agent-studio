@@ -13,6 +13,8 @@ import { QuotaApiService, type CliFallbackState, type CliModelFallbackRoute, typ
 import type { ActiveModelSwitch, EffectiveModelSelection } from '../../../quota/services/quota-api.service';
 import { ConsumerModelPolicyComponent } from '../consumer-model-policy/consumer-model-policy.component';
 import { scrollCliModelsTable } from './cli-models-table-keyboard';
+import { EconomyRoutingPreviewComponent } from '../economy-routing-preview/economy-routing-preview.component';
+import { RoutingCostService, type PricedRouteModel } from '../../services/routing-cost.service';
 import { TaskService } from '../../../../services/task.service';
 import {
   WorkspaceOrchestratorSettingsService,
@@ -50,7 +52,7 @@ export function fallbackStateTone(state: string | null | undefined): StatusTone 
   standalone: true,
   // The badge reads the migration store through the CLI barrel. Defer it so
   // file-order-dependent barrel evaluation cannot leave Angular an undefined dependency.
-  imports: [forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent, ConsumerModelPolicyComponent, StatusIndicatorComponent],
+  imports: [EconomyRoutingPreviewComponent, forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent, ConsumerModelPolicyComponent, StatusIndicatorComponent],
   templateUrl: './cli-models-panel.html',
   styleUrl: './cli-models-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -71,6 +73,8 @@ export class CliModelsPanelComponent implements OnInit {
   readonly callersCannotReroute = signal<{ caller: string; cliType: string; reason: string }[]>([]);
   readonly preferenceSaving = signal<string | null>(null);
   readonly savingCli = signal<string | null>(null);
+  private readonly costs = inject(RoutingCostService);
+  readonly pricedModels = signal<PricedRouteModel[]>([]);
   readonly policy = signal<ModelRoutingPolicyView | null>(null);
   readonly savingEconomyMode = signal(false);
   readonly cliTypes = CLI_TYPES;
@@ -112,6 +116,7 @@ export class CliModelsPanelComponent implements OnInit {
 
   ngOnInit(): void {
     this.catalog.hydrateAll();
+    this.costs.models().subscribe({ next: response => this.pricedModels.set(response.models), error: () => this.pricedModels.set([]) });
     this.routesApi.getModelRoutes().subscribe({
       next: (response) => {
         this.routes.set(response.profiles ?? {});
@@ -277,11 +282,17 @@ export class CliModelsPanelComponent implements OnInit {
     });
   }
 
+  modelPriceLabel(cli: string, model: CliModelInfo): string {
+    const price = this.pricedModels().find(option => option.cli === cli && option.model === model.id)?.price;
+    return `${model.label} · ${price ? `$${price.inputPerMillion} in / $${price.outputPerMillion} out per MTok` : 'price unknown'}`;
+  }
+
   effectiveFor(cliType: CliType): EffectiveModelSelection[] {
     const seen = new Set<string>();
     return this.effectiveRoutes().filter(route => {
-      if (route.configured.cliType !== cliType || seen.has(route.consumer)) return false;
-      seen.add(route.consumer);
+      const key = route.consumer + ':' + (route.stepId ?? '');
+      if (route.configured.cliType !== cliType || seen.has(key)) return false;
+      seen.add(key);
       return true;
     });
   }

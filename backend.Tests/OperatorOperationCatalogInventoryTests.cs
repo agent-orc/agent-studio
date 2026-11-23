@@ -1,5 +1,6 @@
 using AgentStudio.Operations.Contracts;
 using AgentStudio.Security;
+using AgentStudio.Shared;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Routing;
@@ -46,6 +47,8 @@ public sealed class OperatorOperationCatalogInventoryTests : IDisposable
         { OperatorOperationIds.DataDelete, OperatorTier.T2 },
         { OperatorOperationIds.HistoryRewrite, OperatorTier.T2 },
         { OperatorOperationIds.GateBypass, OperatorTier.T2 },
+        { OperatorOperationIds.CardAcceptOverride, OperatorTier.T2 },
+        { OperatorOperationIds.CardArchiveOverride, OperatorTier.T2 },
         { OperatorOperationIds.KeysRotate, OperatorTier.T2 },
         { OperatorOperationIds.HostEnrollment, OperatorTier.T2 },
         { OperatorOperationIds.AccessChange, OperatorTier.T2 },
@@ -82,6 +85,33 @@ public sealed class OperatorOperationCatalogInventoryTests : IDisposable
             Assert.True(OperatorOperationCatalog.Find(id) is not null, $"{rule.Methods} {rule.Pattern} names unknown '{id}'.");
         // Reads are observe; a write rule never catalogues a read method.
         Assert.DoesNotContain(OperatorOperationCatalog.Routes, rule => rule.Methods is "GET" or "HEAD" or "OPTIONS" or "R" or "*");
+    }
+
+    /// <summary>
+    /// ES-2: a card move resolves by its target lane and its override flags.
+    /// An override acceptance and an archive override are their own T2
+    /// operations; other moves into a delivered lane stay a gate bypass, and a
+    /// plain move into Archive stays not catalogued.
+    /// </summary>
+    [Theory]
+    [InlineData(TaskStates.Ready, false, false, OperatorOperationIds.CardRequeue)]
+    [InlineData(TaskStates.Ready, true, true, OperatorOperationIds.CardRequeue)]
+    [InlineData(TaskStates.HumanReview, false, false, OperatorOperationIds.GateBypass)]
+    [InlineData(TaskStates.HumanReview, true, false, OperatorOperationIds.GateBypass)]
+    [InlineData(TaskStates.Completed, false, false, OperatorOperationIds.GateBypass)]
+    [InlineData(TaskStates.Completed, false, true, OperatorOperationIds.GateBypass)]
+    [InlineData(TaskStates.Completed, true, false, OperatorOperationIds.CardAcceptOverride)]
+    [InlineData(TaskStates.Archive, false, true, OperatorOperationIds.CardArchiveOverride)]
+    [InlineData(TaskStates.Archive, false, false, null)]
+    [InlineData(TaskStates.Archive, true, false, null)]
+    public void A_card_move_resolves_by_lane_and_override(string lane, bool operatorOverride, bool archiveOverride, string? expected)
+    {
+        var rule = OperatorOperationCatalog.ResolveWrite("POST", "/api/tasks/{}/move")!;
+        var operation = OperatorOperationCatalog.Refine(rule,
+            new OperatorRequestFacts(TargetLane: lane, OperatorOverride: operatorOverride, ArchiveOverride: archiveOverride));
+        Assert.Equal(expected, operation?.Id);
+        if (operation is not null && OperatorOperationIds.CardOverride.Contains(operation.Id))
+            Assert.Equal((OperatorTier.T2, OperatorScopeKinds.Project), (operation.Tier, operation.ScopeKind));
     }
 
     [Fact]

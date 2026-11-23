@@ -447,6 +447,7 @@
 /api/tasks/{jobId}/stop/{commandId}	free	-	-	-
 /api/tasks/{jobId}/timeline	free	-	-	-
 /api/tasks/{primaryId}/merge/candidates	free	-	-	-
+/api/token-pricing/route-models	free	-	-	-
 /api/token-pricing/unpriced-models	free	-	-	-
 /api/update-service/token	free	-	-	-
 /api/usage/cockpit	free	-	-	-

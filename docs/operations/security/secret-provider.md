@@ -86,13 +86,45 @@ deploy declarations, audit entries and logs carry references, never values.
 | Scope | Reference | Example |
 |---|---|---|
 | Workspace | `secret://workspace/<name>` | `secret://workspace/MAIL_KEY` |
-| Project | `secret://<project>/<name>` | `secret://memowikis/STRIPE_KEY` |
-| Project environment | `secret://<project>/<environment>/<name>` | `secret://memowikis/prod/DATABASE_URL@3` |
+| Project | `secret://<project>/<name>` | `secret://PROJ-002/STRIPE_KEY` |
+| Project environment | `secret://<project>/<environment>/<name>` | `secret://PROJ-002/prod/DATABASE_URL@3` |
 
 `workspace` is reserved and cannot be a project name. Secret names start with a
-letter and use letters, digits, `.`, `_` or `-`, up to 64 characters. Project
-names also allow internal spaces so existing watched projects can use their
-display names as scope keys.
+letter and use letters, digits, `.`, `_` or `-`, up to 64 characters.
+
+`<project>` is the project's registry id (AGT-3987), so renaming a project
+keeps its references, secrets and bindings. Routes still name the project by
+its display name. A secret added through `/api/projects/{project}/...secrets`
+is stored under the id scope, and a default reference offered for a missing
+binding names the id. A project the registry does not know, such as a watched
+path without a registry record, keeps its route name as its key.
+
+References and secrets from before AGT-3987 carry the display name, which is
+why project keys also allow internal spaces. They keep working:
+
+- A reference resolves its literal scope first, so a binding to
+  `secret://memowikis/prod/DATABASE_URL` still finds the secret stored under
+  `memowikis/prod`, also after the project is renamed.
+- An id scope also reads the project's current display-name scope at each
+  inheritance level: `secret://PROJ-002/prod/X` looks in `PROJ-002/prod`,
+  `memowikis/prod`, `PROJ-002`, `memowikis`, then `workspace`.
+- The scope routes list both scopes. Rotate, revoke and delete act on the
+  scope that holds the named secret. A new name goes to the id scope, unless a
+  store was chosen only for the display-name scope; it then stays there until
+  the store is chosen for the id scope.
+- A deploy job may read references under its project's id, its display name,
+  and the project segment of each reference bound for it.
+- Metadata responses keep `scope` as the stored key and add `routeScope`, the
+  scope under the display name, which the Settings selectors group by.
+
+Studio-generated managed database credentials (AGT-3877) and the deploy
+telemetry ingest token (M5) still use the scope under the display name they
+are created with. The host receives the database credential reference in its
+run-target spec, so moving it needs the id passed into that spec.
+
+A secret stored under a display name that is no longer current is not listed
+under the renamed project and is not reached through an id reference. A
+binding that names it keeps resolving.
 Deeper scopes inherit and may override. A reference to
 `secret://memowikis/stage/MAIL_KEY` resolves the environment secret, then the
 project secret, then the workspace secret. The first secret that exists
@@ -230,8 +262,12 @@ Production approval control, even when its ID is not `production` or `prod`.
 Bindings are persisted under
 `<TaskRepository>/.security/secret-bindings/<key>.json`, separate from the
 provider's sealed values. `<key>` is the lowercase hexadecimal SHA-256 of
-the project ID, one LF byte, and the environment ID encoded as UTF-8, using
-the IDs passed to the binding service. Each file is a JSON array of
+the project's registry id, one LF byte, and the environment ID encoded as
+UTF-8. A project the registry does not know uses the name passed to the
+binding service. A file keyed by the display name, written before AGT-3987,
+is moved to the id key the first time it is read: by the Secrets view, the
+Deploy area's secret readiness, or a deploy claim. A display-name file that
+was never read between the upgrade and a rename is not found afterwards. Each file is a JSON array of
 `{ name, reference, boundBy, boundAt, approvedBy }` records. A rebind replaces
 the record with the same name. The service writes a temporary file in the
 same directory, sets mode 600 on Unix, and atomically replaces the file.

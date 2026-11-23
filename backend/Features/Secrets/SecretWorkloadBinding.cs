@@ -10,7 +10,11 @@ namespace AgentStudio.Secrets;
 /// </summary>
 public sealed record DeployJobLease(string JobId, string Project, string EnvironmentId, string HostId,
     IReadOnlyList<string> SecretRefs, IReadOnlyDictionary<string, string>? SecretBindings = null,
-    string? HostRunnerId = null);
+    string? HostRunnerId = null)
+{
+    /// <summary>Keys the project goes by in a reference scope (AGT-3987).</summary>
+    public IReadOnlyCollection<string> ProjectKeys { get; init; } = [];
+}
 
 /// <summary>
 /// A task run with a live lease. <see cref="DeclaredNames"/> lists the secret
@@ -25,7 +29,11 @@ public sealed record TaskRunLease(string TaskKey, string Project, string RunnerI
 /// their bound references.
 /// </summary>
 public sealed record RunTargetCredentialLease(string Project, string EnvironmentId, string HostId,
-    IReadOnlyList<string> Names, IReadOnlyDictionary<string, string> SecretBindings);
+    IReadOnlyList<string> Names, IReadOnlyDictionary<string, string> SecretBindings)
+{
+    /// <summary>Keys the project goes by in a reference scope (AGT-3987).</summary>
+    public IReadOnlyCollection<string> ProjectKeys { get; init; } = [];
+}
 
 /// <summary>Reads the lease facts a workload binding needs.</summary>
 public interface ISecretWorkloadLeases
@@ -49,17 +57,18 @@ public sealed class SecretWorkloadLeases(ProjectEnvironmentService environments,
     {
         IReadOnlyList<string> names = job.Telemetry is { } telemetry
             ? [.. job.SecretRefs.Append(telemetry.SecretName).Distinct(StringComparer.Ordinal)] : job.SecretRefs;
-        return new DeployJobLease(job.Id, job.Project, job.EnvironmentId, job.HostId, names,
-            bindings.ApprovedReferences(job.Project, job.EnvironmentId, names, job.EnvironmentKind ?? "production"),
-            security.DeployHostRunnerId(job.HostId));
+        var bound = bindings.ApprovedReferences(job.Project, job.EnvironmentId, names, job.EnvironmentKind ?? "production");
+        return new DeployJobLease(job.Id, job.Project, job.EnvironmentId, job.HostId, names, bound,
+            security.DeployHostRunnerId(job.HostId)) { ProjectKeys = bindings.ProjectKeys(job.Project, bound) };
     }
 
     public RunTargetCredentialLease? FindRunTargetCredentials(string project, string environmentId)
     {
         if (environments.ManagedDatabaseCredentialLease(project, environmentId) is not { } lease) return null;
         var names = lease.Names.Select(ProjectDatabaseVocabulary.CredentialName).ToArray();
-        return new(lease.Project, lease.EnvironmentId, lease.HostId, names,
-            bindings.ApprovedReferences(lease.Project, lease.EnvironmentId, names, lease.EnvironmentKind));
+        var bound = bindings.ApprovedReferences(lease.Project, lease.EnvironmentId, names, lease.EnvironmentKind);
+        return new(lease.Project, lease.EnvironmentId, lease.HostId, names, bound)
+            { ProjectKeys = bindings.ProjectKeys(lease.Project, bound) };
     }
 
     public TaskRunLease? FindLiveTaskRun(string taskKey)
@@ -113,7 +122,7 @@ public static class SecretWorkloadBinding
         if (!string.Equals(lease.HostId, runner.RunnerId, StringComparison.Ordinal))
             return Denied("workload-identity-denied", "The environment is placed on another host.");
         return (new SecretWorkload(SecretWorkload.RunTarget, runner.RunnerId, lease.Project, lease.EnvironmentId,
-            lease.Names, lease.SecretBindings), SecretAccessDecision.Allow);
+            lease.Names, lease.SecretBindings) { ProjectKeys = lease.ProjectKeys }, SecretAccessDecision.Allow);
     }
 
     public static (SecretWorkload? Workload, SecretAccessDecision Decision) Decide(
@@ -128,7 +137,7 @@ public static class SecretWorkloadBinding
             if (!DeployHostIdentity.Belongs(runner, job.HostId, job.HostRunnerId))
                 return Denied(DeployHostIdentity.DeniedCode, DeployHostIdentity.Refusal(job.HostId, runner));
             return (new SecretWorkload(SecretWorkload.DeployJob, runner.RunnerId, job.Project, job.EnvironmentId,
-                    job.SecretRefs, job.SecretBindings),
+                    job.SecretRefs, job.SecretBindings) { ProjectKeys = job.ProjectKeys },
                 SecretAccessDecision.Allow);
         }
 

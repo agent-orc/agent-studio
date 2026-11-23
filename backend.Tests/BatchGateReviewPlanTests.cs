@@ -212,14 +212,7 @@ public sealed class BatchGateReviewPlanTests
         // AGT-3965: through the wired mode service, strict keeps the batch
         // gate exactly; fast (the default) and balanced integrate post-merge.
         var fixture = CreateFixture();
-        var projects = new AgentStudio.Registry.ProjectRegistry(new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = fixture.Root })
-            .Build(), NullLogger<AgentStudio.Registry.ProjectRegistry>.Instance);
-        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(Now);
-        projects.EnsureProjectForStorage(fixture.Folder, "project", DefaultWorkspace.Id, clock);
-        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, fixture.Config);
-        var mode = new PostMergeModeService(projects, new PostMergeRunStore(Path.Combine(fixture.Root, "post-merge")),
-            new TaskScannerService(fixture.Config, NullLogger<TaskScannerService>.Instance, summary), clock);
+        var mode = new PostMergeModeService();
         var builder = new RemoteReviewPlanBuilder(fixture.Aspects, fixture.Config, fixture.Git, postMergeMode: mode);
         try
         {

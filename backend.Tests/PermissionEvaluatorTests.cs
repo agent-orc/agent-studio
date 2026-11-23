@@ -301,6 +301,22 @@ public sealed class PermissionEvaluatorTests
             role => Assert.DoesNotContain(IamPermissions.AccessManage, role.Permissions));
     }
 
+    /// <summary>ES-2 (ES-D8 A): the override permission belongs to Owner and Admin only, never to a role an agent holds.</summary>
+    [Fact]
+    public void Only_owner_and_admin_hold_the_card_override_permission()
+    {
+        Assert.True(IamPermissions.IsKnown(IamPermissions.ProjectCardsOverride));
+        Assert.Equal(PermissionLevel.Project, IamPermissions.Level(IamPermissions.ProjectCardsOverride));
+        Assert.Equal([IamRoles.Owner, IamRoles.Admin],
+            IamRoles.All.Where(role => role.Permissions.Contains(IamPermissions.ProjectCardsOverride)).Select(role => role.Id));
+
+        var admin = new[] { Binding(IamPrincipalKind.User, UserId, IamRoles.Admin, Project("alpha")) };
+        var developer = new[] { Binding(IamPrincipalKind.User, UserId, IamRoles.Developer, Project("alpha")) };
+        Assert.True(Evaluate(IamPermissions.ProjectCardsOverride, User(), admin, Target("alpha")).Allowed);
+        Assert.False(Evaluate(IamPermissions.ProjectCardsOverride, User(), admin, Target("beta")).Allowed);
+        Assert.False(Evaluate(IamPermissions.ProjectCardsOverride, User(), developer, Target("alpha")).Allowed);
+    }
+
     [Fact]
     public void A_denial_says_whether_the_permission_is_missing_or_only_out_of_scope()
     {

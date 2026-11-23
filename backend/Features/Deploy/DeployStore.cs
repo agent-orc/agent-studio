@@ -61,6 +61,28 @@ public sealed class DeployStore
         }
     }
 
+    /// <summary>
+    /// The Deploy area's names for each deploy job of a project: environment
+    /// name and release version, keyed by job id (also a retried run's earlier
+    /// ids). Attention facts title a deploy by these, never by job id (AGT-3987).
+    /// Reads only the persisted runs and release snapshots, so no git runs.
+    /// </summary>
+    public IReadOnlyDictionary<string, DeployJobLabel> JobLabels(string project)
+    {
+        var releases = ReadReleaseRecords(project).ToDictionary(item => item.Release.Id, StringComparer.Ordinal);
+        var labels = new Dictionary<string, DeployJobLabel>(StringComparer.Ordinal);
+        foreach (var run in ReadDeployments(project))
+        {
+            var release = releases.GetValueOrDefault(run.ReleaseId);
+            var label = new DeployJobLabel(
+                release?.Environments.FirstOrDefault(item => item.Id == run.EnvironmentId)?.Name is { Length: > 0 } name
+                    ? name : run.EnvironmentId,
+                release?.Release.Version);
+            foreach (var jobId in run.PriorJobIds.Append(run.JobId).OfType<string>()) labels[jobId] = label;
+        }
+        return labels;
+    }
+
     public IReadOnlyList<DeploymentRecord> ReadDeployments(string project)
     {
         var path = Path.Combine(ProjectRoot(project), "deployments.json");

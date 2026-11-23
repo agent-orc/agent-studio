@@ -30,19 +30,35 @@ describe('ConsumerModelPolicyComponent', () => {
     };
     http.expectOne('/api/model-selection/policy').flush(policy);
     http.expectOne('/api/model-selection/effective').flush({ routes: [] });
+    http.expectOne('/api/token-pricing/route-models').flush({ models: [{ cli: 'codex', model: 'gpt-6-sol', label: 'Sol', thinkingLevels: ['high'], price: { inputPerMillion: 2, outputPerMillion: 10 } }] });
     fixture.detectChanges();
+    await fixture.whenStable();
     const row = fixture.nativeElement.querySelector('[data-testid="consumer-policy-review-grade"]');
     expect(row).toBeTruthy();
     expect(fixture.nativeElement.textContent).toContain('36 inherited');
-    const input = row.querySelector('input') as HTMLInputElement;
-    input.value = 'codex:gpt-6-sol:high';
+    const input = row.querySelector('select') as HTMLSelectElement;
+    input.value = 'codex:gpt-6-sol';
     input.dispatchEvent(new Event('change'));
+    http.expectNone('/api/model-selection/policy/consumers/review-grade');
+    fixture.componentInstance.update('review-grade', 'primary', 'codex:gpt-6-sol:high');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.componentInstance.preview('review-grade');
+    const preview = http.expectOne('/api/token-pricing/what-if');
+    expect(preview.request.body.consumer).toBe('one-shot');
+    preview.flush({ receipts: 2, actualUsd: 10, alternativeUsd: 4, savingUsd: 6,
+      projectedWeeklySavingUsd: 6, savingPercent: 60, coverage: 'complete', unpricedActual: 0, unpricedAlternative: 0,
+      qualityCaveat: 'Quality may differ', correctnessFloor: 'Correctness floor applies' });
+    fixture.componentInstance.save('review-grade');
     const save = http.expectOne('/api/model-selection/policy/consumers/review-grade');
     expect(save.request.method).toBe('PUT');
     expect(save.request.body.primary).toEqual({ cli: 'codex', model: 'gpt-6-sol', thinking: 'high' });
     save.flush({ ...policy, consumers: { 'review-grade': save.request.body } });
     http.expectOne('/api/model-selection/effective').flush({ routes: [] });
     fixture.detectChanges();
-    expect(row.querySelector('input').value).toBe('codex:gpt-6-sol:high');
+    await fixture.whenStable();
+    const savedRow = fixture.nativeElement.querySelector('[data-testid="consumer-policy-review-grade"]');
+    expect(fixture.componentInstance.policy()?.consumers['review-grade'].primary?.model).toBe('gpt-6-sol');
+    expect(savedRow.querySelector('select').value, savedRow.outerHTML).toBe('codex:gpt-6-sol');
   });
 });

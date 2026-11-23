@@ -74,7 +74,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
         var factTime = _clock.GetUtcNow().UtcDateTime;
         var expected = new Dictionary<string, DateTime>(StringComparer.Ordinal);
         // Deploy completion, environment incidents, review-host drift and
-        // missing post-merge runs have their own sources. A running batch
+        // missing post-merge runs and red post-merge incidents have their own sources. A running batch
         // without a live gate needs a stale snapshot; this fixture registers
         // the remaining sources.
         var seededTypes = OperatorDecisionTypes.All
@@ -83,6 +83,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
                 && type != OperatorDecisionTypes.HostDiskPressure
                 && type != OperatorDecisionTypes.ReviewHostDrift
                 && type != OperatorDecisionTypes.PostMergeRunsMissing
+                && type != OperatorDecisionTypes.PostMergeRedIncident
                 && type != OperatorDecisionTypes.BatchRunningWithoutGate)
             .ToArray();
         foreach (var type in seededTypes) expected[type] = factTime;

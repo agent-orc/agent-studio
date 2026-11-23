@@ -51,6 +51,15 @@ public static class OperatorOperationIds
     public const string DataDelete = "data.delete";
     public const string HistoryRewrite = "history.rewrite";
     public const string GateBypass = "gate.bypass";
+    public const string CardAcceptOverride = "card.accept-override";
+    public const string CardArchiveOverride = "card.archive-override";
+
+    /// <summary>
+    /// The operations whose Owner approval adds
+    /// <see cref="IamPermissions.ProjectCardsOverride"/> to the one request it
+    /// admits (ES-2).
+    /// </summary>
+    public static readonly IReadOnlyList<string> CardOverride = [CardAcceptOverride, CardArchiveOverride];
     public const string KeysRotate = "keys.rotate";
     public const string HostEnrollment = "host.enrollment";
     public const string AccessChange = "access.change";
@@ -87,7 +96,13 @@ public sealed record OperatorOperation(string Id, OperatorTier Tier, string Scop
 public enum OperatorRouteRefinement
 {
     None,
-    /// <summary>The target lane decides: a queue lane is a requeue, a delivered lane skips the gate.</summary>
+    /// <summary>
+    /// The target lane decides: a queue lane is a requeue, a delivered lane
+    /// skips the gate. With <c>operatorOverride</c> a move into Completed is an
+    /// override acceptance, and with <c>archiveOverride</c> a move into Archive
+    /// is an archive override (ES-2); a plain move into Archive stays not
+    /// catalogued.
+    /// </summary>
     CardMove,
     /// <summary>The operation stays routine only for a commit with full gate evidence (D2); otherwise it bypasses the gate.</summary>
     GateEvidence,
@@ -98,7 +113,8 @@ public enum OperatorRouteRefinement
 
 /// <summary>The request facts a refinement reads; the classifier collects them.</summary>
 public sealed record OperatorRequestFacts(string? TargetLane = null, string? EnvironmentKind = null,
-    bool FullGateEvidence = false, string? PersonaOperationId = null);
+    bool FullGateEvidence = false, string? PersonaOperationId = null,
+    bool OperatorOverride = false, bool ArchiveOverride = false);
 
 /// <summary>
 /// The operator agent's operation catalogue (security model SM-4, decisions
@@ -153,6 +169,10 @@ public static class OperatorOperationCatalog
         new(OperatorOperationIds.DataDelete, OperatorTier.T2, OperatorScopeKinds.Project, "Delete data"),
         new(OperatorOperationIds.HistoryRewrite, OperatorTier.T2, OperatorScopeKinds.Project, "Force push or rewrite history"),
         new(OperatorOperationIds.GateBypass, OperatorTier.T2, OperatorScopeKinds.Project, "Bypass a gate"),
+        new(OperatorOperationIds.CardAcceptOverride, OperatorTier.T2, OperatorScopeKinds.Project,
+            "Accept a card with an override and a written reason"),
+        new(OperatorOperationIds.CardArchiveOverride, OperatorTier.T2, OperatorScopeKinds.Project,
+            "Archive a card with an override and a written reason"),
         new(OperatorOperationIds.KeysRotate, OperatorTier.T2, OperatorScopeKinds.Workspace, "Rotate keys"),
         new(OperatorOperationIds.HostEnrollment, OperatorTier.T2, OperatorScopeKinds.Host, "Enroll or remove a host"),
         new(OperatorOperationIds.AccessChange, OperatorTier.T2, OperatorScopeKinds.Workspace, "Change access"),
@@ -300,6 +320,10 @@ public static class OperatorOperationCatalog
         {
             OperatorRouteRefinement.CardMove => facts.TargetLane is { } lane
                 ? QueueLanes.Contains(lane) ? OperatorOperationIds.CardRequeue
+                : facts.OperatorOverride && string.Equals(lane, TaskStates.Completed, StringComparison.OrdinalIgnoreCase)
+                    ? OperatorOperationIds.CardAcceptOverride
+                : facts.ArchiveOverride && string.Equals(lane, TaskStates.Archive, StringComparison.OrdinalIgnoreCase)
+                    ? OperatorOperationIds.CardArchiveOverride
                 : DeliveredLanes.Contains(lane) ? OperatorOperationIds.GateBypass
                 : null
                 : null,
@@ -321,7 +345,8 @@ public static class OperatorOperationCatalog
     /// <summary>Every operation a rule can resolve to, for the inventory test.</summary>
     public static IReadOnlyList<string> PossibleOperations(RouteRule rule) => rule.Refinement switch
     {
-        OperatorRouteRefinement.CardMove => [OperatorOperationIds.CardRequeue, OperatorOperationIds.GateBypass],
+        OperatorRouteRefinement.CardMove => [OperatorOperationIds.CardRequeue, OperatorOperationIds.GateBypass,
+            OperatorOperationIds.CardAcceptOverride, OperatorOperationIds.CardArchiveOverride],
         OperatorRouteRefinement.GateEvidence => [rule.OperationId, OperatorOperationIds.GateBypass],
         OperatorRouteRefinement.ReleaseDeployment =>
             [OperatorOperationIds.StageDeploy, OperatorOperationIds.ProductionPromote, OperatorOperationIds.GateBypass],

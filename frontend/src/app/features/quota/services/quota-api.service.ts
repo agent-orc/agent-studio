@@ -137,8 +137,8 @@ export interface ModelRoutingRecommendation {
 /** The active routing policy shown in the CLI-models panel. */
 export interface ModelRoutingPolicyView {
   economyMode: boolean;
-  policyVersion: string;
-  rows: { tier: string; model: string; thinkingLevel: string | null }[];
+  version: string;
+  tiers: { id: string; model: string; thinkingLevel: string | null; estimatedSavingsPercent: number }[];
 }
 
 @Injectable({ providedIn: 'root' })

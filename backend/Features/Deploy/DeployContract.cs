@@ -103,6 +103,9 @@ public sealed record DeploymentStep(string Name, string State, DateTime? Started
 /// <c>RequestedBy</c> and <c>CreatedAtUtc</c> extend the P1 contract for the
 /// timeline; the contract fields keep their names.
 /// </summary>
+/// <summary>How the Deploy area names a deploy job: its environment's name and its release version.</summary>
+public sealed record DeployJobLabel(string Environment, string? ReleaseVersion);
+
 public sealed record Deployment(
     string Id, string ReleaseId, string EnvironmentId, string State,
     DateTime? StartedAtUtc, DateTime? FinishedAtUtc, string? ApprovedBy,

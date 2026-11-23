@@ -47,24 +47,20 @@ public sealed class PostMergeModeTests
         => Assert.Equal(TestExecutionLevels.WorkPackage,
             PostMergeIntegrationPolicy.Level(null, Sha, null, null, false));
 
-    [Fact]
-    public void EscalationFallsBackUntilGreen()
+    [Theory]
+    [InlineData(TestingStrategies.Fast, IntegrationTestModes.PostMerge)]
+    [InlineData(TestingStrategies.Balanced, IntegrationTestModes.PostMerge)]
+    [InlineData(TestingStrategies.Strict, IntegrationTestModes.PreMerge)]
+    public void A_red_develop_never_changes_the_configured_placement(string strategy, string expected)
     {
-        var clock = new FakeTimeProvider();
-        var now = clock.GetUtcNow();
-        var red = new PostMergeRunRecord("run", "PROJ-002", "window", Sha, null,
-            null, null, 1, ["test"], [new("test", 1, false)], "red",
-            now.AddHours(-3), now.AddHours(-2).AddMinutes(-1));
-        var state = PostMergeProjectState.Empty("PROJ-002") with
-        {
-            DevelopState = "red", Runs = [red],
-        };
-        Assert.True(PostMergeModeService.EscalationActive(state, now));
-        Assert.False(PostMergeModeService.EscalationActive(
-            state with { DevelopState = "green" }, now));
-        Assert.True(PostMergeModeService.EscalationActive(
-            state with { DevelopState = "green" }, now, repairEscalated: true));
-        Assert.False(PostMergeModeService.EscalationActive(
-            state with { DevelopState = "green" }, now, repairEscalated: false));
+        // RT-1 (AGT-3988): three hours of red and an escalated repair card
+        // both used to switch the project to pre-merge and turn the batch
+        // gate back on. The placement is now the configured one.
+        var mode = new PostMergeModeService();
+        var settings = new ProjectSettings { Testing = new ProjectTestingSettings { Strategy = strategy } };
+
+        Assert.Equal(expected, mode.Resolve("PROJ-002", settings));
+        Assert.Equal(expected, PostMergeModeService.Effective(mode, "PROJ-002", settings));
+        Assert.Equal(expected, mode.Resolve("unknown-project", settings));
     }
 }

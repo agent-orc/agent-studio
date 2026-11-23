@@ -1013,6 +1013,37 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(_clock.GetUtcNow().UtcDateTime.AddMinutes(22), paused.InterventionExpiresAtUtc);
     }
 
+    /// <summary>
+    /// AGT-3987 (IN-15 of AGT-3886): the deploy fact of the decision stream is
+    /// titled by project, environment and release, as the Deploy area names a
+    /// run, never by the deploy job id.
+    /// </summary>
+    [Fact]
+    public async Task Deploy_fact_is_titled_by_project_environment_and_release_not_job_id()
+    {
+        var (deploy, environments, store) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        var jobId = Assert.Single(environments.Read("demo")!.Jobs).Id;
+        var stageName = deploy.Status("demo")!.Single(item => item.Environment.Id == "stage").Environment.Name;
+        Assert.Equal(new DeployJobLabel(stageName, release.Version), store.JobLabels("demo")[jobId]);
+
+        await using var factory = LocalFactory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(_watch, "demo", workspace.Id, _clock);
+        var quota = services.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>();
+        quota.RecordDeployStart("demo", jobId, "stage");
+        quota.RecordDeployEnd("demo", jobId);
+        var source = services.GetServices<AgentStudio.Operator.IOperatorDecisionFactSource>()
+            .OfType<AgentStudio.Operator.OperatorDeployFactSource>().Single();
+
+        var fact = Assert.Single(source.Collect(_clock.GetUtcNow().UtcDateTime));
+        Assert.Equal($"demo · {stageName} · {release.Version}", fact.Title);
+        Assert.Null(fact.CardKey);
+        Assert.DoesNotContain(jobId, fact.Title);
+        Assert.Equal("demo · stage", AgentStudio.Operator.OperatorDeployFactSource.Title("demo", null, "stage"));
+    }
+
     [Fact]
     public void GuidedFailure_RetryJobSavedBeforeRun_RestartAttachesTheOriginalRun()
     {

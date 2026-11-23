@@ -1,28 +1,81 @@
 @if (policy(); as selection) {
   <section class="consumer-policy" data-testid="consumer-policy-editor">
-    <header>
-      <strong>Model selection by consumer</strong>
+    <header><strong>Model selection by consumer</strong>
       <small>Workspace defaults · migration: {{ selection.migration.inheritedSteps }} inherited, {{ selection.migration.explicitSteps }} explicit</small>
     </header>
-    <div class="consumer-policy__scroll" tabindex="0"
-         data-testid="consumer-policy-table-scroll"
-         aria-label="Model selection by consumer table"
-         (keydown)="onTableScrollKeydown($event)">
+    <app-routing-cost-preview [models]="models()" />
+    <div class="consumer-policy__scroll" tabindex="0" data-testid="consumer-policy-table-scroll"
+         aria-label="Model selection by consumer table" (keydown)="onTableScrollKeydown($event)">
       <table>
-        <thead><tr><th>Consumer</th><th>Primary (CLI:model:thinking)</th><th>Ordered fallbacks or catalogue</th><th>Effective route</th></tr></thead>
+        <thead><tr><th>Consumer</th><th>Primary model and thinking</th><th>Ordered fallbacks</th><th>Effective route by step</th></tr></thead>
         <tbody>
           @for (row of rows(); track row.id) {
+            @let draft = setting(row.id, row.setting);
             <tr [attr.data-testid]="'consumer-policy-' + row.id">
-              <td><strong>{{ row.id }}</strong></td>
-              <td><input [value]="routeText(row.setting.primary)" [disabled]="saving() !== null || row.setting.route === 'qualification'"
-                  [attr.aria-label]="'Primary route for ' + row.id"
-                  (change)="update(row.id, 'primary', $any($event.target).value)" />
-                  @if (row.setting.route === 'qualification') { <small>Task qualification</small> }</td>
-              <td><input [value]="fallbackText(row.setting)" [disabled]="saving() !== null"
-                  [attr.aria-label]="'Fallback routes for ' + row.id"
-                  (change)="update(row.id, 'fallbacks', $any($event.target).value)" /></td>
-              <td>@for (effective of effectiveRoutes(); track effective.consumer + ':' + (effective.stepId ?? '')) {
-                @if (effective.consumer === row.id) { {{ effective.effective?.cliType ?? 'wait' }} · {{ effective.effective?.model ?? 'default' }} }
+              <td><strong>{{ row.id }}</strong>
+                @if (drafts()[row.id]) {
+                  <button type="button" class="btn" (click)="preview(row.id)" aria-label="Preview weekly saving" [disabled]="!draft.primary?.model">Preview saving</button>
+                  @if (previews()[row.id]; as cost) {
+                    <small>Usage group: {{ row.id === 'coding' ? 'coding' : row.id === 'review-aspect' ? 'review aspect' : 'one-shot and other model calls' }}. This comparison reprices the whole group.</small>
+                    <small>Actual ${{ cost.actualUsd?.toFixed(2) ?? 'unknown' }} · Alternative ${{ cost.alternativeUsd?.toFixed(2) ?? 'unknown' }} · Weekly saving ${{ cost.projectedWeeklySavingUsd?.toFixed(2) ?? 'unknown' }} ({{ cost.receipts }} receipts)</small>
+                    <small>{{ cost.qualityCaveat }} {{ cost.correctnessFloor }}</small>
+                  }
+                  @if (!draft.primary?.model) { <small>Weekly saving is unknown for inherited or qualified routes. Compare a chosen model above.</small> }
+                  <button type="button" class="btn btn--primary" (click)="save(row.id)" [disabled]="saving() !== null || (!!draft.primary?.model && !previews()[row.id])">Save route</button>
+                }
+              </td>
+              <td>
+                <select [ngModel]="routeKey(draft.primary)" [disabled]="saving() !== null || draft.route === 'qualification'"
+                    [attr.aria-label]="'Primary route for ' + row.id" (ngModelChange)="selectModel(row.id, $event)">
+                  <option value="">Inherit default</option>
+                  @for (model of options(draft.primary); track model.cli + ':' + model.model) {
+                    <option [value]="optionValue(model)">{{ modelLabel(model) }}</option>
+                  }
+                </select>
+                <small>{{ routeSummary(draft.primary) }}</small>
+                @if (draft.primary; as primary) {
+                  <select [attr.aria-label]="'Thinking for ' + row.id" [ngModel]="primary.thinking ?? ''" [disabled]="draft.route === 'qualification' || saving() !== null"
+                      (ngModelChange)="update(row.id, 'primary', primary.cli + ':' + (primary.model ?? '') + ':' + $event)">
+                    <option value="">Model default</option>
+                    @for (model of options(primary); track model.cli + ':' + model.model) {
+                      @if (model.cli === primary.cli && model.model === primary.model) {
+                        @for (level of model.thinkingLevels; track level) { <option [value]="level">{{ level }}</option> }
+                      }
+                    }
+                  </select>
+                }
+                @if (draft.route === 'qualification') { <small>Task qualification</small> }
+              </td>
+              <td>
+                <select [attr.aria-label]="'Fallback strategy for ' + row.id" [value]="draft.fallbacks === 'catalogue' ? 'catalogue' : 'ordered'"
+                    [disabled]="saving() !== null" (change)="update(row.id, 'fallbacks', $any($event.target).value === 'catalogue' ? 'catalogue' : '')">
+                  <option value="catalogue">Comparable catalogue</option><option value="ordered">Ordered models</option>
+                </select>
+                @for (fallback of fallbackRoutes(draft); track fallback; let index = $index) {
+                  <label>Fallback {{ index + 1 }}
+                    <select [attr.aria-label]="'Fallback ' + (index + 1) + ' for ' + row.id" [ngModel]="routeKey(fallback)" [disabled]="saving() !== null"
+                        (ngModelChange)="selectModel(row.id, $event, index)">
+                      @for (model of options(fallback); track model.cli + ':' + model.model) {
+                        <option [value]="optionValue(model)">{{ modelLabel(model) }}</option>
+                      }
+                    </select>
+                    <small>{{ routeSummary(fallback) }}</small>
+                    <select [attr.aria-label]="'Fallback thinking ' + (index + 1) + ' for ' + row.id" [ngModel]="fallback.thinking ?? ''"
+                        (ngModelChange)="fallbackThinking(row.id, index, $event)">
+                      <option value="">Model default</option>
+                      @for (model of options(fallback); track model.cli + ':' + model.model) {
+                        @if (model.cli === fallback.cli && model.model === fallback.model) {
+                          @for (level of model.thinkingLevels; track level) { <option [value]="level">{{ level }}</option> }
+                        }
+                      }
+                    </select>
+                    <button type="button" class="btn" (click)="removeFallback(row.id, index)">Remove fallback {{ index + 1 }}</button>
+                  </label>
+                }
+                @if (draft.fallbacks !== 'catalogue') { <button type="button" class="btn" (click)="addFallback(row.id)">Add fallback</button> }
+              </td>
+              <td>@for (effective of effectiveFor(row.id); track effective.stepId ?? 'consumer-default') {
+                <div><code>{{ effective.stepId ?? 'Consumer default' }}</code><small>{{ effective.effective?.cliType ?? 'wait' }} · {{ effective.effective?.model ?? 'default' }} · {{ effective.effective?.thinkingLevel ?? 'model default' }}</small></div>
               }</td>
             </tr>
           }

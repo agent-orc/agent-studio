@@ -39,6 +39,7 @@ public static class IamPermissions
     public const string ProjectRead = "project.read";
     public const string ProjectCardsWrite = "project.cards.write";
     public const string ProjectCardsReview = "project.cards.review";
+    public const string ProjectCardsOverride = "project.cards.override";
     public const string ProjectRunsOperate = "project.runs.operate";
     public const string ProjectChatWrite = "project.chat.write";
     public const string ProjectDocsWrite = "project.docs.write";
@@ -73,6 +74,11 @@ public static class IamPermissions
         new(ProjectCardsWrite, PermissionLevel.Project, "Create, edit, order, and move cards."),
         new(ProjectCardsReview, PermissionLevel.Project,
             "Accept a card in Human Review, or send it back to Ready with a note for the next run."),
+        // ES-2 (Dossier operator-elevated-session, ES-D8 A): Owner and Admin by
+        // role; an operator session holds it only for one request an Owner
+        // approval admitted (card.accept-override, card.archive-override).
+        new(ProjectCardsOverride, PermissionLevel.Project,
+            "Accept a card with an override or archive it with an override, each with a written reason."),
         new(ProjectRunsOperate, PermissionLevel.Project, "Start, stop, and continue runs, pipeline steps, merges, and integrations."),
         new(ProjectChatWrite, PermissionLevel.Project, "Send project, card, and Dossier chat turns."),
         new(ProjectDocsWrite, PermissionLevel.Project, "Edit the wiki, Dossiers, steering, and security documents."),
@@ -160,7 +166,7 @@ public static class IamRoles
     private static readonly string[] AdminSet =
     [
         .. DeveloperSet,
-        IamPermissions.WorkspaceSettingsWrite, IamPermissions.WorkspaceOperate,
+        IamPermissions.WorkspaceSettingsWrite, IamPermissions.WorkspaceOperate, IamPermissions.ProjectCardsOverride,
         IamPermissions.ProjectSettingsWrite, IamPermissions.ProjectPipelineWrite, IamPermissions.EnvironmentProductionDeploy,
         IamPermissions.EnvironmentProductionDeployApprove, IamPermissions.SecretsWrite,
     ];

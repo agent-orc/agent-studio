@@ -78,7 +78,8 @@ public static class OperatorRequestClassifier
             => evidence is not null && project is not null && commit is not null && evidence.HasFullGateEvidence(project, commit);
         var facts = rule.Refinement switch
         {
-            OperatorRouteRefinement.CardMove => new OperatorRequestFacts(TargetLane: Field(body, "targetState")),
+            OperatorRouteRefinement.CardMove => new OperatorRequestFacts(TargetLane: Field(body, "targetState"),
+                OperatorOverride: Flag(body, "operatorOverride"), ArchiveOverride: Flag(body, "archiveOverride")),
             OperatorRouteRefinement.GateEvidence => new OperatorRequestFacts(FullGateEvidence: Evidence(
                 Field(body, "commit") ?? (project is null || Field(body, "artifact") is not { } artifact
                     ? null : evidence?.ReleaseCommit(project, null, artifact)))),
@@ -89,8 +90,15 @@ public static class OperatorRequestClassifier
                     ? null : evidence?.ReleaseCommit(project, releaseId, null))),
             _ => new OperatorRequestFacts(),
         };
-        return OperatorOperationCatalog.Refine(rule, facts);
+        var refined = OperatorOperationCatalog.Refine(rule, facts);
+        // ES-2: the written reason of an override names itself in the audit entry.
+        if (refined is not null && OperatorOperationIds.CardOverride.Contains(refined.Id))
+            context.Items[OverrideReasonItem] = Field(body, "reason")?.Trim();
+        return refined;
     }
+
+    /// <summary>The written reason of an override move an operator session sent (ES-2), for its audit entry.</summary>
+    public const string OverrideReasonItem = "OperatorRequest.OverrideReason";
 
     /// <summary>What a T1 request acts on: the permission target's project and environment, or the host a route names.</summary>
     public static OperatorGrantTarget GrantTarget(OperatorOperation operation, PermissionTarget target, Func<string, string?> routeValue)
@@ -102,6 +110,12 @@ public static class OperatorRequestClassifier
 
     private static string? Field(IReadOnlyDictionary<string, string> body, string name)
         => body.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;
+
+    /// <summary>A JSON boolean the body carries; the collector stores it as <c>true</c> or <c>false</c>.</summary>
+    private static bool Flag(IReadOnlyDictionary<string, string> body, string name)
+        => body.TryGetValue(BooleanKey(name), out var value) && value == "true";
+
+    private static string BooleanKey(string name) => "\u0000bool:" + name;
 
     private static async Task<IReadOnlyDictionary<string, string>> BodyStringsAsync(HttpRequest request)
     {
@@ -123,8 +137,12 @@ public static class OperatorRequestClassifier
             using var document = JsonDocument.Parse(buffer.ToArray());
             if (document.RootElement.ValueKind != JsonValueKind.Object) return fields;
             foreach (var property in document.RootElement.EnumerateObject())
+            {
                 if (property.Value.ValueKind == JsonValueKind.String)
                     fields[property.Name] = property.Value.GetString()!;
+                else if (property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    fields[BooleanKey(property.Name)] = property.Value.ValueKind == JsonValueKind.True ? "true" : "false";
+            }
             return fields;
         }
         catch (JsonException exception)

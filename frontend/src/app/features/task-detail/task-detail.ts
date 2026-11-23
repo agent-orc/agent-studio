@@ -467,7 +467,7 @@ export class TaskDetailComponent implements OnDestroy {
     this.loadModelCatalog(next);
 
     this.jobService
-      .setJobCliType(this.detail().info.id, next, this.detail().info.watchPath)
+      .setJobCliType(this.detail().info.id, next, this.detail().info.watchPath, undefined, this.detail().info.pinMode ?? 'preference')
       .subscribe({
         next: () => this.fileSaved.emit(),
         error: (err) => this.showError(err),
@@ -935,34 +935,18 @@ export class TaskDetailComponent implements OnDestroy {
   onModelDraftChange(value: string): void {
     const trimmed = (value ?? '').trim();
     this.modelDraft.set(trimmed);
-    const current = this.detail().info.model ?? '';
-    if (trimmed === current) return;
-
-    this.jobService
-      .setJobModel(
-        this.detail().info.id,
-        trimmed === '' ? null : trimmed,
-        this.detail().info.watchPath,
-      )
-      .subscribe({
-        error: (err) => this.showError(err),
-      });
+    const info = this.detail().info;
+    if (trimmed === (info.model ?? '')) return;
+    this.jobService.setJobModel(info.id, trimmed || null, info.watchPath, info.pinMode ?? 'preference')
+      .subscribe({ error: err => this.showError(err) });
   }
 
   onThinkingLevelDraftChange(value: string | null): void {
     this.thinkingLevelDraft.set(value);
-    const current = this.detail().info.thinkingLevel ?? null;
-    if (value === current) return;
-
-    this.jobService
-      .setJobThinkingLevel(
-        this.detail().info.id,
-        value,
-        this.detail().info.watchPath,
-      )
-      .subscribe({
-        error: (err) => this.showError(err),
-      });
+    const info = this.detail().info;
+    if (value === (info.thinkingLevel ?? null)) return;
+    this.jobService.setJobThinkingLevel(info.id, value, info.watchPath, info.pinMode ?? 'preference')
+      .subscribe({ error: err => this.showError(err) });
   }
 
   /**
@@ -1019,6 +1003,7 @@ export class TaskDetailComponent implements OnDestroy {
           info.id,
           change.model === '' ? null : change.model,
           info.watchPath,
+          info.pinMode ?? 'preference',
         )
         .subscribe({
           next: () => {
@@ -1034,7 +1019,7 @@ export class TaskDetailComponent implements OnDestroy {
 
     const thinkingPut = () => {
       this.jobService
-        .setJobThinkingLevel(info.id, change.thinkingLevel, info.watchPath)
+        .setJobThinkingLevel(info.id, change.thinkingLevel, info.watchPath, info.pinMode ?? 'preference')
         .subscribe({
           next: () => this.fileSaved.emit(),
           error: (err) => {
@@ -1046,7 +1031,7 @@ export class TaskDetailComponent implements OnDestroy {
 
     if (cliChanged) {
       this.jobService
-        .setJobCliType(info.id, change.cliType, info.watchPath)
+        .setJobCliType(info.id, change.cliType, info.watchPath, undefined, info.pinMode ?? 'preference')
         .subscribe({
           next: () => {
             if (modelChanged) modelPut();

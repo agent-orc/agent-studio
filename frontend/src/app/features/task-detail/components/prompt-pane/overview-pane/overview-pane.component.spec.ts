@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
@@ -133,8 +133,16 @@ async function build(job: TaskInfo, agentWork: AgentWorkSummary | null = null) {
   return fixture;
 }
 
+beforeEach(() => {
+  vi.stubGlobal('IntersectionObserver', class {
+    observe(): void { /* Viewport-deferred content stays outside this fixture. */ }
+    unobserve(): void { /* No browser observer is attached. */ }
+    disconnect(): void { /* No browser observer is attached. */ }
+  });
+});
 afterEach(() => {
   TestBed.resetTestingModule();
+  vi.unstubAllGlobals();
 });
 
 describe('OverviewPaneComponent (smoke)', () => {
