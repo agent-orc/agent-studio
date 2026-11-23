@@ -176,7 +176,7 @@ public sealed partial class AccessSecurityStore
     /// policy step's refusal (SM-4).
     /// </summary>
     public void AppendServiceAccountAudit(ServiceAccountPrincipal principal, string method, string path, int status,
-        string? target = null, string? parameterDigest = null, OperatorPolicyDecision? policy = null)
+        string? target = null, string? parameterDigest = null, OperatorPolicyDecision? policy = null, string? reason = null)
     {
         lock (_gate)
         {
@@ -193,6 +193,8 @@ public sealed partial class AccessSecurityStore
                     delegatedBy = op.DelegatedBy,
                     operation = policy?.Operation?.Id, tier = policy?.Operation?.Tier.ToString(), grantId = policy?.GrantId,
                     approvalId = policy?.ApprovalId, policyReason = policy?.Reason,
+                    // ES-2: an override names the approving Owner and its written reason.
+                    approvedBy = policy?.ApprovedBy, reason,
                 }
                 : new
                 {
