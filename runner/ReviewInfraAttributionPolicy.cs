@@ -13,6 +13,8 @@ internal enum ReviewInfraAttribution
     /// </summary>
     ProductOwned,
 
+    DiskFull,
+
     /// <summary>
     /// Process-level torn-down-<c>/tmp</c> evidence (AGT-2750). The command
     /// never produced a trustworthy test result, so the attempt is settled as
@@ -57,6 +59,11 @@ internal static class ReviewInfraAttributionPolicy
     {
         if (commandSucceeded) return ReviewInfraAttribution.ProductOwned;
         var evidence = Read(standardOutput, standardError);
+
+        // Disk exhaustion can interrupt a suite after some tests already failed.
+        // Only tool output counts; fixture names and indented assertions do not.
+        if (RunnerDiskWriteFailure.IsDiskFull(new IOException(evidence.ProcessLevelOutput)))
+            return ReviewInfraAttribution.DiskFull;
 
         // A runner that got far enough to report "Failed: N" for N failed tests
         // did not lose its /tmp mount mid-build: those tests are the failure,

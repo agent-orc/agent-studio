@@ -562,6 +562,7 @@ public sealed class RemoteReviewWorkspace
             var execution = ReviewCommandKinds.IsAgent(command.ExecutionKind)
                 ? await _agentCommands.RunAsync(command, launch, ct)
                 : await RunCommandAsync(command, RepositoryPath, ct);
+            ThrowIfDiskFull(execution.Process);
             if (!ReviewCommandKinds.IsAgent(command.ExecutionKind))
             {
                 RecordCandidateDependencyLoss(command.StepId);
@@ -1667,6 +1668,7 @@ public sealed class RemoteReviewWorkspace
         {
             if (watchdog is not null) await watchdog.DisposeAsync();
         }
+        ThrowIfDiskFull(process);
         return new CommandExecution(process, started, DateTime.UtcNow, signal, Stall: stall.ToDiagnostics());
     }
 
@@ -2154,6 +2156,13 @@ public sealed class RemoteReviewWorkspace
                          || !string.Equals(finalHead, _subject.ExpectedResultSha, StringComparison.OrdinalIgnoreCase)
                          || !string.Equals(finalTree, _initialTree, StringComparison.OrdinalIgnoreCase);
         return Proof(_subject.RepositoryId, finalHead, finalTree, dirtyAfter);
+    }
+
+    private static void ThrowIfDiskFull(ProcessResult process)
+    {
+        if (ReviewInfraAttributionPolicy.Attribute(process) == ReviewInfraAttribution.DiskFull)
+            throw new ReviewInfrastructureException("DiskFull",
+                "Review host disk is full. Free space before retrying. " + FailureDetail(process));
     }
 
     private static bool MissingToolchain(ProcessResult process)

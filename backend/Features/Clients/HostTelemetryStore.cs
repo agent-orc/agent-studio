@@ -65,7 +65,7 @@ public sealed class HostTelemetryStore(IConfiguration config, ILogger<HostTeleme
         lock (_gate)
         {
             var thresholds = new AgentStudio.TaskServer.Contracts.HostDiskPressureThresholds(
-                config.GetValue("DiskPressure:WarningFreeBytes", 30L * 1024 * 1024 * 1024),
+                config.GetValue("DiskPressure:WarningFreeBytes", 20L * 1024 * 1024 * 1024),
                 config.GetValue("DiskPressure:WarningFreePercent", 15d),
                 config.GetValue("DiskPressure:CriticalFreeBytes", 8L * 1024 * 1024 * 1024),
                 config.GetValue("DiskPressure:CriticalFreePercent", 5d));

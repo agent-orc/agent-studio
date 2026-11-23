@@ -55,20 +55,52 @@ public sealed class OperatorReviewRetryFactSource(
     }
 }
 
-/// <summary>Completed deploys already metered by workspace quota, without a new event store.</summary>
-public sealed class OperatorDeployFactSource(WorkspaceQuotaService quota, ProjectRegistry projects)
+/// <summary>
+/// Completed deploys already metered by workspace quota, without a new event store.
+/// The title names project, environment and release as the Deploy area does
+/// (AGT-3987); the job id stays in the key only. <paramref name="jobLabels"/>
+/// reads the Deploy area's names of a project's jobs by display name.
+/// </summary>
+public sealed class OperatorDeployFactSource(WorkspaceQuotaService quota, ProjectRegistry projects,
+    Func<string, IReadOnlyDictionary<string, AgentStudio.Deploy.DeployJobLabel>>? jobLabels = null)
     : IOperatorDecisionFactSource
 {
     public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.DeployCompleted];
 
     public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
-        => quota.CompletedDeploys(nowUtc.AddDays(-7)).Select(deploy =>
+    {
+        var labels = new Dictionary<string, IReadOnlyDictionary<string, AgentStudio.Deploy.DeployJobLabel>>(StringComparer.OrdinalIgnoreCase);
+        return quota.CompletedDeploys(nowUtc.AddDays(-7)).Select(deploy =>
         {
             var project = projects.FindById(deploy.ProjectId);
+            var name = project?.DisplayName ?? deploy.ProjectId;
+            if (!labels.TryGetValue(name, out var jobs)) labels[name] = jobs = Labels(name);
             return new OperatorDecisionFact(OperatorDecisionTypes.DeployCompleted,
                 $"{OperatorDecisionTypes.DeployCompleted}|{deploy.ProjectId}|{deploy.JobId}|{deploy.CompletedAt:O}",
-                project?.DisplayName, deploy.JobId, "Deployment completed.", deploy.CompletedAt!.Value, []);
+                project?.DisplayName, null, "Deployment completed.", deploy.CompletedAt!.Value, [])
+            {
+                Title = Title(name, jobs.GetValueOrDefault(deploy.JobId), deploy.EnvironmentId),
+            };
         }).ToArray();
+    }
+
+    /// <summary><c>Shop · Production · 2026.11.2</c>; a job without a release record names its environment only.</summary>
+    public static string Title(string project, AgentStudio.Deploy.DeployJobLabel? label, string environmentId)
+        => label?.ReleaseVersion is { Length: > 0 } version
+            ? $"{project} · {label.Environment} · {version}"
+            : $"{project} · {label?.Environment ?? environmentId}";
+
+    private IReadOnlyDictionary<string, AgentStudio.Deploy.DeployJobLabel> Labels(string project)
+    {
+        if (jobLabels is null) return new Dictionary<string, AgentStudio.Deploy.DeployJobLabel>();
+        try { return jobLabels(project); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                                          or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            AgentStudio.Diagnostics.SilentCatch.Note(exception, "OperatorDeployFactSource: deploy state unreadable");
+            return new Dictionary<string, AgentStudio.Deploy.DeployJobLabel>();
+        }
+    }
 }
 
 /// <summary>
@@ -303,4 +335,70 @@ public sealed class OperatorPostMergeCoverageFactSource(Func<IReadOnlyList<PostM
             (coverage.LastReportedAtUtc + PostMergeCoveragePolicy.Limit)?.UtcDateTime ?? nowUtc,
             [new OperatorEvidenceLink("testing", "/api/projects/" + Uri.EscapeDataString(coverage.Project) + "/testing")],
             Title: "Post-merge runs missing")).ToArray();
+}
+
+/// <summary>
+/// RT-1 (AGT-3988): one Needs you item per open post-merge incident whose
+/// owner question was asked (two hours of incident age). The occurrence is the
+/// project, the fingerprint and the incident start, so a repeated red receipt
+/// of the same incident never adds a second item, and a green receipt that
+/// resolves the incident clears it. The answer is applied through the
+/// existing routes: a revert or fix-forward note on the repair card, or the
+/// project's testing strategy, which stays an owner setting.
+/// </summary>
+public sealed class OperatorPostMergeRedIncidentFactSource(
+    Func<IEnumerable<(string Project, AgentStudio.TaskServer.Contracts.PostMergeProjectState State)>> states,
+    Func<string, string, string?>? cardKey = null) : IOperatorDecisionFactSource
+{
+    public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.PostMergeRedIncident];
+
+    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+    {
+        var facts = new List<OperatorDecisionFact>();
+        foreach (var (project, state) in states())
+        foreach (var incident in state.Incidents ?? [])
+        {
+            if (incident.ResolvedAtUtc is not null || incident.OwnerQuestion is not { } question
+                || incident.OwnerAskedAtUtc is not { } asked) continue;
+            var card = cardKey?.Invoke(project, incident.RepairCardId) ?? incident.RepairCardId;
+            var receipt = state.Runs.LastOrDefault(run => run.Id == question.RedRunId);
+            var evidence = new List<OperatorEvidenceLink>
+            {
+                new("repair card", "/#/tasks/" + Uri.EscapeDataString(card)),
+                new("latest red receipt", "/api/runner/post-merge/projects/" + Uri.EscapeDataString(project)),
+                new("testing strategy", "/api/projects/" + Uri.EscapeDataString(project) + "/testing"),
+            };
+            var tests = incident.FailingTests.Count == 0 ? "unknown" : string.Join(", ", incident.FailingTests.Take(5))
+                + (incident.FailingTests.Count > 5 ? $" and {incident.FailingTests.Count - 5} more" : "");
+            var tip = question.RedTipSha is { Length: >= 12 } sha ? sha[..12] : question.RedTipSha ?? "unknown";
+            var reason = $"Develop has been red for incident {incident.Fingerprint} since "
+                + $"{incident.FirstRedAtUtc.UtcDateTime:yyyy-MM-dd HH:mm} UTC. Latest red receipt "
+                + $"{question.RedRunId ?? "unknown"} at {tip}"
+                + (receipt?.FinishedAtUtc is { } finished ? $" ({finished.UtcDateTime:yyyy-MM-dd HH:mm} UTC)" : "")
+                + $". Failing tests: {tests}. Attributed merge: {incident.AttributedMerge ?? "none"}. "
+                + "Options: " + string.Join("; ", question.Options.Select(option => OptionText(option, incident)))
+                + $". Recommended: {OptionText(question.Recommended, incident)}, because {Lower(question.RecommendationReason)}"
+                + " Studio moves no card and keeps the project's test placement until you answer.";
+            facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.PostMergeRedIncident,
+                $"{OperatorDecisionTypes.PostMergeRedIncident}|{project}|{incident.Fingerprint}|{incident.FirstRedAtUtc:O}",
+                project, card, reason, asked.UtcDateTime, evidence,
+                Title: $"{project} · develop red for two hours"));
+        }
+        return facts;
+    }
+
+    private static string OptionText(string option, AgentStudio.TaskServer.Contracts.PostMergeIncident incident) => option switch
+    {
+        nameof(AgentStudio.OrchestrationDecisions.RedDevelopOwnerOption.RevertAttributedMerge) =>
+            incident.AttributedMerge is { } merge
+                ? $"revert the attributed merge {(merge.Length >= 12 ? merge[..12] : merge)}"
+                : "revert the attributed merge (none attributed yet)",
+        nameof(AgentStudio.OrchestrationDecisions.RedDevelopOwnerOption.KeepFixingForward) => "keep fixing forward",
+        nameof(AgentStudio.OrchestrationDecisions.RedDevelopOwnerOption.SwitchProjectToStrict) =>
+            "switch the project to strict until develop is green",
+        _ => option,
+    };
+
+    private static string Lower(string sentence)
+        => sentence.Length == 0 ? sentence : char.ToLowerInvariant(sentence[0]) + sentence[1..];
 }

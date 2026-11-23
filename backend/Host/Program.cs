@@ -493,6 +493,7 @@ builder.Services.AddSingleton(sp => new AgentStudio.GitHubApp.GitHubAppHostKeys(
 // the first App tokens; integration waits on the readiness without holding startup.
 builder.Services.AddSingleton<AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness>();
 builder.Services.AddHostedService<AgentStudio.GitHubApp.GitHubAppHostCredentialService>();
+builder.Services.AddSingleton<SecretProjectKeys>();
 builder.Services.AddSingleton<ProjectSecretBindings>();
 builder.Services.AddSingleton<ISecretWorkloadLeases, SecretWorkloadLeases>();
 builder.Services.AddSingleton<ManagementService>();
@@ -1229,7 +1230,8 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
 // AGT-3792: the one gate host health state. Gate transport attempts, the
 // orphan sweep and the batch gate report to it; the SSH probe checks an
 // unreachable host with backoff instead of a gate run.
-builder.Services.AddSingleton<AgentStudio.Pipeline.IGateHostProbe, AgentStudio.Pipeline.SshGateHostProbe>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.SshGateHostProbe>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.IGateHostProbe>(sp => sp.GetRequiredService<AgentStudio.Pipeline.SshGateHostProbe>());
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateHostOutageMonitor(
     sp.GetRequiredService<TimeProvider>(), sp.GetService<AgentStudio.Pipeline.IGateHostProbe>(),
     sp.GetRequiredService<IConfiguration>().GetValue<int?>(
@@ -1556,9 +1558,21 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGat
     sp.GetRequiredService<AgentStudio.Pipeline.GateHostOutageMonitor>(),
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorReviewHostDriftFactSource>();
-builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
+builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorHostDiskFactSource>();
+// Resolved per read: the deploy fact titles a job by the Deploy area's names (AGT-3987).
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorDeployFactSource(
+    sp.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>(), sp.GetRequiredService<ProjectRegistry>(),
+    project => sp.GetRequiredService<AgentStudio.Deploy.DeployStore>().JobLabels(project)));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPostMergeCoverageFactSource(
     () => sp.GetRequiredService<AgentStudio.Pipeline.PostMergeCoverageService>().Missing()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPostMergeRedIncidentFactSource(
+    () => sp.GetRequiredService<ProjectRegistry>().List().Where(project => !project.Archived)
+        .Select(project => (project.DisplayName,
+            sp.GetRequiredService<AgentStudio.Pipeline.PostMergeRunStore>().Read(project.Id))),
+    (project, cardId) => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live is { } live
+        && TaskScannerService.FindMatches(live.Where(task => string.Equals(task.ProjectName, project,
+            StringComparison.OrdinalIgnoreCase)), cardId, null) is [var task, ..]
+        ? OperatorDecisionFacts.CardKey(task) : null));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorEnvironmentIncidentFactSource(
     sp.GetRequiredService<HealthCheckStore>(),
     () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name),

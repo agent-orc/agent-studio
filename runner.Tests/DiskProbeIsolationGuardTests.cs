@@ -43,7 +43,7 @@ public sealed class RunnerDiskAdmissionTests
         Assert.Equal(HostDiskPressureLevel.Critical, paused.Level);
         Assert.Contains("4.0 GiB free (1.6%)", paused.Reason);
 
-        // 20 GiB is above critical but still below the 30 GiB warning level.
+        // 20 GiB is above critical but below the 15% warning level on this disk.
         probe.Current = new FixedHostFilesystemProbe(20L << 30, 246L << 30);
         Assert.Equal(HostDiskPressureLevel.Critical, admission.Observe().Level);
         probe.Current = FixedHostFilesystemProbe.Healthy;

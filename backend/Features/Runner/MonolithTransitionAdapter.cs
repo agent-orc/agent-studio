@@ -24,6 +24,8 @@ public static class MonolithTransitionAdapter
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
     public static RedDevelopRepairDecision RedDevelopRepair(RedDevelopRepairFacts facts)
         => RedDevelopRepairPolicy.Decide(facts);
+    public static RecurringRepairCardAction RecurringRepairCard(string? lane)
+        => RedDevelopRepairPolicy.RecurringCard(lane);
     public static bool MayCreateRelease(bool developRed)
         => RedDevelopRepairPolicy.MayCreateRelease(developRed);
     public static ReviewBudgetDecision ReviewBudget(ReviewBudgetFacts facts) => ReviewBudgetPolicy.Decide(facts);
@@ -529,8 +531,8 @@ public static class MonolithTransitionAdapter
     public static bool TransitionDecisionPolicyOpensFindingRound(string outcome, ReviewFollowUpAction action)
         => TransitionDecisionPolicy.OpensFindingRound(outcome, action);
 
-    public static bool TransitionDecisionPolicyRetryInfrastructure(bool budgetAvailable, bool aspectRetryExhausted, bool interventionActive, bool probeFailed, bool diagnosisSupported)
-        => TransitionDecisionPolicy.RetryInfrastructure(budgetAvailable, aspectRetryExhausted, interventionActive, probeFailed, diagnosisSupported);
+    public static bool TransitionDecisionPolicyRetryInfrastructure(bool budgetAvailable, bool aspectRetryExhausted, bool interventionActive, bool probeFailed, bool diagnosisSupported, string? failureClassification = null)
+        => TransitionDecisionPolicy.RetryInfrastructure(budgetAvailable, aspectRetryExhausted, interventionActive, probeFailed, diagnosisSupported, failureClassification);
 
     public static string? TransitionDecisionPolicyTargetLane(TransitionAction? action, string? sourcePayloadTarget, OrchestrationAction stageAction)
         => TransitionDecisionPolicy.TargetLane(action, sourcePayloadTarget, stageAction);

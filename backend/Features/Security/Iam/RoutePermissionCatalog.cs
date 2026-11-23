@@ -390,7 +390,7 @@ public static class RoutePermissionCatalog
             "/api/model-selection/policy/consumers/{}",
             "/api/clients/{}/defaults", "/api/clients/{}/runner-capacity", "/api/git/branch-sweep/settings",
             "/api/orchestration/rollout/**");
-        Add("POST", IamPermissions.WorkspaceRead, "/api/token-pricing/calculate", "/api/component-routing/resolve");
+        Add("POST", IamPermissions.WorkspaceRead, "/api/token-pricing/calculate", "/api/token-pricing/what-if", "/api/component-routing/resolve");
         // These reads accept host paths or authority ids rather than a project
         // address. They must not inherit project-scoped workspace.read.
         Add("R", IamPermissions.WorkspaceAdminister, "/api/filesystem-layer/**");

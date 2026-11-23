@@ -39,7 +39,12 @@ grants anything; only grant and approval records do.
 2. Choose **Create operator agent**, give it a name such as `ops console`.
 3. Bind the narrowest role that covers the routine work, in **Role bindings**
    with the principal kind service account and the agent's id. Developer on the
-   projects it operates is a typical start. Owner cannot be bound.
+   projects it operates is a typical start. Owner cannot be bound. The
+   Operator agent role works on the workspace as well as per project: its card
+   writes resolve the card's project, so a workspace binding no longer refuses
+   them as installation-wide changes (ES-2). Do not bind Admin to accept or
+   archive cards with an override; the agent asks you for each one instead
+   (step 5).
 
 ## 2. Create its own OS user
 
@@ -155,6 +160,33 @@ running. The agent gets 403 `approval-required` with an `approvalId`.
    against the approval. A replay answers `approval-used`, a changed card,
    query, or body `approval-digest-mismatch`, a late attempt
    `approval-expired`, and a request still waiting `approval-pending`.
+
+### Overrides: accept or archive a card with a written reason
+
+An override acceptance (a move to Completed with `operatorOverride`) and an
+archive override (a move to Archive with `archiveOverride`) need the
+permission `project.cards.override`, which only Owner and Admin hold. The
+agent's request is the T2 operation `card.accept-override` or
+`card.archive-override` and opens an approval request like any T2 request.
+When you approve it, the agent's replay of that exact request carries the
+permission for that one request and the card moves:
+
+```sh
+curl -sS -X POST \
+  -H "Authorization: Bearer $(cat ~/.config/agent-studio/operator-session)" \
+  -H "Content-Type: application/json" \
+  -H "X-Operator-Instruction-Source: owner-chat" \
+  -H "X-Operator-Approval: <approvalId>" \
+  -d '{"targetState":"6-completed","operatorOverride":true,"reason":"Delivered outside Studio, verified on stage."}' \
+  "https://studio.example.test/api/tasks/AGT-12/move?project=PROJ-001"
+```
+
+The `reason` field is mandatory (at least eight characters). Without it the
+agent gets the 400 reason error at once and no approval request opens. A plain
+move to Archive without `archiveOverride` is not in the catalogue and is
+refused with `operation-not-catalogued`. Each card needs its own approval
+until batch confirmation arrives (ES-8). The card timeline names the session
+as actor, you as `approvedBy`, and the reason.
 
 The approval is bound to the session that asked; another session gets
 `approval-not-found`. Revoking the session or disabling the agent cancels its

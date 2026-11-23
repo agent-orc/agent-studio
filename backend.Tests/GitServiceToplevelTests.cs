@@ -95,6 +95,32 @@ public class GitServiceToplevelTests : IDisposable
         Assert.False(summary.IsRepo);
     }
 
+    [Fact]
+    public void Toplevel_cache_reset_does_not_evict_another_fixtures_repository()
+    {
+        var first = Path.Combine(_tempDir, "repo");
+        var second = Path.Combine(_tempDir, "repo-neighbor");
+        var child = Path.Combine(first, "child");
+        Directory.CreateDirectory(child);
+        Directory.CreateDirectory(second);
+        RunGit(first, "init -q -b main");
+        RunGit(second, "init -q -b main");
+        var git = BuildGitService(("First", first), ("Second", second));
+        Assert.True(git.IsGitRepo(first));
+        Assert.True(git.IsGitRepo(child));
+        Assert.True(git.IsGitRepo(second));
+
+        // Removing the metadata makes a subsequent cache miss observable.
+        // The resolver intentionally caches successful roots for the process lifetime.
+        Directory.Move(Path.Combine(first, ".git"), Path.Combine(first, "saved-git"));
+        Directory.Move(Path.Combine(second, ".git"), Path.Combine(second, "saved-git"));
+        GitService.InvalidateToplevelCache(first);
+
+        Assert.False(git.IsGitRepo(first));
+        Assert.False(git.IsGitRepo(child));
+        Assert.True(git.IsGitRepo(second), "Resetting one fixture must preserve another fixture's cache entry.");
+    }
+
     private GitService BuildGitService(params (string Name, string RootPath, string? RepositoryPath)[] entries)
     {
         var dict = new Dictionary<string, string?>();

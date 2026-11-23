@@ -229,7 +229,8 @@ and the project Operations view show the warning, and Needs you shows a
 a run on the current tip or a report within six hours clears it. The tip comes
 from the `origin/<branch>` ref file and the age from one `git rev-list -n 1
 --first-parent --before` per tip pair. Studio does not fall back to pre-merge
-on this warning; the red-develop fallback below is the only automatic one.
+on this warning, and since RT-1 (AGT-3988) there is no automatic fallback to
+pre-merge at all.
 
 ### Per-project integration test placement (AGT-3314)
 
@@ -261,12 +262,21 @@ first slot available for a batch.
 The post-merge worker reads its window size and age from the project's
 look-ahead settings through the runner state endpoint.
 
-An attribution repair card created with `creationSource: post-merge-attribution`
-is classified by the `HumanReviewEscalation` funnel when its normal run path
-escalates it. The funnel records the card ID in the post-merge run state.
-While that card is in Escalated, or a red develop has lasted at least
-two hours, the project temporarily resolves to `pre-merge`. A green T3 receipt
-clears the recorded card ID. Agent Studio is no longer held in `pre-merge`
+The effective placement is always the configured one (RT-1, AGT-3988, decision
+RT-D7 B). `PostMergeModeService.Resolve` no longer switches a fast or balanced
+project to `pre-merge` when develop has been red for any length of time or when
+a repair card is escalated, so the batch gate stays off. The automatic
+fallback stopped all integration overnight on 22 to 23 November 2026 for four
+reds that were not regressions; see
+[Red test isolation](../../red-test-isolation/index.html). An attribution
+repair card created with `creationSource: post-merge-attribution` is still
+classified by the `HumanReviewEscalation` funnel when its own run path
+escalates it, and the funnel still records the card ID in the post-merge run
+state (`attributionEscalatedTaskId`, cleared by a green T3 receipt). The record
+is evidence only and stays readable for compatibility; placement ignores it.
+A red incident that lasts two hours asks the owner instead (see Red develop
+repair below), and switching a project to `strict` stays an owner setting.
+Agent Studio is no longer held in `pre-merge`
 (owner decision of 20 to 22 November 2026, AGT-3965); it follows its testing
 strategy like every project. The gate-economics seven-day view reports lead
 time and gate minutes per card for comparison after a project switches.
@@ -325,12 +335,12 @@ header reads the smaller `/api/develop-states` projection. The state is evidence
 develop repair and release-hold cards; this unit does not open a repair card or
 alter integration transitions.
 
-A red incident's two-hour escalation leaves repair cards in Auto Review
-(including queued or executing gates), Human Review, Completed, and Archive
-with their delivery owner. Both receipt processing and the periodic overdue
-check apply this rule through `RedDevelopRepairPolicy`; the final escalation
-also rereads the lane and fences its move against that source state. The
-project's temporary pre-merge fallback still applies while develop stays red.
+No automatic code path moves a repair card out of Progress, Auto Review
+(including queued or executing gates and the wait for integration), Human
+Review or Completed because of a red develop, and no review attempt is
+superseded. Both receipt processing and the periodic overdue check take the
+decision from `RedDevelopRepairPolicy`, whose facts carry the repair card's
+lane and the incident age.
 
 Incident attribution and a `Revert` recommendation do not prove a published
 revert. Green receipts close incidents without reopening original suspect
@@ -444,6 +454,33 @@ proof of independence.
 
 ### Red develop repair (AGT-3312)
 
+RT-2 (AGT-4003) adds the pure `RedTestTriagePolicy`, `BisectVerdictPolicy` and
+`HoldScopePolicy` for the recommended RT-D1, RT-D2, RT-D4, RT-D5, RT-D6,
+RT-D7 and RT-D9 option B in the [Red test isolation Dossier](../../red-test-isolation/index.html).
+This slice adds no host wiring: the current repair flow below remains in use.
+Hosts will supply per-test repeat and envelope facts, last-green controls,
+explicit double-run bisect points and their parents, project quarantine entries,
+repair lanes, ages and lift runs. Environment evidence marks a run inconclusive;
+a regression requires two passing controls and a failing point with a passing
+parent. Mixed points stop attribution as flaky. Covering-folder holds match
+exact directories, with recursive suite-area fallback for zero or more than
+12 distinct folders, and include the test file and confirmed suspect paths.
+Repair, attributed-revert and owner-exempt cards pass their own hold. Later
+first-parent merges are coupled only by exact file overlap.
+
+The new policy centralizes the proposed bounds: held 24 hours plus one
+24-hour renewal while the repair is in Progress or Auto Review (including the
+integration wait), report-only seven days, three held and eight total per
+project, three distinct flaky runs in 14 days, seven-day relapse window and
+an owner question after 60 minutes of line stop. Renewals extend the original
+expiry by 24 hours, with a maximum age of 48 hours. Two consecutive covering
+passes in the standard envelope must contain the repair integration to lift.
+Owner questions name their reason, options and recommendation. A fourth held
+test stops the line and asks the owner; a total-cap breach also asks the owner.
+No action changes testing strategy or moves a reviewed or settled card. `RedDevelopRepairPolicy` keeps its existing API
+and two-hour compatibility behavior, delegating safe-revert and exact-file
+hold predicates to the new policies until host adoption in later slices.
+
 This slice implements the Dossier's recorded D2 option A (`revert-first`). A
 terminal red T3 receipt carries failing tests, a bounded log excerpt, the
 first-parent suspects since the last green SHA, changed paths, and the result
@@ -452,18 +489,41 @@ re-runs a focused failure at the same SHA before attribution. It intersects
 suspect paths with the failing test project's tracked reference graph and
 tests merge points, bisecting when several candidates remain. Unknown graph
 edges retain the suspect. `RedDevelopRepairPolicy` in the pure decision
-library chooses revert for one clean independent suspect, fix forward
-otherwise, and Human Operator escalation at two hours. A repair card carries
+library decides with the vocabulary `Revert`, `FixForward`, `Hold` and
+`AskOwner` (RT-1, AGT-3988): revert for one clean independent suspect, fix
+forward otherwise, hold while the repair is in Auto Review, Human Review,
+Completed or Archive, and ask the owner once the incident is two hours old,
+whatever the lane. `AskOwner` never moves a card. A repair card carries
 the evidence and uses the normal integration path, whose publication lease
 guards the eventual revert. The card starts at the front of Preparation.
 
-The project post-merge store keeps one open incident per fingerprint. A repeat
-red receipt reuses that card; a green receipt closes open incidents and records
-their red duration. A red terminal verdict blocks release creation. The
-scheduled runner invokes an escalation check even when the checkout is busy;
-it escalates an incident that has remained red for two hours when its repair
-is outside the delivery lanes described above, and offers the project's
-pre-merge batch gate as the fallback.
+The project post-merge store keeps one open incident per fingerprint, and
+each incident keeps its own clock from its first red receipt; a second
+fingerprint that turns red later does not inherit the first one's age. A
+repeat red receipt reuses that card; a green receipt closes open incidents and
+records their red duration. When a new incident's fingerprint matches an
+earlier repair card, `RedDevelopRepairPolicy.RecurringCard` decides: a card in
+Preparation, Ready, Escalated or another waiting lane is reopened to
+Preparation with the new evidence, a card in Progress, Auto Review or Human
+Review is linked without a move, and a Completed or Archived card stays
+settled while a new repair card is created. A red terminal verdict blocks
+release creation. The scheduled runner calls
+`POST /api/runner/post-merge/projects/{project}/escalation-check` even when
+the checkout is busy; the route keeps its name and now only asks the owner.
+
+At two hours of incident age the decision is `AskOwner`. The incident records
+`ownerAskedAtUtc` and `ownerQuestion` (options, recommended option, reason,
+and the latest red receipt's run ID and tip), and Needs you shows one
+`post-merge.red-incident` item per open incident (key: project, fingerprint
+and incident start), so repeated receipts and checks never add a second item.
+The item names the latest red receipt, the failing tests and the attributed
+merge, and offers three answers: revert the attributed merge, keep fixing
+forward, or switch the project to `strict` until develop is green. The
+recommended answer is revert when exactly one clean independent suspect
+exists, otherwise keep fixing forward. The owner applies the answer through
+existing routes: a note on the repair card (or a revert card), or
+`PUT /api/projects/{project}/testing`. Studio never switches the strategy
+itself. A green receipt resolves the incident and clears the item.
 The integration executor reads that project state before publication. While
 the latest terminal T3 verdict is red, it compares the delivery's changed
 paths with open incident paths under its publication lease. An overlap

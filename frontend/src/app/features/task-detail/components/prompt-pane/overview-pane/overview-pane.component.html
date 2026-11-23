@@ -52,6 +52,7 @@
           }
         </span>
       </div>
+      <app-card-pin-mode [job]="job()" [model]="effectiveModel()" [disabled]="isRunning() || agentConfigReadOnly()" (saved)="referencesChanged.emit()" />
 
       @if (job().ownerClientId) {
       <div class="ov-row">

@@ -1,5 +1,6 @@
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tasks;
+using AgentStudio.Operator;
 using AgentStudio.Pipeline;
 using AgentStudio.Clients;
 using Microsoft.Extensions.Configuration;
@@ -88,7 +89,11 @@ public sealed class HostDiskPressureTests
             HostTelemetrySample Sample(DateTime at, long free) => new(at,
                 null, null, null, null, null, null, null, null, null, null, 4, 0,
                 Filesystems: [new("runner work", "/work", free, 1000)]);
+            var attention = new OperatorHostDiskFactSource(null!, store);
             store.Append("host", Sample(now.AddSeconds(-2), 200));
+            var fact = Assert.Single(attention.Project("host", store.Query("host", "1h"), now));
+            Assert.Equal(OperatorDecisionTypes.HostDiskPressure, fact.Type);
+            Assert.Contains("/work", fact.Reason);
             Assert.Contains(store.Query("host", "1h").Findings,
                 finding => finding.Kind == "disk-pressure" && finding.Label == "Disk low");
             store.Append("host", Sample(now.AddSeconds(-1), 50));
@@ -96,7 +101,10 @@ public sealed class HostDiskPressureTests
                 store.DiskPressure("host", [new("runner work", "/work", 50, 1000)]).Level);
             Assert.Contains(store.Query("host", "1h").Findings,
                 finding => finding.Kind == "disk-pressure" && finding.Label == "Disk critical");
+            Assert.Contains("New work is paused", Assert.Single(
+                attention.Project("host", store.Query("host", "1h"), now)).Reason);
             store.Append("host", Sample(now, 400));
+            Assert.Empty(attention.Project("host", store.Query("host", "1h"), now));
             Assert.Equal(HostDiskPressureLevel.Healthy,
                 store.DiskPressure("host", [new("runner work", "/work", 400, 1000)]).Level);
         }

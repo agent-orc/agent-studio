@@ -386,6 +386,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-red-develop-project-fallback">
+          <td>2026-11-23</td>
+          <td><code>AGT-4002</code><br><span class="small">red-develop-project-fallback</span> (Dossier AGT-3988, RT-1)</td>
+          <td>No CLI crashed. After two hours of red develop the project resolved to pre-merge, the batch gate came back and every review ran the full suite with baseline and clean repeat; nothing integrated between 23:00Z and 04:00Z for four reds that were not regressions.</td>
+          <td>One project-wide timer (<code>PostMergeModeService.EscalationActive</code>, plus a second copy of the two-hour constant in <code>RedDevelopRepairPolicy</code>) mixed incident age with the need for a human, and an escalated repair card also switched the placement.</td>
+          <td>Placement is the configured one. <code>RedDevelopRepairPolicy</code> returns Revert, FixForward, Hold or AskOwner from the repair lane and the per-incident age; at two hours it raises one <code>post-merge.red-incident</code> Needs you item per incident and moves no card. Terminal: the incident waits in Needs you for the owner's answer while integration keeps flowing. RT-2 (AGT-4003) adds pure per-test classification, bounded quarantine, controlled attribution and hold-scope policies for later host adoption. It preserves this compatibility flow and adds no CLI retry or lane movement.</td>
+        </tr>
         <tr id="case-post-merge-daemon-cgroup">
           <td>2026-11-23</td>
           <td><code>AGT-3983</code><br><span class="small">post-merge-daemon-cgroup</span></td>
@@ -3341,6 +3348,13 @@
             on Claude. The fix selects <code>QuotaExceeded</code> and <code>WaitForCapabilityRecovery</code>, preserves the reason,
             and records the provider as Limited until the reported reset. Focused regressions cover coding and review,
             no same-session crash retry, admission hold after a login probe, and narrative false positives.</td>
+        </tr>
+        <tr id="case-review-host-disk-full">
+          <td>2026-11-23</td>
+          <td><code>AGT-3986</code><br><span class="small">review-host-disk-full</span></td>
+          <td>The operator reported review lease renewal failures with <code>No space left on device</code>, a 98% full review VM, and AGT-3952 escalated as ReviewInfra / ReviewWorkerFailed.</td>
+          <td>The ordinary review claim path bypassed the disk admission check. Retention had no size budget or stale-sibling sweep, and partial temp deletion could remove the ownership receipt before a locked child. Historical host contents were unavailable for independent verification.</td>
+          <td>Observed terminal: Escalated or a review lasting over an hour. Disk exhaustion now selects <code>DiskFull</code>, waits for recovery above warning, and schedules an infrastructure successor without consuming the card retry budget. New claims stop at critical pressure; Needs you names the host disk. No product finding is opened for this cause.</td>
         </tr>
       </tbody>
     </table>

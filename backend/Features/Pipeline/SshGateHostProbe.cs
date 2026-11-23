@@ -1,3 +1,6 @@
+using AgentStudio.Clients;
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Pipeline;
 
 /// <summary>
@@ -13,9 +16,14 @@ public sealed class SshGateHostProbe : IGateHostProbe
     private readonly IConfiguration _configuration;
     private readonly Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task> _runProcess;
 
-    public SshGateHostProbe(IConfiguration configuration)
+    private readonly HostTelemetryStore? _telemetry;
+    private bool _diskCritical;
+    public GateHostDiskReading? LatestDisk { get; private set; }
+
+    public SshGateHostProbe(IConfiguration configuration, HostTelemetryStore? telemetry = null)
         : this(configuration, RemoteGateProcess.RunAsync)
     {
+        _telemetry = telemetry;
     }
 
     internal SshGateHostProbe(IConfiguration configuration,
@@ -31,6 +39,48 @@ public sealed class SshGateHostProbe : IGateHostProbe
         {
             try { return RemoteGateOptions.Read(_configuration).Host; }
             catch (InvalidOperationException) { return null; }
+        }
+    }
+
+    public async Task<GateHostDiskReading?> ReadDiskAsync(CancellationToken ct)
+    {
+        if (Host is not { } host) return null;
+        var root = RemoteGateOptions.Read(_configuration).Root;
+        var output = new List<string>();
+        await _runProcess("ssh", RemoteGateTransport.SshArguments(host,
+            "p=" + RemoteGateTransport.Quote(root)
+                + "; while [ ! -d \"$p\" ]; do p=$(dirname -- \"$p\"); done; stat -f -c '%a %b %S' -- \"$p\""), Path.GetTempPath(),
+            ProbeTimeout, ct, line => { lock (output) output.Add(line); }).ConfigureAwait(false);
+        var filesystem = ParseDisk(root, output.LastOrDefault() ?? "");
+        var pressure = _telemetry?.DiskPressure("gate-ssh:" + host, [filesystem])
+            ?? HostDiskPressurePolicy.Decide([filesystem], new(), _diskCritical);
+        _diskCritical = pressure.Level == HostDiskPressureLevel.Critical;
+        var now = DateTime.UtcNow;
+        LatestDisk = new("gate-ssh:" + host, host, now, [filesystem],
+            pressure.Level.ToString().ToLowerInvariant(), pressure.Reason);
+        _telemetry?.Append("gate-ssh:" + host, new HostTelemetrySample(now,
+            null, null, null, null, null, null, null, null, null, null, 0, 0, Filesystems: [filesystem]));
+        return LatestDisk;
+    }
+
+    internal static HostFilesystemUsageDto ParseDisk(string root, string output)
+    {
+        var values = output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (values.Length != 3 || !long.TryParse(values[0], out var available)
+            || !long.TryParse(values[1], out var total) || !long.TryParse(values[2], out var blockSize)
+            || available < 0 || total <= 0 || blockSize <= 0)
+            throw new IOException("Gate host returned an invalid disk-space reading.");
+        return new("gate work", root, checked(available * blockSize), checked(total * blockSize));
+    }
+
+    public async Task WaitForDiskRecoveryAsync(Action<string> log, CancellationToken ct,
+        Func<TimeSpan, CancellationToken, Task>? delay = null)
+    {
+        delay ??= Task.Delay;
+        while (await ReadDiskAsync(ct).ConfigureAwait(false) is { Level: "critical" } disk)
+        {
+            log($"Gate admission paused: {disk.Reason}");
+            await delay(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
         }
     }
 
@@ -50,3 +100,6 @@ public sealed class SshGateHostProbe : IGateHostProbe
         }
     }
 }
+
+public sealed record GateHostDiskReading(string Id, string Host, DateTime ObservedAt,
+    IReadOnlyList<HostFilesystemUsageDto> Filesystems, string Level, string Reason);
