@@ -397,7 +397,9 @@ Routes, under `/api/projects/{project}/deploy`: `GET environments`, `status`
 `releases/{id}/actions`;
 `POST releases/{id}/deployments` (`{environmentId, approve, tenant?, guidedFailure?}`),
 `deployments/{id}/approve`, `deployments/{id}/reject`, `deployments/{id}/cancel`,
-`environments/{id}/redeploy` and `environments/{id}/rollback` (`{approve, tenant?, guidedFailure?}`).
+`environments/{id}/redeploy` and `environments/{id}/rollback` (`{approve, tenant?, guidedFailure?}`);
+`PUT releases/{id}/notes/{cardKey}` (`{text}`) rewrites one card's note of a
+release (AGT-3908).
 `actions` returns, per environment, the deploy of the next release and the
 redeploy of the current one; `releases/{id}/actions` returns, per environment,
 the deploy of that release or its redeploy where it is current. Each
@@ -419,7 +421,26 @@ including divergent release histories. `rolled-back` marks a card withdrawn by
 a successful rollback and stays visible through later queued or failed attempts;
 `not-deployed` means the card has no deployment in that environment. The
 release notes response has `releaseId`, `version`, `preview` and `notes` entries
-with `cardKey` and product-facing `text` captured from the included cards.
+with `cardKey`, product-facing `text`, `maintenance` and `edited`. `text` is the
+edited note, else the card title; `edited` says which. `maintenance` marks a
+chore card, which sorts last and is left out of the notes the release view
+shows.
+
+`PUT releases/{id}/notes/{cardKey}` requires `project.docs.write` on the project
+(`RoutePermissionCatalog`): release notes are product copy, written like project
+documentation, so Developer, Admin and Owner may edit them and a deploy
+permission is not needed. The body is `{text}` with at most 500 characters after
+trimming; longer text returns 400. Empty or missing text removes the edit, and
+the note shows the card title again. An unknown release, or a card key the
+release does not contain, returns 404; the card key matches case-insensitively.
+The response is the release's notes response after the edit. Each edit appends
+a `release-note-edited` entry with the actor to `audit.jsonl`.
+
+Edits live in
+`<TaskRepository>/deployments/projects/<project>/release-notes.json`, next to
+the releases, so release files stay write-once. The file maps release id to an
+object of card key to edited text, and holds only edited notes. It is written
+as a flushed temporary file and moved into place.
 Deployment `state` uses `queued`, `running`, `succeeded`, `failed`, `cancelled`
 and `awaiting-approval`. Step `state` also permits `pending` and `skipped`.
 EnvironmentStatus `health` is `healthy`, `unhealthy` or `unknown`.

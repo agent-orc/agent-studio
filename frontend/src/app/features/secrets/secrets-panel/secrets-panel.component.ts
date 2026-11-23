@@ -52,7 +52,7 @@ export class SecretsPanelComponent {
   readonly rows = computed<readonly SecretMetadata[]>(() => {
     const scope = this.scope().toLowerCase();
     return (this.service.overview()?.secrets ?? [])
-      .filter(item => item.scope.toLowerCase() === scope)
+      .filter(item => (item.routeScope ?? item.scope).toLowerCase() === scope)
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name));
   });

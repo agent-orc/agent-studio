@@ -16,7 +16,10 @@ export interface SecretVersion {
 
 export interface SecretMetadata {
   reference: string;
+  /** Stored scope key; a project scope names the project id (AGT-3987). */
   scope: string;
+  /** The scope as routes and the selectors name it: the project's display name. */
+  routeScope?: string | null;
   scopeKind: 'workspace' | 'project' | 'environment';
   name: string;
   status: 'active' | 'revoked';
