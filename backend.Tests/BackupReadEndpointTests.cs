@@ -3,6 +3,7 @@ using AgentStudio.Management;
 using AgentStudio.Security;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -15,7 +16,10 @@ public sealed class BackupReadEndpointTests : IClassFixture<BackupReadEndpointTe
 
     public sealed class Host : ManagementTestHost
     {
-        protected override void ConfigureHost(IWebHostBuilder builder) => ManagementApiTests.Configure(builder, Folders);
+        public FakeTimeProvider Clock { get; } = new();
+
+        protected override void ConfigureHost(IWebHostBuilder builder)
+            => ManagementApiTests.Configure(builder, Folders, timeProvider: Clock);
     }
 
     [Fact]
@@ -54,6 +58,11 @@ public sealed class BackupReadEndpointTests : IClassFixture<BackupReadEndpointTe
             Assert.DoesNotContain("credentialFiles", entry.Raw);
             Assert.DoesNotContain("files", entry.Raw);
         });
+        // Expiry belongs to the fixture clock, not the time spent creating an archive.
+        _host.Clock.Advance(StudioBackupService.ReadAuditWindow);
+        (await client.GetAsync("/api/v1/management/backups")).EnsureSuccessStatusCode();
+        Assert.Equal(5, audit.ReadNewest(entry => entry.Stream == ControlPlaneAuditStreams.Backup
+            && entry.Operation is BackupAudit.InventoryRead or BackupAudit.ContentsRead, 20).Count);
         Assert.True(audit.VerifyChain().Ok);
     }
 }
