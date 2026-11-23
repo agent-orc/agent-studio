@@ -55,7 +55,7 @@ public sealed class GitReadSpawnCensusTests(GitFactsBoardFixture board, ITestOut
     public async Task Known_violator_stays_within_its_frozen_ceiling(string name)
     {
         var scenario = GitReadSpawnScenarios.All.Single(candidate => candidate.Name == name);
-        GitService.InvalidateToplevelCache();
+        GitReadCensusHost.ResetToplevelCache(board);
         await using var host = new GitReadCensusHost(board, settings: GitReadCensusHost.QuietBoot);
         await scenario.Run(host);
         GitReadCensusEvidence.Append(scenario, host.Records);
@@ -476,6 +476,13 @@ public sealed class GitReadCensusHost : IAsyncDisposable
         ["Runner:RunLiveness:Enabled"] = "false",
     };
 
+    internal static void ResetToplevelCache(GitFactsBoardFixture board)
+    {
+        GitService.InvalidateToplevelCache(board.Code);
+        GitService.InvalidateToplevelCache(board.Workspace);
+        GitService.InvalidateToplevelCache(board.WorktreePath);
+    }
+
     public GitFactsBoardFixture Board { get; }
     public IServiceProvider Services => _factory.Services;
     public HttpClient Client => _client;
@@ -495,7 +502,7 @@ public sealed class GitReadCensusHost : IAsyncDisposable
     /// <summary>Issues <paramref name="url"/> as the first request of a fresh host and keeps its evidence.</summary>
     public async Task GetCold(string url)
     {
-        GitService.InvalidateToplevelCache();
+        ResetToplevelCache(Board);
         await using var fresh = new GitReadCensusHost(Board, settings: QuietBoot);
         await fresh.Get(url);
         await fresh.Get(url);

@@ -778,8 +778,22 @@ public partial class GitService
     /// Drops the memoized <c>rev-parse --show-toplevel</c> results. Tests that
     /// recreate a repository at a path they previously probed call this so a
     /// stale toplevel can't leak across fixtures; production never needs it.
+    /// Only evict the owning fixture's tree: other collections can be measuring
+    /// warm Git reads concurrently in the same process.
     /// </summary>
-    internal static void InvalidateToplevelCache() => _toplevelCache.Clear();
+    internal static void InvalidateToplevelCache(string fixtureRoot)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fixtureRoot);
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(fixtureRoot));
+        var prefix = root + Path.DirectorySeparatorChar;
+        foreach (var path in _toplevelCache.Keys)
+        {
+            var fullPath = Path.GetFullPath(path);
+            if (string.Equals(fullPath, root, StringComparison.OrdinalIgnoreCase)
+                || fullPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                _toplevelCache.TryRemove(path, out _);
+        }
+    }
 
     // Task-detail status is polled and is commonly requested again while the
     // user switches panes. A one-second cache removes every git spawn from that
