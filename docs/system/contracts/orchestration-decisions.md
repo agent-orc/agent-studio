@@ -810,3 +810,18 @@ Run the guard with:
 ```sh
 dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter 'FullyQualifiedName~.Architecture.|Category=Guard'
 ```
+
+
+## Red test isolation policies (RT-2)
+
+`RedTestTriagePolicy`, `BisectVerdictPolicy` and `HoldScopePolicy` own the
+per-test classification, quarantine lifecycle, owner questions, repair rung,
+double-run attribution and scoped integration hold rules from
+[Red test isolation](../../red-test-isolation/index.html). All inputs are
+frozen typed facts; ages, control runs and chronological lift evidence come
+from the host. The output is a list of actions so a line stop and its owner
+question can coexist. `RedTestTriageBounds` is the single home of the new
+bounds. The existing repair API remains compatible. RT-2 does not add host
+calls or transition receipts; later slices collect facts and apply actions
+through the owning adapter. The architecture guard inventories all three
+policies.

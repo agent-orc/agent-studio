@@ -87,7 +87,7 @@ public static class RedDevelopRepairPolicy
 
     /// <summary>Revert for exactly one clean, independent suspect; otherwise fix forward.</summary>
     public static RedDevelopRepairAction ChooseRepair(RedDevelopRepairFacts facts)
-        => facts.SuspectCount == 1 && facts.RevertAppliesCleanly && !facts.LaterMergeDependsOnSuspect
+        => RedTestTriagePolicy.CanProposeRevert(facts.SuspectCount, facts.RevertAppliesCleanly, facts.LaterMergeDependsOnSuspect)
             ? RedDevelopRepairAction.Revert
             : RedDevelopRepairAction.FixForward;
 
@@ -104,7 +104,7 @@ public static class RedDevelopRepairPolicy
 
     public static bool MayMerge(IReadOnlyCollection<string> changedPaths,
         IReadOnlyCollection<string> failingArea)
-        => !changedPaths.Any(path => failingArea.Contains(path, StringComparer.OrdinalIgnoreCase));
+        => HoldScopePolicy.MayMergeFiles(changedPaths, failingArea);
 
     public static bool MayCreateRelease(bool developRed) => !developRed;
 
