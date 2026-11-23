@@ -117,7 +117,7 @@ public static class TokenAnalysisFold
         foreach (var (entry, slot) in agentCalls)
         {
             var kind = slot <= 0 ? TokenUsageKinds.Coding : TokenUsageKinds.FixRound;
-            var attempt = slots.Count == 0 ? slot + 1 : slots[slot].Attempt;
+            var attempt = slots.Count == 0 ? 1 : slots[slot].Attempt;
             items.Add(LedgerItem(pricing, entry, kind, attempt, slot));
         }
 

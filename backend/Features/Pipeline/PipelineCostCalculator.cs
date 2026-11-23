@@ -380,7 +380,8 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
             var estimate = pricing.EstimateRecorded(call.Model, call.InputTokens, call.OutputTokens,
                     call.CacheReadTokens, call.CacheCreationTokens, call.Ts,
                     call.InputIncludesCached, call.UsageNormalization);
-            var priceResolved = ReceiptTokenPricing.HasUsableStoredCost(call) || estimate.ModelKnown;
+            var storedCostUsable = ReceiptTokenPricing.HasUsableStoredCost(call);
+            var priceResolved = storedCostUsable || estimate.ModelKnown;
             allPriced &= priceResolved;
             if (!priceResolved)
             {
@@ -396,7 +397,7 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
                 // If an older ledger row was unpriced but a newer catalogue
                 // version now resolves the same run date, use that historical
                 // catalogue estimate so rollout removes the missing-price state.
-                var scale = ReceiptTokenPricing.HasUsableStoredCost(call)
+                var scale = storedCostUsable
                     ? call.EstimatedApiCostUsd / estimate.Total
                     : 1m;
                 inputCost += estimate.InputUsd * scale;
@@ -412,7 +413,7 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
             // four visible components still sum exactly to the row.
             var tokens = call.InputTokens + call.OutputTokens
                 + call.CacheReadTokens + call.CacheCreationTokens;
-            if (ReceiptTokenPricing.HasUsableStoredCost(call) && tokens > 0)
+            if (storedCostUsable && tokens > 0)
             {
                 inputCost += call.EstimatedApiCostUsd * call.InputTokens / tokens;
                 outputCost += call.EstimatedApiCostUsd * call.OutputTokens / tokens;
@@ -694,11 +695,12 @@ public sealed class PipelineCostCalculator(ITokenPricing pricing)
                 var estimate = pricing.EstimateRecorded(model, call.InputTokens, call.OutputTokens,
                     call.CacheReadTokens, call.CacheCreationTokens, call.Ts == default ? null : call.Ts,
                     call.InputIncludesCached, call.UsageNormalization);
-                var priceResolved = tokens == 0 || ReceiptTokenPricing.HasUsableStoredCost(call) || estimate.ModelKnown;
+                var storedCostUsable = ReceiptTokenPricing.HasUsableStoredCost(call);
+                var priceResolved = tokens == 0 || storedCostUsable || estimate.ModelKnown;
                 modelKnown &= priceResolved;
                 if (!priceResolved)
                     gaps.AddRange(PricingGapsFor(estimate, tokens, model));
-                cost += ReceiptTokenPricing.HasUsableStoredCost(call) ? call.EstimatedApiCostUsd : estimate.Total;
+                cost += storedCostUsable ? call.EstimatedApiCostUsd : estimate.Total;
             }
 
             byModel.Add(new PipelineModelTokenUsage(

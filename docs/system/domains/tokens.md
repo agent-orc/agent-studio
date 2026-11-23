@@ -118,7 +118,10 @@ For per-turn identities, duplicate matching uses source log position, time
 of day and all four counters, without the inferred date or fallback model.
 For cumulative session identities, matching uses the session/model scope and
 counters without the import date. The earliest matching receipt owns the
-original model, timestamp and reasoning level. Read-time collapse also
+original model, timestamp and reasoning level. Duplicate collapse preserves
+the input order of surviving calls and returns an unchanged list when no
+duplicates exist. It selects the earliest attribution within each duplicate
+group without sorting unrelated receipts. Read-time collapse also
 subtracts the removed dimensions from summary totals, preventing residual
 rows from restoring phantom usage. Legacy rows without source identities
 are not automatically removed solely because their counters match.
@@ -128,7 +131,9 @@ The card-detail analysis response includes `duplicateCodingEvents`, with
 equal input, output, cache-read and cache-write counters across coding/fix
 round events. This is an inspection signal, not proof that two real runs
 are duplicates. Remote attempt participants keep separate events even when
-there is no local pipeline log.
+there is no local pipeline log. In that case the API keeps `attempt = 1`
+for every event because receipts do not establish pipeline attempt numbers;
+separate run slots still classify later runs as fix rounds.
 
 OpenAI receipts with positive input, zero cache read, and neither input
 semantics nor normalization provenance retain their recorded counters but

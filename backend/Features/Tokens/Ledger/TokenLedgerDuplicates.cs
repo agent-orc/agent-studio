@@ -10,7 +10,7 @@ namespace AgentStudio.Tokens;
 /// </summary>
 /// <remarks>
 /// Bus collapse preserves input order and returns the input unchanged when
-/// there are no duplicates. Receipt calls are ordered by timestamp so the
+/// there are no duplicates. Receipt calls preserve input order; within a duplicate group the
 /// earliest recorded attribution wins when a source identity was replayed.
 /// </remarks>
 internal static class TokenLedgerDuplicates
@@ -44,9 +44,26 @@ internal static class TokenLedgerDuplicates
     public static IReadOnlyList<TaskTokenCall> CollapseCalls(
         IReadOnlyList<TaskTokenCall> calls,
         out TokenLedgerCollapseCount collapsed)
-        => Collapse(calls.OrderBy(call => call.Ts).ToList(), call =>
-            IsRemoteUsage(call) ? CallIdentityFingerprint(call) : CallFingerprint(call, includeParticipant: true),
-            out collapsed);
+    {
+        collapsed = TokenLedgerCollapseCount.None;
+        var winners = new Dictionary<Fingerprint, int>();
+        for (var index = 0; index < calls.Count; index++)
+        {
+            var call = calls[index];
+            var key = IsRemoteUsage(call)
+                ? CallIdentityFingerprint(call) : CallFingerprint(call, includeParticipant: true);
+            if (!winners.TryGetValue(key, out var previous))
+            {
+                winners.Add(key, index);
+                continue;
+            }
+            collapsed = collapsed.Add(key.TotalTokens);
+            if (call.Ts < calls[previous].Ts) winners[key] = index;
+        }
+        if (collapsed.Entries == 0) return calls;
+        var keptIndices = winners.Values.ToHashSet();
+        return calls.Where((_, index) => keptIndices.Contains(index)).ToList();
+    }
 
     /// <summary>
     /// Fingerprint of one receipt call. <paramref name="includeParticipant"/>
