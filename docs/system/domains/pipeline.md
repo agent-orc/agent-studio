@@ -272,8 +272,17 @@ controls that suite. T1's opt-in sharding policy is unchanged.
 The timers use a dedicated checkout and a local exclusive claim file; the
 server fences the active run ID. A second claim waits, and an abandoned server
 claim expires after four hours for windows or fourteen hours for the nightly
-suite. The worker keeps its service token out of test
-process environments. `--dry-run` prints the fetch and command plan without
+suite. Prepare, build, test discovery, shards, retries, and attribution commands
+start with a cleared process environment (AGT-3981). Only tool and OS variables
+(`PATH`, `HOME`, `DOTNET_ROOT`, locale, certificate paths, temp paths, the
+`PLAYWRIGHT_BROWSERS_PATH` tool cache required by preparation, and Windows
+process plumbing) and the project's declared environment are supplied. Daemon
+`RUNNER_*`, `AGENT_HOST_*`, provider credentials, and Git credentials are not
+inherited. The worker also removes its service-token variables from declared
+values. Repository fetches keep the host's existing credential routing.
+This bounds environment inheritance; the commands still run under the host
+account and can access its readable files, including files under `HOME`.
+`--dry-run` prints the fetch and command plan without
 claiming, fetching, or running tests.
 
 The Runner service posts start, terminal, and skip receipts to

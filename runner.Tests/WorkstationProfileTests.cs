@@ -18,7 +18,7 @@ public sealed class WorkstationProfileTests
             "--workstation-tools", "dotnet",
             "--preview-origin", "https://preview.example.test",
             "--preview-lifetime-seconds", "1800",
-        ]);
+        ], _ => null);
 
         Assert.True(options.IsWorkstation);
         Assert.Equal("local-repo:studio", Assert.Single(options.WorkstationRepositoryRoots).CapabilityKey);
@@ -27,7 +27,7 @@ public sealed class WorkstationProfileTests
             capability => capability.Key == "toolchain:dotnet");
         Assert.Equal(1800, options.WorkstationPreview!.MaxLifetimeSeconds);
         Assert.Throws<ArgumentException>(() => RunnerTestOptions.Parse(
-            ["--workstation", "0", "--workstation-roots", $"studio={temp.Path}"]));
+            ["--workstation", "0", "--workstation-roots", $"studio={temp.Path}"], _ => null));
     }
 
     [Fact]
