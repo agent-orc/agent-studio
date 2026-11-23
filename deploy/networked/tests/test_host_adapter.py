@@ -33,6 +33,29 @@ class HostAdapterTests(unittest.TestCase):
         self.assertEqual(hosts["server"]["composeProject"], "SET_RUNNING_SERVER_COMPOSE_PROJECT")
         self.assertEqual(hosts["engine"]["engineComposeProject"], "SET_RUNNING_ENGINE_COMPOSE_PROJECT")
 
+    def test_review_image_prune_keeps_current_previous_and_other_containers(self):
+        calls = []
+
+        def docker(argv):
+            calls.append(argv)
+            if argv[:3] == ["docker", "ps", "-aq"]:
+                return "gate"
+            if argv[:3] == ["docker", "inspect", "--format"]:
+                return "in-use"
+            if argv[:3] == ["docker", "image", "ls"]:
+                return "current\nprevious\nold\nin-use"
+            if argv[:3] == ["docker", "image", "inspect"]:
+                if argv[4] == "{{.Id}}":
+                    return argv[-1]
+                return json.dumps({"tags": ["example/review:old", "unrelated:keep"], "digests": []})
+            return ""
+
+        with patch.object(remote, "run", docker):
+            self.assertEqual(["example/review:old"],
+                             remote.prune_review_images("example/review", "current", "previous"))
+        self.assertEqual([["docker", "image", "rm", "example/review:old"]],
+                         [call for call in calls if call[:3] == ["docker", "image", "rm"]])
+
     @staticmethod
     def release_archive(path):
         with tarfile.open(path, "w:gz") as stream:

@@ -989,7 +989,8 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_BASE_BRANCH` | `--base-branch` | `main` | Fallback when the task branch is absent on origin. |
 | `RUNNER_WORKDIR` | `--workdir` | `$TMPDIR/agent-runner-work` | Where repo checkouts, result files, and attempt evidence live. |
 | `RUNNER_ROLE` | `--role` | `coding` | `coding`, the separately registered `review` service, the separately registered `gate` service, or the separately registered `integration` service. The gate role uses its own runner identity, credential, state directory, and disposable `RUNNER_REVIEW_WORKDIR`; see the [claimable gate contract](../../system/domains/runner.md#claimable-gate-host-and-task-api). The integration role (AGT-3061) claims accepted deliveries from a standalone Task Server under the project's publication lease, merges them into the registered integration ref in a disposable repository below `RUNNER_STATE_DIR`, and pushes without force; the host's Git credentials must allow that push. |
-| `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache`, `.verify-cache` and `.dependency-cache` are preserved; the shared NuGet folder `.dependency-cache/nuget-packages` drops package versions older than 30 days while no attempt is active. Attempt temp directories live in `/tmp/rv-<digest>` and are removed with their attempt; see [Baseline verify result cache](#baseline-verify-result-cache) and [Verify result reuse after ReviewInfra](#verify-result-reuse-after-reviewinfra). |
+| `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly, with a combined size budget across this root and its `-stale` sibling. The reusable `.baseline-cache`, `.verify-cache` and `.dependency-cache` are preserved; the shared NuGet folder `.dependency-cache/nuget-packages` drops package versions older than 30 days while no attempt is active. Attempt temp directories live in `/tmp/rv-<digest>` and are removed with their attempt; see [Baseline verify result cache](#baseline-verify-result-cache) and [Verify result reuse after ReviewInfra](#verify-result-reuse-after-reviewinfra). |
+| `RUNNER_REVIEW_RETENTION_GIB` | none | `20` | Combined budget in GiB for inactive review attempts and their temp directories, including the review work root's `-stale` sibling. Oldest attempts are removed first. Active attempts and current-root reusable caches are preserved; abandoned caches in the stale sibling count toward the budget. Divide the host budget across containers with separate work roots. |
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
 | `RUNNER_REVIEW_GIT_CREDENTIALS_FILE` | `--review-git-credentials-file` | (none) | Review role only. Owner-only `git credential-store` file with one read-only, repository-scoped `https://` credential per private repository. Registers `review:repository-read:<host>/<owner>/<repo>` and is used only by the review clone and fetch processes; see [Private repositories](#private-repositories). |
 | `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` | `--review-no-cpu-progress-seconds` | `900` | Floor for the hang watchdog on review commands. A command's whole process tree must burn at least one percent of one core within the *effective* window; otherwise the tree is killed and the attempt is reported as `ReviewInfra/NoCpuProgress`. The effective window is `max(this value, 50%` of that command's own budget`)` (AGT-2851), so a legitimately quiet suite with a large budget is not killed for sitting near 0% CPU during a real test wait. `0` disables the watchdog outright, ignoring the budget-derived floor. Linux only: the tree's CPU time is read from `/proc`. See [Review parallelism and build-server isolation](#review-parallelism-and-build-server-isolation). |
@@ -3500,3 +3501,23 @@ host-admission evidence.
 Review test commands also write TRX alongside verbose console output; the
 runner retains compressed TRX and a compact per-class timing summary with the
 review evidence.
+
+
+### Review image rollout retention
+
+The repository-owned `deploy/networked/remote_host.py` rollout records
+`REVIEW_PREVIOUS_IMAGE_REF` before switching `REVIEW_IMAGE_REF`. After every
+review container passes revision, image, plan, and health verification, it
+removes older references from that review image repository. It keeps the
+current image, the actual previous deployment image, and every image used by
+any container, including stopped containers. A repeated rollout of the same
+image preserves the previous reference. No force removal, volume pruning, or
+host-wide image pruning is used.
+
+For a manual rollout, record the current digest before recreation and retain
+it as the rollback image. After health verification, list images for the review
+repository and remove only older unused references. Remove obsolete stopped
+review containers when appropriate, since they protect their images. Inspect
+`docker system df`; prune build cache separately during maintenance. See
+[Host disk pressure and owned retention](../temp-and-cache-hygiene.md#host-disk-pressure-and-owned-retention)
+for the 15% / 20 GiB warning and 5% / 8 GiB admission floor and recovery steps.

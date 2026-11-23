@@ -136,7 +136,7 @@
 <tr><td>Host release behind stable, pending host install</td><td><code>/api/v1/management/host-releases</code> (<code>HostReleaseDriftSnapshot</code>), enrolments without consumption</td><td>The host</td></tr>
 <tr><td>Link down</td><td><code>/api/v1/management/links</code> (<code>RunnerLinkResource</code>), bus tag <code>runner-link</code></td><td>Both ends; the link breaks visibly</td></tr>
 <tr><td>Cards parked or refused because of a host</td><td><code>gate-environment-exhausted</code> parks, <code>/api/v1/management/runner-infrastructure-failures</code>, <code>remote-dispatch-rejected</code></td><td>The host that refused or failed, with the card keys</td></tr>
-<tr><td>Disk pressure</td><td><code>HostDiskPressurePolicy</code> (warning below 30 GiB or 15 % free, critical below 8 GiB or 5 %), telemetry finding <code>disk-pressure</code></td><td>The machine and volume</td></tr>
+<tr><td>Disk pressure</td><td><code>HostDiskPressurePolicy</code> (warning below 20 GiB or 15 % free, critical below 8 GiB or 5 %), telemetry finding <code>disk-pressure</code></td><td>The machine and volume</td></tr>
 <tr><td>Expiring credentials</td><td><code>CapabilityHealthDto.ExpiresAt</code>, signal <code>credentials-expiring</code>, <code>environment-certificate-expiring</code>, <code>/api/v1/management/credential-inventory</code></td><td>The host or the edge</td></tr>
 <tr><td>Missing backups</td><td><code>/api/operator/backups</code> warnings, data locations</td><td>The node holding the location</td></tr>
 </tbody></table></div>
