@@ -1,3 +1,4 @@
+using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Pipeline;
 using AgentStudio.Registry;
 using AgentStudio.Runner;
@@ -32,7 +33,7 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         Assert.NotNull(store.Record(project.Id, red));
         // The terminal receipt may persist before card creation; the scheduled
         // check must resume that step without creating a second card.
-        service.EscalateOverdue(project);
+        service.AskOwnerWhenOverdue(project);
         service.Apply(project, red);
         service.Apply(project, red);
 
@@ -51,15 +52,19 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         }
 
         clock.Advance(TimeSpan.FromHours(2));
-        service.EscalateOverdue(project);
-        Assert.True(Assert.Single(store.Read(project.Id).Incidents!).Escalated);
-        Assert.Equal(TaskStates.Escalated, scanner.FindJob(opened.RepairCardId, projectPath)!.State);
-        Assert.Equal(opened.RepairCardId, store.Read(project.Id).AttributionEscalatedTaskId);
-        Assert.Contains(ReviewDecisionLog.ReadAll(_root, project.DisplayName),
-            record => record.JobId == opened.RepairCardId && record.Kind == ReviewDecisionKind.Escalate);
-        var escalatedCard = scanner.FindJob(opened.RepairCardId, projectPath)!;
-        Assert.False(string.IsNullOrWhiteSpace(File.ReadAllText(Path.Combine(escalatedCard.FolderPath,
-            "status.md"))));
+        service.AskOwnerWhenOverdue(project);
+        service.AskOwnerWhenOverdue(project);
+        // RT-1 (AGT-3988): two hours ask the owner once; the repair keeps its lane.
+        var asked = Assert.Single(store.Read(project.Id).Incidents!);
+        Assert.False(asked.Escalated);
+        Assert.Equal(Now.AddHours(2), asked.OwnerAskedAtUtc);
+        Assert.Equal(nameof(RedDevelopOwnerOption.KeepFixingForward), asked.OwnerQuestion!.Recommended);
+        Assert.Equal("red", asked.OwnerQuestion.RedRunId);
+        Assert.Equal(TaskStates.Preparation, scanner.FindJob(opened.RepairCardId, projectPath)!.State);
+        Assert.Null(store.Read(project.Id).AttributionEscalatedTaskId);
+        Assert.DoesNotContain(ReviewDecisionLog.ReadAll(_root, project.DisplayName),
+            record => record.JobId == opened.RepairCardId);
+        Assert.Single(OwnerItems(project, store));
         clock.Advance(TimeSpan.FromMinutes(37));
         var green = red with { Id = "green", Status = "green", Verdicts = [new("dotnet test", 0, false)],
             StartedAtUtc = Now.AddMinutes(156), FinishedAtUtc = Now.AddMinutes(157), Failure = null };
@@ -76,7 +81,7 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
     [InlineData(TaskStates.HumanReview)]
     [InlineData(TaskStates.Completed)]
     [InlineData(TaskStates.Archive)]
-    public void Overdue_receipt_and_poll_leave_delivery_owned_repairs_alone(string lane)
+    public void Overdue_receipt_and_poll_leave_delivery_owned_repairs_alone_and_ask_the_owner_once(string lane)
     {
         var (project, clock, scanner, mutations, states, store, service) = Setup();
         var repair = mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
@@ -91,12 +96,103 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         clock.Advance(TimeSpan.FromHours(3));
 
         service.Apply(project, red);
-        service.EscalateOverdue(project);
+        service.AskOwnerWhenOverdue(project);
+
+        service.Apply(project, red);
+        service.AskOwnerWhenOverdue(project);
 
         Assert.Equal(lane, scanner.FindJob(repair, project.StorageLocation)!.State);
-        Assert.False(Assert.Single(store.Read(project.Id).Incidents!).Escalated);
+        var incident = Assert.Single(store.Read(project.Id).Incidents!);
+        Assert.False(incident.Escalated);
+        Assert.NotNull(incident.OwnerAskedAtUtc);
         Assert.DoesNotContain(ReviewDecisionLog.ReadAll(_root, project.DisplayName), row => row.JobId == repair);
+        var item = Assert.Single(OwnerItems(project, store));
+        Assert.Equal(repair, item.CardKey);
+        Assert.Contains("keep fixing forward", item.Reason);
+        Assert.Contains("switch the project to strict", item.Reason);
+        Assert.Contains(item.Evidence, link => link.Label == "latest red receipt");
     }
+
+    [Fact]
+    public void A_clean_independent_suspect_recommends_reverting_the_attributed_merge()
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup();
+        var red = Red() with
+        {
+            Failure = new("fingerprint", ["Demo.Tests.Fails"], "failure", ["backend/Foo.cs"], [Tip], Tip, true, false),
+        };
+        store.Record(project.Id, red with { Status = "running", FinishedAtUtc = null });
+        store.Record(project.Id, red);
+        service.Apply(project, red);
+        clock.Advance(TimeSpan.FromHours(2));
+        service.AskOwnerWhenOverdue(project);
+
+        var incident = Assert.Single(store.Read(project.Id).Incidents!);
+        Assert.Equal(nameof(RedDevelopRepairAction.Revert), incident.Action);
+        Assert.Equal(nameof(RedDevelopOwnerOption.RevertAttributedMerge), incident.OwnerQuestion!.Recommended);
+        Assert.Contains("Recommended: revert the attributed merge " + Tip[..12],
+            Assert.Single(OwnerItems(project, store)).Reason);
+    }
+
+    [Fact]
+    public void Each_incident_keeps_its_own_clock()
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup();
+        var first = Red();
+        store.Record(project.Id, first with { Status = "running", FinishedAtUtc = null });
+        store.Record(project.Id, first);
+        service.Apply(project, first);
+        clock.Advance(TimeSpan.FromMinutes(90));
+        var second = first with
+        {
+            Id = "red-2", StartedAtUtc = clock.GetUtcNow(), FinishedAtUtc = clock.GetUtcNow(),
+            Failure = first.Failure! with { Fingerprint = "other" },
+        };
+        store.Record(project.Id, second with { Status = "running", FinishedAtUtc = null });
+        store.Record(project.Id, second);
+        service.Apply(project, second);
+        clock.Advance(TimeSpan.FromMinutes(30));
+        service.AskOwnerWhenOverdue(project);
+
+        var incidents = store.Read(project.Id).Incidents!;
+        Assert.NotNull(incidents.Single(item => item.Fingerprint == "fingerprint").OwnerAskedAtUtc);
+        Assert.Null(incidents.Single(item => item.Fingerprint == "other").OwnerAskedAtUtc);
+        Assert.Single(OwnerItems(project, store));
+    }
+
+    [Theory]
+    [InlineData(TaskStates.Completed, false)]
+    [InlineData(TaskStates.Archive, false)]
+    [InlineData(TaskStates.AutoReview, true)]
+    [InlineData(TaskStates.HumanReview, true)]
+    public void A_recurring_fingerprint_never_pulls_a_delivery_or_settled_repair_back(string lane, bool attaches)
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup();
+        var prior = mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+        {
+            Project = project.Id, Title = "Repair red develop: fingerprint", TargetState = lane,
+            CreationSource = HumanReviewEscalationCategories.PostMergeRepairCreationSource,
+        })!;
+        var red = Red();
+        store.Record(project.Id, red with { Status = "running", FinishedAtUtc = null });
+        store.Record(project.Id, red);
+
+        service.Apply(project, red);
+
+        Assert.Equal(lane, scanner.FindJob(prior, project.StorageLocation)!.State);
+        var incident = Assert.Single(store.Read(project.Id).Incidents!);
+        if (attaches) Assert.Equal(prior, incident.RepairCardId);
+        else
+        {
+            Assert.NotEqual(prior, incident.RepairCardId);
+            Assert.Equal(TaskStates.Preparation, scanner.FindJob(incident.RepairCardId, project.StorageLocation)!.State);
+        }
+    }
+
+    private static IReadOnlyList<AgentStudio.Operator.OperatorDecisionFact> OwnerItems(ProjectRecord project,
+        PostMergeRunStore store)
+        => new AgentStudio.Operator.OperatorPostMergeRedIncidentFactSource(
+            () => [(project.DisplayName, store.Read(project.Id))]).Collect(Now.UtcDateTime);
 
     [Theory]
     [InlineData(false)]
@@ -116,7 +212,7 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
             alreadyResolved ? Now : null, Tip, ["Demo.Tests.Fails"], [], OriginalTaskId: original)]);
         if (!alreadyResolved)
             service.Apply(project, Red() with { Status = "green", Failure = null, FinishedAtUtc = Now });
-        service.EscalateOverdue(project);
+        service.AskOwnerWhenOverdue(project);
 
         Assert.Equal(TaskStates.Completed, scanner.FindJob(original, project.StorageLocation)!.State);
         Assert.False(Assert.Single(store.Read(project.Id).Incidents!).OriginalReopened);
@@ -150,16 +246,8 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
             NullLogger<TaskMutationService>.Instance,
             new TimelineLog(NullLogger<TimelineLog>.Instance));
         var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
-        var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
-        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
-        var git = new GitService(NullLogger<GitService>.Instance, scanner, config, prompts);
-        var transitions = new TaskTransitionService(scanner, states, mutations, git, settings,
-            NullLogger<TaskTransitionService>.Instance);
         var store = new PostMergeRunStore(Path.Combine(_root, "post-merge"));
-        var escalation = new HumanReviewEscalation(states, transitions, _root,
-            NullLogger<HumanReviewEscalation>.Instance, scanner, postMergeRuns: store,
-            projects: registry);
-        var service = new PostMergeIncidentService(store, mutations, scanner, states, escalation, clock,
+        var service = new PostMergeIncidentService(store, mutations, scanner, states, clock,
             NullLogger<PostMergeIncidentService>.Instance);
         return (project, clock, scanner, mutations, states, store, service);
     }
