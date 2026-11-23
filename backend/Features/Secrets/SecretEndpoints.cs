@@ -28,9 +28,10 @@ public static class SecretEndpoints
         {
             var caller = Caller.From(context, security, configuration, registry);
             var listing = await secrets.ListAsync(null, ct);
+            var projectKeys = Keys(context);
             var visible = listing.Records
                 .Where(record => caller.CanSee(record.ParsedScope))
-                .Select(SecretMetadataResponse.From).ToList();
+                .Select(record => SecretMetadataResponse.From(record, projectKeys)).ToList();
             // An item without a readable scope claim counts as workspace-level for visibility.
             var unreadable = listing.Unreadable
                 .Where(item => caller.CanSee(SecretScope.TryParse(item.Scope, out var claimed) ? claimed : SecretScope.Workspace))
@@ -161,7 +162,9 @@ public static class SecretEndpoints
         {
             var scope = scopeOf(context.Request.RouteValues);
             Caller.From(context, security, configuration, registry).RequireSee(scope);
-            return Results.Ok((await secrets.ListAsync(scope, ct)).Records.Select(SecretMetadataResponse.From).ToList());
+            var keys = Keys(context);
+            return Results.Ok((await RecordsInAsync(secrets, StoreScopes(context, scope), ct))
+                .Select(record => SecretMetadataResponse.From(record, keys)).ToList());
         }));
 
         group.MapGet("/{name}", (string name, HttpContext context, ISecretProvider secrets, AccessSecurityStore security,
@@ -169,9 +172,10 @@ public static class SecretEndpoints
         {
             var scope = scopeOf(context.Request.RouteValues);
             Caller.From(context, security, configuration, registry).RequireSee(scope);
-            var record = (await secrets.ListAsync(scope, ct)).Records.FirstOrDefault(item => item.Name == name)
-                ?? throw new SecretNotFoundException(new SecretReference(scope, SecretReference.ValidateName(name)).ToString());
-            return Results.Ok(SecretMetadataResponse.From(record));
+            var stored = StoreScopes(context, scope);
+            var record = (await RecordsInAsync(secrets, stored, ct)).FirstOrDefault(item => item.Name == name)
+                ?? throw new SecretNotFoundException(new SecretReference(stored[0], SecretReference.ValidateName(name)).ToString());
+            return Results.Ok(SecretMetadataResponse.From(record, Keys(context)));
         }));
 
         group.MapPost("", (PutSecretRequest request, HttpContext context, ISecretProvider secrets, AccessSecurityStore security,
@@ -179,8 +183,9 @@ public static class SecretEndpoints
         {
             var scope = scopeOf(context.Request.RouteValues);
             var actor = Caller.From(context, security, configuration, registry).RequireWrite(scope, context, request.Name);
-            var record = await secrets.PutAsync(scope, request.Name ?? string.Empty, request.Value ?? string.Empty, actor, ct);
-            var response = SecretMetadataResponse.From(record);
+            var target = await ScopeHoldingAsync(secrets, context, scope, request.Name, ct);
+            var record = await secrets.PutAsync(target, request.Name ?? string.Empty, request.Value ?? string.Empty, actor, ct);
+            var response = SecretMetadataResponse.From(record, Keys(context));
             return Results.Created(context.Request.Path + "/" + Uri.EscapeDataString(record.Name), response);
         }));
 
@@ -189,7 +194,9 @@ public static class SecretEndpoints
         {
             var scope = scopeOf(context.Request.RouteValues);
             var actor = Caller.From(context, security, configuration, registry).RequireWrite(scope, context);
-            return Results.Ok(SecretMetadataResponse.From(await secrets.RotateAsync(scope, name, request.Value ?? string.Empty, actor, ct)));
+            var target = await ScopeHoldingAsync(secrets, context, scope, name, ct);
+            return Results.Ok(SecretMetadataResponse.From(
+                await secrets.RotateAsync(target, name, request.Value ?? string.Empty, actor, ct), Keys(context)));
         }));
 
         group.MapPost("/{name}/revoke", (string name, RevokeSecretRequest? request, HttpContext context, ISecretProvider secrets,
@@ -197,7 +204,9 @@ public static class SecretEndpoints
         {
             var scope = scopeOf(context.Request.RouteValues);
             var actor = Caller.From(context, security, configuration, registry).RequireWrite(scope, context, version: request?.Version);
-            return Results.Ok(SecretMetadataResponse.From(await secrets.RevokeAsync(scope, name, request?.Version, actor, ct)));
+            var target = await ScopeHoldingAsync(secrets, context, scope, name, ct);
+            return Results.Ok(SecretMetadataResponse.From(
+                await secrets.RevokeAsync(target, name, request?.Version, actor, ct), Keys(context)));
         }));
 
         group.MapDelete("/{name}", (string name, HttpContext context, ISecretProvider secrets, AccessSecurityStore security,
@@ -205,9 +214,49 @@ public static class SecretEndpoints
         {
             var scope = scopeOf(context.Request.RouteValues);
             var actor = Caller.From(context, security, configuration, registry).RequireWrite(scope, context);
-            await secrets.DeleteAsync(scope, name, actor, ct);
+            await secrets.DeleteAsync(await ScopeHoldingAsync(secrets, context, scope, name, ct), name, actor, ct);
             return Results.NoContent();
         }));
+    }
+
+    private static SecretProjectKeys Keys(HttpContext context)
+        => context.RequestServices?.GetService<SecretProjectKeys>() ?? SecretProjectKeys.Identity;
+
+    /// <summary>
+    /// Where a route's secrets are stored (AGT-3987): the project id scope
+    /// first, then the scope under the current display name, which holds
+    /// secrets stored before references moved to the id.
+    /// </summary>
+    private static IReadOnlyList<SecretScope> StoreScopes(HttpContext context, SecretScope route)
+    {
+        var keys = Keys(context);
+        return keys.Aliases(keys.Canonical(route));
+    }
+
+    private static async Task<IReadOnlyList<SecretRecord>> RecordsInAsync(ISecretProvider secrets,
+        IReadOnlyList<SecretScope> scopes, CancellationToken ct)
+        => scopes.Count == 1
+            ? (await secrets.ListAsync(scopes[0], ct)).Records
+            : (await secrets.ListAsync(null, ct)).Records.Where(record => scopes.Contains(record.ParsedScope)).ToList();
+
+    /// <summary>
+    /// The scope a named write goes to: the one that already holds the secret,
+    /// else the id scope. A backend chosen for the display-name scope keeps
+    /// receiving that scope's new secrets until it is chosen for the id scope.
+    /// </summary>
+    private static async Task<SecretScope> ScopeHoldingAsync(ISecretProvider secrets, HttpContext context,
+        SecretScope route, string? name, CancellationToken ct)
+    {
+        var scopes = StoreScopes(context, route);
+        if (scopes.Count == 1) return scopes[0];
+        var records = await RecordsInAsync(secrets, scopes, ct);
+        if (scopes.FirstOrDefault(scope => records.Any(record => record.ParsedScope == scope && record.Name == name)) is { } held)
+            return held;
+        var backends = context.RequestServices?.GetService<SecretBackendSettings>();
+        if (backends is not null && backends.For(scopes[0]) is null
+            && scopes.Skip(1).FirstOrDefault(scope => backends.For(scope) is not null) is { } routed)
+            return routed;
+        return scopes[0];
     }
 
     /// <summary>
@@ -326,7 +375,18 @@ public static class SecretEndpoints
             throw new CallerUnauthenticatedException();
         }
 
-        public bool CanSee(SecretScope scope)
+        /// <summary>Access rules name projects by display name; a stored id scope is checked under it.</summary>
+        private SecretScope Display(SecretScope scope)
+        {
+            if (scope.Kind == SecretScopeKind.Workspace) return scope;
+            var name = new SecretProjectKeys(_registry).DisplayName(scope.Project!);
+            return SecretScope.TryParse(scope.Kind == SecretScopeKind.Project ? name : name + "/" + scope.Environment, out var shown)
+                ? shown : scope;
+        }
+
+        public bool CanSee(SecretScope scope) => CanSeeDisplayed(Display(scope));
+
+        private bool CanSeeDisplayed(SecretScope scope)
             => _access is not null
                 ? _access.Allows(IamPermissions.SecretsRead, Target(scope))
                 : SecretManagementPolicy.CanSeeMetadata(scope, Unrestricted, Member);
@@ -337,7 +397,9 @@ public static class SecretEndpoints
                 throw new SecretAccessDeniedException("project-scope-denied", "This account is not a member of the project.");
         }
 
-        public SecretAccessDecision CanWrite(SecretScope scope)
+        public SecretAccessDecision CanWrite(SecretScope scope) => CanWriteDisplayed(Display(scope));
+
+        private SecretAccessDecision CanWriteDisplayed(SecretScope scope)
             => _access is not null
                 ? _access.Allows(IamPermissions.SecretsWrite, Target(scope))
                     ? SecretAccessDecision.Allow

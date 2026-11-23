@@ -357,6 +357,80 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal("revoked", Assert.Single((await bindings.CheckAsync("demo", "production")).Missing).Reason);
     }
 
+    /// <summary>
+    /// AGT-3987 (F20 of AGT-3885): a new reference names the project id; a
+    /// reference and a binding file written under the display name keep
+    /// working; after a rename the project deploys with both.
+    /// </summary>
+    [Fact]
+    public async Task Secret_references_use_the_project_id_and_a_renamed_project_still_deploys()
+    {
+        var config = SecretConfig();
+        var registry = new AgentStudio.Registry.ProjectRegistry(config,
+            NullLogger<AgentStudio.Registry.ProjectRegistry>.Instance, clock: _clock);
+        var record = registry.EnsureProjectForStorage(Path.Combine(_root, "workspace", "projects", "demo"), "demo",
+            "ws-default", _clock);
+        var (environments, repo, _) = Build(registry: registry);
+        var declaration = Path.Combine(repo, "docs", "deployments", "environments", "production.json");
+        var production = JsonNode.Parse(File.ReadAllText(declaration))!;
+        production["secretRefs"] = JsonSerializer.SerializeToNode(new[] { "DATABASE_URL", "API_KEY" });
+        File.WriteAllText(declaration, production.ToJsonString());
+        var keys = new SecretProjectKeys(registry);
+        var provider = new SecretProvider(
+            new BuiltInSecretStore(config, new ConfiguredKeyEncryptionKeySource(config, _ => null, _ => { })),
+            new SecretAuditLog(config), new SecretValueScrubber(_clock), _clock,
+            NullLogger<SecretProvider>.Instance, keys);
+
+        // Before AGT-3987: the binding file and the reference name the display name.
+        const string legacyReference = "secret://demo/production/DATABASE_URL";
+        new ProjectSecretBindings(config, provider, environments, _clock)
+            .Bind("demo", "production", "DATABASE_URL", legacyReference, "human:owner", "owner");
+        var legacyValue = "legacy-" + Guid.NewGuid().ToString("N");
+        await provider.PutAsync(SecretScope.ForEnvironment("demo", "production"), "DATABASE_URL", legacyValue,
+            SecretActor.Human("owner"));
+        var bindingFiles = Path.Combine(_root, "workspace", ".security", "secret-bindings");
+        var legacyFile = Assert.Single(Directory.GetFiles(bindingFiles));
+
+        var bindings = new ProjectSecretBindings(config, provider, environments, _clock, keys);
+        var missing = Assert.Single((await bindings.CheckAsync("demo", "production")).Missing);
+        Assert.Equal("API_KEY", missing.Name);
+        var newReference = $"secret://{record.Id}/production/API_KEY";
+        Assert.Equal(newReference, missing.Reference);
+        Assert.False(File.Exists(legacyFile));
+        Assert.Single(Directory.GetFiles(bindingFiles));
+        var newValue = "current-" + Guid.NewGuid().ToString("N");
+        await provider.PutAsync(SecretScope.ForEnvironment(record.Id, "production"), "API_KEY", newValue,
+            SecretActor.Human("owner"));
+        Assert.Equal(newReference, bindings.Bind("demo", "production", "API_KEY", missing.Reference,
+            "human:owner", "owner").Reference);
+        Assert.True((await bindings.CheckAsync("demo", "production")).Ready);
+
+        registry.Rename(record.Id, "shop");
+
+        var target = environments.Declarations("shop")!.Single(item => item.Id == "production");
+        Assert.NotNull(environments.QueueDeployment("shop", target, _artifact, "owner", false));
+        var job = environments.Claim("prod-host")!;
+        Assert.Equal("shop", job.Project);
+        Assert.True((await bindings.CheckAsync(job.Project, job.EnvironmentId, job.SecretRefs, job.EnvironmentKind!)).Ready);
+        var leases = new SecretWorkloadLeases(environments,
+            new RunLeaseService(NullLogger<RunLeaseService>.Instance, () => _clock.GetUtcNow().UtcDateTime),
+            Scanner(config), bindings, new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock));
+        var claimed = leases.FindClaimedDeployJob(job.Project, job.Id, job.LeaseToken!)!;
+        Assert.Equal(legacyReference, claimed.SecretBindings!["DATABASE_URL"]);
+        Assert.Equal(newReference, claimed.SecretBindings["API_KEY"]);
+        var workload = new SecretWorkload(SecretWorkload.DeployJob, job.HostId, job.Project, job.EnvironmentId,
+            claimed.SecretRefs, claimed.SecretBindings) { ProjectKeys = claimed.ProjectKeys };
+        Assert.Equal(legacyValue, (await provider.GetForWorkloadAsync(SecretReference.Parse(legacyReference), workload,
+            "deploy:production")).Value);
+        Assert.Equal(newValue, (await provider.GetForWorkloadAsync(SecretReference.Parse(newReference), workload,
+            "deploy:production")).Value);
+        Assert.Equal("project-scope-denied", SecretAccessPolicy.ForWorkload(
+            SecretReference.Parse("secret://other/production/API_KEY"), workload with
+            {
+                DeclaredReferences = new Dictionary<string, string> { ["API_KEY"] = "secret://other/production/API_KEY" },
+            }, "deploy:production").Code);
+    }
+
     [Fact]
     public async Task Production_binding_uses_declared_kind_when_environment_id_is_custom()
     {
@@ -1663,7 +1737,8 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false,
-        string project = "demo", AgentStudio.Quota.WorkspaceQuotaService? quota = null)
+        string project = "demo", AgentStudio.Quota.WorkspaceQuotaService? quota = null,
+        AgentStudio.Registry.ProjectRegistry? registry = null)
     {
         var repo = Path.Combine(_root, "repo");
         var watch = Path.Combine(_root, "workspace", "projects", project);
@@ -1701,7 +1776,8 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
             ["WatchPaths:0:RootPath"] = repo, ["WatchPaths:0:RepositoryPath"] = repo,
         }).Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
-        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary,
+            projectRegistry: registry);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         return (new(config, scanner, git, settings, _clock, quota: quota), repo, watch);
