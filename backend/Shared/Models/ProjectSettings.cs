@@ -298,6 +298,16 @@ public record ProjectSettings
     public int MaxParallelism { get; init; } = 1;
 
     /// <summary>
+    /// <c>dispatch.overlapWindow</c> (DS-0, decision DS-D10 B of
+    /// <c>docs/dispatcher-personas/index.html</c>): which cards the pick-gate
+    /// compares a candidate's scope with, on the local pickup and the remote
+    /// claim. Null resolves to <see cref="OverlapWindows.Default"/>
+    /// (<c>in-flight</c>); see <see cref="OverlapWindows"/>.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonPropertyName("dispatch.overlapWindow")]
+    public string? DispatchOverlapWindow { get; init; }
+
+    /// <summary>
     /// ADR-0052: branch that parallel task worktrees branch off and merge back
     /// into (the project's integration line). Blank means the repository's
     /// <c>origin/HEAD</c> branch. When parallelism is off
@@ -1308,6 +1318,35 @@ public static class ReviewPackageSetting
     public static string Resolve(ProjectSettings? settings)
         => AgentStudio.TaskServer.Contracts.ReviewPackageModes.Normalize(settings?.Review?.Package)
             ?? AgentStudio.TaskServer.Contracts.ReviewPackageModes.Off;
+}
+
+/// <summary>
+/// Values of <c>dispatch.overlapWindow</c> (DS-0). A card stays exposed from
+/// its start until it integrates, so the default compares a candidate with
+/// every card of the project that started a coding run and has not integrated
+/// yet. <see cref="Running"/> keeps the comparison with running cards only, the
+/// local behaviour before DS-0.
+/// </summary>
+public static class OverlapWindows
+{
+    public const string Running = "running";
+    public const string InFlight = "in-flight";
+    public const string Default = InFlight;
+
+    public static readonly IReadOnlyList<string> All = [Running, InFlight];
+
+    /// <summary>The known window for a stored or requested value, or null.</summary>
+    public static string? Normalize(string? value)
+    {
+        var trimmed = value?.Trim();
+        return All.FirstOrDefault(known => string.Equals(known, trimmed, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public static bool IsKnown(string? value) => Normalize(value) is not null;
+
+    /// <summary>The effective window; an unset or unknown value is <see cref="Default"/>.</summary>
+    public static string Resolve(ProjectSettings? settings)
+        => Normalize(settings?.DispatchOverlapWindow) ?? Default;
 }
 
 public static class IntegrationTestModes

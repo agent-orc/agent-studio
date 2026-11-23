@@ -141,7 +141,7 @@ public sealed class DispatchPlanPolicyEquivalenceTests
                 var admission = ParallelSlotPolicy.Decide(key, queue.Scopes[key], running, queue.MaxParallelism);
                 if (!admission.Admitted)
                 {
-                    passedOver.Add(PassOver(key, admission.Reason));
+                    passedOver.Add(PassOver(key, admission));
                     continue;
                 }
                 picked.Add(key);
@@ -165,14 +165,17 @@ public sealed class DispatchPlanPolicyEquivalenceTests
         _ => throw new InvalidOperationException("unmapped admission reason: " + reason),
     };
 
-    private static DispatchPassOver PassOver(string key, string reason)
+    private static DispatchPassOver PassOver(string key, SlotAdmission admission)
     {
+        // DS-0: a scope serialize carries the conflicting card and the shared
+        // prefix as fields; its reason text also names the overlap window.
+        if (admission.IsScopeConflict)
+            return new DispatchPassOver(key, DispatchReasonCodes.ScopeOverlap, admission.ConflictTaskId, admission.SharedPrefix);
+        var reason = admission.Reason;
         if (Regex.Match(reason, "^exclusive task '(.+)' is running$") is { Success: true } exclusive)
             return new DispatchPassOver(key, DispatchReasonCodes.ExclusiveRunning, exclusive.Groups[1].Value);
         if (reason.StartsWith("exclusive: waits for", StringComparison.Ordinal))
             return new DispatchPassOver(key, DispatchReasonCodes.ExclusiveWaitsForDrain, null);
-        if (Regex.Match(reason, "^scope conflict with '(.+)' on '(.+)'$") is { Success: true } scope)
-            return new DispatchPassOver(key, DispatchReasonCodes.ScopeOverlap, scope.Groups[1].Value, scope.Groups[2].Value);
         throw new InvalidOperationException("unmapped serialize reason: " + reason);
     }
 }

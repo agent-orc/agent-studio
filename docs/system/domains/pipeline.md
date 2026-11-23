@@ -454,6 +454,33 @@ proof of independence.
 
 ### Red develop repair (AGT-3312)
 
+RT-2 (AGT-4003) adds the pure `RedTestTriagePolicy`, `BisectVerdictPolicy` and
+`HoldScopePolicy` for the recommended RT-D1, RT-D2, RT-D4, RT-D5, RT-D6,
+RT-D7 and RT-D9 option B in the [Red test isolation Dossier](../../red-test-isolation/index.html).
+This slice adds no host wiring: the current repair flow below remains in use.
+Hosts will supply per-test repeat and envelope facts, last-green controls,
+explicit double-run bisect points and their parents, project quarantine entries,
+repair lanes, ages and lift runs. Environment evidence marks a run inconclusive;
+a regression requires two passing controls and a failing point with a passing
+parent. Mixed points stop attribution as flaky. Covering-folder holds match
+exact directories, with recursive suite-area fallback for zero or more than
+12 distinct folders, and include the test file and confirmed suspect paths.
+Repair, attributed-revert and owner-exempt cards pass their own hold. Later
+first-parent merges are coupled only by exact file overlap.
+
+The new policy centralizes the proposed bounds: held 24 hours plus one
+24-hour renewal while the repair is in Progress or Auto Review (including the
+integration wait), report-only seven days, three held and eight total per
+project, three distinct flaky runs in 14 days, seven-day relapse window and
+an owner question after 60 minutes of line stop. Renewals extend the original
+expiry by 24 hours, with a maximum age of 48 hours. Two consecutive covering
+passes in the standard envelope must contain the repair integration to lift.
+Owner questions name their reason, options and recommendation. A fourth held
+test stops the line and asks the owner; a total-cap breach also asks the owner.
+No action changes testing strategy or moves a reviewed or settled card. `RedDevelopRepairPolicy` keeps its existing API
+and two-hour compatibility behavior, delegating safe-revert and exact-file
+hold predicates to the new policies until host adoption in later slices.
+
 This slice implements the Dossier's recorded D2 option A (`revert-first`). A
 terminal red T3 receipt carries failing tests, a bounded log excerpt, the
 first-parent suspects since the last green SHA, changed paths, and the result

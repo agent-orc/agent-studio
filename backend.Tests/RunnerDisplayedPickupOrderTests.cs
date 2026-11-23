@@ -67,6 +67,75 @@ public sealed class RunnerDisplayedPickupOrderTests : IDisposable
         Assert.Contains("conflicts-with-running", reason);
     }
 
+    [Fact]
+    public void InFlightWindow_SkipsReadyCardOverlappingACardInReview()
+    {
+        // DS-0: the card in review holds no slot but is exposed until it
+        // integrates; the default in-flight window compares with it.
+        WriteJob(TaskStates.AutoReview, "still-in-review", order: 1,
+            prompt: "Edit backend/Services/Runner/ProjectRunner.cs.");
+        WriteJob(TaskStates.Ready, "overlaps-review", order: 1,
+            prompt: "Edit backend/Services/Runner/ActiveRuns.cs.");
+        WriteJob(TaskStates.Ready, "disjoint-next", order: 2,
+            prompt: "Edit frontend/src/app/features/task-list/task-list.component.ts.");
+
+        var (runner, _) = BuildRunner();
+        runner.SetMode("auto-continuous");
+
+        var picked = InvokeDisplayedPicker(runner, slotMax: 1);
+
+        Assert.NotNull(picked);
+        Assert.Equal("disjoint-next", picked!.Id);
+        var skip = Assert.Single(runner.GetStatus().PickupSkips);
+        Assert.Equal("overlaps-review", skip.JobId);
+        Assert.Equal(RunnerPickupWaitCodes.ParallelConflict, skip.Code);
+        Assert.Equal(
+            "scope conflict with 'still-in-review' on 'backend/services/runner' (window in-flight, 4-auto-review)",
+            skip.Detail);
+        Assert.Equal(
+            "display-order: 2-ready disjoint-next; skipped earlier conflicting candidate(s): overlaps-review: "
+            + "scope conflict with 'still-in-review' on 'backend/services/runner' (window in-flight, 4-auto-review)",
+            runner.GetStatus().LastPickReason);
+    }
+
+    [Fact]
+    public void RunningWindow_KeepsTodaysRunningOnlyComparison()
+    {
+        WriteJob(TaskStates.AutoReview, "still-in-review", order: 1,
+            prompt: "Edit backend/Services/Runner/ProjectRunner.cs.");
+        WriteJob(TaskStates.Ready, "overlaps-review", order: 1,
+            prompt: "Edit backend/Services/Runner/ActiveRuns.cs.");
+
+        var (runner, settings) = BuildRunner();
+        settings.SetDispatchOverlapWindow(ProjectName, OverlapWindows.Running);
+        runner.SetMode("auto-continuous");
+
+        var picked = InvokeDisplayedPicker(runner, slotMax: 1);
+
+        Assert.Equal("overlaps-review", picked?.Id);
+        Assert.Equal("display-order: 2-ready overlaps-review", runner.GetStatus().LastPickReason);
+        Assert.Empty(runner.GetStatus().PickupSkips);
+    }
+
+    [Fact]
+    public void InFlightWindow_IgnoresAnIntegratedCardInHumanReview()
+    {
+        // clock-independent: the integration record date is fixture data; no start is recorded, so any date counts.
+        WriteJob(TaskStates.HumanReview, "already-integrated", order: 1,
+            prompt: "Edit backend/Services/Runner/ProjectRunner.cs.",
+            extraJson: ",\"integrationRecords\":[{\"id\":\"rec-1\",\"classification\":\"integrated-verified\",\"recordedAtUtc\":\"2026-11-20T10:00:00Z\"}]");
+        WriteJob(TaskStates.Ready, "overlaps-integrated", order: 1,
+            prompt: "Edit backend/Services/Runner/ActiveRuns.cs.");
+
+        var (runner, _) = BuildRunner();
+        runner.SetMode("auto-continuous");
+
+        var picked = InvokeDisplayedPicker(runner, slotMax: 1);
+
+        Assert.Equal("overlaps-integrated", picked?.Id);
+        Assert.Equal("display-order: 2-ready overlaps-integrated", runner.GetStatus().LastPickReason);
+    }
+
     private static TaskInfo? InvokeDisplayedPicker(ProjectRunner runner, int slotMax)
     {
         var method = typeof(ProjectRunner).GetMethod("PickNextDisplayedCandidate", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -74,13 +143,14 @@ public sealed class RunnerDisplayedPickupOrderTests : IDisposable
         return method!.Invoke(runner, [slotMax]) as TaskInfo;
     }
 
-    private void WriteJob(string state, string slug, int order, string? prompt = null, string? kind = null)
+    private void WriteJob(string state, string slug, int order, string? prompt = null, string? kind = null,
+        string extraJson = "")
     {
         var dir = Path.Combine(_watchPath, state, slug);
         Directory.CreateDirectory(dir);
         var kindField = kind != null ? $",\"kind\":\"{kind}\"" : string.Empty;
         File.WriteAllText(Path.Combine(dir, "task.json"),
-            $"{{\"id\":\"{slug}\",\"title\":\"{slug}\",\"state\":\"{state}\",\"order\":{order},\"agent\":\"codex\",\"cliType\":\"codex\",\"ownerClientId\":\"local-default\"{kindField}}}");
+            $"{{\"id\":\"{slug}\",\"title\":\"{slug}\",\"state\":\"{state}\",\"order\":{order},\"agent\":\"codex\",\"cliType\":\"codex\",\"ownerClientId\":\"local-default\"{kindField}{extraJson}}}");
         if (prompt != null) File.WriteAllText(Path.Combine(dir, "prompt.md"), prompt);
     }
 
