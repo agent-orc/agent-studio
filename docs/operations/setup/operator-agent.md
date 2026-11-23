@@ -13,9 +13,10 @@ decision D11 option A; see the
 |---|---|---|
 | Operator agent principal (`opa_*`) | Role bindings you choose, no token of its own | Until you disable it |
 | Operator session | One `oas.*` bearer in the agent user's protected file | 1 to 8 hours, renewed only by you |
+| Known device | The key thumbprint of a terminal whose sign-in you confirmed | Until you forget the device |
 | Standing grant | The routine (T1) operations the agent may run, by scope, rate, and window | 7 days by default, at most 30, renewed only by you |
 | Approval | One exact high-risk (T2) request you approved after a second factor | Used once, within 15 minutes of your decision |
-| You, the Owner | Creating the agent, starting, renewing, and revoking sessions and grants; the kill switch | |
+| You, the Owner | Creating the agent, confirming terminal sign-ins with your second factor, starting, renewing, and revoking sessions and grants; the kill switch | |
 
 Every request the session makes, every audit entry, and every card timeline
 event it causes names `operator-agent:<id>/session:<sid>` as actor and
@@ -85,6 +86,54 @@ and do not install your Git credential, cloud logins, or host keys for it.
 Host work happens through Studio, not through your keys.
 
 ## 3. Start a session
+
+### From the agent's terminal (recommended)
+
+The terminal asks, you confirm in Studio with your second factor, and the
+session goes straight into the agent user's protected file. Nothing secret
+passes through your clipboard (Dossier
+[elevated operator session](../../operator-elevated-session/index.html),
+ES-3, decision ES-D2 option S2).
+
+1. As the agent user, with [studio-op](studio-op.md) installed and
+   `studio-op.json` pointing at your Studio:
+
+   ```sh
+   studio-op login --agent "ops console"
+   ```
+
+   It prints an eight-character code such as `WDJB-MJHT`, a link and a QR code
+   of the link, and waits. `--label` changes the device label (default
+   `<OS user>@<machine>`); `--class <id>` asks for an elevated action class
+   (`cards.accept-override`, `cards.archive-override`, `project.testing`), which
+   you can remove when you confirm; `--no-qr` leaves out the QR code.
+2. Open the link on your computer or scan the QR code with your phone, or open
+   **Confirm terminal sign-in** (`#/terminal-sign-in`) and type the code. Sign
+   in first if Studio asks. Compare the code with the terminal and tick
+   **This code is on my terminal now** when you came through the link.
+3. Check what the page shows: the device label, **Known device** or **Unknown
+   device**, the requesting address and whether it is on your browser's
+   network, the operator agent, the action classes, and the lifetime (1 to 8
+   hours, 8 by default). If you did not just run `studio-op login` yourself,
+   choose **Deny**.
+4. Enter your authenticator code, or leave the field empty to use a passkey,
+   and choose **Confirm sign-in**.
+5. Within a few seconds the terminal reports the session. `studio-op` wrote it
+   to `~/.config/agent-studio/operator-session` (mode 600) and set
+   `"credential": "operator-session"` in `studio-op.json`. It never prints the
+   token. Check with `studio-op auth status`.
+
+The code works once and for 10 minutes. Five wrong codes within 15 minutes
+lock code entry for you for 15 minutes. Until slice ES-4 binds the session to
+the device key, the session file is still a bearer: protect it like the token
+file. `studio-op` keeps the device key in
+`~/.config/agent-studio/operator-device-key.json` (mode 600); deleting it makes
+the next sign-in an unknown device. Elevated action classes are recorded on
+the session but take effect only with slice ES-7.
+
+### From Settings
+
+Kept for sessions without action classes until the migration slice retires it.
 
 1. In **Settings > Access > Operator agents**, choose **Start session** on the
    agent. Pick a name and a lifetime of at most 8 hours.
@@ -215,6 +264,15 @@ refusal codes are listed in the
 - **End session** ends one session at once and leaves the agent and its other
   sessions working; **Disable** ends the agent and every session. A session
   also ends when your Owner role ends.
+- A session from a terminal sign-in shows its device label, key thumbprint and
+  the terminal's address at confirmation in the session row. **Known devices**
+  under the agent lists each confirmed device key with its last confirmation
+  and last use; **Forget device** ends its sessions at once, and its next
+  sign-in shows as unknown.
+- A terminal sign-in session also ends when you revoke the browser session
+  that confirmed it in a session list, when your password is reset or you
+  change it, and when your account is disabled. Signing out of that browser,
+  or its session expiring, does not end it.
 - After a session, delete the token file:
   `rm ~/.config/agent-studio/operator-session`.
 - **Settings > Access > Operator activity** lists each session with its

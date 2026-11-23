@@ -268,8 +268,8 @@ public static class AccessSecurityEndpoints
             AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             Execute(() =>
             {
-                RequireOwner(context, store);
-                var reset = store.ResetPassword(id, request);
+                var owner = RequireOwner(context, store);
+                var reset = store.ResetPassword(id, request, owner.User.Id);
                 revokes.EnqueueSub(id);
                 return Results.Ok(new PasswordResetResponse(reset.User.Id, reset.TemporaryPassword, true));
             }));
@@ -393,6 +393,7 @@ public static class AccessSecurityEndpoints
             }));
 
         app.MapIamEndpoints();
+        app.MapOperatorSignInEndpoints();
         app.MapControlPlaneAuditEndpoints();
     }
 

@@ -17,6 +17,9 @@ export const EXIT = Object.freeze({
   UNREACHABLE: 10,
   BATCH_ISOLATION_ACTIVE: 11,
   APPROVAL_REQUIRED: 12,
+  // studio-op login: the Owner denied the sign-in, or its code expired.
+  SIGN_IN_DENIED: 13,
+  SIGN_IN_EXPIRED: 14,
   // studio-op watch: one code per class of the first actionable event.
   EVENT_ESCALATION: 20,
   EVENT_HUMAN_REVIEW: 21,

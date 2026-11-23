@@ -33,12 +33,15 @@
           <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-agent-disable-' + agent.id" [disabled]="operators.busy()" (click)="disable(agent)">Disable</button>
         }
       </header>
+      @if (!agent.disabledAt) {
+        <p class="access-hint" [attr.data-testid]="'access-operator-login-hint-' + agent.id">Or sign in from the agent's terminal: run <code>studio-op login --agent "{{ agent.name }}"</code> and confirm its code with your second factor. No token is copied.</p>
+      }
       @if (agent.sessions.length) {
         <div class="operators__scroll">
           <table [attr.data-testid]="'access-operator-sessions-' + agent.id">
             <thead>
               <tr>
-                <th scope="col">Session</th><th scope="col">State</th><th scope="col">Actor</th><th scope="col">Delegated by</th>
+                <th scope="col">Session</th><th scope="col">State</th><th scope="col">Device</th><th scope="col">Actor</th><th scope="col">Delegated by</th>
                 <th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Last used</th><th scope="col"><span class="visually-hidden">Actions</span></th>
               </tr>
             </thead>
@@ -46,7 +49,18 @@
               @for (session of sessions(agent); track session.id) {
                 <tr [attr.data-testid]="'access-operator-session-' + session.id" [attr.data-state]="session.state">
                   <td>{{ session.name || session.id }}</td>
-                  <td><app-status-indicator [tone]="session.state === 'active' ? 'success' : 'neutral'" [label]="stateLabel(session.state)" [detail]="session.revokedAt ? 'Revoked ' + time(session.revokedAt) : null" [compact]="true" /></td>
+                  <td><app-status-indicator [tone]="session.state === 'active' ? 'success' : session.state === 'pending' ? 'running' : 'neutral'" [label]="stateLabel(session.state)" [detail]="session.revokedAt ? 'Revoked ' + time(session.revokedAt) : null" [compact]="true" /></td>
+                  <td [attr.data-testid]="'access-operator-session-device-' + session.id">
+                    @if (session.device; as device) {
+                      <span class="operators__device">
+                        <span>{{ device.label }}</span>
+                        <code class="operators__actor" [attr.title]="device.keyThumbprint" [attr.data-testid]="'access-operator-session-thumbprint-' + session.id">{{ thumb(device.keyThumbprint) }}</code>
+                        <span class="access-hint access-numeric" [attr.title]="device.confirmedAddress ? 'Confirmed in the browser at ' + device.confirmedAddress : null" [attr.data-testid]="'access-operator-session-address-' + session.id">From {{ device.requestedAddress ?? 'unknown address' }} at confirmation</span>
+                      </span>
+                    } @else {
+                      <span class="access-hint">Started in Settings</span>
+                    }
+                  </td>
                   <td><code class="operators__actor">{{ session.actor }}</code></td>
                   <td>{{ person(session.delegatedBy) }}</td>
                   <td class="access-numeric">{{ time(session.createdAt) }}</td>
@@ -56,6 +70,8 @@
                     <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-session-activity-' + session.id" (click)="showActivity(session)">Activity</button>
                     @if (session.state === 'active' && !agent.disabledAt) {
                       <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-session-renew-' + session.id" [disabled]="operators.busy()" (click)="renew(agent, session)">Renew</button>
+                    }
+                    @if ((session.state === 'active' || session.state === 'pending') && !agent.disabledAt) {
                       <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-session-kill-' + session.id" [disabled]="operators.busy() || operators.killing()" (click)="end(agent, session)">End session</button>
                     }
                   </td>
@@ -66,6 +82,33 @@
         </div>
       } @else {
         <p class="access-hint">No sessions yet.</p>
+      }
+      @if (devices(agent).length) {
+        <h5 class="operators__subhead">Known devices</h5>
+        <div class="operators__scroll">
+          <table [attr.data-testid]="'access-operator-devices-' + agent.id">
+            <thead>
+              <tr>
+                <th scope="col">Device</th><th scope="col">Key thumbprint</th><th scope="col">Last confirmed</th><th scope="col">Last use</th>
+                <th scope="col">Live sessions</th><th scope="col"><span class="visually-hidden">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (device of devices(agent); track device.id) {
+                <tr [attr.data-testid]="'access-operator-device-' + device.id">
+                  <td>{{ device.label }}</td>
+                  <td><code class="operators__actor" [attr.title]="device.keyThumbprint">{{ thumb(device.keyThumbprint) }}</code></td>
+                  <td class="access-numeric" [attr.title]="device.lastAddress ? 'From ' + device.lastAddress : null">{{ time(device.lastConfirmedAt) }}</td>
+                  <td class="access-numeric">{{ time(device.lastUsedAt) || 'Never' }}</td>
+                  <td class="access-numeric">{{ device.activeSessions }}</td>
+                  <td class="access-actions">
+                    <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-device-forget-' + device.id" [disabled]="operators.busy()" (click)="forget(agent, device)">Forget device</button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
       }
     </article>
   } @empty {

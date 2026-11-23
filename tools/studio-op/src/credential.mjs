@@ -22,10 +22,11 @@ export const RETIRED_TOKEN_VARIABLE = ['AGENT', 'STUDIO', 'API', 'TOKEN'].join('
 
 /**
  * Studio-issued bearer shapes: <prefix>.<id>.<secret>. The prefixes cover API
- * tokens (api), service-account tokens (sat), operator sessions (oas) and the
- * other secrets Studio issues, so a pasted one is masked too.
+ * tokens (api), service-account tokens (sat), operator sessions (oas), the
+ * poll handle of a terminal sign-in (osp) and the other secrets Studio
+ * issues, so a pasted one is masked too.
  */
-const TOKEN_SHAPE = /\b(?:api|sat|oas|inv|rnr|enr|ssn|otl)\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}/g;
+const TOKEN_SHAPE = /\b(?:api|sat|oas|osp|inv|rnr|enr|ssn|otl)\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}/g;
 const BEARER_VALUE = /\b(Bearer\s+)[^\s"',;}]+/gi;
 export const REDACTED = '[redacted-token]';
 
