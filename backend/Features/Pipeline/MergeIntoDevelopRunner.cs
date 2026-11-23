@@ -235,6 +235,19 @@ public sealed partial class MergeIntoDevelopRunner
         Func<Action, bool>? publicationFence = null,
         string? reviewedResultSha = null)
     {
+        var conflictSubject = ReviewSubjectStore.Read(jobFolderPath);
+        using var conflictCapture = IntegrationConflictCapture.Begin(project,
+            conflictSubject?.TaskKey ?? jobId, integrationBranch, conflictSubject?.ResultSha ?? "",
+            conflictSubject?.BaseSha, reviewTimeProvider: () =>
+            {
+                var conflictJob = _taskScanner?.FindJob(jobId, watchPath);
+                var reviewed = conflictJob is null ? null : AgentStudio.Review.ReviewProjectionReader.Read(
+                    conflictJob, _timeline?.ReadAll(jobFolderPath) ?? [], null).Attempts
+                    .Where(attempt => attempt.SubjectSha == conflictSubject?.ResultSha
+                        && string.Equals(attempt.Outcome, "Pass", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(attempt => attempt.ReceivedAt).FirstOrDefault()?.ReceivedAt;
+                return reviewed is { } at ? new DateTimeOffset(at.ToUniversalTime()) : null;
+            });
         // Count both the active operation and serialized waiters. The external
         // stable watchdog uses this drain signal to avoid cutting the process
         // between merge and gate/rollback. The accepted lane and pipeline facts

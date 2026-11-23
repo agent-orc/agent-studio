@@ -40,6 +40,7 @@ and one review runner.
 | [docker.md](./docker.md) | The recommended one-box installation from this checkout, plus its operations: credentials, backup, update, and network binding. |
 | [contributor-setup.md](./contributor-setup.md) | Development seat for contributors who edit, test, or debug Agent Studio itself on Linux or Windows. Not a product installation path. |
 | [onboard-a-project.md](./onboard-a-project.md) | Product workflow for project creation through the UI or API, central task-store rules, runtime activation, and troubleshooting. |
+| [library-releases.md](./library-releases.md) | Declare a project release command and branch, preview it, and release after verification. |
 | [onboard-an-agent-cli.md](./onboard-an-agent-cli.md) | A new CLI (Claude, Codex, Copilot, Gemini) needs to be installed and made auto-runnable on this machine. Includes the load-bearing **Codex on Windows sandbox quirk**. |
 | [your-first-task.md](./your-first-task.md) | First use after installation: first-run checklist, project creation, execution location, pickup mode, `project.yml`, review, and Accept. |
 | [troubleshooting.md](./troubleshooting.md) | FAQ-style: sandbox errors, pickup mode changed after failures, a pickup mode change refused, crash recovery, quota probe stuck on onboarding. |

@@ -272,8 +272,17 @@ controls that suite. T1's opt-in sharding policy is unchanged.
 The timers use a dedicated checkout and a local exclusive claim file; the
 server fences the active run ID. A second claim waits, and an abandoned server
 claim expires after four hours for windows or fourteen hours for the nightly
-suite. The worker keeps its service token out of test
-process environments. `--dry-run` prints the fetch and command plan without
+suite. Prepare, build, test discovery, shards, retries, and attribution commands
+start with a cleared process environment (AGT-3981). Only tool and OS variables
+(`PATH`, `HOME`, `DOTNET_ROOT`, locale, certificate paths, temp paths, the
+`PLAYWRIGHT_BROWSERS_PATH` tool cache required by preparation, and Windows
+process plumbing) and the project's declared environment are supplied. Daemon
+`RUNNER_*`, `AGENT_HOST_*`, provider credentials, and Git credentials are not
+inherited. The worker also removes its service-token variables from declared
+values. Repository fetches keep the host's existing credential routing.
+This bounds environment inheritance; the commands still run under the host
+account and can access its readable files, including files under `HOME`.
+`--dry-run` prints the fetch and command plan without
 claiming, fetching, or running tests.
 
 The Runner service posts start, terminal, and skip receipts to
@@ -4136,3 +4145,12 @@ When a deployment section already exists, the import is a no-op. Unsupported des
 yield a clear error and leave the repository unchanged.
 Review the generated process before committing it; imported commands retain
 the legacy behavior and do not acquire a web-branch publish step automatically.
+
+## Integration conflict evidence (AGT-3969)
+
+Conflicts are captured before Git recovery removes the unmerged index, including
+union resolution and batch sibling collisions. The durable version 1 record,
+project time-range API, rate denominator and attribution limitations are specified
+in [Integration conflict evidence](../contracts/integration-conflicts.md). The
+project Pipeline panel shows seven days of daily rates, top files and card pairs.
+This evidence supports later selection work; it changes no transition policy.

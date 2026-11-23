@@ -17,6 +17,9 @@ public sealed partial class BatchGatePilotService
     private PerTaskFallbackSubject PrepareFallbackSubject(BatchGatePendingRecord pending,
         BatchGateOwnership? ownership, bool ownBase, CancellationToken ct)
     {
+        using var conflictCapture = IntegrationConflictCapture.Begin(pending.Subject.Project,
+            pending.Subject.TaskKey, pending.Subject.IntegrationBranch, pending.Subject.ResultSha,
+            reviewedAt: pending.Subject.ReviewCompletedAtUtc);
         var resultSha = pending.Subject.ResultSha;
         if (ownBase) return PerTaskFallbackPolicy.Choose(resultSha, true, null, null, null);
         var repo = pending.RepositoryPath;

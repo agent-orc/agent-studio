@@ -20,6 +20,24 @@ public sealed class ProjectPreparationTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { }
     }
 
+    [Theory]
+    [InlineData("  command: bash scripts/release.sh\n")]
+    [InlineData("  branch: main\n")]
+    [InlineData("  command: bash scripts/release.sh\n  branch: ../main\n")]
+    public void Incomplete_or_invalid_release_command_is_rejected(string release)
+    {
+        var result = ProjectDefinitionReader.Parse("schemaVersion: 2\nproject:\n  id: example-project\nstack: [node]\ncommands:\n  prepare: echo ready\nrelease:\n" + release);
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Issues, issue => issue.Path.StartsWith("release", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Release_command_and_branch_do_not_require_studio_identity_rules()
+    {
+        var result = ProjectDefinitionReader.Parse("schemaVersion: 2\nproject:\n  id: example-project\nstack: [node]\ncommands:\n  prepare: .agent-studio/prepare\nrelease:\n  command: bash scripts/release.sh\n  branch: main\n");
+        Assert.True(result.IsValid, string.Join("; ", result.Issues.Select(issue => issue.Message)));
+    }
+
     [Fact]
     public void Minimal_schema_two_document_and_schema_required_fields_match_runtime()
     {

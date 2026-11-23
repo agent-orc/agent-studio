@@ -99,13 +99,14 @@ public partial class GitService
             var (_, addError, addCode) = RunGitArgs(worktreePath, "add", "--", path);
             if (addCode != 0) return Refused($"{path}: resolved file could not be staged: {addError.Trim()}");
         }
+        IntegrationConflictCapture.Resolve("union");
         return new AddAddConflictResolution(true, hunks, null);
 
         static AddAddConflictResolution Refused(string reason) => new(false, [], reason);
     }
 
     /// <summary>
-    /// Card keys named by the commits on <paramref name="tipSha"/> since its
+    /// Primary card keys in the subjects of commits on <paramref name="tipSha"/> since its
     /// merge base with <paramref name="resultSha"/> that touched one of
     /// <paramref name="paths"/>, in first-seen order. <paramref name="ownKey"/>
     /// is left out. Empty when git cannot answer.
@@ -118,13 +119,82 @@ public partial class GitService
             return [];
         var (mergeBase, _, baseCode) = RunGitArgs(repoRoot, "merge-base", resultSha, tipSha);
         if (baseCode != 0 || string.IsNullOrWhiteSpace(mergeBase)) return [];
-        string[] args = ["log", "--format=%s%n%b", $"{mergeBase.Trim()}..{tipSha}", "--", .. paths];
+        string[] args = ["log", "--full-history", "--format=%s", $"{mergeBase.Trim()}..{tipSha}", "--", .. paths];
         var (log, _, logCode) = RunGitArgs(repoRoot, args);
         if (logCode != 0) return [];
-        return ConflictCardKeyPattern().Matches(log)
-            .Select(match => match.Value)
+        return log.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(PrimaryConflictCard).OfType<string>()
             .Where(key => !string.Equals(key, ownKey?.Trim(), StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
+    // Managed commits name their owning card first in the subject. Other keys
+    // in a title or body can be playthrough labels or references, not owners.
+    private static string? PrimaryConflictCard(string subject)
+    {
+        var match = ConflictCardKeyPattern().Match(subject);
+        return match.Success ? match.Value.ToUpperInvariant() : null;
+    }
+
+    // Evidence must never interrupt merge abort or temporary-worktree cleanup.
+    private void TryCaptureIntegrationConflict(string worktreePath, IReadOnlyList<string> paths)
+    {
+        try { CaptureIntegrationConflict(worktreePath, paths); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            _logger.LogWarning(ex, "Integration conflict evidence could not be captured for {CardKey} at {Path}",
+                IntegrationConflictCapture.Active?.CardKey, worktreePath);
+        }
+    }
+
+    private void CaptureIntegrationConflict(string worktreePath, IReadOnlyList<string> paths)
+    {
+        if (IntegrationConflictCapture.Active is not { Tip: not null } context || paths.Count == 0) return;
+        var (mergeBase, baseError, baseCode) = RunGitArgs(worktreePath, "merge-base", context.DeliverySha, context.Tip);
+        if (baseCode != 0) throw new IOException($"Conflict merge base unavailable: {baseError}");
+        var baseSha = string.IsNullOrWhiteSpace(context.BaseSha) ? mergeBase.Trim() : context.BaseSha;
+        var (count, countError, countCode) = RunGitArgs(worktreePath, "rev-list", "--count", $"{baseSha}..{context.Tip}", "--");
+        if (countCode != 0 || !int.TryParse(count.Trim(), out var commits))
+            throw new IOException($"Conflict commit count unavailable: {countError}");
+        var files = new List<IntegrationConflictFile>();
+        foreach (var path in paths)
+        {
+            // Binary, delete/modify and mode conflicts have no textual hunk count.
+            int? hunks = null;
+            var full = Path.Combine(worktreePath, path);
+            if (File.Exists(full))
+            {
+                var bytes = File.ReadAllBytes(full);
+                if (Array.IndexOf(bytes, (byte)0) < 0)
+                {
+                    var text = Encoding.UTF8.GetString(bytes);
+                    var countHunks = text.Split('\n').Count(line => line.StartsWith("<<<<<<<", StringComparison.Ordinal));
+                    if (countHunks > 0) hunks = countHunks;
+                }
+            }
+            var (log, logError, logCode) = RunGitArgs(worktreePath, "log", "--full-history", "--format=%H%x00%s%x00", $"{baseSha}..{context.Tip}", "--", path);
+            if (logCode != 0) throw new IOException($"Conflict attribution unavailable: {logError}");
+            var fields = log.Split('\0');
+            var touches = new List<IntegrationConflictCommit>();
+            for (var index = 0; index + 1 < fields.Length; index += 2)
+            {
+                var sha = fields[index].Trim();
+                if (sha.Length == 0) continue;
+                var owner = PrimaryConflictCard(fields[index + 1]);
+                string[] keys = owner is not null && !owner.Equals(context.CardKey, StringComparison.OrdinalIgnoreCase)
+                    ? [owner] : [];
+                touches.Add(new IntegrationConflictCommit(sha, keys));
+            }
+            var cards = touches.SelectMany(touch => touch.CardKeys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            files.Add(new IntegrationConflictFile(path, hunks, cards) { Commits = touches });
+        }
+        var reviewedAt = context.ReviewedAt.Value;
+        var at = DateTimeOffset.UtcNow;
+        var id = IntegrationConflictLedger.Hash($"{context.Project.ToUpperInvariant()}\n{context.CardKey.ToUpperInvariant()}\n{context.Target}\n{context.DeliverySha}\n{context.Tip}");
+        context.Ledger.Record(new IntegrationConflictEntry(1, id, context.Project, context.CardKey,
+            context.Target, context.DeliverySha, baseSha, context.Tip, at, reviewedAt,
+            reviewedAt is { } reviewed ? Math.Max(0, (at - reviewed).TotalSeconds) : null,
+            commits, files, "pending", at));
+    }
+
 }

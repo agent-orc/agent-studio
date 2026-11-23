@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { QualityStudioPanelComponent } from '../quality-studio-panel/quality-studio-panel.component';
 import { QualityStudioStatusService } from '../quality-studio-panel/quality-studio-status.service';
 import { AuthSessionState } from '../../../../services/auth.service';
@@ -61,6 +61,7 @@ const PROJECT_SHELL_STATE_STORAGE_PREFIX = 'atp.projectShell.v1.';
  */
 @Component({
   selector: 'app-project-shell',
+  host: { '(window:resize)': 'collapseSetupOnPhone()' },
   standalone: true,
   imports: [SectionHeaderComponent, StudioSidebarHeaderComponent, StudioIconComponent, TooltipDirective, TreeRowComponent, QualityStudioPanelComponent],
   providers: [QualityStudioStatusService],
@@ -122,6 +123,7 @@ export class ProjectShellComponent {
 
     effect(() => {
       this.ensureActiveRailVisible(this.activeRail());
+      untracked(() => this.collapseSetupOnPhone());
     });
   }
 
@@ -164,6 +166,11 @@ export class ProjectShellComponent {
     return item.key !== 'quality-studio' || this.qualityStudio.status()?.connected === true
       || this.auth.status()?.user?.role === 'owner'
       || this.quality.status(this.projectName())?.configured === true;
+  }
+
+  /** Give setup the phone viewport while keeping project navigation expandable. */
+  collapseSetupOnPhone(width = window.innerWidth): void {
+    if (this.activeRail() === 'settings' && width <= 720) this.setRailCollapsed(true);
   }
 
   setRailCollapsed(collapsed: boolean): void {

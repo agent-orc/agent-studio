@@ -20,6 +20,22 @@ describe('ProjectExecutionDefinitionComponent', () => {
 
   afterEach(() => http.verify());
 
+  it('detects the stack and shows proposed verify commands on the setup view', () => {
+    fixture.detectChanges();
+    http.expectOne('/api/projects/Quality%20Studio/execution').flush({ valid: false, issues: [] });
+    http.expectOne('/api/projects/Quality%20Studio/pipeline-definition').flush({ valid: true, issues: [] });
+    http.expectNone('/api/projects/Quality%20Studio/execution/proposal-preview');
+    fixture.componentRef.setInput('detectOnOpen', true);
+    fixture.detectChanges();
+    http.expectOne('/api/projects/Quality%20Studio/execution/proposal-preview').flush({
+      detectedStacks: ['node'], reasoning: 'Found package.json', definition: '', prepareScript: '',
+      reviewCommands: { build: ['npm run build'], test: ['npm test'], lint: ['npm run lint'] },
+    });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Build profile for node');
+    expect(fixture.nativeElement.textContent).toContain('npm test');
+  });
+
   it('renders repository truth and requires a justification before saving an override', async () => {
     fixture.detectChanges();
     http.expectOne('/api/projects/Quality%20Studio/execution').flush({
