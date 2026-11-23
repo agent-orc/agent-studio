@@ -268,7 +268,7 @@ public sealed class TaskIntegrationRecoveryService
             queued?.State);
 
         AgentStudio.Git.IntegrationConflictLedger.Default.Resolve(job.ProjectName, subject.TaskKey,
-            subject.ResultSha, integrationBranch, "agent-round");
+            subject.ResultSha, integrationBranch, "agent-round", integrationTip: conflict?.IntegrationTipSha);
         return new TaskIntegrationRecoveryResult(
             true,
             Position: position,

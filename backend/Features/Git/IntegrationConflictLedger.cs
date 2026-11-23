@@ -65,6 +65,7 @@ public sealed class IntegrationConflictLedger(string? root = null)
     private void ResolveCore(string project, string cardKey, string deliverySha, string target, string resolution,
         bool preserveUnion, string? integrationTip)
     {
+        if (string.IsNullOrWhiteSpace(integrationTip)) return;
         var folder = Folder(project);
         lock (Locks.GetOrAdd(folder, _ => new object()))
         {
@@ -72,7 +73,7 @@ public sealed class IntegrationConflictLedger(string? root = null)
                          row.CardKey.Equals(cardKey, StringComparison.OrdinalIgnoreCase)
                          && row.DeliverySha.Equals(deliverySha, StringComparison.OrdinalIgnoreCase)
                          && row.IntegrationTarget.Equals(target, StringComparison.Ordinal)
-                         && (integrationTip is null || row.IntegrationTipSha == integrationTip)
+                         && row.IntegrationTipSha.Equals(integrationTip, StringComparison.OrdinalIgnoreCase)
                          && (!preserveUnion || row.Resolution != "union"));
             foreach (var row in matches.OrderByDescending(row => row.DetectedAtUtc).Take(1))
                 Write(Path.Combine(folder, row.Id + ".json"), row with
@@ -119,13 +120,14 @@ public sealed class IntegrationConflictLedger(string? root = null)
 public static class IntegrationConflictCapture
 {
     internal sealed record Context(string Project, string CardKey, string Target, string DeliverySha,
-        string? BaseSha, DateTimeOffset? ReviewedAt, IntegrationConflictLedger Ledger, string? Tip = null);
+        string? BaseSha, Lazy<DateTimeOffset?> ReviewedAt, IntegrationConflictLedger Ledger, string? Tip = null);
     private static readonly AsyncLocal<Context?> Current = new();
     internal static Context? Active => Current.Value;
 
     public static IDisposable Begin(string project, string cardKey, string target, string deliverySha,
-        string? baseSha = null, DateTimeOffset? reviewedAt = null, IntegrationConflictLedger? ledger = null)
-        => Set(new Context(project, cardKey, target, deliverySha, baseSha, reviewedAt,
+        string? baseSha = null, DateTimeOffset? reviewedAt = null, IntegrationConflictLedger? ledger = null,
+        Func<DateTimeOffset?>? reviewTimeProvider = null)
+        => Set(new Context(project, cardKey, target, deliverySha, baseSha, new Lazy<DateTimeOffset?>(() => reviewTimeProvider is null ? reviewedAt : reviewTimeProvider()),
             ledger ?? IntegrationConflictLedger.Default));
 
     internal static IDisposable Pin(string deliverySha, string tip, string? target = null)

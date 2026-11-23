@@ -33,7 +33,13 @@ future Dossier selection role.
 
 Capture covers the individual integration runner, batch assembly, formation
 admission and per-task fallback candidate probes. The agent-round service updates
-the record after queueing or parking. Unscoped Git operations (for example a user
+the record after queueing or parking. Every resolution update must name the exact
+integration tip as well as the delivery and target. Missing tips leave the record
+unchanged; updates never select the latest collision as a substitute. Batch sibling
+deferral updates the candidate tip that actually conflicted, even after a clean
+probe against the batch base. Individual merges finalize their pinned target
+before releasing that scope. Review history is read lazily at the first conflict
+capture, once per merge scope; clean merges do not read it for this evidence. Unscoped Git operations (for example a user
 merge outside the pipeline) do not create project evidence. Recovery call sites
 explicitly capture after reading the unmerged index; `ListUnmergedFiles` only
 reads Git facts. Evidence I/O failures are logged and must not interrupt merge
