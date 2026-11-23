@@ -180,6 +180,8 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("POST", "/api/projects/{projectName}/deploy/deployments/{deploymentId}/cancel", IamPermissions.EnvironmentProductionDeploy)]
     [InlineData("POST", "/api/projects/{projectName}/deploy/environments/{environmentId}/redeploy", IamPermissions.EnvironmentProductionDeploy)]
     [InlineData("POST", "/api/projects/{projectName}/deploy/environments/{environmentId}/rollback", IamPermissions.EnvironmentProductionDeploy)]
+    [InlineData("GET", "/api/projects/{projectName}/testing", IamPermissions.ProjectRead)]
+    [InlineData("PUT", "/api/projects/{projectName}/testing", IamPermissions.ProjectSettingsWrite)]
     [InlineData("PUT", "/api/projects/{projectName}/auto-commit", IamPermissions.ProjectSettingsWrite)]
     [InlineData("PUT", "/api/projects/{projectName}/wiki/files/{**relPath}", IamPermissions.ProjectDocsWrite)]
     [InlineData("POST", "/api/runner/{projectName}/orchestrator-chat", IamPermissions.ProjectChatWrite)]

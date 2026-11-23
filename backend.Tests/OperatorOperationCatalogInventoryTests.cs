@@ -41,6 +41,7 @@ public sealed class OperatorOperationCatalogInventoryTests : IDisposable
         { OperatorOperationIds.GateRerun, OperatorTier.T1 },
         { OperatorOperationIds.StageDeploy, OperatorTier.T1 },
         { OperatorOperationIds.ProductionPromote, OperatorTier.T1 },
+        { "project.testing.set", OperatorTier.T2 },
         { OperatorOperationIds.SecretsChange, OperatorTier.T2 },
         { OperatorOperationIds.ExposureChange, OperatorTier.T2 },
         { OperatorOperationIds.DataDelete, OperatorTier.T2 },
