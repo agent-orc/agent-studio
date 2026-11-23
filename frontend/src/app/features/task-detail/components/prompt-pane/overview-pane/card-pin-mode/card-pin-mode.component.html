@@ -1,0 +1,8 @@
+<label data-testid="card-pin-mode-row">Pin mode
+  <select aria-label="Card pin mode" data-testid="card-pin-mode"
+      title="Preference permits comparable fallbacks; hard waits for the pinned route."
+      [ngModel]="mode()" [disabled]="disabled() || saving()" (ngModelChange)="change($event)">
+    <option value="preference">Preference</option><option value="hard">Hard</option>
+  </select>
+</label>
+@if (error()) { <p role="alert">{{ error() }}</p> }

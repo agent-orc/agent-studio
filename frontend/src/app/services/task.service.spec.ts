@@ -72,6 +72,21 @@ describe('TaskService', () => {
     http.verify();
   });
 
+  it('sends hard and preference pin modes with card routing mutations', () => {
+    service.setJobModel('card', 'claude-sonnet-5', undefined, 'hard').subscribe();
+    const model = http.expectOne('/api/tasks/card/model');
+    expect(model.request.body).toEqual({ model: 'claude-sonnet-5', pinMode: 'hard' });
+    model.flush({});
+    service.setJobThinkingLevel('card', 'high', undefined, 'hard').subscribe();
+    const thinking = http.expectOne('/api/tasks/card/thinking-level');
+    expect(thinking.request.body).toEqual({ thinkingLevel: 'high', pinMode: 'hard' });
+    thinking.flush({});
+    service.setJobCliType('card', 'codex', undefined, false, 'preference').subscribe();
+    const cli = http.expectOne('/api/tasks/card/cli-type');
+    expect(cli.request.body).toEqual({ cliType: 'codex', useOwnSession: false, pinMode: 'preference' });
+    cli.flush({});
+  });
+
   it('discovers registry projects while their watch paths catch up', () => {
     let paths: unknown;
     service.getProjectPaths().subscribe(value => { paths = value; });

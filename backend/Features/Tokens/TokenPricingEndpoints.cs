@@ -53,6 +53,65 @@ public static class TokenPricingEndpoints
             return Results.Ok(new { items = rows, provider = "TokenEconomy" });
         });
 
+        app.MapPost("/api/token-pricing/what-if", (RoutingWhatIfRequest request, HttpContext context,
+            WorkspaceRegistry workspaces, ProjectRegistry registry, ProjectTokenLedger ledger,
+            AgentMessageBusStore bus, TaskScannerService scanner, IConfiguration configuration,
+            AgentStudio.Pipeline.ModelRoutingPolicyRegistry policy) =>
+        {
+            if (!RoutingWhatIf.Valid(request))
+                return Results.BadRequest(new { error = "Choose UTC timestamps spanning at most 93 days, a consumer (coding, review-aspect, one-shot), and an alternative model." });
+            var workspace = string.IsNullOrWhiteSpace(request.WorkspaceId)
+                ? workspaces.List().FirstOrDefault(item => item.IsDefault) ?? workspaces.List().FirstOrDefault()
+                : workspaces.Find(request.WorkspaceId);
+            if (workspace is null) return Results.NotFound(new { error = "Unknown workspace." });
+            var all = registry.List().Where(project => !project.Archived
+                && string.Equals(project.WorkspaceId, workspace.Id, StringComparison.OrdinalIgnoreCase)).ToList();
+            var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal;
+            var visible = all.Where(project => human is null
+                || ProjectAccessAuthorization.Allows(human.User, project.Id, registry)).ToList();
+            if (human is not null && !ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User)
+                && visible.Count == 0) return Results.StatusCode(StatusCodes.Status403Forbidden);
+            var includeUnassigned = workspace.IsDefault && (human is null
+                || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User));
+            var inputs = UsageCostInputReader.Read(all, visible, ledger, bus, scanner, configuration,
+                request.From.ToUniversalTime(), includeUnassigned);
+            var cards = new Dictionary<string, TaskDetail?>();
+            string? EconomyModel(OrchestratorLogEntry entry)
+            {
+                if (entry.JobId is not { } jobId) return null;
+                if (!cards.TryGetValue(jobId, out var card)) cards[jobId] = card = scanner.GetJobDetail(jobId);
+                return RoutingWhatIf.EconomyModel(policy, entry, card, request.EconomyMode!.Value);
+            }
+            var result = RoutingWhatIf.Calculate(pricing, request, inputs,
+                request.EconomyMode.HasValue ? EconomyModel : null);
+            var floorNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var entry in inputs.SelectMany(input => input.Entries).Where(entry => entry.TokenUsage is not null
+                && UsageCockpitProjection.AsUtc(entry.Ts) >= request.From.ToUniversalTime()
+                && UsageCockpitProjection.AsUtc(entry.Ts) < request.To.ToUniversalTime()
+                && RoutingWhatIf.Consumer(entry) == request.Consumer))
+            {
+                if (entry.JobId is not { } jobId) { floorNames.Add("unknown (no card)"); continue; }
+                if (!cards.TryGetValue(jobId, out var card)) cards[jobId] = card = scanner.GetJobDetail(jobId);
+                floorNames.Add(card is null ? "unknown (missing card)"
+                    : policy.CorrectnessFloor(card.Info.TaskType, card.Info.Title, card.PromptMarkdown)?.Id ?? "no hard tier floor");
+            }
+            return Results.Ok(result with { CorrectnessFloor = result.CorrectnessFloor
+                + " Current card floors: " + (floorNames.Count == 0 ? "no matching receipts" : string.Join(", ", floorNames.Order())) + "." });
+        });
+
+        app.MapGet("/api/token-pricing/route-models", () => Results.Ok(new
+        {
+            models = ModelMetadataRegistry.All.Where(model => model.Available && !model.Deprecated)
+                .SelectMany(model => CliTypes.All
+                    .Where(cli => ModelMetadataRegistry.IsCompatibleWithCli(cli, model.Id))
+                    .Select(cli => new
+                    {
+                        cli, model = model.Id, label = model.Label,
+                        thinkingLevels = ModelMetadataRegistry.ThinkingLevelsFor(cli, model.Id),
+                        price = pricing.Estimate(model.Id, 1000000, 0, 0, 0, DateTime.UtcNow).PriceBasis,
+                    })).ToList(),
+        }));
+
         // Diagnostic: every model id active in recorded workspace usage with
         // at least one call lacking a historical price.
         app.MapGet("/api/token-pricing/unpriced-models",

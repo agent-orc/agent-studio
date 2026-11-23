@@ -40,6 +40,7 @@ public sealed record TaskCoreRecord
     public bool PendingIntent { get; init; }
     public string? Model { get; init; }
     public bool ModelExplicit { get; init; }
+    public string PinMode { get; init; } = "preference";
     public string? ThinkingLevel { get; init; }
     public bool ThinkingLevelExplicit { get; init; }
     public string? CliType { get; init; }
@@ -108,7 +109,7 @@ public sealed record TaskCoreRecord
             Phase = info.Phase, PhaseEnteredAt = info.PhaseEnteredAt,
             Order = info.Order, Mode = info.Mode, Kind = info.Kind, TaskType = info.TaskType,
             Released = info.Released, PendingIntent = info.PendingIntent is not null,
-            Model = info.Model, ModelExplicit = info.ModelExplicit,
+            Model = info.Model, ModelExplicit = info.ModelExplicit, PinMode = info.PinMode,
             ThinkingLevel = info.ThinkingLevel, ThinkingLevelExplicit = info.ThinkingLevelExplicit,
             CliType = info.CliType, ContextMode = info.ContextMode,
             UseOwnSession = info.UseOwnSession, AllowWebAccess = info.AllowWebAccess,

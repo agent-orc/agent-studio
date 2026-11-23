@@ -389,6 +389,7 @@ export class TaskDetailPrefetchService {
       || (info.pendingIntent != null) !== core.pendingIntent
       || (info.model ?? null) !== (pins.model ?? null)
       || (info.modelExplicit ?? false) !== pins.modelExplicit
+      || (info.pinMode !== undefined && info.pinMode !== (pins.pinMode ?? 'preference'))
       || (info.thinkingLevel ?? null) !== (pins.thinkingLevel ?? null)
       || (info.thinkingLevelExplicit ?? false) !== pins.thinkingLevelExplicit
       || (info.cliType ?? null) !== (pins.cliType ?? null)

@@ -14,24 +14,7 @@
   </section>
   <app-consumer-model-policy />
   @if (policy(); as routingPolicy) {
-    <section class="cli-models__policy" data-testid="model-routing-policy">
-      <div class="cli-models__policy-copy">
-        <span class="cli-models__policy-title">Automatic task routing</span>
-        <span class="cli-models__policy-detail">
-          Policy {{ routingPolicy.policyVersion }} derives the default tier from task type.
-          Correctness floors still apply.
-        </span>
-      </div>
-      <label class="cli-models__economy">
-        <input type="checkbox"
-               data-testid="model-routing-economy-mode"
-               [checked]="routingPolicy.economyMode"
-               [disabled]="savingEconomyMode()"
-               (change)="setEconomyMode($any($event.target).checked)" />
-        <span>Economy mode {{ routingPolicy.economyMode ? 'on' : 'off' }}</span>
-        <small>Lower eligible tiers by one step</small>
-      </label>
-    </section>
+    <app-economy-routing-preview [policy]="routingPolicy" [saving]="savingEconomyMode()" (saveRequested)="setEconomyMode($event)" />
   }
   @if (migrations.version(); as migrationVersion) {
     <section class="cli-models__policy" data-testid="model-migration-catalog">
@@ -124,10 +107,10 @@
         </label>
         @if (effectiveFor(g.cliType).length) {
           <div class="cli-models__effective" [attr.data-testid]="'effective-routes-' + g.cliType">
-            @for (route of effectiveFor(g.cliType); track route.consumer) {
+            @for (route of effectiveFor(g.cliType); track route.consumer + ':' + (route.stepId ?? '')) {
               <span>{{ route.consumer }}: {{ route.effective?.cliType ?? 'wait' }}
                 @if (route.effective?.model) { · {{ route.effective?.model }} }
-                ({{ route.rule }})</span>
+                ({{ route.rule }}) · {{ route.stepId ?? 'Consumer default' }}</span>
             }
           </div>
         }
@@ -149,7 +132,7 @@
                 <select [value]="primaryModel(g.cliType)"
                         [attr.data-testid]="'cli-primary-' + g.cliType"
                         (change)="setPrimary(g.cliType, $any($event.target).value)">
-                  @for (m of g.models; track m.id) { <option [value]="m.id">{{ m.label }}</option> }
+                  @for (m of g.models; track m.id) { <option [value]="m.id">{{ modelPriceLabel(g.cliType, m) }}</option> }
                 </select>
               </label>
               <div class="cli-models__route-line cli-models__route-line--fallback">
@@ -165,7 +148,7 @@
                         [attr.data-testid]="'cli-fallback-' + g.cliType"
                         (change)="setFallbackModel(g.cliType, $any($event.target).value)">
                   <option value="">Disabled</option>
-                  @for (m of fallbackModels(g.cliType); track m.id) { <option [value]="m.id">{{ m.label }}</option> }
+                  @for (m of fallbackModels(g.cliType); track m.id) { <option [value]="m.id">{{ modelPriceLabel(fallbackCli(g.cliType), m) }}</option> }
                 </select>
                 @if (fallbackThinkingLevels(g.cliType).length) {
                   <select [value]="routes()[g.cliType]?.fallbackThinkingLevel ?? ''"

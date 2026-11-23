@@ -1,0 +1,19 @@
+<section data-testid="model-routing-policy">
+  <div><strong>Automatic task routing</strong>
+    <p>Policy {{ policy().version }} derives the default tier from task type. Correctness floors still apply.</p>
+    @for (tier of policy().tiers; track tier.id) {
+      <span>{{ tier.id }}: policy estimate {{ tier.estimatedSavingsPercent }}% vs top tier. </span>
+    }
+  </div>
+  <label><input type="checkbox" data-testid="model-routing-economy-mode"
+      [checked]="draft() ?? policy().economyMode" [disabled]="saving()"
+      (change)="stage($any($event.target).checked)" />
+    Economy mode {{ (draft() ?? policy().economyMode) ? 'on' : 'off' }}
+    <small>Lower eligible tiers by one step</small>
+  </label>
+  @if (draft() !== null) {
+    <app-routing-cost-preview [economyMode]="draft()!" (estimated)="preview.set($event)" (changed)="preview.set(null)" />
+    <p class="basis">Uses current card types, prompts and pins; missing cards remain unpriced. Historical token usage stays fixed. Weekly saving is extrapolated from the selected period.</p>
+    <button type="button" class="btn btn--primary" data-testid="save-economy-mode" [disabled]="!preview() || saving()" (click)="save()">Save economy mode</button>
+  }
+</section>
