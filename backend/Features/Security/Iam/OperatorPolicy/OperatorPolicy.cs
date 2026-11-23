@@ -27,13 +27,16 @@ public sealed record OperatorPolicyDecision(
 {
     public string? ApprovalId { get; init; }
 
+    /// <summary>The Owner (user id) whose approval admitted this request (ES-2); set only on an admitted approval.</summary>
+    public string? ApprovedBy { get; init; }
+
     public static OperatorPolicyDecision Admit(OperatorOperation operation, string? grantId = null)
         => new(true, null, operation, grantId, grantId is null ? $"{operation.Tier} {operation.Id} admitted."
             : $"{operation.Tier} {operation.Id} admitted under standing grant {grantId}.");
 
-    public static OperatorPolicyDecision AdmitApproved(OperatorOperation operation, string approvalId)
+    public static OperatorPolicyDecision AdmitApproved(OperatorOperation operation, string approvalId, string? approvedBy = null)
         => new(true, null, operation, null, $"{operation.Tier} {operation.Id} admitted under the Owner's approval {approvalId}.")
-        { ApprovalId = approvalId };
+        { ApprovalId = approvalId, ApprovedBy = approvedBy };
 
     public static OperatorPolicyDecision Refuse(string reason, OperatorOperation? operation, string message)
         => new(false, reason, operation, null, message);

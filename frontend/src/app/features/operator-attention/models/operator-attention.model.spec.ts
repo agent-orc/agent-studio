@@ -85,6 +85,15 @@ describe('operator attention model', () => {
     expect(attentionActionLabel(group.items[0], group.spec)).toBe('Open operations');
   });
 
+  it('opens the repair card when a red develop incident asks the owner (RT-1)', () => {
+    const red = item('post-merge.red-incident', { cardKey: 'AGT-4100', cards: ['AGT-4100'], project: 'Agent Studio' });
+    expect(attentionClassOf(red.type)).toBe('red-develop');
+    const [group] = groupAttention([red]);
+    expect(group.spec.label).toBe('Develop red for two hours');
+    expect(attentionTarget(group.items[0], group.spec)).toBe('card');
+    expect(attentionActionLabel(group.items[0], group.spec)).toBe('Open repair card');
+  });
+
   it('opens the card of a blocked push (AGT-3695)', () => {
     const [blocked] = groupAttention([item('push.blocked')]);
     expect(blocked.spec.label).toBe('Push blocked');

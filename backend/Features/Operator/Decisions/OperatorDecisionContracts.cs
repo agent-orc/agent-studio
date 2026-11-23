@@ -28,6 +28,8 @@ public static class OperatorDecisionTypes
     public const string EnvironmentIncidentOpen = "environment.incident-open";
     /// <summary>AGT-3965: a fast or balanced project whose develop moved without a post-merge run.</summary>
     public const string PostMergeRunsMissing = "post-merge.missing";
+    /// <summary>RT-1 (AGT-3988): a post-merge incident red for two hours waits for the owner's answer.</summary>
+    public const string PostMergeRedIncident = "post-merge.red-incident";
     public const string DeployCompleted = "deploy.completed";
     public const string WatcherHeartbeat = "watcher.heartbeat";
 
@@ -36,6 +38,7 @@ public static class OperatorDecisionTypes
         EscalationOpened, HumanReviewReady, DecisionCardOpened, BackendStalled, BatchGateStuck, ProgressIdleWithReady,
         BatchRed, BatchIsolating, BatchRecordUnreadable, BatchRunningWithoutGate, PushPendingOverdue, PushBlocked, QuotaExhausted, QuotaFallbackActive,
         GateHostUnreachable, HostDiskPressure, ReviewHostDrift, ReviewRetrySchedulerStalled, EnvironmentIncidentOpen, PostMergeRunsMissing,
+        PostMergeRedIncident,
         DeployCompleted, WatcherHeartbeat,
     ];
 
@@ -95,6 +98,8 @@ public static class OperatorOperations
         OperatorDecisionTypes.EnvironmentIncidentOpen => [CardInspect],
         // The repair is the post-merge timers on a host, or the strategy, both the owner's (AGT-3965).
         OperatorDecisionTypes.PostMergeRunsMissing => [OwnerDecide],
+        // Revert, fix forward or strict are the owner's answers; the repair card is the evidence (RT-1).
+        OperatorDecisionTypes.PostMergeRedIncident => [OwnerDecide, CardInspect],
         OperatorDecisionTypes.DeployCompleted => [CardInspect],
         OperatorDecisionTypes.WatcherHeartbeat => [WatcherStatus],
         _ => [],

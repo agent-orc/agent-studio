@@ -185,6 +185,28 @@ step of an intent a dead host left open. `BatchGateStartPolicy.Order` is first
 in, first out with a maximum wait. Details are in
 [batch gate](../../operations/gates/batch-gate.md#formation-planner-and-intents-agt-3568).
 
+AGT-3993 (DS-3 of the [dispatcher personas Dossier](../../dispatcher-personas/index.html)):
+`DispatchPlanPolicy.Plan(DispatchFacts, DispatchStrategy)` is the pure rule
+of a dispatcher persona. The facts are the Ready cards of one project (lane
+order and pin, lane entry, priority class, `urgent`, dependsOn state, touch
+forecast, declared prompt-path scope, source wave and size prior), the
+in-flight cards with their forecasts, the free slots, the overlap window
+(`InFlight` by default, `Running` as today), the conflict ledger summary, hub
+files, active holds and exclusive marks. The plan returns the order, holds
+(reason code, waits-for, expiry), releases, dependency edges with origin
+`dispatch:<persona>`, exclusive marks, and per free slot `Admit` or
+`Serialize` with a reason code and the candidates passed over.
+`DispatchStrategies` holds the five starter strategies as
+`dispatch-strategy.v1` data: `lane-entry-v1` (Queue keeper),
+`one-per-area-v1` (Area warden), `file-overlap-v1` (Surveyor),
+`ledger-learned-v1` (Historian) and `package-then-chain-v1` (Packer dispatch
+part). Every strategy keeps pins and `urgent` first within a priority class,
+dependsOn, exclusive runs, the slot count, a hold of at most 24 hours renewed
+once, and at most 25 % of Ready held. `lane-entry-v1` with the `Running`
+window equals the `LaneSortApplier` order and `ParallelSlotPolicy` admissions
+(`DispatchPlanPolicyEquivalenceTests`). No host calls the policy yet; DS-5
+records shadow plans and DS-6 makes the pick-gate read the live plan.
+
 ## Decision grounds, shadow receipts and active coding choice
 
 AGT-3063 implements AGT-W73 OD-S1 for the `CodingCompletion` profile while it
@@ -788,3 +810,18 @@ Run the guard with:
 ```sh
 dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter 'FullyQualifiedName~.Architecture.|Category=Guard'
 ```
+
+
+## Red test isolation policies (RT-2)
+
+`RedTestTriagePolicy`, `BisectVerdictPolicy` and `HoldScopePolicy` own the
+per-test classification, quarantine lifecycle, owner questions, repair rung,
+double-run attribution and scoped integration hold rules from
+[Red test isolation](../../red-test-isolation/index.html). All inputs are
+frozen typed facts; ages, control runs and chronological lift evidence come
+from the host. The output is a list of actions so a line stop and its owner
+question can coexist. `RedTestTriageBounds` is the single home of the new
+bounds. The existing repair API remains compatible. RT-2 does not add host
+calls or transition receipts; later slices collect facts and apply actions
+through the owning adapter. The architecture guard inventories all three
+policies.

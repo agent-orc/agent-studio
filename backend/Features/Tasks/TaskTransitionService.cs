@@ -192,10 +192,9 @@ public sealed class TaskTransitionService
         }
         if (archiveOverride && (info.State != TaskStates.Completed
             || targetState != TaskStates.Archive
-            || !TimelineActors.IsHuman(cause)
+            || !ArchiveOverrideActorPolicy.Admits(cause)
             || !CompletionContractPolicy.IsUsableReason(reason?.Trim())))
-            return new MoveJobOutcome(MoveJobStatus.Failure,
-                "Archive override requires a human actor and a written reason.");
+            return new MoveJobOutcome(MoveJobStatus.Failure, ArchiveOverrideActorPolicy.Refusal);
 
         if (engineContinuationBase is not null && !engineDecisionRequeue)
             return new MoveJobOutcome(MoveJobStatus.Failure, "A continuation base requires an engine requeue.");
@@ -2172,6 +2171,9 @@ public sealed class TaskTransitionService
                 taskKey = card.TaskKey,
                 reason = reason.Trim(),
                 actor,
+                // ES-2: an operator session's override names the approval and the approving Owner.
+                approvalId = OperatorActorScope.Current?.ApprovalId,
+                approvedBy = OperatorActorScope.Current?.ApprovedBy is { } approvedBy ? TimelineActors.Human(approvedBy) : null,
                 at = _time.GetUtcNow(),
                 deliveryEpoch = subject?.RunAttemptId ?? card.CompletionClaim?.DeliveryEpoch,
                 resultSha = subject?.ResultSha ?? card.CompletionClaim?.ResultSha,
@@ -2198,7 +2200,9 @@ public sealed class TaskTransitionService
     {
         var status = _integrationStatus?.BuildLookup([card]).GetValueOrDefault(card.TaskKey);
         return _timeline?.Append(folder, "archive_override", actor,
-            "Owner requested a written archive override for this card.",
+            ArchiveOverrideActorPolicy.IsApprovedOperatorSession(actor)
+                ? "Operator session archived this card with a written override the Owner approved."
+                : "Owner requested a written archive override for this card.",
             details: new Dictionary<string, string>
             {
                 ["reason"] = reason.Trim(),

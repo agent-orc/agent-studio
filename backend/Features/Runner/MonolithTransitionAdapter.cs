@@ -24,6 +24,8 @@ public static class MonolithTransitionAdapter
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
     public static RedDevelopRepairDecision RedDevelopRepair(RedDevelopRepairFacts facts)
         => RedDevelopRepairPolicy.Decide(facts);
+    public static RecurringRepairCardAction RecurringRepairCard(string? lane)
+        => RedDevelopRepairPolicy.RecurringCard(lane);
     public static bool MayCreateRelease(bool developRed)
         => RedDevelopRepairPolicy.MayCreateRelease(developRed);
     public static ReviewBudgetDecision ReviewBudget(ReviewBudgetFacts facts) => ReviewBudgetPolicy.Decide(facts);
