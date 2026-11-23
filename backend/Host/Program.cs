@@ -1,3 +1,4 @@
+using AgentStudio.Dispatch;
 
 
 using Microsoft.AspNetCore.SignalR;
@@ -82,6 +83,7 @@ Log.Logger = new LoggerConfiguration()
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddDispatch();
 // WebApplicationFactory can use the default environment, so also detect its
 // in-process xunit host before loading any machine-specific settings.
 var underTestHost = Array.Exists(

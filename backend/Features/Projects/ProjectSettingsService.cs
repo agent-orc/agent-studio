@@ -1150,6 +1150,18 @@ public class ProjectSettingsService
     /// chosen; null clears it and the project resolves to
     /// <see cref="OverlapWindows.Default"/> again.
     /// </summary>
+    public void SetDispatchHubFiles(string projectName, IReadOnlyList<string>? files)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { DispatchHubFiles = files?.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray() };
+            Persist();
+        }
+    }
+
     public void SetDispatchOverlapWindow(string projectName, string? window)
     {
         var normalized = window is null ? null : OverlapWindows.Normalize(window)

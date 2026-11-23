@@ -9,6 +9,9 @@ public static class CauseBreakerSettingsDefaults
 
 public record ProjectSettings
 {
+    /// <summary>Null uses the default dispatch hubs; an empty list excludes no files.</summary>
+    public IReadOnlyList<string>? DispatchHubFiles { get; init; }
+
     /// <summary>Quality Studio's durable project-to-repository mapping and last registration outcome.</summary>
     [System.Text.Json.Serialization.JsonPropertyName("qualityStudio")]
     public QualityStudioRegistration? QualityStudio { get; init; }
