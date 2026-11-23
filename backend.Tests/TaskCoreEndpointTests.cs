@@ -356,6 +356,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
     public async Task WarmCore_IsBoundedValidatedAndIndependentOfDirtyBoard()
     {
         Seed("AGT-core", TaskStates.Ready);
+        Assert.True(TaskJsonFile.UpdateField(Path.Combine(Jobs, TaskStates.Ready, "AGT-core"), "pinMode", "hard", NullLogger.Instance));
         Seed("AGT-archive", TaskStates.Archive);
         await using var factory = Factory();
         using var client = factory.CreateClient();
@@ -374,6 +375,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         using var body = JsonDocument.Parse(bytes);
         Assert.Equal("ready", body.RootElement.GetProperty("state").GetString());
         Assert.Equal("AGT-core", body.RootElement.GetProperty("id").GetString());
+        Assert.Equal("hard", body.RootElement.GetProperty("pins").GetProperty("pinMode").GetString());
         Assert.Equal(Jobs, body.RootElement.GetProperty("watchPath").GetString());
         Assert.Equal(Path.Combine(Jobs, TaskStates.Ready, "AGT-core"),
             body.RootElement.GetProperty("folderPath").GetString());

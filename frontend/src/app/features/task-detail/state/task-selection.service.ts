@@ -516,7 +516,7 @@ export class TaskSelectionService {
       archiveState: core.archiveState, enteredLaneAt: core.enteredLaneAt,
       order: core.order, mode: core.mode as TaskInfo['mode'],
       kind: core.kind as TaskInfo['kind'], released: core.released,
-      model: core.pins.model ?? null, modelExplicit: core.pins.modelExplicit,
+      model: core.pins.model ?? null, modelExplicit: core.pins.modelExplicit, pinMode: core.pins.pinMode ?? 'preference',
       thinkingLevel: core.pins.thinkingLevel ?? null,
       thinkingLevelExplicit: core.pins.thinkingLevelExplicit,
       cliType: core.pins.cliType as TaskInfo['cliType'],

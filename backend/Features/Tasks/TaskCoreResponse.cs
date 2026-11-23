@@ -46,6 +46,7 @@ public sealed record TaskCorePins
 {
     public string? Model { get; init; }
     public bool ModelExplicit { get; init; }
+    public string PinMode { get; init; } = "preference";
     public string? ThinkingLevel { get; init; }
     public bool ThinkingLevelExplicit { get; init; }
     public string? CliType { get; init; }
