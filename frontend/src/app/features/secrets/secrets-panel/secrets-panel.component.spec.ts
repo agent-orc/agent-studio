@@ -89,6 +89,21 @@ describe('SecretsPanelComponent', () => {
     expect(row.querySelectorAll('.secrets__versions li')).toHaveLength(2);
   });
 
+  it('lists a secret stored under the project id with the project it was routed by (AGT-3987)', async () => {
+    const { fixture, service, element } = await setup();
+    const current = service.overview()!;
+    service.overview.set({ ...current, secrets: [...current.secrets,
+      { ...secret('PROJ-002/stage', 'API_KEY'), scopeKind: 'environment', routeScope: 'memowikis/stage' }] });
+
+    fixture.componentInstance.selectProject('memowikis');
+    fixture.componentInstance.environment.set('stage');
+    fixture.detectChanges();
+
+    const rows = [...element.querySelectorAll('[data-testid="secrets-row"]')].map(row => row.textContent ?? '');
+    expect(rows).toHaveLength(2);
+    expect(rows.some(text => text.includes('secret://PROJ-002/stage/API_KEY'))).toBe(true);
+  });
+
   it('adds a secret through a password field and clears the value after saving', async () => {
     const { fixture, service, element } = await setup();
     const value = `value-${crypto.randomUUID()}`;

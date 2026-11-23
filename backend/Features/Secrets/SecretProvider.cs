@@ -18,10 +18,12 @@ public sealed class SecretProvider : ISecretProvider
     private readonly SecretValueScrubber _scrubber;
     private readonly TimeProvider _clock;
     private readonly ILogger<SecretProvider> _logger;
+    private readonly SecretProjectKeys _keys;
 
     public SecretProvider(ISecretStore store, SecretAuditLog audit, SecretValueScrubber scrubber, TimeProvider clock,
-        ILogger<SecretProvider> logger)
+        ILogger<SecretProvider> logger, SecretProjectKeys? keys = null)
     {
+        _keys = keys ?? SecretProjectKeys.Identity;
         _store = store;
         _audit = audit;
         _scrubber = scrubber;
@@ -91,7 +93,7 @@ public sealed class SecretProvider : ISecretProvider
         return await AuditedAsync(SecretAuditActions.Resolve, reference, workload.Actor, purpose, workload, async () =>
         {
             SecretRecord? record = null;
-            foreach (var candidate in reference.Scope.InheritanceChain())
+            foreach (var candidate in _keys.LookupChain(reference.Scope))
             {
                 record = await _store.FindAsync(candidate, reference.Name, ct);
                 if (record is not null) break;
