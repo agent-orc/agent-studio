@@ -10,6 +10,7 @@ import { NotificationService } from '../../../../services/notification.service';
 import { CliCatalogStore } from '../../../cli';
 import { RemoteHostsService, seedRemoteHosts, type RemoteHost } from '../../../remote-hosts';
 import type { CreateRegistryProjectRequest } from '../../../../models/task.model';
+import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
 import { ServerCheckoutStore } from '../../../server-checkout';
 
 describe('OnboardProjectDialogComponent', () => {
@@ -19,6 +20,7 @@ describe('OnboardProjectDialogComponent', () => {
       onboardProjectOpen: signal(false), onboardWorkspaceId: signal<string | null>(null),
       closeProjectOnboard: vi.fn(), refreshAfterProjectCreate: vi.fn(), notifyRegistryChanged: vi.fn(),
     };
+    const tabs = { open: vi.fn() };
     const serverCheckout = { enabled: signal(false), startForNewProject: vi.fn() };
     const hosts = signal<RemoteHost[]>([]);
     const ensureLoaded = vi.fn(() => hosts.set([...hosts()]));
@@ -40,6 +42,7 @@ describe('OnboardProjectDialogComponent', () => {
         { provide: RemoteHostsService, useValue: { ensureLoaded, hosts } },
         { provide: HttpClient, useValue: { get: getCapability } },
         { provide: ServerCheckoutStore, useValue: serverCheckout },
+        { provide: StudioTabStateService, useValue: tabs },
       ],
     }).overrideComponent(OnboardProjectDialogComponent, { set: { template: '' } }).compileComponents();
     const fixture = TestBed.createComponent(OnboardProjectDialogComponent);
@@ -53,8 +56,15 @@ describe('OnboardProjectDialogComponent', () => {
     component.executionCapabilityLoaded.set(true);
     component.localCodingAdmitted.set(true);
     component.executionRunner.set('local');
-    return { component, fixture, manager, hosts, ensureLoaded, getCapability, serverCheckout, submitted: () => submitted };
+    return { component, fixture, manager, tabs, hosts, ensureLoaded, getCapability, serverCheckout, submitted: () => submitted };
   }
+
+  it('opens project setup immediately after creation', async () => {
+    const { component, tabs, manager } = await setup();
+    component.onSubmit();
+    expect(manager.refreshAfterProjectCreate).toHaveBeenCalledTimes(1);
+    expect(tabs.open).toHaveBeenCalledWith({ kind: 'hub', projectName: 'Fresh Site', section: 'settings' });
+  });
 
   it('submits an existing repository without provisioning', async () => {
     const { component, submitted } = await setup();
@@ -70,7 +80,7 @@ describe('OnboardProjectDialogComponent', () => {
   });
 
   it('creates the server checkout of a local URL project in the create flow (AGT-3809)', async () => {
-    const { component, manager, serverCheckout, submitted } = await setup();
+    const { component, manager, tabs, serverCheckout, submitted } = await setup();
     serverCheckout.enabled.set(true);
     component.repositoryUrl.set('https://github.com/example/library.git');
     expect(component.offerCheckout()).toBe(true);
@@ -78,11 +88,8 @@ describe('OnboardProjectDialogComponent', () => {
     component.onSubmit();
     expect(submitted()?.repositoryUrl).toBe('https://github.com/example/library.git');
     expect(serverCheckout.startForNewProject).toHaveBeenCalledWith('PROJ-2');
-    expect(component.createdProject()).toEqual({ id: 'PROJ-2', displayName: 'Fresh Site' });
-    expect(manager.refreshAfterProjectCreate).not.toHaveBeenCalled();
-    component.finish();
     expect(manager.refreshAfterProjectCreate).toHaveBeenCalledTimes(1);
-    expect(component.createdProject()).toBeNull();
+    expect(tabs.open).toHaveBeenCalledWith({ kind: 'hub', projectName: 'Fresh Site', section: 'settings' });
   });
 
   it('skips the checkout when the owner opts out or supplies a checkout path', async () => {

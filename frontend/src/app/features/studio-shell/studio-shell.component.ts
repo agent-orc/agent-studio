@@ -590,7 +590,7 @@ export class StudioShellComponent {
     if (tab.kind === 'board') return tab.projectName === '__all__' ? null : 'board';
     if (tab.kind === 'hub') {
       const rail = resolveProjectSection(tab.section).rail;
-      if (rail === 'wiki' || rail === 'deploy' || rail === 'operations') return rail;
+      if (rail === 'wiki' || rail === 'deploy' || rail === 'operations' || rail === 'settings') return rail;
       return 'hub';
     }
     if (tab.kind === 'workbenches') return tab.projectName === null ? null : 'workbenches';
@@ -685,6 +685,10 @@ export class StudioShellComponent {
     // Keep the legacy TaskSelectionService in sync so the embedded
     // <app-job-detail> can pick the job up by reading the selected signal.
     this.jobSelection.openDetailAfterPaint(job);
+  }
+
+  openProjectSettings(projectName: string): void {
+    this.tabState.open({ kind: 'hub', projectName, section: 'settings' });
   }
 
   openHub(projectName: string): void {

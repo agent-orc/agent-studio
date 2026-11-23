@@ -12,6 +12,7 @@ import {
 import type { ProjectAutoPickupIndicator, ProjectAutoPickupState } from '../../studio-shell.auto-pickup';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import type { RegistryWorkspaceListItem, RegistryProjectSummary } from '../../../../models/task.model';
+import { ExplorerProjectDestinationsComponent } from '../explorer-project-destinations/explorer-project-destinations';
 import { ExplorerSectionsService } from '../../services/explorer-sections.service';
 
 function project(displayName: string, workspaceId: string, storage: string): RegistryProjectSummary {
@@ -82,6 +83,22 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     } catch (err) {
       console.warn('render path note:', err);
     }
+  });
+
+  it('renders a newly registered project before watch paths refresh and offers Settings', () => {
+    const fixture = mount();
+    fixture.componentRef.setInput('registryWorkspaces', [
+      workspace('ws-default', 'Default', 0, [project('New project', 'ws-default', '/store/PROJ-2/tasks')]),
+    ]);
+    fixture.componentRef.setInput('projectRows', []);
+    fixture.componentRef.setInput('expandedProjects', new Set(['New project']));
+    fixture.componentRef.setInput('activeProjectName', 'New project');
+    fixture.componentRef.setInput('activeProjectSurface', 'settings');
+    fixture.detectChanges();
+    expect(fixture.componentInstance.groups()[0].projects.map(p => p.name)).toEqual(['New project']);
+    const settings = fixture.nativeElement.querySelector('[data-testid="studio-explorer-project-settings-New project"]');
+    expect(settings).not.toBeNull();
+    expect(settings.getAttribute('aria-current')).toBe('page');
   });
 
   it('groups project rows under their registry workspace by display name', () => {
@@ -276,7 +293,7 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     // AGT-3835: the name starts with the row's visible text, counters included.
     expect(board?.getAttribute('aria-label'))
       .toBe('Board · active work 3 2 5, Board, Active work: 3 ready, 2 in progress, 5 human review');
-    expect(fixture.componentInstance.boardActiveWorkTooltip).toContain('Excludes Backlog, Preparation');
+    expect(fixture.debugElement.query(By.directive(ExplorerProjectDestinationsComponent)).componentInstance.boardActiveWorkTooltip).toContain('Excludes Backlog, Preparation');
     expect(counts?.getAttribute('aria-label')).toBe('Active work: 3 ready, 2 in progress, 5 human review');
     expect(ready?.textContent?.trim()).toBe('3');
     expect(progress?.textContent?.trim()).toBe('2');
@@ -477,7 +494,7 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     ).toBeGreaterThanOrEqual(4);
   });
 
-  it('renders the six destinations in decision order and opens Wiki', () => {
+  it('renders project destinations in decision order and opens Wiki', () => {
     const fixture = mount();
     const cmp = fixture.componentInstance;
     fixture.componentRef.setInput('registryWorkspaces', []);
@@ -500,6 +517,7 @@ describe('ExplorerWorkspaceTreeComponent', () => {
       'studio-explorer-project-operations-Alpha',
       'studio-explorer-project-wiki-Alpha',
       'studio-explorer-project-hub-Alpha',
+      'studio-explorer-project-settings-Alpha',
     ]);
 
     const wiki = root.querySelector<HTMLElement>('[data-testid="studio-explorer-project-wiki-Alpha"]');

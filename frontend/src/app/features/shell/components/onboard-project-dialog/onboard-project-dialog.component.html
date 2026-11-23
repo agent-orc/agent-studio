@@ -8,12 +8,6 @@
     testid="onboard-project-dialog"
     (closeRequest)="onCancel()"
     (backdropClick)="onCancel()">
-    @if (createdProject(); as created) {
-    <div class="opd__content" data-testid="onboard-project-checkout-step">
-      <p class="opd__section-desc"><strong>{{ created.displayName }}</strong> was created. Studio is creating its server checkout so its first card can integrate.</p>
-      <app-server-checkout-notice [projectId]="created.id" />
-    </div>
-    } @else {
     <div class="opd__content">
       <section class="opd__section" aria-label="Repository setup">
         <label class="opd__field">
@@ -127,15 +121,6 @@
         <p class="opd__error" role="alert" data-testid="onboard-project-error">{{ message }}</p>
       }
     </div>
-    }
-    @if (createdProject()) {
-    <div footer class="opd__actions">
-      <button type="button"
-              class="opd__btn opd__btn--primary"
-              data-testid="onboard-project-done"
-              (click)="finish()">Done</button>
-    </div>
-    } @else {
     <div footer class="opd__actions">
       <button type="button"
               class="opd__btn"
@@ -152,6 +137,5 @@
         Create project
       </button>
     </div>
-    }
   </app-dialog>
 }

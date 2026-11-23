@@ -1,6 +1,6 @@
 import { Injectable, signal, inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse, HttpHeaders, HttpParams } from '@angular/common/http';
-import { Subject, catchError, finalize, map, switchMap, tap, throwError, timer, type Observable } from 'rxjs';
+import { Subject, catchError, finalize, forkJoin, map, switchMap, tap, throwError, timer, type Observable } from 'rxjs';
 import { isGitFactsWarming, retryWhileWarming } from '../utils/git-facts-warming';
 import { sortLaneLikeBoard } from './lane-sort.util';
 import type { TaskCore, TaskResource, ResourceName } from '../models/task-core.model';
@@ -1095,6 +1095,19 @@ export class TaskService {
   getWatchPaths() {
     return this.http.get<WatchPathEntry[]>(`${this.baseUrl}/watch-paths`);
   }
+
+  /** Reconcile registry membership before resolving routes or cleaning project tabs. */
+  getProjectPaths(): Observable<WatchPathEntry[]> {
+    return forkJoin({ paths: this.getWatchPaths(), projects: this.getRegistryProjects() }).pipe(
+      map(({ paths, projects }) => {
+        const knownNames = new Set(paths.map(path => path.name));
+        return [...paths, ...projects.filter(project => !project.archived && !knownNames.has(project.displayName))
+          .map(project => ({ name: project.displayName, path: project.storageLocation,
+            rootPath: project.rootPath ?? project.repositoryPath ?? '' }))];
+      }),
+    );
+  }
+
 
   /**
    * F45a / ADR-0042 — list workspaces with their embedded projects.

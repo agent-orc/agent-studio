@@ -1,17 +1,6 @@
 <section class="ps-settings" data-testid="project-settings-panel">
-  <header class="ps-settings__head">
-    <div class="ps-settings__title-row">
-      <h2 class="ps-settings__title" data-testid="project-settings-title">Settings</h2>
-      <span class="ps-settings__chip">this project</span>
-    </div>
-    <p class="ps-settings__desc" data-testid="project-settings-desc">
-      Edit this project's onboarding values and execution behavior, then review
-      the workspace defaults it inherits.
-    </p>
-    <app-settings-jump-links [links]="[{ target: 'batch-settings', label: 'Batch verification', testId: 'project-settings-jump-batch' }]" />
-    <button type="button" class="ps-settings__link" data-testid="project-settings-review-aspects" (click)="openReviewAspects()">Review aspects in Deploy / Run steps</button>
-  </header>
-  <section class="ps-settings__section" aria-label="Project basics">
+  <app-project-setup-header (reviewAspects)="openReviewAspects()" (release)="openRelease()" />
+  <section class="ps-settings__section" id="project-setup-checkout" aria-label="Checkout and integration branch">
     <app-project-basics-card [projectName]="projectName()" (pathsSaved)="reloadBuildProfileGate()" />
     @if (buildProfileGate(); as gate) {
       @if (!gate.gateApplicable || gate.verifyDefinition?.state === 'checkout-missing') {
@@ -22,7 +11,12 @@
       }
     }
   </section>
-  <app-project-execution-definition [projectName]="projectName()" />
+  <section id="project-setup-verify" aria-label="Detected stack and verify commands">
+    <app-project-execution-definition [projectName]="projectName()" [detectOnOpen]="!!buildProfileGate() && buildProfileGate()?.verifyDefinition?.state !== 'checkout-missing'" />
+  </section>
+  <section id="project-setup-execution" aria-label="Execution host and pickup mode">
+    <app-execution-assignment-card [projectName]="projectName()" />
+  </section>
   <app-quality-studio-connection-settings />
   <app-incident-webhook-settings [projectName]="projectName()" />
   <app-batch-settings [project]="projectName()" />
@@ -178,7 +172,6 @@
       </div>
     }
     <div class="ps-settings__execution-grid">
-      <app-execution-assignment-card [projectName]="projectName()" />
       <article class="ps-settings__card ps-settings__card--wiki-source"
                data-testid="project-settings-wiki-source">
         <div class="ps-settings__card-head">

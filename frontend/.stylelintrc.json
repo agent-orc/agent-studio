@@ -234,6 +234,7 @@
         "src/app/features/quota/components/quota-curve/quota-curve.scss",
         "src/app/features/quota/components/quota-forecast-panel/quota-forecast-panel.scss",
         "src/app/features/board/components/task-column/task-column.scss",
+        "src/app/features/project-detail/components/project-setup-header/project-setup-header.scss",
         "src/app/features/studio-shell/_studio-tab.scss",
         "src/app/features/studio-shell/components/explorer-workspace-tree/_row-actions.scss",
         "src/app/features/secrets/project-secrets-page/project-secrets-page.component.scss",
