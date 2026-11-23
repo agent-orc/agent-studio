@@ -5402,6 +5402,18 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         });
     }
 
+    /// <summary>Leaves a spend-producing step pending when quota admission refuses it.</summary>
+    internal bool RefuseSpendBudget(TaskInfo task, string stepId, StepKind kind)
+    {
+        if (_workspaceQuota?.Admit(task.ProjectName, cardId: task.Id) is not { Allowed: false } refusal)
+            return false;
+        _pipelineLog?.RecordStep(task.FolderPath, new PipelineStepExecution
+        {
+            StepId = stepId, Kind = kind, Status = PipelineStepStatus.Pending, Reason = refusal.Message,
+        });
+        return true;
+    }
+
     /// <summary>
     /// Run the automatic post-CORE quality-grade code-review step (ASS-1657)
     /// and record it on the pipeline. It assigns an A/B/C/D grade and structured
@@ -5417,17 +5429,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// Within one open attempt, unchanged grade inputs reuse the earlier graded
     /// report without side effects (<see cref="AgentStudio.Review.CodeReviewGradeReuse"/>).
     /// </summary>
-    internal bool RefuseSpendBudget(TaskInfo task, string stepId, StepKind kind)
-    {
-        if (_workspaceQuota?.Admit(task.ProjectName, cardId: task.Id) is not { Allowed: false } refusal)
-            return false;
-        _pipelineLog?.RecordStep(task.FolderPath, new PipelineStepExecution
-        {
-            StepId = stepId, Kind = kind, Status = PipelineStepStatus.Pending, Reason = refusal.Message,
-        });
-        return true;
-    }
-
     private async Task<AgentStudio.Review.CodeReviewStepReport?> RunCodeReviewGradePostStepAsync(
         WatchPathEntry entry,
         TaskInfo job,
