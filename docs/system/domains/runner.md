@@ -9,6 +9,41 @@ compares the role's commit and image with Stable. An idle role still uses the
 host release watchdog's grace period. A fresh heartbeat reporting the expected
 commit and image clears the attention fact.
 
+## Overlap window of the pick-gate, DS-0
+
+`ParallelSlotPolicy.Decide` runs on both claim paths: the local pickup in
+`ProjectRunner` and the remote claim in `LeaseEndpoints`, which walks
+`LaneSortApplier.PickupOrder`. Both read the card scope from
+`TaskScopePrediction`: the parent directory of every `backend/`, `frontend/`,
+`src/`, `docs/` or `tools/` path named in the title and `prompt.md`, at most
+24. A card without such a path has unknown scope and is admitted
+optimistically.
+
+The project setting `dispatch.overlapWindow` (`GET` and `PUT
+/api/projects/{project}/dispatch/overlap-window`) selects the comparison set.
+`in-flight` is the default (Dossier decision DS-D10 B in
+[dispatcher personas](../../dispatcher-personas/index.html)). It compares a
+candidate with the running cards and with every card of the project that
+started a coding run and has not integrated yet: Progress, Auto Review
+(including cards waiting for the batch gate), Human Review (cards waiting for
+the acceptance integration) and queued merge rounds (a started card back in
+Ready with a pending follow-up). `OverlapComparisonSet` collects that set from
+the card snapshot without git: a card stops being exposed when a provenance
+merge record or an integrated-class integration record is newer than its last
+entry into Progress. Escalated, Failed pickup, Code not complete, Completed,
+planning and research cards are not in the set. A candidate that already
+started is compared only with running and post-coding cards, so two started
+cards never hold each other. `running` keeps the local behaviour before DS-0.
+
+In-flight cards take no slot, and an exclusive card blocks only while it runs.
+A scope serialize is a `parallel-conflict` pickup skip on the local pickup and a
+`parallel-conflict` dispatch rejection on the remote claim. Its reason names
+the window, the conflicting card, its lane and the shared prefix, for example
+`scope conflict with 'AGT-1' on 'backend/features/runner' (window in-flight,
+4-auto-review)`. Each serialize also writes one `overlap-serialize` log line
+with `path`, `window`, `project`, `candidate`, `conflict`, `lane` and `prefix`,
+so over-serialization can be counted per window.
+
 ## Persona occurrences, PT-4
 
 PT-D4, PT-D5 and PT-D8 use the Dossier's recommended option B. The Watcher

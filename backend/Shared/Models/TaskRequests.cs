@@ -757,6 +757,16 @@ public record SetAutonomyLevelRequest
 }
 
 /// <summary>
+/// Body for <c>PUT /api/projects/{name}/dispatch/overlap-window</c> (DS-0):
+/// <c>running</c> or <c>in-flight</c>; null clears the stored value and the
+/// project resolves to the default <c>in-flight</c>.
+/// </summary>
+public record SetDispatchOverlapWindowRequest
+{
+    public string? Window { get; init; }
+}
+
+/// <summary>
 /// Body for <c>PUT /api/projects/{name}/lane-sort-strategy</c> (F35). When
 /// <see cref="Strategy"/> is null or empty, the explicit override is cleared
 /// and the lane reverts to its default.

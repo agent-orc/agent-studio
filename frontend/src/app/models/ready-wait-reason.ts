@@ -41,7 +41,7 @@ const RUNNER_REASONS: Record<string, RunnerReasonText> = {
   'load-throttle': { label: 'load throttle', headline: 'Skipped · host load throttle' },
   'provider-limit': { label: 'provider limit', headline: 'Skipped · provider limit' },
   'quota-defer': { label: 'quota defer', headline: 'Skipped · quota defer' },
-  'parallel-conflict': { label: 'parallel conflict', headline: 'Skipped · conflicts with a running task' },
+  'parallel-conflict': { label: 'parallel conflict', headline: 'Skipped · overlaps a card that has not integrated' },
 };
 
 export type ReadyWaitKind = 'hold' | 'runner' | 'queued';

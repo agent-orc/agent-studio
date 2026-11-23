@@ -1547,6 +1547,8 @@ public class ProjectRunner
         PrunePlacementWarnings();
         var skippedForConflict = new List<string>();
         var skips = new List<RunnerPickupSkip>();
+        var window = OverlapWindows.Resolve(_projectSettings.Get(ProjectName));
+        IReadOnlyList<InFlightTask>? inFlight = null;
 
         foreach (var candidate in ListPickupCandidatesInDisplayedOrder())
         {
@@ -1645,19 +1647,37 @@ public class ProjectRunner
                 continue;
             }
 
-            if (_activeRuns.Count > 0)
+            inFlight ??= CollectInFlight(window);
+            if (_activeRuns.Count > 0 || inFlight.Count > 0)
             {
-                var adm = DecideAdmission(candidate.Info.Id, PredictParallelism(candidate.Info), slotMax);
+                var adm = DecideAdmission(candidate.Info, slotMax, inFlight, window);
                 if (!adm.Admitted)
                 {
                     var reason = $"{candidate.Info.Id}: {adm.Reason}";
                     skippedForConflict.Add(reason);
                     _lastPickReason = $"parallel-conflict-skip: {reason}";
                     skips.Add(new RunnerPickupSkip(candidate.Info.Id, RunnerPickupWaitCodes.ParallelConflict, adm.Reason));
-                    _logger.LogInformation(
-                        "[taskboard] skipping visible pickup candidate {Job} on {Project}: {Reason}",
-                        candidate.Info.Id, ProjectName, adm.Reason);
+                    if (adm.IsScopeConflict)
+                        _logger.LogInformation(
+                            "[taskboard] overlap-serialize path=local window={Window} project={Project} candidate={Job} conflict={Conflict} lane={Lane} prefix={Prefix}",
+                            adm.Window, ProjectName, candidate.Info.Id, adm.ConflictTaskId, adm.ConflictLane, adm.SharedPrefix);
+                    else
+                        _logger.LogInformation(
+                            "[taskboard] skipping visible pickup candidate {Job} on {Project}: {Reason}",
+                            candidate.Info.Id, ProjectName, adm.Reason);
                     continue;
+                }
+
+                // Nothing runs locally and no in-flight card overlaps: the pick
+                // is the plain display-order pick it was before DS-0.
+                if (_activeRuns.Count == 0)
+                {
+                    var idlePickReason = skippedForConflict.Count == 0
+                        ? $"display-order: {candidate.State} {candidate.Info.Id}"
+                        : $"display-order: {candidate.State} {candidate.Info.Id}; skipped earlier conflicting candidate(s): {string.Join("; ", skippedForConflict)}";
+                    _lastPickReason = idlePickReason;
+                    _pendingPickReasons[candidate.Info.Id] = idlePickReason;
+                    return PublishPickupSkips(skips, candidate.Info);
                 }
 
                 var pickReason = skippedForConflict.Count == 0
@@ -1731,47 +1751,50 @@ public class ProjectRunner
     /// <summary>Effective, clamped MaxParallelism for this project (live setting).</summary>
     private int SlotMax() => ParallelSlotPolicy.ClampMax(_projectSettings.Get(ProjectName).MaxParallelism);
 
-    private static readonly System.Text.RegularExpressions.Regex ScopePathRegex =
-        new(@"\b((?:backend|frontend|src|docs|tools)/[A-Za-z0-9_./-]+)",
-            System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
     /// <summary>
     /// Predict a task's parallelisability facts so the pick-gate can prove it
-    /// disjoint from running tasks. Heuristic: repo-relative path prefixes
-    /// mentioned in the title + prompt.md form the predicted scope; none found =
-    /// unknown scope (the pick-gate admits it optimistically under worktree
-    /// isolation). The
-    /// orchestrator can later replace this with an LLM scope prediction.
+    /// disjoint from running and in-flight tasks. Shared with the remote claim
+    /// through <see cref="TaskScopePrediction"/> (DS-0).
     /// </summary>
-    private TaskParallelism PredictParallelism(TaskInfo info)
+    private static TaskParallelism PredictParallelism(TaskInfo info) => TaskScopePrediction.Predict(info);
+
+    /// <summary>
+    /// DS-0: the in-flight cards of this project that hold no local slot,
+    /// collected once per pickup pass and only under the <c>in-flight</c>
+    /// window. Under <c>running</c> the list stays empty.
+    /// </summary>
+    private IReadOnlyList<InFlightTask> CollectInFlight(string window)
     {
-        var text = info.Title ?? string.Empty;
+        if (window != OverlapWindows.InFlight) return Array.Empty<InFlightTask>();
+        var running = new HashSet<string>(
+            _activeRuns.RunningTasks().Select(r => r.TaskId), StringComparer.OrdinalIgnoreCase);
         try
         {
-            var pf = Path.Combine(info.FolderPath, "prompt.md");
-            if (File.Exists(pf)) text += "\n" + File.ReadAllText(pf);
+            return OverlapComparisonSet.Collect(_scanner.ScanAllAutomationJobs(), ProjectName, running, PredictParallelism);
         }
-        catch (Exception __ex) { SilentCatch.Note(__ex, "ProjectRunner: best-effort"); /* best-effort */ }
-        var scope = ScopePathRegex.Matches(text)
-            .Select(m => m.Groups[1].Value)
-            .Select(p => { var i = p.LastIndexOf('/'); return i > 0 ? p.Substring(0, i) : p; })
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(24)
-            .ToArray();
-        return new TaskParallelism(false, scope);
+        catch (Exception ex)
+        {
+            // A failed scan keeps today's running-only comparison for this pass.
+            _logger.LogWarning(ex, "[taskboard] in-flight comparison set unavailable on {Project}", ProjectName);
+            return Array.Empty<InFlightTask>();
+        }
     }
 
     /// <summary>
-    /// Pick-gate admission for one candidate against what is already running.
-    /// Delegates to <see cref="ParallelSlotPolicy.Decide"/>. Unknown scopes are
-    /// admitted optimistically because each coding run is worktree-isolated; a
-    /// real file conflict then surfaces deterministically at integrate-merge
-    /// (-&gt; escalate), never as shared-checkout corruption. Exclusive tasks and
-    /// declared scope conflicts are still serialized.
+    /// Pick-gate admission for one candidate against what is already running
+    /// and, under the <c>in-flight</c> window, every card that started and has
+    /// not integrated yet. Delegates to <see cref="ParallelSlotPolicy.Decide"/>.
+    /// Unknown scopes are admitted optimistically because each coding run is
+    /// worktree-isolated; a real file conflict then surfaces deterministically
+    /// at integrate-merge (-&gt; escalate), never as shared-checkout corruption.
+    /// Exclusive tasks block only while they run; declared scope conflicts are
+    /// serialized.
     /// </summary>
-    private SlotAdmission DecideAdmission(string jobId, TaskParallelism p, int slotMax)
+    private SlotAdmission DecideAdmission(
+        TaskInfo candidate, int slotMax, IReadOnlyList<InFlightTask> inFlight, string window)
     {
-        return ParallelSlotPolicy.Decide(jobId, p, _activeRuns.RunningTasks(), slotMax);
+        return ParallelSlotPolicy.Decide(candidate.Id, PredictParallelism(candidate), _activeRuns.RunningTasks(), slotMax,
+            OverlapComparisonSet.For(candidate, inFlight), window);
     }
 
     /// <summary>Where isolated coding worktrees live (sibling temp root, off the repo).</summary>

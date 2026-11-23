@@ -40,10 +40,33 @@ public enum SlotDecision
     RunExclusive,
 }
 
+/// <summary>
+/// A card of the project that started a coding run and has not integrated yet,
+/// without a runner slot (DS-0). It is part of the scope comparison set under
+/// the <c>in-flight</c> overlap window, never of the slot count, and it never
+/// blocks as exclusive: an exclusive card blocks only while it runs.
+/// </summary>
+public sealed record InFlightTask(string TaskId, TaskParallelism Parallelism, string Lane);
+
 /// <summary>Result of one pick-gate evaluation, with a human-readable rationale for the timeline.</summary>
 public sealed record SlotAdmission(SlotDecision Decision, string Reason)
 {
     public bool Admitted => Decision is SlotDecision.Admit or SlotDecision.RunExclusive;
+
+    /// <summary>The overlap window the scope check used (<see cref="OverlapWindows"/>).</summary>
+    public string Window { get; init; } = OverlapWindows.Running;
+
+    /// <summary>The card whose scope overlaps the candidate's, on a scope serialize.</summary>
+    public string? ConflictTaskId { get; init; }
+
+    /// <summary>The shared path prefix, on a scope serialize.</summary>
+    public string? SharedPrefix { get; init; }
+
+    /// <summary>Lane of the conflicting card: <c>running</c> for a slot holder, else its lane.</summary>
+    public string? ConflictLane { get; init; }
+
+    /// <summary>True when the candidate was serialized by a scope overlap.</summary>
+    public bool IsScopeConflict => ConflictTaskId is not null;
 }
 
 /// <summary>
@@ -83,10 +106,48 @@ public static class ParallelSlotPolicy
         TaskParallelism candidate,
         IReadOnlyList<RunningTask> running,
         int maxParallelism)
+        => Decide(candidateId, candidate, running, maxParallelism,
+            Array.Empty<InFlightTask>(), OverlapWindows.Running);
+
+    /// <summary>
+    /// DS-0: the same rules, with the scope check extended over the overlap
+    /// window. Slots, a running exclusive card and an exclusive candidate are
+    /// judged on <paramref name="running"/> alone. Under
+    /// <see cref="OverlapWindows.InFlight"/> the scope check also covers
+    /// <paramref name="inFlight"/>: cards that started and have not integrated.
+    /// Under <see cref="OverlapWindows.Running"/> that list is ignored. A scope
+    /// serialize names the window, the conflicting card and the shared prefix.
+    /// </summary>
+    public static SlotAdmission Decide(
+        string candidateId,
+        TaskParallelism candidate,
+        IReadOnlyList<RunningTask> running,
+        int maxParallelism,
+        IReadOnlyList<InFlightTask> inFlight,
+        string? overlapWindow)
+    {
+        var window = OverlapWindows.Normalize(overlapWindow) ?? OverlapWindows.Default;
+        return DecideInWindow(candidateId, candidate, running, maxParallelism, inFlight, window)
+            with { Window = window };
+    }
+
+    private static SlotAdmission DecideInWindow(
+        string candidateId,
+        TaskParallelism candidate,
+        IReadOnlyList<RunningTask> running,
+        int maxParallelism,
+        IReadOnlyList<InFlightTask> inFlight,
+        string window)
     {
         var max = ClampMax(maxParallelism);
         running ??= Array.Empty<RunningTask>();
         candidate ??= TaskParallelism.Default;
+        var exposed = window == OverlapWindows.InFlight && inFlight is not null
+            ? inFlight.Where(item => item is not null
+                    && !string.Equals(item.TaskId, candidateId, StringComparison.OrdinalIgnoreCase)
+                    && !running.Any(r => string.Equals(r.TaskId, item.TaskId, StringComparison.OrdinalIgnoreCase)))
+                .ToArray()
+            : Array.Empty<InFlightTask>();
 
         if (running.Count >= max)
             return new SlotAdmission(SlotDecision.Serialize,
@@ -118,17 +179,36 @@ public static class ParallelSlotPolicy
             usedOptimisticUnknownScope |= !HasDeclaredScope(r.Parallelism.PredictedScope);
             var conflict = FirstScopeConflict(candidate.PredictedScope, r.Parallelism.PredictedScope);
             if (conflict != null)
-                return new SlotAdmission(SlotDecision.Serialize,
-                    $"scope conflict with '{r.TaskId}' on '{conflict}'");
+                return ScopeSerialize(window, r.TaskId, "running", conflict);
         }
 
-        return new SlotAdmission(SlotDecision.Admit,
-            running.Count == 0
-                ? "parallel-ok: first slot"
-                : usedOptimisticUnknownScope
-                    ? "parallel-ok (optimistic: unknown scope, worktree-isolated)"
-                    : $"parallel-ok: disjoint from {running.Count} running task(s)");
+        foreach (var item in exposed)
+        {
+            usedOptimisticUnknownScope |= !HasDeclaredScope(item.Parallelism?.PredictedScope);
+            var conflict = FirstScopeConflict(candidate.PredictedScope,
+                item.Parallelism?.PredictedScope ?? Array.Empty<string>());
+            if (conflict != null)
+                return ScopeSerialize(window, item.TaskId, item.Lane, conflict);
+        }
+
+        var reason = running.Count == 0 && exposed.Length == 0
+            ? "parallel-ok: first slot"
+            : usedOptimisticUnknownScope
+                ? "parallel-ok (optimistic: unknown scope, worktree-isolated)"
+                : exposed.Length == 0
+                    ? $"parallel-ok: disjoint from {running.Count} running task(s)"
+                    : $"parallel-ok: disjoint from {running.Count} running and {exposed.Length} in-flight task(s)";
+        return new SlotAdmission(SlotDecision.Admit, reason);
     }
+
+    private static SlotAdmission ScopeSerialize(string window, string taskId, string lane, string prefix)
+        => new(SlotDecision.Serialize,
+            $"scope conflict with '{taskId}' on '{prefix}' (window {window}, {lane})")
+        {
+            ConflictTaskId = taskId,
+            SharedPrefix = prefix,
+            ConflictLane = lane,
+        };
 
     /// <summary>
     /// Returns the first overlapping declared path, else null. Empty and blank
