@@ -133,3 +133,45 @@ outside its SQLite write transaction. New settings propagate through its normal
 The board owns one header notice for reached workspace or project limits,
 including amounts and reset. Cards show a quiet admission marker with detail
 in the tooltip. Acute refusal components remain tied to actual refused work.
+
+## Remote receipt replay and missing cache evidence (AGT-3973)
+
+Remote log ingestion preserves each line's full UTC date and time. The CLI
+log parser still accepts legacy time-only rows, whose date is only the file
+write date and cannot establish a historical run on its own. Receipt import
+uses the fenced session's recorded CLI, model and reasoning level before
+card defaults. A Claude importer rejects Codex `turn.completed` frames.
+
+Remote receipt usage identities survive completion replay across attempts.
+For per-turn identities, duplicate matching uses source log position, time
+of day and all four counters, without the inferred date or fallback model.
+For cumulative session identities, matching uses the session/model scope and
+counters without the import date. The earliest matching receipt owns the
+original model, timestamp and reasoning level. Read-time collapse also
+subtracts the removed dimensions from summary totals, preventing residual
+rows from restoring phantom usage. Legacy rows without source identities
+are not automatically removed solely because their counters match.
+
+The card-detail analysis response includes `duplicateCodingEvents`, with
+`identical-coding-token-counters` warnings and zero-based `eventIndexes` for
+equal input, output, cache-read and cache-write counters across coding/fix
+round events. This is an inspection signal, not proof that two real runs
+are duplicates. Remote attempt participants keep separate events even when
+there is no local pipeline log.
+
+OpenAI receipts with positive input, zero cache read, and neither input
+semantics nor normalization provenance retain their recorded counters but
+have no USD estimate. Card analysis marks their cost incomplete, ledger
+pricing marks them unpriced, pipeline step stamps withhold cost, and the
+cockpit reports partial coverage and withheld cost. An explicitly reported zero cache read remains priceable. Legacy remote
+receipts with only an `InputIncludesCached` boolean also lack cache-field
+provenance: the older importer set that boolean even when the field was
+absent. At zero cache read, those remote receipts are marked unpriced on
+read until a versioned normalization marker establishes the split.
+Codex re-import checks that `cached_input_tokens` is actually present in the
+frame and stamps the normalization version only when that field is present.
+When an older importer treated an absent field as zero, re-import
+withdraws that stored price while preserving the original run attribution.
+This marks ambiguous history; it does not invent a cache split or perform a
+startup rewrite of stored receipts. Known cache splits continue through the existing legacy
+normalization policy.

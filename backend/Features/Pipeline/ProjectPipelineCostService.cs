@@ -116,9 +116,9 @@ public sealed class ProjectPipelineCostService
                 {
                     var stepTokens = StepCostMeasurement.Tokens(run);
                     var est = stepTokens > 0
-                        ? pricing.Estimate(
-                            run.Model, run.InputTokens, run.OutputTokens, run.CacheReadTokens, run.CacheCreationTokens,
-                            run.StartedAt ?? ts)
+                        ? pricing.EstimateRecorded(run.Model, run.InputTokens, run.OutputTokens,
+                    run.CacheReadTokens, run.CacheCreationTokens, run.StartedAt ?? ts,
+                    run.InputIncludesCached, run.UsageNormalization)
                         : null;
                     if (countsOccurrences)
                     {
