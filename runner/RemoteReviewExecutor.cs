@@ -377,14 +377,14 @@ public sealed class RemoteReviewExecutor
                     return await FinalizeInfrastructureAsync(
                         slot,
                         workspace,
-                        exception.Classification,
+                        RunnerDiskWriteFailure.IsDiskFull(exception) ? "DiskFull" : exception.Classification,
                         exception.Message,
                         shutdown);
                 }
                 catch (Exception exception)
                 {
                     return await FinalizeInfrastructureAsync(
-                        slot, workspace, "WorkspacePreparationFailed",
+                        slot, workspace, RunnerDiskWriteFailure.IsDiskFull(exception) ? "DiskFull" : "WorkspacePreparationFailed",
                         $"Review workspace preparation failed at '{workspace.RepositoryPath}': {exception.Message}",
                         shutdown);
                 }
@@ -403,7 +403,7 @@ public sealed class RemoteReviewExecutor
                     return await FinalizeInfrastructureAsync(
                         slot,
                         workspace,
-                        "ReviewWorkerStartFailed",
+                        RunnerDiskWriteFailure.IsDiskFull(exception) ? "DiskFull" : "ReviewWorkerStartFailed",
                         $"Detached review worker could not start: {exception.Message}",
                         shutdown);
                 }
@@ -476,6 +476,11 @@ public sealed class RemoteReviewExecutor
             // outgoing instance buys it enough runway to get there.
             await HandOffAsync(attempt);
             return 0;
+        }
+        catch (Exception exception) when (RunnerDiskWriteFailure.IsDiskFull(exception))
+        {
+            return await FinalizeInfrastructureAsync(slot, workspace, "DiskFull",
+                $"Review host state write failed because its disk is full: {exception.Message}", shutdown);
         }
         finally
         {
@@ -576,6 +581,8 @@ public sealed class RemoteReviewExecutor
         CancellationToken ct)
     {
         var attempt = slot.Claim.Attempt!;
+        if (failureClassification == "DiskFull")
+            await RunnerDiskAdmission.WaitForRecoveryAsync(_options, _log, ct);
         ReportWorkerEnvelope(slot);
         if (failureClassification is not null)
         {

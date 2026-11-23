@@ -3327,6 +3327,13 @@
             and records the provider as Limited until the reported reset. Focused regressions cover coding and review,
             no same-session crash retry, admission hold after a login probe, and narrative false positives.</td>
         </tr>
+        <tr id="case-review-host-disk-full">
+          <td>2026-11-23</td>
+          <td><code>AGT-3986</code><br><span class="small">review-host-disk-full</span></td>
+          <td>The operator reported review lease renewal failures with <code>No space left on device</code>, a 98% full review VM, and AGT-3952 escalated as ReviewInfra / ReviewWorkerFailed.</td>
+          <td>The ordinary review claim path bypassed the disk admission check. Retention had no size budget or stale-sibling sweep, and partial temp deletion could remove the ownership receipt before a locked child. Historical host contents were unavailable for independent verification.</td>
+          <td>Observed terminal: Escalated or a review lasting over an hour. Disk exhaustion now selects <code>DiskFull</code>, waits for recovery above warning, and schedules an infrastructure successor without consuming the card retry budget. New claims stop at critical pressure; Needs you names the host disk. No product finding is opened for this cause.</td>
+        </tr>
       </tbody>
     </table>
 

@@ -3,6 +3,7 @@ using System.Text.Json;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using AgentStudio.Tasks;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
@@ -30,6 +31,34 @@ public sealed class BatchGatePilotDiskPressureTests : BatchGatePilotServiceTests
     /// unabandoned while the probe reports critical free space, and completes
     /// on the first tick after it recovers.
     /// </summary>
+    [Fact]
+    public async Task Remote_gate_disk_pressure_holds_the_batch_before_a_run_is_created()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["RemoteGate:SshHost"] = "gate-host", ["RemoteGate:Root"] = "/srv/gates",
+            ["RemoteGate:WorkerPath"] = "/opt/gate.dll",
+        }).Build();
+        var probe = new SshGateHostProbe(config, (_, _, _, _, _, output) =>
+        {
+            output!("6 246 1073741824");
+            return Task.CompletedTask;
+        });
+        await probe.ReadDiskAsync(default);
+        using var factory = BuildFactory(testServices: services =>
+        {
+            PinDisk(services);
+            services.RemoveAll<SshGateHostProbe>();
+            services.AddSingleton(probe);
+        });
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        SeedMember(factory, "DOC-REMOTE-DISK", "docs/remote-disk.md");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        await pilot.TickAsync(default);
+        Assert.Empty(factory.Services.GetRequiredService<BatchGateStore>().ListManifests());
+    }
+
     [Fact]
     public async Task Critical_free_space_stops_the_tick_that_abandons_a_withdrawn_batch()
     {

@@ -2,10 +2,15 @@ import type { HttpClient } from '@angular/common/http';
 import type { WritableSignal } from '@angular/core';
 import type { HostFilesystemUsage, RemoteHost } from '../models/remote-host.model';
 
+interface DiskReading {
+  id: string; host: string; observedAt: string; filesystems: readonly HostFilesystemUsage[];
+  level: 'healthy' | 'warning' | 'critical'; reason: string;
+}
+
 /** Hydrates the measured API host only when the Execution Hosts view opens. */
 export function hydrateApiHost(http: HttpClient, hosts: WritableSignal<RemoteHost[]>, local: boolean): void {
   http.get<{ host: string; observedAt: string; filesystems: readonly HostFilesystemUsage[];
-    level: 'healthy' | 'warning' | 'critical'; reason: string }>('/api/host/filesystems').subscribe({
+    level: 'healthy' | 'warning' | 'critical'; reason: string; remoteHosts?: readonly DiskReading[] }>('/api/host/filesystems').subscribe({
     next: reading => {
       const id = local ? 'local' : 'api-host';
       hosts.update(hostsNow => {
@@ -24,7 +29,20 @@ export function hydrateApiHost(http: HttpClient, hosts: WritableSignal<RemoteHos
           diskPressureReason: reading.level === 'healthy' ? null : reading.reason,
           liveDataState: 'ready',
         };
-        return current ? currentHosts.map(host => host.id === id ? updated : host) : [...currentHosts, updated];
+        const hydrated = current ? currentHosts.map(host => host.id === id ? updated : host) : [...currentHosts, updated];
+        for (const remote of reading.remoteHosts ?? []) {
+          const gate: RemoteHost = {
+            id: remote.id, name: remote.host, role: 'remote', serviceRole: 'runner', address: remote.host,
+            clientId: remote.id, status: remote.level === 'healthy' ? 'online' : 'degraded', os: 'Gate host',
+            lastHeartbeatAt: remote.observedAt, uptimeLabel: null, capabilities: ['Gate'], cliQuotas: [], stats: null,
+            filesystems: remote.filesystems, diskPressureReason: remote.level === 'healthy' ? null : remote.reason,
+            liveDataState: 'ready',
+          };
+          const index = hydrated.findIndex(host => host.id === remote.id);
+          if (index >= 0) hydrated[index] = gate;
+          else hydrated.push(gate);
+        }
+        return hydrated;
       });
     },
     error: () => hosts.update(current => current.map(host => host.clientId === 'api-host'

@@ -25,6 +25,27 @@ def run(argv, cwd=None):
     return result.stdout.strip()
 
 
+def prune_review_images(repository, current, previous):
+    """Prune this repository only, preserving rollback and every container's image."""
+    keep = {run(["docker", "image", "inspect", "--format", "{{.Id}}", ref])
+            for ref in (current, previous) if ref}
+    containers = run(["docker", "ps", "-aq"]).splitlines()
+    for container in containers:
+        keep.add(run(["docker", "inspect", "--format", "{{.Image}}", container]))
+    candidates = set(run(["docker", "image", "ls", "--no-trunc", "-q", repository]).splitlines())
+    removed = []
+    for image_id in sorted(candidates - keep):
+        refs = json.loads(run(["docker", "image", "inspect", "--format",
+                               '{"tags":{{json .RepoTags}},"digests":{{json .RepoDigests}}}', image_id]))
+        owned = [ref for ref in (refs["tags"] or []) if ref.startswith(repository + ":")]
+        if not owned:
+            owned = [ref for ref in (refs["digests"] or []) if ref.startswith(repository + "@")]
+        for ref in owned:
+            run(["docker", "image", "rm", ref])
+            removed.append(ref)
+    return removed
+
+
 def check_command(host, key):
     argv = host.get(key)
     if not isinstance(argv, list) or not argv or not all(isinstance(x, str) and x for x in argv):
@@ -402,7 +423,10 @@ def main(request):
         release = Path(host["runnerReleaseRoot"]) / agent_sha
         if not release.is_dir():
             fail("review release is missing")
-        env_set(host["reviewEnvFile"], {"REVIEW_IMAGE_REF": image})
+        prior = env_read(host["reviewEnvFile"])
+        previous = prior.get("REVIEW_PREVIOUS_IMAGE_REF") if prior.get("REVIEW_IMAGE_REF") == image else prior.get("REVIEW_IMAGE_REF")
+        env_set(host["reviewEnvFile"], {"REVIEW_IMAGE_REF": image,
+                                       "REVIEW_PREVIOUS_IMAGE_REF": previous})
         compose(host["reviewComposeDir"], host["reviewEnvFile"], *host["reviewServices"])
         replace_link(host["runnerCurrent"], release)
         return {"recreated": True}
@@ -424,7 +448,10 @@ def main(request):
             plans.add(plan)
         if len(plans) != 1:
             fail("review containers use different plans")
-        return {"commit": commit, "planDigest": plans.pop(), "imageRef": image}
+        previous = env_read(host["reviewEnvFile"]).get("REVIEW_PREVIOUS_IMAGE_REF")
+        removed = prune_review_images(host["reviewImageRepository"], image, previous)
+        return {"commit": commit, "planDigest": plans.pop(), "imageRef": image,
+                "removedImages": removed}
     if action.startswith("rollback_"):
         previous = json.loads(fields[0])
         role = action.removeprefix("rollback_")

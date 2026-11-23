@@ -1609,6 +1609,23 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Disk_full_verify_never_runs_baseline_or_returns_product_failure()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = new ReviewCommandDto("verify-disk", "build-tests", PosixShell.RequirePath(),
+            ["-c", "printf 'error: No space left on device\\n' >&2; exit 1"], CompareToBaseline: true);
+        var (workspace, _) = Workspace("attempt-disk-full", subjectSha, [command], 24018,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+        var error = await Assert.ThrowsAsync<ReviewInfrastructureException>(() => workspace.ExecutePlanAsync(default));
+        Assert.Equal("DiskFull", error.Classification);
+        Assert.Contains("No space left", error.Message);
+        Assert.Empty(Directory.GetDirectories(workspace.AttemptRoot, "baseline-runtime-*"));
+    }
+
+    [Fact]
     public void Retention_removes_only_expired_inactive_attempt_workspaces()
     {
         var now = new DateTime(2026, 8, 2, 18, 0, 0, DateTimeKind.Utc);

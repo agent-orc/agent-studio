@@ -20,8 +20,12 @@ public static class ReviewSlotAdmissionPolicy
         int slotCeiling,
         double maxLoadPerCore,
         WorkerResourceEnvelope? envelope = null,
-        double? roleQuotaCores = null)
+        double? roleQuotaCores = null,
+        AgentStudio.TaskServer.Contracts.HostDiskPressureDecision? diskPressure = null)
     {
+        if (diskPressure?.Level == AgentStudio.TaskServer.Contracts.HostDiskPressureLevel.Critical)
+            return new(false, $"disk admission paused: {diskPressure.Reason}", null);
+
         // AGT-2866: admission and enforcement read one budget. A centrally
         // recommended ceiling that no longer leaves a full envelope per slot is
         // clamped here rather than admitted and then throttled by the kernel,

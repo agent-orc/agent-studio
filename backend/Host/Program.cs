@@ -1228,7 +1228,8 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
 // AGT-3792: the one gate host health state. Gate transport attempts, the
 // orphan sweep and the batch gate report to it; the SSH probe checks an
 // unreachable host with backoff instead of a gate run.
-builder.Services.AddSingleton<AgentStudio.Pipeline.IGateHostProbe, AgentStudio.Pipeline.SshGateHostProbe>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.SshGateHostProbe>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.IGateHostProbe>(sp => sp.GetRequiredService<AgentStudio.Pipeline.SshGateHostProbe>());
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateHostOutageMonitor(
     sp.GetRequiredService<TimeProvider>(), sp.GetService<AgentStudio.Pipeline.IGateHostProbe>(),
     sp.GetRequiredService<IConfiguration>().GetValue<int?>(
@@ -1555,6 +1556,7 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGat
     sp.GetRequiredService<AgentStudio.Pipeline.GateHostOutageMonitor>(),
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorReviewHostDriftFactSource>();
+builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorHostDiskFactSource>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPostMergeCoverageFactSource(
     () => sp.GetRequiredService<AgentStudio.Pipeline.PostMergeCoverageService>().Missing()));
