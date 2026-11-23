@@ -26,6 +26,15 @@ public sealed class PostMergeModeService(ProjectRegistry projects, PostMergeRunS
         }
     }
 
+    /// <summary>
+    /// The effective placement through <paramref name="service"/> (AGT-3965).
+    /// A host built without the service has no post-merge store and no
+    /// red-develop fallback, so it integrates pre-merge, which is also what
+    /// <see cref="Resolve"/> answers for a project it cannot find.
+    /// </summary>
+    public static string Effective(PostMergeModeService? service, string project, ProjectSettings? settings)
+        => service?.Resolve(project, settings) ?? IntegrationTestModes.PreMerge;
+
     internal static bool EscalationActive(
         AgentStudio.TaskServer.Contracts.PostMergeProjectState state, DateTimeOffset now,
         bool repairEscalated = false)

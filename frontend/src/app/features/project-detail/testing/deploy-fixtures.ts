@@ -21,6 +21,9 @@ import {
   type Release,
 } from '../state/deploy-area.model';
 import type { PipelineDefinitionResponse } from '../services/project-pipeline-definition.service';
+import type {
+  EnvironmentHealth, EnvironmentHealthCheck, EnvironmentHealthResponse, HealthIncident, HealthStatus,
+} from '../../environment-health/models/environment-health.model';
 
 export const DEPLOY_FIXTURE_NOW = Date.parse('2026-10-19T12:00:00Z');
 
@@ -132,6 +135,39 @@ export function deployStatusFixture(): EnvironmentStatus[] {
       currentDeployment: runs.find(item => item.id === 'run-c-production')!, newerRelease: RELEASE_3,
       cardsSinceLastDeploy: ['WEB-33', 'WEB-34', 'WEB-35'], health: 'healthy' },
   ];
+}
+
+/** An open control-plane incident on the HTTP check of an environment (M2: Production down). */
+export function openIncidentFixture(environmentId: string): HealthIncident {
+  return {
+    id: `incident-${environmentId}`, environmentId, checkId: 'http', startedAt: '2026-10-19T11:50:00Z',
+    firstError: 'connection refused', failedProbes: 3, endedAt: null, cardId: null,
+  };
+}
+
+/** `GET /environments/health` entry with one HTTP check in the given state. */
+export function observedHealthFixture(environmentId: string, status: HealthStatus,
+  currentIncident: HealthIncident | null = null): EnvironmentHealth {
+  const check: EnvironmentHealthCheck = {
+    id: 'http', kind: 'http', target: `https://${environmentId}.website.example/healthz`, derived: true, expectedStatus: 200,
+    hasBodyMarker: false, intervalSeconds: 30, timeoutSeconds: 5, failureThreshold: 3, recoveryThreshold: 2, status,
+    lastSample: null, consecutiveFailures: currentIncident ? 3 : 0, uptime24h: null, uptime7d: null, uptime30d: null,
+    latency24h: { p50Ms: null, p95Ms: null, p99Ms: null }, certificateNotAfter: null,
+  };
+  return {
+    project: 'Website', environmentId, name: environmentId, kind: environmentId, address: `https://${environmentId}.website.example`,
+    status, uptime24h: null, uptime7d: null, uptime30d: null, latency24h: { p50Ms: null, p95Ms: null, p99Ms: null },
+    currentIncident, lastIncident: null, checks: [check], error: null,
+  };
+}
+
+/** Control-plane health: Staging up, Production down with an open incident, while every deploy report still says healthy. */
+export function productionDownHealthFixture(): EnvironmentHealthResponse {
+  return {
+    capturedAt: '2026-10-19T12:00:00Z', probeOrigin: 'mock', environments: [
+      observedHealthFixture('stage', 'up'), observedHealthFixture('production', 'down', openIncidentFixture('production')),
+    ],
+  };
 }
 
 /** Every source ready: AGT-3176 environments plus the AGT-3201 deploy routes. */

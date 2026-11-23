@@ -92,8 +92,8 @@ public sealed class AdHocUsageRecorder
                 File.AppendAllText(path, line, Encoding.UTF8);
             }
             _logger.LogInformation(
-                "adhoc-usage-recorded source={Source} model={Model} input={Input} output={Output} durationMs={Duration}",
-                record.Source, record.Model, record.InputTokens, record.OutputTokens, record.DurationMs);
+                "adhoc-usage-recorded source={Source} model={Model} durationMs={Duration}",
+                record.Source, record.Model, record.DurationMs);
 
             // Mirror onto the bus so token aggregation has a single source of
             // truth. Fire-and-forget by design (the bus is observability;

@@ -9,6 +9,8 @@ import type { ReviewStatistics } from './review-statistics.model';
 const metric = { median: 120, p90: 240, samples: 2, last7d: [null, null, null, 120, null, null, 240], last30d: Array(30).fill(null) };
 const fixtureData: ReviewStatistics = {
   deliveryTokens: metric, deliveryUsd: { ...metric, median: 0.12, p90: 0.24 },
+  deliveryCacheReadTokens: { ...metric, median: 160_000, p90: 180_000 },
+  deliveryCacheWriteTokens: { ...metric, median: 64_000, p90: 70_000 },
   roundsUntilAcceptance: { ...metric, median: 2, p90: 3 },
   tokensPerAcceptedCard: metric, usdPerAcceptedCard: { ...metric, median: 0.12 },
   reviewSharePercent: { ...metric, median: 12, p90: 24 },
@@ -40,6 +42,8 @@ describe('ReviewStatisticsComponent', () => {
     expect(host.querySelector('[data-testid="review-tile-delivery-tokens"]')?.textContent).toContain('120');
     expect(host.querySelector('[data-testid="review-tile-delivery-tokens"] svg path')?.getAttribute('d')).toContain('M');
     expect(host.querySelector('[data-testid="review-tile-rounds"]')?.textContent).toContain('2');
+    expect(host.querySelector('[data-testid="review-tile-delivery-cache-read"]')?.textContent).toContain('Cache read tokens');
+    expect(host.querySelector('[data-testid="review-tile-delivery-cache-write"]')?.textContent).toContain('Cache write tokens');
     host.querySelector<HTMLAnchorElement>('[data-testid="review-tile-step-requirement-fit"]')!.click();
     fixture.detectChanges();
     expect(host.querySelector('[data-testid="review-evidence"]')?.textContent).toContain('AGT-1');

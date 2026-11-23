@@ -156,20 +156,10 @@ public sealed class IntegrationReleaseServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Green_post_merge_run_on_the_tip_counts_as_the_gate()
+    public async Task Green_nightly_post_merge_run_on_the_tip_counts_as_the_gate()
     {
         var (_, _, store, registry) = Build();
-        var tip = Head();
-        var projects = new ProjectRegistry(_configuration!, NullLogger<ProjectRegistry>.Instance);
-        var id = projects.EnsureProjectForStorage(_watch, "demo", DefaultWorkspace.Id, _clock).Id;
-        var postMerge = new PostMergeRunStore(Path.Combine(_root, "post-merge"));
-        var started = _clock.GetUtcNow();
-        PostMergeRunRecord Run(string status) => new("pm-1", "demo", "window", tip, null, null, null, 1,
-            ["true"], status == "running" ? [] : [new PostMergeCommandVerdict("true", 0, false)], status,
-            started, status == "running" ? null : started.AddMinutes(1));
-        Assert.NotNull(postMerge.Record(id, Run("running")));
-        Assert.NotNull(postMerge.Record(id, Run("green")));
-        var service = WithPostMerge(projects, postMerge);
+        var (service, tip) = WithPostMergeRuns(("pm-1", "nightly", "green"));
 
         var status = await service.CreateAsync("demo", IntegrationReleaseService.AutomaticActor, automatic: true, default);
 
@@ -177,6 +167,112 @@ public sealed class IntegrationReleaseServiceTests : IDisposable
         var release = Assert.Single(store.ReadReleases("demo"));
         Assert.Equal("post-merge/pm-1",
             registry.VerifiedForArtifact("demo", tip, release.ArtifactDigests[0])!.GateRunId);
+    }
+
+    [Fact]
+    public async Task Green_window_of_an_opted_in_project_queues_exactly_one_staging_job_for_the_tip()
+    {
+        // AGT-3966: delivery.deployAfterGreenWindow releases the tip of a green merge window to Stage.
+        var (_, environments, store, registry) = Build();
+        DeliveryOptIn(true);
+        var (service, tip) = WithPostMergeRuns(("pm-1", "window", "green"));
+
+        var first = await service.CreateAsync("demo", IntegrationReleaseService.AutomaticActor, automatic: true, default);
+        var second = await service.CreateAsync("demo", IntegrationReleaseService.AutomaticActor, automatic: true, default);
+
+        Assert.Equal(IntegrationReleaseStates.Released, first!.State);
+        Assert.Equal(IntegrationReleaseStates.Released, second!.State);
+        Assert.Contains(tip[..8], second.Message, StringComparison.Ordinal);
+        var release = Assert.Single(store.ReadReleases("demo"));
+        Assert.Equal(tip, release.CommitSha);
+        var job = Assert.Single(environments.Read("demo")!.Jobs);
+        Assert.Equal(("stage", release.Id, "queued"), (job.EnvironmentId, job.ReleaseId, job.Status));
+        var run = Assert.Single(store.ReadDeployments("demo"));
+        Assert.Equal(("stage", release.Id), (run.EnvironmentId, run.ReleaseId));
+        Assert.Equal("post-merge/pm-1",
+            registry.VerifiedForArtifact("demo", tip, release.ArtifactDigests[0])!.GateRunId);
+    }
+
+    [Fact]
+    public async Task Red_window_of_an_opted_in_project_queues_no_job()
+    {
+        var (_, environments, store, _) = Build();
+        DeliveryOptIn(true);
+        var (service, tip) = WithPostMergeRuns(("pm-1", "window", "green"), ("pm-2", "window", "red"));
+
+        var status = await service.CreateAsync("demo", IntegrationReleaseService.AutomaticActor, automatic: true, default);
+
+        Assert.Equal(IntegrationReleaseStates.Blocked, status!.State);
+        Assert.Contains($"tip {tip[..8]} is red", status.Message, StringComparison.Ordinal);
+        Assert.Empty(store.ReadReleases("demo"));
+        Assert.Empty(environments.Read("demo")?.Jobs ?? []);
+    }
+
+    [Fact]
+    public async Task Green_window_without_the_opt_in_waits_and_names_the_setting()
+    {
+        var (_, environments, store, _) = Build();
+        DeliveryOptIn(false);
+        var (service, tip) = WithPostMergeRuns(("pm-1", "window", "green"));
+
+        var status = await service.CreateAsync("demo", IntegrationReleaseService.AutomaticActor, automatic: true, default);
+
+        Assert.Equal(IntegrationReleaseStates.WaitingForGate, status!.State);
+        Assert.Equal(tip, status.Commit);
+        Assert.Contains("delivery.deployAfterGreenWindow", status.Message, StringComparison.Ordinal);
+        Assert.Empty(store.ReadReleases("demo"));
+        Assert.Empty(environments.Read("demo")?.Jobs ?? []);
+    }
+
+    /// <summary>Commits a schema 1 project.yml whose delivery section sets the AGT-3966 opt-in.</summary>
+    private void DeliveryOptIn(bool deploy)
+    {
+        var directory = Path.Combine(_repo, ".agent-studio");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "project.yml"), $$"""
+            schemaVersion: 1
+            stack: [custom]
+            toolVersions:
+            commands:
+              prepare: .agent-studio/prepare
+              build:
+                - "true"
+              test:
+                - "true"
+              lint:
+            testSuites:
+              - id: smoke
+                category: base
+                expectedDurationSeconds: 5
+                command: "true"
+            cachePaths:
+            capabilities: [git]
+            delivery:
+              deployAfterGreenWindow: {{(deploy ? "true" : "false")}}
+            """);
+        File.WriteAllText(Path.Combine(directory, "prepare"), "#!/bin/sh\ntrue\n");
+        Git("add", ".");
+        Git("commit", "-q", "-m", "project.yml");
+    }
+
+    private (IntegrationReleaseService Service, string Tip) WithPostMergeRuns(
+        params (string Id, string Kind, string Status)[] runs)
+    {
+        var tip = Head();
+        var projects = new ProjectRegistry(_configuration!, NullLogger<ProjectRegistry>.Instance);
+        var id = projects.EnsureProjectForStorage(_watch, "demo", DefaultWorkspace.Id, _clock).Id;
+        var postMerge = new PostMergeRunStore(Path.Combine(_root, "post-merge"));
+        foreach (var (runId, kind, status) in runs)
+        {
+            var started = _clock.GetUtcNow();
+            PostMergeRunRecord Run(string state) => new(runId, "demo", kind, tip, null, null, null, 1,
+                ["true"], state == "running" ? [] : [new PostMergeCommandVerdict("true", status == "red" ? 1 : 0, false)],
+                state, started, state == "running" ? null : started.AddMinutes(1));
+            Assert.NotNull(postMerge.Record(id, Run("running")));
+            Assert.NotNull(postMerge.Record(id, Run(status)));
+            _clock.Advance(TimeSpan.FromMinutes(2));
+        }
+        return (WithPostMerge(projects, postMerge), tip);
     }
 
     private (ProjectEnvironmentService Environments, DeployService Deploy, DeployStore Store, GitService Git,

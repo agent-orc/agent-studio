@@ -184,7 +184,7 @@ describe('ProjectDetailComponent (smoke)', () => {
     fixture.destroy();
   });
 
-  it('shows testing.perCard read-only with full as the default', async () => {
+  it('lets the Owner choose the testing strategy, names each one in a sentence, and shows the post-merge warning', async () => {
     await TestBed.configureTestingModule({
       imports: [ProjectDetailComponent],
       providers: [
@@ -198,20 +198,54 @@ describe('ProjectDetailComponent (smoke)', () => {
     fixture.detectChanges();
     const http = TestBed.inject(HttpTestingController);
     const host = fixture.nativeElement as HTMLElement;
-    const value = () =>
-      host.querySelector('[data-testid="project-detail-per-card-tests-value"]')?.textContent?.trim();
+    const strategies = [
+      { id: 'fast', sentence: 'Fast sentence.', isDefault: true },
+      { id: 'balanced', sentence: 'Balanced sentence.', isDefault: false },
+      { id: 'strict', sentence: 'Strict sentence.', isDefault: false },
+    ];
+    const missing = {
+      project: 'demo', strategy: 'fast', state: 'missing', developTipSha: 'a'.repeat(40),
+      lastReportedTipSha: null, lastReportedAtUtc: null, missing: true,
+      message: 'No post-merge run was ever reported for demo, while develop moved.',
+    };
+    const warning = () => host.querySelector('[data-testid="project-detail-post-merge-warning"]');
 
-    http.expectOne('/api/projects/demo/snapshot').flush({ settings: {} });
+    // A project without a stored value is fast; the warning is visible.
+    http.expectOne('/api/projects/demo/snapshot').flush({
+      settings: { testingStrategies: strategies, postMergeCoverage: missing },
+    });
     await fixture.whenStable();
-    expect(value()).toBe('Full suite');
-    const section = host.querySelector('[data-testid="project-detail-per-card-tests"]')!;
-    expect(section.querySelectorAll('input, select, button')).toHaveLength(0);
+    expect(fixture.componentInstance.testingStrategyDraft()).toBe('fast');
+    const section = host.querySelector('[data-testid="project-detail-testing-strategy"]')!;
+    for (const option of strategies)
+      expect(section.querySelector(`[data-testid="project-detail-testing-strategy-sentence-${option.id}"]`)?.textContent)
+        .toContain(option.sentence);
+    expect(section.querySelector('[data-testid="project-detail-testing-strategy-fast"]')?.textContent).toContain('Fast (default)');
+    expect(warning()?.textContent).toContain('No post-merge run was ever reported for demo');
 
-    fixture.componentInstance.refreshAll();
-    http.expectOne('/api/projects/demo/snapshot').flush({ settings: { testingPerCard: 'affected' } });
+    // Choosing strict writes the strategy and clears the warning on the next read.
+    (section.querySelector('[data-testid="project-detail-testing-strategy-strict"]') as HTMLButtonElement).click();
+    const put = http.expectOne('/api/projects/demo/testing');
+    expect(put.request.method).toBe('PUT');
+    expect(put.request.body).toEqual({ strategy: 'strict' });
+    put.flush({});
+    http.expectOne('/api/projects/demo/snapshot').flush({
+      settings: {
+        testingStrategy: 'strict', testingStrategies: strategies,
+        postMergeCoverage: { ...missing, strategy: 'strict', state: 'not-expected', missing: false, message: 'strict' },
+      },
+    });
     await fixture.whenStable();
-    expect(value()).toBe('Affected tests');
-    expect(section.textContent).toContain('PUT /api/projects/demo/testing');
+    expect(fixture.componentInstance.testingStrategyDraft()).toBe('strict');
+    expect(warning()).toBeNull();
+
+    // A refused write keeps the stored strategy and names why.
+    fixture.componentInstance.setTestingStrategy('balanced');
+    http.expectOne('/api/projects/demo/testing').flush({ error: 'Forbidden' }, { status: 403, statusText: 'Forbidden' });
+    await fixture.whenStable();
+    expect(fixture.componentInstance.testingStrategyDraft()).toBe('strict');
+    expect(host.querySelector('[data-testid="project-detail-testing-strategy-error"]')?.textContent)
+      .toContain('Only the Owner can change the testing strategy.');
     fixture.destroy();
   });
 

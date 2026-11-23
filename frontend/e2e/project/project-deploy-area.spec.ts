@@ -13,6 +13,7 @@ import {
   deployStatusFixture,
   deploymentLogFixture,
   pipelineDefinitionFixture,
+  productionDownHealthFixture,
   productionRollbackFixture,
   RELEASE_1,
   RELEASE_2,
@@ -37,6 +38,13 @@ const DEPLOY = `/api/projects/${PROJECT}/deploy`;
 const results = process.env.JOB_RESULTS_DIR ?? path.resolve(__dirname, '..', '..', 'test-results', 'project-deploy-area');
 
 const MISSING = Symbol('missing route');
+// AGT-3879 running Studio instance fixtures; imports hoist, so this sits apart from the shared import block.
+import { instanceDeployFixture } from '../../src/app/features/project-detail/testing/instance-deploy-fixtures';
+/** Refreshes the area after moving the pinned clock: the AGT-3879 instance section re-reads when the area clock moves. */
+async function refreshLater(page: Page, seconds: number): Promise<void> {
+  await page.clock.setFixedTime(new Date(DEPLOY_FIXTURE_NOW + seconds * 1000));
+  await page.getByTestId('deploy-refresh').click();
+}
 type Answer = unknown | typeof MISSING | { status: number; body: unknown };
 interface DeployMocks {
   environments: unknown;
@@ -1065,6 +1073,65 @@ test.describe('Project Deploy area (mocked)', () => {
     await capture(page, 'older-guided-failure-dark');
   });
 
+  test('shows the running Studio instance, its live release, and what the next deploy brings (AGT-3879)', async ({ page }) => {
+    // The Studio's own project declares no environments; the instance is its Production.
+    const empty = { project: PROJECT, environments: [], promotions: [], jobs: [], hosts: [] };
+    await openDeploy(page, fullMocks({ environments: empty, status: [], releases: [], deployments: [] }));
+    await page.route(`**${DEPLOY}/instance`, route => answer(route, instanceDeployFixture()));
+    await refreshLater(page, 1);
+    const panel = page.getByTestId('instance-deploy');
+    await expect(panel).toBeVisible();
+    await expect(page.getByTestId('instance-deploy-version')).toHaveText('0.9.5-5faca674a');
+    await expect(page.getByTestId('instance-deploy-live-since')).toContainText('2026-11-16 03:35 UTC');
+    await expect(page.getByTestId('instance-deploy-brought')).toContainText('AGT-3839');
+    await expect(page.getByTestId('instance-deploy-pending').locator('li')).toHaveText([
+      /AGT-3861/, /AGT-3870/, /AGT-3879/,
+    ]);
+    for (const width of [1280, 390] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        const overflow = await panel.evaluate(element => {
+          const box = element.getBoundingClientRect();
+          return [...element.querySelectorAll('*')].filter(child => child.getBoundingClientRect().right > box.right + 1)
+            .map(child => `${child.tagName.toLowerCase()}.${child.className}`).slice(0, 3);
+        });
+        expect(overflow).toEqual([]);
+        fs.mkdirSync(results, { recursive: true });
+        await panel.screenshot({ path: path.join(results, `agt-3879-instance-deploy-${width}-${theme}.png`) });
+      }
+    }
+  });
+
+  test('names the step a failed or stalled Studio deploy stopped at (AGT-3879)', async ({ page }) => {
+    let run: 'failed' | 'stalled' = 'failed';
+    await openDeploy(page, fullMocks());
+    await page.route(`**${DEPLOY}/instance`, route => answer(route, instanceDeployFixture(run)));
+    await refreshLater(page, 1);
+    await expect(page.getByTestId('instance-deploy-run-state')).toContainText('Deploy failed at host:runner-1');
+    for (const width of [1280, 390] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.getByTestId('instance-deploy').screenshot({ path: path.join(results, `agt-3879-instance-deploy-failed-${width}-${theme}.png`) });
+      }
+    }
+    run = 'stalled';
+    await refreshLater(page, 2);
+    await expect(page.getByTestId('instance-deploy-run-state')).toContainText('Deploy stalled after host:runner-1 · no report for 30 min');
+    await page.getByTestId('instance-deploy').screenshot({ path: path.join(results, 'agt-3879-instance-deploy-stalled-390-dark.png') });
+  });
+
+  test('shows no Studio instance panel for another project (AGT-3879)', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    await page.route(`**${DEPLOY}/instance`, route => answer(route,
+      { status: 404, body: { error: `'${PROJECT}' is not the source project of this Studio instance.` } }));
+    await refreshLater(page, 1);
+    await expect(page.getByTestId('deploy-environments')).toBeVisible();
+    await expect(page.getByTestId('instance-deploy')).toHaveCount(0);
+    await expect(page.getByTestId('instance-deploy-notice')).toHaveCount(0);
+  });
+
   test('works with partial data: AGT-3176 environments only, AGT-3201 and AGT-3221 routes missing', async ({ page }) => {
     await openDeploy(page, { environments: deployEnvironmentsFixture(), ...HOST_ONLY, pipelineDefinition: MISSING });
     const area = page.getByTestId('project-deploy-area');
@@ -1277,6 +1344,68 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(page.getByTestId('deploy-run-drawer')).toContainText('Production');
     await page.getByTestId('deploy-run-approve').click();
     await expect.poll(() => calls).toEqual(['approve:run-c-production']);
+  });
+
+  test('M2: every environment surface reads Production down from the open incident, with release version and age', async ({ page }) => {
+    test.setTimeout(180_000);
+    // Every deploy report and /deploy/status still say healthy; the control plane has an open incident on Production.
+    await openDeploy(page, fullMocks({ health: productionDownHealthFixture() }), 90_000);
+    await page.route(`**/api/projects/${PROJECT}/deployment/summary`, route => route.fulfill(json({
+      project: PROJECT, available: false, reason: 'No deploy-stable history is available for this project.',
+      source: 'logs/stable-restarts.jsonl', lastDeployment: null, history: [], pendingCount: null, pendingCommits: [],
+      targets: [], defaultEvidenceRun: null,
+    })));
+    await page.route(`**${DEPLOY}/runbooks`, route => route.fulfill(json([{ name: 'restart', steps: ['restart-container'], environments: [] }])));
+    await page.route(`**${DEPLOY}/runbooks/runs?*`, route => route.fulfill(json([])));
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z', environments: [],
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: 0, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    const area = page.getByTestId('project-deploy-area');
+    const expectProductionDown = async (production: ReturnType<Page['getByTestId']>, healthId: string) => {
+      await expect(production.getByTestId(healthId)).toHaveText('Down');
+      await expect(production.getByTestId(healthId)).toHaveAttribute('data-tone', 'danger');
+      await expect(production).not.toContainText('Healthy');
+    };
+
+    const surfaces: { name: string; production: string; open: () => Promise<void>; check: () => Promise<void> }[] = [
+      { name: 'overview', production: 'deploy-environment-production', open: () => page.getByTestId('deploy-tab-overview').click(), check: async () => {
+        await expectProductionDown(area.getByTestId('deploy-environment-production'), 'deploy-environment-health');
+        await expect(area.getByTestId('deploy-environment-production').getByTestId('deploy-environment-release')).toHaveText('Release 2026.10.18.1');
+      } },
+      { name: 'tools', production: 'environment-production', open: async () => { await page.getByTestId('deploy-tab-overview').click(); await page.getByTestId('deploy-open-tools').click(); }, check: async () => {
+        const production = area.getByTestId('environment-production');
+        await expectProductionDown(production, 'environment-state-health');
+        await expect(production.getByTestId('environment-state-release')).toHaveText('Release 2026.10.18.1 deployed 13 h ago');
+        await expect(production.getByTestId('environment-state-digest')).toHaveText('website@sha256:aaaaaaaaaaaa');
+        await expect(area.getByTestId('environment-stage').getByTestId('environment-state-health')).toHaveText('Up');
+      } },
+      { name: 'runbooks', production: 'project-environment-production', open: () => page.getByTestId('deploy-tab-runbooks').click(), check: async () => {
+        const production = area.getByTestId('project-environment-production');
+        await expectProductionDown(production, 'environment-state-health');
+        await expect(production.getByTestId('environment-state-release')).toHaveText('Release 2026.10.18.1 deployed 13 h ago');
+        await expect(production.getByTestId('environment-runbooks')).toContainText('restart');
+        await expect(production).not.toContainText('registry.example/website@sha256');
+      } },
+      { name: 'operations', production: 'environment-health-production', open: () => page.getByTestId('deploy-tab-operations').click(), check: async () => {
+        await expect(area.getByTestId('environment-health-production').getByTestId('environment-health-status')).toHaveText('Down');
+      } },
+    ];
+
+    for (const [width, height] of [[1280, 900], [390, 844]] as const) {
+      await page.setViewportSize({ width, height });
+      for (const theme of width === 1280 ? (['light', 'dark'] as const) : (['light'] as const)) {
+        await setTheme(page, theme);
+        for (const surface of surfaces) {
+          await surface.open();
+          await surface.check();
+          if (width === 390) expect((await area.boundingBox())?.width).toBeLessThanOrEqual(390);
+          await area.getByTestId(surface.production).scrollIntoViewIfNeeded();
+          await capture(page, `m2-production-down-${surface.name}-${width}-${theme}`);
+        }
+      }
+    }
   });
 
   test('F17: after approval and the host report, the Production card follows without a reload', async ({ page }) => {

@@ -6,7 +6,7 @@ namespace AgentStudio.Projects;
 /// <summary>
 /// One check's failure streak past its threshold. <see cref="CardId"/> is the card of the
 /// environment incident it belongs to; <see cref="Reported"/> says that card shows it.
-/// <see cref="EndReason"/> is <c>recovered</c> or <c>check-removed</c>.
+/// <see cref="EndReason"/> is <c>recovered</c>, <c>check-removed</c> or <c>not-deployed</c> (the environment stopped).
 /// </summary>
 public sealed record HealthIncident(string Id, string EnvironmentId, string CheckId, DateTimeOffset StartedAt,
     string FirstError, int FailedProbes, DateTimeOffset? EndedAt = null, string? CardId = null,
@@ -27,7 +27,7 @@ public sealed class EnvironmentHealthState
     public EnvironmentIncident? OpenIncident { get; set; }
     public EnvironmentIncident? LastIncident { get; set; }
     public List<EnvironmentIncident> IncidentHistory { get; set; } = [];
-    /// <summary>The latest incident card, available for reuse during the recovery cool-down.</summary>
+    /// <summary>The card of the latest incident, kept for navigation and legacy state.</summary>
     public string? IncidentCardId { get; set; }
 }
 

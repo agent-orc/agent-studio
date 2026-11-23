@@ -728,6 +728,10 @@ if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") &&
     builder.Services.AddHostedService<HostedVolumeBackupWorker>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
+builder.Services.AddSingleton<AgentStudio.Deploy.InstanceDeployStore>();
+builder.Services.AddSingleton<AgentStudio.Deploy.InstanceDeployService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<AgentStudio.Deploy.InstanceDeployWorker>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeploySecretReadiness>();
 builder.Services.AddSingleton<AgentStudio.QualityStudio.QualityReleaseRangeVerdictClient>();
@@ -767,6 +771,7 @@ builder.Services.AddSingleton<HealthCheckStore>();
 builder.Services.AddSingleton<IncidentActions>();
 builder.Services.AddSingleton<TelemetryAlertReader>();
 builder.Services.AddSingleton<HealthAlerts>();
+builder.Services.AddSingleton<IHealthIncidentContext, HealthIncidentContextReader>();
 builder.Services.AddHttpClient(IncidentWebhookService.HttpClientName, client =>
 {
     client.Timeout = Timeout.InfiniteTimeSpan;
@@ -1188,6 +1193,11 @@ builder.Services.AddSingleton<AgentStudio.Security.IOperatorGateEvidence, AgentS
 builder.Services.AddOperatorApprovals();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeIncidentService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeModeService>();
+// AGT-3965: fast and balanced say visibly when develop gets no post-merge runs.
+builder.Services.AddSingleton<AgentStudio.Pipeline.IDevelopCoverageGit, AgentStudio.Pipeline.DevelopCoverageGit>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeCoverageService>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService<AgentStudio.Pipeline.PostMergeCoverageRefresher>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateAdvisorService>();
 builder.Services.AddSingleton<AgentStudio.Operator.BatchTriageReader>();
 builder.Services.AddSingleton<AgentStudio.Operator.DeployPreflightService>();
@@ -1546,6 +1556,8 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGat
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorReviewHostDriftFactSource>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPostMergeCoverageFactSource(
+    () => sp.GetRequiredService<AgentStudio.Pipeline.PostMergeCoverageService>().Missing()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorEnvironmentIncidentFactSource(
     sp.GetRequiredService<HealthCheckStore>(),
     () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name),

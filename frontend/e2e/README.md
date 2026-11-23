@@ -617,11 +617,12 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `tab-label-tooltip-alignment.spec.ts` | restored task tab hides its watch path and uses the canonical tooltip in both themes |
 | `url-preview-failure-recovery.spec.ts` | offline 4184 is actionable, responsive, and links to quick setup |
 
-### `system/` - 23 specs
+### `system/` - 24 specs
 
 | Spec | Summary |
 |------|---------|
 | `app-markdown-central-component.spec.ts` | <cac-markdown> central component |
+| `base-product-start.spec.ts` | the product starts and its board shows a card created through the API |
 | `caret-suppression.spec.ts` | caret suppression on non-text-input elements |
 | `concept-help.spec.ts` | orchestrator concept-help on the global orchestrator card |
 | `crash-recovery-prompt.spec.ts` | Crash recovery prompt |

@@ -63,6 +63,8 @@ public record TaskTokenCall
     /// those as "level unknown" rather than guessing a level.
     /// </summary>
     public string? ThinkingLevel { get; init; }
+    /// <summary>Coding launch provenance: resumed or fresh; null on historical calls.</summary>
+    public string? SessionMode { get; init; }
     /// <summary>Bus participant that produced this token usage row, e.g. <c>agent:codex</c> or <c>orchestrator:Project</c>.</summary>
     public string? ParticipantId { get; init; }
     /// <summary>CLI that made the call (<c>claude</c>, <c>codex</c>, ...). Null on rows written before AGT-2986.</summary>

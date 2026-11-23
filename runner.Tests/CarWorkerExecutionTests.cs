@@ -197,6 +197,33 @@ public sealed class CarWorkerExecutionTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Follow_up_in_the_same_worktree_resumes_the_Codex_session()
+    {
+        if (NodeMissing()) return;
+        const string sessionId = "019dee65-7a9b-7843-bfd9-06e555fff02b";
+        var fixture = Fixture.Load("p1-happy-done.codex.fixture");
+        var worktree = Path.Combine(_root, "same-worktree");
+        var first = await RunFixtureAsync(fixture, cleanContextKey: "AGT-3970",
+            workingDirectory: worktree);
+        const string delta = "Resolve the named integration conflict and run the focused checks.";
+
+        var continued = await RunFixtureAsync(fixture, cleanContextKey: "AGT-3970",
+            workingDirectory: worktree, resumeSessionId: sessionId, prompt: delta,
+            model: "gpt-6-sol", thinkingLevel: "low");
+
+        Assert.False(continued.LaunchFailed);
+        Assert.Equal(first.SpawnedEnvironment!["CODEX_HOME"], continued.SpawnedEnvironment!["CODEX_HOME"]);
+        var argv = continued.SpawnedArgv!.ToList();
+        var resumeIndex = argv.IndexOf("resume");
+        Assert.True(argv.IndexOf("exec") >= 0 && argv.IndexOf("exec") < resumeIndex);
+        Assert.Contains(sessionId, argv.Skip(resumeIndex + 1));
+        Assert.Contains(argv, argument => argument.Contains("model_reasoning_effort", StringComparison.Ordinal)
+            && argument.Contains("low", StringComparison.Ordinal));
+        Assert.Equal(delta.Length, continued.Capture!.RootElement.GetProperty("stdinChars").GetInt32());
+    }
+
+    [Fact]
     public async Task Read_only_permission_and_shared_context_from_the_spec_reach_the_argv_and_environment()
     {
         if (NodeMissing()) return;
@@ -622,10 +649,11 @@ public sealed class CarWorkerExecutionTests : IDisposable
         IReadOnlyDictionary<string, string>? extraEnvironment = null,
         string? cleanContextKey = null,
         CancellationToken stopToken = default,
-        string? model = null, string? thinkingLevel = null)
+        string? model = null, string? thinkingLevel = null,
+        string? resumeSessionId = null, string? workingDirectory = null)
     {
         var workerDirectory = Path.Combine(_root, Guid.NewGuid().ToString("N"));
-        var workingDirectory = Path.Combine(workerDirectory, "worktree");
+        workingDirectory ??= Path.Combine(workerDirectory, "worktree");
         var resultsDirectory = Path.Combine(workerDirectory, "results");
         Directory.CreateDirectory(workingDirectory);
         Directory.CreateDirectory(resultsDirectory);
@@ -643,6 +671,7 @@ public sealed class CarWorkerExecutionTests : IDisposable
             PermissionMode: permissionMode,
             ContextMode: contextMode,
             RunId: $"car-parity-{Guid.NewGuid():N}",
+            ResumeSessionId: resumeSessionId,
             CleanContextKey: cleanContextKey);
 
         var spawner = new FixtureSpawner(fixture.Path);

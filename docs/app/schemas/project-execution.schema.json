@@ -69,6 +69,10 @@
             "optional",
             "off"
           ]
+        },
+        "deployAfterGreenWindow": {
+          "description": "A green merge-window run on the integration tip releases that tip to the declared Stage environment.",
+          "type": "boolean"
         }
       }
     },

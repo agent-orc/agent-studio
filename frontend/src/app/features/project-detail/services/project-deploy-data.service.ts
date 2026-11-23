@@ -1,6 +1,6 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable, catchError, map, of, startWith } from 'rxjs';
+import { Observable, catchError, combineLatest, filter, forkJoin, map, of, startWith, switchMap, take } from 'rxjs';
 import { TaskService } from '../../../services/task.service';
 import type { ProjectEnvironments } from '../../../models/project-overview.model';
 import type {
@@ -17,9 +17,18 @@ import type {
   ReleaseGateStatus,
   SecretReadinessResponse,
 } from '../state/deploy-area.model';
+import { artifactReleaseLookups, buildEnvironmentCards, ready, type DeploySources, type EnvironmentCardView } from '../state/deploy-area.model';
 import { ProjectPipelineDefinitionService, type PipelineDefinitionResponse } from './project-pipeline-definition.service';
 import { EnvironmentHealthService } from '../../environment-health/services/environment-health.service';
 import type { EnvironmentHealthResponse } from '../../environment-health/models/environment-health.model';
+
+/** Declared environments with their state from the one environment projection. */
+export interface EnvironmentStates {
+  /** The AGT-3176 declarations, history and promotions; null when only `/deploy/status` answered. */
+  environments: ProjectEnvironments | null;
+  /** One state per environment, in the order {@link buildEnvironmentCards} returns them. */
+  states: EnvironmentCardView[];
+}
 
 export interface DeployPage<T> { items: T[]; offset: number; limit: number; total: number }
 export interface ReleaseNotes {
@@ -231,6 +240,36 @@ export class ProjectDeployDataService {
 
   health(projectName: string): Observable<DeployPanel<EnvironmentHealthResponse>> {
     return panel(this.healthService.project(projectName), 'Environment health could not be loaded.', true);
+  }
+
+  /**
+   * The environment state projection ({@link buildEnvironmentCards}) for a
+   * surface outside the Deploy overview: declarations, `/deploy/status`,
+   * control-plane health with its open incident, and the release of each host
+   * artifact. A failing health or status source degrades to the next one.
+   */
+  environmentStates(projectName: string): Observable<DeployPanel<EnvironmentStates>> {
+    const settled = <T>(source: Observable<DeployPanel<T>>) => source.pipe(filter(item => item.status !== 'loading'), take(1));
+    return combineLatest([
+      settled(this.environments(projectName)), settled(this.statuses(projectName)), settled(this.health(projectName)),
+    ]).pipe(
+      switchMap(([environments, statuses, health]): Observable<DeployPanel<EnvironmentStates>> => {
+        if (environments.status === 'error' && statuses.status !== 'ready') return of({ status: 'error', message: environments.message });
+        const sources: DeploySources = {
+          environments: ready(environments), statuses: ready(statuses), deployments: null, releases: null, health: ready(health),
+        };
+        // Without AGT-3201 there are no release records to look up.
+        const lookups = statuses.status === 'ready' ? artifactReleaseLookups(sources) : [];
+        const releases = lookups.length === 0 ? of([] as [string, DeployPanel<Release | null>][])
+          : forkJoin(lookups.map(lookup => settled(this.releaseForArtifact(projectName, lookup.artifact, lookup.notAfterUtc))
+            .pipe(map(result => [lookup.key, result] as [string, DeployPanel<Release | null>]))));
+        return releases.pipe(map((entries): DeployPanel<EnvironmentStates> => ({
+          status: 'ready',
+          value: { environments: sources.environments, states: buildEnvironmentCards({ ...sources, artifactReleases: new Map(entries) }) },
+        })));
+      }),
+      startWith<DeployPanel<EnvironmentStates>>({ status: 'loading' }),
+    );
   }
 }
 

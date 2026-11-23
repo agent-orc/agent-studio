@@ -200,7 +200,7 @@ export function triggerLabel(raw: string): string {
   return (DEPLOY_TRIGGERS as readonly string[]).includes(raw) ? TRIGGER_LABEL[raw as keyof typeof TRIGGER_LABEL] : raw;
 }
 
-export type HealthState = 'healthy' | 'unhealthy' | 'unknown' | 'up' | 'degraded' | 'down' | 'invalid' | 'not-observed' | 'crash-loop' | 'crash-rollback';
+export type HealthState = 'healthy' | 'unhealthy' | 'unknown' | 'up' | 'degraded' | 'down' | 'invalid' | 'not-observed' | 'crash-loop' | 'crash-rollback' | 'not-deployed';
 /** AGT-3201 `EnvironmentStatus.health`. */
 const STATUS_HEALTH: Record<string, HealthState> = { healthy: 'healthy', unhealthy: 'unhealthy', unknown: 'unknown' };
 /** AGT-3176 `environments[].health`, from the latest host report. */
@@ -212,7 +212,7 @@ const HOST_REPORT: Record<string, { state: DeploymentState; trigger: string }> =
   failed: { state: 'failed', trigger: 'deploy' },
 };
 
-export const HEALTH_LABEL: Record<HealthState, string> = { healthy: 'Healthy', unhealthy: 'Unhealthy', unknown: 'No data', up: 'Up', degraded: 'Degraded', down: 'Down', invalid: 'Misconfigured', 'not-observed': 'Not observed', 'crash-loop': 'Crash loop', 'crash-rollback': 'Crash rollback' };
+export const HEALTH_LABEL: Record<HealthState, string> = { healthy: 'Healthy', unhealthy: 'Unhealthy', unknown: 'No data', up: 'Up', degraded: 'Degraded', down: 'Down', invalid: 'Misconfigured', 'not-observed': 'Not observed', 'crash-loop': 'Crash loop', 'crash-rollback': 'Crash rollback', 'not-deployed': 'Not deployed' };
 
 /** Actions the lifecycle accepts per state (AGT-3201 StandardLifecyclePolicy); the server still decides. */
 export type DeployRunAction = 'approve' | 'reject' | 'cancel' | 'retry' | 'skip' | 'abort';
@@ -439,12 +439,28 @@ export function runningReleaseOf(view: ProjectEnvironments['environments'][numbe
   return { artifact, release, uncertain: false };
 }
 
-export function runningReleaseLabel(view: ProjectEnvironments['environments'][number],
-  status: EnvironmentStatus | null): string {
-  const running = runningReleaseOf(view, status);
-  if (running.uncertain) return 'Running release uncertain. A failed release may be running.';
-  if (running.release) return `Release ${running.release.version}`;
-  return running.artifact ? `Running ${shortArtifact(running.artifact)}` : 'Nothing deployed yet';
+/** What runs in an environment: the release version leads, the artifact digest is secondary. */
+export interface EnvironmentReleaseDisplay {
+  version: string | null;
+  digest: string | null;
+  artifact: string | null;
+  deployedAt: string | null;
+  /** "12 min ago", "just now", or null when the deploy time is unknown. */
+  age: string | null;
+  /** A failed deploy left the running release unknown (AGT-3899). */
+  uncertain: boolean;
+}
+
+export function environmentReleaseDisplay(card: EnvironmentCardView, now: number): EnvironmentReleaseDisplay {
+  const age = formatAge(card.deployedAt, now);
+  return {
+    version: card.releaseVersion,
+    digest: card.artifact ? shortArtifact(card.artifact) : null,
+    artifact: card.artifact,
+    deployedAt: card.deployedAt,
+    age: age && age !== 'just now' ? `${age} ago` : age,
+    uncertain: card.releaseUncertain === true,
+  };
 }
 
 /** The latest successful host report for the deployed artifact (AGT-3176). */
@@ -640,17 +656,22 @@ function healthFor(status: EnvironmentStatus | null, base: CardBase, health?: En
     return { status: 'reported', state: incident.kind === 'crash-rollback' ? 'crash-rollback' : 'crash-loop' };
   if (base.view?.observed?.state === 'crash-loop') return { status: 'reported', state: 'crash-loop' };
   const observed = health?.environments.find(item => item.environmentId === base.id);
+  // M2 of the playthrough: an open incident wins, then control-plane checks that know, then the last deploy report.
+  if (observed?.currentIncident) return { status: 'reported', state: 'down' };
+  if (observed?.status === 'unknown' && observed.checks.length > 0) return { status: 'reported', state: lastReportHealth(status, base) };
   if (observed && (observed.checks.length > 0 || observed.status === 'invalid'))
     return observed.status === 'invalid'
       ? { status: 'reported', state: observed.status, problem: observed.error }
       : { status: 'reported', state: observed.status };
   if (base.view && !base.healthUrl && !base.hasChecks) return { status: 'no-checks' };
-  // AGT-3201 health wins when it knows; it reads a host rollback as unknown, AGT-3176 as healthy.
+  return { status: 'reported', state: lastReportHealth(status, base) };
+}
+
+/** AGT-3201 health wins when it knows; it reads a host rollback as unknown, AGT-3176 as healthy. */
+function lastReportHealth(status: EnvironmentStatus | null, base: CardBase): HealthState {
   const reported = status ? STATUS_HEALTH[status.health] ?? 'unknown' : 'unknown';
   const host = base.view ? HOST_HEALTH[base.view.health] ?? 'unknown' : 'unknown';
-  const state = reported !== 'unknown' ? reported : host;
-  // Without a declared health URL there is nothing to check.
-  return { status: 'reported', state };
+  return reported !== 'unknown' ? reported : host;
 }
 
 function lastRunOf(runs: readonly Deployment[]): CardRun | null {

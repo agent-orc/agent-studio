@@ -1850,6 +1850,20 @@ public sealed partial class ProjectEnvironmentService
         => history.LastOrDefault(row => row.EnvironmentId == environmentId
             && row.Item.Status is "healthy" or "rolled-back" or "stopped")?.Item.Status is "healthy" or "rolled-back";
 
+    /// <summary>
+    /// The environments a host runs now: a healthy deploy report (or rollback) without a
+    /// confirmed stop after it. Health checks watch only these. Null when the deploy state is unreadable.
+    /// </summary>
+    public IReadOnlySet<string>? RunningEnvironments(string project)
+    {
+        lock (_gate)
+        {
+            if (TryLoad(project) is not { } state) return null;
+            return state.History.Select(row => row.EnvironmentId).Distinct(StringComparer.Ordinal)
+                .Where(id => IsRunning(state.History, id)).ToHashSet(StringComparer.Ordinal);
+        }
+    }
+
     private static bool IsDeclared(IReadOnlyList<EnvironmentDeclaration>? declarations, string environmentId)
         => declarations?.Any(item => item.Id == environmentId) == true;
 

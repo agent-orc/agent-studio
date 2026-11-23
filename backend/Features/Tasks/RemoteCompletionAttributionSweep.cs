@@ -17,9 +17,12 @@ public sealed partial class RemoteCompletionAttributionSweep
 {
     public const string ReportFileName = "remote-completion-attribution-v1.json";
     public const string SalvageSubjectReportFileName = "salvage-subject-attribution-v1.json";
-    public const string IntegrationHistoryReportFileName = "integration-history-attribution-v2.json";
+    public const string IntegrationHistoryReportFileName = "integration-history-attribution-v3.json";
     public const string CommitSubjectKeyReportFileName = "commit-subject-key-attribution-v1.json";
     private static readonly TimeSpan Lookback = TimeSpan.FromDays(8);
+    // AGT-3968: the integration-history pass also repairs merge-only and
+    // unchanged continuation deliveries parked since 16 November.
+    private static readonly TimeSpan IntegrationHistoryLookback = TimeSpan.FromDays(14);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
@@ -217,7 +220,12 @@ public sealed partial class RemoteCompletionAttributionSweep
 
     /// <summary>
     /// Repairs a passing reviewed delivery escalated solely because a commit
-    /// imported from the integration line was mistaken for task work.
+    /// imported from the integration line was mistaken for task work, or
+    /// because a continuation round added only integration merges or nothing
+    /// at all (AGT-3947, AGT-3968). For the last case the pickup range is
+    /// empty: the runner's develop merge is the pickup base, or the round
+    /// re-delivered the earlier SHA. The integration merge-base range is then
+    /// attributed under the strict continuation rule.
     /// </summary>
     public RemoteCompletionAttributionSweepReport RunIntegrationHistoryRepairOnce()
     {
@@ -234,43 +242,56 @@ public sealed partial class RemoteCompletionAttributionSweep
         foreach (var task in _scanner.ScanAllJobsWithArchive().Where(task => task.State == TaskStates.Escalated))
         {
             var subject = ReviewSubjectStore.Read(task.FolderPath);
-            if (subject is null || subject.CompletedAtUtc < _now - Lookback) continue;
+            if (subject is null || subject.CompletedAtUtc < _now - IntegrationHistoryLookback) continue;
             var key = task.Key ?? task.Id;
             if (!IsCurrentPassingReview(key, subject)) continue;
+            if (RemoteCommitAttributionGuard.CoversDelivery(task.Commits, subject.RunAttemptId, subject.ResultSha))
+                continue;
             var warning = RunFinishedAttributionWarning(task, subject);
             var match = Regex.Match(warning ?? "", @"commit (?<sha>[0-9a-fA-F]{7,40}) names foreign task");
-            var alreadyAttributed = task.Commits.Count(commit => string.Equals(commit.RunAttemptId,
-                subject.RunAttemptId, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(commit.ResultSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase));
-            if (alreadyAttributed > 0) continue;
             var repository = _git.ResolveRepoRootForWatchPath(task.WatchPath);
             var deliveryRef = subject.ImmutableResultRef ?? subject.ResultRef;
             if (string.IsNullOrWhiteSpace(repository) || string.IsNullOrWhiteSpace(deliveryRef)) continue;
+            var integrationBranch = subject.IntegrationBranch ?? task.IntegrationBranch;
             var range = _git.InspectRemoteDeliveryCommitRange(repository, deliveryRef,
-                subject.ResultSha, subject.IntegrationBranch ?? task.IntegrationBranch,
-                subject.BaseSha, taskKey: key);
+                subject.ResultSha, integrationBranch, subject.BaseSha, taskKey: key);
+            var continuationRange = false;
+            if (!match.Success && task.Commits.Count > 0 && (!range.Success || range.Commits.Count == 0))
+            {
+                range = _git.InspectRemoteDeliveryCommitRange(repository, deliveryRef,
+                    subject.ResultSha, integrationBranch, expectedBaseSha: null, taskKey: key);
+                continuationRange = true;
+            }
             if (!range.Success || range.Commits.Count == 0) continue;
             var integrationRef = "refs/remotes/origin/" + TaskIntegrationBranch.Name(range.IntegrationBranch);
             var importedForeignCommit = match.Success
                 && _git.IsAncestor(repository, match.Groups["sha"].Value, integrationRef);
             var newDeliveryCommits = range.Commits.Where(commit => !task.Commits.Any(existing =>
                 string.Equals(existing.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase))).ToList();
-            var mergeOnlyRecovery = !match.Success && newDeliveryCommits.Count > 0
+            var mergeOnlyRecovery = !match.Success
+                && (newDeliveryCommits.Count > 0 || continuationRange)
                 && newDeliveryCommits.All(commit => commit.IsMerge);
             if (!importedForeignCommit && !mergeOnlyRecovery) continue;
 
-            var repair = RepairCommits(task, subject);
+            var repair = continuationRange
+                ? AttributeRange(task, subject, repository, deliveryRef, range, continuationRange: true)
+                : RepairCommits(task, subject);
             if (repair.Commits == 0)
             {
+                var unresolved = repair.Warning ?? "No commit could be attributed.";
+                if (unresolved.StartsWith(RejectedPrefix, StringComparison.Ordinal))
+                    unresolved = unresolved[RejectedPrefix.Length..];
                 rows.Add(new RemoteCompletionAttributionSweepTaskReport(task.ProjectName, key,
-                    subject.ResultSha, 0, 0, repair.Warning));
+                    subject.ResultSha, 0, 0, unresolved));
                 continue;
             }
             var details = new Dictionary<string, string>
             {
                 ["reason"] = importedForeignCommit
                     ? "imported-integration-history"
-                    : "merge-only-recovery-delivery",
+                    : continuationRange
+                        ? "continuation-without-own-commit"
+                        : "merge-only-recovery-delivery",
             };
             if (importedForeignCommit) details["foreignCommit"] = match.Groups["sha"].Value;
             rows.Add(RestoreToAutoReview(task, subject, repair.Commits,
@@ -456,41 +477,69 @@ public sealed partial class RemoteCompletionAttributionSweep
             if (rangeQualifies is not null && !rangeQualifies(range.Commits))
                 return (0, null);
 
-            var attribution = RemoteCommitAttributionGuard.Attribute(
-                task.Key ?? task.Id,
-                deliveryRef,
-                range.Commits,
-                subject.Repository,
-                RemoteCommitAttributionGuard.CardReferencedKeys(task),
-                task.Commits,
-                parent => _git.IsAncestor(repository, parent,
-                    "refs/remotes/origin/" + TaskIntegrationBranch.Name(range.IntegrationBranch)));
-            if (!attribution.Accepted)
+            var attributed = AttributeRange(task, subject, repository, deliveryRef, range,
+                continuationRange: false);
+            if (attributed.Commits == 0 && attributed.Warning is { } rejected
+                && rejected.StartsWith(RejectedPrefix, StringComparison.Ordinal))
             {
-                if (!string.IsNullOrWhiteSpace(attribution.Warning)) warnings.Add(attribution.Warning);
+                warnings.Add(rejected[RejectedPrefix.Length..]);
                 continue;
             }
-
-            _mutations.SetRunIntegrationBranchOnFolder(task.FolderPath, range.IntegrationBranch!);
-            var written = _mutations.SetRemoteCommitAttributionOnFolder(
-                task.FolderPath,
-                subject.RunAttemptId,
-                string.IsNullOrWhiteSpace(subject.Executor) ? "remote-runner-backfill" : subject.Executor,
-                subject.ResultSha,
-                attribution.Commits);
-            if (!written) return (0, "The verified delivery range could not be persisted.");
-            var current = _scanner.FindJob(task.Key ?? task.Id, task.WatchPath);
-            var persistedForRun = current?.Commits.Count(commit => string.Equals(
-                    commit.RunAttemptId, subject.RunAttemptId, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(commit.ResultSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase)) ?? 0;
-            return persistedForRun > 0
-                ? (persistedForRun, null)
-                : (0, "The verified range contained only commits attributed to an earlier run.");
+            return attributed;
         }
 
         return (0, warnings.Count == 0
             ? "No unambiguous pickup base is recorded for the remote delivery."
             : string.Join(" ", warnings.Distinct(StringComparer.Ordinal)));
+    }
+
+    private const string RejectedPrefix = "rejected:";
+
+    // Attributes one verified range to the subject's run attempt. A guard
+    // rejection is returned with RejectedPrefix so RepairCommits can try the
+    // next base candidate.
+    private (int Commits, string? Warning) AttributeRange(
+        TaskInfo task,
+        ReviewSubjectRecord subject,
+        string repository,
+        string deliveryRef,
+        RemoteDeliveryCommitRange range,
+        bool continuationRange)
+    {
+        var integrationRef = "refs/remotes/origin/" + TaskIntegrationBranch.Name(range.IntegrationBranch);
+        var attribution = RemoteCommitAttributionGuard.Attribute(
+            task.Key ?? task.Id,
+            deliveryRef,
+            range.Commits,
+            subject.Repository,
+            RemoteCommitAttributionGuard.CardReferencedKeys(task),
+            task.Commits,
+            parent => _git.IsAncestor(repository, parent, integrationRef),
+            continuationRange);
+        if (!attribution.Accepted)
+            return (0, RejectedPrefix + (attribution.Warning ?? "attribution rejected"));
+
+        _mutations.SetRunIntegrationBranchOnFolder(task.FolderPath, range.IntegrationBranch!);
+        var written = _mutations.SetRemoteCommitAttributionOnFolder(
+            task.FolderPath,
+            subject.RunAttemptId,
+            string.IsNullOrWhiteSpace(subject.Executor) ? "remote-runner-backfill" : subject.Executor,
+            subject.ResultSha,
+            attribution.Commits);
+        if (!written) return (0, "The verified delivery range could not be persisted.");
+        var current = _scanner.FindJob(task.Key ?? task.Id, task.WatchPath);
+        // Commits this run produced; an unchanged re-delivery produced none and
+        // counts the inherited commits its delivery generation now carries.
+        var producedForRun = current?.Commits.Count(commit =>
+            string.Equals(commit.RunAttemptId, subject.RunAttemptId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(commit.ResultSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase)) ?? 0;
+        var persistedForRun = producedForRun > 0 ? producedForRun : current?.Commits.Count(commit =>
+            string.Equals(commit.DeliveryAttemptId, subject.RunAttemptId, StringComparison.OrdinalIgnoreCase)) ?? 0;
+        return persistedForRun > 0
+               && current is not null
+               && RemoteCommitAttributionGuard.CoversDelivery(current.Commits, subject.RunAttemptId, subject.ResultSha)
+            ? (persistedForRun, null)
+            : (0, "The verified range contained only commits attributed to an earlier run.");
     }
 
     private static bool HasTokenSummary(string folderPath)

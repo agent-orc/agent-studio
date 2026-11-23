@@ -21,6 +21,14 @@ background warm when it is missing. It never folds the ledger on the request.
 
 The writers are `ProjectRunner.MirrorAgentTurnUsageToBus` for local coding calls, `RemoteTokenReceiptService` for remote coding completion, `RemotePipelineReviewEvidenceProjector` for remote review, and `OrchestratorChatService.RecordChatUsageAsync` for chat. Chat fallback receipts are written when the bus append fails. The merged ledger retains participant, host, CLI, model, timestamp, and token dimensions.
 
+Remote coding completion also records `sessionMode` on each usage call: `resumed`
+when the worker launched with a prior session ID, otherwise `fresh`. The fenced
+continuation evidence supplies this value, and receipt reads preserve it in the
+merged ledger. Missing provenance stays null for historical calls. Compare it
+with input/captured session IDs in `session-continuation-ledger.jsonl` when
+investigating provider acceptance or a fresh fallback. Codex raw input includes
+cached input; do not add raw input and cached input when comparing session costs.
+
 `TokenAggregationService.WorkspaceTimeline` filters to the requested UTC window before pricing entries. The fold applies the same half-open interval `[start, end)` and builds project, model, host, and bucket rows from the selected entries. `WorkspaceTimelineRange` reads bus rows for its exact calendar interval. Both preserve the recorded timestamp for historical pricing.
 
 ## Model identity and cost
@@ -29,7 +37,7 @@ The writers are `ProjectRunner.MirrorAgentTurnUsageToBus` for local coding calls
 
 Canonical stored input is uncached input. `cacheRead` is the cached subset and is priced separately. Codex/OpenAI provider input that includes cached tokens is normalized at the parser boundary with `ProviderUsageNormalization.OpenAi`. Claude provider input and cache read arrive as separate dimensions. `StoredUsageNormalization` handles legacy immutable bus rows and legacy receipts on read. No fold subtracts cached input or prices a call. `TokenPricingService` is the only application pricing seam; `TokenEconomyPriceProvider` adapts the pinned historical catalog. A missing historical price remains an unknown price, with the existing API decimal fields retained for wire compatibility.
 
-The project pipeline cost view uses receipt calls when they contain the coding run, mapping `agent:*` to core, `support:*` to aspect, and `orchestrator:*` to orchestrator. Calls without such receipts keep their pipeline execution records. The token usage cockpit joins the same ledger with route and quota evidence. CLI quota windows and slot occupancy are separate measurements; they are never added to ledger token totals.
+The project pipeline cost view (`ProjectPipelineCostService`) has one source: `TokenAnalysisService.ProjectCostItems`, the reconciled facts that the card analysis prices, project-only calls included. It folds them into step-kind and day cells, so `pipeline-cost` and the analysis slices report the same total for the same window. A review receipt keeps its step id (`aspect-*`, `post-code-review-grade`) as its step label, for remote and local review hosts alike. The token usage cockpit joins the same ledger with route and quota evidence. CLI quota windows and slot occupancy are separate measurements; they are never added to ledger token totals.
 
 The CLI account page reads `QuotaWindow.WindowHours` from the shared backend quota duration policy. Its reset time uses the parsed `ResetAt` and workspace zone, with the provider's `ResetLabel` below it. `GET /api/workspace/tokens/cli-window` sums merged project and workspace one-shot receipts in the quota interval `[resetAt - duration, min(resetAt, now))`, or the trailing duration when no reset is known. It selects receipts by their stored `CliType`; older receipts without that field stay unattributed. The read applies project permissions and includes unattributed workspace rows only for unrestricted users. Each quota card displays its own recorded total, and the token stream uses the primary quota window.
 
@@ -67,3 +75,32 @@ for recording and attribution rules.
 | Project | `TokenAggregationService.cs`, `ITokenAggregator.cs`, token endpoints and cache stores |
 
 Paths in this table are relative to `backend/Features/Tokens/`. The earlier bus-backed shims and their parity-only tests were removed in AGT-3037. The golden characterization now covers the production composition directly. See [the token aggregation concept](../../concepts/token-aggregation.md) for the stage contract and [the token pricing domain](token-pricing.md) for catalog policy.
+
+## Review and economy audit (AGT-3952)
+
+Review receipt participants preserve the original pipeline step after
+`:step:` and before `:usage:`. The receipt reader, review statistics, analysis
+classification, and pipeline step totals retain that identity for every
+aspect and for paid local grading calls. Remote host grading is deterministic
+policy code: its pipeline evidence explicitly records `deterministic` cost
+basis with no model, rather than borrowing the last aspect's model. Remote
+review usage falls back to distinct assistant message usage when an interrupted
+Claude command has no terminal result; a terminal result supersedes that fallback.
+
+The production project pipeline-cost view consumes the same reconciled facts
+as card analysis, including historical bus usage, workspace enrichment, and
+project-only calls. Each fact is filtered and bucketed by its own timestamp.
+Compare equal project scopes and equal day windows. Unattributed workspace
+calls remain outside project totals.
+
+A legacy receipt's dimensionless `totalTokens` is not evidence of uncached
+input. The reader retains known input, output, cache-read, and cache-write
+counters and never converts a dimensionless remainder into paid input.
+Incomplete dimension data produces partial receipt coverage. This read-time
+policy does not rewrite stored receipts or guess a cache split from cost.
+
+Auto-tag and the Result summary/assessment route default to Claude Haiku 5.5
+at low reasoning. Explicit project step overrides remain authoritative.
+Summary receipts record the selected reasoning level even when the provider
+omits it. Usage counters belong to durable receipts; diagnostic log messages
+record source and execution identity without copying provider usage payloads.

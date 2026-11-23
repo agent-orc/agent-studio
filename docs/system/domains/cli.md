@@ -7,6 +7,18 @@ Use this when a change touches Claude, Codex, Copilot, Gemini, prompt handoff,
 stream parsing, session capture, quota probes, model catalogs, sandbox modes, or
 CLI execution tests.
 
+Weekly quota refusals use the shared `ProviderAccessClassifier` for remote
+coding, review and host capability evidence (AGT-3972). A failed Claude
+`result` or typed assistant `error: rate_limit` frame closes provider admission
+until the reported reset, including hour-only clocks with an explicit zone.
+`ExecutionOutcomeAdapter` preserves the reason and selects quota wait instead
+of crash resume. The recovery probe's `ProviderProbeClassifier` also recognizes
+the weekly account refusal and uses the shared reset parser, so its health
+outcome stays quota-exhausted rather than indeterminate while it waits.
+`runner.Tests/WeeklyQuotaRefusalTests.cs` pins classification,
+reset parsing and capability admission; see the
+[run outcome contract](../contracts/run-outcome.md).
+
 ## Entry Points
 
 - [docs/system/cli/supported-clis.md](../cli/supported-clis.md) defines the cross-CLI invocation

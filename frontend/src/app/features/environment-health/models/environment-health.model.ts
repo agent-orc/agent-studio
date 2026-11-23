@@ -1,6 +1,6 @@
 /** Wire shapes of `/api/environment/health` and `/api/projects/{project}/environments/health` (IP-14). */
 /** `invalid`: the declaration is broken or a target resolves to an address the control plane refuses. */
-export type HealthStatus = 'up' | 'degraded' | 'down' | 'invalid' | 'unknown' | 'not-observed';
+export type HealthStatus = 'up' | 'degraded' | 'down' | 'invalid' | 'unknown' | 'not-observed' | 'not-deployed';
 
 export interface HealthSample {
   at: string;
@@ -82,6 +82,7 @@ export const HEALTH_STATUS_LABEL: Record<HealthStatus, string> = {
   invalid: 'Misconfigured',
   unknown: 'No data',
   'not-observed': 'Not observed',
+  'not-deployed': 'Not deployed',
 };
 
 /** Uptime share as a percentage with two decimals, so 99.95 % and 100 % stay distinct. */

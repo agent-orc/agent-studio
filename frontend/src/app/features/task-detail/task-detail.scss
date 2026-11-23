@@ -505,6 +505,7 @@
       margin-left: calc(var(--studio-spacing-3) * -1);
       margin-right: calc(var(--studio-spacing-3) * -1);
     }
+    .detail__panes--incident { display: block; overflow: auto; }
     .pane {
       display: flex;
       flex-direction: column;

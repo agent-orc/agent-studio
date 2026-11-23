@@ -11,7 +11,7 @@ namespace AgentStudio.Pipeline;
 /// actually use. Bounded supporting steps use Codex gpt-5.4-mini/high; the
 /// operator-facing grade and task-spawner judgments use the live-discovered
 /// Codex flagship and its top advertised reasoning level.
-/// The Result summary and assessment step defaults to Claude Opus 5.5 at low
+/// The Result summary and assessment step defaults to Claude Haiku 5.5 at low
 /// reasoning (AGT-3046).
 ///
 /// <para>
@@ -43,7 +43,7 @@ public static class PipelineStepModelDefaults
     /// </summary>
     public static string? RuntimeDefaultFor(PipelineStep step) => step.Kind switch
     {
-        StepKind.Orchestrator when IsSummaryAssessment(step) => ModelIds.ClaudeOpus55,
+        StepKind.Orchestrator when IsSummaryAssessment(step) => ModelIds.ClaudeHaiku55,
         StepKind.Aspect => SupportModel,
         StepKind.Drift => SupportModel,
         StepKind.Module when string.Equals(

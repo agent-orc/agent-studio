@@ -1971,15 +1971,14 @@ public static class LeaseEndpoints
                 task,
                 attemptId,
                 req.RunnerId,
-                req.OutcomeDecision?.RawFacts.EffectiveModel);
+                req.OutcomeDecision?.RawFacts.EffectiveModel,
+                req.SessionContinuation);
             if (req.SessionContinuation is { } completedSession)
             {
                 AgentStudio.Runner.SessionContinuationLedgerStore.Append(
                     task.FolderPath,
                     AgentStudio.Runner.SessionContinuationLedgerStore.WithReceiptFallback(
                         completedSession, tokenReceipt.TotalTokens));
-                if (!string.IsNullOrWhiteSpace(completedSession.CapturedSessionId))
-                    sessions.BackfillLatestSessionEventCapturedId(task.Id, completedSession.CapturedSessionId, task.WatchPath);
             }
             if (!tokenReceipt.Persisted && !string.IsNullOrWhiteSpace(tokenReceipt.Warning))
             {
@@ -2158,6 +2157,25 @@ public static class LeaseEndpoints
                     }
                     else
                     {
+                        // AGT-3968: the runner reports the round's start head as
+                        // its base, and that head already holds the runner's
+                        // develop merge. A round that adds no commit of its own
+                        // (AGT-3905, AGT-3914) has an empty pickup range and its
+                        // result SHA would never be recorded for this attempt.
+                        var continuationRange = false;
+                        if (deliveryRange.Commits.Count == 0 && task.Commits.Count > 0)
+                        {
+                            var widened = git.InspectRemoteDeliveryCommitRange(
+                                repoRoot, deliveryBranch, resultSha, req.IntegrationBranch,
+                                expectedBaseSha: null, ct, taskKey: req.TaskKey);
+                            if (widened.Success && widened.Commits.Count > 0)
+                            {
+                                deliveryRange = widened;
+                                continuationRange = true;
+                            }
+                        }
+                        var integrationRefForParents = "refs/remotes/origin/"
+                            + TaskIntegrationBranch.Name(deliveryRange.IntegrationBranch);
                         remoteAttribution = RemoteCommitAttributionGuard.Attribute(
                             req.TaskKey,
                             deliveryBranch,
@@ -2165,8 +2183,8 @@ public static class LeaseEndpoints
                             req.Repository,
                             RemoteCommitAttributionGuard.CardReferencedKeys(task),
                             task.Commits,
-                            parent => git.IsAncestor(repoRoot, parent,
-                                "refs/remotes/origin/" + TaskIntegrationBranch.Name(deliveryRange.IntegrationBranch)));
+                            parent => git.IsAncestor(repoRoot, parent, integrationRefForParents),
+                            continuationRange);
                         attributionWarning = string.Join(" ", new[]
                             { deliveryRange.Warning, remoteAttribution.Warning }
                             .Where(value => !string.IsNullOrWhiteSpace(value)));

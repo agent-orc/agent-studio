@@ -1526,8 +1526,8 @@ public sealed partial class MergeIntoDevelopRunner
         }
 
         var settings = ProjectSettingsFor(project);
-        var postMergeMode = (_postMergeMode?.Resolve(project, settings)
-            ?? IntegrationTestModes.Resolve(settings)) == IntegrationTestModes.PostMerge
+        var postMergeMode = PostMergeModeService.Effective(_postMergeMode, project, settings)
+            == IntegrationTestModes.PostMerge
             && !IsReleaseBranch(integrationBranch);
         var review = postMergeMode ? ReviewVerificationStore.Read(jobFolderPath) : null;
         IReadOnlyList<string>? deliveryPaths = null;

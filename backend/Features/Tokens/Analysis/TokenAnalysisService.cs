@@ -98,6 +98,20 @@ public sealed class TokenAnalysisService
             remainders, quota, ProjectTokenDataFreshness.Combine(freshness), TokenAnalysisFold.Disclaimer);
     }
 
+    /// <summary>The same reconciled facts used by card analysis, including project-only calls.</summary>
+    internal (IReadOnlyList<(string JobId, TokenAnalysisItem Item)> Items, ProjectTokenDataFreshness Freshness)
+        ProjectCostItems(string projectName, string watchPath, DateTime now)
+    {
+        var rows = ReadWorkspaceRows(out var warning);
+        var build = Build(new TokenAnalysisProjectSource(null, projectName, watchPath), rows, now);
+        var items = build.Jobs.SelectMany(job => job.Items.Select(item => (job.Input.JobId, item)))
+            .Concat(build.Remainder.Select(item => (string.Empty, item))).ToList();
+        var freshness = warning is null ? build.Freshness
+            : ProjectTokenDataFreshness.Combine([build.Freshness,
+                new ProjectTokenDataFreshness { Status = "partial", Warning = warning }]);
+        return (items, freshness);
+    }
+
     public TokenAnalysisCardDetail? CardDetail(TokenAnalysisProjectSource project, string jobId)
     {
         var now = _time.GetUtcNow().UtcDateTime;

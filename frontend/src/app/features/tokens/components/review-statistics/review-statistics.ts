@@ -40,6 +40,8 @@ export class ReviewStatisticsComponent {
     return [
       { key: 'delivery-tokens', title: 'Tokens per delivery review', metric: data.deliveryTokens, unit: 'tokens' },
       { key: 'delivery-usd', title: 'USD per delivery review', metric: data.deliveryUsd, unit: 'usd' },
+      ...(data.deliveryCacheReadTokens ? [{ key: 'delivery-cache-read', title: 'Cache read tokens per delivery review', metric: data.deliveryCacheReadTokens, unit: 'tokens' as const }] : []),
+      ...(data.deliveryCacheWriteTokens ? [{ key: 'delivery-cache-write', title: 'Cache write tokens per delivery review', metric: data.deliveryCacheWriteTokens, unit: 'tokens' as const }] : []),
       { key: 'rounds', title: 'Rounds until acceptance', metric: data.roundsUntilAcceptance, unit: 'number' },
       { key: 'accepted-tokens', title: 'Review tokens per accepted card', metric: data.tokensPerAcceptedCard, unit: 'tokens' },
       { key: 'accepted-usd', title: 'Review USD per accepted card', metric: data.usdPerAcceptedCard, unit: 'usd' },

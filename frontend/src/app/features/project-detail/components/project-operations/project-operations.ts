@@ -2,12 +2,13 @@ import { historyRunStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { DatePipe } from '@angular/common';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, type WritableSignal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, computed, effect, inject, input, output, signal, type WritableSignal } from '@angular/core';
 import { take } from 'rxjs';
 import { hostStateLabel, hostStateTone, metric, ratio, type OperationsLogResult, type OperationsTrace, type OperationsSpan, type ProjectOperations } from './project-operations.model';
 import { OperationsTrendComponent } from '../operations-trend/operations-trend';
 import { LoadingSurfaceComponent, PendingButtonDirective } from '../../../../components/async-feedback';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
+import type { PostMergeCoverage, ProjectTesting } from '../../../../models/task.model';
 
 @Component({
   selector: 'app-project-operations', standalone: true, imports: [StatusIndicatorComponent, DatePipe, OperationsTrendComponent, LoadingSurfaceComponent, PendingButtonDirective],
@@ -20,11 +21,15 @@ export class ProjectOperationsComponent {
   private readGeneration = 0;
   private logGeneration = 0;
   private traceGeneration = 0;
+  private coverageGeneration = 0;
   readonly projectName = input.required<string>();
   readonly openRelease = output<string>();
   readonly openCard = output<string>();
   readonly snapshot = signal<ProjectOperations | null>(null);
+  /** AGT-3965: a fast or balanced project whose develop moved without a post-merge run says so here. */
+  readonly postMergeCoverage = signal<PostMergeCoverage | null>(null);
   readonly error = signal<string | null>(null);
+  readonly pendingWindow = signal<{ starved: boolean; openedAtUtc: string; admissionReason: string } | null>(null);
   readonly selectedEnvironment = signal('');
   readonly since = signal('');
   readonly until = signal('');
@@ -46,10 +51,32 @@ export class ProjectOperationsComponent {
   readonly hostStateTone = hostStateTone;
   readonly projectSlug = computed(() => studioProjectSlug(this.projectName()));
 
+  @HostListener('window:hashchange') onHashChange(): void { this.applyIncidentWindow(); }
+
+  private applyIncidentWindow(): void {
+    const query = window.location.hash.split('?')[1] ?? '';
+    const params = new URLSearchParams(query);
+    if (params.get('view') !== 'operations' || !params.get('environmentId') || !params.get('since')) return;
+    const since = new Date(params.get('since')!);
+    if (Number.isNaN(since.getTime())) return;
+    this.selectedEnvironment.set(params.get('environmentId')!);
+    this.since.set(new Date(since.getTime() - since.getTimezoneOffset() * 60_000).toISOString().slice(0, 16));
+    this.until.set('');
+    if (this.snapshot()) this.search();
+  }
+
   constructor() { effect(() => this.load(this.projectName())); }
 
   load(project: string): void {
+    this.loadCoverage(project);
     const generation = ++this.readGeneration;
+    this.pendingWindow.set(null);
+    this.http.get<{ project: string; pendingWindow?: { starved: boolean; openedAtUtc: string; admissionReason: string } }[]>(
+      '/api/develop-states').pipe(take(1)).subscribe({
+      next: rows => { if (generation === this.readGeneration)
+        this.pendingWindow.set(rows.find(row => row.project === project)?.pendingWindow ?? null); },
+      error: () => { /* Keep the application Operations snapshot available during a state read failure. */ },
+    });
     ++this.logGeneration;
     ++this.traceGeneration;
     this.snapshot.set(null); this.logs.set(null); this.error.set(null); this.release.set('');
@@ -62,11 +89,22 @@ export class ProjectOperationsComponent {
         this.snapshot.set(value); this.error.set(null); this.loading.set(false);
         if (!value.environments.some(item => item.environment.id === this.selectedEnvironment()))
           this.selectedEnvironment.set(value.environments[0]?.environment.id ?? '');
+        this.applyIncidentWindow();
       },
       error: (failure: HttpErrorResponse) => { if (generation === this.readGeneration) {
         this.loading.set(false);
         this.error.set(failure.status === 503 ? 'Operations telemetry store read failed.' : 'Operations data could not be loaded.');
       } },
+    });
+  }
+
+  private loadCoverage(project: string): void {
+    const generation = ++this.coverageGeneration;
+    this.postMergeCoverage.set(null);
+    this.http.get<ProjectTesting>(`/api/projects/${encodeURIComponent(project)}/testing`).pipe(take(1)).subscribe({
+      next: value => { if (generation === this.coverageGeneration) this.postMergeCoverage.set(value.postMergeCoverage ?? null); },
+      // The operations read stays usable; the settings page names the strategy.
+      error: () => { if (generation === this.coverageGeneration) this.postMergeCoverage.set(null); },
     });
   }
 

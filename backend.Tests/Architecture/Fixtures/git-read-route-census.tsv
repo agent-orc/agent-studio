@@ -126,6 +126,7 @@
 /api/git/summary	reachable	measured-zero	-	-
 /api/host/filesystems	free	-	-	-
 /api/hosts/{id}/operations/{attemptId}	free	-	-	-
+/api/instance/deploy/reporter-tokens/	free	-	-	-
 /api/integrations/quality-studio/connection	free	-	-	-
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-
@@ -208,6 +209,7 @@
 /api/projects/{projectName}/deploy/deployments/{deploymentId}	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/deployments/{deploymentId}/log	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/environments	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/projects/{projectName}/deploy/instance	free	-	-	-
 /api/projects/{projectName}/deploy/integration-release	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/lanes	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/operations	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
@@ -279,6 +281,7 @@
 /api/projects/{projectName}/steering/read-analytics	free	-	-	-
 /api/projects/{projectName}/style-guides	free	-	-	-
 /api/projects/{projectName}/tags	free	-	-	-
+/api/projects/{projectName}/testing	free	-	-	-
 /api/projects/{projectName}/throughput	free	-	-	-
 /api/projects/{projectName}/token-usage/analysis/cards/{jobId}	free	-	-	-
 /api/projects/{projectName}/token-usage/expensive	free	-	-	-
@@ -337,6 +340,7 @@
 /api/runner/integration-lease/{projectName}/{integrationBranch}	free	-	-	-
 /api/runner/lease/{taskKey}	free	-	-	-
 /api/runner/orchestrator-feed	reachable	measured-zero	-	-
+/api/runner/post-merge/projects	free	-	-	-
 /api/runner/post-merge/projects/{project}	free	-	-	-
 /api/runner/release-candidates/{project}/{commit}	reachable	gap	Deploy and environments	Release candidate plan from Task Server source facts
 /api/runner/project-chat/status	free	-	-	-

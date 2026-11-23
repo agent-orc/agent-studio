@@ -1,5 +1,5 @@
 import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
-import type { HealthState, StepState } from './deploy-area.model';
+import { HEALTH_LABEL, type DeployHealth, type HealthState, type StepState } from './deploy-area.model';
 
 /**
  * Deploy run and step states mapped onto the shared status tones (AGT-3403).
@@ -38,6 +38,7 @@ const HEALTH_TONE: Readonly<Record<HealthState, StatusTone>> = {
   'crash-loop': 'danger',
   'crash-rollback': 'danger',
   'not-observed': 'neutral',
+  'not-deployed': 'neutral',
 };
 
 export function healthStateTone(state: string | null | undefined): StatusTone {
@@ -51,4 +52,13 @@ export function healthStateTone(state: string | null | undefined): StatusTone {
 export function historyRunStateTone(state: string | null | undefined): StatusTone {
   const tone = runStateTone(state);
   return tone === 'danger' ? 'warning' : tone;
+}
+
+/**
+ * Environment health of {@link buildEnvironmentCards} on the shared status
+ * indicator. Every surface that names an environment state renders this.
+ */
+export function environmentHealthDisplay(health: DeployHealth): { tone: StatusTone; label: string } {
+  if (health.status === 'no-checks') return { tone: 'neutral', label: 'No checks' };
+  return { tone: healthStateTone(health.state), label: HEALTH_LABEL[health.state] };
 }

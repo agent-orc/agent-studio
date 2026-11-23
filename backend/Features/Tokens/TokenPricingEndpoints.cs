@@ -15,7 +15,8 @@ public sealed record TokenPriceCalculationItem(
     DateTime? RecordedAt = null,
     string? Label = null,
     decimal? RecordedCostUsd = null,
-    bool? RecordedModelPriced = null);
+    bool? RecordedModelPriced = null,
+    long? PromptTokens = null);
 
 public sealed record TokenPriceCalculationResult(
     string Model,
@@ -55,9 +56,10 @@ public static class TokenPricingEndpoints
         // Diagnostic: every model id active in recorded workspace usage with
         // at least one call lacking a historical price.
         app.MapGet("/api/token-pricing/unpriced-models",
-            (HttpContext context, string? workspaceId, WorkspaceRegistry workspaces, WorkspaceSettingsService settings,
+            async (HttpContext context, string? workspaceId, WorkspaceRegistry workspaces, WorkspaceSettingsService settings,
                 ProjectRegistry registry, ProjectTokenLedger ledger, AgentMessageBusStore bus,
-                TaskScannerService scanner, IConfiguration configuration) =>
+                TaskScannerService scanner, IConfiguration configuration, TokenEndpointReads reads,
+                CancellationToken ct) =>
             {
                 var workspace = string.IsNullOrWhiteSpace(workspaceId)
                     ? workspaces.List().FirstOrDefault(item => item.IsDefault) ?? workspaces.List().FirstOrDefault()
@@ -71,25 +73,31 @@ public static class TokenPricingEndpoints
                 if (human is not null && !ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User)
                     && visibleProjects.Count == 0)
                     return Results.StatusCode(StatusCodes.Status403Forbidden);
-                var now = DateTime.UtcNow;
-                UsageCalendar calendar;
-                try
+                var includeUnassigned = workspace.IsDefault && (human is null
+                    || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User));
+                // The visible scope is part of the key so permission-filtered results are never shared.
+                var key = "unpriced:" + workspace.Id + "|" + includeUnassigned + "\n" + string.Join("\n", visibleProjects
+                    .Select(project => project.Id).Order(StringComparer.Ordinal));
+                return await reads.ReadAsync(key, () => Task.Run<object>(() =>
                 {
-                    var calendarSettings = settings.Get(workspace.Id);
-                    calendar = UsageCockpitProjection.Calendar(now, calendarSettings.UsageTimeZone,
-                        calendarSettings.UsageWeekStart);
-                }
-                catch (Exception)
-                {
-                    calendar = UsageCockpitProjection.Calendar(now, null, null);
-                }
-                var inputs = UsageCostInputReader.Read(allProjects, visibleProjects, ledger, bus,
-                    scanner, configuration, calendar.WeekStartUtc,
-                    workspace.IsDefault && (human is null
-                        || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User)));
-                return Results.Ok(new UnpricedModelsResponse(
-                    SelectUnpricedModels(pricing, calendar, inputs), now.ToString("o"),
-                    calendar.WeekStartUtc, calendar.WeekEndUtc, calendar.TimeZone));
+                    var now = DateTime.UtcNow;
+                    UsageCalendar calendar;
+                    try
+                    {
+                        var calendarSettings = settings.Get(workspace.Id);
+                        calendar = UsageCockpitProjection.Calendar(now, calendarSettings.UsageTimeZone,
+                            calendarSettings.UsageWeekStart);
+                    }
+                    catch (Exception)
+                    {
+                        calendar = UsageCockpitProjection.Calendar(now, null, null);
+                    }
+                    var inputs = UsageCostInputReader.Read(allProjects, visibleProjects, ledger, bus,
+                        scanner, configuration, calendar.WeekStartUtc, includeUnassigned);
+                    return new UnpricedModelsResponse(
+                        SelectUnpricedModels(pricing, calendar, inputs), now.ToString("o"),
+                        calendar.WeekStartUtc, calendar.WeekEndUtc, calendar.TimeZone);
+                }), ct);
             });
     }
 
@@ -106,8 +114,11 @@ public static class TokenPricingEndpoints
                 Math.Max(0, item.OutputTokens),
                 Math.Max(0, item.CacheReadTokens),
                 Math.Max(0, item.CacheWriteTokens),
-                pricing.Estimate(item.Model, item.InputTokens, item.OutputTokens,
-                    item.CacheReadTokens, item.CacheWriteTokens, at),
+                item.PromptTokens is { } promptTokens
+                    ? pricing.EstimateRequest(item.Model, item.InputTokens, item.OutputTokens,
+                        item.CacheReadTokens, item.CacheWriteTokens, Math.Max(0, promptTokens), at)
+                    : pricing.Estimate(item.Model, item.InputTokens, item.OutputTokens,
+                        item.CacheReadTokens, item.CacheWriteTokens, at),
                 item.RecordedCostUsd, item.RecordedModelPriced);
         }).ToList();
     }

@@ -9,6 +9,9 @@ public sealed record PostMergeRunOptions(string Project, string Checkout, string
     string Branch, string Remote, string TokenFile, string Mode, int MaxMerges,
     TimeSpan Window, int MaxSlots, IReadOnlyList<string> StateDirectories, bool DryRun)
 {
+    public string? RepositoryUrl { get; init; }
+    public bool RecordSkips { get; init; } = true;
+
     public static PostMergeRunOptions Parse(IReadOnlyList<string> args,
         IReadOnlyDictionary<string, string?> environment)
     {
@@ -87,20 +90,20 @@ public sealed class PostMergeRunCommand
         return await new PostMergeRunCommand(options, output, TimeProvider.System, http).ExecuteAsync(ct);
     }
 
-    public async Task<int> ExecuteAsync(CancellationToken ct)
+    public async Task<int> ExecuteAsync(CancellationToken ct, bool observeOnly = false)
     {
         if (_options.DryRun)
         {
             _output.WriteLine($"post-merge dry-run project={_options.Project} mode={_options.Mode} checkout={_options.Checkout}");
             _output.WriteLine($"Would fetch {_options.Remote}/{_options.Branch}, pin FETCH_HEAD, and read the project state.");
             _output.WriteLine(_options.Mode == "window"
-                ? $"Would close after {_options.MaxMerges} merges or {_options.Window.TotalMinutes:0} minutes; run the affected-test union."
+                ? $"Would close after {_options.MaxMerges} merges or {_options.Window.TotalMinutes:0} minutes; run the base suite and the affected-test union."
                 : "Would run the full routine suite on the fetched tip across free slots.");
             var read = ProjectDefinitionReader.ReadWorkspace(_options.Checkout);
             if (read.Definition is null) return 1;
-            _output.WriteLine("Window test commands are resolved from each fetched merge; this is the full fallback plan.");
-            foreach (var command in PostMergeRunPlan.Build(read.Definition, _options.Mode,
-                         _options.Mode == "window" ? [".agent-studio/project.yml"] : []))
+            _output.WriteLine("Window test commands are resolved from each fetched merge; this is the widest plan.");
+            foreach (var command in PostMergeRunPlan.Build(read.Definition, _options.Mode, [],
+                         _options.Mode == "window" ? PostMergeWindowSuiteModes.Routine : null))
                 _output.WriteLine($"Would run: {command}");
             return 0;
         }
@@ -110,47 +113,89 @@ public sealed class PostMergeRunCommand
 
         Directory.CreateDirectory(_options.Checkout);
         using var claim = ClaimCheckout();
-        if (claim is null) { _output.WriteLine("post-merge checkout already claimed"); return 0; }
+        var readOnlyObservation = claim is null && observeOnly && _options.RepositoryUrl is not null;
+        if (claim is null && !readOnlyObservation)
+        { _output.WriteLine("post-merge checkout already claimed"); return 0; }
         var host = _probeHost();
-        if (host.ActiveSlots >= _options.MaxSlots
-            || host.LoadPerCore is { } load && load > CoverageRunOptions.DefaultMaxLoadPerCore)
+        var admissionReason = host.ActiveSlots >= _options.MaxSlots
+            || host.LoadPerCore is { } load && load > CoverageRunOptions.DefaultMaxLoadPerCore
+            ? $"{host.ActiveSlots} occupied slots, load {host.LoadPerCore:0.00}" : null;
+        if (readOnlyObservation) admissionReason = "post-merge checkout occupied";
+        var freeSlots = Math.Max(0, _options.MaxSlots - host.ActiveSlots);
+        if (!readOnlyObservation)
         {
-            _output.WriteLine($"post-merge waiting: {host.ActiveSlots} occupied slots, load {host.LoadPerCore:0.00}");
-            return 0;
+            if (!Directory.Exists(Path.Combine(_options.Checkout, ".git"))
+                && !File.Exists(Path.Combine(_options.Checkout, ".git")))
+            {
+                if (_options.RepositoryUrl is null)
+                    throw new IOException("Post-merge checkout is not a git checkout.");
+                // The checkout claim already occupies this directory. Initialize and fetch
+                // in place so a failed first fetch is recoverable on the next poll.
+                var initialized = await Git(ct, "init", "--quiet");
+                if (!initialized.Success) throw new IOException(initialized.StdErr);
+            }
+            if (_options.RepositoryUrl is { } repository)
+            {
+                var remote = await Git(ct, "remote", "get-url", _options.Remote);
+                var configured = remote.Success
+                    ? await Git(ct, "remote", "set-url", _options.Remote, repository)
+                    : await Git(ct, "remote", "add", _options.Remote, repository);
+                if (!configured.Success) throw new IOException(configured.StdErr);
+            }
+            var dirty = await Git(ct, "status", "--porcelain", "--untracked-files=no");
+            if (!dirty.Success) throw new IOException(dirty.StdErr);
+            if (dirty.StdOut.Trim().Length > 0)
+            {
+                if (_options.RepositoryUrl is null)
+                    throw new IOException("Post-merge checkout has tracked changes.");
+                // The host owns this dedicated clone. Commands may have changed a
+                // tracked generated file during the previous run; restore its base.
+                var reset = await Git(ct, "reset", "--quiet", "--hard", "HEAD");
+                if (!reset.Success) throw new IOException(reset.StdErr);
+            }
         }
-        var freeSlots = _options.MaxSlots - host.ActiveSlots;
-        if (!Directory.Exists(Path.Combine(_options.Checkout, ".git"))
-            && !File.Exists(Path.Combine(_options.Checkout, ".git")))
-            throw new IOException("Post-merge checkout is not a git checkout.");
-        var dirty = await Git(ct, "status", "--porcelain", "--untracked-files=no");
-        if (!dirty.Success || dirty.StdOut.Trim().Length > 0)
-            throw new IOException("Post-merge checkout has tracked changes.");
         var state = await _http.GetFromJsonAsync<PostMergeProjectState>(StateUrl(), Json, ct)
             ?? throw new IOException("Post-merge state was unavailable.");
-        var fetch = await Git(ct, "fetch", "--quiet", _options.Remote, _options.Branch);
+        // An active suite owns the checkout and FETCH_HEAD. Observers only
+        // update this separate ref and Git's object database, never its worktree.
+        const string observationRef = "refs/agent-studio/post-merge-observed";
+        var fetchedRef = readOnlyObservation ? observationRef : "FETCH_HEAD";
+        var fetch = readOnlyObservation
+            ? await Git(ct, "fetch", "--quiet", "--no-write-fetch-head", _options.RepositoryUrl!,
+                $"+{_options.Branch}:{observationRef}")
+            : await Git(ct, "fetch", "--quiet", _options.Remote, _options.Branch);
         if (!fetch.Success) throw new IOException(fetch.StdErr);
-        var resolved = await Git(ct, "rev-parse", "--verify", "FETCH_HEAD^{commit}");
+        var resolved = await Git(ct, "rev-parse", "--verify", fetchedRef + "^{commit}");
         if (!resolved.Success) throw new IOException(resolved.StdErr);
         var tip = resolved.StdOut.Trim();
         var now = _clock.GetUtcNow();
         var id = Guid.NewGuid().ToString("N");
-        if (string.Equals(tip, state.LastGreenSha, StringComparison.OrdinalIgnoreCase))
+        var nightlyChecked = _options.Mode == "nightly" && state.Runs.Any(run => run.Kind == "nightly"
+            && run.Status == "green" && run.TipSha == tip
+            && run.StartedAtUtc.UtcDateTime.Date == now.UtcDateTime.Date);
+        if (string.Equals(tip, state.LastGreenSha, StringComparison.OrdinalIgnoreCase)
+            && (_options.Mode == "window" || nightlyChecked))
         {
+            await ObserveWindow(tip, null, now, state.WindowMinutes ?? (int)_options.Window.TotalMinutes, null, ct);
+            if (observeOnly || admissionReason is not null || !_options.RecordSkips) return 0;
             var skipped = new PostMergeRunRecord(id, _options.Project, _options.Mode, tip,
                 state.LastWindowTipSha, null, null, 0, [], [], "skipped", now, now,
-                "develop has not moved since the last green run");
+                nightlyChecked ? "nightly routine suite already green on this tip today"
+                    : "develop has not moved since the last green run");
             await Post(skipped, ct);
             _output.WriteLine($"post-merge skipped tip={tip}");
             return 0;
         }
 
-        var from = state.LastWindowTipSha;
+        var from = observeOnly ? state.ActiveRun?.TipSha ?? state.LastWindowTipSha : state.LastWindowTipSha;
         IReadOnlyList<(string Sha, DateTimeOffset At)> merges = [];
         if (_options.Mode == "window")
         {
             // First observation starts a window at the current first-parent commit.
-            var range = from is null ? "FETCH_HEAD^..FETCH_HEAD" : $"{from}..{tip}";
-            var history = await Git(ct, "log", "--first-parent", "--format=%H%x09%cI", range);
+            var range = from is null ? fetchedRef : $"{from}..{tip}";
+            var history = from is null
+                ? await Git(ct, "log", "-1", "--first-parent", "--format=%H%x09%cI", range)
+                : await Git(ct, "log", "--first-parent", "--format=%H%x09%cI", range);
             if (!history.Success) throw new IOException(history.StdErr);
             merges = history.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Select(line => line.Split('\t'))
@@ -162,9 +207,16 @@ public sealed class PostMergeRunCommand
                 state.WindowMaxMerges ?? _options.MaxMerges,
                 state.WindowMinutes is { } minutes
                     ? TimeSpan.FromMinutes(minutes) : _options.Window);
+            await ObserveWindow(tip, merges.Count == 0 ? null : merges.Min(merge => merge.At), now,
+                state.WindowMinutes ?? (int)_options.Window.TotalMinutes, admissionReason, ct);
             if (!close.Close) { _output.WriteLine($"post-merge pending tip={tip}: {close.Reason}"); return 0; }
         }
 
+        if (observeOnly || admissionReason is not null)
+        {
+            if (admissionReason is not null) _output.WriteLine($"post-merge waiting: {admissionReason}");
+            return 0;
+        }
         var checkout = await Git(ct, "checkout", "--quiet", "--detach", "--force", tip);
         if (!checkout.Success) throw new IOException(checkout.StdErr);
         var definition = ProjectDefinitionReader.ReadWorkspace(_options.Checkout).Definition
@@ -183,15 +235,17 @@ public sealed class PostMergeRunCommand
             }
             changed = changed.Distinct(StringComparer.Ordinal).ToList();
         }
-        var commands = PostMergeRunPlan.Build(definition, _options.Mode, changed);
+        var commands = PostMergeRunPlan.Build(definition, _options.Mode, changed, state.WindowSuites);
         var opened = merges.Count == 0 ? (DateTimeOffset?)null : merges.Min(merge => merge.At);
         var started = new PostMergeRunRecord(id, _options.Project, _options.Mode, tip,
-            from, opened, now, merges.Count, commands, [], "running", now, null);
+            from, opened, now, merges.Count, commands, [], "running", now, null,
+            StartLoadPerCore: host.LoadPerCore, StartOccupiedSlots: host.ActiveSlots);
         await Post(started, ct);
         var verdicts = new List<PostMergeCommandVerdict>();
         var quarantinedFailures = 0;
         foreach (var command in commands)
         {
+            var verdictStart = verdicts.Count;
             var suite = definition.TestSuites.FirstOrDefault(item => item.Command == command);
             if (_options.Mode == "nightly" && suite is not null
                 && freeSlots > 1 && command.Contains("dotnet test ", StringComparison.Ordinal)
@@ -219,23 +273,18 @@ public sealed class PostMergeRunCommand
                     result.ExitCode == 0 ? null : PostMergeAttributor.Excerpt(result.Output),
                     result.ExitCode == 0 ? null : PostMergeAttributor.FailedTests(result.Output)));
             }
-            foreach (var failingVerdict in verdicts.Where(verdict => verdict.ExitCode != 0).ToArray())
+            if (suite is not null)
             {
-                if (!definition.TestSuites.Any(suite => failingVerdict.Command == suite.Command
-                        || failingVerdict.Command.StartsWith(suite.Command + " ", StringComparison.Ordinal)
-                        || suite.Command.Contains("dotnet test ", StringComparison.Ordinal)
-                        && failingVerdict.Command.Contains(suite.Command.Split(" --filter", StringSplitOptions.None)[0],
-                            StringComparison.Ordinal)))
-                    continue;
-                var observed = failingVerdict.FailedTests ?? PostMergeAttributor.FailedTests(failingVerdict.OutputTail ?? "");
-                var blocking = PostMergeAttributor.BlockingTests(_options.Checkout, observed, _clock.GetUtcNow());
-                var focused = PostMergeAttributor.FocusedCommand(failingVerdict.Command, blocking);
-                var knownFlake = observed.Count > 0 && blocking.Count == 0;
-                if (!knownFlake && focused is not null)
-                    knownFlake = (await RunCommand(focused, definition.Environment, ct)).ExitCode == 0;
-                if (!knownFlake) continue;
-                verdicts[verdicts.IndexOf(failingVerdict)] = failingVerdict with { ExitCode = 0 };
-                quarantinedFailures++;
+                // Retry only this suite's new verdicts, including shards. Build and prepare failures
+                // are not test failures and must remain blocking.
+                for (var index = verdictStart; index < verdicts.Count; index++)
+                {
+                    if (verdicts[index].ExitCode == 0) continue;
+                    verdicts[index] = await PostMergeTestRetry.RepeatAsync(verdicts[index],
+                        tests => PostMergeAttributor.BlockingTests(_options.Checkout, tests, _clock.GetUtcNow()),
+                        retry => RunCommand(retry, definition.Environment, ct));
+                    if (verdicts[index].ExitCode == 0) quarantinedFailures++;
+                }
             }
             if (verdicts.Any(verdict => verdict.ExitCode != 0)) break;
         }
@@ -370,7 +419,7 @@ public sealed class PostMergeRunCommand
         return new(fingerprint, blocking, excerpt, failingPaths,
             candidates.Select(candidate => candidate.Sha).TakeLast(512).ToArray(),
             attributed, clean, laterDepends,
-            AttributedTaskId: attributedTaskId);
+            AttributedTaskId: attributedTaskId, NoRelevantMerges: candidates.Count == 0);
     }
 
     private FileStream? ClaimCheckout()
@@ -383,6 +432,8 @@ public sealed class PostMergeRunCommand
     private IReadOnlyDictionary<string, string?> ChildEnvironment(IReadOnlyDictionary<string, string> values)
     {
         var environment = values.ToDictionary(pair => pair.Key, pair => (string?)pair.Value);
+        environment["RUNNER_AUTH_TOKEN"] = null;
+        environment["RUNNER_AUTH_TOKEN_FILE"] = null;
         environment["POST_MERGE_TOKEN_FILE"] = null;
         environment["POST_MERGE_SERVER_URL"] = null;
         return environment;
@@ -407,6 +458,14 @@ public sealed class PostMergeRunCommand
         {
             return (124, true, "");
         }
+    }
+
+    private async Task ObserveWindow(string tip, DateTimeOffset? opened, DateTimeOffset now,
+        int minutes, string? admissionReason, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(StateUrl() + "/window",
+            new PostMergeWindowObservation(tip, opened, now, minutes, admissionReason), Json, ct);
+        response.EnsureSuccessStatusCode();
     }
 
     private string StateUrl() => $"api/runner/post-merge/projects/{Uri.EscapeDataString(_options.Project)}";

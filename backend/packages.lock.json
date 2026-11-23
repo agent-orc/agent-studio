@@ -97,9 +97,9 @@
       },
       "TokenEconomy": {
         "type": "Direct",
-        "requested": "[0.3.7, 0.3.7]",
-        "resolved": "0.3.7",
-        "contentHash": "3T+WOWWfdQ0OW2yBrq+1esn/203x0nuavtzOjpQbzOYF6un0ywh7Anl7qScl3eZrVxZZA7zngjGYDOyXEEc1ng=="
+        "requested": "[0.3.9, 0.3.9]",
+        "resolved": "0.3.9",
+        "contentHash": "1DXcBwnm9TIrWFAKmofKH99LcXlEaQyc4Dx1f25W0+tPfF9PJXTZ7NemxtCNvoLhQZb/zS0umhhkEZqWvqSGSw=="
       },
       "AngleSharp.Css": {
         "type": "Transitive",
