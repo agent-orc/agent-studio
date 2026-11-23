@@ -289,7 +289,7 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
 
         Assert.Equal("empty", deferred.Status);
         Assert.Equal(Contract.ReviewClaimEmptyReasons.QuotaDeferred, deferred.Reason);
-        Assert.Contains("Weekly quota reached", deferred.Message!, StringComparison.Ordinal);
+        Assert.Contains("weekly token limit", deferred.Message!, StringComparison.Ordinal);
         Assert.Equal("claimed", claimed.Status);
         Assert.Equal("AGT-1", claimed.Attempt!.TaskId);
     }
@@ -368,7 +368,7 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
         Assert.Equal("OTH-1", first.Attempt!.TaskId);
         Assert.Equal("empty", second.Status);
         Assert.Equal(Contract.ReviewClaimEmptyReasons.QuotaDeferred, second.Reason);
-        Assert.Contains("Weekly quota reached", second.Message!, StringComparison.Ordinal);
+        Assert.Contains("weekly token limit", second.Message!, StringComparison.Ordinal);
         var skipped = authority.GetReview(older)!;
         Assert.Equal(AttemptLifecycleState.Pending, skipped.State);
         Assert.Equal(0, skipped.LastFence);

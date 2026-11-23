@@ -223,7 +223,7 @@ public sealed class MonolithGateStore
 
     /// <summary>
     /// Quota verdicts per queued subject task, read before the claim lock: one
-    /// task index read and at most one admission per project. Null when no
+    /// task index read and an admission using each resolved card. Null when no
     /// quota limit exists, so claims do no quota work at all.
     /// </summary>
     private Dictionary<string, AgentStudio.Quota.QuotaAdmission>? QuotaVerdicts()
@@ -236,22 +236,20 @@ public sealed class MonolithGateStore
                 .Select(record => record.Subject.TaskId).Distinct(StringComparer.Ordinal).ToArray();
         var verdicts = new Dictionary<string, AgentStudio.Quota.QuotaAdmission>(StringComparer.Ordinal);
         if (taskIds.Length == 0) return verdicts;
-        var projects = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var cards = new Dictionary<string, TaskInfo>(StringComparer.OrdinalIgnoreCase);
         foreach (var task in _scanner?.ScanAllJobsWithArchive() ?? [])
             foreach (var alias in new[] { task.Id, task.Key, task.TaskKey })
-                if (!string.IsNullOrWhiteSpace(alias)) projects.TryAdd(alias, task.ProjectName);
-        var byProject = new Dictionary<string, AgentStudio.Quota.QuotaAdmission>(StringComparer.OrdinalIgnoreCase);
+                if (!string.IsNullOrWhiteSpace(alias)) cards.TryAdd(alias, task);
         foreach (var taskId in taskIds)
         {
-            if (!projects.TryGetValue(taskId, out var project))
+            if (!cards.TryGetValue(taskId, out var task))
             {
                 // Like an unregistered project: admitted, and the meter gap is named on the claim.
                 verdicts[taskId] = new(true,
                     $"Gate card '{taskId}' could not be resolved to a project; quota admission is off for it.", true);
                 continue;
             }
-            if (!byProject.TryGetValue(project, out var admission))
-                byProject[project] = admission = _workspaceQuota.Admit(project);
+            var admission = _workspaceQuota.Admit(task);
             verdicts[taskId] = admission;
         }
         return verdicts;

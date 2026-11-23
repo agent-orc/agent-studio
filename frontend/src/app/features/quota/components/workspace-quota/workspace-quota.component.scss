@@ -21,3 +21,5 @@
 .workspace-quota__trend { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); font-variant-numeric: tabular-nums; }
 .workspace-quota__editor label, .workspace-quota__override label { display: grid; gap: var(--studio-spacing-1); }
 .workspace-quota input { width: 10rem; }
+
+.workspace-quota input[type='checkbox'] { width: auto; justify-self: start; }

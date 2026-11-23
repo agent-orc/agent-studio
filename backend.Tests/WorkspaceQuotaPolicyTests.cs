@@ -8,6 +8,39 @@ public sealed class WorkspaceQuotaPolicyTests
 {
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 18, 23, 59, 0, TimeSpan.Zero));
 
+    [Theory]
+    [InlineData(79, "ok", true)]
+    [InlineData(80, "warning", true)]
+    [InlineData(100, "blocked", false)]
+    public void Weekly_usd_budget_is_an_admission_limit(decimal spent, string status, bool allowed)
+    {
+        var limits = new QuotaLimits(null, null, null, WeeklyBudgetUsd: 100);
+        var usage = new QuotaUsage(1000000, spent, 0, 0);
+        Assert.Equal(status, WorkspaceQuotaPolicy.Status(limits, usage));
+        Assert.Equal(allowed, WorkspaceQuotaPolicy.Allows(limits, usage, false));
+    }
+
+    [Fact]
+    public void Token_limit_can_exclude_cache_reads_without_changing_total_usage()
+    {
+        var usage = new QuotaUsage(1000, 0, 0, 0, UncachedTokens: 25);
+        var limits = new QuotaLimits(100, null, null);
+        Assert.False(WorkspaceQuotaPolicy.Allows(limits, usage, false));
+        Assert.True(WorkspaceQuotaPolicy.Allows(limits with { IncludeCacheReads = false }, usage, false));
+        Assert.Equal("ok", WorkspaceQuotaPolicy.Status(limits with { IncludeCacheReads = false }, usage));
+    }
+
+    [Fact]
+    public void Reached_message_names_each_limit_amount_and_actual_reset()
+    {
+        var reset = new DateTime(2026, 11, 23, 0, 0, 0, DateTimeKind.Utc);
+        var message = WorkspaceQuotaPolicy.ReachedMessage(new QuotaLimits(100, null, null, 5),
+            new QuotaUsage(100, 6, 0, 0), reset);
+        Assert.Contains("weekly USD budget 6.00 / 5.00 USD", message);
+        Assert.Contains("including cache reads", message);
+        Assert.Contains("2026-11-23 00:00 UTC", message);
+    }
+
     [Fact]
     public void Week_rolls_over_on_monday_utc()
     {

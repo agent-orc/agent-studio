@@ -349,6 +349,9 @@ export function buildCliDetailView(
 // --------------------------------------------------------- cost section
 
 export interface UsageProjectRowView {
+  budget?: string | null;
+  budgetRemaining?: string | null;
+  budgetSpent?: string | null;
   key: string;
   name: string;
   unattributed: boolean;
@@ -397,6 +400,7 @@ export interface UsageCostDetailView {
   budgetDaily: string | null;
   budgetDailyRemaining: string | null;
   budgetWeekly: string | null;
+  budgetWeeklySpent?: string | null;
   budgetWeeklyRemaining: string | null;
   dayStart: UsageInstantView | null;
   dayEnd: UsageInstantView | null;
@@ -478,6 +482,9 @@ export function buildCostDetailView(snapshot: UsageCockpitResponse, now: number)
       unattributed,
       today: formatUsdExact(p.todayUsd) ?? NOT_AVAILABLE,
       week: formatUsdExact(p.weekUsd) ?? NOT_AVAILABLE,
+      budget: formatUsdExact(p.weeklyBudgetUsd),
+      budgetSpent: formatUsdExact(p.budgetWeekSpentUsd),
+      budgetRemaining: remaining(p.weeklyBudgetUsd, p.budgetWeekSpentUsd ?? null),
       coverageLabel: status && status !== 'complete' ? stateWording(status as UsageChipState) ?? status : null,
       todayHref: ledgerHref(rangeScope(snapshot.workspaceId, calendar, 'today', p.projectId ?? UNATTRIBUTED_KEY)),
     };
@@ -517,7 +524,8 @@ export function buildCostDetailView(snapshot: UsageCockpitResponse, now: number)
     budgetDaily: usd(cost.dailyBudgetUsd),
     budgetDailyRemaining: remaining(cost.dailyBudgetUsd, cost.todayUsd),
     budgetWeekly: usd(cost.weeklyBudgetUsd),
-    budgetWeeklyRemaining: remaining(cost.weeklyBudgetUsd, cost.weekUsd),
+    budgetWeeklySpent: usd(cost.budgetWeekSpentUsd ?? cost.weekUsd),
+    budgetWeeklyRemaining: remaining(cost.weeklyBudgetUsd, cost.budgetWeekSpentUsd ?? cost.weekUsd),
     dayStart: instantView(calendar.dayStartUtc, zone),
     dayEnd: instantView(calendar.dayEndUtc, zone),
     weekStart: instantView(calendar.weekStartUtc, zone),

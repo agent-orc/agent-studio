@@ -138,7 +138,7 @@ export function observeCost(cost: UsageCostProjection, now: number): UsageSource
   if (status !== 'unavailable' && status !== 'suspicious') {
     const periods: [UsageBudgetPeriod, number | null, number | null | undefined, string | undefined, string | undefined][] = [
       ['daily', cost.todayUsd, cost.dailyBudgetUsd, cost.calendar?.dayStartUtc, cost.calendar?.dayEndUtc],
-      ['weekly', cost.weekUsd, cost.weeklyBudgetUsd, cost.calendar?.weekStartUtc, cost.calendar?.weekEndUtc],
+      ['weekly', cost.budgetWeekSpentUsd ?? cost.weekUsd, cost.weeklyBudgetUsd, cost.budgetWeekStartUtc ?? cost.calendar?.weekStartUtc, cost.budgetWeekEndUtc ?? cost.calendar?.weekEndUtc],
     ];
     for (const [period, amount, budget, startIso, endIso] of periods) {
       const start = epoch(startIso);

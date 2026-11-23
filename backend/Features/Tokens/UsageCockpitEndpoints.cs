@@ -40,7 +40,7 @@ public static class UsageCockpitEndpoints
             AttemptAuthorityService reviews,
             RemoteChatWorkBroker chatWork,
             LocalChatUsageTracker localChatWork,
-            IConfiguration configuration) =>
+            IConfiguration configuration, AgentStudio.Quota.WorkspaceQuotaService workspaceQuotas) =>
         {
             var workspace = string.IsNullOrWhiteSpace(workspaceId)
                 ? workspaces.List().FirstOrDefault(item => item.IsDefault) ?? workspaces.List().FirstOrDefault()
@@ -88,6 +88,17 @@ public static class UsageCockpitEndpoints
             var costInputs = UsageCostInputReader.Read(allProjects, visibleProjects, ledger, bus,
                 scanner, configuration, calendar.WeekStartUtc, canAssignUnattributed);
             var cost = UsageCockpitProjection.Cost(pricing, calendar, costInputs, DateTime.UtcNow);
+            var budget = (human is null || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User))
+                && workspaceQuotas.Limits(workspace.Id)?.WeeklyBudgetUsd is not null
+                ? workspaceQuotas.Snapshot(workspace.Id) : null;
+            cost = cost with { WeeklyBudgetUsd = budget?.Limits?.WeeklyBudgetUsd,
+                BudgetWeekSpentUsd = budget?.Usage.ModelCostUsd, BudgetWeekEndUtc = budget?.WeekEndUtc, BudgetWeekStartUtc = budget?.WeekStartUtc,
+                Projects = cost.Projects.Select(child => {
+                    if (child.ProjectId is null || workspaceQuotas.Limits(workspace.Id, child.ProjectId)?.WeeklyBudgetUsd is null) return child;
+                    var projectBudget = workspaceQuotas.Snapshot(workspace.Id, child.ProjectId);
+                    return child with { WeeklyBudgetUsd = projectBudget.Limits?.WeeklyBudgetUsd,
+                        BudgetWeekSpentUsd = projectBudget.Usage.ModelCostUsd };
+                }).ToList() };
             sourceStates["cost"] = cost.Coverage;
 
             var runnerState = TryRead(() => runner.GetStatus(), now);
