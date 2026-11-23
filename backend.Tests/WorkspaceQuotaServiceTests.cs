@@ -53,6 +53,44 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
             Assert.Contains("card-budget-tokens", refusals[prefix + alias]);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Claim_admission_reuses_resolved_cards_without_rescanning_the_archive(bool review)
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "claim-cards"), "Claim cards", workspace.Id, _clock);
+        SeedTask(project.StorageLocation, "blocked-card", key: "CLM-1");
+        SeedTask(project.StorageLocation, "eligible-card", key: "CLM-2");
+        SeedTask(project.StorageLocation, "archived-card", key: "CLM-3", state: TaskStates.Archive);
+        var scanner = new CountingScanner(services);
+        var quota = ActivatorUtilities.CreateInstance<WorkspaceQuotaService>(services, scanner);
+        quota.SetCardBudget(workspace.Id, project.Id, "CLM-1", new(null, 0));
+        scanner.FolderReads = 0;
+
+        if (review)
+        {
+            var blocked = V1ReviewPlaneEndpoints.WorkspaceQuotaBlockedReviews(["CLM-1", "CLM-2"], scanner, quota);
+            Assert.Contains("card-budget-tokens", Assert.Single(blocked).Value);
+            Assert.Contains("CLM-1", blocked.Keys);
+        }
+        else
+        {
+            var store = new MonolithGateStore((string?)null, _clock, new GateHosts(), quota, scanner);
+            store.Create(GateSubject("CLM-1"));
+            store.Create(GateSubject("CLM-2") with { SourceRunId = "run-2" });
+            var claimed = store.Claim(new GateClaimRequest("gate-a", "instance-a"));
+            Assert.Equal("claimed", claimed.Status);
+            Assert.Equal("CLM-2", claimed.Subject!.TaskId);
+        }
+
+        Assert.Equal(3, scanner.FolderReads);
+    }
+
     private sealed class CountingScanner(IServiceProvider services) : TaskScannerService(
         services.GetRequiredService<IConfiguration>(),
         services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<TaskScannerService>>(),

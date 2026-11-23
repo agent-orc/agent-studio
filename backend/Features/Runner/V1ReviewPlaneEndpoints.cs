@@ -2863,8 +2863,8 @@ public static class V1ReviewPlaneEndpoints
     }
 
     /// <summary>
-    /// AGT-3177: workspace quota refusals per open review task. Each project is
-    /// admitted once from the task index; without any quota limit nothing is read.
+    /// AGT-3177: workspace quota refusals per open review task. Each card is
+    /// admitted from one task snapshot; without any quota limit nothing is read.
     /// </summary>
     internal static IReadOnlyDictionary<string, string> WorkspaceQuotaBlockedReviews(
         IReadOnlyList<string> taskKeys,
@@ -2879,7 +2879,7 @@ public static class V1ReviewPlaneEndpoints
             var key = new[] { task.TaskKey, task.Key, task.Id }
                 .FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate) && wanted.Contains(candidate));
             if (key is null) continue;
-            var verdict = workspaceQuota.Admit(task.ProjectName, cardId: task.Id);
+            var verdict = workspaceQuota.Admit(task);
             if (!verdict.Allowed) blocked.TryAdd(key, verdict.Message ?? "Workspace quota reached.");
         }
         return blocked;
