@@ -29,8 +29,7 @@ import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../
 import { ProjectDragDropService } from '../../../shell';
 import { ExplorerSectionsService } from '../../services/explorer-sections.service';
 import { ExplorerProjectActionsService } from '../../services/explorer-project-actions.service';
-import { BOARD_ACTIVE_WORK_TOOLTIP, boardLaneCountsLabel, laneCountsFor } from '../../studio-shell.project-rows';
-import { ExplorerLaneDashboardComponent, type ExplorerTreeMetricView } from '../explorer-lane-dashboard/explorer-lane-dashboard.component';
+import { type ExplorerTreeMetricView } from '../explorer-lane-dashboard/explorer-lane-dashboard.component';
 import {
   aggregateAutoPickup,
   aggregateAutoPickupTooltip,
@@ -40,10 +39,9 @@ import {
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { ExplorerAutoPickupIndicatorComponent } from '../explorer-auto-pickup-indicator/explorer-auto-pickup-indicator.component';
 import type { WorkbenchListItem } from '../../../../models/project-docs.model';
-import { ExplorerWorkbenchListComponent } from '../explorer-workbench-list/explorer-workbench-list.component';
-import { QualityStudioExplorerRowComponent } from '../quality-studio-explorer-row/quality-studio-explorer-row.component';
+import { ExplorerProjectDestinationsComponent, type ProjectDestination } from '../explorer-project-destinations/explorer-project-destinations';
 import {
-  buildExplorerWorkspaceGroups,
+  buildExplorerWorkspaceGroups, explorerUrlAriaLabel,
   type ExplorerProjectNode,
   type ExplorerProjectRow,
   type ExplorerWorkspaceGroup,
@@ -53,7 +51,7 @@ export type {
   ExplorerProjectRow,
   ExplorerWorkspaceGroup,
 } from './explorer-workspace-groups';
-export type ExplorerProjectSurface = 'board' | 'hub' | 'wiki' | 'deploy' | 'operations' | 'workbenches' | 'workbench';
+export type ExplorerProjectSurface = 'board' | 'hub' | 'settings' | 'wiki' | 'deploy' | 'operations' | 'workbenches' | 'workbench';
 export interface ActiveExplorerWorkbench {
   projectName: string;
   workbenchId: string;
@@ -70,7 +68,7 @@ export interface ActiveExplorerWorkbench {
 @Component({
   selector: 'app-explorer-workspace-tree',
   standalone: true,
-  imports: [CdkDrag, CdkDropList, CdkDropListGroup, SectionHeaderComponent, TreeRowComponent, StudioIconComponent, EmptyStateComponent, TooltipDirective, MenuComponent, ExplorerAutoPickupIndicatorComponent, ExplorerLaneDashboardComponent, ExplorerWorkbenchListComponent, QualityStudioExplorerRowComponent, StatusIndicatorComponent],
+  imports: [CdkDrag, CdkDropList, CdkDropListGroup, SectionHeaderComponent, TreeRowComponent, StudioIconComponent, EmptyStateComponent, TooltipDirective, MenuComponent, ExplorerAutoPickupIndicatorComponent, ExplorerProjectDestinationsComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './explorer-workspace-tree.component.html',
@@ -89,6 +87,7 @@ export class ExplorerWorkspaceTreeComponent {
   readonly projectStorageByName = input<ReadonlyMap<string, string>>(new Map());
   readonly expandedProjects = input<ReadonlySet<string>>(new Set());
   readonly showAllActive = input(false);
+  readonly activeProjectName = input<string | null>(null);
   readonly activeProjectSurface = input<ExplorerProjectSurface | null>(null);
   readonly activeWorkbench = input<ActiveExplorerWorkbench | null>(null);
   /** Monotonic command from the tree head. Each new value closes every
@@ -100,6 +99,7 @@ export class ExplorerWorkspaceTreeComponent {
   readonly showAll = output<void>();
   readonly toggleExpanded = output<string>();
   readonly openBoardRequest = output<string>();
+  readonly openSettingsRequest = output<string>();
   readonly openHubRequest = output<string>();
   readonly openDeployRequest = output<string>();
   readonly openOperationsRequest = output<string>();
@@ -192,7 +192,7 @@ export class ExplorerWorkspaceTreeComponent {
       this.projectRows(),
       this.registryWorkspaces(),
       this.registryProjects(),
-      this.projectStorageByName(),
+      this.projectStorageByName(), this.activeProjectName(),
     ));
 
   private lastRevealedNavigationPath: string | null = null;
@@ -262,9 +262,12 @@ export class ExplorerWorkspaceTreeComponent {
     event?.stopPropagation();
     window.open(url, '_blank', 'noopener');
   }
-  readonly laneCountsFor = laneCountsFor;
-  readonly boardLaneCountsLabel = boardLaneCountsLabel;
-  readonly boardActiveWorkTooltip = BOARD_ACTIVE_WORK_TOOLTIP;
+  navigateProject(name: string, destination: ProjectDestination): void {
+    const requests = { board: this.openBoardRequest, workbenches: this.openWorkbenchesRequest,
+      deploy: this.openDeployRequest, operations: this.openOperationsRequest,
+      wiki: this.openWikiRequest, hub: this.openHubRequest, settings: this.openSettingsRequest };
+    requests[destination].emit(name);
+  }
 
   autoPickupFor(name: string): ProjectAutoPickupIndicator {
     return this.projectAutoPickupByName().get(name) ?? {
@@ -434,11 +437,7 @@ export class ExplorerWorkspaceTreeComponent {
     return [url.label, url.url, statusLabel].join('\n');
   }
 
-  urlAriaLabel(p: ExplorerProjectNode, url: RegistryProjectUrl): string {
-    return url.id === 'repo'
-      ? `Repository, open Git View for ${p.displayLabel}`
-      : `${url.label}, opens ${url.url} as an embedded preview tab`;
-  }
+  readonly urlAriaLabel = explorerUrlAriaLabel;
   onDragStart(p: ExplorerProjectNode): void {
     this.projectDrag.onDragStart({
       projectId: p.projectId,

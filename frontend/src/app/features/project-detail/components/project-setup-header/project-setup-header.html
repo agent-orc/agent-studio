@@ -1,0 +1,20 @@
+  <header class="ps-settings__head">
+    <div class="ps-settings__title-row">
+      <h2 class="ps-settings__title" data-testid="project-settings-title">Settings</h2>
+      <span class="ps-settings__chip">this project</span>
+    </div>
+    <p class="ps-settings__desc" data-testid="project-settings-desc">
+      Set up this project: checkout, integration branch, stack and verify commands,
+      execution host and pickup mode. Then review aspects and release.
+    </p>
+    <app-settings-jump-links [links]="[
+      { target: 'project-setup-checkout', label: 'Checkout and branch', testId: 'project-settings-jump-checkout' },
+      { target: 'project-setup-verify', label: 'Stack and verify commands', testId: 'project-settings-jump-verify' },
+      { target: 'project-setup-execution', label: 'Host and pickup mode', testId: 'project-settings-jump-execution' },
+      { target: 'batch-settings', label: 'Batch verification', testId: 'project-settings-jump-batch' }
+    ]" />
+    <div class="ps-settings__actions">
+    <button type="button" class="ps-settings__link" data-testid="project-settings-review-aspects" (click)="reviewAspects.emit()">Review aspects in Deploy / Run steps</button>
+    <button type="button" class="ps-settings__link" data-testid="project-settings-release" (click)="release.emit()">Release in Deploy</button>
+    </div>
+  </header>

@@ -9,6 +9,7 @@ import { App } from './app';
 import { TaskService } from './services/task.service';
 import type { RegistryWorkspaceListItem, TaskDetail, TaskInfo } from './models/task.model';
 import { ProjectLookupService } from './services/project-lookup.service';
+import { StudioTabStateService } from './features/studio-shell/services/studio-tab-state.service';
 import { studioTabKey } from './features/studio-shell';
 import { TaskSelectionService, TriageController } from './features/task-detail/runtime';
 import { ensureBrowserStorage } from '../testing/browser-storage';
@@ -92,11 +93,26 @@ describe('App boot board reads (AGT-3088)', () => {
     expect(boot).toHaveLength(1);
     const refresh = vi.spyOn(taskService, 'refresh');
     http.expectOne(watchPathsRequest).flush([{ name: 'demo', path: 'C:/demo' }]);
+    for (const request of http.match('/api/v1/projects')) request.flush([]);
 
     expect(refresh).not.toHaveBeenCalled();
     boot[0].flush({});
     expect(http.match(boardRequest)).toHaveLength(0);
     app.ngOnDestroy();
+  });
+
+  it('keeps a newly registered setup tab when watch paths arrive late', () => {
+    const { app, http } = configure();
+    const tabs = TestBed.inject(StudioTabStateService);
+    const route = vi.spyOn(app as unknown as { syncStudioRouteFromHash(): boolean }, 'syncStudioRouteFromHash')
+      .mockImplementation(() => { tabs.activateAllProjectsBoard(); return true; });
+    app.watchPathsLoaded.set(true);
+    tabs.open({ kind: 'hub', projectName: 'New project', section: 'settings' });
+    app.loadWatchPaths(false);
+    http.expectOne(watchPathsRequest).flush([{ name: 'Existing project', path: '/store/first' }]);
+    for (const request of http.match('/api/v1/projects')) request.flush([{ displayName: 'New project', storageLocation: '/store/new', rootPath: '/repo/new', archived: false }]);
+    expect(tabs.activeTab()).toEqual({ kind: 'hub', projectName: 'New project', section: 'settings' });
+    expect(route).not.toHaveBeenCalled();
   });
 
   it('still refreshes the board when the project list reloads after a project delete', () => {
@@ -105,6 +121,7 @@ describe('App boot board reads (AGT-3088)', () => {
 
     app.loadWatchPaths();
     http.expectOne(watchPathsRequest).flush([{ name: 'demo', path: 'C:/demo' }]);
+    for (const request of http.match('/api/v1/projects')) request.flush([]);
 
     expect(refresh).toHaveBeenCalledWith(true);
   });

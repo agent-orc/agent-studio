@@ -47,10 +47,19 @@ There is no project-source selection or Project Sources administration step.
 Local project onboarding is the available product workflow. A repository URL
 does not by itself create a managed checkout.
 
+After creation, Studio opens the project's Settings as its setup view. The
+Explorer lists it immediately, including before watch paths refresh, and offers
+a direct **Settings** destination. Setup links lead to checkout and the editable
+integration branch (empty follows `origin/HEAD`), detected stack and proposed
+build/test/lint commands, execution host and pickup mode, review aspects, and
+release in Deploy. Stack detection previews commands; creating a repository
+change still requires **Create proposal card**.
+
 On the local profile, a project with a repository URL and no checkout path
 offers **Create a server checkout now** in the dialog (on by default). The
-dialog then stays open, clones the URL on the Studio host, checks out the
-project's integration branch, and shows the progress and the resulting path.
+project setup view opens immediately. Studio clones the URL on the Studio
+host, checks out the project's integration branch, and shows checkout progress
+and the resulting path in Project basics.
 The checkout lands in `repository-checkouts/<project id>` next to the task
 store and becomes the project's repository path and CLI working directory.
 The clone uses the project's verified first-run credential when one exists,
