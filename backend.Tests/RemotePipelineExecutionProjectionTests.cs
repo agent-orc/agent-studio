@@ -284,8 +284,10 @@ public sealed class RemotePipelineExecutionProjectionTests
         }
     }
 
-    [Fact]
-    public void Project_RemoteLifecycle_MapsCoreReviewSkipsAndLedgerWithoutWritingParallelState()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Project_RemoteLifecycle_MapsCoreReviewSkipsAndLedgerWithoutWritingParallelState(bool cacheSplitKnown)
     {
         var folder = Path.Combine(
             Path.GetTempPath(),
@@ -392,6 +394,14 @@ public sealed class RemotePipelineExecutionProjectionTests
                 ],
             };
 
+            // A saved estimate cannot establish whether a zero cache count
+            // was actually reported. Exercise both explicit and missing evidence.
+            if (!cacheSplitKnown)
+                summary = summary with
+                {
+                    Entries = summary.Entries.Select(call => call with { InputIncludesCached = null }).ToList(),
+                };
+
             var projected = RemotePipelineExecutionProjection.Project(
                 local,
                 pipeline,
@@ -439,13 +449,15 @@ public sealed class RemotePipelineExecutionProjectionTests
                 projected.Execution,
                 projected.LedgerCalls);
             Assert.Equal(660, cost.TotalTokens);
-            Assert.Equal(0.66m, cost.TotalCostUsd);
+            Assert.Equal(cacheSplitKnown ? 0.66m : 0m, cost.TotalCostUsd);
+            Assert.Equal(!cacheSplitKnown, cost.AnyModelUnknown);
+            Assert.Equal(cacheSplitKnown ? 0 : 1, cost.UnpricedRuns);
             Assert.Equal(
-                0.33m,
+                cacheSplitKnown ? 0.33m : 0m,
                 cost.Steps.Single(step =>
                     step.StepId == PipelineCatalogue.CoreAgentRunStepId).CostUsd);
             Assert.Equal(
-                0.33m,
+                cacheSplitKnown ? 0.33m : 0m,
                 cost.Steps.Single(step =>
                     step.StepId == PipelineCatalogue.OrchestratorDecisionStepId).CostUsd);
 
@@ -583,6 +595,7 @@ public sealed class RemotePipelineExecutionProjectionTests
             ParticipantId = participant,
             InputTokens = input,
             OutputTokens = output,
+            InputIncludesCached = true,
             EstimatedApiCostUsd = cost,
             ModelPriced = true,
         };

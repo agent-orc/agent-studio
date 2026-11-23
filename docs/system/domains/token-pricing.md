@@ -222,3 +222,6 @@ known input semantics or normalization provenance. Project and per-card
 summaries keep a cataloged model known when cache evidence is absent, but
 mark its cost unpriced. `TokenSummaryTests` covers missing evidence alongside
 explicit zero-cache input semantics.
+`RemotePipelineExecutionProjectionTests` also checks both cases through the
+remote lifecycle projection: stored USD estimates survive only with cache
+evidence, while ambiguous receipts retain their tokens with unpriced cost.
