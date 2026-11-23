@@ -1,6 +1,8 @@
 # Visual design rubric
 
-Score your own work on these four dimensions before you deliver. They are the
+Score your own work on these dimensions before you deliver. For structure,
+operations, and other technical views, score Content (0) first; it outranks
+the four visual dimensions. They are the
 owner's acceptance dimensions, so a score here predicts the review. Score from
 the screenshots and the capture report, not from memory of the code.
 
@@ -15,6 +17,30 @@ the open defects are listed.
 | 3 | Works, but looks or feels generic, or one visible flaw stands out. |
 | 2 | A clear defect: a broken state, a layout break, an unreadable area. |
 | 1 | Does not work or does not meet the brief. |
+
+## 0. Content
+
+Technical views only. Does the view carry the technical detail an operator
+needs? The five criteria are defined in
+[SKILL.md](../SKILL.md#content-first-for-technical-views).
+
+- **5:** Every node shows name, kind, and live figures with units at the
+  overview; cards carry role, figures, warnings with next step, and links;
+  each zoom step adds detail down to items and history; an outline of the
+  whole system is visible by default; concrete use (tasks, events, traffic)
+  sits next to the structure at every level.
+- **3:** Detail exists but hides: figures only in the panel or only at the
+  deepest zoom, meters without labels or units, outline behind a button.
+- **1:** A pretty diagram of empty boxes.
+
+Checks:
+
+- At the overview screenshot, count nodes without a name or a figure. Any at
+  a readable size cost a point.
+- Does each zoom level show something the level above did not?
+- Can you reach every node from the outline without panning?
+- A design or feel fix that removed detail is reverted, and Content may never
+  drop between rounds.
 
 ## 1. Originality
 
@@ -54,6 +80,8 @@ Checks:
 - Text contrast meets WCAG AA (4.5:1 body, 3:1 large text and UI glyphs) in
   both themes.
 - 3D: is there a key light, a readable silhouette, and more than one material?
+- Studio views: every colour and font comes from the `--studio-*` tokens;
+  no palette of your own, no warm cream, terracotta, or serif display default.
 - Owner rules: calm hero, self-hosted fonts, no gradients in the hero, no left
   accent bars, existing structure kept.
 
@@ -130,6 +158,7 @@ Capture report: <path>, <issue count>
 
 | Dimension | Score | Evidence (screenshot) | Main defect |
 |---|---|---|---|
+| Content (technical views) | | | |
 | Originality | | | |
 | Design | | | |
 | Feel | | | |
