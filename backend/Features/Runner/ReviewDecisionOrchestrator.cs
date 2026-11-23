@@ -5405,7 +5405,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// <summary>Leaves a spend-producing step pending when quota admission refuses it.</summary>
     internal bool RefuseSpendBudget(TaskInfo task, string stepId, StepKind kind)
     {
-        if (_workspaceQuota?.Admit(task.ProjectName, cardId: task.Id) is not { Allowed: false } refusal)
+        if (_workspaceQuota?.Admit(task) is not { Allowed: false } refusal)
             return false;
         _pipelineLog?.RecordStep(task.FolderPath, new PipelineStepExecution
         {

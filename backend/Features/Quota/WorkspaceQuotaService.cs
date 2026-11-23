@@ -226,6 +226,11 @@ public sealed class WorkspaceQuotaService
     {
         lock (_gate) { Reload(); if (_state.Cards is not { Count: > 0 }) return null; }
         var task = FindCard(_scanner.ScanAllJobsWithArchive(), project, cardId);
+        return CardAdmission(project, task, cardId);
+    }
+
+    private QuotaAdmission? CardAdmission(ProjectRecord project, TaskInfo? task, string cardId)
+    {
         CardBudget? budget;
         lock (_gate) { Reload(); budget = _state.Cards?.GetValueOrDefault(project.Id + "/" + (task?.Id ?? cardId)); }
         return budget is null ? null : CardAdmission(budget, CardAliases(task, cardId),
@@ -564,6 +569,15 @@ public sealed class WorkspaceQuotaService
         if (project is null)
             return new(true, $"Project '{projectName}' is not registered in Studio; quota admission is off for it.", true);
         return (cardId is null ? null : CardAdmission(project, cardId)) ?? Admit(project, hosting);
+    }
+
+    /// <summary>Admit an already resolved card without another archive-inclusive task lookup.</summary>
+    public QuotaAdmission Admit(TaskInfo task)
+    {
+        if (!HasLimits()) return new(true, null);
+        var project = _projects.FindByIdOrDisplayName(task.ProjectName);
+        if (project is null) return Admit(task.ProjectName);
+        return CardAdmission(project, task, task.Id) ?? Admit(project, hosting: false);
     }
 
     private QuotaAdmission Admit(ProjectRecord project, bool hosting)
