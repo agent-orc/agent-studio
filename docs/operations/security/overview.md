@@ -682,7 +682,8 @@ D1, D4, and D11).
   a service account of origin `operator-agent` (id `opa_*`) with role bindings
   like any service account, but no `sat.*` token. Its credentials are child
   sessions. The Owner creates the agent and starts each session in Settings →
-  Access → Operator agents (`/api/auth/iam/operator-agents`).
+  Access → Operator agents (`/api/auth/iam/operator-agents`), or confirms a
+  terminal sign-in that `studio-op login` started (ES-3, below).
 - Each session receives its own `oas.*` bearer, returned once and stored only
   as a hash. A session lasts 1 to 8 hours (default 8). Only an active Owner
   starts, renews (again at most 8 hours from the renewal), or revokes it;
@@ -704,6 +705,85 @@ D1, D4, and D11).
 - The operator agent runs on the Owner's machine under its own OS user,
   without the Owner's SSH agent, keys, or credential files (D11). See the
   [operator agent setup guide](../setup/operator-agent.md).
+
+### Terminal sign-in confirmed with step-up (ES-3)
+
+An operator session can reach the agent's terminal without the Owner copying a
+bearer ([elevated session Dossier](../../operator-elevated-session/index.html),
+decision ES-D2 option S2, and ES-D5 option A for the session part: the
+lifetime stays the existing 1 to 8 hours until ES-6). It follows the device
+authorization pattern (RFC 8628) with a Studio step-up as the confirmation.
+
+- **Start.** `POST /api/auth/operator-sign-in` is anonymous. It takes the
+  device's public key as a JWK (EC P-256, no private member), a device label
+  (1 to 64 printable characters), the operator agent the terminal asks for (id
+  or name, optional) and the requested elevated action classes
+  (`cards.accept-override`, `cards.archive-override`, `project.testing`;
+  anything else is refused with `action-class-unknown`). The body is bounded to
+  4 KiB before binding. Studio answers a user code of eight characters from the
+  RFC 8628 consonant alphabet (`BCDFGHJKLMNPQRSTVWXZ`, shown as `XXXX-XXXX`),
+  valid 10 minutes and once, the confirmation page `#/terminal-sign-in` and the
+  link with the code, a poll handle (`osp.*`) and an interval of 5 seconds. The
+  start does not reveal whether the named agent exists. Starts are throttled to
+  10 per client address (IPv6 per /64) within 15 minutes
+  (`Security:OperatorSignIn:MaxStartsPerAddress`), at most 100 sign-ins wait at
+  once (`Security:OperatorSignIn:MaxOpen`), and a pending out-of-band kill
+  refuses every start. Studio keeps only hashes of the code and the poll handle.
+- **Poll.** `POST /api/auth/operator-sign-in/poll` with the poll handle answers
+  `pending`, `slow-down` (a poll sooner than the interval; the interval grows by
+  5 seconds), `denied`, `expired`, or once `session` with the `oas.*` bearer,
+  the actor, the delegating Owner, the expiry, the confirmed classes and the
+  key thumbprint. A second poll after that answers `expired`. An unknown handle
+  answers 404 `signin-not-found`.
+- **Confirm.** The page **Confirm terminal sign-in** in Studio
+  (`#/terminal-sign-in`, or the link with `?code=`) needs a signed-in browser
+  session; signing in first keeps the link. It shows code entry, or the link's
+  code with an explicit "This code is on my terminal now" tick that Confirm
+  requires; the device label; whether the key thumbprint is already known for
+  the chosen agent; the requesting address and whether it is on the browser's
+  network (same address, or the same /64); the requested classes, which the
+  Owner can remove but never add (`action-class-not-requested`); the operator
+  agent (preselected from the request); and the lifetime of 1 to 8 hours
+  (default 8). Unknown device and another network together raise a warning to
+  deny a sign-in the Owner did not start. Lookup, confirm and deny
+  (`/api/auth/iam/operator-sign-ins/{lookup,confirm,deny}`) need an active
+  Owner (`owner-required`) with the browser's CSRF token. Confirm consumes a
+  fresh step-up (`step-up-required` without one); deny needs none.
+- **Codes.** An unknown code answers 404 `signin-code-unknown`, an expired one
+  410 `signin-code-expired`, a used one 409 `signin-code-used`, a denied one
+  409 `signin-code-denied`. Five unknown codes entered by one Owner within 15
+  minutes lock code entry for that Owner for 15 minutes: the sixth entry, even
+  with the right code, answers 429 `signin-locked`.
+- **Session and device record.** Confirming creates the `oas.*` session of the
+  chosen agent at once, with the device label, the key thumbprint (RFC 7638),
+  the terminal's address at confirmation, the Owner's browser address and the
+  confirming browser session id, and the kept classes. Its bearer is minted
+  when the terminal next polls, so until then the session shows as **Waiting
+  for terminal** and has no usable token. A confirmed sign-in that is not
+  collected within the 10 minutes expires and its session ends. The thumbprint
+  is stored now and enforced from ES-4 on (proof of possession); until then the
+  session is a bearer like one started in Settings. The classes are recorded
+  only; ES-7 admits their operations, so the session has the operator-agent
+  role's authority and nothing more.
+- **Devices.** Each operator agent lists its known devices (label, thumbprint,
+  last confirmation and its address, last use of any of its sessions, live
+  sessions). **Forget device** (`DELETE
+  /api/auth/iam/operator-agents/{id}/devices/{deviceId}`, no step-up) ends every
+  live session of that key for the agent at once, and a later sign-in with it
+  shows as an unknown device.
+- **Ending.** Revoking the confirming browser session from a session list
+  (one session, or "sign out other sessions"), a password reset of the
+  confirming person by an Owner, a password change by that person, and
+  disabling that person end every live session it or they confirmed, and
+  cancel those sessions' open approvals. A sign-out and the browser session's
+  ordinary expiry do not. A session started in Settings is not affected by
+  these rules.
+- **Audit.** The IAM audit records `operator-signin.start` (label, thumbprint,
+  requested agent and classes, address), `operator-signin.confirm` (agent,
+  session, known device, classes, both addresses and whether they match),
+  `operator-signin.deny`, `operator-signin.expire`, `operator-signin.issue`,
+  `operator-device.forget`, and `operator-session.revoke` with the reason for
+  each session an ending rule ended.
 
 ### Operator operation catalogue, tiers, and standing grants (SM-4)
 
@@ -1397,6 +1477,12 @@ Dossier's guardrails in code:
   Studio-issued token shape and bearer header values, so an answer that echoes
   a credential is not printed. Prompt, title and log text holding a
   token-shaped value is refused instead of sent.
+- `studio-op login` (ES-3) sends no credential: it starts a terminal sign-in
+  with its P-256 device key, prints the code, the link and a terminal QR code,
+  and writes the session the Owner confirmed into `operator-session` (mode 600,
+  through a temporary file and a rename) without printing it. It refuses plain
+  HTTP to a non-loopback host. Until ES-4 the device key is kept in
+  `operator-device-key.json` (mode 600) beside the session file.
 - `studio-op watch` keeps a local lock file (mode 600) next to the token file
   in addition to the server's watcher lease, and releases both on exit.
 - `studio-op accept` refuses unless the latest review passed with proven build

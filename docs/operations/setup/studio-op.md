@@ -42,6 +42,11 @@ folder into the CLI's personal skills folder (for Claude Code
 The token is read from exactly one file. There is no environment variable, no
 command-line option and no fallback to another file.
 
+The quickest way to an operator session is `studio-op login` (see
+[Login](#login)): you confirm the terminal's code in Studio with your second
+factor and the session lands in `operator-session` without being copied. The
+steps below set up a token by hand.
+
 1. Create the credential in Studio, signed in as the Owner:
    - **API token** (available today): **Settings > Access**, section **Service accounts and API tokens**, role
      `operator` (it binds the narrow `operator-agent` role, OA-D4), the
@@ -96,7 +101,8 @@ Settings > Access. If a secret was exposed anywhere, revoke it at once.
 | `token-file-empty`, `token-file-invalid` | The file is empty or holds more than one value. |
 | `token-environment-refused` | `AGENT_STUDIO_API_TOKEN` is set, or any environment variable holds a token-shaped value. |
 | `token-argument-refused` | A `--token` option or a token-shaped argument was given. |
-| `token-requires-https` | A token would travel over plain HTTP to a non-loopback host. |
+| `token-requires-https` | A token would travel over plain HTTP to a non-loopback host, or `login` would receive a session that way. |
+| `device-key-permissions`, `device-key-owner`, `device-key-not-regular`, `device-key-invalid` | The `login` device key file is accessible to others, belongs to another user, is not a regular file, or holds no P-256 key. |
 
 A prompt, title or log text that contains a token-shaped value is refused with
 `token-in-content` (exit 2). Every line `studio-op` writes, including Studio
@@ -111,6 +117,7 @@ to stderr) and `--url`.
 
 | Command | Routes | Notes |
 |---|---|---|
+| `login [--agent <name>] [--label <text>] [--class <id>]... [--no-qr]` | `POST /api/auth/operator-sign-in`, `POST /api/auth/operator-sign-in/poll` | See [Login](#login). Sends no credential. |
 | `auth status` | `GET /api/operator/decisions?limit=1`, `GET /api/watch-paths` | Local file checks plus the identity probe. |
 | `watch [--session <label>] [--after <cursor>\|--from-start] [--take-over --reason <text>] [--timeout <s>]` | `POST/DELETE /api/operator/watcher/lease`, `.../heartbeat`, `GET /api/operator/decisions/stream` | See [Watch](#watch). |
 | `triage [--project <p>]` | `GET /api/operator/batch-triage` | Flights, red and isolating members, pending pushes with age, next safe member operation. |
@@ -147,6 +154,34 @@ card's attention lease and send its revision as `If-Match`, as the
 [attention contract](../operator-api.md#operator-log-and-card-attention)
 requires for operator tokens. A 409 `attention-held` or 412
 `stale-card-revision` means another actor works on the card.
+
+### Login
+
+`studio-op login` signs this terminal in as an operator agent (Dossier
+[elevated operator session](../../operator-elevated-session/index.html), ES-3).
+It:
+
+1. loads the device key `~/.config/agent-studio/operator-device-key.json`, or
+   creates an EC P-256 key there the first time (mode 600; a file group or
+   others can read is refused with `device-key-permissions`, exit 3);
+2. starts a sign-in with the public key, the device label (`--label`, default
+   `<OS user>@<machine>`), the agent (`--agent`, its name or id) and the
+   requested action classes (`--class`, repeatable), without any credential;
+3. prints the code, the confirmation link and a QR code of the link to stderr
+   (`--no-qr` leaves the QR code out), so `--json` keeps stdout parseable;
+4. polls at the interval Studio names, slowing down when Studio answers
+   `slow-down`, until the Owner confirms or denies or the code expires;
+5. writes the session into `operator-session` (mode 600, through a temporary
+   file and a rename), sets `"credential": "operator-session"` in
+   `studio-op.json` when it selects another file, and reports the actor, the
+   delegating Owner, the expiry and the classes. The token is never printed;
+   every later line masks it.
+
+A denied sign-in exits 13 (`sign-in-denied`), an expired code 14
+(`sign-in-expired`); an existing session file stays as it was. Login needs
+HTTPS or a loopback address (`token-requires-https`, exit 3). Until ES-4 the
+device key is a file; ES-4 moves it into the memory of a resident agent
+process and ES-5 into the TPM or Secure Enclave.
 
 ### Watch
 
@@ -261,6 +296,8 @@ one result per project; exit 6 means some projects refused, exit 1 all.
 | 10 | `studio-unreachable`. |
 | 11 | `batch-isolation-active`: the card is a member of a batch under isolation. |
 | 12 | `approval-required`: a T2 operation waits for the Owner's approval. |
+| 13 | `sign-in-denied`: the Owner denied the `login`, or its session ended before collection. |
+| 14 | `sign-in-expired`: the `login` code expired or was already used. |
 | 20 | Watch woke on `escalation.opened`. |
 | 21 | Watch woke on `human-review.ready`. |
 | 22 | Watch woke on `decision-card.opened`. |
