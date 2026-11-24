@@ -92,7 +92,7 @@ export async function main(argv, { env = process.env, home = os.homedir(), stdou
     let client = null;
     let clientError = null;
     try {
-      client = new StudioClient({ url, credential, clientId: config.clientId ?? 'local-default', anonymous: !!command.anonymous });
+      client = new StudioClient({ url, credential, clientId: config.clientId ?? 'local-default', anonymous: !!command.anonymous, configDir });
     }
     catch (error) {
       // auth status reports a missing or misplaced credential instead of failing on it.

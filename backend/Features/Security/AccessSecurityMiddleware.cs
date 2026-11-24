@@ -120,6 +120,19 @@ public sealed class AccessSecurityMiddleware
         }
 
         var path = NormalizePath(context.Request.Path.Value);
+        // Binding applies before route-specific exemptions, cookies and authorization.
+        // A copied terminal session is never admitted through an anonymous route.
+        var operatorBearer = ReadBearer(context.Request.Headers.Authorization.FirstOrDefault());
+        if (_store.AuthenticateOperatorSession(operatorBearer, recordUse: false) is { BoundKeyThumbprint: { } thumbprint } bound)
+        {
+            var refusal = _store.ValidateOperatorProof(context.Request, operatorBearer!, thumbprint);
+            if (refusal is not null)
+            {
+                await Reject(context, 401, refusal, "A fresh proof from the session key is required.");
+                _store.AppendServiceAccountAudit(bound, context.Request.Method, path, 401, path, null, reason: refusal);
+                return;
+            }
+        }
         if (IsHealth(path)) { await _next(context); return; }
         if (!context.Request.IsHttps)
         {

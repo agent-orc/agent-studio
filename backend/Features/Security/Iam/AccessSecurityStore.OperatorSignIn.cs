@@ -99,7 +99,7 @@ public sealed partial class AccessSecurityStore
     /// current interval answers slow-down and raises the interval by five
     /// seconds (RFC 8628).
     /// </summary>
-    public PollOperatorSignInResponse PollOperatorSignIn(string? pollHandle)
+    public PollOperatorSignInResponse PollOperatorSignIn(string? pollHandle, HttpRequest? proofRequest = null)
     {
         if (!TryTokenParts(pollHandle, OperatorSignInPollHandlePrefix, out var id))
             throw new SecurityOperationException(404, "signin-not-found", "No terminal sign-in has this poll handle.");
@@ -111,6 +111,12 @@ public sealed partial class AccessSecurityStore
             var signIn = state.OperatorSignIns.FirstOrDefault(candidate => candidate.Id == id);
             if (signIn is null || !PasswordSecretHasher.VerifySecret(pollHandle!, signIn.PollHandleHash))
                 throw new SecurityOperationException(404, "signin-not-found", "No terminal sign-in has this poll handle.");
+            if (proofRequest is not null)
+            {
+                var refusal = DpopVerifier.Validate(proofRequest, pollHandle!, signIn.KeyThumbprint, new DateTimeOffset(Now, TimeSpan.Zero));
+                if (refusal is not null)
+                    throw new SecurityOperationException(401, refusal, "The poll needs a fresh proof from the sign-in key.");
+            }
             var interval = OperatorSignInPollIntervalSeconds;
             if (_signInPolls.TryGetValue(id, out var last))
             {

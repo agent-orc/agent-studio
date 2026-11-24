@@ -192,7 +192,7 @@ public sealed record ServiceAccountToken
 public sealed record ServiceAccountPrincipal(
     string AccountId, string AccountName, string TokenId, string? Origin = null, string? CreatedBy = null,
     AgentStudio.Shared.OperatorActor? Operator = null, string? OccurrenceId = null,
-    string? PersonaWorkspaceId = null, string? PersonaId = null)
+    string? PersonaWorkspaceId = null, string? PersonaId = null, string? BoundKeyThumbprint = null)
 {
     /// <summary>
     /// How handlers, audit records, and card timelines attribute the account's
