@@ -77,8 +77,7 @@ public sealed record OperatorDevicePublicKey(string Kty, string Crv, string X, s
 
 /// <summary>
 /// The device a sign-in came from, recorded on the session it created: the
-/// label the terminal sent, the key thumbprint (stored now, enforced from
-/// ES-4 on), the requesting address and the Owner's address and browser
+/// label the terminal sent, the key thumbprint enforced by ES-4, the requesting address and the Owner's address and browser
 /// session at confirmation.
 /// </summary>
 public sealed record OperatorSessionDevice

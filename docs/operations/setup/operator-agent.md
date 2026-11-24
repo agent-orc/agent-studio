@@ -124,16 +124,40 @@ ES-3, decision ES-D2 option S2).
    token. Check with `studio-op auth status`.
 
 The code works once and for 10 minutes. Five wrong codes within 15 minutes
-lock code entry for you for 15 minutes. Until slice ES-4 binds the session to
-the device key, the session file is still a bearer: protect it like the token
-file. `studio-op` keeps the device key in
-`~/.config/agent-studio/operator-device-key.json` (mode 600); deleting it makes
-the next sign-in an unknown device. Elevated action classes are recorded on
-the session but take effect only with slice ES-7.
+lock code entry for you for 15 minutes. Login starts a resident `studio-op agent`
+under the agent's OS user and generates a fresh P-256 session key only in its
+memory. Every command and event-stream connection signs through its protected
+socket (mode 600 in a mode-700 directory), or a named pipe with a current-user-only
+ACL on Windows. Windows uses Windows PowerShell for the pipe transport.
+The key is never written to disk. Login removes the old ES-3
+`operator-device-key.json`; existing terminal sessions require a new login.
+`operator-session-agent.json` contains only the socket endpoint, token hash
+and public thumbprint. Copying `operator-session` to another user or machine
+gets 401 `dpop-required`; copying the metadata does not copy the key or socket.
+
+Keep the resident running. It ends with failed sign-in, session expiry, a
+signed 401, or within five seconds of detecting revocation or a removed or
+replaced session file. After a restart or lost resident, run `studio-op login`
+again; the private key cannot be recovered from a file. A denied second login
+keeps the earlier session working. Each memory-key login shows as a new
+device. ES-5 adds persistent hardware identity and certification of this
+memory session key; no hardware key is required in ES-4. Elevated action
+classes stay recorded only until ES-7.
+
+Terminal sessions require fresh DPoP proofs, including a method, public URL,
+token hash, timestamp within 60 seconds and single-use id. `studio-op` handles
+these automatically. Typed 401 answers are `dpop-required`, `dpop-invalid`,
+`dpop-replayed`, `dpop-stale` and `dpop-key-mismatch`; see the
+[validation contract](../security/overview.md#proof-of-possession-binding-es-4).
+Keep the host clock synchronized. Commands refuse redirects. Direct bearer-only
+curl examples below
+apply to the unbound Settings compatibility path; bound sessions must use
+`studio-op` or a client that requests proofs from its resident signer.
 
 ### From Settings
 
-Kept for sessions without action classes until the migration slice retires it.
+Kept for unbound sessions without action classes until the migration slice retires it.
+The session row explicitly says **Unbound**. Treat these files as bearer secrets.
 
 1. In **Settings > Access > Operator agents**, choose **Start session** on the
    agent. Pick a name and a lifetime of at most 8 hours.
@@ -264,7 +288,7 @@ refusal codes are listed in the
 - **End session** ends one session at once and leaves the agent and its other
   sessions working; **Disable** ends the agent and every session. A session
   also ends when your Owner role ends.
-- A session from a terminal sign-in shows its device label, key thumbprint and
+- A session from a terminal sign-in shows **Memory key**, its device label, key thumbprint and
   the terminal's address at confirmation in the session row. **Known devices**
   under the agent lists each confirmed device key with its last confirmation
   and last use; **Forget device** ends its sessions at once, and its next

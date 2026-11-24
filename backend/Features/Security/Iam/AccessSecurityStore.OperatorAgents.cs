@@ -12,6 +12,9 @@ namespace AgentStudio.Security;
 public sealed partial class AccessSecurityStore
 {
     public const string OperatorSessionTokenPrefix = "oas";
+    public OperatorDpopVerifier DpopVerifier { get; } = new();
+    public string? ValidateOperatorProof(HttpRequest request, string token, string thumbprint)
+        => DpopVerifier.Validate(request, token, thumbprint, _clock.GetUtcNow());
     public static readonly TimeSpan MaxOperatorSessionLifetime = TimeSpan.FromHours(8);
 
     public IReadOnlyList<ServiceAccount> ListOperatorAgents()
@@ -155,7 +158,7 @@ public sealed partial class AccessSecurityStore
     /// unrevoked and unexpired, its agent enabled, and the Owner who started it
     /// still an active Owner: a session never outlives its delegation.
     /// </summary>
-    public ServiceAccountPrincipal? AuthenticateOperatorSession(string? bearer)
+    public ServiceAccountPrincipal? AuthenticateOperatorSession(string? bearer, bool recordUse = true)
     {
         if (!TryTokenParts(bearer, OperatorSessionTokenPrefix, out var sessionId)) return null;
         // An out-of-band kill refuses every session from the moment the command writes its latch.
@@ -174,7 +177,7 @@ public sealed partial class AccessSecurityStore
                 return null;
             if (agent.Origin == ServiceAccountOrigins.Persona && session.OccurrenceId is null) return null;
             if (!ActiveOwnerIds(state.Users, state.RoleBindings, state.Groups).Contains(session.CreatedBy)) return null;
-            if (session.LastUsedAt is null || now - session.LastUsedAt >= TimeSpan.FromMinutes(1))
+            if (recordUse && (session.LastUsedAt is null || now - session.LastUsedAt >= TimeSpan.FromMinutes(1)))
             {
                 state.ServiceAccounts[state.ServiceAccounts.IndexOf(agent)] = agent with
                 {
@@ -185,7 +188,7 @@ public sealed partial class AccessSecurityStore
             }
             return new ServiceAccountPrincipal(agent.Id, agent.Name, session.Id, agent.Origin, agent.CreatedBy,
                 new AgentStudio.Shared.OperatorActor(agent.Id, session.Id, session.CreatedBy, agent.PersonaId),
-                session.OccurrenceId, agent.PersonaWorkspaceId, agent.PersonaId);
+                session.OccurrenceId, agent.PersonaWorkspaceId, agent.PersonaId, session.Device?.KeyThumbprint);
         }
     }
 
