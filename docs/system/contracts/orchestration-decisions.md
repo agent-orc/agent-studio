@@ -825,3 +825,64 @@ bounds. The existing repair API remains compatible. RT-2 does not add host
 calls or transition receipts; later slices collect facts and apply actions
 through the owning adapter. The architecture guard inventories all three
 policies.
+
+### Frozen incident and decision contract
+
+[`RedTestTriageFacts`](../../../orchestration-decisions/RedTestTriageFacts.cs)
+describes one test and suite (`Base` or `Routine`), with its incident
+fingerprint, first and same-SHA repeat results, envelope canary, reference
+fingerprint comparison and reference-envelope repeat. Hosts also supply zero
+to two last-green control results, double-run bisect points and their parent
+runs, all active project quarantines, the current fingerprint's quarantine,
+distinct flaky runs in 14 days, relapse and attribution-withdrawal evidence,
+repair lane and attempt, incident and line-stop ages, and build or prepare
+failure. Lift evidence is chronological and includes failed covering runs.
+`DistinctFlakyRuns14Days` includes the current run once; the host owns run
+deduplication and evidence collection. A new fingerprint opens a separate
+incident rather than renewing an old quarantine.
+
+`RedTestTriageDecision` returns a classification, an optional attributed merge
+and a list of `RedTestDecision` actions. Classifications and effects are
+separate: an environment classification returns `MarkInconclusive`, while a
+confirmed base failure can return both `LineStop` and `AskOwner`. An owner
+question carries a typed reason, available options, a recommended option and
+its explanation. Applying a decision, deduplicating an owner item and mapping
+an abstract model rung to a configured model belong to the host.
+
+| Classification | Evidence and resulting rule |
+|---|---|
+| `WrongAttribution` | The test still fails after the earlier suspect's revert integrated, or later control evidence contradicts the attribution. Withdraw blame and release suspect-only holds. |
+| `Environment` | The canary fails, a different envelope recovers in the reference repeat, or the last-green control fails. Attribute no merge and mark the run inconclusive; recurring environment failures can start report-only quarantine. |
+| `Flaky` | The same-SHA repeat recovers, or a bisect point or its parent is mixed. Count the run; three distinct runs in 14 days, or mixed bisect evidence immediately, can start report-only quarantine. |
+| `Regression` | With confirmed failure and verified envelope evidence, both last-green controls pass and a double-failing point has a double-passing parent. Attribute that point. |
+| `Ambiguous` | A failure is confirmed in the reference envelope but no regression boundary is proven. Hold the routine test's area and request at most one bounded classification. |
+| `Inconclusive` | The repeat or envelope evidence is incomplete or unverified. Mark the run inconclusive and collect reference-envelope evidence. |
+
+The build or prepare confirmation path can stop the line before a test canary
+can run. Neither it nor a base test is automatically quarantined. All duration,
+count and scope limits are named in `RedTestTriageBounds`; they are starting
+values from the Dossier, not measurements. Held renewal requires Progress or
+Auto Review and is allowed once. Lift requires the last two covering runs to
+pass in the standard envelope on tips containing the repair integration.
+
+`BisectVerdictPolicy` accepts at most two control results. Two fails make a
+point `Fail`, two passes make it `Pass`, and every other pair is `Mixed`.
+A failing control attributes no merge; any mixed point or parent stops
+attribution as flaky. Search order alone does not prove the first failing
+merge: the point's measured parent must pass twice too.
+
+`HoldScopePolicy.Create` normalizes path separators and deduplicates covering
+folders before applying the 12-folder bound. Covering folders match an exact
+immediate directory, while suite-area fallback includes descendants. The
+test file and confirmed suspect files remain held with either scope.
+`MayIntegrate` checks every hold independently, so exemption from one hold
+does not bypass another. `LaterMergeIsCoupled` uses exact file overlap with
+the suspect, even when other later merges are independent.
+
+The existing `RedDevelopRepairPolicy` delegates its safe-revert predicate and
+exact-file hold predicate to these policies. Its public decision vocabulary,
+lane protection and two-hour owner question remain compatible until host
+adoption. RT-2 adds no host calls. The focused contract tests are
+`RedTestTriagePolicyTests`, `BisectVerdictPolicyTests`, `HoldScopePolicyTests`
+and `RedDevelopRepairPolicyTests`; `TransitionDecisionBoundaryTests` and
+`MonolithDecisionBoundaryTests` enforce the policy boundary.

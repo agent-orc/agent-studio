@@ -481,6 +481,38 @@ No action changes testing strategy or moves a reviewed or settled card. `RedDeve
 and two-hour compatibility behavior, delegating safe-revert and exact-file
 hold predicates to the new policies until host adoption in later slices.
 
+The implemented working choices are RT-D1 B, RT-D2 B, RT-D4 B, RT-D5 B,
+RT-D6 B, RT-D7 B and RT-D9 B. The Dossier's evidence, recommendations and
+remaining decisions retain their original meaning. The
+[decision-library contract](../contracts/orchestration-decisions.md#frozen-incident-and-decision-contract)
+defines the frozen incident inputs and classification outputs for later host
+adoption. In particular, a last-green control failure attributes no merge,
+and a reference-envelope mismatch without a recovering reference repeat stays
+inconclusive rather than becoming a regression.
+
+| Owner question in RT-2 | Recommended working answer |
+|---|---|
+| Line stop reaches 60 minutes | Revert a confirmed clean independent suspect; otherwise keep fixing forward. |
+| Held quarantine reaches 48 hours, or expires without an in-progress repair | Report-only with a repair card if the area has no new failure; otherwise revert. |
+| Project quarantine cap would be exceeded | Stop the line; alternatives are a one-time cap increase or an owner switch to strict. |
+| Confirmed relapse within seven days of lift | Rehold with a new repair card one model rung higher. |
+| T2 operation requested | Refuse unless the base test is moving to routine; any grant needs an expiry and use cap. |
+
+`FixForward` carries an abstract model rung: high for a regression, medium
+for flaky or environment repair, one rung higher on the second attempt or a
+relapse. `ProposeRevert` requires exactly one confirmed suspect with a clean
+independent revert. These are returned decisions for the normal card flow;
+RT-2 does not grant a model permission to choose an action or mutate a card.
+
+The table-driven historical-red fixture in `RedTestTriagePolicyTests`
+replays AGT-3975 and AGT-3980 as flaky, and AGT-3981 and AGT-3983 as
+environment. None attributes a merge or returns a line stop. Those are
+policy replays of the Dossier evidence, not new measurements of the original
+hosts. Control execution, targeted builds and receipt collection belong to
+RT-3; quarantine persistence and incident application to RT-4; integration
+enforcement to RT-5. The existing runtime flow below remains the deployed
+compatibility contract for this slice.
+
 This slice implements the Dossier's recorded D2 option A (`revert-first`). A
 terminal red T3 receipt carries failing tests, a bounded log excerpt, the
 first-parent suspects since the last green SHA, changed paths, and the result
