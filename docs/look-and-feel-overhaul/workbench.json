@@ -1,0 +1,470 @@
+{
+ "schemaVersion": 1,
+ "id": "look-and-feel-overhaul",
+ "title": "Studio look and feel: one component library, one standard, page by page",
+ "summary": "Owner direction of 24 November 2026: rework the confusing Access page, turn its lessons into standards, then rework every page step by step with owner review, using standard components developed as an area of their own. Counted at develop 1b5354e53 (inventory script in the Dossier): 59 shared components, but 1,325 buttons outside them with 548 distinct first classes and 20 radii, 107 locally styled tables, 26 local dialogs, fields in 142 templates with no field component, 139 font-size values, no self-hosted font (the capture host renders a CJK fallback) and an undeclared radius token used 50 times. Recommended: an Angular library project frontend/projects/studio-ui with an import boundary, own checks and a catalogue app showing every state in both themes; the 27 generic shared components moved in unchanged; families in order of need (layout and sections, buttons and menus, grid with Access moved on, self-hosted Inter, forms, overlays, states); twelve U-rules in docs/system/ui-standard/rules.md enforced per reworked page by a guard and Stylelint; the design skill and visual review read the standard; pages reworked one card at a time, daily surfaces first, with owner review between cards. Eleven decisions, sixteen slices.",
+ "entrypoint": "index.html",
+ "status": "decision-pending",
+ "phase": "decision-ready",
+ "pattern": "concept",
+ "updatedAt": "2026-11-24T00:36:51Z",
+ "sourceTaskKeys": [
+  "AGT-4030"
+ ],
+ "relatedTaskKeys": [
+  "AGT-4023",
+  "AGT-3957",
+  "AGT-3402",
+  "AGT-2813",
+  "AGT-3465",
+  "AGT-1934"
+ ],
+ "buildsOn": [
+  "docs/style-rule-delivery/",
+  "docs/operations/admin-design-guideline/",
+  "docs/quality/design/style-guide-hard-rules.md"
+ ],
+ "tags": [
+  "frontend",
+  "design-system",
+  "component-library",
+  "ui-standard",
+  "visual-design",
+  "rollout"
+ ],
+ "openDecisions": [
+  {
+   "id": "LF-D1",
+   "decisionId": "library-location",
+   "title": "Where the library lives",
+   "question": "Where does the component library live and how is it consumed?",
+   "options": {
+    "A": "Angular library project frontend/projects/studio-ui in the frontend workspace, consumed through a path alias",
+    "B": "Separate npm package in this repository (packages/studio-ui), built and versioned",
+    "C": "Repository of its own, published and pinned like coding-agent-chat"
+   },
+   "recommended": "A",
+   "rationale": "Lowest cost and one-commit changes across library and page; independence comes from an import boundary, own checks and own docs. coding-agent-chat shows the price of C: pinned at 0.4.1 since 7 September 2026 with two post-install patch scripts. Move to B only if a second product consumes the library.",
+   "recommendation": "A. Angular library project frontend/projects/studio-ui in the frontend workspace, consumed through a path alias",
+   "status": "open"
+  },
+  {
+   "id": "LF-D2",
+   "decisionId": "catalogue",
+   "title": "Living catalogue",
+   "question": "How is the catalogue of components with their states built?",
+   "options": {
+    "A": "Own Angular catalogue app in the workspace, states as data in *.catalogue.ts, Playwright screenshots without backend",
+    "B": "Storybook",
+    "C": "Static HTML pages under docs/"
+   },
+   "recommended": "A",
+   "rationale": "Uses the existing mockup-app pattern and tooling, renders the live components, doubles as visual regression and owner review material, and its data files are readable by agents.",
+   "recommendation": "A. Own Angular catalogue app in the workspace, states as data in *.catalogue.ts, Playwright screenshots without backend",
+   "status": "open"
+  },
+  {
+   "id": "LF-D3",
+   "decisionId": "selector-prefix",
+   "title": "Selector prefix",
+   "question": "What prefix do library components use?",
+   "options": {
+    "A": "New prefix sui- with the old app- selector kept as an alias on moved components until the last app- user is gone",
+    "B": "Keep app- for everything"
+   },
+   "recommended": "A",
+   "rationale": "Makes library use visible in templates and in guards, while the alias keeps every existing page and lint gate working without churn.",
+   "recommendation": "A. New prefix sui- with the old app- selector kept as an alias on moved components until the last app- user is gone",
+   "status": "open"
+  },
+  {
+   "id": "LF-D4",
+   "decisionId": "standard-location",
+   "title": "Where the UI standard lives",
+   "question": "Where are the UI standard rules written?",
+   "options": {
+    "A": "docs/system/ui-standard/rules.md (U1 to U12) beside the pilot notes, with one pointer rule R10 in style-guide-hard-rules.md",
+    "B": "Inside style-guide-hard-rules.md",
+    "C": "In docs/quality/frontend/style-guide/"
+   },
+   "recommended": "A",
+   "rationale": "Keeps the hard rules short, gives the standard one file that skill, prompt and review read, and supersedes the family pages instead of adding a sixth parallel source.",
+   "recommendation": "A. docs/system/ui-standard/rules.md (U1 to U12) beside the pilot notes, with one pointer rule R10 in style-guide-hard-rules.md",
+   "status": "open"
+  },
+  {
+   "id": "LF-D5",
+   "decisionId": "enforcement",
+   "title": "How rules are enforced",
+   "question": "How is the standard enforced?",
+   "options": {
+    "A": "Per reworked page: guard check-ui-standard.mjs with an enforced list, a Stylelint override for enforced folders, the visual review aspect citing rule ids, and the design skill",
+    "B": "Review aspect and design skill only",
+    "C": "Global lint for the whole frontend at once"
+   },
+   "recommended": "A",
+   "rationale": "The families that converged (status, menus, disclosure) each had a component plus a guard with a baseline. A per-page enforced list locks each reworked page without breaking pages not yet reworked; C would fail hundreds of files on day one.",
+   "recommendation": "A. Per reworked page: guard check-ui-standard.mjs with an enforced list, a Stylelint override for enforced folders, the visual review aspect citing rule ids, and the design skill",
+   "status": "open"
+  },
+  {
+   "id": "LF-D6",
+   "decisionId": "grid-implementation",
+   "title": "Grid implementation",
+   "question": "What is the data grid built on?",
+   "options": {
+    "A": "Own sui-data-grid on native table semantics, CDK only for focus and overlay helpers",
+    "B": "CDK table as the base",
+    "C": "Third-party data grid"
+   },
+   "recommended": "A",
+   "rationale": "The Studio's lists are tens to hundreds of rows; native table semantics give screen reader support for free, the responsive stacked form already exists on Access, and no new dependency or theme bridge is needed.",
+   "recommendation": "A. Own sui-data-grid on native table semantics, CDK only for focus and overlay helpers",
+   "status": "open"
+  },
+  {
+   "id": "LF-D7",
+   "decisionId": "fonts",
+   "title": "Product-hosted fonts",
+   "question": "Which font does the library ship?",
+   "options": {
+    "A": "Self-host Inter and JetBrains Mono (woff2 with licences, font-display swap) as the admin guideline requires, applied globally in one owner-reviewed card",
+    "B": "Keep the system stack (Segoe UI, system-ui)",
+    "C": "Switch the font page by page"
+   },
+   "recommended": "A",
+   "rationale": "The owner wants product-hosted fonts and the admin guideline already names Inter and JetBrains Mono, yet no woff2 ships; the capture host renders the Studio in a CJK fallback, so agent screenshots and reviews see another typeface than the owner. Segoe UI cannot be redistributed. C would mix fonts across pages for months.",
+   "recommendation": "A. Self-host Inter and JetBrains Mono (woff2 with licences, font-display swap) as the admin guideline requires, applied globally in one owner-reviewed card",
+   "status": "open"
+  },
+  {
+   "id": "LF-D8",
+   "decisionId": "rollout-order",
+   "title": "Order of pages",
+   "question": "In which order are pages reworked?",
+   "options": {
+    "A": "By use (daily, weekly, occasional) and then by local vocabulary: Board, task detail in three cards, Dossier viewer, shell chrome, Deck pages, settings pages",
+    "B": "Settings family first (closest to the Access pilot, lowest risk), then Deck, then daily surfaces",
+    "C": "By local vocabulary only"
+   },
+   "recommended": "A",
+   "rationale": "The owner gains most where he spends his day; the library is proven on Access and in the catalogue before the Board. The use classes are inferred from page roles because no page-view telemetry exists; the owner confirms or edits them in rollout.md.",
+   "recommendation": "A. By use (daily, weekly, occasional) and then by local vocabulary: Board, task detail in three cards, Dossier viewer, shell chrome, Deck pages, settings pages",
+   "status": "open"
+  },
+  {
+   "id": "LF-D9",
+   "decisionId": "page-card-granularity",
+   "title": "Size of a page card",
+   "question": "How large is one page card?",
+   "options": {
+    "A": "One page per card; task detail split into three cards along its panes; the five smallest settings pages (Updates, Appearance, Credentials, Secrets, GitHub) in one card",
+    "B": "Strictly one page per card, including the smallest",
+    "C": "Several pages per card"
+   },
+   "recommended": "A",
+   "rationale": "Keeps each owner review to one readable set of before and after screenshots; the five smallest pages have a local vocabulary of 3 to 11 and would make five near-empty reviews.",
+   "recommendation": "A. One page per card; task detail split into three cards along its panes; the five smallest settings pages (Updates, Appearance, Credentials, Secrets, GitHub) in one card",
+   "status": "open"
+  },
+  {
+   "id": "LF-D10",
+   "decisionId": "existing-shared-components",
+   "title": "Existing shared components",
+   "question": "What happens to the 59 shared components in src/app/components?",
+   "options": {
+    "A": "Move the 27 generic primitives into the library unchanged, with app- aliases; domain components stay in the app",
+    "B": "Wrap them with new library components",
+    "C": "Leave them and build new library components beside them"
+   },
+   "recommended": "A",
+   "rationale": "A move with no visual change gives the library its first 27 components at once, keeps all gates working, and avoids two competing versions of menu, dialog or status.",
+   "recommendation": "A. Move the 27 generic primitives into the library unchanged, with app- aliases; domain components stay in the app",
+   "status": "open"
+  },
+  {
+   "id": "LF-D11",
+   "decisionId": "ownership",
+   "title": "Ownership and change path",
+   "question": "Who changes the library and how?",
+   "options": {
+    "A": "Owner approves the standard and each new family in the catalogue; library cards own the library; page cards may add variants and small components under the library contract",
+    "B": "Every library change is its own card",
+    "C": "Page cards change the library freely"
+   },
+   "recommended": "A",
+   "rationale": "New families get their own review; small additions a page really needs land with the page under the same contract, so a page card is not blocked by a separate card for one variant.",
+   "recommendation": "A. Owner approves the standard and each new family in the catalogue; library cards own the library; page cards may add variants and small components under the library contract",
+   "status": "open"
+  }
+ ],
+ "implementationTasks": [
+  {
+   "id": "LF-1",
+   "title": "LF-1 · Library project, boundary and catalogue skeleton",
+   "dependsOn": [],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-1",
+    "criteria": [
+     "`npm run ui:test`, `npm run ui:lint` and `npm run ui:catalogue:check` pass without the backend and without `dotnet publish`.",
+     "An import from `src/app` inside the library fails `npm run lint` with the boundary rule.",
+     "The app builds with the alias and `npm run lint` and `npm test` stay green; no product page changes."
+    ]
+   },
+   "promptMarkdown": "# LF-1 · Library project, boundary and catalogue skeleton\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D1 (A), LF-D2 (A), LF-D3 (A). Dependencies: none.\n\n**Area:** `frontend/angular.json`, `frontend/package.json` (scripts only), `frontend/tsconfig*.json` (path alias), `frontend/eslint.config.js`, new `frontend/projects/studio-ui/**`, new `frontend/projects/studio-ui-catalogue/**`\n\n## Why\nDossier sections Library and Cost of checks. The frontend has 59 shared components in `src/app/components/` but no place that is developed and checked on its own; the existing mockup apps in `angular.json` show the workspace pattern.\n\n## Deliver\n1. Add an Angular library project `studio-ui` at `frontend/projects/studio-ui` with `src/public-api.ts`, `README.md`, `CHANGELOG.md` and an empty `src/lib/`. Selector prefix `sui`.\n2. Add a path alias `@studio/ui` to the app tsconfig so the app consumes the library source; no build or publish step, no `file:` dependency.\n3. Add an ESLint `no-restricted-imports` block that fails when any file under `frontend/projects/studio-ui/` imports from `frontend/src/app/`, `coding-agent-chat` or `src/app/services`. Add a test fixture proving the rule fires.\n4. Add an Angular application `studio-ui-catalogue` at `frontend/projects/studio-ui-catalogue` that discovers `*.catalogue.ts` files (states as plain data: label, inputs, content, theme, width) and renders every entry in light and dark with the component README beside it. Ship one sample entry.\n5. Add `projects/studio-ui-catalogue/e2e/catalogue.spec.ts` and a Playwright config that serves the static catalogue build (no backend) and compares each entry at 1440 and 390 px in both themes against checked-in screenshots.\n6. Add scripts `ui:test` (library unit tests only), `ui:lint` (ESLint and Stylelint for the two projects), `ui:catalogue` (serve), `ui:catalogue:check` (build plus screenshot spec) and `ui:api` (writes `projects/studio-ui/api-report.md` from `public-api.ts` and fails when it differs from the checked-in report).\n\n## Acceptance\n- `npm run ui:test`, `npm run ui:lint` and `npm run ui:catalogue:check` pass without the backend and without `dotnet publish`.\n- An import from `src/app` inside the library fails `npm run lint` with the boundary rule.\n- The app builds with the alias and `npm run lint` and `npm test` stay green; no product page changes.\n\n## Verification\nRun the four new scripts, `npm --prefix frontend run lint`, `npm --prefix frontend test`. No product Playwright run is needed because no product template changes; say so in the result.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-2",
+   "title": "LF-2 · UI standard documents and pointers",
+   "dependsOn": [],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-2",
+    "criteria": [
+     "`rules.md` has twelve rules, each with id, sentence, reason and check, and no component detail.",
+     "Every new document is listed in `docs/start/README.md` and every link resolves.",
+     "No product code changes."
+    ]
+   },
+   "promptMarkdown": "# LF-2 · UI standard documents and pointers\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D4 (A), LF-D8 (A), LF-D9 (A). Dependencies: none.\n\n**Area:** new `docs/system/ui-standard/README.md`, `rules.md`, `rollout.md`; `docs/quality/design/style-guide-hard-rules.md` (R10); `frontend/AGENTS.md` (first section); `docs/quality/frontend-styling.md`; `docs/quality/frontend/style-guide/README.md` and `migration-status.md`; `docs/start/README.md`\n\n## Why\nDossier sections UI standard and Rollout. The style guide has no checkable component rules; `migration-status.md` has kept the button, card and form decisions open since mid-2026.\n\n## Deliver\n1. Write `docs/system/ui-standard/rules.md` with rules U1 to U12 exactly as in the Dossier table: id, one sentence, one-line reason, check. Read `docs/system/ui-standard/access-page-pilot.md` if it exists: turn each pilot pattern into a rule, merge it into an existing rule, or record it as Access-specific with the reason. If the file does not exist yet, add one open row per expected pilot pattern (page frame, outline, section, table, form row, button variants).\n2. Write `docs/system/ui-standard/rollout.md`: the ordered page list from the Dossier with use class, local vocabulary and an empty review column, plus the page card delivery checklist.\n3. Write `docs/system/ui-standard/README.md`: what the standard is, where the library and catalogue live, how a rule is enforced, how a page card and a library card differ.\n4. Add R10 to `style-guide-hard-rules.md`: reworked pages follow `docs/system/ui-standard/rules.md`.\n5. Name the rules file and the catalogue command in the first section of `frontend/AGENTS.md` and link them from `docs/quality/frontend-styling.md`.\n6. Add a 'Superseded by the UI standard' note to `docs/quality/frontend/style-guide/README.md` and to `migration-status.md`, pointing to `rollout.md`.\n7. Add one row per new document to `docs/start/README.md`.\n\n## Acceptance\n- `rules.md` has twelve rules, each with id, sentence, reason and check, and no component detail.\n- Every new document is listed in `docs/start/README.md` and every link resolves.\n- No product code changes.\n\n## Verification\nDocumentation only: check links and navigation and review the diff; no build or Playwright run (AGENTS.md).\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-3",
+   "title": "LF-3 · Move the generic shared components into the library",
+   "dependsOn": [
+    "LF-1"
+   ],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-3",
+    "criteria": [
+     "`git diff` shows no change to any moved template or SCSS file other than its path and selector alias.",
+     "`npm run lint`, `npm test`, `npm run ui:test` and `npm run ui:catalogue:check` pass; the token guard passes.",
+     "A Playwright run of the settings, board and task-detail smoke specs shows no visual change other than the declared radius, which is screenshotted before and after."
+    ]
+   },
+   "promptMarkdown": "# LF-3 · Move the generic shared components into the library\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D3 (A), LF-D10 (A). Dependencies: LF-1.\n\n**Area:** `frontend/src/app/components/**` (27 generic primitives), `frontend/src/styles/_tokens-primitives.scss`, `_tokens-semantic.scss` (moved), all importing files in `frontend/src/app/**`, `frontend/scripts/check-status-chips.mjs`, `check-disclosure-markers.mjs`, `check-segmented-controls.mjs` and their baselines (paths only), `frontend/projects/studio-ui/**`\n\n## Why\nDossier section Inventory, table Shared components today: 27 generic primitives (status indicator, studio icon, pending button, tooltip, segmented control, disclosure marker, dialog, confirm and error dialog, menu, loading surface, section header, tree row, list row, row, empty state, count badge, info button, notification and stack, side sheet, pane header, pane tabs, splitter, sidebar header, media lightbox, copyable command). The Evidence section found `var(--studio-radius-sm)` used 50 times in 27 files but never declared.\n\n## Deliver\n1. Move the 27 components and directives with their specs into `frontend/projects/studio-ui/src/lib/<name>/`, export them from `public-api.ts`, and give each selector the form `sui-<name>, app-<name>` (attribute directives keep the old attribute as an alias). Do not change any template, style or behaviour.\n2. Move the colour token files into `frontend/projects/studio-ui/src/styles/` unchanged and keep `src/styles.scss` loading them from there.\n3. Update every import in the app to `@studio/ui` and the paths in the three structure gates and their baselines.\n4. Add a catalogue entry and a README for each moved component with its current states, and record the catalogue screenshots as the baseline.\n5. Add a token guard to `ui:lint`: every `var(--studio-*)` used in any SCSS must be declared in the token files. Declare the missing radius scale (`--studio-radius-xs` to `--studio-radius-2xl` from the shape scale in `docs/quality/frontend/design-system.md`) so the 50 existing uses resolve. Name in the result the files whose corners change visibly because of this, with screenshots.\n6. Add a CHANGELOG line per moved component.\n\n## Acceptance\n- `git diff` shows no change to any moved template or SCSS file other than its path and selector alias.\n- `npm run lint`, `npm test`, `npm run ui:test` and `npm run ui:catalogue:check` pass; the token guard passes.\n- A Playwright run of the settings, board and task-detail smoke specs shows no visual change other than the declared radius, which is screenshotted before and after.\n\n## Verification\nLibrary checks plus `npm --prefix frontend run typecheck`, `npm --prefix frontend test`, `npm --prefix frontend run lint`, and the Playwright specs of the pages whose corners changed because of the radius token.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-4",
+   "title": "LF-4 · Layout and section components",
+   "dependsOn": [
+    "LF-2",
+    "LF-3"
+   ],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-4",
+    "criteria": [
+     "Every state in the Dossier table is a catalogue entry in light and dark at 1440 and 390 px.",
+     "Keyboard specs cover outline navigation, toolbar roving focus, splitter resize and pane key containment.",
+     "Only library checks run; no product file changes."
+    ]
+   },
+   "promptMarkdown": "# LF-4 · Layout and section components\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D5 (A), LF-D11 (A). Dependencies: LF-2, LF-3.\n\n**Area:** `frontend/projects/studio-ui/**` only\n\n## Why\nDossier section Standard components, group 1. Access shows that structure is the first problem: one column, 19 headings, 9 tables, no outline. 181 SCSS files declare their own root grid and 359 header elements are built locally.\n\n## Deliver\n1. Build `sui-page`, `sui-section`, `sui-pane`, `sui-split`, `sui-toolbar`, `sui-outline` and the layout mixins `stack`, `cluster` and `form-grid` with the coverage, states, keyboard and screen reader behaviour, and theme treatment in the Dossier table.\n2. `sui-section` registers with `sui-outline`; heading levels come from nesting; collapsible sections use the disclosure marker grammar; `sui-pane` implements R8 key containment; `sui-toolbar` reuses `directives/roving-focus` (move it into the library).\n3. Take the Access pilot's page structure as the reference consumer: read the pilot markup and `docs/system/ui-standard/access-page-pilot.md` if present and cover what it needed.\n4. Each component gets a README, a `*.catalogue.ts` with every state, unit specs including keyboard behaviour, and a CHANGELOG line.\n\n## Acceptance\n- Every state in the Dossier table is a catalogue entry in light and dark at 1440 and 390 px.\n- Keyboard specs cover outline navigation, toolbar roving focus, splitter resize and pane key containment.\n- Only library checks run; no product file changes.\n\n## Verification\n`npm run ui:lint`, `ui:test`, `ui:catalogue:check`, `ui:api`. Deliver the catalogue screenshots in results for the owner review.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-5",
+   "title": "LF-5 · Buttons and menus",
+   "dependsOn": [
+    "LF-4"
+   ],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-5",
+    "criteria": [
+     "Contrast of every button variant and state passes in both themes in the catalogue spec.",
+     "The context menu opens by mouse, ContextMenu key and Shift+F10 and returns focus to its trigger on Escape.",
+     "Only library checks run; no product file changes."
+    ]
+   },
+   "promptMarkdown": "# LF-5 · Buttons and menus\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D11 (A). Dependencies: LF-4.\n\n**Area:** `frontend/projects/studio-ui/**` only\n\n## Why\nDossier sections Inventory (1,325 buttons with 548 distinct first classes; 20 radii, 20 min-heights, 26 font sizes in 452 button rules) and Standard components, group 3. Evidence: the reload action is drawn four ways on four settings pages.\n\n## Deliver\n1. Build `sui-button` (attribute on button and a; variants primary, secondary, quiet, danger; sizes default and compact; disabled with reason through `aria-disabled` and tooltip; pending state absorbing `appPendingButton`) and `sui-icon-button` (required label, toggled state).\n2. Extend the moved `sui-menu` with `[suiMenuTrigger]` and `[suiContextMenu]`: ContextMenu key and Shift+F10 open the menu at the focused element; submenus one level deep; disabled rows with reason; danger row; rows stay text-only.\n3. Catalogue entries for every state, keyboard specs, README with do and do not, CHANGELOG lines.\n\n## Acceptance\n- Contrast of every button variant and state passes in both themes in the catalogue spec.\n- The context menu opens by mouse, ContextMenu key and Shift+F10 and returns focus to its trigger on Escape.\n- Only library checks run; no product file changes.\n\n## Verification\nLibrary checks; catalogue screenshots in results.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-6",
+   "title": "LF-6 · Data grid, and Access moved onto the library",
+   "dependsOn": [
+    "LF-5"
+   ],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-6",
+    "criteria": [
+     "Every grid state is a catalogue entry; keyboard specs cover sort, selection and row menu.",
+     "`frontend/e2e/settings/access-area.spec.ts` and the other Access specs pass unchanged.",
+     "Access before and after screenshots differ only where the pilot's local controls were replaced, and the result names each difference."
+    ]
+   },
+   "promptMarkdown": "# LF-6 · Data grid, and Access moved onto the library\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D6 (A). Dependencies: LF-5.\n\n**Area:** `frontend/projects/studio-ui/**`, `frontend/src/app/features/access/**`\n\n## Why\nDossier sections Inventory (107 tables in 71 templates, 22 font sizes and 26 paddings in 355 table rules) and Standard components, group 2. The Access pilot is the first page to consume page, section, outline, toolbar, button, menu and grid.\n\n## Deliver\n1. Build `sui-data-grid` on native table semantics: column definitions, sticky header, density, sort with `aria-sort`, selection mode as `role=grid` with arrow navigation, row actions through `sui-menu` behind a visible trigger and `[suiContextMenu]`, footer aggregate equal to the sum of visible rows, stacked rows under 760 px, and loading (200 ms rule), empty, error, filtered-empty, busy and disabled-row states. Add `sui-list` as the documented name for the moved row components.\n2. Move the Access page (as approved in the pilot card) onto `sui-page`, `sui-section`, `sui-outline`, `sui-toolbar`, `sui-button`, `sui-menu` and `sui-data-grid` with no intended visual change against the owner-approved pilot. Remove the Access-local mixins that the library replaces.\n3. Deliver before (pilot as approved) and after screenshots of Access at 1440 and 390 px in both themes, and the 'Patterns used and added' table.\n\n## Acceptance\n- Every grid state is a catalogue entry; keyboard specs cover sort, selection and row menu.\n- `frontend/e2e/settings/access-area.spec.ts` and the other Access specs pass unchanged.\n- Access before and after screenshots differ only where the pilot's local controls were replaced, and the result names each difference.\n\n## Verification\nLibrary checks, Access unit specs, `npm --prefix frontend run e2e -- e2e/settings/access-area.spec.ts` and the operator-agents Access spec, visual review with the screenshots.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-7",
+   "title": "LF-7 · UI standard guard and Stylelint override",
+   "dependsOn": [
+    "LF-2",
+    "LF-5"
+   ],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-7",
+    "criteria": [
+     "The guard's tests cover each rule with a passing and a failing fixture.",
+     "`npm run lint` passes on develop with only the enforced folders checked.",
+     "A baseline entry without a reason fails the guard."
+    ]
+   },
+   "promptMarkdown": "# LF-7 · UI standard guard and Stylelint override\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D5 (A). Dependencies: LF-2, LF-5.\n\n**Area:** `frontend/scripts/check-ui-standard.mjs` (new), `frontend/scripts/ui-standard-baseline.json` (new), `frontend/package.json` (`lint:structure`), `frontend/.stylelintrc.json`, `frontend/AGENTS.md` (one section)\n\n## Why\nDossier section UI standard, How a rule is enforced. The status, disclosure and segmented gates show the pattern; `features/remote-hosts/**` already has a per-folder Stylelint override.\n\n## Deliver\n1. Write `check-ui-standard.mjs` with tests. For template files in folders listed under `enforced` in `ui-standard-baseline.json`, it fails on: local `h1` to `h6` (U2), a button without `sui-button` or `sui-icon-button` (U4), a `table` element (U5), a `(contextmenu)` handler without `suiContextMenu` (U6), an input, select or textarea outside `sui-field` (U7, active once LF-11 lands, behind a flag until then), and a local `role=dialog` (U8). Exceptions need `reason` and a pinned signature like the other baselines (U12).\n2. Add a Stylelint override template for enforced folders: `declaration-property-value-allowed-list` for font-size, border-radius, height and min-height (library tokens only) and `selector-disallowed-list` for button, input, select, textarea and table element selectors (U11).\n3. Add the guard to `lint:structure`, list the Access folders (moved in LF-6) as the first enforced entry if LF-6 has landed, and document the guard in `frontend/AGENTS.md`.\n\n## Acceptance\n- The guard's tests cover each rule with a passing and a failing fixture.\n- `npm run lint` passes on develop with only the enforced folders checked.\n- A baseline entry without a reason fails the guard.\n\n## Verification\n`npm --prefix frontend run lint`; the guard's `node --test` file.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-8",
+   "title": "LF-8 · Design skill takes in the UI standard",
+   "dependsOn": [
+    "LF-2"
+   ],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-8",
+    "criteria": [
+     "The skill names the rules file and the catalogue and requires the patterns table.",
+     "`AgentSkillFrontmatterTests` pass."
+    ]
+   },
+   "promptMarkdown": "# LF-8 · Design skill takes in the UI standard\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D4 (A). Dependencies: LF-2.\n\n**Area:** `.agents/skills/visual-design/SKILL.md`, `.agents/skills/visual-design/references/rubric.md`, new `.agents/skills/visual-design/references/studio-ui.md`\n\n## Why\nDossier section Design skill and review. Build on AGT-4023 (Studio tokens, content first); if it has not been integrated when this slice starts, include its rule 'Studio views use Studio tokens' in the same wording.\n\n## Deliver\n1. Add `references/studio-ui.md` and route 'Screen in an existing product' to it: read `docs/system/ui-standard/rules.md`, open the catalogue entries for the needed families (`npm --prefix frontend run ui:catalogue`), list the components you will use, and decide for each missing need between variant, new library component under the contract (U12), or recorded exception.\n2. Change hard rule 1: on a rollout page card the target structure is the standard, not the old page.\n3. Add the rubric check 'Standard fit' (library controls only, structure through page, section and outline, states present, no local control styles); a score below 4 blocks delivery.\n4. Require the 'Patterns used and added' table in the delivery of every UI card.\n5. Add the Access pilot's before and after pair as the worked example once the pilot result exists; until then, link the pilot card.\n\n## Acceptance\n- The skill names the rules file and the catalogue and requires the patterns table.\n- `AgentSkillFrontmatterTests` pass.\n\n## Verification\n`dotnet test backend.Tests --filter FullyQualifiedName~AgentSkillFrontmatterTests`; no frontend checks.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-9",
+   "title": "LF-9 · Visual review aspect checks against the standard",
+   "dependsOn": [
+    "LF-2"
+   ],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-9",
+    "criteria": [
+     "Runner tests prove the rules file is appended when present and skipped when absent.",
+     "A library-only fixture delivery with catalogue images does not get a missing-screenshot concern.",
+     "The prompt is a CLI behaviour change: run the matching live probe or state why it could not run."
+    ]
+   },
+   "promptMarkdown": "# LF-9 · Visual review aspect checks against the standard\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D5 (A). Dependencies: LF-2.\n\n**Area:** `runner/VisualReviewScreenshotBundle.cs`, `runner.Tests/VisualReviewScreenshotTests.cs`, `prompts/runtime/review-aspect-visual-review.md`, `docs/system/domains/review.md`\n\n## Why\nDossier section Design skill and review. `VisualReviewScreenshotBundle.cs` already appends `style-guide-hard-rules.md` (line 248).\n\n## Deliver\n1. Append `docs/system/ui-standard/rules.md` to the visual review material in the same way as the hard rules, when the file exists.\n2. Add a 'Standard fit' paragraph to the prompt: cite rule ids U1 to U12 per concern; a missing outline, missing state or local control on a page in the enforced list is `concerns`; check the 'Patterns used and added' table against the diff; a grown guard baseline is a concern.\n3. For a delivery that changes only `frontend/projects/studio-ui/**`, accept catalogue before and after images (named `catalogue/<component>/<state>-before-1440-light.png` and so on) as the screenshot evidence.\n4. Update `review.md` and the runner tests.\n\n## Acceptance\n- Runner tests prove the rules file is appended when present and skipped when absent.\n- A library-only fixture delivery with catalogue images does not get a missing-screenshot concern.\n- The prompt is a CLI behaviour change: run the matching live probe or state why it could not run.\n\n## Verification\n`dotnet test runner.Tests --filter FullyQualifiedName~VisualReview`; the prompt live probe per AGENTS.md.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-10",
+   "title": "LF-10 · Self-hosted Inter and JetBrains Mono",
+   "dependsOn": [
+    "LF-6"
+   ],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-10",
+    "criteria": [
+     "The rendered font on the capture host is Inter for text and JetBrains Mono for code.",
+     "No network font request in the Playwright run (assert no request leaves the origin for fonts).",
+     "Six surfaces have before and after screenshots in both themes."
+    ]
+   },
+   "promptMarkdown": "# LF-10 · Self-hosted Inter and JetBrains Mono\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D7 (A). Dependencies: LF-6.\n\n**Area:** `frontend/projects/studio-ui/src/styles/**`, `frontend/projects/studio-ui/assets/fonts/**`, `frontend/angular.json` (assets), `frontend/src/styles.scss` (font tokens only), the 11 local `font-family` declarations\n\n## Why\nDossier Evidence: Access declares Inter first, no woff2 ships, and the capture host renders the Studio in WenQuanYi Zen Hei. The admin guideline requires local Inter and JetBrains Mono with licence files and font-display swap.\n\n## Deliver\n1. Add Inter and JetBrains Mono woff2 files (the weights the type ramp uses) with their licence files to the library assets, `@font-face` with `font-display: swap`, and tokens `--studio-font-sans` and `--studio-font-mono`.\n2. Replace the 11 local `font-family` values with the tokens.\n3. Capture before and after at 1440 px in both themes for Board, task detail overview, Access, Environment, Deck overview and the Dossier viewer, on the Linux runner, and name the rendered font from `CSS.getPlatformFontsForNode` in both.\n4. This is the one global visible change; the owner reviews it before the first page card.\n\n## Acceptance\n- The rendered font on the capture host is Inter for text and JetBrains Mono for code.\n- No network font request in the Playwright run (assert no request leaves the origin for fonts).\n- Six surfaces have before and after screenshots in both themes.\n\n## Verification\nLibrary checks; the six capture specs; `npm --prefix frontend run lint`.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-11",
+   "title": "LF-11 · Form controls",
+   "dependsOn": [
+    "LF-10"
+   ],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-11",
+    "criteria": [
+     "Every state in the table is in the catalogue in both themes.",
+     "Only library checks run."
+    ]
+   },
+   "promptMarkdown": "# LF-11 · Form controls\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D11 (A). Dependencies: LF-10.\n\n**Area:** `frontend/projects/studio-ui/**` only\n\n## Why\nDossier sections Inventory (fields in 142 templates; 344 field rules with 17 radii, 20 min-heights, 20 font sizes) and Standard components, group 4.\n\n## Deliver\n1. Build `sui-field`, the native-control attributes `suiInput`, `suiSelect`, `suiTextarea`, plus `sui-checkbox`, `sui-radio-group`, `sui-switch` and `sui-form-actions` with the states and keyboard and screen reader behaviour in the Dossier table.\n2. Catalogue entries for every state, specs for label wiring, `aria-describedby`, `aria-invalid` and the error summary focus links, README and CHANGELOG.\n\n## Acceptance\n- Every state in the table is in the catalogue in both themes.\n- Only library checks run.\n\n## Verification\nLibrary checks; catalogue screenshots in results.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-12",
+   "title": "LF-12 · Overlays",
+   "dependsOn": [
+    "LF-11"
+   ],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-12",
+    "criteria": [
+     "Escape, focus trap and focus return are covered by specs for dialog and popover.",
+     "Only library checks run."
+    ]
+   },
+   "promptMarkdown": "# LF-12 · Overlays\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D11 (A). Dependencies: LF-11.\n\n**Area:** `frontend/projects/studio-ui/**` only\n\n## Why\nDossier sections Inventory (26 templates with their own `role=dialog`; 68 dialog rules with 8 radii) and Standard components, group 5.\n\n## Deliver\n1. Extend `sui-dialog` with size lg and the typed-reason danger confirmation; keep the side sheet push contract; build `sui-popover` on `@angular/cdk/overlay`.\n2. Catalogue entries, focus-trap and focus-return specs, README and CHANGELOG.\n\n## Acceptance\n- Escape, focus trap and focus return are covered by specs for dialog and popover.\n- Only library checks run.\n\n## Verification\nLibrary checks; catalogue screenshots in results.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-13",
+   "title": "LF-13 · Status, tags, counts, empty and error states",
+   "dependsOn": [
+    "LF-12"
+   ],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-13",
+    "criteria": [
+     "Every state in the table is in the catalogue in both themes.",
+     "The status-chip gate tests cover the tag rule."
+    ]
+   },
+   "promptMarkdown": "# LF-13 · Status, tags, counts, empty and error states\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D11 (A). Dependencies: LF-12.\n\n**Area:** `frontend/projects/studio-ui/**`, `frontend/scripts/check-status-chips.mjs` (tag rule)\n\n## Why\nDossier sections Inventory (174 local chip elements in 85 templates; 107 templates with own empty elements; 128 with own error elements) and Standard components, group 6.\n\n## Deliver\n1. Build `sui-tag` and `sui-error-state`; give the moved empty state the next-action slot and the four reasons; document `sui-status`, `sui-count` and `sui-loading-surface` in the catalogue.\n2. Extend `check-status-chips.mjs` so a tag-shaped element in an enforced folder must be `sui-tag`.\n3. Catalogue entries, specs, README and CHANGELOG.\n\n## Acceptance\n- Every state in the table is in the catalogue in both themes.\n- The status-chip gate tests cover the tag rule.\n\n## Verification\nLibrary checks; `npm --prefix frontend run lint`.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-14",
+   "title": "LF-14 · Change-scoped checks for library and pages",
+   "dependsOn": [
+    "LF-7"
+   ],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-14",
+    "criteria": [
+     "Tests cover each row with a fixture diff.",
+     "A library-only diff lists no backend or product e2e check."
+    ]
+   },
+   "promptMarkdown": "# LF-14 · Change-scoped checks for library and pages\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D1 (A). Dependencies: LF-7.\n\n**Area:** new `frontend/projects/studio-ui/check-scope.json`, new `frontend/scripts/ui-affected.mjs` and its test, `frontend/package.json` (one script)\n\n## Why\nDossier section Cost of checks. The parallel card 'Reviews and gates test what a change touches' chooses checks by changed paths; this slice gives it the UI map.\n\n## Deliver\n1. Write `check-scope.json` with the rows of the Dossier table: library only, library with API change, library with a moved component's look change, one page, standard docs, design skill.\n2. Write `npm run ui:affected -- <files>` that prints the checks for a set of changed files, using the API report diff and `scripts/generate-e2e-coverage-map.mjs` for the page row.\n3. If the parallel card has landed, register the map in its mechanism; otherwise document the hand-run in `docs/system/ui-standard/README.md`.\n\n## Acceptance\n- Tests cover each row with a fixture diff.\n- A library-only diff lists no backend or product e2e check.\n\n## Verification\n`node --test frontend/scripts/ui-affected.test.mjs`; `npm --prefix frontend run lint`.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-15",
+   "title": "LF-15 · Page card: Board",
+   "dependsOn": [
+    "LF-7",
+    "LF-8",
+    "LF-9",
+    "LF-13"
+   ],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-15",
+    "criteria": [
+     "Before and after screenshots in both themes and widths, the patterns table, and the guard enforcing the board folders.",
+     "Board Playwright specs pass unchanged in behaviour.",
+     "No guard baseline entry was added without a reason."
+    ]
+   },
+   "promptMarkdown": "# LF-15 · Page card: Board\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D8 (A), LF-D9 (A), LF-D11 (A). Dependencies: LF-7, LF-8, LF-9, LF-13.\n\n**Area:** `frontend/src/app/features/board/**`, the board parts of `frontend/src/app/app.html`, `ui-standard-baseline.json`, the Stylelint override, `docs/system/ui-standard/rollout.md`\n\n## Why\nDossier sections Pages measured and Rollout: Board is daily, 38 components, local vocabulary 230, 27 button classes, 32 font sizes, the most-used context menu. Start only after the owner reviewed the Access move (LF-6) and the font card (LF-10).\n\n## Deliver\n1. Load the visual design skill. Capture before screenshots first (1440 and 390 px, light and dark; populated, empty and filtered-empty).\n2. Rebuild the board's toolbar, filters, column heads, card menus and dialogs from library components; keep lane presentation from `lane-presentation.ts` (R9), the card status contract (R4) and all `data-testid` values.\n3. Add only variants or small components the board needs, under the library contract; no new family.\n4. Move the board folders into `enforced` and the Stylelint override; record the row in `rollout.md` with screenshots, patterns table and local SCSS lines before and after.\n\n## Acceptance\n- Before and after screenshots in both themes and widths, the patterns table, and the guard enforcing the board folders.\n- Board Playwright specs pass unchanged in behaviour.\n- No guard baseline entry was added without a reason.\n\n## Verification\nPage unit specs, board e2e specs from the coverage map, `npm --prefix frontend run lint`, visual review.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  },
+  {
+   "id": "LF-16",
+   "title": "LF-16 · Page card: Task detail, header and overview",
+   "dependsOn": [
+    "LF-15"
+   ],
+   "acceptanceScope": {
+    "deliveryMode": "bounded-slice",
+    "slice": "LF-16",
+    "criteria": [
+     "Before and after screenshots, patterns table, enforced folders.",
+     "`e2e/task-detail/detail-lane-dropdown.spec.ts`, `detail-view-lane-pager.spec.ts` and the overview specs pass."
+    ]
+   },
+   "promptMarkdown": "# LF-16 · Page card: Task detail, header and overview\n\nSource: `docs/look-and-feel-overhaul/index.html` (AGT-4030) and its `workbench.json`. Decisions: LF-D8 (A), LF-D9 (A), LF-D11 (A). Dependencies: LF-15.\n\n**Area:** `frontend/src/app/features/task-detail/components/detail-header/**`, `.../prompt-pane/overview-pane/**`, `ui-standard-baseline.json`, the Stylelint override, `docs/system/ui-standard/rollout.md`\n\n## Why\nDossier sections Pages measured and Rollout: task detail is the most divergent page (102 components, local vocabulary 696, 135 button classes, 62 font sizes) and is split into three cards; this is the first. Start only after the owner reviewed the Board card. The remaining page cards are created from `rollout.md` one at a time after each review.\n\n## Deliver\n1. Load the visual design skill. Capture before screenshots of the header and Overview pane (1440 and 390 px, light and dark).\n2. Rebuild the detail header (lane select, pager, overflow menu, actions) and the Overview pane from library components; keep the Run-Switcher contract, the lane-control rules and the header-zone rules in `frontend/AGENTS.md` and `docs/quality/header-zones.md`.\n3. Enforce the two folders, record the rollout row, and list in the result what the next two task-detail cards inherit.\n\n## Acceptance\n- Before and after screenshots, patterns table, enforced folders.\n- `e2e/task-detail/detail-lane-dropdown.spec.ts`, `detail-view-lane-pager.spec.ts` and the overview specs pass.\n\n## Verification\nPage unit specs, task-detail e2e specs from the coverage map, lint, visual review.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
+  }
+ ]
+}
