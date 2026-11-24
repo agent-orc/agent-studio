@@ -377,9 +377,15 @@ public sealed class OperatorKillSwitchIntegrationTests(ITestOutputHelper output)
                 ["WatchPaths:0:Path"] = ProjectPath("alpha"),
                 ["WatchPaths:0:RootPath"] = ProjectPath("alpha"),
             }));
-            builder.ConfigureTestServices(services => services
-                .AddHttpClient("operator-kill-switch-operations")
-                .ConfigurePrimaryHttpMessageHandler(() => operationsHandler));
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddHttpClient("operator-kill-switch-operations")
+                    .ConfigurePrimaryHttpMessageHandler(() => operationsHandler);
+                // The kill switch worker applies the out-of-band latch, retries the
+                // host revocation, notifies, and schedules drills; test hosts start
+                // product workers only on request.
+                services.AddHostedService(provider => provider.GetRequiredService<OperatorKillSwitchService>());
+            });
         });
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         if (!bootstrap) return factory;
