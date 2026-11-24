@@ -1,0 +1,104 @@
+{
+  "kind": "planning-estimate",
+  "asOf": "2026-11-24",
+  "units": "USD per million tokens",
+  "sources": [
+    "https://developers.openai.com/api/docs/pricing",
+    "https://developers.openai.com/api/docs/guides/prompt-caching",
+    "https://platform.claude.com/docs/en/build-with-claude/prompt-caching"
+  ],
+  "assumptions": [
+    "Incremental full skill closure only.",
+    "No output, reasoning, tools, task or base context included.",
+    "Same number used for each provider for planning; exact tokenizers differ.",
+    "Full cache reuse within TTL is an idealized case, not a CLI guarantee.",
+    "Standard API reference rates, not subscription billing."
+  ],
+  "rates": {
+    "claude-sonnet-4-6": {
+      "input": 3,
+      "write": 3.75,
+      "read": 0.3,
+      "output": 15,
+      "writeTtl": "5m"
+    },
+    "gpt-6.2-sol-standard": {
+      "input": 2,
+      "write": 2.5,
+      "read": 0.1,
+      "output": 10,
+      "writeTtl": "30m"
+    }
+  },
+  "scenarios": [
+    {
+      "card": "backend-regression",
+      "addedTokensPerRequest": 2800,
+      "tenRequestInputTokens": 28000,
+      "incrementalUsd": {
+        "claude-sonnet-4-6": {
+          "uncachedRequest": 0.0084,
+          "writeRequest": 0.0105,
+          "fullHitRequest": 0.00084,
+          "tenRequestsNoCache": 0.084,
+          "tenRequestsOneWriteNineHits": 0.01806
+        },
+        "gpt-6.2-sol-standard": {
+          "uncachedRequest": 0.0056,
+          "writeRequest": 0.007,
+          "fullHitRequest": 0.00028,
+          "tenRequestsNoCache": 0.056,
+          "tenRequestsOneWriteNineHits": 0.00952
+        }
+      }
+    },
+    {
+      "card": "ui-change",
+      "addedTokensPerRequest": 4800,
+      "tenRequestInputTokens": 48000,
+      "incrementalUsd": {
+        "claude-sonnet-4-6": {
+          "uncachedRequest": 0.0144,
+          "writeRequest": 0.018,
+          "fullHitRequest": 0.00144,
+          "tenRequestsNoCache": 0.144,
+          "tenRequestsOneWriteNineHits": 0.03096
+        },
+        "gpt-6.2-sol-standard": {
+          "uncachedRequest": 0.0096,
+          "writeRequest": 0.012,
+          "fullHitRequest": 0.00048,
+          "tenRequestsNoCache": 0.096,
+          "tenRequestsOneWriteNineHits": 0.01632
+        }
+      }
+    },
+    {
+      "card": "full-stack-workflow",
+      "addedTokensPerRequest": 6800,
+      "tenRequestInputTokens": 68000,
+      "incrementalUsd": {
+        "claude-sonnet-4-6": {
+          "uncachedRequest": 0.0204,
+          "writeRequest": 0.0255,
+          "fullHitRequest": 0.00204,
+          "tenRequestsNoCache": 0.204,
+          "tenRequestsOneWriteNineHits": 0.04386
+        },
+        "gpt-6.2-sol-standard": {
+          "uncachedRequest": 0.0136,
+          "writeRequest": 0.017,
+          "fullHitRequest": 0.00068,
+          "tenRequestsNoCache": 0.136,
+          "tenRequestsOneWriteNineHits": 0.02312
+        }
+      }
+    }
+  ],
+  "classifierCeiling": {
+    "inputTokens": 1200,
+    "outputTokens": 200,
+    "model": "gpt-6.2-sol-standard",
+    "uncachedUsd": 0.0044
+  }
+}

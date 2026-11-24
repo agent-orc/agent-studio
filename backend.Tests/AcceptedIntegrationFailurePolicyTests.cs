@@ -6,6 +6,18 @@ namespace AgentStudio.Tests;
 public sealed class AcceptedIntegrationFailurePolicyTests
 {
     [Fact]
+    public void Gate_capacity_is_preserved_without_a_rebase_round()
+    {
+        var result = MergeIntoIntegrationResult.Failed(AcceptedIntegrationFailureCodes.GateCapacity,
+            "Gate capacity: 3 admission attempts exhausted.");
+        var failure = AcceptedIntegrationFailurePolicy.Classify(PipelineStepStatus.Failed,
+            result.Outcome.ToString(), result.Error, null, AcceptedIntegrationFailureCodes.For(result));
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateCapacity, failure!.Code);
+        Assert.Equal("Gate capacity", failure.Label);
+        Assert.False(failure.RebaseRecoveryAvailable);
+    }
+
+    [Fact]
     public void ExhaustedBranchSyncRefRace_RemainsVisibleAsRefLockInfrastructureFailure()
     {
         var failure = AcceptedIntegrationFailurePolicy.Classify(

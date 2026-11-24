@@ -1735,6 +1735,13 @@ public sealed partial class MergeIntoDevelopRunner
         // separately so the card is never marked
         // a conflict and no rebase-recovery steer round is spent chasing a gate
         // environment problem the delivery cannot fix.
+        if (reset.Success && MonolithTransitionAdapter.IsGateQueueOverrun(
+                gate.ViolatedBudget?.Name, gate.ViolatedBudget?.Phase))
+            return (MergeIntoIntegrationResult.Failed(AcceptedIntegrationFailureCodes.GateCapacity,
+                "Gate capacity: the integration merge check could not acquire its reserved slot after 3 admission attempts. "
+                + $"{integrationBranch} was rolled back and nothing was pushed. Retry integration when gate capacity is available.")
+                with { GateExecuted = false }, gate);
+
         var outcome = gate.FailureKind == BuildTestGateFailureKind.Environment
             ? MergeIntoIntegrationOutcome.GateEnvironmentFailure
             : MergeIntoIntegrationOutcome.GateFailed;

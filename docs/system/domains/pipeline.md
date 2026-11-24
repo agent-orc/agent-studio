@@ -265,6 +265,28 @@ the full suite, so every such project changes behaviour with this release.
 | `balanced` | As fast | As fast, plus a work-package run when develop moved over the card's paths or the merge is uncertain | Merge window: the base suite and every routine suite. Nightly and release as fast |
 | `strict` | Affected build and tests in review and batch gate when the repository declares `testSelection` (`pre-merge`); conservative full suite otherwise | After a green batch | None (the behaviour before AGT-3965) |
 
+AGT-4038: a testing-strategy write is serialized with batch formation. Its
+`transition` response names the previous and new strategies and one `cards`
+receipt per affected review generation (`taskKey`, `work`, `action`). The same
+receipt is appended once to each card as `testing-strategy-changed`. Pending
+batch members in a post-merge strategy go directly to integration. Running
+batches retire through their existing route and publication fences, return
+members to pending, and hand them to the new strategy on the next pilot tick;
+the switch is not a red gate. Running per-task fallbacks are cancelled and
+resume through that same handoff. No new formed batch starts after batching
+has been disabled by the strategy.
+
+The integration check has one reserved cross-process machine slot, separate
+from regular suite and shard slots. It retries a machine-slot queue timeout
+at most three times in total, with 15 seconds between attempts on the same
+exact merge subject. The card stays in its lane and publication stays fenced
+while admission waits. Exhaustion rolls back the local merge and reports
+`gate-capacity`; a running test timeout does not use this admission retry.
+Fast also pins contained-delivery integration checks to compile-only. An
+unmapped fast Remote Review selection runs build and lint, without promoting
+itself to the full suite. A mapped command that repeats an unchanged full test
+command is also deferred; narrowed class, guard and affected commands remain. Strict and balanced keep their existing T1 fallback.
+
 The Owner chooses the strategy on the project settings page or with
 `PUT /api/projects/{name}/testing` (`{"strategy":"balanced"}`). The route
 accepts only `strategy`; a body with only `perCard` or `mode` is refused with

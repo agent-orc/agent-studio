@@ -14,12 +14,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fakeToken } from './fake-studio.mjs';
 import { keyThumbprint } from '../src/login.mjs';
+import { stopAgent } from '../src/agent.mjs';
 
 const bin = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'studio-op.mjs');
 const posix = process.platform !== 'win32';
 const servers = [];
+const homes = [];
 
-after(() => { for (const server of servers) server.close(); });
+after(async () => {
+  for (const home of homes) { await stopAgent(path.join(home, '.config', 'agent-studio')); fs.rmSync(home, { recursive: true, force: true }); }
+  for (const server of servers) server.close();
+});
 
 /** A Studio that answers one sign-in: the start, then the scripted poll answers in order. */
 async function signInStudio(polls) {
@@ -29,7 +34,7 @@ async function signInStudio(polls) {
     req.on('data', chunk => { body += chunk; });
     req.on('end', () => {
       const parsed = body ? JSON.parse(body) : null;
-      requests.push({ method: req.method, path: req.url, authorization: req.headers.authorization ?? null, body: parsed });
+      requests.push({ method: req.method, path: req.url, authorization: req.headers.authorization ?? null, proof: req.headers.dpop ?? null, body: parsed });
       const send = (status, payload) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(payload)); };
       if (req.method === 'POST' && req.url === '/api/auth/operator-sign-in')
         return send(200, { signInId: 'sign-in-1', userCode: 'WDJB-MJHT', verificationUri: `${studio.url}/#/terminal-sign-in`,
@@ -51,6 +56,7 @@ async function signInStudio(polls) {
 
 function makeHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-op-login-'));
+  homes.push(home);
   fs.mkdirSync(path.join(home, '.config', 'agent-studio'), { recursive: true, mode: 0o700 });
   return home;
 }
@@ -76,7 +82,7 @@ test('login writes the confirmed session to operator-session with mode 600 and n
     { status: 'pending', interval: 1 },
     { status: 'slow-down', interval: 1 },
     { status: 'session', interval: 1, token: session, operatorAgentId: 'opa_1', sessionId: session.split('.')[1],
-      actor: 'operator-agent:opa_1/session:x', delegatedBy: 'human:owner', expiresAt: '2026-11-23T18:00:00Z',
+      actor: 'operator-agent:opa_1/session:x', delegatedBy: 'human:owner', expiresAt: new Date(Date.now() + 3600_000).toISOString(),
       classes: ['project.testing'], keyThumbprint: 'thumb' },
   ]);
   const home = makeHome();
@@ -103,7 +109,7 @@ test('login writes the confirmed session to operator-session with mode 600 and n
   assert.equal(start.body.publicKey.crv, 'P-256');
   assert.deepEqual([start.body.deviceLabel, start.body.operatorAgent, start.body.classes], ['agent@workstation', 'ops console', ['project.testing']]);
   const keyFile = path.join(folder, 'operator-device-key.json');
-  if (posix) assert.equal(fs.statSync(keyFile).mode & 0o777, 0o600);
+  assert.equal(fs.existsSync(keyFile), false, 'the private key is never persisted');
   assert.equal(studio.requests.filter(request => request.path === '/api/auth/operator-sign-in/poll').length, 3);
 
   // auth status reads the session file the login selected.
@@ -112,14 +118,16 @@ test('login writes the confirmed session to operator-session with mode 600 and n
   assert.equal(status.json.credential.name, 'operator-session');
   assert.equal(status.json.credential.prefix, 'oas');
   assert.equal(status.json.server.authenticated, true);
+  assert.ok(studio.requests.find(request => request.authorization)?.proof, 'CLI commands carry DPoP');
+  assert.ok(studio.requests.filter(request => request.path === '/api/auth/operator-sign-in/poll').every(request => request.proof));
   assert.ok(!status.stdout.includes(session));
 
-  // A second login reuses the device key, so Studio sees a known device.
+  // A second login gets a fresh memory key; denial keeps the earlier session and signer.
   const again = await signInStudio([{ status: 'denied', interval: 1, message: 'The Owner denied this sign-in.' }]);
   const denied = await run(['login', '--no-qr', '--json'], home, again.url);
   assert.equal(denied.code, 13);
   assert.equal(denied.json.error, 'sign-in-denied');
-  assert.deepEqual(again.requests[0].body.publicKey, start.body.publicKey);
+  assert.notDeepEqual(again.requests[0].body.publicKey, start.body.publicKey);
   assert.equal(fs.readFileSync(file, 'utf8').trim(), session, 'a denied login keeps the earlier session file');
 });
 
@@ -130,7 +138,7 @@ test('an expired code ends login with its own exit code', async () => {
   assert.match(result.stderr, /sign-in-expired/);
 });
 
-test('login refuses plain HTTP to another host and an unsafe device key file', async () => {
+test('login refuses plain HTTP to another host and retires the ES-3 disk key', async () => {
   const home = makeHome();
   const remote = await run(['login', '--no-qr'], home, 'http://studio.example.test');
   assert.equal(remote.code, 3);
@@ -139,8 +147,8 @@ test('login refuses plain HTTP to another host and an unsafe device key file', a
   const keyFile = path.join(home, '.config', 'agent-studio', 'operator-device-key.json');
   fs.writeFileSync(keyFile, '{}', { mode: 0o644 });
   fs.chmodSync(keyFile, 0o644);
-  const studio = await signInStudio([]);
+  const studio = await signInStudio([{ status: 'denied', interval: 1 }]);
   const unsafe = await run(['login', '--no-qr'], home, studio.url);
-  assert.equal(unsafe.code, 3);
-  assert.match(unsafe.stderr, /device-key-permissions/);
+  assert.equal(unsafe.code, 13);
+  assert.equal(fs.existsSync(keyFile), false);
 });

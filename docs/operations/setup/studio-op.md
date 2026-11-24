@@ -161,15 +161,14 @@ requires for operator tokens. A 409 `attention-held` or 412
 [elevated operator session](../../operator-elevated-session/index.html), ES-3).
 It:
 
-1. loads the device key `~/.config/agent-studio/operator-device-key.json`, or
-   creates an EC P-256 key there the first time (mode 600; a file group or
-   others can read is refused with `device-key-permissions`, exit 3);
+1. starts a resident `studio-op agent` under the same OS user and generates
+   a fresh EC P-256 session key in memory, removing the retired ES-3 disk key;
 2. starts a sign-in with the public key, the device label (`--label`, default
    `<OS user>@<machine>`), the agent (`--agent`, its name or id) and the
    requested action classes (`--class`, repeatable), without any credential;
 3. prints the code, the confirmation link and a QR code of the link to stderr
    (`--no-qr` leaves the QR code out), so `--json` keeps stdout parseable;
-4. polls at the interval Studio names, slowing down when Studio answers
+4. polls with a fresh DPoP proof at the interval Studio names, slowing down when Studio answers
    `slow-down`, until the Owner confirms or denies or the code expires;
 5. writes the session into `operator-session` (mode 600, through a temporary
    file and a rename), sets `"credential": "operator-session"` in
@@ -179,9 +178,21 @@ It:
 
 A denied sign-in exits 13 (`sign-in-denied`), an expired code 14
 (`sign-in-expired`); an existing session file stays as it was. Login needs
-HTTPS or a loopback address (`token-requires-https`, exit 3). Until ES-4 the
-device key is a file; ES-4 moves it into the memory of a resident agent
-process and ES-5 into the TPM or Secure Enclave.
+HTTPS or a loopback address (`token-requires-https`, exit 3). ES-4 keeps the
+private key only in resident memory. Commands and streams sign through a
+mode-600 socket or, on Windows, a named pipe with a user-only ACL (Windows
+PowerShell provides the transport). `operator-session-agent.json` stores only
+public connection metadata. `studio-op agent` runs a foreground signer for
+diagnostics; login starts and manages its own resident automatically. Hardware
+certification of the memory session key arrives in ES-5.
+
+A copied session file gets 401 `dpop-required`. After the resident ends, sign
+in again. It stops on failed login, expiry, a signed 401, or within five seconds
+of detecting server revocation or a missing or replaced session file. A denied
+second login keeps the earlier resident. Redirects are refused, and each
+request, reconnect and stream uses a new proof. See the
+[operator setup guide](operator-agent.md#3-start-a-session) and
+[DPoP contract](../security/overview.md#proof-of-possession-binding-es-4).
 
 ### Watch
 
