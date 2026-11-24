@@ -1,0 +1,139 @@
+schemaVersion: 1
+stack: [dotnet, node, playwright]
+toolVersions:
+  node: .nvmrc
+  dotnetSdk: global.json
+commands:
+  prepare: .agent-studio/prepare
+  build:
+    - dotnet build agent-taskboard.sln --no-restore
+    - bash scripts/check-release-build.sh
+    - bash scripts/npm-frontend.sh run build
+  test:
+    - dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound
+    - dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound
+    - dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound
+    - bash scripts/npm-frontend.sh run test:ci
+    - node scripts/check-public-docs.mjs
+  lint:
+    - bash scripts/npm-frontend.sh run lint
+testSuites:
+  - id: docs-check
+    category: routine
+    expectedDurationSeconds: 10
+    command: node scripts/check-public-docs.mjs
+  # Base suites run in full routine windows. Affected windows use only the
+  # suites selected by testSelection. Together the base suites must finish
+  # within about ten minutes on the run host. How to choose them: see
+  # "Base suite" in docs/system/domains/pipeline.md.
+  - id: backend-base
+    category: base
+    expectedDurationSeconds: 90
+    command: dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter "(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard|FullyQualifiedName~TransitionDecisionBoundaryTests|FullyQualifiedName~MonolithDecisionBoundaryTests|FullyQualifiedName~LocalStateStartupTests|FullyQualifiedName~TaskListProjectFilterEndpointTests|FullyQualifiedName~IntegrationReleaseServiceTests)"
+  - id: frontend-unit-base
+    category: base
+    expectedDurationSeconds: 210
+    command: bash scripts/npm-frontend.sh run test:ci -- --include src/app/app.spec.ts --include src/app/features/studio-shell/studio-shell.component.spec.ts --include src/app/services/task.service.spec.ts --include src/app/services/core-attach-routes.spec.ts --include src/app/features/task-detail/task-detail.spec.ts
+  - id: product-start
+    category: base
+    expectedDurationSeconds: 300
+    command: bash scripts/base-product-start.sh
+  - id: backend-routine
+    category: routine
+    expectedDurationSeconds: 1440
+    # Measured on the gate host, see "Sharded test suites in the gate" in docs/system/domains/pipeline.md.
+    shards: 4
+    command: dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound
+  - id: runner-routine
+    category: routine
+    expectedDurationSeconds: 90
+    command: dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound
+  - id: task-server-routine
+    category: routine
+    expectedDurationSeconds: 150
+    command: dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound
+  # Coverage runs outside review gates (Dossier test-acceleration B11): the
+  # collector made the same backend tests 1.7-2.5x slower on agent-runner-01.
+  - id: backend-coverage
+    category: release
+    expectedDurationSeconds: 3600
+    command: dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound --collect "Code Coverage;Format=Cobertura" --results-directory coverage/dotnet/backend
+  - id: runner-coverage
+    category: release
+    expectedDurationSeconds: 180
+    command: dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound --collect "Code Coverage;Format=Cobertura" --results-directory coverage/dotnet/runner
+  - id: task-server-coverage
+    category: release
+    expectedDurationSeconds: 300
+    command: dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound --collect "Code Coverage;Format=Cobertura" --results-directory coverage/dotnet/task-server
+  - id: frontend-unit
+    category: routine
+    expectedDurationSeconds: 360
+    command: bash scripts/npm-frontend.sh run test:ci
+  # Writes coverage/frontend/lcov.info for the scheduled coverage run (AGT-3074).
+  - id: frontend-coverage
+    category: release
+    expectedDurationSeconds: 600
+    command: bash scripts/npm-frontend.sh run test:release
+  - id: frontend-e2e
+    category: machine-bound
+    expectedDurationSeconds: 900
+    command: bash scripts/npm-frontend.sh run e2e
+  - id: task-switch-workstation-budget
+    category: machine-bound
+    expectedDurationSeconds: 5400
+    command: bash scripts/npm-frontend.sh run e2e:task-switch-budget
+# Shared by review, batch, integration and affected merge-window gates.
+# Build/lint indices address commands above, starting at zero. Unknown paths
+# and * rows select the full inventory. Keep the inventory guard green.
+testSelection:
+  - paths: [frontend/]
+    suites: [frontend-unit]
+    build: [2]
+    lint: [0]
+    prepare: [bash scripts/npm-frontend.sh ci --prefer-offline]
+  - paths: [backend/, backend.Tests/]
+    suites: [backend-routine]
+    build: [0, 1]
+    prepare: [dotnet restore agent-taskboard.sln --locked-mode]
+  - paths: [runner/, runner.Tests/]
+    suites: [backend-routine, runner-routine, task-server-routine]
+    build: [0, 1]
+    prepare: [dotnet restore agent-taskboard.sln --locked-mode]
+  - paths: [task-server/, task-server.Tests/]
+    suites: [backend-routine, task-server-routine]
+    build: [0, 1]
+    prepare: [dotnet restore agent-taskboard.sln --locked-mode]
+  - paths: [docs/, README.md, ROADMAP.md, CHANGELOG.md, AGENTS.md, CLAUDE.md, GEMINI.md]
+    suites: [docs-check]
+  # Shared contracts, build tooling and sources without a separately declared
+  # routine suite keep the conservative full inventory.
+  - paths: [.agents/, contracts/, orchestration-decisions/, cli-hosting/, retention/, testsupport/, tools/, scripts/, setup/, setup.Tests/, orchestrator-engine/, orchestrator-engine.Tests/, operations-server/, operations-server.Tests/, operations-agent/, studio-bff/, update-service/, demo-replay-runner/, demo-replay-runner.Tests/, retention.Tests/, project-templates/, prompts/, agent-rules/, companion/, deploy/, testdata/]
+    suites: ['*']
+cachePaths:
+  - frontend/node_modules
+capabilities: [git, child-process, loopback-network]
+environment:
+  DOTNET_NOLOGO: "1"
+  NUGET_XMLDOC_MODE: skip
+  # Windows gate: the prepare process starts with a cleared environment and
+  # powershell.exe cannot load without SystemRoot (error 8009001d). Ignored on
+  # Linux. Remove once the gate passes the Windows base variables (AGT-2822).
+  SystemRoot: 'C:\Windows'
+release:
+  identity:
+    - package: CodingAgentRunner
+      ecosystem: nuget
+      source: backend/packages.lock.json
+    - package: coding-agent-chat
+      ecosystem: npm
+      source: frontend/package-lock.json
+  restore:
+    - dotnet restore backend/OrchestratorApi.csproj --locked-mode
+    - bash scripts/npm-frontend.sh ci
+devServer:
+  command: bash scripts/npm-frontend.sh start
+  workingDirectory: .
+  healthUrl: http://127.0.0.1:4010
+  startupTimeoutSeconds: 120
+  stopWithRun: true

@@ -14,16 +14,12 @@ commands:
     - dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound
     - dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound
     - bash scripts/npm-frontend.sh run test:ci
-    - node scripts/check-public-docs.mjs
   lint:
     - bash scripts/npm-frontend.sh run lint
 testSuites:
-  - id: docs-check
-    category: routine
-    expectedDurationSeconds: 10
-    command: node scripts/check-public-docs.mjs
-  # Base suites run in full routine windows. Affected windows use only the
-  # suites selected by testSelection. Together the base suites must finish
+  # Base suite (AGT-3966): every merge-window run executes these after
+  # commands.build (solution build, release build check, frontend build); a
+  # path outside every area selects them alone. Together they must finish
   # within about ten minutes on the run host. How to choose them: see
   # "Base suite" in docs/system/domains/pipeline.md.
   - id: backend-base
@@ -83,33 +79,6 @@ testSuites:
     category: machine-bound
     expectedDurationSeconds: 5400
     command: bash scripts/npm-frontend.sh run e2e:task-switch-budget
-# Shared by review, batch, integration and affected merge-window gates.
-# Build/lint indices address commands above, starting at zero. Unknown paths
-# and * rows select the full inventory. Keep the inventory guard green.
-testSelection:
-  - paths: [frontend/]
-    suites: [frontend-unit]
-    build: [2]
-    lint: [0]
-    prepare: [bash scripts/npm-frontend.sh ci --prefer-offline]
-  - paths: [backend/, backend.Tests/]
-    suites: [backend-routine]
-    build: [0, 1]
-    prepare: [dotnet restore agent-taskboard.sln --locked-mode]
-  - paths: [runner/, runner.Tests/]
-    suites: [backend-routine, runner-routine, task-server-routine]
-    build: [0, 1]
-    prepare: [dotnet restore agent-taskboard.sln --locked-mode]
-  - paths: [task-server/, task-server.Tests/]
-    suites: [backend-routine, task-server-routine]
-    build: [0, 1]
-    prepare: [dotnet restore agent-taskboard.sln --locked-mode]
-  - paths: [docs/, README.md, ROADMAP.md, CHANGELOG.md, AGENTS.md, CLAUDE.md, GEMINI.md]
-    suites: [docs-check]
-  # Shared contracts, build tooling and sources without a separately declared
-  # routine suite keep the conservative full inventory.
-  - paths: [.agents/, contracts/, orchestration-decisions/, cli-hosting/, retention/, testsupport/, tools/, scripts/, setup/, setup.Tests/, orchestrator-engine/, orchestrator-engine.Tests/, operations-server/, operations-server.Tests/, operations-agent/, studio-bff/, update-service/, demo-replay-runner/, demo-replay-runner.Tests/, retention.Tests/, project-templates/, prompts/, agent-rules/, companion/, deploy/, testdata/]
-    suites: ['*']
 cachePaths:
   - frontend/node_modules
 capabilities: [git, child-process, loopback-network]

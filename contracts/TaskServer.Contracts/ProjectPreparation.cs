@@ -580,6 +580,9 @@ public static partial class ProjectDefinitionReader
     private static IReadOnlyList<ProjectTestSelectionArea> ParseTestSelection(
         IReadOnlyList<YamlLine> lines, List<ProjectDefinitionIssue> issues)
     {
+        var header = lines.FirstOrDefault(line => line.Indent == 0 && KeyValue(line.Text).Key == "testSelection");
+        if (header is not null && KeyValue(header.Text).Value is not ("" or "[]"))
+            issues.Add(new("testSelection", "selection-shape-invalid", "Test selection must be an array of rows."));
         var rows = new List<ProjectTestSelectionArea>();
         Dictionary<string, string>? fields = null;
         void Add()
@@ -591,6 +594,8 @@ public static partial class ProjectDefinitionReader
                 int.TryParse(value, out var index) ? index : -1).ToArray();
             if (fields.Keys.Any(key => key is not ("paths" or "suites" or "build" or "lint" or "prepare")))
                 issues.Add(new("testSelection", "unknown-field", "Test selection contains an unsupported field."));
+            if (fields.Values.Any(value => !value.StartsWith('[') || !value.EndsWith(']')))
+                issues.Add(new("testSelection", "selection-shape-invalid", "Test selection fields must be inline lists."));
             rows.Add(new(List("paths"), List("suites"), Indices("build"), Indices("lint")) { Prepare = List("prepare") });
         }
         foreach (var line in Section(lines, "testSelection"))

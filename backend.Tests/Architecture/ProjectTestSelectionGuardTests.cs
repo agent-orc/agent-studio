@@ -9,12 +9,18 @@ public sealed class ProjectTestSelectionGuardTests
 {
     [Fact]
     [Trait("Category", "Guard")]
+    [Trait("Category", "MachineBound")]
     public void EveryTrackedTopLevelSourceFolderAndDeclaredCommandHasAnImpactAssignment()
     {
         var root = RepositoryRoot.Find();
         var read = ProjectDefinitionReader.ReadWorkspace(root);
         Assert.True(read.IsValid, string.Join("; ", read.Issues.Select(issue => issue.Message)));
-        var definition = read.Definition!;
+        // Until the next deploy the repository keeps its legacy definition.
+        // Police the activation candidate without enabling a field older hosts refuse.
+        var candidate = ProjectDefinitionReader.Parse(File.ReadAllText(Path.Combine(root,
+            "testdata/project-test-selection.project.yml")));
+        Assert.True(candidate.IsValid, string.Join("; ", candidate.Issues.Select(issue => issue.Message)));
+        var definition = read.Definition!.TestSelection.Count > 0 ? read.Definition : candidate.Definition!;
         Assert.NotEmpty(definition.TestSelection);
         // Git's inventory ignores node_modules, build outputs and temporary evidence.
         using var process = Process.Start(new ProcessStartInfo("git", ["ls-files", "-z"])

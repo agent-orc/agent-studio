@@ -144,6 +144,17 @@ not establish that card finding.
 
 ### Shared affected-suite selection (AGT-4031)
 
+Activation is staged across deployments. This card ships the parser, schema
+and gate behavior while keeping this repository's `.agent-studio/project.yml`
+unchanged, so the deployed gate host can validate its own upgrade. A missing
+`testSelection` keeps the legacy gate planners; the shared selector and
+post-merge window fail closed to the full inventory. Unknown fields remain
+errors. After deploying the new readers to gate hosts, an operator follow-up
+adds the map and documentation command. The tested activation candidate is
+[`testdata/project-test-selection.project.yml`](../../../testdata/project-test-selection.project.yml);
+its map is guarded against the tracked source inventory even before activation.
+The rules below describe behavior once a project opts in.
+
 The repository-owned `testSelection` rows in `.agent-studio/project.yml` are
 shared by review build/tests, batch gates, integration gates and affected
 post-merge windows. `ProjectTestSelectionPolicy` in TaskServer.Contracts owns

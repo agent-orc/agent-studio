@@ -20,7 +20,7 @@ public sealed class PostMergeRunTests
     [Fact]
     public void AffectedWindowUsesSharedSelectionAndDocsRunsNoBuildOrBackendTest()
     {
-        var definition = ProjectDefinitionReader.ReadWorkspace(RepositoryRoot.Find()).Definition!;
+        var definition = EnabledDefinition();
         Assert.Equal(["node scripts/check-public-docs.mjs"],
             PostMergeRunPlan.Build(definition, "window", ["docs/start/README.md"]));
         Assert.Equal(["bash scripts/npm-frontend.sh ci --prefer-offline", "bash scripts/npm-frontend.sh run build", "bash scripts/npm-frontend.sh run lint",
@@ -35,7 +35,7 @@ public sealed class PostMergeRunTests
     [Fact]
     public void AnUnassignedDeclaredTestCommandCannotDisappearFromFullFallback()
     {
-        var definition = ProjectDefinitionReader.ReadWorkspace(RepositoryRoot.Find()).Definition!;
+        var definition = EnabledDefinition();
         definition = definition with { Commands = definition.Commands with
             { Test = [.. definition.Commands.Test, "new unassigned test command"] } };
         Assert.Contains("new unassigned test command", PostMergeRunPlan.Build(definition, "window", ["docs/a.md"]));
@@ -46,7 +46,7 @@ public sealed class PostMergeRunTests
     [InlineData("window", PostMergeWindowSuiteModes.Routine)]
     public void FullSuitePointsKeepAllRoutineSuites(string kind, string? mode)
     {
-        var definition = ProjectDefinitionReader.ReadWorkspace(RepositoryRoot.Find()).Definition!;
+        var definition = EnabledDefinition();
         Assert.InRange(definition.TestSuites.Where(suite => suite.Category == "base")
             .Sum(suite => suite.ExpectedDurationSeconds), 1, 600);
         var commands = PostMergeRunPlan.Build(definition, kind, ["docs/a.md"], mode);
@@ -68,7 +68,7 @@ public sealed class PostMergeRunTests
     [InlineData("unknown/A.cs")]
     public void SharedOrUnmappedInputSelectsAllRoutineSuites(string path)
     {
-        var definition = ProjectDefinitionReader.ReadWorkspace(RepositoryRoot.Find()).Definition!;
+        var definition = EnabledDefinition();
         Assert.Equal(definition.TestSuites.Where(suite => suite.Category == "routine").Select(suite => suite.Command),
             PostMergeRunPlan.SelectAffected(definition, [path]));
     }
@@ -173,6 +173,24 @@ public sealed class PostMergeRunTests
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    private static ProjectExecutionDefinition EnabledDefinition()
+        => ProjectDefinitionReader.Parse(File.ReadAllText(Path.Combine(RepositoryRoot.Find(),
+            "testdata/project-test-selection.project.yml"))).Definition!;
+
+    [Fact]
+    public void MissingMapKeepsTheFullPostMergeInventory()
+    {
+        var definition = EnabledDefinition() with { TestSelection = [] };
+        Assert.Empty(definition.TestSelection);
+        var selection = ProjectTestSelectionPolicy.Select(definition, ["docs/a.md"]);
+        Assert.True(selection.Full);
+        Assert.Contains("The project has no valid test selection map.", selection.Reasons);
+        var commands = PostMergeRunPlan.Build(definition, "window", ["docs/a.md"]);
+        Assert.Contains(definition.Commands.Prepare, commands);
+        Assert.All(definition.Commands.Build.Concat(definition.Commands.Test),
+            command => Assert.Contains(command, commands));
     }
 
     private sealed class FixedClock : TimeProvider

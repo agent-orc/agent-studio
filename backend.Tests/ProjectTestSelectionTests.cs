@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AgentStudio.Pipeline;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
@@ -8,10 +9,36 @@ namespace AgentStudio.Tests;
 
 // clock-independent: fixed evidence timestamps are never compared with the current date.
 
-public sealed class ProjectTestSelectionTests
+public sealed class ProjectTestSelectionTests : IDisposable
 {
-    private static readonly string Root = RepositoryRoot.Find();
-    private static ProjectExecutionDefinition Definition => ProjectDefinitionReader.ReadWorkspace(Root).Definition!;
+    private const string LegacyDefinition = """
+        schemaVersion: 1
+        stack: [custom]
+        commands:
+          prepare: .agent-studio/prepare
+          build: [echo build]
+          test: [echo test]
+          lint: []
+        """;
+
+    private readonly string Root = Path.Combine(Path.GetTempPath(), "selection-plan-" + Guid.NewGuid().ToString("N"));
+
+    public ProjectTestSelectionTests()
+    {
+        Directory.CreateDirectory(Path.Combine(Root, ".agent-studio"));
+        File.Copy(Path.Combine(RepositoryRoot.Find(), "testdata/project-test-selection.project.yml"),
+            Path.Combine(Root, ".agent-studio/project.yml"));
+        foreach (var path in new[] { ".agent-studio/prepare", ".nvmrc", "global.json",
+                     "backend/packages.lock.json", "frontend/package-lock.json" })
+        {
+            var target = Path.Combine(Root, path);
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(Path.Combine(RepositoryRoot.Find(), path), target);
+        }
+    }
+
+    public void Dispose() => Directory.Delete(Root, recursive: true);
+    private ProjectExecutionDefinition Definition => ProjectDefinitionReader.ReadWorkspace(Root).Definition!;
 
     [Theory]
     [InlineData("frontend/src/app/app.ts", "frontend-unit")]
@@ -167,7 +194,59 @@ public sealed class ProjectTestSelectionTests
         Assert.Contains(read.Issues, issue => issue.Code == "selection-invalid");
     }
 
-    private static StagedVerifyPlan Plan(params string[] paths) => DeterministicTestScope.Plan(Root,
+    [Fact]
+    public void MissingMapKeepsTheLegacyGatePlanner()
+    {
+        var definitionPath = Path.Combine(Root, ".agent-studio/project.yml");
+        File.WriteAllText(definitionPath, LegacyDefinition);
+        var read = ProjectDefinitionReader.ReadWorkspace(Root);
+        Assert.True(read.IsValid);
+        Assert.Empty(read.Definition!.TestSelection);
+        Assert.Null(ProjectAffectedVerifyPlanner.TryPlan(Root, VerifyCommandPlanner.Plan(Root, null),
+            ["docs/a.md"], "integration", TestExecutionLevels.WorkPackage));
+        var selection = ProjectTestSelectionPolicy.Select(read.Definition, ["frontend/a.ts"]);
+        Assert.True(selection.Full);
+        Assert.Empty(selection.OmittedSuites);
+    }
+
+    [Fact]
+    public void SelectionSchemaDeclaresOnlySupportedRowFieldsAndKeepsUnknownFieldsClosed()
+    {
+        using var schema = JsonDocument.Parse(File.ReadAllText(Path.Combine(RepositoryRoot.Find(),
+            "docs/app/schemas/project-execution.schema.json")));
+        Assert.False(schema.RootElement.GetProperty("additionalProperties").GetBoolean());
+        var selection = schema.RootElement.GetProperty("properties").GetProperty("testSelection");
+        Assert.Equal("array", selection.GetProperty("type").GetString());
+        var row = selection.GetProperty("items");
+        Assert.False(row.GetProperty("additionalProperties").GetBoolean());
+        Assert.Equal(["paths", "suites"], row.GetProperty("required").EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal(["build", "lint", "paths", "prepare", "suites"],
+            row.GetProperty("properties").EnumerateObject().Select(item => item.Name).Order());
+    }
+
+    [Theory]
+    [InlineData("testSelectionTypo: []", "testSelectionTypo")]
+    [InlineData("testSelection:\n  - paths: [docs/]\n    suites: ['*']\n    typo: []", "testSelection")]
+    public void NewFieldDoesNotRelaxUnknownFieldValidation(string addition, string issuePath)
+    {
+        var read = ProjectDefinitionReader.Parse(LegacyDefinition + "\n" + addition + "\n");
+        Assert.False(read.IsValid);
+        Assert.Contains(read.Issues, issue => issue.Code == "unknown-field" && issue.Path == issuePath);
+    }
+
+    [Theory]
+    [InlineData("testSelection: invalid")]
+    [InlineData("testSelection: {}")]
+    [InlineData("testSelection:\n  - paths: docs/\n    suites: ['*']")]
+    [InlineData("testSelection:\n  - paths: [docs/]\n    suites: ['*']\n    build: 0")]
+    public void SelectionRequiresAnArrayOfRowsWithInlineLists(string addition)
+    {
+        var read = ProjectDefinitionReader.Parse(LegacyDefinition + "\n" + addition + "\n");
+        Assert.False(read.IsValid);
+        Assert.Contains(read.Issues, issue => issue.Code == "selection-shape-invalid");
+    }
+
+    private StagedVerifyPlan Plan(params string[] paths) => DeterministicTestScope.Plan(Root,
         VerifyCommandPlanner.Plan(Root, null), paths, null, null, "gate", TestExecutionLevels.WorkPackage);
 }
 

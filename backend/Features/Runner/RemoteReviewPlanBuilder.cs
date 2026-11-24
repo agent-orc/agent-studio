@@ -274,6 +274,7 @@ public sealed partial class RemoteReviewPlanBuilder
             RequireDifferentHostFailureDomain = projectSettings?.RequireDifferentReviewHost == true,
         };
         var ordinaryToolPlan = toolPlan;
+        var usesSharedSelection = toolPlan.SuiteSelection is not null;
         // AGT-3698: a concept delivery confined to one docs/<topic>/ Dossier is
         // judged by concept-fit alone. Installing and testing the repository
         // proves nothing about the Dossier and let unrelated tooling block it.
@@ -321,6 +322,7 @@ public sealed partial class RemoteReviewPlanBuilder
                         ?? TestSelectionPlanner.Plan(selectionRepo,
                             verify, changedPaths, projectSettings.TestExecution, "remote-review", level,
                             ReferenceSelection(selectionRepo, resultSha!));
+                    if (usesSharedSelection) level = selection.Audit.Level;
                     LogReferenceSelection(task!, selection.Audit);
                     var selected = selection.Commands.Where(command =>
                         command.Kind != VerifyCommandKind.Test || command.BlocksWorkPackage).ToArray();
@@ -368,7 +370,7 @@ public sealed partial class RemoteReviewPlanBuilder
         if (!deferBuildTest && !noChange && conceptDossier is null
             && task is not null && !TaskModes.IsReportOnly(task.Mode)
             && projectSettings is not null
-            && PerCardTestModes.Resolve(projectSettings) == PerCardTestModes.Affected
+            && (usesSharedSelection || PerCardTestModes.Resolve(projectSettings) == PerCardTestModes.Affected)
             && changedPaths is { Count: > 0 } && !string.IsNullOrWhiteSpace(repositoryPath)
             && ReviewSubjectStore.IsValidResultSha(resultSha))
         {
@@ -381,9 +383,9 @@ public sealed partial class RemoteReviewPlanBuilder
                 string.IsNullOrWhiteSpace(task.TaskKey) ? task.Id : task.TaskKey, selection.Audit.Selector,
                 selection.Audit.FullSuiteRequired, selection.Audit.ProjectMapDigest, selection.Audit.Digest,
                 string.Join(" | ", selection.Audit.Reasons));
-            if (!selection.Audit.FullSuiteRequired)
+            if (!selection.Audit.FullSuiteRequired || usesSharedSelection)
             {
-                if (TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast)
+                if (!usesSharedSelection && TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast)
                 {
                     var fullCommands = verify.Commands.Where(command => command.Kind == VerifyCommandKind.Test)
                         .Select(command => (command.Command, command.WorkingSubdir)).ToHashSet();
@@ -406,7 +408,7 @@ public sealed partial class RemoteReviewPlanBuilder
                 {
                     RequireDifferentHostFailureDomain = projectSettings.RequireDifferentReviewHost == true,
                 };
-                testLevel = TestExecutionLevels.WorkPackage;
+                testLevel = selection.Audit.Level;
                 selectionDigest = selection.Audit.Digest;
                 perCardApplied = true;
             }
