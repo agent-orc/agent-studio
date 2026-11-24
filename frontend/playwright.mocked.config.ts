@@ -26,6 +26,7 @@ export default defineConfig({
       '**/task-detail/escalation-summary.spec.ts',
       '**/system/semantic-contrast.spec.ts',
       '**/project/project-deploy-area.spec.ts',
+      '**/project/main-scroll-keys.spec.ts',
       '**/project/operations-security.spec.ts',
       '**/project/testing-strategy.spec.ts',
       '**/workspace/deployment-dashboard.spec.ts',
