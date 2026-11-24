@@ -234,14 +234,17 @@ entrypoint-only inventory so that this distinction is explicit.
 Recreate the collected review packet after a repair or results cleanup:
 
 ```sh
-python3 -B docs/portable-skill-library/prepare-review.py --results-dir /home/agent/runner-work/tasks/AGT-4032/results
+python3 -B docs/portable-skill-library/prepare-review.py --results-dir "$JOB_RESULTS_DIR"
 ```
 
 The helper validates the canonical Dossier before writing. It writes only to
-the explicitly supplied absolute AGT-4032 results folder and its requested
-job-folder status reference. It does not change task lanes or project state.
+the explicitly supplied absolute task results folder. A follow-up card uses
+its own `JOB_RESULTS_DIR`; the helper does not write outside that directory.
+It does not change task lanes or project state.
 It produces:
 
+- `review-entry.md`: a compact requirement and sequence table, linking the
+  actual section texts in `sections/` and full card prompts in `cards/`.
 - `report.html`: the entire canonical HTML entrypoint, byte-identical.
 - `report.md`: the entire readable article, including all thirteen full prompts.
 - `required-sections.md`: the actual Alternatives, Recommendation, Evidence and
@@ -251,14 +254,15 @@ It produces:
 - `dossier/`: byte-identical copies of all files in this Dossier directory.
 - `workbench.json`, `review-map.md`, `evidence.md`, `cost-model.json`: directly
   inspectable descriptor and supporting documents beside the reports.
-- `deliverables.md` and both status references: the exact canonical repository
-  entrypoint and packet inventory.
+- `deliverables.md` and `status.md` inside the results folder: the exact
+  canonical repository entrypoint and packet inventory.
 - `verification.json` and `review-manifest.json`: structural, collected-byte and
   prompt-parity checks, file sizes and SHA-256 identity.
 
-At the start of the current repair, the collection check failed because
-`results/deliverables.md` was missing. `verification-before.json` records that
-observation. It is not a reconstruction of an earlier review input. New
+At the start of this continuation, the canonical Dossier passed repository
+checks but no review packet had been collected for this follow-up card.
+`verification-before.json` records the missing collected reference. It is not a reconstruction
+of an earlier review input. New
 document captures, when present, validate this HTML only. They are not
 screenshots of implemented skill-library product surfaces.
 
@@ -273,7 +277,7 @@ Run from the repository root:
 
 ```sh
 python3 docs/portable-skill-library/verify.py
-python3 -B docs/portable-skill-library/verify.py --results-dir /home/agent/runner-work/tasks/AGT-4032/results
+python3 -B docs/portable-skill-library/verify.py --results-dir "$JOB_RESULTS_DIR"
 ```
 
 The verifier parses the actual HTML, validates required metadata, substantive
@@ -284,7 +288,7 @@ map retains every slice's acceptance criteria. It emits JSON with file hashes
 so a reviewer can identify the verified bytes. A pass establishes these checks;
 content judgment, real CLI transport and skill effectiveness remain separate.
 
-The canonical entrypoint is `docs/portable-skill-library/index.html`. Both task
-references are required: `results/deliverables.md` and job-folder `status.md`.
-Those files are external delivery metadata, not additional repository Dossiers.
+The canonical entrypoint is `docs/portable-skill-library/index.html`. Task
+references are collected in `deliverables.md`, `review-entry.md` and `status.md`
+inside `JOB_RESULTS_DIR`. Those files are delivery evidence for the same Dossier.
 The task results also contain the verification output and document captures.
