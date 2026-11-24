@@ -156,7 +156,7 @@ test.describe('local profile owner actions', () => {
 
       // The same session now opens Access, where runner enrollments live.
       await page.goto('/#/workspace/settings/access');
-      await expect(page.getByTestId('access-summary')).toBeVisible();
+      await expect(page.getByTestId('access-outline')).toBeVisible();
       await expect(page.getByTestId('access-error')).toHaveCount(0);
       await capture(page, 'access-signed-in');
     } finally {

@@ -12,18 +12,6 @@
         "d8f03b7f33961e27"
       ]
     },
-    "src/app/features/access/components/access-bindings/access-bindings.component.html": {
-      "reason": "Role name of a binding is a tag; the owner tint marks the role, not a state.",
-      "signatures": [
-        "f9f8678a96e95b75"
-      ]
-    },
-    "src/app/features/access/components/access-groups/access-groups.component.html": {
-      "reason": "Binding count of a group is a tag with a count, not a state.",
-      "signatures": [
-        "ca1597ce10c1fa67"
-      ]
-    },
     "src/app/features/access/components/access-operator-approvals/access-operator-approvals.component.html": {
       "reason": "Instruction source of an approval request is a tag; the warn tint marks an untrusted origin, not a state of the request.",
       "signatures": [

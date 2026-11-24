@@ -1,0 +1,5 @@
+@use '../../access-controls' as access;
+
+:host { display: block; min-width: 0; }
+@include access.standard;
+code { font-family: var(--font-mono); }

@@ -1,112 +1,80 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import {
-  formatAccessTime,
-  scopeLabel,
-  type IamGrant,
-  type OneTimeServiceAccountToken,
-  type ServiceAccount,
-  type ServiceAccountToken,
-} from '../../models/access.model';
+import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
+import { DataGridComponent, GridCellDirective } from '../../../../components/data-grid';
+import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
+import type { MenuItem } from '../../../../components/menu';
+import { OverflowMenuComponent } from '../../../../components/overflow-menu/overflow-menu.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { principalName, type ServiceAccount } from '../../models/access.model';
+import { accessColumns, grantsOf, isApiToken, tokenSummary, type GrantView } from '../../models/access-view.model';
 import { isOperatorAgentAccount } from '../../models/operator-agent.model';
 import { ACCESS_CLOCK } from '../../services/access-clock';
+import { AccessSelectionService, type AccessDetailKind } from '../../services/access-selection.service';
 import { AccessService } from '../../services/access.service';
-import { AccessGrantFormComponent } from '../access-grant-form/access-grant-form.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { AccessGrantsComponent } from '../access-grants/access-grants.component';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+export interface AccountRow {
+  id: string;
+  name: string;
+  sub: string;
+  account: ServiceAccount;
+  grants: readonly GrantView[];
+  disabled: boolean;
+  tokens: string;
+  menu: readonly MenuItem[];
+}
 
 /**
- * Non-human principals with their own API tokens. A token is shown once at
- * creation; the store keeps only its hash, expiry, last use, and revocation.
- * API tokens (AGT-3186) are listed here too: one `api.` token each, revocable,
- * and replaced rather than reissued.
+ * Non-human principals in one grid. `kind="service-account"` lists the
+ * accounts scripts and jobs use; `kind="api-token"` lists API tokens
+ * (AGT-3186), which are service accounts with one token bound to its creator.
+ * Operator agents are service accounts too, but live in the operator panel.
  */
 @Component({
   selector: 'app-access-service-accounts',
   standalone: true,
-  imports: [AccessGrantFormComponent, StatusIndicatorComponent],
+  imports: [AccessGrantsComponent, DataGridComponent, EmptyStateComponent, GridCellDirective, OverflowMenuComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-service-accounts.component.html',
   styleUrl: './access-service-accounts.component.scss',
 })
 export class AccessServiceAccountsComponent {
   readonly access = inject(AccessService);
+  readonly selection = inject(AccessSelectionService);
   private readonly now = inject(ACCESS_CLOCK);
-  readonly name = signal('');
-  readonly description = signal('');
-  readonly grant = signal<IamGrant | null>(null);
-  readonly tokenDays = signal(90);
-  readonly issued = signal<OneTimeServiceAccountToken | null>(null);
-  /** Operator agents are service accounts too, but they are managed only in the operator panel. */
-  readonly accounts = computed(() => (this.access.overview()?.serviceAccounts ?? []).filter(account => !isOperatorAgentAccount(account)));
-  readonly lifetimes: readonly number[] = [30, 90, 365];
-  readonly time = formatAccessTime;
+  readonly kind = input<Extract<AccessDetailKind, 'service-account' | 'api-token'>>('service-account');
 
-  bindings(account: ServiceAccount): string[] {
+  readonly api = computed(() => this.kind() === 'api-token');
+  readonly columns = computed(() => this.api()
+    ? accessColumns('API token', 'Role', 'Token')
+    : accessColumns('Service account', 'Roles', 'Tokens'));
+
+  readonly rows = computed<AccountRow[]>(() => {
     const overview = this.access.overview();
-    if (!overview) return [];
-    return overview.bindings
-      .filter(binding => binding.principalKind === 'service-account' && binding.principalId === account.id)
-      .map(binding => `${overview.roles.find(role => role.id === binding.role)?.displayName ?? binding.role} · ${scopeLabel(binding.scope, this.access.projects())}`);
-  }
+    const api = this.api();
+    return (overview?.serviceAccounts ?? [])
+      .filter(account => !isOperatorAgentAccount(account) && isApiToken(account) === api)
+      .map(account => {
+        const disabled = !!account.disabledAt;
+        const creator = account.createdBy ? principalName('user', account.createdBy, overview) : '';
+        return {
+          id: account.id, name: account.name, account, disabled,
+          sub: api && creator ? `Created by ${creator}` : account.description ?? '',
+          grants: grantsOf('service-account', account.id, overview, this.access.projects()),
+          tokens: disabled ? '' : tokenSummary(account, this.now()),
+          menu: [
+            { kind: 'row', id: 'open', label: 'Open details' },
+            ...(disabled ? [] : [{ kind: 'separator' }, { kind: 'row', id: 'disable', label: 'Disable…', danger: true }] as MenuItem[]),
+          ],
+        };
+      });
+  });
 
-  /**
-   * The roles an API token is bound to, by display name and description, so
-   * the Owner sees what an operator token may do (OP-1: `operator-agent`).
-   */
-  tokenRoles(account: ServiceAccount): { id: string; name: string; description: string }[] {
-    const overview = this.access.overview();
-    if (!overview) return [];
-    const ids = [...new Set(overview.bindings
-      .filter(binding => binding.principalKind === 'service-account' && binding.principalId === account.id)
-      .map(binding => binding.role))];
-    return ids.map(id => {
-      const role = overview.roles.find(candidate => candidate.id === id);
-      return { id, name: role?.displayName ?? id, description: role?.description ?? '' };
-    });
-  }
+  readonly rowId = (row: AccountRow) => row.id;
+  readonly rowLabel = (row: AccountRow) => row.name;
+  readonly rowTestId = (row: AccountRow) => `access-service-account-${row.id}`;
+  readonly muted = (row: AccountRow) => row.disabled;
 
-  isApiToken(account: ServiceAccount): boolean {
-    return account.origin === 'api-token';
-  }
-
-  creator(account: ServiceAccount): string {
-    const id = account.createdBy;
-    return this.access.overview()?.users.find(user => user.id === id)?.displayName ?? id ?? '';
-  }
-
-  activeTokens(account: ServiceAccount): ServiceAccountToken[] {
-    return account.tokens.filter(token => !token.revokedAt);
-  }
-
-  async create(): Promise<void> {
-    const name = this.name().trim();
-    const grant = this.grant();
-    if (!name || this.access.busy()) return;
-    if (await this.access.createServiceAccount(name, this.description().trim(), grant ? [grant] : [])) {
-      this.name.set('');
-      this.description.set('');
-    }
-  }
-
-  async issue(account: ServiceAccount): Promise<void> {
-    if (this.access.busy()) return;
-    const expiresAt = new Date(this.now() + this.tokenDays() * DAY_MS).toISOString();
-    this.issued.set(await this.access.createToken(account.id, `${account.name} token`, expiresAt));
-  }
-
-  async revoke(account: ServiceAccount, token: ServiceAccountToken): Promise<void> {
-    if (this.access.busy()) return;
-    await this.access.revokeToken(account.id, token.id);
-  }
-
-  async disable(account: ServiceAccount): Promise<void> {
-    if (this.access.busy()) return;
-    await this.access.disableServiceAccount(account.id);
-  }
-
-  setLifetime(value: string): void {
-    const days = Number(value);
-    if (this.lifetimes.includes(days)) this.tokenDays.set(days);
+  act(action: string, row: AccountRow): void {
+    this.selection.open(this.kind(), row.id, action === 'disable' ? 'disable' : null);
   }
 }

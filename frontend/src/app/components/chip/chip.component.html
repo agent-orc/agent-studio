@@ -1,0 +1,5 @@
+<span class="chip" [attr.data-emphasis]="emphasis()" [attr.data-testid]="testId()" [attr.title]="full()">
+  <span class="chip__label">{{ label() }}</span>
+  @if (detail(); as text) { <span class="chip__detail">{{ text }}</span> }
+  @if (note(); as text) { <span class="chip__note">{{ text }}</span> }
+</span>

@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core';
+import { SecretRevealComponent } from '../../../../components/secret-reveal/secret-reveal.component';
 import { formatAccessTime, type IamGrant } from '../../models/access.model';
 import { AccessService } from '../../services/access.service';
 import { AccessGrantFormComponent } from '../access-grant-form/access-grant-form.component';
@@ -6,12 +7,12 @@ import { AccessGrantFormComponent } from '../access-grant-form/access-grant-form
 /**
  * Invites a person through the existing invitation flow
  * (`POST /api/auth/invitations`) with one initial role binding. The sign-in
- * link is shown once; it is valid for 24 hours.
+ * link is shown once, in the shared secret reveal; it is valid for 24 hours.
  */
 @Component({
   selector: 'app-access-invite-form',
   standalone: true,
-  imports: [AccessGrantFormComponent],
+  imports: [AccessGrantFormComponent, SecretRevealComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-invite-form.component.html',
   styleUrl: './access-invite-form.component.scss',
@@ -23,8 +24,12 @@ export class AccessInviteFormComponent {
   readonly grant = signal<IamGrant | null>(null);
   readonly link = signal<{ url: string; username: string; expiresAt: string; factor: string } | null>(null);
   readonly pending = signal<{ username: string; role: string } | null>(null);
-  readonly copied = signal(false);
-  readonly copyError = signal(false);
+
+  constructor() {
+    effect(() => {
+      if (this.access.state() === 'denied') this.link.set(null);
+    });
+  }
 
   canInvite(): boolean {
     return this.username().trim().length >= 3 && !!this.grant() && !this.access.busy() && !this.pending();
@@ -36,8 +41,6 @@ export class AccessInviteFormComponent {
     const username = this.username().trim();
     const role = this.access.overview()?.roles.find(item => item.id === grant.role)?.displayName ?? grant.role;
     this.link.set(null);
-    this.copied.set(false);
-    this.copyError.set(false);
     this.pending.set({ username, role });
     let result: Awaited<ReturnType<AccessService['invite']>>;
     try {
@@ -53,21 +56,7 @@ export class AccessInviteFormComponent {
         ? 'A second factor is required to approve production releases. Set one up after acceptance.'
         : 'A second factor is recommended after acceptance.';
     this.link.set({ url: origin + result.signInLink, username: result.user.username, expiresAt: formatAccessTime(result.expiresAt), factor });
-    this.copied.set(false);
-    this.copyError.set(false);
     this.username.set('');
     this.displayName.set('');
-  }
-
-  async copyLink(): Promise<void> {
-    const link = this.link();
-    if (!link) return;
-    try {
-      await navigator.clipboard.writeText(link.url);
-      this.copied.set(true);
-      this.copyError.set(false);
-    } catch {
-      this.copyError.set(true);
-    }
   }
 }
