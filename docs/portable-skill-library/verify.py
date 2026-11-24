@@ -164,7 +164,7 @@ def verify(results_dir=None):
     if results_dir is not None:
         results_dir = Path(results_dir).resolve()
         entry = "docs/portable-skill-library/index.html"
-        for reference in (results_dir / "deliverables.md", results_dir.parent / "status.md",
+        for reference in (results_dir / "deliverables.md", results_dir / "review-entry.md",
                           results_dir / "status.md"):
             assert entry in reference.read_text(), f"Missing canonical task reference: {reference}"
             delivery_checks.append(str(reference))
@@ -178,9 +178,15 @@ def verify(results_dir=None):
         sections = (results_dir / "required-sections.md").read_text()
         for key in required:
             assert article.sections[key].strip() in sections, f"Missing collected section text: {key}"
+            assert article.sections[key].strip() in (results_dir / "sections" / f"{key}.md").read_text(), \
+                f"Missing individual section text: {key}"
         for task in tasks:
             assert task["promptMarkdown"] in inventory, f"Missing collected full prompt: {task['id']}"
             assert task["promptMarkdown"] in readable_report, f"Missing readable report prompt: {task['id']}"
+            individual = (results_dir / "cards" / f"{task['id']}.md").read_text()
+            assert task["promptMarkdown"] in individual, f"Missing individual full prompt: {task['id']}"
+            assert f"dependsOn: {json.dumps(task['dependsOn'])}" in individual, \
+                f"Individual dependency mismatch: {task['id']}"
         delivery_checks.append("All Dossier files copied byte-for-byte; all full prompts collected")
         delivery_checks.append("Complete HTML/text reports and verbatim required section extracts present")
     return {"status": "pass", "sourceTaskKey": "AGT-4032", "requiredSections": sorted(required),

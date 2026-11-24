@@ -2,7 +2,7 @@
 
 As of 24 November 2026. Source card: AGT-4032. This register separates repository observations, owner-supplied facts, proposed contracts and planning calculations. It does not certify operator acceptance or a product implementation.
 
-Repository source revision rechecked for this repair: `3e292026b2c48307588da208cfc34ce6c36690af`. Product files were inspected read-only and remain unchanged in this task.
+Original AGT-4032 source inspection: `3e292026b2c48307588da208cfc34ce6c36690af`. AGT-4036 restores the Dossier from retained commit `fb5bfbeb99de31ccbcc736b522eb09dfa25b47f6` onto base `e3ca3c8adc8024dcb76dd9b34798723de14de212`. Product files remain unchanged by this repair. The observations and external-reference checks below belong to AGT-4032 unless explicitly labelled AGT-4036.
 
 ## Repository observations
 
@@ -23,49 +23,65 @@ Repository source revision rechecked for this repair: `3e292026b2c48307588da208c
 
 ## Review repair
 
-The current collection check was repeated before writing delivery files and
-failed with a missing `results/deliverables.md`; that failure is retained in
-`verification-before.json` in the task results. Repository-only validation
-already passed for all four required sections, ten recommended decisions and
-thirteen full implementation prompts. The observed result gap is therefore
-distinct from content absence in this checkout.
+Repair card: AGT-4036.
+
+Finding: required Dossier content and the complete card sequence could not be
+verified. At the start of AGT-4036, the assigned checkout had neither
+`docs/portable-skill-library/index.html` nor its descriptor. The task results
+contained only the preparation manifest.
+`initial-delivery-verification-before.json` in this recovery's results retains
+that earlier observation. It does not establish what a prior
+remote reviewer received.
+
+AGT-4032's retained commit `fb5bfbeb99de31ccbcc736b522eb09dfa25b47f6`
+and collected artifacts contain seven complete Dossier files. AGT-4036 restores
+those files to the assigned checkout and adds the documentation-index entry.
+The recovered source passes the section, dependency, prompt-parity, navigation
+and cost-arithmetic checks before the collection helper is updated.
+
+The repaired [collection helper](prepare-review.py) accepts the explicitly
+supplied absolute task results directory, including a follow-up card's folder.
+It writes all evidence inside that directory. It does not write a sibling
+job-folder status file. `review-entry.md` links the actual text of all four
+required sections and thirteen separate complete card prompts. Their dependency
+arrays and titles remain inspectable without opening a large combined report.
+The complete HTML, readable report, descriptor, supporting sources and a
+byte-identical Dossier snapshot are also collected. Verification checks the
+actual content and HTML/descriptor prompt parity; the manifest records file
+sizes and SHA-256 identity. Collection is repeatable after results cleanup.
 
 [ConceptDossierReviewMaterial.cs](../../backend/Features/Runner/ConceptDossierReviewMaterial.cs)
-reads the task reference and queues `index.html` and `workbench.json` first,
-with limits of 256,000 characters per file and 512,000 total. The complete
-decision and card contract fits in these first two files; the verifier measures
-their final sizes and checks every HTML prompt against the descriptor.
+queues the entrypoint and descriptor first with 256,000 characters per file
+and 512,000 total. Both complete contract files fit those limits.
 [ConceptDossierSnapshot.cs](../../backend/Features/Pipeline/ConceptDossierSnapshot.cs)
-copies those two contract files at an exact revision, so completeness must not
-depend on following a supporting source link. This is code inspection, not an
-observation of the previous remote review invocation.
+copies these two files at the exact source revision. The required section text
+and all full card prompts are therefore embedded in the entrypoint itself,
+without relying on a supporting source link. These are source-code observations;
+AGT-4036 does not change the review pipeline or claim to observe a later review.
 
-[prepare-review.py](prepare-review.py) makes the delivery packet reproducible
-after results cleanup. It collects the complete entrypoint in HTML and readable
-text, all four actual section extracts, the thirteen complete prompts and
-dependency arrays, all Dossier files, both requested task references, verification
-and a hash manifest. The post-collection check compares those files with the
-canonical bytes. It proves local packet completeness and identity; later remote
-ingestion, concept acceptance and operator approval remain pipeline work.
+The concept's recommended options remain the working decisions for promoted
+implementation cards unless a recorded operator decision selects another.
+This repair preserves the concept and sequence; it does not implement SL-1
+through SL-13 or claim decision acceptance. Local verification establishes
+collected content identity and completeness, with document rendering checked
+separately. Sight review and operator approval remain pipeline lanes.
 
-The initial collected results directory in this repair contained only
-`preparation-manifest.json`; `results/deliverables.md` and the prior verification
-artifacts named by `status.md` were absent. This is an observed handoff gap,
-not proof of the cause of either earlier review finding. The repair retains
-the canonical repository Dossier, embeds all thirteen full implementation
-prompts in the HTML entrypoint, and verifies them against the JSON source.
-A byte-identical Dossier copy, a readable full-prompt inventory, structural
-verification and a file/hash manifest are collected under the task's absolute
-results directory. Both task-file references name the canonical repository
-entrypoint. No prior absent verification artifact is claimed as new evidence.
+### Integration recovery
 
-The local AGT-3465 Dossier and its nine slices remain mapped in
-[review-map.md](review-map.md#agt-3465-continuity). Its live card remains
-unretrieved; the API failure below belongs to the prior inspection.
-The current source checks reconfirmed the enrichment limits, selection,
-summary rendering and report seam. Official OpenAI pricing/caching and Claude
-caching pages were reopened; the stated reference-route rates remain the
-planning inputs. This is not a live cache measurement.
+The next AGT-4036 round addresses failed stage `merge-into-develop`. Delivery
+`0ef1c0e980ce50deebe4727d1463048a7a403aea` conflicted with base
+`09ec17dd03ccd6a426ce12a079e1611a7b8439a0` in this register, the collection
+helper, the review map, the verifier and the descriptor. No integration gate
+ran for that failed attempt. The runner supplied a clean checkout at the new
+base for this recovery; no agent-owned merge or history rewrite is performed.
+
+AGT-4032 is present in that base. Its published Dossier key `AGT-W3470`, all
+thirteen implementation entries and all ten decision records are retained.
+The collection helper and verifier retain AGT-4036's task-specific results
+directory, individual section/card files, complete prompts, dependencies and
+byte-parity checks. The descriptor adds the repair reference without removing
+upstream identity. The results packet includes `integration-recovery.md` and
+`integration-recovery.json`, with both source SHAs and per-file resolutions.
 
 ## Owner input
 
@@ -94,7 +110,7 @@ These are entrypoint-only character estimates. References, scripts, wrappers and
 
 ## External primary references
 
-All were fetched or opened again during this repair on 24 November 2026. Links are reference contracts, not pinned production price records.
+All were fetched or opened by AGT-4032 on 24 November 2026; AGT-4036 preserves these dated references without a new pricing or provider-contract claim. Links are reference contracts, not pinned production price records.
 
 - [Official OpenAI skills documentation](https://developers.openai.com/codex/skills): portable SKILL.md, resources, native discovery and the distinction between skills and plugin packaging. Studio chooses its own managed distribution; the provider's preferred marketplace/plugin route is not a requirement here.
 - [OpenAI API pricing](https://developers.openai.com/api/docs/pricing): Standard reference rates used in the planning model. Tier and context length matter; a subscription is not API billing.
@@ -110,4 +126,4 @@ No controlled skill-quality experiment, tokenization experiment, native CLI comp
 
 ## Delivery constraints
 
-The explicit concept-mode instruction limits repository changes to this single Dossier directory. The normal docs-index row is therefore deferred to SL-1 rather than editing `docs/start/README.md` in this run. The canonical HTML reuses the current article-document-v2 style block, font families, color variables and evidence components. No existing product-state claim is supported by a fabricated or seeded screenshot. Document-layout captures in task results validate this Dossier only.
+AGT-4032 limited its changes to this Dossier directory. AGT-4036 also adds the required navigation row in `docs/start/README.md`. The canonical HTML reuses the current article-document-v2 style block, font families, color variables and evidence components. No existing product-state claim is supported by a fabricated or seeded screenshot. Document-layout captures in task results validate this Dossier only.
