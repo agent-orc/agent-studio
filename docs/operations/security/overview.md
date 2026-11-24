@@ -1192,6 +1192,18 @@ of the former projected Admin or Owner role and the human-Owner check.
   or from the operator session of an approved request, so an automated actor
   cannot archive with an override even through an internal caller.
 
+| Caller | Override with a reason | Without a reason |
+|---|---|---|
+| Owner, Admin of the card's project | 200, the card moves | 400 reason error |
+| Developer, Product, Reviewer, Viewer, Approver | 403 `operator-authority-required`, `permission: project.cards.override` | `operatorOverride`: 400 reason error; `archiveOverride`: 403 as with a reason |
+| Operator session, no approval | 403 `approval-required` (opens an SM-5 request) | 400 reason error, no approval request |
+| Operator session, replay under the Owner's approval | 200 once; a second replay 403 `approval-used` | not reachable: no approval opens |
+
+The move routes keep their order of checks: `operatorOverride` checks the
+target lane, then the reason, then the permission, and `archiveOverride`
+checks the target lane, then the permission, then the reason. `archiveOverride` on a move to any lane
+but Archive stays 400.
+
 `OperatorApprovalFlowTests` cover both operator paths, the missing reason, the
 uncatalogued plain archive, and the workspace-bound requeue;
 `IamHandlerAccessTests` cover the Developer refusal and the direct Admin and

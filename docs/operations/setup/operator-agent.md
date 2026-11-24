@@ -254,12 +254,29 @@ curl -sS -X POST \
   "https://studio.example.test/api/tasks/AGT-12/move?project=PROJ-001"
 ```
 
+An archive override uses the same route with
+`{"targetState":"7-archive","archiveOverride":true,"reason":"..."}`; the
+approval request shows it as `card.archive-override`. `PUT
+/api/tasks/{id}/state` takes the same body and is classified the same way.
+
 The `reason` field is mandatory (at least eight characters). Without it the
 agent gets the 400 reason error at once and no approval request opens. A plain
 move to Archive without `archiveOverride` is not in the catalogue and is
 refused with `operation-not-catalogued`. Each card needs its own approval
 until batch confirmation arrives (ES-8). The card timeline names the session
 as actor, you as `approvedBy`, and the reason.
+
+What the agent gets for an override:
+
+| Situation | Answer |
+|---|---|
+| No `reason`, or one shorter than eight characters | 400 with the reason error; no approval request |
+| Valid request, no approval yet | 403 `approval-required` with `approvalId` and the operation |
+| Replay with your approval | 200; the card moves once |
+| Second replay, changed body or card, late replay | 403 `approval-used`, `approval-digest-mismatch`, `approval-expired` |
+
+The approval adds `project.cards.override` to the approved request only.
+The agent does not keep it, and no approval of another operation grants it.
 
 The approval is bound to the session that asked; another session gets
 `approval-not-found`. Revoking the session or disabling the agent cancels its
