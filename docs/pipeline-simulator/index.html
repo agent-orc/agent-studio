@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pipeline simulator | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #696762;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+  <style data-dossier="pipeline-simulator">
+    nav.toc { margin: 24px 0 8px; color: var(--article-muted); font-size: 0.82rem; line-height: 1.8; font-family: var(--article-sans); }
+    .pages { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; font: 0.8rem var(--article-sans); }
+    .pages a, .pages span { padding: 3px 10px; border: 1px solid var(--article-line); border-radius: 999px; text-decoration: none; }
+    .pages span { background: var(--article-link-soft); color: var(--article-link); border-color: color-mix(in srgb, var(--article-link) 35%, var(--article-line)); }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept · Pipeline · Token economy</p>
+    <h1>Pipeline simulator</h1>
+    <p class="lede">A world in the Studio where cards walk through Ready, Coding, Review and Integration. The owner watches the real pipeline in it, then forks it into a what-if run to see where the bottleneck is, what a strategy or a wave costs in tokens and quota, and what a single card went through. The simulation uses no model tokens.</p>
+    <div class="meta">
+      <span><b>Pattern</b> concept</span>
+      <span><b>Status</b> decision-pending</span>
+      <span><b>Phase</b> decision-ready</span>
+      <span><b>Source card</b> AGT-4028</span>
+      <span><b>As of</b> 24 November 2026, develop 6ad4f5f0e</span>
+      <span><b>Builds on</b> <code>docs/dispatcher-personas/</code>, <code>docs/red-test-isolation/</code>, <code>docs/header-usage-cockpit/</code></span>
+    </div>
+    <nav class="pages" aria-label="Dossier pages"><span aria-current="page">Decision page</span><a href="model.html">Model</a><a href="world.html">The world</a><a href="surfaces.html">Charts and placement</a></nav>
+  </header>
+
+  <nav class="toc" aria-label="Contents">
+    <a href="#scope">Scope</a> · <a href="#paragraph">In one paragraph</a> · <a href="#questions">Questions</a> · <a href="#answers">First answers</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#slices">Slices</a> · <a href="#implementation">Implementation</a>
+  </nav>
+
+  <section id="scope">
+    <h2><span class="number">01</span> Scope</h2>
+    <p>On 24 November 2026 the owner pointed to an interactive simulation website as an inspiration: "I want to simulate and show card throughput in different phases like this. I want to show token usage simulated here. [...] Here I want to understand bottlenecks, development, costs and so on." This Dossier takes the principle of that site, a world you watch move and then play with, and applies it to the Agent Studio card pipeline. It changes no product code.</p>
+    <table>
+      <thead><tr><th>Card item</th><th>Where it is worked out</th></tr></thead>
+      <tbody>
+        <tr><td>1 · Questions the simulator must answer</td><td><a href="#questions">Questions</a>, <a href="#answers">First answers</a></td></tr>
+        <tr><td>2 · Model, parameters, check against reality</td><td><a href="model.html">Model</a>; PS-D1, PS-D2, PS-D8, PS-D9</td></tr>
+        <tr><td>3 · Live and what-if modes</td><td><a href="world.html#modes">The world, Two modes</a>; PS-D4, PS-D5</td></tr>
+        <tr><td>4 · Renderings and visual language</td><td><a href="world.html">The world</a>, <a href="surfaces.html#charts">Charts</a>; PS-D6, PS-D7</td></tr>
+        <tr><td>5 · Place in the product and neighbours</td><td><a href="surfaces.html#place">Where it lives</a>, <a href="surfaces.html#personas">Judging personas</a>; PS-D3, PS-D11</td></tr>
+        <tr><td>6 · Cost</td><td><a href="model.html#cost">Model, Cost</a>; PS-D10</td></tr>
+        <tr><td>7 · Decisions and slices</td><td><a href="#open-decisions">Open decisions</a>, <a href="#slices">Slices</a></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="paragraph">
+    <h2><span class="number">02</span> In one paragraph</h2>
+    <p>The simulator is a project hub section, "Pipeline world", next to "Throughput &amp; cycle time". It opens on a live isometric world of the project: blue figures are cards in their first pass, orange figures are rework. The bottleneck place is highlighted, and one sentence names it. A what-if run forks this state, takes a dated parameter set measured from the installation plus the owner's changes, and plays forward under a strategy (strict, fast as built, fast as intended, with or without a dispatcher). Charts under the world show cards per hour, queues per phase, a bottleneck band, USD split into first pass and rework, lead time, and the weekly quota window. One card can be followed round by round, and two runs can be compared. The engine is a per-card discrete-event model in the backend. It applies the decision library's own policies, so a simulated strategy is the real one. The browser only plays back the event log. Every parameter set is checked by replaying recorded days, and the fit is shown.</p>
+  </section>
+
+  <section id="questions">
+    <h2><span class="number">03</span> Questions</h2>
+    <table>
+      <thead><tr><th>The owner asks</th><th>The simulator answers with</th></tr></thead>
+      <tbody>
+        <tr><td>Where is the bottleneck today, and what would move it?</td><td>The highlighted place and the bottleneck band; a what-if with one changed setting</td></tr>
+        <tr><td>What does a wave of 50 cards cost in tokens and USD under each strategy?</td><td>A wave preset run under each strategy, compared side by side</td></tr>
+        <tr><td>How many points of the weekly window does a plan use, and by which day?</td><td>The window chart: used percent now, the plan's projection and the reset</td></tr>
+        <tr><td>What happens to lead time if reviews get two more slots?</td><td>A what-if with 9 review slots against live</td></tr>
+        <tr><td>How many rounds does a strategy cause, and where does the rework come from?</td><td>Rounds per card and USD split by loop: conflict, red gate, stale verdict, red after integration</td></tr>
+        <tr><td>Why did this card take so long?</td><td>Following one card: its rounds, waits and reasons</td></tr>
+        <tr><td>What does a dispatcher strategy gain and cost?</td><td>A replay of a recorded wave with the strategy plugged in</td></tr>
+        <tr><td>What would 22 and 23 November have looked like with quarantine instead of the project-wide fallback?</td><td>A replay of those days with <code>RedTestTriagePolicy</code></td></tr>
+        <tr><td>Can I trust the numbers?</td><td>The replay fit of the current parameter set, per recorded day</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="answers">
+    <h2><span class="number">04</span> First answers</h2>
+    <p>A first-order wave model (<a href="evidence/wave_model.py">evidence/wave_model.py</a>, standard library only) runs the 17 November wave of 57 cards through the four strategies with the measured values. Each figure is the mean of 200 seeded runs. The conflict share was fitted to the 21 of 57 cards that needed a develop sync on that day. The dispatcher row uses the fast-as-intended gate and a perfect forecast at the level of a series. Full output: <a href="evidence/output-6ad4f5f0e.txt">evidence/output-6ad4f5f0e.txt</a>; commands in the <a href="README.md">Dossier README</a>.</p>
+    <table>
+      <thead><tr><th>Strategy</th><th class="num">Cards/h</th><th class="num">Drained</th><th class="num">Gate wait p50</th><th class="num">Synced</th><th class="num">USD (rework)</th><th class="num">Points</th><th>Bottleneck (busy)</th></tr></thead>
+      <tbody>
+        <tr><td>strict</td><td class="num">3.29</td><td class="num">18.3 h</td><td class="num">167 min</td><td class="num">20.7</td><td class="num">977 (12.5 %)</td><td class="num">54.2</td><td>Integration (96 %)</td></tr>
+        <tr><td>fast as built</td><td class="num">1.34</td><td class="num">42.7 h</td><td class="num">531 min</td><td class="num">22.0</td><td class="num">981 (12.7 %)</td><td class="num">54.5</td><td>Integration (98 %)</td></tr>
+        <tr><td>fast as intended</td><td class="num">6.64</td><td class="num">8.6 h</td><td class="num">6 min</td><td class="num">16.0</td><td class="num">923 (7.3 %)</td><td class="num">51.3</td><td>Coding (82 %)</td></tr>
+        <tr><td>with a dispatcher</td><td class="num">2.13</td><td class="num">26.9 h</td><td class="num">5 min</td><td class="num">1.1</td><td class="num">870 (1.8 %)</td><td class="num">48.3</td><td>Coding (24 %), held back by the dispatch rule</td></tr>
+      </tbody>
+    </table>
+    <ul>
+      <li><b>Bottleneck.</b> Under strict and fast as built the gate is busy almost all the time, and review is busy 5 to 14 %. Two more review slots change nothing in this wave. They help only when reviews run the full suite (60 to 75 minutes): then, under fast as intended, 9 slots instead of 7 raise throughput from 2.96 to 3.58 cards an hour.</li>
+      <li><b>Conflicts do not vanish with speed.</b> Integrating at once cuts the gate wait from 167 to 6 minutes, but the number of cards needing a sync falls only from 20.7 to 16.0: more merges land while a card is coding. Speed removes the repeat rounds and stale reviews. Only fewer overlapping cards running at the same time removes the first conflict.</li>
+      <li><b>Cost of a wave.</b> One wave of 57 cards uses about 48 to 55 points of the weekly Claude window, about one point per card, mostly first runs. For 50 cards: 42 to 47 points.</li>
+      <li><b>What the model misses.</b> It gives 12.5 % rework against the measured 40 %. The p95 gate wait is 303 against 598 minutes. The calibration card and the replay check (SIM-5) must close both gaps before the simulator's answers are trusted (see <a href="model.html#check">Check against reality</a>).</li>
+    </ul>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+    <h2><span class="number">05</span> Alternatives</h2>
+    <div class="variant-grid">
+      <article class="variant"><h3>A · Forecast charts in the throughput view</h3><p>Add queue formulas and a forecast line to "Throughput &amp; cycle time". This is cheap and has no world. It cannot show loops compounding, one card's rounds, or a strategy's rules, because averages hide them. It misses the owner's principle of watching and then playing.</p></article>
+      <article class="variant"><h3>B · A world in the Studio on the real rules (recommended)</h3><p>A per-card discrete-event engine in the backend that calls the decision library's policies. A dated parameter set is measured nightly and checked by replay. A live world fed by real events, a what-if fork, charts, card following and comparison. This is more work, but the numbers are those of the installation and the rules are the shipped ones.</p></article>
+      <article class="variant"><h3>C · A stand-alone simulator in the browser</h3><p>Grow one of the research prototypes into a separate page with its own engine in the browser, fed with exported parameters. It is the fastest to show, but its rules would be a second copy outside the decision library, it has no live mode, and it drifts from the product with every policy change.</p></article>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+    <h2><span class="number">06</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Recommended default</h3>
+      <p>Adopt B. Start with the recorded facts and the event schema (SIM-1), because the live world (SIM-3) and the engine (SIM-2) both need them and can then be built in parallel. Only open what-if mode to the owner (SIM-6) once the parameter set exists (SIM-4). Use its answers for decisions only after the replay check (SIM-5) fits 17, 18 and 23 November.</p>
+    </div>
+    <ul>
+      <li><b>Why.</b> The owner's questions are about loops and rules, and averages hide both. The live mode is useful from the first day without any model. The replay check makes the what-if answers trustworthy, or shows where they are not.</li>
+      <li><b>What it reuses.</b> Lane events, pipeline execution records, the token analysis kinds and prices, quota snapshots, the batch gate ledger, the conflict record, the decision library, the Studio tokens and lane tones.</li>
+      <li><b>Risk.</b> A plausible but wrong simulation steers decisions. Against that: parameter sets are dated, assumptions are marked, the replay fit is shown next to every answer, and a set that does not fit is never used silently.</li>
+    </ul>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+    <h2><span class="number">07</span> Evidence</h2>
+    <p>Observed facts are read from code at develop 6ad4f5f0e or from the existing views. The wave model's results are inferences. The proposals are labelled as such.</p>
+    <figure class="evidence-figure media-breakout">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/throughput-cycle-time-history-only-light--mocked.png" alt="Throughput and cycle time section of a demo project, light theme: summary medians, a table of throughput per UTC day, runtime by step, wait for resources, a median stage composition bar and a stage table.">
+          <span class="figure-annotation">Completed cards only</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/throughput-cycle-time-history-only-dark--mocked.png" alt="The same section in the dark theme with the All time window selected.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence.</b> "Throughput &amp; cycle time" describes completed cards: medians, one row per UTC day, and a stage table. It has no time axis within a day, no queue per phase, no bottleneck and no control to change a setting and see the effect. The simulator adds those, and it reads the same stage boundaries for its replay check.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-11-24">24 November 2026</time> on develop 6ad4f5f0e by the unchanged <code>frontend/e2e/project/project-cycle-time-panel.spec.ts</code> (Last 7 days); its <code>/api/projects/{p}/cycle-time</code> response is the spec's route mock, so the data is mocked and the rendering is real. Cropped to the content panel.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-11-24">24 November 2026</time> in the same run (All time), same mock, same crop.</span>
+        </span>
+      </figcaption>
+    </figure>
+    <figure class="evidence-figure media-breakout">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/token-analysis-recorded-spend-light--pinned-fixture.png" alt="Token analysis, light theme: cost by usage kind (coding run, review aspect, chat), usage kinds per card, tokens over time per UTC day by model, and provider quota windows with a used-percent line.">
+          <span class="figure-annotation">Recorded spend per day</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/token-analysis-recorded-spend-dark--pinned-fixture.png" alt="The same token analysis panels in the dark theme.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence.</b> The token analysis splits recorded cost by usage kind, card and model, per UTC day, and draws the quota window as used percent from the quota history. It shows what was spent, not what a plan or a strategy would spend, and not how far a plan fills the window before its reset. The simulator takes its kinds and prices and projects them forward.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-11-24">24 November 2026</time> on develop 6ad4f5f0e by the unchanged <code>frontend/e2e/workspace/token-analysis.spec.ts</code> at 1280 px, with the analysis response pinned to <code>token-analysis.fixtures.ts</code>. Cropped to the four panels below the filters.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-11-24">24 November 2026</time> in the same run, same fixture and crop.</span>
+        </span>
+      </figcaption>
+    </figure>
+    <div class="evidence-list">
+      <a class="evidence" href="#ev-surfaces"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-surfaces">No surface shows the pipeline over time or a what-if</b><small>Throughput &amp; cycle time (<code>features/project-cycle-time/</code>), pipeline health, gate economics, the environment flow overlay and the token analysis all show measured history or a current count. None shows queues per phase over time, a bottleneck, or a forecast for a changed setting. The only what-if is <code>RoutingWhatIf</code> (<code>POST /api/token-pricing/what-if</code>), which re-prices recorded receipts under another model.</small></span></a>
+      <a class="evidence" href="#ev-sources"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-sources">The facts are recorded</b><small><code>IntegrationLaneEvent</code> kinds <code>enqueued</code> to <code>published</code> (<code>backend/Features/Pipeline/IntegrationLaneEvents.cs</code>); <code>PipelineStepExecution</code> with four token counters (<code>PipelineModels.cs:219</code>); <code>TokenUsageKindPolicy</code> (coding, fix round, review aspect and others); quota history and <code>QuotaForecastPolicy</code>; gate run ledger; conflict record with <code>topFiles</code> and <code>cardPairs</code>.</small></span></a>
+      <a class="evidence" href="#ev-rules"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-rules">The rules are pure policies</b><small><code>BatchFormationPolicy</code>, <code>BatchGateStartPolicy</code>, <code>BisectVerdictPolicy</code>, <code>RedTestTriagePolicy</code> and <code>DispatchPlanPolicy</code> (no caller yet) in <code>orchestration-decisions/</code>. The window close rule is in <code>runner/PostMergeRunPlan.cs</code>.</small></span></a>
+      <a class="evidence" href="#ev-front"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-front">Frontend means</b><small>Hash routes from <code>studio-route.ts</code>; hub sections in <code>project-shell.config.ts</code>; no chart library, no <code>&lt;canvas&gt;</code>; inline SVG charts; Inter declared in <code>--font-ui</code> but not bundled; <code>--studio-accent</code> brand orange, <code>--studio-accent-3</code> info blue.</small></span></a>
+      <a class="evidence" href="#ev-model"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-model">Wave model results</b><small>Section 04 and <a href="evidence/output-6ad4f5f0e.txt">the recorded output</a>. It matches the sync count (fitted), fast as built (1.34 against one or two cards an hour) and roughly the median gate wait. It misses the rework share and the p95 wait.</small></span></a>
+      <a class="evidence" href="#ev-proposed"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="ev-proposed">Thresholds and starting values</b><small>Replay fit of 15 % for throughput, 25 % for median gate wait and 20 % for USD; stale threshold 240 min; follow-up round 10 to 30 min; 40 figures per place. Starting values for the owner, not measurements.</small></span></a>
+    </div>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+    <h2><span class="number">08</span> Open decisions</h2>
+    <p>Each decision has a recommended option. The slices use the recommendation unless the owner records another choice.</p>
+    <table>
+      <thead><tr><th>Decision</th><th>Options</th><th>Recommended</th></tr></thead>
+      <tbody>
+        <tr><td><b>PS-D1</b> Where the engine runs</td><td>A In the browser, its own TypeScript rules; B In the backend, a .NET engine that calls the decision library's policies; the browser plays back the event log; C Both, a browser estimate plus the backend engine</td><td><b>B.</b> A simulated strategy must be the shipped strategy; rules live only in orchestration-decisions/.</td></tr>
+        <tr><td><b>PS-D2</b> Model granularity</td><td>A Queue formulas on averages; B Per-card discrete events, seeded, 200 runs for a range; C Trace replay only</td><td><b>B.</b> Loops compound per card; averages hide the 7-round card.</td></tr>
+        <tr><td><b>PS-D3</b> Where it lives</td><td>A Project hub section Pipeline world next to Throughput &amp; cycle time; B A tab inside Throughput &amp; cycle time; C A workspace-level route for all projects</td><td><b>A.</b> Gate, window, strategy and conflicts are per project; a full-bleed world needs its own section.</td></tr>
+        <tr><td><b>PS-D4</b> Source of the live mode</td><td>A Poll projections every 30 s; B Snapshot on open, then events over /hubs/jobs; C No live mode at first</td><td><b>B.</b> The events exist; a picture that lags 30 s cannot show a card moving.</td></tr>
+        <tr><td><b>PS-D5</b> Telling the modes apart</td><td>A A mode pill only; B Ground, figure style, mode pill with change chips, and a forked timeline together; C Two separate pages</td><td><b>B.</b> A simulated queue must never be read as a real one, even in a screenshot.</td></tr>
+        <tr><td><b>PS-D6</b> Visual language</td><td>A Its palette and Archivo as a separate simulator theme; B Its principle with Studio tokens, lane tones and Inter at weight 800 with system fallback; C As B, plus a bundled Archivo for the headline only</td><td><b>B.</b> One visual system, both themes, no font from another host; C stays open if the headline looks weak.</td></tr>
+        <tr><td><b>PS-D7</b> Rendering of the world</td><td>A Inline SVG; B Canvas 2D for the world, inline SVG for charts; C A WebGL library</td><td><b>B.</b> Hundreds of moving figures; charts stay in the existing SVG pattern; no new dependency.</td></tr>
+        <tr><td><b>PS-D8</b> Parameter refresh</td><td>A By hand; B Nightly dated set from a 7-day window, owner changes as a named layer, slots and quota read live at the fork; C Continuously</td><td><b>B.</b> Reproducible comparisons need sets that never change once written.</td></tr>
+        <tr><td><b>PS-D9</b> When the model is trusted</td><td>A Owner judgement; B Replay of 17, 18 and 23 November within 15 % throughput, 25 % median gate wait, 20 % USD; nightly fit shown; C No check</td><td><b>B.</b> The first model misses the rework share by a factor of three; only a replay shows that.</td></tr>
+        <tr><td><b>PS-D10</b> Model tokens</td><td>A No; statements and bottleneck readings are computed; B A persona narration of a run on the persona budget; C Model-based parameter estimation</td><td><b>A.</b> The simulation is arithmetic over records; a narration can be added later as a persona action.</td></tr>
+        <tr><td><b>PS-D11</b> Judging dispatcher strategies</td><td>A In the separate DS-4 harness; B On this engine through DispatchPlanPolicy; DS-4 uses it; C Not replayed</td><td><b>B.</b> Two simulators of the same pipeline would disagree; one engine serves both.</td></tr>
+        <tr><td><b>PS-D12</b> Use of the research prototypes</td><td>A Port the better prototype; B Take findings from both into SIM-3, SIM-6 and SIM-8; engine from SIM-2; C Ship a prototype as is</td><td><b>B.</b> Prototype rules would be a copy outside the decision library; their visual findings are the value.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="slices">
+    <h2><span class="number">09</span> Slices</h2>
+    <p>Nine slices in two lanes. The backend lane is SIM-1, 2, 4, 5 and 7. The frontend lane is SIM-3, 6, 8 and 9. Slices in the same lane never run at the same time, and the <code>dependsOn</code> edges in <code>workbench.json</code> enforce this. The two lanes run in parallel.</p>
+    <table>
+      <thead><tr><th>Slice</th><th>Area</th><th>Depends on</th><th>Delivers</th></tr></thead>
+      <tbody>
+        <tr><td>SIM-1</td><td>backend/Features/Simulation/Facts (new), contracts, docs</td><td>none</td><td>Snapshot and recorded-day API, one event schema</td></tr>
+        <tr><td>SIM-2</td><td>backend/Features/Simulation/Engine (new), orchestration-decisions/ (moved pure rules)</td><td>SIM-1</td><td>Per-card discrete-event engine, four strategy presets</td></tr>
+        <tr><td>SIM-3</td><td>frontend/src/app/features/pipeline-world (new), project-shell.config.ts</td><td>SIM-1</td><td>Project hub section, live world, bottleneck and statement</td></tr>
+        <tr><td>SIM-4</td><td>backend/Features/Simulation/Parameters (new)</td><td>SIM-2</td><td>Dated parameter sets with provenance and owner layers</td></tr>
+        <tr><td>SIM-5</td><td>backend/Features/Simulation/Replay (new), docs</td><td>SIM-4</td><td>Trace and model replay, fit report, thresholds</td></tr>
+        <tr><td>SIM-6</td><td>frontend/src/app/features/pipeline-world</td><td>SIM-3, SIM-4</td><td>Fork from now, controls, six charts</td></tr>
+        <tr><td>SIM-7</td><td>backend/Features/Simulation/Engine, dispatch adapter</td><td>SIM-5</td><td>DispatchPlanPolicy in the engine; replay of recorded waves per strategy</td></tr>
+        <tr><td>SIM-8</td><td>frontend/src/app/features/pipeline-world</td><td>SIM-5, SIM-6</td><td>Card ribbon, comparison view, saved runs</td></tr>
+        <tr><td>SIM-9</td><td>frontend: cycle-time, usage cockpit detail, token analysis, batch gate, integration conflicts, environment flow</td><td>SIM-8</td><td>Entry points into the Pipeline world</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">10</span> Implementation</h2>
+    <p>Delivery slices append their current implementation status here. Decision content above remains unchanged.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

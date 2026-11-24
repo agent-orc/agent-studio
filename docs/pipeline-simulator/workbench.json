@@ -1,0 +1,370 @@
+{
+  "schemaVersion": 1,
+  "id": "pipeline-simulator",
+  "title": "Pipeline simulator: a world to watch and play with",
+  "summary": "Owner wish of 24 November 2026: simulate and show card throughput per phase and token usage, to understand bottlenecks, development and costs, in the spirit of an interactive simulation site (a world you watch move, then play with). Proposal: a project hub section Pipeline world next to Throughput & cycle time. A live isometric world fed by lane, step, token and quota events; a what-if fork from the current state with selectable strategies (strict, fast as built, fast as intended, dispatcher) and editable parameters; six charts (cards per hour, queue per phase, bottleneck band, USD first pass and rework, lead time, weekly window); following one card; comparing two runs. A per-card discrete-event engine in the backend calls the decision library's policies, so simulated rules are the shipped ones; dated parameter sets are measured nightly and checked by replaying 17, 18 and 23 November. No model tokens. A first wave model of the 57-card wave puts the bottleneck at integration under strict (3.3 cards/h, median gate wait 167 min) and at coding under fast as intended (6.6 cards/h); about one weekly point per card; it misses the measured 40 % rework share (12.5 %). Twelve decisions, nine slices in a backend and a frontend lane.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-11-24T02:30:00Z",
+  "sourceTaskKeys": [
+    "AGT-4028"
+  ],
+  "relatedTaskKeys": [
+    "AGT-3974",
+    "AGT-3988",
+    "AGT-3993",
+    "AGT-4003",
+    "AGT-3965",
+    "AGT-3969",
+    "AGT-3267"
+  ],
+  "buildsOn": [
+    "docs/dispatcher-personas/",
+    "docs/red-test-isolation/",
+    "docs/header-usage-cockpit/"
+  ],
+  "tags": [
+    "simulation",
+    "throughput",
+    "bottleneck",
+    "token-usage",
+    "quota",
+    "integration-strategy",
+    "replay",
+    "visualisation"
+  ],
+  "openDecisions": [
+    {
+      "id": "PS-D1",
+      "decisionId": "engine-placement",
+      "title": "Where the engine runs",
+      "question": "Where does the simulation engine run, and where do its rules come from?",
+      "options": {
+        "A": "In the browser, its own TypeScript rules",
+        "B": "In the backend, a .NET engine that calls the decision library's policies; the browser plays back the event log",
+        "C": "Both, a browser estimate plus the backend engine"
+      },
+      "recommended": "B",
+      "recommendation": "B. In the backend, a .NET engine that calls the decision library's policies; the browser plays back the event log",
+      "rationale": "A simulated strategy must be the shipped strategy; rules live only in orchestration-decisions/.",
+      "status": "open"
+    },
+    {
+      "id": "PS-D2",
+      "decisionId": "model-granularity",
+      "title": "Model granularity",
+      "question": "How fine is the model?",
+      "options": {
+        "A": "Queue formulas on averages",
+        "B": "Per-card discrete events, seeded, 200 runs for a range",
+        "C": "Trace replay only"
+      },
+      "recommended": "B",
+      "recommendation": "B. Per-card discrete events, seeded, 200 runs for a range",
+      "rationale": "Loops compound per card; averages hide the 7-round card.",
+      "status": "open"
+    },
+    {
+      "id": "PS-D3",
+      "decisionId": "placement",
+      "title": "Where it lives",
+      "question": "Where does the simulator appear in the Studio?",
+      "options": {
+        "A": "Project hub section Pipeline world next to Throughput & cycle time",
+        "B": "A tab inside Throughput & cycle time",
+        "C": "A workspace-level route for all projects"
+      },
+      "recommended": "A",
+      "recommendation": "A. Project hub section Pipeline world next to Throughput & cycle time",
+      "rationale": "Gate, window, strategy and conflicts are per project; a full-bleed world needs its own section.",
+      "status": "open"
+    },
+    {
+      "id": "PS-D4",
+      "decisionId": "live-source",
+      "title": "Source of the live mode",
+      "question": "How is the live world fed?",
+      "options": {
+        "A": "Poll projections every 30 s",
+        "B": "Snapshot on open, then events over /hubs/jobs",
+        "C": "No live mode at first"
+      },
+      "recommended": "B",
+      "recommendation": "B. Snapshot on open, then events over /hubs/jobs",
+      "rationale": "The events exist; a picture that lags 30 s cannot show a card moving.",
+      "status": "open"
+    },
+    {
+      "id": "PS-D5",
+      "decisionId": "mode-distinction",
+      "title": "Telling the modes apart",
+      "question": "How are live and what-if told apart at a glance?",
+      "options": {
+        "A": "A mode pill only",
+        "B": "Ground, figure style, mode pill with change chips, and a forked timeline together",
+        "C": "Two separate pages"
+      },
+      "recommended": "B",
+      "recommendation": "B. Ground, figure style, mode pill with change chips, and a forked timeline together",
+      "rationale": "A simulated queue must never be read as a real one, even in a screenshot.",
+      "status": "open"
+    },
+    {
+      "id": "PS-D6",
+      "decisionId": "visual-language",
+      "title": "Visual language",
+      "question": "How much of the inspiration's look is taken?",
+      "options": {
+        "A": "Its palette and Archivo as a separate simulator theme",
+        "B": "Its principle with Studio tokens, lane tones and Inter at weight 800 with system fallback",
+        "C": "As B, plus a bundled Archivo for the headline only"
+      },
+      "recommended": "B",
+      "recommendation": "B. Its principle with Studio tokens, lane tones and Inter at weight 800 with system fallback",
+      "rationale": "One visual system, both themes, no font from another host; C stays open if the headline looks weak.",
+      "status": "open"
+    },
+    {
+      "id": "PS-D7",
+      "decisionId": "world-rendering",
+      "title": "Rendering of the world",
+      "question": "What draws the world?",
+      "options": {
+        "A": "Inline SVG",
+        "B": "Canvas 2D for the world, inline SVG for charts",
+        "C": "A WebGL library"
+      },
+      "recommended": "B",
+      "recommendation": "B. Canvas 2D for the world, inline SVG for charts",
+      "rationale": "Hundreds of moving figures; charts stay in the existing SVG pattern; no new dependency.",
+      "status": "open"
+    },
+    {
+      "id": "PS-D8",
+      "decisionId": "parameter-refresh",
+      "title": "Parameter refresh",
+      "question": "How are parameters refreshed?",
+      "options": {
+        "A": "By hand",
+        "B": "Nightly dated set from a 7-day window, owner changes as a named layer, slots and quota read live at the fork",
+        "C": "Continuously"
+      },
+      "recommended": "B",
+      "recommendation": "B. Nightly dated set from a 7-day window, owner changes as a named layer, slots and quota read live at the fork",
+      "rationale": "Reproducible comparisons need sets that never change once written.",
+      "status": "open"
+    },
+    {
+      "id": "PS-D9",
+      "decisionId": "model-acceptance",
+      "title": "When the model is trusted",
+      "question": "What makes a parameter set usable for decisions?",
+      "options": {
+        "A": "Owner judgement",
+        "B": "Replay of 17, 18 and 23 November within 15 % throughput, 25 % median gate wait, 20 % USD; nightly fit shown",
+        "C": "No check"
+      },
+      "recommended": "B",
+      "recommendation": "B. Replay of 17, 18 and 23 November within 15 % throughput, 25 % median gate wait, 20 % USD; nightly fit shown",
+      "rationale": "The first model misses the rework share by a factor of three; only a replay shows that.",
+      "status": "open"
+    },
+    {
+      "id": "PS-D10",
+      "decisionId": "model-tokens",
+      "title": "Model tokens",
+      "question": "May the simulator use model tokens?",
+      "options": {
+        "A": "No; statements and bottleneck readings are computed",
+        "B": "A persona narration of a run on the persona budget",
+        "C": "Model-based parameter estimation"
+      },
+      "recommended": "A",
+      "recommendation": "A. No; statements and bottleneck readings are computed",
+      "rationale": "The simulation is arithmetic over records; a narration can be added later as a persona action.",
+      "status": "open"
+    },
+    {
+      "id": "PS-D11",
+      "decisionId": "persona-replay",
+      "title": "Judging dispatcher strategies",
+      "question": "Where are dispatcher strategies replayed?",
+      "options": {
+        "A": "In the separate DS-4 harness",
+        "B": "On this engine through DispatchPlanPolicy; DS-4 uses it",
+        "C": "Not replayed"
+      },
+      "recommended": "B",
+      "recommendation": "B. On this engine through DispatchPlanPolicy; DS-4 uses it",
+      "rationale": "Two simulators of the same pipeline would disagree; one engine serves both.",
+      "status": "open"
+    },
+    {
+      "id": "PS-D12",
+      "decisionId": "prototype-adoption",
+      "title": "Use of the research prototypes",
+      "question": "How do the two prototype variants feed in?",
+      "options": {
+        "A": "Port the better prototype",
+        "B": "Take findings from both into SIM-3, SIM-6 and SIM-8; engine from SIM-2",
+        "C": "Ship a prototype as is"
+      },
+      "recommended": "B",
+      "recommendation": "B. Take findings from both into SIM-3, SIM-6 and SIM-8; engine from SIM-2",
+      "rationale": "Prototype rules would be a copy outside the decision library; their visual findings are the value.",
+      "status": "open"
+    }
+  ],
+  "implementationTasks": [
+    {
+      "id": "SIM-1",
+      "title": "SIM-1 · Recorded facts and the simulation event schema",
+      "dependsOn": [],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SIM-1",
+        "criteria": [
+          "The snapshot of a fixture workspace lists every in-flight card once, and its counts per phase equal the board's.",
+          "A recorded fixture day replays into the schema with no unexplained gap; first pass plus rework USD equals the token analysis total for that day.",
+          "No model call, no write path; the endpoints are read-only."
+        ]
+      },
+      "promptMarkdown": "# SIM-1 · Recorded facts and the simulation event schema\n\nSource: `docs/pipeline-simulator/index.html` (AGT-4028) and its pages `model.html`, `world.html`, `surfaces.html`, plus `workbench.json`. Dependencies: none.\n\n**Area:** backend/Features/Simulation/Facts (new), contracts, docs\n\n## Why\nDossier pages Model (Entities, Parameters) and The world (Two modes). The live world and the engine both need one event vocabulary and one snapshot of the current state. The facts exist in separate places: IntegrationLaneEvent (backend/Features/Pipeline/IntegrationLaneEvents.cs), PipelineStepExecution in pipeline-execution.json, task.json token receipts through ProjectTokenLedger, quota history, the batch gate ledger and the conflict record.\n\n## Deliver\n1. A versioned simulation event schema: time, project, card key, kind, phase, slot, round number, run kind (first pass, sync round, fix round, repair, review), model and level, the four token counters and list-price USD (through TokenPricingService), plus a run id (null when recorded). Lane event kinds map onto it one to one.\n2. `GET /api/projects/{p}/simulation/snapshot`: every non-terminal card with phase, slot or queue position, elapsed time in phase, round number, base commit; slot counts and occupancy; gate and window state; quota used percent and reset per provider.\n3. `GET /api/projects/{p}/simulation/days/{yyyy-MM-dd}`: the recorded event log of a UTC day, rebuilt from the sources above, with a list of gaps (facts that could not be found) instead of zeros.\n4. Add the round number to review rows of the token analysis fold so reviews split into first pass and rework without a new usage kind; totals unchanged.\n5. A pure projection test over fixed fixtures; a domain page section in docs/system/domains/pipeline.md (or a new docs/system/domains/simulation.md) and one row for docs/pipeline-simulator/index.html in docs/start/README.md.\n\n## Acceptance\n- The snapshot of a fixture workspace lists every in-flight card once, and its counts per phase equal the board's.\n- A recorded fixture day replays into the schema with no unexplained gap; first pass plus rework USD equals the token analysis total for that day.\n- No model call, no write path; the endpoints are read-only.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/quality/design/style-guide-hard-rules.md first. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented in the Dossier's Implementation section. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification."
+    },
+    {
+      "id": "SIM-2",
+      "title": "SIM-2 · Simulation engine on the decision library",
+      "dependsOn": [
+        "SIM-1"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SIM-2",
+        "criteria": [
+          "Same seed, same input: identical event log. A 57-card wave with 200 seeds runs in under 5 s on the host.",
+          "The engine contains no transition rule of its own; an architecture test fails when it does (extend TransitionDecisionBoundaryTests or add a Simulation boundary test).",
+          "No model call."
+        ]
+      },
+      "promptMarkdown": "# SIM-2 · Simulation engine on the decision library\n\nSource: `docs/pipeline-simulator/index.html` (AGT-4028) and its pages `model.html`, `world.html`, `surfaces.html`, plus `workbench.json`. Dependencies: SIM-1.\n\n**Area:** backend/Features/Simulation/Engine (new), orchestration-decisions/ (moved pure rules)\n\n## Why\nDossier pages Model (Phases, Loops, Strategies) and decision PS-D1 B, PS-D2 B. The engine must apply the shipped rules: BatchFormationPolicy, BatchGateStartPolicy, BisectVerdictPolicy and RedTestTriagePolicy in orchestration-decisions/. The window close rule (runner/PostMergeRunPlan.cs) and the stale-verdict check of the review plane are pure but live outside the library.\n\n## Deliver\n1. Move the window close rule and the stale-verdict threshold check into orchestration-decisions/ as pure policies with their existing tests; callers use them unchanged. No other rule changes.\n2. A deterministic, seeded discrete-event engine: entities card, run, slot pool, queue, develop, batch, window, quota window; phases Ready, Coding, Review, Integration, Done; loops conflict, red gate, stale verdict, red after integration. It starts from a SIM-1 snapshot or from an empty project with an arrival wave, and emits SIM-1 events with a run id.\n3. Strategy as three choices (test placement, gate shape, dispatch rule) with presets strict, fast as built, fast as intended, and a dispatch slot that defaults to today's order. A preset whose policy does not exist yet is flagged as a design model.\n4. `POST /api/projects/{p}/simulation/runs` (parameters, strategy, seed or seed count, horizon) returning the event log and per-run summary; 200 seeds return percentiles. Runs are kept in memory with a bounded cache; nothing is written to job folders.\n5. A port of docs/pipeline-simulator/evidence/wave_model.py's scenario as an engine test: with its parameters the engine reproduces its table within the seed range, or the report explains each difference by a shipped rule the Python model lacks.\n\n## Acceptance\n- Same seed, same input: identical event log. A 57-card wave with 200 seeds runs in under 5 s on the host.\n- The engine contains no transition rule of its own; an architecture test fails when it does (extend TransitionDecisionBoundaryTests or add a Simulation boundary test).\n- No model call.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/quality/design/style-guide-hard-rules.md first. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented in the Dossier's Implementation section. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification."
+    },
+    {
+      "id": "SIM-3",
+      "title": "SIM-3 · Pipeline world in live mode",
+      "dependsOn": [
+        "SIM-1"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SIM-3",
+        "criteria": [
+          "Playwright spec with a mocked snapshot and event stream: figures move to Review on a review-start event; the bottleneck highlight and statement change when the gate queue grows; screenshots in light and dark at 1280 px and 390 px in the task results folder.",
+          "Reduced-motion and axe checks pass; no new runtime dependency; no hard-coded colour."
+        ]
+      },
+      "promptMarkdown": "# SIM-3 · Pipeline world in live mode\n\nSource: `docs/pipeline-simulator/index.html` (AGT-4028) and its pages `model.html`, `world.html`, `surfaces.html`, plus `workbench.json`. Dependencies: SIM-1.\n\n**Area:** frontend/src/app/features/pipeline-world (new), project-shell.config.ts\n\n## Why\nDossier pages The world (Two modes, The world, Visual language) and Charts and placement (Where it lives); decisions PS-D3 A, PS-D4 B, PS-D5 B, PS-D6 B, PS-D7 B, PS-D12 B.\n\n## Deliver\n1. A project hub section `simulation`, label \"Pipeline world\", next to `cycle-time` in PROJECT_RAIL_ITEMS, route `#/projects/<slug>/simulation`, full-bleed (rule R2).\n2. An isometric world drawn with Canvas 2D: places for Ready, Coding (one desk per slot), Review (one bench per slot), Integration (gate and queue) and Done; figures per card, first pass in --studio-accent-3, rework in --studio-accent; place tints from lane-presentation.ts and the --studio-lane-* tokens (rule R9); the bottleneck place tinted with --studio-accent-warn (no left bar, rule R1). Up to 40 figures per place, then a count.\n3. Live mode: load the SIM-1 snapshot, apply events from /hubs/jobs, wall clock, pause only. Mode pill \"Live HH:MM\" through app-status-indicator with a steady dot (rule R4).\n4. The bottleneck rule (queue growth over the last hour weighted by the oldest wait) as a pure function with unit tests, and the statement above the world (\"Integration is the bottleneck.\") in --font-ui at weight 800.\n5. Today's USD and quota points, first pass and rework, as a small bar that sums to its total (rule R3).\n6. Reduced motion: no walking, counts on every place (rule R5). Both themes.\n7. Read the findings of the research cards \"Pipeline simulation prototype, variant 1\" and \"variant 2\" if they are delivered, and record which findings you followed.\n\n## Acceptance\n- Playwright spec with a mocked snapshot and event stream: figures move to Review on a review-start event; the bottleneck highlight and statement change when the gate queue grows; screenshots in light and dark at 1280 px and 390 px in the task results folder.\n- Reduced-motion and axe checks pass; no new runtime dependency; no hard-coded colour.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/quality/design/style-guide-hard-rules.md first. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented in the Dossier's Implementation section. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification."
+    },
+    {
+      "id": "SIM-4",
+      "title": "SIM-4 · Parameter sets and nightly calibration",
+      "dependsOn": [
+        "SIM-2"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SIM-4",
+        "criteria": [
+          "A nightly run on a fixture workspace creates one new set and leaves older sets byte-identical.",
+          "Every value shows source and sample size; a parameter without data stays an assumption with the owner default, never zero.",
+          "No model call."
+        ]
+      },
+      "promptMarkdown": "# SIM-4 · Parameter sets and nightly calibration\n\nSource: `docs/pipeline-simulator/index.html` (AGT-4028) and its pages `model.html`, `world.html`, `surfaces.html`, plus `workbench.json`. Dependencies: SIM-2.\n\n**Area:** backend/Features/Simulation/Parameters (new)\n\n## Why\nDossier page Model (Parameters, Research cards); decision PS-D8 B.\n\n## Deliver\n1. A parameter set record: id, created at, window (default 7 days), and per parameter the value or distribution, class (measured or assumption), source, sample size. Sets are immutable once written.\n2. A nightly fold from the SIM-1 sources: coding and round durations, review durations by test level, gate durations by kind, batch green share and isolation cost, defect and flaky rates, overlap per area from the conflict record, conflict share fitted to recorded syncs, tokens and USD per run kind and model, USD per quota point per provider.\n3. Seed set v0 from the calibration card's output if it is delivered; otherwise from the starting values in the Dossier's Parameters table, marked as such.\n4. Owner layers: a named list of changes over a set (\"two more review slots\"); a what-if run names set and layer.\n5. Live values read at fork time: slot counts, window settings, stale threshold, quota used percent and reset.\n6. `GET /api/projects/{p}/simulation/parameter-sets`, `.../{id}`, and layer CRUD.\n\n## Acceptance\n- A nightly run on a fixture workspace creates one new set and leaves older sets byte-identical.\n- Every value shows source and sample size; a parameter without data stays an assumption with the owner default, never zero.\n- No model call.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/quality/design/style-guide-hard-rules.md first. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented in the Dossier's Implementation section. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification."
+    },
+    {
+      "id": "SIM-5",
+      "title": "SIM-5 · Replay check of recorded days",
+      "dependsOn": [
+        "SIM-4"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SIM-5",
+        "criteria": [
+          "The fit of each replay day is readable through `GET /api/projects/{p}/simulation/parameter-sets/{id}/fit`.",
+          "The trace replay of a fixture day reproduces its recorded publication order exactly.",
+          "The rework-share gap is explained with numbers, or the report names the missing record."
+        ]
+      },
+      "promptMarkdown": "# SIM-5 · Replay check of recorded days\n\nSource: `docs/pipeline-simulator/index.html` (AGT-4028) and its pages `model.html`, `world.html`, `surfaces.html`, plus `workbench.json`. Dependencies: SIM-4.\n\n**Area:** backend/Features/Simulation/Replay (new), docs\n\n## Why\nDossier page Model (Check against reality); decision PS-D9 B. The first wave model misses the 40 % rework share (it gives 12.5 %) and the p95 gate wait (303 against 598 min).\n\n## Deliver\n1. Trace replay: recorded arrivals, durations and conflicts; only queueing and rules simulated.\n2. Model replay: recorded arrivals and slots, durations and loops drawn from a parameter set, 200 seeds.\n3. A fit report per day and per hour: cards per hour, median and p95 gate wait, lead time, rounds per card, sync rounds, USD and tokens split into first pass and rework, quota points; fit when throughput is within 15 %, median gate wait within 25 % and USD within 20 %; p95 reported, not gated.\n4. A nightly job replays 17, 18 and 23 November 2026 (or the calibration card's chosen days) against the newest set and stores the fit next to it; a set that does not fit is marked unfit.\n5. A short measurement note in docs/pipeline-simulator/ (implementation log) that explains the rework share: which run kinds, sessions or models account for the measured share.\n\n## Acceptance\n- The fit of each replay day is readable through `GET /api/projects/{p}/simulation/parameter-sets/{id}/fit`.\n- The trace replay of a fixture day reproduces its recorded publication order exactly.\n- The rework-share gap is explained with numbers, or the report names the missing record.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/quality/design/style-guide-hard-rules.md first. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented in the Dossier's Implementation section. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification."
+    },
+    {
+      "id": "SIM-6",
+      "title": "SIM-6 · What-if mode and charts",
+      "dependsOn": [
+        "SIM-3",
+        "SIM-4"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SIM-6",
+        "criteria": [
+          "Playwright with a mocked run API: changing review slots from 7 to 9 issues one run and redraws charts; the mode signs differ between live and what-if; light and dark screenshots.",
+          "Every stacked total equals the sum of its visible parts (rule R3) in a unit test.",
+          "A set marked unfit shows a visible warning next to every number."
+        ]
+      },
+      "promptMarkdown": "# SIM-6 · What-if mode and charts\n\nSource: `docs/pipeline-simulator/index.html` (AGT-4028) and its pages `model.html`, `world.html`, `surfaces.html`, plus `workbench.json`. Dependencies: SIM-3, SIM-4.\n\n**Area:** frontend/src/app/features/pipeline-world\n\n## Why\nDossier pages The world (Two modes) and Charts and placement (Charts); decisions PS-D5 B, PS-D8 B.\n\n## Deliver\n1. What-if fork from now or from a chosen time or recorded day: blueprint ground (--studio-accent-3 grid via color-mix), outlined figures, pill \"What-if from HH:MM · seed N\", each owner change as a dashed chip, play, speed, scrub, \"Back to live\".\n2. Controls for strategy (three choices and presets), slot counts, durations, arrival wave (draw a wave or load a saved plan), Codex share; assumptions shown with a dashed outline and their source on hover; the parameter set and its replay fit shown next to the controls.\n3. \"Run 200 seeds\" with the shared pending button; ranges shown on every value.\n4. Six inline-SVG charts sharing the time axis and a cursor: cards per hour, queue per phase, bottleneck band, USD per hour first pass and rework (filter by phase and model), lead time per card, weekly window with projection and reset.\n\n## Acceptance\n- Playwright with a mocked run API: changing review slots from 7 to 9 issues one run and redraws charts; the mode signs differ between live and what-if; light and dark screenshots.\n- Every stacked total equals the sum of its visible parts (rule R3) in a unit test.\n- A set marked unfit shows a visible warning next to every number.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/quality/design/style-guide-hard-rules.md first. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented in the Dossier's Implementation section. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification."
+    },
+    {
+      "id": "SIM-7",
+      "title": "SIM-7 · Dispatcher strategies and persona replay on the engine",
+      "dependsOn": [
+        "SIM-5"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SIM-7",
+        "criteria": [
+          "The 17 November wave under today's order reproduces the recorded sync count within the replay threshold.",
+          "Each strategy's replay result is reproducible by seed and readable through the run API.",
+          "No model call."
+        ]
+      },
+      "promptMarkdown": "# SIM-7 · Dispatcher strategies and persona replay on the engine\n\nSource: `docs/pipeline-simulator/index.html` (AGT-4028) and its pages `model.html`, `world.html`, `surfaces.html`, plus `workbench.json`. Dependencies: SIM-5.\n\n**Area:** backend/Features/Simulation/Engine, dispatch adapter\n\n## Why\nDossier page Charts and placement (Judging personas); decision PS-D11 B. DispatchPlanPolicy (AGT-3993) exists without a caller; the dispatcher Dossier's DS-4 plans a separate replay harness. If DS-3 or DS-5 of docs/dispatcher-personas/ are not delivered, adapt to the policy as it exists and say so.\n\n## Deliver\n1. The engine's dispatch slot calls DispatchPlanPolicy with simulated DispatchFacts; strategies selectable by name.\n2. Persona replay: replay a recorded wave (17 November first) under each strategy; report cards needing a sync, cards per hour, drain time, lead time and rework USD against the strategy that was live.\n3. The red-after-integration loop calls RedTestTriagePolicy so a replay of 22 and 23 November compares the old fallback with quarantine and area holds.\n4. A model step of a persona (classification, recut) is replayed from its recorded output; the engine never calls a model.\n5. Coordinate with the dispatcher Dossier: DS-4 uses this engine; record that in both Dossiers' implementation logs.\n\n## Acceptance\n- The 17 November wave under today's order reproduces the recorded sync count within the replay threshold.\n- Each strategy's replay result is reproducible by seed and readable through the run API.\n- No model call.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/quality/design/style-guide-hard-rules.md first. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented in the Dossier's Implementation section. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification."
+    },
+    {
+      "id": "SIM-8",
+      "title": "SIM-8 · Following one card and comparing two runs",
+      "dependsOn": [
+        "SIM-5",
+        "SIM-6"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SIM-8",
+        "criteria": [
+          "Playwright with mocked runs: the ribbon of a three-round card sums to its lead time; a comparison table shows the delta and a within-noise row; light and dark screenshots."
+        ]
+      },
+      "promptMarkdown": "# SIM-8 · Following one card and comparing two runs\n\nSource: `docs/pipeline-simulator/index.html` (AGT-4028) and its pages `model.html`, `world.html`, `surfaces.html`, plus `workbench.json`. Dependencies: SIM-5, SIM-6.\n\n**Area:** frontend/src/app/features/pipeline-world\n\n## Why\nDossier pages The world (Following one card) and Charts and placement (Comparing two runs).\n\n## Deliver\n1. Click a figure or choose a key: the world dims other cards; a ribbon shows each round as work, wait and return segments with reason, model, tokens and USD; live cards link to `#/tasks/<key>`; simulated cards carry a \"simulated\" badge; a recorded card shows recorded past and simulated future around the fork.\n2. Comparison of any two runs (live, what-if, replay against recording): a difference table first, charts overlaid (solid A, dashed B), side-by-side worlds on one clock on wide screens; differences within the seed range greyed and labelled within noise.\n3. Saved runs and comparisons per project in the section's side panel.\n\n## Acceptance\n- Playwright with mocked runs: the ribbon of a three-round card sums to its lead time; a comparison table shows the delta and a within-noise row; light and dark screenshots.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/quality/design/style-guide-hard-rules.md first. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented in the Dossier's Implementation section. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification."
+    },
+    {
+      "id": "SIM-9",
+      "title": "SIM-9 · Links from neighbouring surfaces",
+      "dependsOn": [
+        "SIM-8"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "SIM-9",
+        "criteria": [
+          "Each link opens the section with the right mode, day, card or layer (Playwright per link, mocked APIs); no surface gains its own numbers."
+        ]
+      },
+      "promptMarkdown": "# SIM-9 · Links from neighbouring surfaces\n\nSource: `docs/pipeline-simulator/index.html` (AGT-4028) and its pages `model.html`, `world.html`, `surfaces.html`, plus `workbench.json`. Dependencies: SIM-8.\n\n**Area:** frontend: cycle-time, usage cockpit detail, token analysis, batch gate, integration conflicts, environment flow\n\n## Why\nDossier page Charts and placement (Neighbouring surfaces).\n\n## Deliver\n1. Throughput & cycle time: \"Replay this day\" on a day row.\n2. Usage detail surface: \"What does the plan use?\" opens a what-if from now on the window chart.\n3. Token analysis drill-down and the ribbon link to each other.\n4. Batch gate report: \"Replay with another batch size\".\n5. Integration conflicts: a conflict opens the card in the world with its partner named.\n6. Environment flow overlay: the project row opens the Pipeline world.\n\n## Acceptance\n- Each link opens the section with the right mode, day, card or layer (Playwright per link, mocked APIs); no surface gains its own numbers.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/quality/design/style-guide-hard-rules.md first. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented in the Dossier's Implementation section. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification."
+    }
+  ]
+}
