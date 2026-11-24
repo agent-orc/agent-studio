@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portable skill library | Decision Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #696762;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+<style>
+nav.contents { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 24px 0; font-size: .85rem; }
+nav.contents a { display: inline-flex; align-items: center; min-height: 44px; }
+section, h3 { scroll-margin-top: 24px; }
+.flow { position: relative; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; font: .9rem/1.5 var(--article-sans); }
+.flow > div { padding: 18px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); }
+.flow b { display: block; margin-bottom: 8px; }
+.flow > svg { position:absolute; width:100%; height:24px; top: -24px; overflow:visible; color:var(--article-link); }
+.table-wrap { overflow-x: auto; }
+.decision + .decision { border-top: 1px solid var(--article-line); margin-top: 28px; padding-top: 4px; }
+.numeric { font-variant-numeric: tabular-nums; }
+.table-wrap:focus-visible { outline:2px solid var(--article-link); outline-offset:4px; }
+.skill-list article + article { border-top:1px solid var(--article-line); margin-top:28px; }
+@media(max-width:760px) { .table-wrap > table { display:table; min-width:620px; } .flow { grid-template-columns:1fr; } .flow > svg { display:none; } }
+</style></head><body><main class="article">
+<header class="page"><p class="kicker">Decision Dossier · AGT-4032</p>
+<h1>Portable skill library</h1>
+<p class="lede">Versioned working knowledge, selected before every run, delivered through the prompt, and measured from the card back to the skill.</p>
+<div class="meta"><span><b>Date</b> 24 November 2026</span><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span></div></header>
+<nav class="contents" aria-label="Dossier contents"><a href="#recommendation">Recommendation</a><a href="#alternatives">Alternatives</a><a href="#format">Format</a><a href="#library">Library</a><a href="#selection">Selection</a><a href="#distribution">Delivery</a><a href="#economics">Costs</a><a href="#visibility">Visibility</a><a href="#quality">Quality</a><a href="#shipping">Shipping</a><a href="#first-skills">Initial skills</a><a href="#evidence">Evidence</a><a href="#open-decisions">Decisions</a><a href="#implementation">Slices</a></nav>
+<section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+<h2>Recommendation</h2>
+<div class="callout" data-tone="accent"><p><b>Extend the existing enrichment step into the managed skills delivery boundary.</b> Resolve a small set of immutable skill packages, insert their complete instruction text into every applicable run, materialize their resources, and retain a receipt. Use the same receipt for review and for the library's usage record. Native CLI discovery remains a convenience for direct sessions.</p></div>
+<p>The owner direction of 24 November is the product requirement: fitting knowledge reaches the agent through the prompt, across projects and CLIs, and its use is visible in both directions. Loading a skill proves delivery, not compliance or benefit. A weak skill can reduce quality. This proposal makes both the delivery and its consequences inspectable.</p>
+<p>All behavior described below is proposed unless labelled as repository evidence. This delivery changes documentation only. No skill selection, product screen, release, or operator acceptance is implemented here.</p>
+<figure class="media-breakout"><div class="flow" role="group" aria-label="Proposed skill delivery and feedback">
+<svg viewBox="0 0 1080 24" aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10" fill="currentColor"/></marker></defs><path d="M180 20 C300 -4 360 -4 490 20 M550 20 C680 -4 740 -4 900 20" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/></svg>
+<div><b>1. Resolution</b>Card kind, stack, forecast, role and explicit requests select exact skill versions under a budget.</div>
+<div><b>2. Delivery</b>Complete instruction text enters the prompt. Scripts and reference files arrive with the run. The receipt records exact bytes.</div>
+<div><b>3. Evidence</b>Review checks delivered criteria. Outcomes link to versions. Findings become candidate revisions and comparisons.</div>
+</div><figcaption>Proposed data flow. Labels describe the contract; this is an architecture diagram, not a capture of an existing product surface.</figcaption></figure>
+<h3>Continuity</h3>
+<table><thead><tr><th>Existing work</th><th>Takeover</th><th>Change</th></tr></thead><tbody>
+<tr><td><code>pre-prompt-enrichment</code></td><td>Keep the step id, local and remote preparation seam, project settings, report durability, pricing attribution and source checks.</td><td>Add skill resolution, immutable bundles, per-run receipts and a complete instruction renderer. Replace substring routing and summary-only delivery for migrated material.</td></tr>
+<tr><td>AGT-3465 rule packs</td><td>Keep applicability, delivery through card Docs, and review against the exact delivered rules.</td><td>One delivery programme with this Dossier as the proposed umbrella. A rule pack becomes a policy or best-practice skill package, with stable rule ids. Map each AGT-3465 criterion before retiring duplicate slices. AGT-3465 stays undecided until its review lane records the merger.</td></tr>
+<tr><td><a href="../concepts/skills-architecture.md">Portable Skills Architecture</a></td><td>Keep central portable knowledge, project additions, direct-session lookup, and core lifecycle ownership.</td><td>Replace excerpts-first and confirmation for every automatic suggestion with full bounded instructions and policy-controlled automatic selection. Add workspace scope, pins, receipts and evaluation. Preserve legacy lookup until callers migrate.</td></tr>
+<tr><td><a href="../../.agents/skills/README.md">Repository skills</a></td><td>Import the five current skill folders, frontmatter, references, scripts and sentinel probes.</td><td>Add release metadata and hashes without silently rewriting their meaning. Sentinels stay diagnostic, not proof of context delivery. Split oversized skills by capability in later reviewed versions.</td></tr>
+<tr><td>Wiki and style guides</td><td>Wiki remains the human knowledge and rationale library. Hard rules remain authoritative.</td><td>Publish bounded executable guidance as skills derived from named source revisions. No second independently maintained copy of a style standard.</td></tr>
+<tr><td>Personas and roles</td><td>Reuse role identities, persona versions, grants and budgets.</td><td>A role can declare required skills. A skill grants no permissions and has no independent persona identity.</td></tr>
+</tbody></table>
+<p>AGT-3465's title, scope and Human Review state come from the task brief; the original card was unavailable through the local task API. The merger recommendation covers the overlap described there, not unseen acceptance details. Slice SL-1 must reconcile its complete card before any duplicate implementation is closed. This does not prevent delivery of this concept.</p>
+</section>
+<section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+<h2>Alternatives</h2>
+<div class="variant-grid">
+<article class="variant"><h3>A. Larger guide summaries</h3><p>Raise the current 1,500-token limit and improve keyword matching. Cheapest migration, but scripts, skill identity, version pins and cross-project outcomes remain separate. Useful only as a short compatibility stage.</p></article>
+<article class="variant"><h3>B. Native CLI skills</h3><p>Install folders and let each CLI decide what to read. Efficient progressive disclosure, but discovery, precedence and observability differ. It cannot establish that every managed run received the required knowledge.</p></article>
+<article class="variant"><h3>C. Managed prompt bundles</h3><p><b>Recommended.</b> Studio resolves versions, renders full bounded instructions and records transport receipts. The same bundle serves every CLI. Requires a resolver, a resource transfer contract and outcome joins.</p></article>
+<article class="variant"><h3>D. Whole-library injection</h3><p>Insert every skill into every prompt. Delivery is simple, but irrelevant procedures compete with the task and consume context. It also reproduces the content-depth failure described by the owner at larger scale.</p></article>
+</div>
+<p>A marketplace is outside this proposal. An installation can import a reviewed package from another installation or a private repository without delegating policy, updates or trust to a marketplace.</p>
+</section>
+<section id="format"><h2>Format</h2>
+<p>A <b>skill</b> is a named, versioned unit of task-specific working knowledge with declared applicability, bounded instruction text, a responsible maintainer and evidence of its behavior. It explains how to perform work and what to check. A selected skill is an artefact, not an unversioned URL and not a permission grant.</p>
+<table><thead><tr><th>Kind</th><th>Examples</th><th>Boundary</th></tr></thead><tbody>
+<tr><td>Area best practice</td><td>Frontend, backend, UX, tests, security, operations</td><td>Technology-aware decisions and failure patterns. Security audit procedures do not activate merely because a file mentions credentials.</td></tr>
+<tr><td>Task procedure</td><td>Incident analysis, Dossier writing, release preparation</td><td>Inputs, stopping conditions, evidence and outputs for a bounded task.</td></tr>
+<tr><td>Project knowledge</td><td>Domain invariants, API vocabulary, project verification</td><td>Only for named projects or an explicit adoption, tied to repository revisions.</td></tr>
+<tr><td>Role knowledge</td><td>Dispatcher forecasts, guardian investigation</td><td>Role charter and evidence method. Deterministic scheduling and transition authority remain in the decision library.</td></tr>
+</tbody></table>
+<p>A <b>rule</b> is an individually identifiable requirement with authority, scope and a check. A <b>style guide</b> groups related conventions and rationale. A <b>wiki page</b> explains a subject and its history. A skill packages the actionable portion of these sources, cites their versions, and adds a procedure and examples. A <b>plugin</b> is an optional versioned container for one or more skills plus tool or connector declarations and assets. Installing it never creates credentials, tool grants or execution authority.</p>
+<h3>Package</h3>
+<pre><code>frontend-best-practice/
+  SKILL.md                 # portable frontmatter and complete core instructions
+  skill.json               # Studio schema, triggers, sources and delivery closure
+  references/              # optional, task-specific supporting instruction modules
+  scripts/                 # optional deterministic helpers
+  examples/                # optional examples with provenance
+  tests/                   # routing cases, behavioral fixtures, script checks
+  assets/                  # optional templates or output resources
+  release.json             # generated hashes, licence, review and evaluation evidence</code></pre>
+<p>Only <code>SKILL.md</code>, <code>skill.json</code> and release metadata are required for a released Studio skill. Keep the portable frontmatter small: <code>name</code>, <code>description</code> and the existing sentinel where present. Put Studio-specific fields in the sidecar, avoiding a dependency on a CLI accepting custom YAML fields. A draft can consist of SKILL.md alone and is not eligible for automatic production delivery.</p>
+<pre><code>---
+name: frontend-best-practice
+description: Angular component and state changes with browser evidence.
+---
+
+# Frontend best practice
+Use the project component and state contracts supplied with this skill.
+Verify identity, loading, keyboard behavior and the changed user journey.</code></pre>
+<p>The sidecar declares <code>schemaVersion</code>, namespaced <code>id</code>, <code>version</code>, kind, owner, licence, compatible package/runtime versions, technologies, task kinds and modes, include/exclude path globs, roles, explicit labels, required dependencies, conflicts, replacement or extension relationships, source revision hashes, budget class, stable <code>criteria</code> ids with scope and authority, and a <code>deliveryFiles</code> list. Triggers use a validated expression schema with explicit <code>allOf</code>, <code>anyOf</code> and <code>not</code> semantics. Empty selectors match nothing; <code>*</code> is explicit. Dependencies form an acyclic graph.</p>
+<h3>Instruction closure</h3>
+<p><b>Whole skill in the prompt</b> means the complete SKILL.md, including its metadata, plus every instructional reference declared in the released delivery closure. The compiler recursively resolves those references once, normalizes text to UTF-8 and LF, preserves instruction content, and records the resulting digest. No summary or truncation substitutes for selected instructions. A reference containing a requirement belongs in this closure. A long optional manual belongs in a separately selectable skill module.</p>
+<p>Scripts, tests, example data and binary assets are shipped as files; their source is not automatically instructional context. A small instructional example can be declared in <code>deliveryFiles</code> and then counts in full. Every other reference is explicitly labelled supplementary and cannot hide an acceptance requirement. Network links are citations, never a way to defer loading required instructions.</p>
+<h3>Size</h3>
+<p>Target 800 to 1,800 tokens per skill closure; warn above 2,000 and reject a new general release above 2,500. Allow a reviewed procedure class up to 5,000 tokens for existing operations workflows. Store per-provider counts and tokenizer version; retain <code>ceil(characters / 4)</code> only as a clearly labelled fallback estimate. The current task-api entry alone is about 4,150 estimated tokens, so importing all existing skills under a universal 2,500-token cap would break compatibility.</p>
+<p>Default added instruction budget: 6,000 tokens; hard limit: 8,000, and never more than 10% of the selected model's usable context after reserved task and output space. All numbers include delivery wrappers, policy projections and dependency text, excluding the skill catalogue, which is separately accounted. A reviewed project budget can lower these limits. A larger procedure is split by capability or explicitly budgeted; silently dropping a required tail is prohibited.</p>
+</section>
+<section id="library"><h2>Library</h2>
+<p>Use three logical scopes with the same immutable package contract. Shipped defaults are bundled with the product, authored initially in <code>.agents/skills/</code>, and indexed by a release lock. Workspace packages are installation-owned state shared by its projects through the application API. Project additions live in that project's <code>.agents/skills/</code>. The exact workspace storage path belongs to the application filesystem contract, not to prompts or user scripts.</p>
+<p>Resolve the project's explicit mapping, then its workspace activation, then the shipped baseline. Scope alone never shadows a skill with the same short name. An override explicitly names <code>replaces: studio/frontend-best-practice</code>, the compatible upstream version and a different qualified identity. A fork retains its upstream digest and review lineage. An extension uses <code>extends</code>; both the base and the additive instructions enter the closure and receipt. A replacement requires project maintainer adoption and cannot remove an independent mandatory policy dependency. Keep <code>ownerRoleId</code> (the role responsible for maintenance) distinct from <code>roles</code> (the invocations to which the skill applies). A dispatcher-owned skill can also support a concept run without becoming a dispatcher persona.</p>
+<p>Examples: a workspace can share <code>acme/backend-contracts@1.2.0</code> across three projects; one project can extend it with invoice invariants. A customer wanting a different visual convention forks the optional UX skill under its namespace. Studio's own mandatory UI rules apply to Studio UI projects through explicit project policy, not indiscriminately to every customer's application.</p>
+<h3>Versions</h3>
+<p>Use semantic versions for intended compatibility and SHA-256 of a canonical file manifest for exact identity. Changed bytes always produce a new artefact and digest, including an instruction typo. Patch means compatible clarification, minor adds compatible guidance, major changes triggers, required workflow or acceptance criteria. A version number is descriptive; the digest is the pin. Duplicate identity and version with different bytes is rejected.</p>
+<p>Workspace and project activations name a channel or constraint; a reviewed lock resolves them to exact versions. Product upgrades introduce new shipped versions without rewriting local forks or active locks. New run attempts resolve against the active lock; retries and fix rounds retain the originating pin. An explicit re-resolution records old and new receipts and a reason. In-flight runs never change under them. Retain old bundles while any receipt references them, including archived cards.</p>
+<h3>Artefact lifecycle</h3>
+<ol>
+<li><b>Draft:</b> an author or a normal skill-creation card supplies scope, triggers, source revisions, content, owner and a specific expected improvement. AI-created packages stay drafts.</li>
+<li><b>Review:</b> the domain maintainer checks correctness and scope; the quality maintainer checks budget, conflicts, exclusions, testability and permission boundaries. Script changes receive executable-code review.</li>
+<li><b>Test:</b> validate package structure, path containment, dependency closure, source hashes, routing positives and negatives, deterministic script fixtures, and representative behavioral tasks with and without the candidate.</li>
+<li><b>Candidate:</b> publish an immutable package and signed release manifest. Shadow selection establishes coverage; isolated comparisons test content. A candidate is never selected as the default merely because its description matches.</li>
+<li><b>Release:</b> domain maintainer records evaluation and adopts a lock revision. Product releases ship tested baseline locks. Workspace forks release independently.</li>
+<li><b>Retirement:</b> deprecate with a successor or explanation; stop new selection, retain historical bytes. Rollback changes the lock for future work, not historical evidence.</li>
+</ol>
+<h3>Wiki</h3>
+<p>Keep the cloned project wiki as the source for rationale, long domain knowledge and discoveries. The library links back to it. A published skill pins the source commit and section digest; a drift detector proposes a revision when that section changes. Guidance updates remain ordinary reviewed cards. The wiki can render a package and its usage projection, but cannot edit an immutable published version in place.</p>
+<p>The Access-page pilot and the parallel “one look and feel” work own the future UI standard. Until those decisions are delivered, migrate the current hard rules as the baseline and identify pilot material as candidate. Their approved revision must update the UX package, project lock and visual review criteria together. Do not freeze an undecided pilot screenshot into every UI card.</p>
+</section>
+<section id="selection"><h2>Selection</h2>
+<p>Every model invocation passes through skill preparation, including a recorded empty or disabled result when nothing applies. Applicable declared requirements are automatic; manual skill requests add to that set within the same authority and budget rules. Keep <code>pre-prompt-enrichment</code> as the named pipeline step. It resolves the instruction bundle before local dispatch or remote admission, after model qualification. The service collects facts and persists a report; the selection function is deterministic and independently testable. It does not become a second scheduler or transition engine.</p>
+<h3>Facts</h3>
+<p>Use task mode and kind, explicit skill requests and exclusions, project and stack, declared work areas, acceptance criteria, forecast files and modules with confidence, role/persona version, CLI capability, model context size and budget. Consume the dispatcher concept's shared touch forecast by id, producer version, base SHA and confidence. It is a forecast, not a fact about changed files. If unavailable, use cited paths, a project module map and a fixed task-kind set. Do not require the dispatcher to be live before basic skills delivery can work.</p>
+<table><thead><tr><th>Signal</th><th>Selection behavior</th><th>Example</th></tr></thead><tbody>
+<tr><td>Project policy and role requirements</td><td>Always include applicable policy and role closures.</td><td>Studio UI policy for a known frontend path; guardian evidence procedure for a guardian run.</td></tr>
+<tr><td>Declared task-kind sets</td><td>Choose a conservative default for the kind and stack.</td><td>Backend bug: backend practice and regression procedure. Concept: Dossier/evidence procedure.</td></tr>
+<tr><td>Forecast paths and modules</td><td>Match validated globs against normalized repository-relative paths, not prose substrings.</td><td><code>frontend/**/*.ts</code> plus Angular selects the frontend skill; a backend prompt using the word “card” does not.</td></tr>
+<tr><td>Explicit skill request</td><td>Include the requested released version or report that it cannot be resolved.</td><td>A named operations procedure outranks an optional area suggestion.</td></tr>
+<tr><td>Ambiguous scope</td><td>One bounded classifier call proposes catalogue ids and reasons, then deterministic validation applies.</td><td>At most 1,200 input and 200 output tokens. No tool execution, package fetching or policy overrides.</td></tr>
+</tbody></table>
+<p>The small model sees the card summary, declared facts and compact catalogue descriptors, never the entire library. Its result is cached by task-input, forecast, catalogue and classifier revision hashes. On invalid output or timeout use the conservative fixed set and an explicit uncertainty record. Model choice affects capacity and cost, not which correctness rules the task deserves. Optional classification is outside the loaded-instruction budget and has its own usage record.</p>
+<h3>Resolution</h3>
+<ol>
+<li>Resolve the project lock, explicit requests, task-kind set and typed triggers. Record positive and negative evidence, including uncertainty. Validate scope, compatibility, sources, permissions needed by scripts, and installed tools.</li>
+<li>Expand required dependencies, flatten declared instruction references and deduplicate by exact identity and rule id. Same id with different content is a conflict. Shared dependencies count once in prompt bytes, with all selecting parents retained in the receipt.</li>
+<li>Resolve authority first: task instructions and repository guardrails, then applicable mandatory project policy, then required skills, then optional advice. A skill cannot override higher authority. Incompatible mandatory rules block bundle preparation with the conflicting ids and sources. Optional conflicts use the explicitly adopted replacement; otherwise omit the optional conflicting candidate with a reason.</li>
+<li>Reserve space for mandatory policy, explicit requests and role/task required skills. Rank optional skills by declared priority, forecast evidence/confidence, then stable id. Count the complete closure at each addition. There is no arbitrary two-skill limit.</li>
+<li>Emit every candidate decision: <code>included</code>, <code>excluded-trigger</code>, <code>incompatible</code>, <code>superseded</code>, <code>duplicate</code>, <code>omitted-budget</code>, <code>source-missing</code> or <code>conflict</code>, with a reason. Persist and verify the transport before launching.</li>
+</ol>
+<p>If required text exceeds the hard or model budget, preparation reports a bounded <code>skill-context-overflow</code> failure for the existing pipeline recovery path; it does not start an unenriched run. The implementation must express any admission consequence through the existing decision boundary and <code>AiOperatorDecisionGateway</code>. The existing selector exception path fails open to the authored prompt; required-skill preparation deliberately strengthens that behavior. An optional miss can proceed with a visible warning and the available required set. Projects intentionally opting out must record <code>disabled</code>; an applicable mandatory policy cannot be turned into a silent opt-out.</p>
+<p>After delivery, compare actual changed files with the forecast for selection diagnostics. A newly discovered area can trigger an explicit same-run bundle extension before work in that area; its full text, time and digest create a new receipt revision. The CLI can request this through the supported run-context seam or stop with a typed missing-context report. Ad-hoc reads remain labelled observations and cannot be counted as managed prompt delivery.</p>
+<h3>Examples</h3>
+<p>A .NET API regression with forecast <code>backend/Features/Tasks/**</code> gets backend best practice, regression guidance and project policy. A UI change with forecast Angular component/SCSS files gets frontend best practice, UX and visual standard, and UI evidence procedure, including the current hard-rule dependency. A concept card discussing frontend architecture gets the concept/evidence procedure and relevant project knowledge; it receives no implementation-only Angular instructions simply because its prose contains “UI”.</p>
+</section>
+<section id="distribution"><h2>Distribution</h2>
+<p>The application compiler produces a canonical <code>context-bundle.md</code>, a machine-readable receipt and a content-addressed resource archive. Put resolved resources under a run-owned <code>.studio/run-context/skills/&lt;qualified-id&gt;/&lt;digest&gt;/</code> directory inside the prepared worktree, outside native discovery folders. This is disposable runner context, not a new per-task workspace. The platform creates and excludes it from task diffs and preserves the immutable source archive with the receipt. Use logical paths in shared instruction text; bind absolute paths in the variable run-context section.</p>
+<p>Check archive size, manifest digest, file hashes, executable flags and path containment before starting. Reject path traversal, symlinks outside the package, case-colliding files and unbounded archives. Proposed limits: 10 MiB expanded per skill, 40 MiB per run, excluding separately approved tool dependencies. Packages contain no credentials. Scripts run only when the task needs them and the existing execution policy permits them; importing a package executes nothing.</p>
+<table><thead><tr><th>CLI</th><th>Managed delivery contract</th><th>Verification</th></tr></thead><tbody>
+<tr><td>Claude Code</td><td>Send the full bundle through the existing text stdin/headless prompt transport, alongside the unchanged task. Stable instruction-file placement is an optional adapter optimization after equivalence tests; it is not permission to replace higher-priority CLI instructions.</td><td>Capture the compiled bytes and adapter payload hash before spawn. Use a nonbillable fake transport test and an opt-in live sentinel probe.</td></tr>
+<tr><td>Codex</td><td>Send the same complete bundle through the execution request's prompt input; the repository one-shot implementation already accepts stdin with <code>exec … -</code>. Preserve the main-run adapter's permission and repository contracts.</td><td>Compare the canonical bundle with the prompt payload at the adapter boundary. Native <code>$skill</code> invocation alone does not satisfy delivery.</td></tr>
+<tr><td>Copilot and Gemini</td><td>Insert the same text into their existing supported prompt/message transport. Where a CLI only supports a prompt argument, pass one argument using the process argument API, without shell interpolation, and enforce the OS length limit.</td><td>A capability test for the installed CLI version must prove the text arrives untruncated. An unsupported adapter reports unavailable; pointing to a file is not a full-text fallback.</td></tr>
+</tbody></table>
+<p>Local and remote runners share the compiler output. The remote job carries exact text, receipt and resource manifest; it must not re-resolve “latest” on the host. An archive failure or receipt persistence failure stops admission. A transport-level receipt proves text was sent, not that the model understood it. Sentinel echo remains a useful smoke probe but cannot replace byte and hash verification.</p>
+<h3>Prompt order</h3>
+<p>Target order: stable platform rules, stable project policy and resolved skill text, then variable role invocation, authored task, receipt-specific reasons, resource path bindings and evidence paths. Within the stable part use policy first, common task-kind skills next, specialist skills last, with explicit ranks and stable id ordering. Keep dates, task ids, selection reasons and absolute worktree paths out of the reusable skill prefix. Preserve the authored task verbatim and retain hashes for both the composed prompt and task.</p>
+<p>The current enrichment renderer appends context after the authored task. Its audit seam can be reused immediately, but that placement prevents different cards from sharing the appended skill prefix across fresh calls. Reordering is an explicit transport slice with prompt-equivalence tests, not an assumed cache saving. CLI-added system text, tool schemas, session configuration and model switches can still change the effective prefix.</p>
+<h3>Run modes</h3>
+<table><thead><tr><th>Invocation</th><th>Delivered skills</th><th>Version behavior</th></tr></thead><tbody>
+<tr><td>Implementation</td><td>Project policy, task-kind set, applicable area and procedure skills.</td><td>Resolve once at attempt start and retain the original bundle.</td></tr>
+<tr><td>Review and aspects</td><td>Project policy, review/evidence procedure, plus complete implementation skills relevant to the aspect. Deliver their stable criteria ids and origin receipt.</td><td>Check against the versions delivered to implementation. Read other aspect receipts as evidence, not as a requirement to repeat all procedures. A guideline published later cannot retroactively fail a task.</td></tr>
+<tr><td>Fix round</td><td>Original relevant skills, complete review findings and a narrow fix procedure.</td><td>Retain original pins. A new skill version requires an explicit re-resolution record and reason. Urgent policy changes are separate recorded additions.</td></tr>
+<tr><td>Concept</td><td>Dossier structure, evidence and decision-quality procedure; relevant project/role knowledge; UX evaluation guidance when the concept changes a user journey.</td><td>Exclude implementation-only triggers. Visual craft is subordinate to content completeness and the mandated document template.</td></tr>
+<tr><td>Dispatcher and guardian</td><td>Role-owned analysis, forecast or incident-evidence skills.</td><td>Role template requirements resolve to pinned skills; persona activation retains its own version and grants. Pure dispatcher decision-library calls have no model prompt and record “not applicable”.</td></tr>
+</tbody></table>
+<p>Native skill discovery remains supported for direct CLI use, offline reading and authoring. It may expose the exact pinned files as a convenience in a controlled run, with native duplicate loading disabled where supported. Do not rewrite repository AGENTS or user configuration at each launch. A native-only activation is a distinct <code>observed-native</code> event when verifiable, otherwise unknown; it is never counted as managed injection. Record unexpected extra native versions as possible experimental contamination.</p>
+</section>
+<section id="economics"><h2>Costs</h2>
+<p>These are planning scenarios, not measurements of live cards. Every number below is incremental skill context, with text and wrapper allowances, excluding the task, tools, outputs, reasoning and unrelated context. Production receipts must replace these estimates with provider token counts and actual route pricing.</p>
+<div class="table-wrap media-breakout" tabindex="0" role="region" aria-label="Skill context cost table"><table class="numeric"><thead><tr><th>Typical card</th><th>Bundle composition, tokens</th><th>Added per request</th><th>Ten requests in one run</th></tr></thead><tbody>
+<tr><td>Backend regression</td><td>Policy 800 + backend 1,400 + regression 600</td><td>2,800</td><td>28,000 input tokens revisited</td></tr>
+<tr><td>UI change</td><td>Policy 800 + frontend 1,600 + UX 1,800 + visual evidence 600</td><td>4,800</td><td>48,000 input tokens revisited</td></tr>
+<tr><td>Full-stack workflow</td><td>UI bundle 4,800 + backend 1,400 + API contract 600</td><td>6,800</td><td>68,000 input tokens revisited</td></tr>
+</tbody></table></div>
+<p>The full-stack example needs the recorded budget expansion from the 6,000 default, within the 8,000 hard limit. The 600-token procedures are bounded proposed modules, not shortened versions of existing 3,000 to 4,000-token skills. The policy allocation is a proposed compact released closure, not a measured token count of today's full hard-rules document. Exact source-derived policy text must be counted before adoption. A fourth required large skill would require a narrower task or a reviewed package split.</p>
+<p>API reference rates, checked 24 November 2026: Claude Sonnet 4.6 input $3, 5-minute cache write $3.75, cache read $0.30 per million tokens. Codex scenario: GPT-6.2 Sol Standard input $2, 30-minute write $2.50, read $0.10 per million. These are reference routes, not a model-selection recommendation or subscription bill. <a href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching">Claude pricing and caching</a>; <a href="https://developers.openai.com/api/docs/pricing">OpenAI API pricing</a>.</p>
+<p class="dim">On narrow screens, scroll this comparison horizontally; the table region supports keyboard focus.</p>
+<div class="table-wrap media-breakout" tabindex="0" role="region" aria-label="Provider cost comparison"><table class="numeric"><thead><tr><th>Card</th><th>Claude cold, no cache</th><th>Claude write</th><th>Claude read</th><th>Codex cold, no cache</th><th>Codex write</th><th>Codex read</th></tr></thead><tbody>
+<tr><td>Backend · 2,800</td><td>$0.00840</td><td>$0.01050</td><td>$0.00084</td><td>$0.00560</td><td>$0.00700</td><td>$0.00028</td></tr>
+<tr><td>UI · 4,800</td><td>$0.01440</td><td>$0.01800</td><td>$0.00144</td><td>$0.00960</td><td>$0.01200</td><td>$0.00048</td></tr>
+<tr><td>Full stack · 6,800</td><td>$0.02040</td><td>$0.02550</td><td>$0.00204</td><td>$0.01360</td><td>$0.01700</td><td>$0.00068</td></tr>
+</tbody></table></div>
+<p>For ten requests with one write and nine full reads, added context costs $0.01806 / $0.03096 / $0.04386 on Claude, or $0.00952 / $0.01632 / $0.02312 on Codex, in the same card order. With no reuse, ten ordinary uncached reads cost $0.084 / $0.144 / $0.204 and $0.056 / $0.096 / $0.136 respectively. Repeated cache misses cost the write rate where caching creates new entries. Reproducible inputs and calculations are in <a href="cost-model.json">cost-model.json</a>.</p>
+<p>General model: for N added tokens, W writes, H cache reads and U ordinary uncached requests, cost = N × (W × writeRate + H × readRate + U × inputRate) / 1,000,000. Split mixed prefixes into actual cached and uncached tokens. The cost of selecting skills is separate: deterministic routing costs zero model tokens; the optional bounded classifier allows at most 1,400 total tokens per selection. At the same Standard GPT-6.2 Sol reference rate its 1,200 input and 200 output ceiling is $0.00440 without caching.</p>
+<p>Caching needs a matching prefix. Stable order and a shared prefix create an opportunity; they do not prove reuse. API cache eligibility depends on model, minimum length and TTL. CLI transport cannot promise API breakpoint control. Subscription quota is not a token-price invoice. Record observed cache usage and unknowns, and keep the no-cache case viable. <a href="https://developers.openai.com/api/docs/guides/prompt-caching">OpenAI cache contract</a>; <a href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching">Claude cache contract</a>.</p>
+<p>Cache reads reduce billing and processing, not occupied context. Avoid injecting redundant knowledge just because reads are cheap. Do not add skill-attributed cost to the run total again: it is a component of that total. Per-skill cache savings remain an estimate unless the provider exposes a boundary that supports attribution.</p>
+</section>
+<section id="visibility"><h2>Visibility</h2>
+<p><b>Proposed card journey:</b> open the card's Docs/context area, inspect “Skills delivered”, then choose an invocation: core, aspect review, fix or concept. Each entry shows qualified identity, version and digest, source scope, full text/resources, why it matched, required/optional status and tokens. Show budget omissions and conflicts next to inclusions. A separate native observation never carries a “delivered by Studio” label. This is a future surface specification, not a claim about the current UI.</p>
+<p><b>Proposed reverse journey:</b> open a skill's library detail, choose version or all versions, then inspect loads by project, task kind, invocation mode and date. Follow a row to its card and exact receipt. Default overview columns: owner, released version, scope, trigger summary, instruction tokens, unique cards, delivered invocations, acceptance numerator/denominator, relevant findings, rework, last release and evaluation status. Filter retired versions and local forks without merging their outcomes.</p>
+<p>The library should be a shared workspace knowledge view with project filters, version comparison and source links. Card and library use the same ledger projection. Totals must equal visible child counts under the same filters; a page subtotal must not impersonate the workspace total. Empty means zero eligible records only when the dataset is complete; missing history is “unknown”. Follow the flat admin grammar, existing tokens, both themes and keyboard conventions in the eventual UI slice.</p>
+<h3>Ledger</h3>
+<table><thead><tr><th>Record</th><th>Required fields</th></tr></thead><tbody>
+<tr><td>Selection</td><td><code>schemaVersion, selectionId, workspaceId, projectId, taskKey, attemptId, invocationId, mode, phase, roleId, personaVersion, cliVersion, model, policyVersion, catalogueDigest, lockDigest, forecastId/baseSha/confidence, authoredPromptHash, createdAt</code>; candidate ids, decisions, evidence, reason codes, budgets and classifier usage.</td></tr>
+<tr><td>Bundle item</td><td><code>skillId, version, contentDigest, scope, upstreamDigest, dependencyParents, authority, mandatory, order, deliveryFiles, exactTextDigest, exactTextRef, resourceManifestDigest, tokenCount, tokenizer, tokenCountKind</code>. Store the immutable text and files, not only hashes.</td></tr>
+<tr><td>Delivery</td><td><code>eventId, selectionId, invocationId, bundleDigest, adapterPayloadDigest, materializationDigest, state, transport, preparedAt, sentAt, runnerId, fencingToken</code>; states prepared, sent, failed or native-observed, plus failure reason. Use the run's existing fence and identity.</td></tr>
+<tr><td>Usage</td><td>Provider input/output, cache read/write, route and price revision, observed or estimated attribution, total run cost reference. Null with reason for unavailable data. Keep skill context and classifier cost separate.</td></tr>
+<tr><td>Outcome link</td><td><code>taskKey, resultSha, reviewInvocationId, sourceDeliveryId, criterionId, area, findingId, severity, applicable, verdict, remediationRound, acceptedAt, acceptanceAuthority</code>. Include owner feedback ids, experiment arm, baseline and evaluator revision.</td></tr>
+<tr><td>Governance</td><td>Package author, licence, source revisions, review receipt, evaluation evidence, release/retirement, lock activations, overrides, export/import receipts. No secrets or absolute source-repository paths in the library's public projection.</td></tr>
+</tbody></table>
+<p>Append events idempotently using invocation + bundle + item identity. Prepared context that never reaches a spawned transport is not a load. A retry creates another delivery invocation; a resumed process with the same delivered prefix creates no extra load unless a new prompt is sent. Count unique cards separately from invocations and token-bearing requests. Deduplicate shared dependencies once per invocation. Pre-existing enrichment reports can be imported as <code>legacy-summary</code>, never backfilled as full skills.</p>
+<h3>Metrics</h3>
+<p><b>Load count:</b> distinct successful managed delivery invocations containing the skill. <b>Card reach:</b> distinct task keys with such delivery. <b>Acceptance:</b> accepted terminal cards divided by terminal eligible cards, with pending and censored cards shown separately. <b>Relevant findings:</b> findings with criterion or area attribution divided by completed applicable reviews. <b>Rework:</b> fix rounds per completed card, plus the share requiring any fix. Native observations and legacy summaries get separate denominators.</p>
+<p>Observational outcomes are associations. Show model, task complexity, project, review regime and time window before comparing versions. A hard task is more likely to load more skills; raw acceptance rankings would punish the useful ones. Without reliable attribution show a finding as unattributed rather than blaming every skill on the card. Give workspace administrators export and retention controls; customer knowledge and card content stay private by default.</p>
+</section>
+<section id="quality"><h2>Quality</h2>
+<p>The owner's 24 November blind comparison reports that the version without the visual-design skill won because it had more content depth. Treat it as a concrete hypothesis about harm and a design for a repeatable comparison. The underlying briefs, outputs, prompts and scores were not supplied here, so this Dossier does not turn that observation into a measured effect size or a universal verdict on the skill.</p>
+<h3>Comparison</h3>
+<ol>
+<li>Record the candidate version, intended improvement and harm hypothesis. Start with “visual procedure reduces decision or content coverage” as a regression case. Preserve mandatory policy in both arms.</li>
+<li>Build a stratified sample from actual task types: UI behavior, visual redesign, content-heavy Dossier, backend change and operational procedure. Freeze base revision, brief, acceptance criteria, model/effort, tools, token budget and reviewer version. Isolate outputs; neither arm reads the other's result.</li>
+<li>Randomize presence or version of the optional skill. Use at least 20 matched task pairs for an initial directional screen, with repeated seeds or runs where stochasticity is material. This is a screening target, not a statistical guarantee. Candidate runs cannot mutate live task state.</li>
+<li>Blind reviewers to skill, arm and model label. Score correctness and content coverage before visual coherence, accessibility and effort. Include independent task acceptance checks and the owner's pairwise choice. Report ties, failures and disagreements. A reviewer checking the candidate's own style rules cannot be the sole outcome judge.</li>
+<li>Report per-stratum effects with paired uncertainty intervals, costs and rework. “Inconclusive” stays inconclusive. Advance to a limited live rollout only when the target improves and no protected dimension materially declines.</li>
+</ol>
+<p>Suggested rollout guardrails: no new critical correctness or permission failure, no loss of a required acceptance item, and no content-coverage drop greater than five percentage points in the pilot. These are proposed operating thresholds, not established product facts. A material harm finding pauses automatic selection of the candidate version; retain the previous released version. Optional skills may have a holdout cohort; mandatory hard rules are never withheld to make an experiment.</p>
+<h3>Review</h3>
+<p>Every delivered criterion has a stable id, scope and authority. The review aspect receives the exact original skill text plus an independent review procedure. Findings cite skill id/version/digest, criterion id, affected file or screenshot, and the evidence that fails it. Irrelevant criteria are marked not applicable with a reason. Advisory craft preferences cannot become blocking hard rules. Review must also report missing delivered guidance and any instruction that pushed the work away from the task.</p>
+<p>For content-heavy documents, completeness of decisions, evidence and implementation scope is a protected dimension. For UI work, preserve actual content, tasks and states before appearance. A rule such as “use a diagram” is conditional on whether it explains the subject; a visual iteration does not authorize cutting required analysis.</p>
+<h3>Revision</h3>
+<p>Review and owner findings enter a feedback queue keyed to the exact package version and criterion. A domain maintainer triages instruction error, wrong selection, missing source knowledge, transport loss or agent noncompliance. Only the first three usually justify a skill edit. Produce a normal creation/revision card with a failing behavioral fixture, change, comparison and source updates. The role guardian can propose the card; its grants still control mutation. The released package keeps evidence and change rationale. No review agent silently edits the default skill while reviewing its own work.</p>
+<p>Regular reporting should show harmful versions, inconclusive experiments, and unresolved feedback as readily as successes. Usage volume alone never promotes a skill. Retire general visual-design defaults for content-heavy concepts if controlled comparisons repeat the reported harm; keep useful capture procedures as a narrowly selected module.</p>
+</section>
+<section id="shipping"><h2>Shipping</h2>
+<p>A product release contains a package catalogue, immutable bundles, compatibility metadata and a tested baseline lock. Workspace activation shares one version across projects; project-specific knowledge remains opt-in. Creation, review, release, adoption and retirement use normal artefact tasks, and installation-owned state is changed only through the application API. Runtime agents do not manage Git, worktrees or release publication.</p>
+<p>Export a deterministic archive with skill identities and versions, file hashes, complete instruction closure, required dependency bundles, licence notices, source provenance and review/evaluation receipts. Tool declarations list capability requirements without endpoint secrets. A plugin manifest can group these packages with connector configuration templates and assets. Do not export credentials, private card bodies, usage history or project knowledge without an explicit export scope.</p>
+<p>Import verifies manifest signatures or recorded local trust, hashes, size/path limits, dependencies, schema and tool compatibility, then shows an adoption preview. Unknown publishers remain inactive until an administrator adopts them. A dry run reports exact replacements and conflicts. Offline transfer works with the same archive. An import never auto-runs scripts, enables connectors or updates project locks.</p>
+<p>Customers may create, fork, extend, select, disable optional packages, pin old versions and export their own knowledge. They may change project-specific policies through their authorised project governance. They cannot mutate a signed shipped version in place, rewrite prior receipts or bypass platform lifecycle and permission floors by adding a skill. Updates propose a three-way comparison between upstream, local fork and new release; adoption is explicit, with rollback to a retained lock.</p>
+</section>
+<section id="first-skills"><h2>Initial skills</h2>
+<p>Write these first as separately releasable packages. The frontend and backend packages can be domain-neutral at their core, with explicit Angular and .NET applicability. Studio-specific hard rules are a project policy dependency. The numbers are authoring targets; actual token counts decide release eligibility.</p>
+<div class="skill-list">
+<article><h3>Frontend best practice</h3><p class="meta"><code>studio/frontend-best-practice</code> · About 1,600 tokens</p><p><b>Content.</b> Standalone OnPush component boundaries, signal-backed state, stable row identity, API/async state transitions, semantic tokens and shared components, keyboard/focus behavior, loading/error/empty states, rendering and bundle performance. Keep craft separate from correctness. Select tests for the changed journey.</p><p><b>Evidence.</b> Routing negatives for backend prose mentioning “card” or “token”; a list refresh retaining focus/identity; stale async response; both-theme interaction evidence. Reference existing frontend domain and style contracts rather than inventing a new Angular architecture.</p></article>
+<article><h3>Backend best practice</h3><p class="meta"><code>studio/backend-best-practice</code> · About 1,400 tokens</p><p><b>Content.</b> Feature ownership, typed API errors and contracts, cancellation, concurrency/idempotency, authorization, transaction and filesystem boundaries, observability/correlation, deterministic tests, secret-safe fixtures. Orchestration facts/actions remain in the decision-library contract; use APIs for task state and platform-owned Git.</p><p><b>Evidence.</b> Duplicate request, cancellation and partial persistence examples; permission checks; meaningful regression measurement; tests for decision-boundary preservation. Trigger by stack/path or explicit API work, not the word “service”.</p></article>
+<article><h3>UX and visual standard</h3><p class="meta"><code>studio/ux-visual-standard</code> · About 1,800 tokens</p><p><b>Content.</b> User task and information completeness first, hierarchy, content density, disclosure, action vocabulary, status and feedback, keyboard/touch/accessibility, current hard rules and flat admin grammar through policy dependency, both themes. Bind the approved Access/one-look standard by revision. Include a compact capture and critique procedure without forcing decorative variety.</p><p><b>Evidence.</b> The reported content-depth failure becomes a protected comparison case. Check operator tasks, all meaningful states, content coverage and blind preference before aesthetic scores. Exclude logic-only and ordinary prose work; use the concept variant only for an actual journey/design question.</p></article>
+</div>
+<p>Regression and visual-evidence modules used in the cost examples are later small procedure dependencies. Do not claim the full existing visual-design skill is already a 600-token module. The first content release must identify which legacy criteria migrate, remain optional, or are retired with evidence.</p>
+</section>
+<section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+<h2>Evidence</h2>
+<p>Evidence is source inspection and explicit owner input, dated 24 November 2026. No controlled skill-effect experiment was run for this concept. The following implementation claims concern repository contracts and code; no claim about a presently visible product screen is made. Proposed journeys above are future specifications. Dossier layout captures are validation of this document and are not product-state evidence.</p>
+<div class="evidence-list">
+<a class="evidence" href="../../backend/Features/Runner/PromptEnrichmentService.cs"><span class="evidence-class" data-evidence-class="observed">Source</span><span><b>Audited enrichment already exists</b><small>Prepare persists context before its report; report persistence failure prevents dispatch. BuildReport includes exact block text, source verification, revisions, digests, candidate reasons, token estimates and model-dependent cost. Reuse this boundary.</small></span></a>
+<a class="evidence" href="../../backend/Features/Runner/IntakeRunner.cs"><span class="evidence-class" data-evidence-class="observed">Source</span><span><b>Selection remains coarse and bounded</b><small>DetectTaskAreas calls Contains over the task text. Needles include “ui”, “card”, “style” and “token”. Constants set 6,000 characters, roughly 1,500 tokens, and two optional blocks. Current guide priorities differ by matched area: header 10, frontend 20, other 30. Same-area guides tie by id.</small></span></a>
+<a class="evidence" href="../../backend/Features/Docs/ProjectStyleGuideService.cs"><span class="evidence-class" data-evidence-class="observed">Source</span><span><b>Guide summaries have a 600-character ceiling</b><small>The catalogue validates promptSummary against MaxPromptSummaryChars = 600. Intake renders this summary and a source pointer, not the complete guide. “All guides have equal priority” is too broad for this checkout; same-area ties and the two-block ceiling remain.</small></span></a>
+<a class="evidence" href="../../backend/Shared/Models/PromptEnrichmentReport.cs"><span class="evidence-class" data-evidence-class="observed">Source</span><span><b>Omissions are not absent from the data contract</b><small>The report has candidates and reason codes; intake records optional-block-limit and context-character-budget. The task brief's “drops out silently” describes an experience concern, not proof that the backend has no omission record. This proposal specifies explicit display without asserting a current rendering defect.</small></span></a>
+<a class="evidence" href="../../.agents/skills/README.md"><span class="evidence-class" data-evidence-class="observed">Source</span><span><b>Portable files, different discovery</b><small>The repository has five skills and documents Codex discovery from .agents/skills and a Claude .claude/skills link for visual-design. This is repository documentation of a checked CLI setup, not a new portability test in this run.</small></span></a>
+<a class="evidence" href="../dispatcher-personas/index.html"><span class="evidence-class" data-evidence-class="inferred">Dependency</span><span><b>A better routing fact is available as a concept contract</b><small>The dispatcher Dossier specifies cited paths, module forecasts, producer confidence and delivery-time actual files. Reuse that schema; do not infer that every remote claim already supplies all those facts.</small></span></a>
+<a class="evidence" href="../persona-team/index.html"><span class="evidence-class" data-evidence-class="observed">Source</span><span><b>Roles remain distinct from skills</b><small>The persona concept distinguishes a versioned descriptor and activation from prompt-only skills. Reuse role identity and grants; add skill requirements without turning skill text into a persona or granting authority.</small></span></a>
+<a class="evidence" href="evidence.md#owner-input"><span class="evidence-class" data-evidence-class="inferred">Owner input</span><span><b>Blind comparison and parallel standard</b><small>The task supplies the 24 November comparison result, AGT-3465's scope/state and the Access-page pilot. No original comparison output or AGT-3465 card was retrieved. They motivate a recommendation and future reconciliation, not invented measurements.</small></span></a>
+<a class="evidence" href="evidence.md#inventory"><span class="evidence-class" data-evidence-class="observed">Inventory</span><span><b>Existing procedure sizes need a migration class</b><small>SKILL.md character estimates: operator 3,767 tokens; task-api 4,150; visual-design 2,930; runtime-log-analysis 3,187; regenerate-readme 1,300. Supporting references are additional. These are character estimates, not provider tokenization.</small></span></a>
+</div>
+<p>Additional primary references: <a href="https://developers.openai.com/codex/skills">official OpenAI skills format and native discovery</a>, <a href="https://code.claude.com/docs/en/headless">Claude Code headless transport</a>, <a href="../concepts/skills-architecture.md">prior portable architecture</a>, <a href="../quality/README.md">guide applicability contract</a>, <a href="../quality/design/style-guide-hard-rules.md">hard UI rules</a>, <a href="../system/contracts/orchestration-decisions.md">decision-library boundary</a>. External prices and cache behavior can change; production accounting must use the selected route and a dated price revision.</p>
+<p><a href="evidence.md">Evidence register</a> records source locations, limitations, the local API connection failure and the exact size measurement. All proposed thresholds, caps and evaluation targets are working recommendations, not observations.</p>
+</section>
+<section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+<h2>Open decisions</h2>
+<p>Each recommendation is a working implementation choice unless the recorded operator decision selects another option. No sight review, decision acceptance or operator approval is claimed by this delivery.</p>
+<section class="decision" data-decision-id="delivery" data-decision-kind="single"><h3>SL-D1 · Delivery authority</h3><p>Who guarantees that fitting knowledge reaches the run?</p><ul><li data-option-id="A">A. Native CLI discovery owns selection and delivery.</li><li data-option-id="B">B. Studio resolves and injects the complete bounded skill closure; native discovery is supplementary. <b>(recommended)</b></li><li data-option-id="C">C. Inject the entire library into every prompt.</li></ul><p><b>Recommendation: B.</b> The owner requires CLI-independent delivery and auditable context; complete selected closures meet it without whole-library noise.</p></section>
+<section class="decision" data-decision-id="merger" data-decision-kind="single"><h3>SL-D2 · Concept continuity</h3><p>How should AGT-3465 and the earlier portable concept continue?</p><ul><li data-option-id="A">A. Keep three independent delivery systems.</li><li data-option-id="B">B. Use this Dossier as the umbrella, reconcile AGT-3465 criteria and merge its overlapping slices; retain source and decision history. <b>(recommended)</b></li></ul><p><b>Recommendation: B.</b> Rule delivery, card visibility and review need one receipt and one implementation backlog. Reconcile the unavailable original card before retiring work.</p></section>
+<section class="decision" data-decision-id="format" data-decision-kind="single"><h3>SL-D3 · Instruction boundaries</h3><p>What does whole skill mean?</p><ul><li data-option-id="A">A. Only SKILL.md; references may hide additional requirements.</li><li data-option-id="B">B. SKILL.md plus every declared instructional reference, fully rendered; resources shipped as files. <b>(recommended)</b></li><li data-option-id="C">C. Every package byte, including scripts and binary assets, enters the prompt.</li></ul><p><b>Recommendation: B.</b> Required knowledge is complete and reviewable, while executable resources remain resources. Separate optional manuals into independently selectable modules.</p></section>
+<section class="decision" data-decision-id="scopes" data-decision-kind="single"><h3>SL-D4 · Library ownership</h3><p>How are scope and overrides resolved?</p><ul><li data-option-id="A">A. One shipped library only.</li><li data-option-id="B">B. Product, workspace and project scopes with explicit qualified replacements/extensions and digest pins. <b>(recommended)</b></li><li data-option-id="C">C. Nearest same-name file silently wins.</li></ul><p><b>Recommendation: B.</b> Supports customer knowledge and sharing while preserving provenance. Workspace activation is not a native CLI name-collision rule.</p></section>
+<section class="decision" data-decision-id="routing" data-decision-kind="single"><h3>SL-D5 · Selection policy</h3><p>How should routing improve?</p><ul><li data-option-id="A">A. Expand substring needles.</li><li data-option-id="B">B. Typed triggers, fixed task-kind sets and forecast paths; one bounded model call only for ambiguity. <b>(recommended)</b></li><li data-option-id="C">C. An unrestricted model reads the library for every run.</li></ul><p><b>Recommendation: B.</b> Deterministic routing stays cheap and explainable. The forecast is reused as a versioned fact, and a failed classifier has a conservative fallback.</p></section>
+<section class="decision" data-decision-id="budget" data-decision-kind="single"><h3>SL-D6 · Context budget</h3><p>How should full delivery remain bounded?</p><ul><li data-option-id="A">A. Keep two optional blocks and 1,500 estimated tokens.</li><li data-option-id="B">B. Target 800-1,800 tokens per skill; 6,000 default and 8,000 hard per-run addition, constrained by model context; migration procedure class up to 5,000. <b>(recommended)</b></li><li data-option-id="C">C. No budget; rely on prompt caching.</li></ul><p><b>Recommendation: B.</b> Supports complete useful instructions without truncation. Required overflow stops preparation. Cache savings do not reduce occupied context.</p></section>
+<section class="decision" data-decision-id="receipts" data-decision-kind="single"><h3>SL-D7 · Evidence scope</h3><p>What counts as skill use?</p><ul><li data-option-id="A">A. A skill listed, selected or echoed counts as loaded.</li><li data-option-id="B">B. A successful managed transport receipt counts as delivered; native observations, prepared-only context and legacy summaries remain separate. <b>(recommended)</b></li></ul><p><b>Recommendation: B.</b> Avoids fabricated usage. Count invocations, cards and requests separately and link immutable outcomes without double charging tokens.</p></section>
+<section class="decision" data-decision-id="evaluation" data-decision-kind="single"><h3>SL-D8 · Quality standard</h3><p>What is sufficient to release a new default?</p><ul><li data-option-id="A">A. Usage growth and checking compliance with its own rules.</li><li data-option-id="B">B. Structural and routing checks plus independent, blinded comparisons protecting correctness and content depth; domain-owned rollout/rollback. <b>(recommended)</b></li></ul><p><b>Recommendation: B.</b> A skill can worsen results. Owner feedback and criterion-linked reviews produce testable revision candidates, not automatic edits to the live version.</p></section>
+<section class="decision" data-decision-id="distribution" data-decision-kind="single"><h3>SL-D9 · Distribution and trust</h3><p>How should installations exchange skills?</p><ul><li data-option-id="A">A. A marketplace owns installation and updates.</li><li data-option-id="B">B. Versioned self-contained exports and release bundles with explicit adoption; optional plugins group skills and tool declarations. <b>(recommended)</b></li></ul><p><b>Recommendation: B.</b> Works offline and across projects while preserving customer control. Imported scripts do not execute and connector grants remain separate.</p></section>
+<section class="decision" data-decision-id="baseline" data-decision-kind="single"><h3>SL-D10 · Initial content and UI standard</h3><p>Which guidance should be written first?</p><ul><li data-option-id="A">A. Promote the present visual-design skill universally.</li><li data-option-id="B">B. Frontend best practice, backend best practice, then UX and visual standard; preserve existing hard rules and adopt the approved Access/one-look revision through a new version. <b>(recommended)</b></li></ul><p><b>Recommendation: B.</b> Separates engineering and user-task quality, protects content depth, and gives the parallel visual standard a single distribution path.</p></section>
+</section>
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation"><h2>Implementation</h2>
+<p>Thirteen bounded slices form one dependency chain. This deliberately serializes the first implementation: enrichment/runner changes in SL-3 to SL-5, shared receipt/read-model changes in SL-6 to SL-7, catalogue and release-content changes in SL-8 to SL-10, and feedback/release/rollout changes in SL-11 to SL-13 cannot overlap. The default project execution remains sequential. Every scheduler dependency is encoded in workbench.json, not only in prose.</p>
+<p>The dispatcher forecast and Access/one-look work are external inputs with bounded fallbacks, not undocumented blocking edges. SL-3 can use cited paths; SL-10 can publish a current-baseline candidate and adopt the approved pilot revision later. If a real external prerequisite is needed, add an API-managed task dependency before scheduling it.</p>
+<div class="table-wrap"><table><thead><tr><th>Slice</th><th>Delivery</th><th>Depends on</th></tr></thead><tbody><tr><td>SL-1</td><td>Skill and receipt contracts</td><td>None</td></tr><tr><td>SL-2</td><td>Immutable registry and pins</td><td>SL-1</td></tr><tr><td>SL-3</td><td>Typed selection and budgets</td><td>SL-2</td></tr><tr><td>SL-4</td><td>Prompt and resource transport</td><td>SL-3</td></tr><tr><td>SL-5</td><td>Review and continuation context</td><td>SL-4</td></tr><tr><td>SL-6</td><td>Skill ledger and projections</td><td>SL-5</td></tr><tr><td>SL-7</td><td>Card and library visibility</td><td>SL-6</td></tr><tr><td>SL-8</td><td>Frontend best-practice artefact</td><td>SL-7</td></tr><tr><td>SL-9</td><td>Backend best-practice artefact</td><td>SL-8</td></tr><tr><td>SL-10</td><td>UX and visual-standard artefact</td><td>SL-9</td></tr><tr><td>SL-11</td><td>Skill quality loop</td><td>SL-10</td></tr><tr><td>SL-12</td><td>Portable releases and plugins</td><td>SL-11</td></tr><tr><td>SL-13</td><td>Compatibility rollout and documentation</td><td>SL-12</td></tr></tbody></table></div><p>Exact implementation prompts and acceptance scopes are in <a href="workbench.json">workbench.json</a>. No implementation cards are created or approved by this concept delivery.</p>
+<ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+</ol></section>
+<!-- agent-studio:implementation-section:end -->
+<p class="meta">Canonical repository delivery: docs/portable-skill-library/index.html · Source card: AGT-4032</p>
+</main></body></html>
