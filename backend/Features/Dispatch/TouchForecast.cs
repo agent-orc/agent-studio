@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Runtime.CompilerServices;
 
 namespace AgentStudio.Dispatch;
 
@@ -26,6 +27,27 @@ public sealed record CoChangeIndex(string Revision, DateTimeOffset AsOf, string 
 /// <summary>Model-free facts only. Admission and dispatcher decisions belong to the decision library.</summary>
 public static class TouchForecast
 {
+    // Integration inventories are immutable snapshots. Key by the list instance so
+    // a record clone with a replacement tree cannot inherit an older lookup.
+    private static readonly ConditionalWeakTable<IReadOnlyList<string>, ForecastInventory> Inventories = new();
+    private sealed class ForecastInventory
+    {
+        public HashSet<string> Files { get; }
+        public Dictionary<string, string> UniqueNames { get; }
+        public HashSet<string> Directories { get; } = new(StringComparer.Ordinal);
+        public ForecastInventory(IReadOnlyList<string> tracked)
+        {
+            Files = tracked.ToHashSet(StringComparer.Ordinal);
+            UniqueNames = tracked.GroupBy(Path.GetFileName, StringComparer.Ordinal)
+                .Where(group => group.Count() == 1).ToDictionary(group => group.Key!, group => group.Single(), StringComparer.Ordinal);
+            foreach (var file in tracked)
+            {
+                for (var slash = file.LastIndexOf('/'); slash > 0; slash = file.LastIndexOf('/', slash - 1))
+                    Directories.Add(file[..slash]);
+            }
+        }
+    }
+
     public static readonly string[] DefaultHubFiles =
     [
         "backend/Host/Program.cs", "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
@@ -81,18 +103,19 @@ public static class TouchForecast
         var tokens = Regex.Matches(text.Replace('\\', '/'), @"[\p{L}\p{N}_.@/-]+")
             .Select(match => match.Value.TrimEnd('.', ':'))
             .Select(token => token.StartsWith("./", StringComparison.Ordinal) ? token[2..] : token).ToHashSet(StringComparer.Ordinal);
-        var uniqueNames = index.TrackedFiles.GroupBy(Path.GetFileName, StringComparer.Ordinal)
-            .Where(group => group.Count() == 1).ToDictionary(group => group.Key!, group => group.Single(), StringComparer.Ordinal);
-        var cited = index.TrackedFiles.Where(tokens.Contains).Concat(tokens.Where(uniqueNames.ContainsKey)
-            .Select(token => uniqueNames[token])).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        var inventory = Inventories.GetValue(index.TrackedFiles, static tracked => new ForecastInventory(tracked));
+        var cited = tokens.Where(inventory.Files.Contains).Concat(tokens.Where(inventory.UniqueNames.ContainsKey)
+            .Select(token => inventory.UniqueNames[token])).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         var files = cited.Concat(cited.SelectMany(file => index.Expansion.GetValueOrDefault(file) ?? []))
-            .Intersect(index.TrackedFiles, StringComparer.Ordinal).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            .Where(inventory.Files.Contains).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         var modules = Modules(files, hubs);
         if (cited.Length == 0)
         {
             // Directory citations can identify a module without pretending to predict files.
-            modules = index.TrackedFiles.Except(hubs, StringComparer.Ordinal).Where(file => tokens.Any(token => token.Contains('/')
-                    && file.StartsWith(token.TrimEnd('/') + "/", StringComparison.Ordinal)))
+            var directories = tokens.Where(token => token.Contains('/')).Select(token => token.TrimEnd('/'))
+                .Where(inventory.Directories.Contains).ToArray();
+            modules = directories.Length == 0 ? [] : index.TrackedFiles.Except(hubs, StringComparer.Ordinal)
+                .Where(file => directories.Any(directory => file.StartsWith(directory + "/", StringComparison.Ordinal)))
                 .Select(Module).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         }
         return new(cited, files, modules, hubs.ToArray(), cited.Length > 0 ? "cited" : modules.Length > 0 ? "module-only" : "none", index.Revision)

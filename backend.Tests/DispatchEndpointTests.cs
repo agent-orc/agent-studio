@@ -11,6 +11,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: index dates are stored evidence; refresh dates are explicit observations passed to the collector, never compared with the wall clock.
+
 public sealed class DispatchEndpointTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "dispatch-api-" + Guid.NewGuid().ToString("N"));
@@ -47,17 +49,74 @@ public sealed class DispatchEndpointTests : IDisposable
         factory.Services.GetRequiredService<TaskIndexCache>().GetSnapshot();
         var card = factory.Services.GetRequiredService<TaskScannerService>().FindJob("sample", Watch)!;
         var forecast = TouchForecast.Compute("a.cs", TouchForecast.BuildIndex("tip", new(2026, 11, 17, 0, 0, 0, TimeSpan.Zero), ["a.cs"], []), []);
+        forecast = forecast with
+        {
+            Deliveries = [new TouchDelivery("result", "base", forecast.ComputedAt, ["a.cs", "b.cs"], ["a.cs", "b.cs"],
+                new(1, 0.5), new(1, 0.5)) { Forecast = forecast }],
+        };
         factory.Services.GetRequiredService<DispatchStore>().Write(card.ProjectName, card.TaskKey, forecast);
         using var response = await client.GetAsync("/api/projects/Forecast%20Project/dispatch/forecasts?cards=sample");
         response.EnsureSuccessStatusCode();
         var body = (await response.Content.ReadFromJsonAsync<Dictionary<string, TouchForecastV1?>>())!;
         Assert.Equal(forecast.IndexRevision, Assert.Single(body).Value!.IndexRevision);
+        var delivery = Assert.Single(Assert.Single(body).Value!.Deliveries);
+        Assert.Equal(new[] { "a.cs", "b.cs" }, delivery.RealFiles);
+        Assert.Equal(new ForecastAccuracy(1, 0.5), delivery.FileAccuracy);
+        Assert.Equal(new ForecastAccuracy(1, 0.5), delivery.ModuleAccuracy);
+        Assert.Equal(forecast.IndexRevision, delivery.Forecast!.IndexRevision);
         using var detail = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/sample?watchPath=" + Uri.EscapeDataString(Watch)));
         Assert.Equal(forecast.IndexRevision, detail.RootElement.GetProperty("touchForecast").GetProperty("indexRevision").GetString());
         var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Watch)!;
         using var overview = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/sample/details/overview?project=" + Uri.EscapeDataString(project.Id)));
         Assert.Equal(forecast.IndexRevision, overview.RootElement.GetProperty("data").GetProperty("touchForecast").GetProperty("indexRevision").GetString());
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/projects/missing/dispatch/forecasts")).StatusCode);
+    }
+
+    [Fact]
+    public async Task RoutineRefreshSelectsOnlyChangedCardsAndRecoversArchiveOncePerDay()
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        var archived = Path.Combine(Watch, TaskStates.Archive, "archived");
+        Directory.CreateDirectory(archived);
+        File.WriteAllText(Path.Combine(archived, "task.json"), JsonSerializer.Serialize(new
+            { id = "archived", title = "Archived", state = TaskStates.Archive, order = 1, agent = "codex" }));
+        factory.Services.GetRequiredService<TaskIndexCache>().Invalidate();
+        var service = factory.Services.GetRequiredService<DispatchForecastService>();
+        var now = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+        Assert.Equal(2, service.CollectRefreshCards(now, out var startup).Count);
+        Assert.True(startup);
+        Assert.Empty(service.CollectRefreshCards(now.AddMinutes(1), out var idle));
+        Assert.False(idle);
+
+        // A prompt update must not erase an already queued Ready-entry refresh.
+        service.RequestCardRefresh(Watch, "sample", enteredReady: true);
+        service.RequestCardRefresh(Watch, "sample");
+        var ready = Assert.Single(service.CollectRefreshCards(now.AddMinutes(2), out var changed));
+        Assert.False(changed);
+        Assert.Equal("sample", ready.Card.Id);
+        Assert.True(ready.EnteredReady);
+        service.RequestCardRefresh(Watch, "archived");
+        var delivery = Assert.Single(service.CollectRefreshCards(now.AddMinutes(3), out _));
+        Assert.Equal("archived", delivery.Card.Id);
+        Assert.False(delivery.EnteredReady);
+        Assert.Empty(service.CollectRefreshCards(now.AddMinutes(4), out _));
+
+        // The delivery subject can land after the lane event. Raw watcher changes
+        // also cover prompt writes that do not publish a task mutation event.
+        service.PathChanged(Path.Combine(ready.Card.FolderPath, "prompt.md"));
+        Assert.Equal("sample", Assert.Single(service.CollectRefreshCards(now.AddMinutes(4), out _)).Card.Id);
+        service.PathChanged(AgentStudio.Pipeline.ReviewSubjectStore.PathFor(archived));
+        Assert.Equal("archived", Assert.Single(service.CollectRefreshCards(now.AddMinutes(4), out _)).Card.Id);
+        service.PathChanged(Path.Combine(archived, "logs", "cli-output.log"));
+        Assert.Empty(service.CollectRefreshCards(now.AddMinutes(4), out _));
+
+        service.Refresh(); // Hub settings and bulk changes request reconciliation.
+        Assert.Equal(2, service.CollectRefreshCards(now.AddMinutes(5), out var bulk).Count);
+        Assert.True(bulk);
+        Assert.Equal(2, service.CollectRefreshCards(now.AddDays(1), out var nightly).Count);
+        Assert.True(nightly);
+        Assert.Empty(service.CollectRefreshCards(now.AddDays(1).AddMinutes(1), out _));
     }
 
     [Fact]

@@ -1145,11 +1145,7 @@ public class ProjectSettingsService
         _logger.LogInformation("Intake enabled set to {Enabled} for project {Project}", enabled, projectName);
     }
 
-    /// <summary>
-    /// DS-0: stores <c>dispatch.overlapWindow</c>. A known window is stored as
-    /// chosen; null clears it and the project resolves to
-    /// <see cref="OverlapWindows.Default"/> again.
-    /// </summary>
+    /// <summary>Stores the project hub-file override; null restores the defaults.</summary>
     public void SetDispatchHubFiles(string projectName, IReadOnlyList<string>? files)
     {
         EnsureLoaded();
@@ -1162,6 +1158,11 @@ public class ProjectSettingsService
         }
     }
 
+    /// <summary>
+    /// DS-0: stores <c>dispatch.overlapWindow</c>. A known window is stored as
+    /// chosen; null clears it and the project resolves to
+    /// <see cref="OverlapWindows.Default"/> again.
+    /// </summary>
     public void SetDispatchOverlapWindow(string projectName, string? window)
     {
         var normalized = window is null ? null : OverlapWindows.Normalize(window)

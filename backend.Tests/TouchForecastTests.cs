@@ -23,6 +23,20 @@ public sealed class TouchForecastTests
     }
 
     [Fact]
+    public void ReplacementIntegrationInventoryRebuildsPathAndUniqueNameLookups()
+    {
+        var index = Index(A);
+        Assert.Equal(new[] { A }, TouchForecast.Compute("Task.cs", index, []).CitedFiles);
+        var replacement = index with { TrackedFiles = [B, "runner/Task.cs", "other/Task.cs"] };
+        var result = TouchForecast.Compute($"{A} Task.cs Partner.cs", replacement, []);
+        Assert.Equal(new[] { B }, result.CitedFiles);
+        Assert.Equal(new[] { "backend/Features/Tasks" }, result.Modules);
+        Assert.Empty(TouchForecast.Compute("backend/Features/Tasks/", index with { TrackedFiles = [] }, []).Modules);
+        // The original immutable snapshot remains usable alongside the new one.
+        Assert.Equal(new[] { A }, TouchForecast.Compute("Task.cs", index, []).CitedFiles);
+    }
+
+    [Fact]
     public void CoChangeRequiresThreeSharedCommitsAndHalfOfTheCitedFilesHistory()
     {
         var commits = new IReadOnlyList<string>[] { [A, B, C], [A, B, C], [A, B], [A], [A], [A], [B] };
@@ -80,6 +94,7 @@ public sealed class TouchForecastTests
         Assert.Equal(new[] { "backend/Features/Tasks" }, result.Modules);
         Assert.Empty(result.ForecastFiles);
         Assert.Equal("none", TouchForecast.Compute("Unrelated words", Index(A), []).Confidence);
+        Assert.Equal("none", TouchForecast.Compute("backend", Index(A), []).Confidence);
     }
 
     [Fact]

@@ -1,0 +1,213 @@
+[
+  {
+    "key": "AGT-3924",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D1",
+        "title": "Close only the shared dialog, not the card under it, when Escape is pressed in a dialog opened from a card",
+        "problem": "With a card open, Escape inside an app-dialog opened from that card (pipeline step details, run history, step token modal, the 'Send a round' acceptance dialog) closes the whole task detail instead of the dialog; the opener unmounts with the card and focus falls to the body.",
+        "cause": "ModalStackService closes the top stack entry from a document capture listener (frontend/src/app/services/modal-stack.service.ts onKeydown). TaskDetailComponent pushes 'task-detail' on mount (frontend/src/app/features/task-detail/task-detail.ts:407). DialogComponent only handles keydown.escape on its own host (frontend/src/app/components/dialog/dialog.component.ts:122-123) and never registers on the stack, and ModalFocusDirective leaves Escape to the owner (frontend/src/app/directives/modal-focus.directive.ts:14). Owners without a registration: pipeline-step-details.component.html:14, pipeline-run-history.component.html:15, overview-step-token-modal.component.html:1, acceptance-round-dialog.html:1.",
+        "acceptanceCriteria": [
+          "Escape in any app-dialog opened while a card is open closes that dialog only; the task detail stays open.",
+          "After that Escape, focus is on the control that opened the dialog.",
+          "app-dialog owners that already push their own modal-stack entry do not end up with two entries (one Escape closes the dialog once).",
+          "A unit test opens a shared dialog above a 'task-detail' stack entry and asserts the above."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3925",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D2",
+        "title": "Keep the skip-link host out of the shell grid so short views are not pushed to the bottom of the screen",
+        "problem": "For an operator, every main view shorter than the viewport is drawn in the bottom part of the screen under a large empty band, and the footer covers its controls. Example: the Dossiers overview at 390 px, where Playwright cannot click 'Review here' because the footer status bar intercepts the pointer.",
+        "cause": "The .studio root is a grid with grid-template-rows: auto auto minmax(0,1fr) auto and auto-placed children (frontend/src/app/features/studio-shell/studio-shell.component.scss:6-8). <app-studio-keyboard-entry> is inserted as its first child (frontend/src/app/features/studio-shell/studio-shell.component.html:8). Its host is display: contents, but its <nav class=\"studio-skip-links\"> (studio-keyboard-entry.component.html:1) becomes a zero-height grid item. As a result, the always-rendered operator quota banner lands in the 1fr row and .studio-body lands in an auto row sized to its content.",
+        "acceptanceCriteria": [
+          "With the skip links present, the main view fills the space between titlebar and footer for short and tall content, at 390 px and 1280 px, with and without the operator quota banner.",
+          "The Dossiers overview at 390 px shows its controls above the footer, and 'Review here' can be clicked.",
+          "The skip links stay the first Tab stops and are visible on focus.",
+          "A Playwright or layout check asserts the body's top edge sits directly below the titlebar for a short view."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3926",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D3",
+        "title": "Keep the card's Enter shortcut working after the usage sheet has been opened once",
+        "problem": "After the owner opens and closes the Cost and usage sheet once, Enter on the card content never runs the primary action again for the rest of the session, while the primary buttons still advertise aria-keyshortcuts=Enter and 'Accept (Enter in the card content)'.",
+        "cause": "frontend/src/app/features/task-detail/task-detail-keyboard.util.ts:8-9,40 treats any element matching [role=\"dialog\"] in the document as an open overlay. AGT-3831 added an explicit role=\"dialog\" to the native <dialog> of the usage sheet (frontend/src/app/features/usage-cockpit/components/usage-detail-surface/usage-detail-surface.html:3). The sheet is rendered inside @defer (when headerCockpit.detailFocus() !== null) (frontend/src/app/features/studio-shell/studio-shell.component.html:138; legacy frontend/src/app/features/shell/components/status-bar-usage-host/status-bar-usage-host.html:2), which loads once and never unloads, so a closed <dialog role=dialog> stays in the DOM and querySelector always matches it.",
+        "acceptanceCriteria": [
+          "Enter on the card surface runs the primary action after the usage sheet has been opened and closed (both the Studio and the legacy status-bar host).",
+          "Enter on the card surface does not run the primary action while the usage sheet, a dialog or a menu is actually open.",
+          "The guard decides 'overlay open' from open/rendered overlays or from ModalStackService (nothing above the task-detail entry), not from the presence of a closed element with role=dialog.",
+          "A unit test renders a closed usage surface (or a closed <dialog role=dialog>) and asserts the shortcut still runs."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3927",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D4",
+        "title": "Stop naming a recovered or settled review refusal as 'not registered'",
+        "problem": "After a refused key recovers (registered, fresh, admitted) or the refused attempt leaves Auto Review, the card still reads 'Review cannot be claimed: ... lacks provider-auth:codex (not registered)' without its queue position, and Execution Hosts lists the key as held/not-registered with the old waiting card for up to 6 hours.",
+        "cause": "backend/Features/Tasks/TaskLiveStatusProjection.cs:415 falls back to NotRegistered when the registry no longer holds the key; backend/Features/Runner/HeldCapabilityProjection.cs:31-34 adds a not-registered hold for any refused key not currently held, without checking the registration; ReviewClaimUnclaimableLog entries are cleared only by a successful claim of the same attempt (backend/Features/Runner/V1ReviewPlaneEndpoints.cs:752) or after 6 h (backend/Features/Runner/ReviewClaimStagnation.cs:71); backend/Features/Management/ManagementEndpoints.cs:123 merges all refusals without checking attempt state.",
+        "acceptanceCriteria": [
+          "When the executor's registration admits every refused key, the card live status no longer shows the unclaimable line and shows the queue position again.",
+          "Execution Hosts lists a not-registered hold only for keys the role did not register.",
+          "Refusals of attempts that are no longer pending or current are dropped from the held list and waiting work.",
+          "A test covers a refusal recorded before the key recovered."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3928",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D5",
+        "title": "Clear the host busy state after a successful capability re-probe",
+        "problem": "After Re-probe succeeds the role keeps busyAction 'reprobe': every held row shows 'Re-probing...' disabled and every other host action guarded by busyAction (drain, reconnect, capacity, a second re-probe) is refused until a page reload.",
+        "cause": "frontend/src/app/features/remote-hosts/services/remote-hosts.service.ts:571 only calls reload() on success; reload and hydration rebuild hosts with ...current, so busyAction survives; only actionFailed resets it. The older reprobe at line 556 has the same pattern.",
+        "acceptanceCriteria": [
+          "After a 202 from the re-probe route the host's busyAction is null and the Re-probe buttons are enabled.",
+          "A second re-probe of another key on the same role sends a request.",
+          "The same holds for the project-proof re-probe.",
+          "A service spec pins the busy state after success."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3929",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D6",
+        "title": "Format the board token popover and Card analysis times with the shared usage format",
+        "problem": "The board token popover still shows 'Last update 11/13/2026, 4:39:48 AM', the exact example the card cites, with no zone. Card analysis 'Provider quota windows' and the card drilldown show 'MMM d, HH:mm' in browser time without a zone, and the quota probe-failure label shows 'probe failed 04:39'. Criterion 1 (one format with an explicit zone across usage, popover and model-selection surfaces) is not met.",
+        "cause": "frontend/src/app/features/board/components/task-card/task-card-view-model.ts:334 uses formatShortTime (:354-360, toLocaleString('en-US')), untouched by the commit; token-analysis-quota.html:39-40 and card-token-drilldown.html:36 use the date pipe 'MMM d, HH:mm'; quota-freshness.util.ts:30 uses toLocaleTimeString without a zone.",
+        "acceptanceCriteria": [
+          "The board token popover 'Last update' renders through usage-time.util with an explicit zone.",
+          "Card analysis quota window from/to and drilldown event times render through usage-time.util with an explicit zone.",
+          "The quota probe-failure label names its zone.",
+          "A unit test pins the popover's last-update text format."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3930",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D7",
+        "title": "Refuse Cancel and resume on the server once another operator has started the host switch",
+        "problem": "The panel reads the server status only on load. A session that loaded at the quiet point still offers Cancel and resume after a second operator recorded the switch start. Pressing it resumes admission while the host is being switched and erases the recorded switch start, so the other operator's verification baseline is gone.",
+        "cause": "review-host-update.ts:197-203 cancel() checks only the local switchStartedAt signal and posts /resume without re-reading drain-status. The restore effect (:65) runs once per clientId and there is no refresh. ClientEndpoints.cs:157-163 /resume calls ClientIdentityStore.ResumeDrain, which clears DrainRequestedAt and DeploySwitchStartedAt unconditionally (ClientIdentityStore.cs:353). The server cannot tell a cancel-before-switch from a resume-after-verification.",
+        "acceptanceCriteria": [
+          "A cancel request sent while the server has a recorded switch start is refused with 409 and the current drain status, and the drain and switch start stay.",
+          "After such a refusal the panel adopts the recorded switch and shows Check new heartbeat instead of Cancel and resume.",
+          "A component spec covers two sessions where the second cancels after the first started the switch."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3931",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D8",
+        "title": "Add the Workload-Identit\u00e4t Dossier to docs/start/README.md and link it from IP-D10",
+        "problem": "The new Dossier has no row in docs/start/README.md or docs/operations/README.md, and no document links to it. The IP-D10 section it explains has no pointer to it. AGENTS.md requires the row in the same change.",
+        "cause": "f2b20787 removed the row and link when it moved the folder and deferred them to an unnamed follow-up card. The net change 1c3ea6207 adds only the two Dossier files.",
+        "acceptanceCriteria": [
+          "docs/start/README.md has one row for docs/workload-identitaet/index.html.",
+          "docs/operations/integrierte-plattform/index.html IP-D10 links to ../../workload-identitaet/index.html and the link resolves."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3932",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D9",
+        "title": "Label the flaky-suspect re-gate outcome by what actually happened",
+        "problem": "Three re-gate endings show text that contradicts what happened. A green re-gate whose publication did not land is shown as 'the same-code re-gate gave no test verdict ... Its members continue through their own gates'. A re-gate held by an unreachable gate host is shown with the same text, but its members are requeued to the batch pool. A mark whose re-gate never recorded a verdict (claim lost, cancellation, process death) keeps saying 'The cohort is re-gated once on the same code' after recovery has sent the members to per-card suites, and stays active in the failed-test ranking for good. docs/system/domains/pipeline.md says any other result takes the per-card path, which is not true of the host-held case.",
+        "cause": "backend/Features/Pipeline/BatchGate/BatchGatePilotService.cs:2490-2494 maps everything that is neither published nor DeterministicSuiteRed (pass-not-published, host-held InfrastructureRed, Superseded) to 'inconclusive'. The host-held branch at :2517-2526 then requeues. frontend/src/app/models/batch-gate.model.ts:126-136 renders every 'inconclusive' as 'gave no test verdict ... continue through their own gates'. backend/Features/Pipeline/BatchGate/BatchGateStore.FlakySuspects.cs:27 keeps a mark without a re-gate record active with no end. The 'isolation interrupted' recovery at BatchGatePilotService.cs:1291-1306 sends the members per-card without touching the mark.",
+        "acceptanceCriteria": [
+          "A re-gate that passed but did not publish is recorded with a distinct outcome, and the batch panel says it passed and why the members continued.",
+          "A host-held re-gate is recorded as held or requeued, and the panel says the members were requeued to the batch pool.",
+          "A flaky-suspect mark whose parent left isolation without a re-gate record reads as an interrupted re-gate, not 'is re-gated once'.",
+          "Unit tests cover the label for each outcome, and a pilot test covers the host-held re-gate path."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3933",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D10",
+        "title": "Point the checkout-missing verify notice at 'Create server checkout' when the project has a repository URL",
+        "problem": "For a URL project without a server checkout, Settings shows two warnings for one cause: the server-checkout notice with 'Create server checkout', and the new verify notice saying 'Set the repository checkout path in Project basics'. The path field only accepts an existing git checkout, so the link leads to the manual shell clone that AGT-3795-F1 removed. F9 asks the notice to link the F1 fix, and F1 asks for one actionable notice.",
+        "cause": "project-build-profile-notice.component.html:1-18 always links #project-basics-repository-path; project-settings-panel.component.html:16 renders it next to the server-checkout notice in project-basics-card.component.html:38; VerifyDefinitionPolicy.cs:121-125 gives the same advice; ProjectRegistry.cs:708-731 requires an existing .git for the path.",
+        "acceptanceCriteria": [
+          "For a project with a repository URL and no checkout, Settings shows one actionable remedy for the missing checkout: Create server checkout.",
+          "The verify notice either refers to that action or is hidden while the server-checkout notice is shown.",
+          "For a local project whose checkout path is missing, the verify notice still links to the repository checkout path field.",
+          "A component or browser test covers both project kinds."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3934",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D11",
+        "title": "Offer Accept with a reason only where an override can admit the card",
+        "problem": "For a Human Review card whose dry run is refused at the batch-gate stage (class 'integrated-unverified', for example 'batch-gate-evidence-missing' or no passing batch evidence), the detail's Acceptance next steps shows 'Accept with a reason' and the toolbar names 'Next step: Accept with override'. The server refuses the override again, so the offered step leads nowhere. This breaks AC2 ('accept with a written reason when policy allows').",
+        "cause": "acceptanceOverrideAllowed (frontend/src/app/features/acceptance-readiness/models/acceptance-readiness.model.ts:88-89) returns false only when the refusal text contains 'required report is missing'. AcceptanceNextStepsComponent.canAcceptWithReason (acceptance-next-steps.component.ts:63) and nextAction/readinessHold (frontend/src/app/features/task-detail/state/acceptance-refusal.model.ts:40-45, 91-93) therefore offer the override for every other stage. On the server, the batch-gate check runs for every Human Review to Completed move and ignores operatorOverride (backend/Features/Tasks/TaskTransitionService.cs:1739-1745; BatchGateReleaseFailure at :1984 has no override parameter). The readiness item already carries the stage ('batch-gate'), but the client does not use it.",
+        "acceptanceCriteria": [
+          "For a readiness item with stage 'batch-gate' the detail shows no 'Accept with a reason' and the toolbar does not offer 'Accept with override'; the round (or a gate action) is offered instead.",
+          "The rule for 'override allowed' is based on the admission stage (or a server-provided flag), not on refusal wording.",
+          "A unit spec covers a batch-gate refused item in both acceptance-next-steps and acceptanceRefusalFor."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3935",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D12",
+        "title": "Clear a recorded content refusal when its round or re-review is sent",
+        "problem": "After a refused Accept, the content refusal is recorded per task key for the whole session. Sending the round that the detail now offers, or 'Review again against the current brief', does not clear it. When the card comes back to Human Review with a passing verdict, the toolbar still shows the old 'Acceptance refused: requirement-fit verdict was concerns.' with 'Accept with override...', and the Accept tooltip repeats the old reason, until the page is reloaded or an Accept succeeds.",
+        "cause": "triage-controller.service.ts:300-301 records the content refusal (new in this delivery). AcceptanceRefusalStore is cleared only after a successful triage move, reissue, override or integration retry (triage-controller.service.ts:259, :352; acceptance-refusal.component.ts:90, :107). AcceptanceReadinessStore.sendRound (acceptance-readiness.store.ts:163-176) and AcceptanceNextStepsComponent.reviewAgain (acceptance-next-steps.component.ts:94-109) never clear it. acceptanceRefusalFor returns the server refusal before it looks at the fresh readiness item (acceptance-refusal.model.ts:63-64), so a newer 'ready' dry run cannot override it.",
+        "acceptanceCriteria": [
+          "Sending a round or requesting a content re-review clears the recorded refusal for that card.",
+          "A recorded server refusal is dropped once a newer readiness check for the same card reports 'ready' or a new delivery arrives.",
+          "A unit spec: record a content refusal, send the round, return the card to Human Review as ready; no refusal is rendered."
+        ]
+      }
+    ]
+  }
+]
