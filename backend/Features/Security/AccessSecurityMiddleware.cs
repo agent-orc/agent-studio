@@ -1334,7 +1334,10 @@ public sealed class AccessSecurityMiddleware
            || path.Equals("/api/auth/invite/preview", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/v1/studio/auth/invite/accept", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/v1/studio/auth/invite/preview", StringComparison.OrdinalIgnoreCase)
-           || path.Equals("/api/auth/runner-enroll", StringComparison.OrdinalIgnoreCase);
+           || path.Equals("/api/auth/runner-enroll", StringComparison.OrdinalIgnoreCase)
+           // ES-3: the terminal has no credential yet; the routes throttle and bound themselves.
+           || path.Equals(OperatorSignInEndpoints.StartPath, StringComparison.OrdinalIgnoreCase)
+           || path.Equals(OperatorSignInEndpoints.PollPath, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsRunnerTaskFileRead(string method, string path)
         => HttpMethods.IsGet(method)

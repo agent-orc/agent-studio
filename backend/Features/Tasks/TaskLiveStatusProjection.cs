@@ -24,7 +24,8 @@ public sealed class TaskLiveStatusProjection(
     V1ReviewExecutorRegistry reviewExecutors,
     IConfiguration? configuration = null,
     TimeProvider? time = null,
-    ReviewClaimUnclaimableLog? unclaimableLog = null)
+    ReviewClaimUnclaimableLog? unclaimableLog = null,
+    DeliveryIntegrationQueueBoard? integrationQueue = null)
 {
     private static readonly HashSet<string> VisibleStates = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -185,7 +186,7 @@ public sealed class TaskLiveStatusProjection(
                 if (authority!.Reviews.TryGetValue(authorityKey, out var activity)) current = activity;
                 if (reviewQueueEntries?.TryGetValue(authorityKey, out var entry) == true) queued = entry;
             }
-            return ReviewQueueFor(
+            var reviewLine = ReviewQueueFor(
                 authorityKey is not null,
                 current,
                 queued,
@@ -195,9 +196,28 @@ public sealed class TaskLiveStatusProjection(
                 reviewHost,
                 configuration is null ? null : AutoReviewStrandingWatchdog.RetryOverdueLimit(configuration),
                 UnclaimableOf(current));
+            return WithIntegrationQueue(reviewLine, integrationQueue?.PositionOf(job.ProjectName, job.Id));
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// AGT-4020: a card that sits in the delivery integration queue names its
+    /// position, the cards in front of it and why its previous attempt failed,
+    /// instead of the bare "waiting for delivery integration". A line about
+    /// something else (a review still running, a stalled attempt) is kept.
+    /// </summary>
+    internal static TaskLiveQueue? WithIntegrationQueue(TaskLiveQueue? line, DeliveryIntegrationQueuePosition? position)
+    {
+        if (position is null) return line;
+        if (line is not null && line.State != TaskLiveQueueStates.Integration) return line;
+        return new TaskLiveQueue
+        {
+            Kind = "review",
+            State = TaskLiveQueueStates.Integration,
+            Reason = position.Describe(),
+        };
     }
 
     /// <summary>

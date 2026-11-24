@@ -5,6 +5,7 @@ import { describeToken, inspectCredential, isTokenShaped } from './credential.mj
 import { ARTICLE_KINDS, MAX_BODY_BYTES, articlePath, parseArticle, parseSource, scopeOf, slugOf } from './magazine.mjs';
 import { EXIT } from './exit-codes.mjs';
 import { OperationError, failure } from './studio.mjs';
+import { login } from './login.mjs';
 import { watchDecisions } from './watch.mjs';
 
 const enc = encodeURIComponent;
@@ -116,6 +117,16 @@ function lines(...parts) {
 }
 
 export const COMMANDS = {
+  login: {
+    summary: 'Sign in from this terminal; the Owner confirms the code in Studio with a second factor.',
+    spec: { agent: 'string', label: 'string', class: 'list', noQr: 'boolean' },
+    anonymous: true,
+    async run(ctx, positionals, options) {
+      if (positionals.length) throw usage('unexpected-argument', 'login takes no arguments. Use --agent <name>.');
+      return login(ctx, options);
+    },
+  },
+
   'auth status': {
     summary: 'Show the credential file, the identity check and what stays with the Owner.',
     spec: {},

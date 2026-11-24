@@ -25,6 +25,9 @@ internal sealed class PostMergeCommandEnvelope : IDisposable
         return new PostMergeCommandEnvelope(directory, cgroup, log);
     }
 
+    /// <summary>The leaf's <c>cpu.max</c> when readable (RT-3 envelope fingerprint).</summary>
+    internal string? CpuMax => PostMergeEnvelopeProbe.ReadCpuMax(_cgroup.CgroupDirectory);
+
     internal WorkerLaunch Launch(string fileName, IReadOnlyList<string> arguments)
         => WorkerCgroup.Wrap(_cgroup.ProcsPath, fileName, arguments, requireAttachment: true);
 

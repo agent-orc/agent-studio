@@ -36,6 +36,22 @@ export function operatorSession(overrides: Partial<OperatorSession> = {}): Opera
   };
 }
 
+/** An agent with one session from a terminal sign-in and its known device (ES-3). */
+export function signedInOperatorAgent(): OperatorAgent {
+  const thumbprint = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
+  return {
+    id: 'opa_term', name: 'ops console', description: null, createdAt: '2026-11-23T08:00:00Z', createdBy: 'usr_owner', disabledAt: null,
+    sessions: [operatorSession({
+      id: 'ses_term', operatorAgentId: 'opa_term', name: 'opsagent@workstation', classes: ['project.testing'],
+      device: { deviceId: 'dev_1', label: 'opsagent@workstation', keyThumbprint: thumbprint, requestedAddress: '198.51.100.7',
+        confirmedAddress: '203.0.113.20', signInId: 'sign-in-1' },
+    })],
+    devices: [{ id: 'dev_1', label: 'opsagent@workstation', keyThumbprint: thumbprint, firstConfirmedAt: '2026-11-23T08:00:00Z',
+      lastConfirmedAt: '2026-11-23T08:00:00Z', lastConfirmedBy: 'usr_owner', lastAddress: '198.51.100.7',
+      lastUsedAt: '2026-11-23T08:30:00Z', activeSessions: 1 }],
+  };
+}
+
 export function operatorAgents(): OperatorAgent[] {
   return [
     {
@@ -147,6 +163,7 @@ export function fakeOperatorAgentsService(agents: OperatorAgent[] = operatorAgen
     disable: vi.fn(() => Promise.resolve({})),
     startSession: vi.fn(() => Promise.resolve(issued)),
     renewSession: vi.fn(() => Promise.resolve({})),
+    forgetDevice: vi.fn(() => Promise.resolve({})),
     killSwitch: signal<OperatorKillSwitchStatus | null>(killSwitch),
     killSwitchError: signal<string | null>(null),
     killing: signal(false),

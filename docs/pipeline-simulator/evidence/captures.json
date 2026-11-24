@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "sourceTaskKey": "AGT-4028",
+  "captureDate": "2026-11-24",
+  "provenance": "Inherited product screenshots from the reviewed delivery at develop 6ad4f5f0e, preserved without recapture or pixel changes. Fixture data, not installation measurements. See publication.md for individual provenance.",
+  "captures": [
+    {
+      "path": "assets/throughput-cycle-time-history-only-dark--mocked.png",
+      "sha256": "98730c0b4944aacc8ad533b5d96405b5acff53efd612c214f09f4c5075786ceb",
+      "bytes": 113426,
+      "width": 1072,
+      "height": 1030
+    },
+    {
+      "path": "assets/throughput-cycle-time-history-only-light--mocked.png",
+      "sha256": "69efd4411f481739e75282bc7b3d511c849f02c9eec21975e4c865e1824c7d04",
+      "bytes": 109498,
+      "width": 1072,
+      "height": 1030
+    },
+    {
+      "path": "assets/token-analysis-recorded-spend-dark--pinned-fixture.png",
+      "sha256": "93e2bae198afa2b01f7742ca7dc8864a5616d53fa11198db38558168eae78aad",
+      "bytes": 69417,
+      "width": 722,
+      "height": 905
+    },
+    {
+      "path": "assets/token-analysis-recorded-spend-light--pinned-fixture.png",
+      "sha256": "52b2260c05c793006d8a9ca7ffa05914166f150602f7b4d361373a889f1d67c0",
+      "bytes": 66964,
+      "width": 722,
+      "height": 905
+    }
+  ]
+}

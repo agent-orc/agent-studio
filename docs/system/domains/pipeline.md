@@ -202,8 +202,8 @@ the full suite, so every such project changes behaviour with this release.
 
 | Strategy | Per card, before integration | Integration | After integration |
 |---|---|---|---|
-| `fast` (default) | Build and affected tests (`testing.perCard` = `affected`) | Right after the review passed, through the post-merge integration gate below (`testing.mode` = `post-merge`) | Merge window: the base suite and the affected routine suites. Nightly: the full routine suite. Production release: the release full suite (`delivery.fullSuite`) |
-| `balanced` | As fast | As fast | Merge window: the base suite and every routine suite. Nightly and release as fast |
+| `fast` (default) | Build and affected tests (`testing.perCard` = `affected`) | Right after the review passed, through the post-merge integration gate below (`testing.mode` = `post-merge`): a conflict check and a compile of the merged tree, no test command; waiting cards compile together ([before and after the merge](#before-and-after-the-merge-agt-4020)) | Merge window: the base suite and the affected routine suites. Nightly: the full routine suite. Production release: the release full suite (`delivery.fullSuite`) |
+| `balanced` | As fast | As fast, plus a work-package run when develop moved over the card's paths or the merge is uncertain | Merge window: the base suite and every routine suite. Nightly and release as fast |
 | `strict` | Build in review; full suite in the batch gate (`affected` off, `pre-merge`) | After a green batch | None (the behaviour before AGT-3965) |
 
 The Owner chooses the strategy on the project settings page or with
@@ -232,15 +232,81 @@ from the `origin/<branch>` ref file and the age from one `git rev-list -n 1
 on this warning, and since RT-1 (AGT-3988) there is no automatic fallback to
 pre-merge at all.
 
+### Before and after the merge (AGT-4020)
+
+What runs in front of the merge into develop and what runs after it, per
+strategy. The model review aspects and the per-card Remote Review run before
+integration in every strategy.
+
+| Strategy | In front of the merge (integration gate) | After the merge |
+|---|---|---|
+| `fast` | Conflict check (the merge itself) and a compile of the merged tree: the build commands only, no lint, no test command. Waiting cards compile together in a post-merge train, below. | Merge-window run: base suite and the affected routine suites. Nightly routine suite, release full suite. |
+| `balanced` | Conflict check and compile. A work-package run of the affected tests is added when develop moved over a path the card changed, the merge was replayed or resolved, or the review evidence cannot prove a disjoint merge (`PostMergeIntegrationPolicy.Level`). | Merge-window run: base suite and every routine suite. Nightly and release as fast. |
+| `strict` | The pre-merge integration gate and the batch gate with the full suite. | None. |
+
+Balanced keeps the work-package run on purpose: it is the strategy for a
+project that wants develop to stay green between window runs, and the run
+covers exactly the case the review's own test verdict does not, a merge whose
+content the review never tested. Without develop movement over the card's
+paths it costs nothing extra.
+
+**Post-merge train (fast).** `RemoteDeliveryIntegrationCoordinator` drains a
+project's reviewed deliveries one at a time in delivery order. Before the head
+merges, it hands the head and every delivery waiting behind it on the same
+branch to `MergeIntoDevelopRunner.PlanPostMergeTrainAsync`. Under the merge
+lock the train merges each delivery in queue order onto the integration tip
+with its own merge commit (`git merge-tree` and `commit-tree`, objects only,
+pinned at `refs/agent-studio/post-merge-train/<branch>`) and compiles the
+combined tip once at the `compile-only` level. When that compile is red, the
+cards are added one at a time, each compile on the last green tip; the card
+that turns the compile red is left out and the search continues with the rest
+(`PostMergeTrainSearch`). No test command runs for any of it. A delivery that
+conflicts leaves the train and keeps the normal conflict path; a delivery the
+train cannot resolve ends the train there.
+
+Each member's decision is stored beside the card in `post-merge-train.json`
+(train id, position, members, base, planned merged tree, the compiled tip,
+reason). Every card still integrates through its own merge, merge commit,
+receipts and push. Its gate reuses the train compile (`gate-finished`
+level `post-merge-train`, verdict source `CacheHit`) only when its merge
+commit has exactly the planned tree and merges the planned delivery. Otherwise,
+for example after develop moved or a card in front was ejected, the card runs
+its own compile-only gate. A card that turned the train red also runs its own
+compile, so its evidence is its own build log. Only the combined tip is
+compiled; an intermediate merge commit of a green train is not compiled on its
+own, and the merge-window run is what tests develop.
+
+After a green integration gate in `fast` or `balanced` the card records
+`post-merge-window-coverage.json` and a `post-merge-window` lane event: the
+pre-merge level, the window suites, and the window it falls into, the first
+merge-window run after the last completed window tip
+(`PostMergeWindowCoverage.WindowFromSha`). `PostMergeWindowCoverage.CoveringRun`
+resolves the run once one exists: the earliest window run whose tip contains
+the card's merge commit.
+
+**Queue reason.** The coordinator publishes its queue per project to
+`DeliveryIntegrationQueueBoard`. A card in it reads, for example,
+`integration queue position 3 of 6; in front: AGT-3993 (compiling the combined
+tree of 6 cards since 15:41:00Z), AGT-4002`, and after a failed attempt adds
+`previous attempt failed: <the integration error>`.
+
+**Guard step reasons.** The gate prefixes a failed guard step with
+`guard violation, full suite not run` only when a guard test failed. A guard
+step that timed out, ran out of budget, crashed or exited before a test failed
+reads `guard step failed without a failing guard test (<cause>), full suite not
+run`, and `GuardViolation` stays false.
+
 ### Per-project integration test placement (AGT-3314)
 
 `testing.mode` is derived from `testing.strategy` (AGT-3965): `strict` is
 `pre-merge`, `fast` and `balanced` are `post-merge`. The pre-merge path retains
 the existing per-card integration gate and optional pre-merge batch gate. In
 `post-merge` the Remote Review runs the affected T1 plan, the batch route is
-disabled, and the integration gate compiles the exact merged tree. It repeats the affected
-selection when develop moved over a path changed by the reviewed delivery,
-or when review and merge evidence cannot prove a disjoint merge. Merge and
+disabled, and the integration gate compiles the exact merged tree. In `balanced` it
+repeats the affected selection when develop moved over a path changed by the
+reviewed delivery, or when review and merge evidence cannot prove a disjoint
+merge; in `fast` it never runs a test command
+([before and after the merge](#before-and-after-the-merge-agt-4020)). Merge and
 publication locks are keyed by project and integration branch; the aggregate
 merge-busy flag still drains stable deployment.
 The threshold batch planner selects a per-task gate when one eligible card
@@ -452,7 +518,96 @@ repair card says no merge explains the failure and identifies an environmental
 or flaky suspect. Attribution errors remain unresolved rather than claiming a
 proof of independence.
 
+### Attribution protocol (RT-3)
+
+RT-3 (AGT-4004) implements RT-D9 B, RT-D6 B (covering folders) and RT-D10 B
+(fingerprint part only) in `PostMergeRunCommand`. When a suite stays red after
+its same-SHA repeat, the runner attributes it as follows:
+
+- Control. It checks out the last green SHA, builds only the failing test
+  project and runs the focused tests twice. A .NET suite builds
+  `dotnet build <test project> --no-restore` (a wrapper before `dotnet` is
+  kept); a Vitest suite uses the build command that shares its launcher, which
+  is the frontend build for Agent Studio, and is focused with `--include` on
+  the failing spec files. Prepare, the solution build, the release build check
+  and the other build commands never run at a control or a bisect point. A
+  failing control attributes no merge (`environment`). Without a last green
+  SHA, or without a partial build or focused command, no point is tested.
+- Bisect. The candidates keep the reference-graph filter and the docs
+  exclusion. Each point gets the same partial build and two focused runs, and
+  `BisectVerdictPolicy` gives the point verdict. A mixed point stops the search
+  (`flaky`), a build failure stops it without attribution, and a regression
+  needs a point that fails twice after a tested point (or the control) that
+  passed twice. The checkout returns to the tip afterwards.
+- Revert independence. A later first-parent merge is coupled to the attributed
+  merge only when it changes one of its files (`HoldScopePolicy.LaterMergeIsCoupled`).
+  An independent suspect gets the clean-revert check even when it is not the
+  newest merge.
+
+The receipt records the protocol and its facts. All new fields are optional,
+so receipts of older runners stay valid, and the run route bounds them:
+
+- `failure.attribution`: last green SHA, control results, tested points in
+  candidate order with their two results and verdict, the bisect
+  classification, the stop reason and the partial build command.
+- `testVerdicts[]`: one entry per failed test with suite id and category,
+  every attempt (`initial`, `repeat`, `control`, `bisect`) with result, SHA and
+  the duration of the run that produced it, `quarantined`, and the RT-2
+  `classificationHint` from `RedTestTriagePolicy.ClassificationHint`. The hint
+  treats envelope facts the runner does not measure (canary, reference
+  fingerprint) as not contradicting; the server's triage decides.
+- `testFile`, `coveringFolders` and `coveringFallback` per test that did not
+  recover. The test source file is found by class name in the test project.
+  Identifiers of at least eight characters that name a tracked `.cs` type file
+  outside test projects reach that file's folder; types defined in more than
+  two folders and the hub types of the Dossier's evidence script are ignored.
+  No folder, or more than 12, sets the fallback (`HoldScopePolicy.UsesSuiteAreaFallback`).
+  Vitest tests always fall back to their area. This is a static name match, not
+  runtime coverage.
+- `focusedRuns[]`: every repeat, control and bisect run and every partial build
+  with phase, SHA, test count, exit code and duration, and `durationMs` on each
+  command verdict. These replace the Dossier's unmeasured estimate of a focused
+  run's cost. A short measurement note follows here one week after the slice
+  is deployed.
+- `envelope` on the running and terminal receipt of every window and nightly
+  run: digest of the allowlisted variable names passed from the host, digest of
+  the declared environment, cgroup kind (`worker`, `daemon`, `process`,
+  `none`) and `cpu.max` when readable, processor count, SDK version, shard
+  plan, load per core at start and the peak of a 15-second load sample during
+  the run. Skip receipts run nothing and carry no envelope. Comparing
+  fingerprints with a reference envelope is RT-6.
+
+The receipt still feeds the compatibility repair flow in the next section. Quarantine starts,
+covering-folder holds and the triage ladder belong to RT-4 and RT-5.
+
 ### Red develop repair (AGT-3312)
+
+RT-2 (AGT-4003) adds the pure `RedTestTriagePolicy`, `BisectVerdictPolicy` and
+`HoldScopePolicy` for the recommended RT-D1, RT-D2, RT-D4, RT-D5, RT-D6,
+RT-D7 and RT-D9 option B in the [Red test isolation Dossier](../../red-test-isolation/index.html).
+This slice adds no host wiring: the current repair flow below remains in use.
+Hosts will supply per-test repeat and envelope facts, last-green controls,
+explicit double-run bisect points and their parents, project quarantine entries,
+repair lanes, ages and lift runs. Environment evidence marks a run inconclusive;
+a regression requires two passing controls and a failing point with a passing
+parent. Mixed points stop attribution as flaky. Covering-folder holds match
+exact directories, with recursive suite-area fallback for zero or more than
+12 distinct folders, and include the test file and confirmed suspect paths.
+Repair, attributed-revert and owner-exempt cards pass their own hold. Later
+first-parent merges are coupled only by exact file overlap.
+
+The new policy centralizes the proposed bounds: held 24 hours plus one
+24-hour renewal while the repair is in Progress or Auto Review (including the
+integration wait), report-only seven days, three held and eight total per
+project, three distinct flaky runs in 14 days, seven-day relapse window and
+an owner question after 60 minutes of line stop. Renewals extend the original
+expiry by 24 hours, with a maximum age of 48 hours. Two consecutive covering
+passes in the standard envelope must contain the repair integration to lift.
+Owner questions name their reason, options and recommendation. A fourth held
+test stops the line and asks the owner; a total-cap breach also asks the owner.
+No action changes testing strategy or moves a reviewed or settled card. `RedDevelopRepairPolicy` keeps its existing API
+and two-hour compatibility behavior, delegating safe-revert and exact-file
+hold predicates to the new policies until host adoption in later slices.
 
 This slice implements the Dossier's recorded D2 option A (`revert-first`). A
 terminal red T3 receipt carries failing tests, a bounded log excerpt, the
@@ -460,8 +615,9 @@ first-parent suspects since the last green SHA, changed paths, and the result
 of a clean revert check. The runner excludes active test quarantines and
 re-runs a focused failure at the same SHA before attribution. It intersects
 suspect paths with the failing test project's tracked reference graph and
-tests merge points, bisecting when several candidates remain. Unknown graph
-edges retain the suspect. `RedDevelopRepairPolicy` in the pure decision
+tests merge points with the [attribution protocol](#attribution-protocol-rt-3),
+bisecting when several candidates remain. Unknown graph edges retain the
+suspect. `RedDevelopRepairPolicy` in the pure decision
 library decides with the vocabulary `Revert`, `FixForward`, `Hold` and
 `AskOwner` (RT-1, AGT-3988): revert for one clean independent suspect, fix
 forward otherwise, hold while the repair is in Auto Review, Human Review,

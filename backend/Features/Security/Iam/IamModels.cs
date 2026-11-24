@@ -126,6 +126,11 @@ public sealed record ServiceAccount
     public List<ServiceAccountToken> Tokens { get; init; } = [];
     /// <summary>Operator agent sessions; <c>null</c> for every other origin.</summary>
     public List<OperatorAgentSession>? Sessions { get; init; }
+    /// <summary>
+    /// Devices whose key the Owner confirmed in a terminal sign-in (ES-3);
+    /// <c>null</c> until the first one. Forgetting a device removes it here.
+    /// </summary>
+    public List<OperatorDevice>? Devices { get; init; }
     /// <summary><see cref="ServiceAccountPurposes.KillSwitchDrill"/> for a drill's test principal; <c>null</c> otherwise.</summary>
     public string? Purpose { get; init; }
     /// <summary>The workspace and persona activation represented by a persona principal.</summary>
@@ -162,6 +167,15 @@ public sealed record OperatorAgentSession
     public string? RevokedBy { get; init; }
     /// <summary>One platform occurrence; immutable for the life of a persona session.</summary>
     public string? OccurrenceId { get; init; }
+    /// <summary>
+    /// The device of a session a terminal sign-in created (ES-3); <c>null</c>
+    /// for a session started in Settings &gt; Access. Its bearer exists only
+    /// once the terminal collected it, so <see cref="SecretHash"/> is empty
+    /// until then.
+    /// </summary>
+    public OperatorSessionDevice? Device { get; init; }
+    /// <summary>The elevated action classes the Owner kept at confirmation; ES-7 admits their operations.</summary>
+    public List<string>? Classes { get; init; }
 }
 
 public sealed record ServiceAccountToken
@@ -234,13 +248,16 @@ public static class OperatorSessionStates
     public const string Active = "active";
     public const string Expired = "expired";
     public const string Revoked = "revoked";
+    /// <summary>Confirmed in a terminal sign-in; the terminal has not collected its bearer yet.</summary>
+    public const string Pending = "pending";
 }
 
 public sealed record OperatorSessionResponse(
     string Id, string OperatorAgentId, string? Name, string Actor, string DelegatedBy, DateTime CreatedAt, string CreatedBy,
-    DateTime ExpiresAt, DateTime? RenewedAt, DateTime? LastUsedAt, DateTime? RevokedAt, string State);
+    DateTime ExpiresAt, DateTime? RenewedAt, DateTime? LastUsedAt, DateTime? RevokedAt, string State,
+    OperatorSessionDeviceResponse? Device = null, IReadOnlyList<string>? Classes = null);
 public sealed record OperatorAgentResponse(
     string Id, string Name, string? Description, DateTime CreatedAt, string? CreatedBy, DateTime? DisabledAt,
-    IReadOnlyList<OperatorSessionResponse> Sessions);
+    IReadOnlyList<OperatorSessionResponse> Sessions, IReadOnlyList<OperatorDeviceResponse>? Devices = null);
 public sealed record OneTimeOperatorSessionResponse(
     string OperatorAgentId, string SessionId, string Token, string Actor, string DelegatedBy, DateTime ExpiresAt);

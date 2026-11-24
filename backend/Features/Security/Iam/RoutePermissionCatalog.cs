@@ -189,7 +189,7 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.Anonymous, "/api/auth/status", "/api/auth/invite/preview", "/recovery");
         Add("POST", IamPermissions.Anonymous,
             "/api/auth/bootstrap", "/api/auth/login", "/api/auth/invite/accept", "/api/auth/runner-enroll",
-            "/api/auth/passkeys/assertion-options");
+            "/api/auth/passkeys/assertion-options", "/api/auth/operator-sign-in", "/api/auth/operator-sign-in/poll");
         Add("R", IamPermissions.SelfSession, "/api/auth/session");
         Add("R", IamPermissions.SelfSession, "/api/auth/directory");
         Add("POST", IamPermissions.SelfSession, "/api/auth/logout", "/api/auth/change-password");
