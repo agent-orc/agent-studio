@@ -19,3 +19,5 @@ Runbooks for agent sessions: [.agents/skills/operator](../../.agents/skills/oper
 Tests: `node --test tools/studio-op/test/*.test.mjs` (unit and fake-Studio),
 `frontend/e2e/operator/studio-op-operator-cli.spec.ts` (prebuilt networked stack) and
 `frontend/e2e/security/terminal-sign-in.networked-https.spec.ts` (login on the networked-https stack).
+
+`studio-op routing drill --dry-run --project <project> --json` reads the installation routing drill. It uses fake quotas, invokes no model, writes no routing receipts and lists missing Token Economy equivalents. `studio-op routing` also shows the short-step quota reserve.

@@ -1,139 +1,47 @@
 using AgentStudio.Cli;
-using AgentStudio.Pipeline;
+using TokenEconomy;
 using Xunit;
 
 namespace AgentStudio.Tests;
 
 public sealed class ModelEquivalenceCatalogTests
 {
-    [Fact]
-    public void Sol_xhigh_has_the_D5_explicit_Opus_route()
-    {
-        var route = _catalogue.TryGetRoute(CliTypes.Codex, ModelIds.Gpt6Sol,
-            "xhigh", CliTypes.Claude);
-        Assert.NotNull(route);
-        Assert.Equal(ModelIds.ClaudeOpus5, route.ToModel);
-        Assert.Equal("xhigh", route.ToThinkingLevel);
-        Assert.True(_catalogue.SameCapabilityClass(ModelIds.Gpt6Sol, route.ToModel));
-    }
     private readonly ModelEquivalenceCatalog _catalogue = new(TokenTestServices.Pricing());
 
     [Fact]
-    public void RoutePrices_UseInjectedPricing()
+    public void Every_published_pair_comes_from_Token_Economy_in_either_direction()
     {
-        var pricing = new FixedPricing();
-        var catalogue = new ModelEquivalenceCatalog(pricing);
-
-        var route = catalogue.TryGetRoute(CliTypes.Claude, ModelIds.ClaudeOpus5, "high", CliTypes.Codex);
-
-        Assert.NotNull(route);
-        Assert.Equal(123m, route.FromInputPerMTok);
-        Assert.Equal(456m, route.FromOutputPerMTok);
-        Assert.Equal(123m, route.ToInputPerMTok);
-        Assert.Equal(456m, route.ToOutputPerMTok);
-        Assert.Contains(ModelIds.ClaudeOpus5, pricing.PricedModels);
-    }
-
-    private sealed class FixedPricing : ITokenPricing
-    {
-        public HashSet<string> PricedModels { get; } = new(StringComparer.OrdinalIgnoreCase);
-
-        public TokenCostEstimate Estimate(string? modelId, long inputTokens, long outputTokens,
-            long cacheReadTokens, long cacheCreationTokens, DateTime? recordedAt = null)
-        {
-            PricedModels.Add(modelId ?? "");
-            return new TokenCostEstimate(0, 0, 0, 0, 0, modelId ?? "", true,
-                TokenEconomy.PriceStatus.Resolved,
-                new TokenPriceBasis(123m, 456m, 123m, 456m, "USD", DateTime.UnixEpoch,
-                    null, null, false));
-        }
-
-        public IReadOnlyList<PricedTokenEntry> Price(IReadOnlyList<OrchestratorLogEntry> ledger)
-            => [];
-    }
-
-    [Theory]
-    [InlineData(ModelIds.ClaudeOpus5, "high", ModelIds.Gpt56Sol, "high")]
-    [InlineData(ModelIds.ClaudeSonnet5, null, ModelIds.Gpt56Sol, "medium")]
-    [InlineData(ModelIds.ClaudeHaiku45, null, ModelIds.Gpt56Luna, "medium")]
-    public void ClaudeClass_MapsToComparableSelectableCodexRoute(
-        string source, string? thinking, string target, string targetThinking)
-    {
-        var route = _catalogue.TryGetRoute(CliTypes.Claude, source, thinking, CliTypes.Codex);
-
-        Assert.NotNull(route);
-        Assert.Equal(target, route.ToModel);
-        Assert.Equal(targetThinking, route.ToThinkingLevel);
-        Assert.Contains("TokenEconomy", route.CatalogueVersion);
-        Assert.NotNull(route.FromInputPerMTok);
-        Assert.NotNull(route.ToInputPerMTok);
-    }
-
-    [Fact]
-    public void RetiredMini_NeverAppearsInPublishedRoutes()
-        => Assert.DoesNotContain(_catalogue.Routes, route =>
-            string.Equals(route.FromModel, ModelIds.Gpt54Mini, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(route.ToModel, ModelIds.Gpt54Mini, StringComparison.OrdinalIgnoreCase));
-
-    [Fact]
-    public void AutomaticCodexFallbacks_StayWithinStudioPolicyTiers()
-    {
-        // AGT-2903 re-based the tiers on GPT-6; the gpt-5.6 siblings stay in the
-        // policy as declared provider-rejection fallbacks of the GPT-6 tiers.
-        var policy = new ModelRoutingPolicyRegistry().Policy;
-        var policyModels = policy.Tiers.Select(tier => tier.Model)
-            .Concat(policy.ProviderRejectionFallbacks
-                .Where(fallback => fallback.CliType == CliTypes.Codex)
-                .Select(fallback => fallback.ToModel))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var knowledge = ModelRoutingKnowledgeBase.Default;
         Assert.NotEmpty(_catalogue.Routes);
-        Assert.All(_catalogue.Routes, route =>
-        {
-            if (route.FromCliType == CliTypes.Codex)
-                Assert.Contains(route.FromModel, policyModels);
-            if (route.ToCliType == CliTypes.Codex)
-                Assert.Contains(route.ToModel, policyModels);
-        });
+        Assert.All(_catalogue.Routes, pair => Assert.Contains(knowledge.Routes, route =>
+            knowledge.FallbacksFor(route.Id).Any(fallback =>
+                route.ModelId == pair.FromModel && route.ThinkingLevel == pair.FromThinkingLevel
+                    && fallback.ModelId == pair.ToModel && fallback.ThinkingLevel == pair.ToThinkingLevel
+                || route.ModelId == pair.ToModel && route.ThinkingLevel == pair.ToThinkingLevel
+                    && fallback.ModelId == pair.FromModel && fallback.ThinkingLevel == pair.FromThinkingLevel)));
     }
 
     [Theory]
-    [InlineData("low")]
-    [InlineData("medium")]
-    [InlineData("high")]
-    public void ClaudeRoute_PreservesEachSupportedSourceThinkingLevel(string thinkingLevel)
+    [InlineData("codex", "gpt-6-sol", "medium", "claude", "claude-sonnet-5", "high")]
+    [InlineData("claude", "claude-sonnet-5", "high", "codex", "gpt-6-sol", "medium")]
+    public void Exact_pair_and_reasoning_mapping_work_in_both_directions(string provider, string model, string level,
+        string targetProvider, string targetModel, string targetLevel)
     {
-        var route = _catalogue.TryGetRoute(
-            CliTypes.Claude, ModelIds.ClaudeOpus5, thinkingLevel, CliTypes.Codex);
-
-        Assert.NotNull(route);
-        Assert.Equal(thinkingLevel, route.FromThinkingLevel);
-        Assert.Equal(thinkingLevel, route.ToThinkingLevel);
+        var pair = _catalogue.TryGetRoute(provider, model, level, targetProvider);
+        Assert.NotNull(pair);
+        Assert.Equal(targetModel, pair.ToModel);
+        Assert.Equal(targetLevel, pair.ToThinkingLevel);
+        Assert.Contains("TokenEconomy", pair.CatalogueVersion);
+        Assert.NotNull(pair.FromInputPerMTok);
+        Assert.NotNull(pair.ToInputPerMTok);
     }
 
-    [Fact]
-    public void ProviderFallback_SelectsOnlyTheMatchingCatalogueThinkingLevel()
-    {
-        var medium = _catalogue.TryGetRoute(
-            CliTypes.Codex, ModelIds.Gpt56Sol, "medium", CliTypes.Claude);
-        var xhigh = _catalogue.TryGetRoute(
-            CliTypes.Codex, ModelIds.Gpt56Sol, "xhigh", CliTypes.Claude);
-
-        Assert.NotNull(medium);
-        Assert.Equal("medium", medium.FromThinkingLevel);
-        Assert.Equal(ModelIds.ClaudeSonnet5, medium.ToModel);
-        Assert.Equal("high", medium.ToThinkingLevel);
-        Assert.Null(xhigh);
-    }
-
-    [Fact]
-    public void UnsupportedThinkingFloor_ReturnsNoDowngradedRoute()
-    {
-        // TokenEconomy 0.3.6 (TE-59) added max to the GPT-5.6 Sol ladder, so
-        // Opus 5/max now has an exact-level Codex route ...
-        var max = _catalogue.TryGetRoute(CliTypes.Claude, ModelIds.ClaudeOpus5, "max", CliTypes.Codex);
-        Assert.NotNull(max);
-        Assert.Equal("max", max.ToThinkingLevel);
-        // ... while a level the source ladder lacks still gets no downgraded route.
-        Assert.Null(_catalogue.TryGetRoute(CliTypes.Claude, ModelIds.ClaudeOpus5, "ultra", CliTypes.Codex));
-    }
+    [Theory]
+    [InlineData("codex", "gpt-6-sol", "xhigh", "claude")]
+    [InlineData("claude", "claude-opus-5-5", "low", "codex")]
+    [InlineData("claude", "claude-haiku-5-5", "low", "codex")]
+    [InlineData("claude", "claude-opus-5", "xhigh", "codex")]
+    public void Missing_pair_never_inherits_a_guessed_model_or_reasoning_mapping(string provider, string model,
+        string level, string targetProvider)
+        => Assert.Null(_catalogue.TryGetRoute(provider, model, level, targetProvider));
 }

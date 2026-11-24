@@ -1039,6 +1039,11 @@ public static class LeaseEndpoints
                                 task.PinMode == "hard" ? AgentStudio.TaskServer.Contracts.SelectionPinMode.Hard
                                     : AgentStudio.TaskServer.Contracts.SelectionPinMode.Preference),
                             IsExplicitPin = task.ModelExplicit,
+                            Continuation = CodingSelectionCalls.ContinuationFor(task),
+                            PipelineType = PipelineTypes.Resolve(task),
+                            TaskMode = task.Mode,
+                            WorkClass = TaskModes.IsConcept(task.Mode) ? AgentStudio.TaskServer.Contracts.SelectionWorkClasses.Concept
+                                : AgentStudio.TaskServer.Contracts.SelectionWorkClasses.Coding,
                             TaskType = task.TaskType,
                             Host = new AgentStudio.TaskServer.Contracts.SelectionHost(req.RunnerName),
                         },

@@ -62,6 +62,9 @@ builder.Services.AddHttpClient(nameof(TaskServerModelSelectionPoster), client =>
     client.Timeout = TimeSpan.FromSeconds(3));
 builder.Services.AddSingleton<TaskServerModelSelectionPoster>();
 // Without a meter URL quota admission is off: no admission object, no per-claim event, one startup log line.
+builder.Services.AddHttpClient(nameof(HttpModelRouteAdmission), client => client.Timeout = TimeSpan.FromSeconds(3));
+if (!string.IsNullOrWhiteSpace(builder.Configuration["TaskServer:QuotaAdmissionBaseUrl"]))
+    builder.Services.AddSingleton<IModelRouteAdmission, HttpModelRouteAdmission>();
 if (!string.IsNullOrWhiteSpace(builder.Configuration["TaskServer:QuotaAdmissionBaseUrl"]))
     builder.Services.AddSingleton<IWorkspaceQuotaAdmission, HttpWorkspaceQuotaAdmission>();
 builder.Services.AddSignalR();

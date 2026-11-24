@@ -98,7 +98,7 @@ public sealed class ReviewAttemptTaskLifecycleService
         IReadOnlySet<string>? capabilities = null,
         IReadOnlySet<string>? heldTaskKeys = null,
         Func<ReviewAttemptDto, bool>? admission = null,
-        IReadOnlyDictionary<string, ReviewClaimRepositoryFact>? repositoryFacts = null)
+        IReadOnlyDictionary<string, ReviewClaimRepositoryFact>? repositoryFacts = null, bool routeAgentProviders = false)
     {
         lock (_gate)
         {
@@ -112,7 +112,7 @@ public sealed class ReviewAttemptTaskLifecycleService
                 capabilities,
                 heldTaskKeys,
                 admission,
-                repositoryFacts);
+                repositoryFacts, routeAgentProviders);
             AppendClaimEntry(claimed, tasks);
             return claimed;
         }

@@ -35,10 +35,16 @@ public sealed record ModelSelectionEvent
     public ModelSelectionEquivalence? Equivalence { get; init; }
     public DateTimeOffset? ReturnToPrimaryAt { get; init; }
     public string? ClosesId { get; init; }
+    public string? ExecutionId { get; init; }
+    public string? ExecutionProvider { get; init; }
+    public bool ProviderFailure { get; init; }
+    public bool NearbyResetWait { get; init; }
     public ModelSelectionPrice? PricePerMTok { get; init; }
     public int Count { get; init; } = 1;
     public IReadOnlyList<string>? CollapsedIds { get; init; }
 }
+
+public sealed record ProviderRoutingUsage(string Provider, int Executions, int SwitchExecutions);
 
 public sealed record ModelSelectionDailySummary(DateOnly Day, string Provider, string Rule, string Consumer, int Count);
 public sealed record ModelSelectionEventPage(IReadOnlyList<ModelSelectionEvent> Events, string? NextCursor);
@@ -115,6 +121,33 @@ public sealed class ModelSelectionLedger
             Prune();
             return true;
         }
+    }
+
+    public bool RecordExecution(string selectionId, bool providerFailure = false)
+    {
+        lock (_sync)
+        {
+            var selected = _events.FirstOrDefault(entry => entry.Id == selectionId);
+            return selected is not null && selected.Kind is "selected" or "switched" or "returned" && Append(selected with
+            {
+                Id = "executed:" + selectionId, ExecutionId = selectionId,
+                From = selected.Kind == "returned" ? selected.To : selected.From,
+                Kind = "executed", At = _time.GetUtcNow(), Count = 1,
+                ProviderFailure = providerFailure, ExecutionProvider = selected.To?.CliType,
+                ClosesId = null, CollapsedIds = null, ReturnToPrimaryAt = null,
+            });
+        }
+    }
+
+    public IReadOnlyList<ProviderRoutingUsage> ExecutionUsage(DateTimeOffset since,
+        IReadOnlySet<string> projects, bool includeUnscoped = false)
+    {
+        lock (_sync)
+            return _events.Where(entry => entry.Kind == "executed" && entry.At >= since
+                    && (entry.Project is null ? includeUnscoped : projects.Contains(entry.Project)))
+                .GroupBy(entry => entry.To?.CliType ?? "unknown")
+                .Select(group => new ProviderRoutingUsage(group.Key, group.Count(),
+                    group.Count(entry => entry.From?.CliType != entry.To?.CliType))).ToArray();
     }
 
     public ModelSelectionEventPage Query(string? provider = null, string? project = null, string? consumer = null,
@@ -207,6 +240,11 @@ public sealed class ModelSelectionLedger
 
     private void Project(ModelSelectionEvent entry)
     {
+        foreach (var prior in _active.Values.Where(prior => prior.Kind == "waiting"
+            && prior.Consumer == entry.Consumer && prior.Project == entry.Project
+            && prior.TaskKey == entry.TaskKey && prior.StepId == entry.StepId).ToArray())
+            _active.Remove(prior.Id);
+        if (entry.Kind == "waiting") _active[entry.Id] = entry;
         if (entry.Kind is "switched" or "operator-switch")
         {
             foreach (var earlier in _active.Values.Where(e => e.Kind is "switched" or "operator-switch"

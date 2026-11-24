@@ -36,14 +36,14 @@ public static class ReviewLibraryStepPolicy
         return plan with { Commands = commands, Preparation = preparation };
     }
 
-    public static bool Supports(ReviewPlanDto plan, IReadOnlySet<string> capabilities)
+    public static bool Supports(ReviewPlanDto plan, IReadOnlySet<string> capabilities, bool routePending = false)
         => plan.LibraryVersion == 0
             ? plan.Commands.All(command => command.LibraryStep is null)
               && (plan.Preparation ?? []).All(command => command.LibraryStep is null)
             : plan.LibraryVersion == Version
               && plan.Commands.All(command => command.LibraryStep is not null)
               && (plan.Preparation ?? []).All(command => command.LibraryStep is not null)
-              && Steps(plan).All(step => step.RequiredCapabilities.All(capabilities.Contains));
+              && ExecutionCapabilities(plan, routePending).All(capabilities.Contains);
 
     /// <summary>
     /// Every toolchain key a sealed step can require, with the invocation tokens
@@ -65,10 +65,10 @@ public static class ReviewLibraryStepPolicy
     /// or the library-step version key when the envelope itself is unusable.
     /// Empty exactly when the plan is supported.
     /// </summary>
-    public static IReadOnlyList<string> MissingCapabilities(ReviewPlanDto plan, IReadOnlySet<string> capabilities)
+    public static IReadOnlyList<string> MissingCapabilities(ReviewPlanDto plan, IReadOnlySet<string> capabilities, bool routePending = false)
     {
-        if (Supports(plan, capabilities)) return [];
-        var missing = RequiredCapabilities(plan).Where(key => !capabilities.Contains(key)).ToArray();
+        if (Supports(plan, capabilities, routePending)) return [];
+        var missing = ExecutionCapabilities(plan, routePending).Where(key => !capabilities.Contains(key)).ToArray();
         return missing.Length > 0 ? missing : [$"review:library-step:v{plan.LibraryVersion}"];
     }
 
@@ -76,12 +76,34 @@ public static class ReviewLibraryStepPolicy
         => Steps(plan).SelectMany(step => step.RequiredCapabilities)
             .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
 
+    /// <summary>Provider requirements follow the selected execution route, separately from the authored digest.</summary>
+    public static IReadOnlyList<string> ExecutionCapabilities(ReviewPlanDto plan, bool routePending = false)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var command in plan.Commands)
+        {
+            foreach (var key in command.LibraryStep?.RequiredCapabilities ?? [])
+                if (!ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                    || command.ModelSelection is null && !routePending
+                    || !key.StartsWith("cli-execution:", StringComparison.Ordinal)
+                       && !key.StartsWith("provider-auth:", StringComparison.Ordinal)) keys.Add(key);
+            if (ReviewCommandKinds.IsAgent(command.ExecutionKind) && command.ModelSelection is { ShouldLaunch: true } selected)
+            {
+                keys.Add(CapabilityProtocol.CliExecution(selected.Route.CliType));
+                keys.Add(CapabilityProtocol.ProviderAuthentication(selected.Route.CliType));
+            }
+        }
+        foreach (var preparation in plan.Preparation ?? [])
+            foreach (var key in preparation.LibraryStep?.RequiredCapabilities ?? []) keys.Add(key);
+        return keys.Order(StringComparer.Ordinal).ToArray();
+    }
+
     public static bool ValidPlan(ReviewPlanDto plan, string subjectSha)
         => plan.LibraryVersion == 0
             ? plan.Commands.All(command => command.LibraryStep is null)
               && (plan.Preparation ?? []).All(command => command.LibraryStep is null)
             : plan.LibraryVersion == Version
-              && plan.Commands.All(command => Matches(command.LibraryStep, ForCommand(command, subjectSha)))
+              && plan.Commands.All(command => ValidSelection(command) && Matches(command.LibraryStep, ForCommand(command, subjectSha)))
               && (plan.Preparation ?? []).All(command =>
                   Matches(command.LibraryStep, ForPreparation(command, subjectSha)));
 
@@ -123,6 +145,7 @@ public static class ReviewLibraryStepPolicy
 
     private static ReviewLibraryStepDto ForCommand(ReviewCommandDto command, string sha)
     {
+        command = ConfiguredCommand(command);
         var capabilities = new List<string> { ReviewCapabilities.LibraryStepV1 };
         if (command.CompareToBaseline) capabilities.Add(ReviewCapabilities.BaselineComparison);
         if (ReviewCommandKinds.IsAgent(command.ExecutionKind))
@@ -139,8 +162,25 @@ public static class ReviewLibraryStepPolicy
             ? ReviewAspectBudgetDefaults.CeilingSeconds
             : command.TimeoutSeconds;
         return Create(command.StepId, sha, limit, capabilities,
-            JsonSerializer.Serialize(command with { LibraryStep = null }));
+            JsonSerializer.Serialize(ConfiguredCommand(command) with { LibraryStep = null }));
     }
+
+    // The library digest binds the authored command. A claim-scoped routing
+    // receipt describes its execution without changing that frozen payload.
+    private static bool ValidSelection(ReviewCommandDto command)
+        => command.ModelSelection is not { } selection || selection.ShouldLaunch
+            && command.FileName == selection.Route.CliType && command.CliType == selection.Route.CliType
+            && command.Model == selection.Route.Model && command.ThinkingLevel == selection.Route.ThinkingLevel;
+
+    private static ReviewCommandDto ConfiguredCommand(ReviewCommandDto command)
+        => command.ModelSelection is not { } selection ? command : command with
+        {
+            FileName = selection.Primary.CliType,
+            CliType = selection.Primary.CliType,
+            Model = selection.Primary.Model,
+            ThinkingLevel = selection.Primary.ThinkingLevel,
+            ModelSelection = null,
+        };
 
     private static ReviewLibraryStepDto ForPreparation(ReviewPreparationCommandDto command, string sha)
     {
