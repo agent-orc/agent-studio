@@ -518,6 +518,68 @@ repair card says no merge explains the failure and identifies an environmental
 or flaky suspect. Attribution errors remain unresolved rather than claiming a
 proof of independence.
 
+### Attribution protocol (RT-3)
+
+RT-3 (AGT-4004) implements RT-D9 B, RT-D6 B (covering folders) and RT-D10 B
+(fingerprint part only) in `PostMergeRunCommand`. When a suite stays red after
+its same-SHA repeat, the runner attributes it as follows:
+
+- Control. It checks out the last green SHA, builds only the failing test
+  project and runs the focused tests twice. A .NET suite builds
+  `dotnet build <test project> --no-restore` (a wrapper before `dotnet` is
+  kept); a Vitest suite uses the build command that shares its launcher, which
+  is the frontend build for Agent Studio, and is focused with `--include` on
+  the failing spec files. Prepare, the solution build, the release build check
+  and the other build commands never run at a control or a bisect point. A
+  failing control attributes no merge (`environment`). Without a last green
+  SHA, or without a partial build or focused command, no point is tested.
+- Bisect. The candidates keep the reference-graph filter and the docs
+  exclusion. Each point gets the same partial build and two focused runs, and
+  `BisectVerdictPolicy` gives the point verdict. A mixed point stops the search
+  (`flaky`), a build failure stops it without attribution, and a regression
+  needs a point that fails twice after a tested point (or the control) that
+  passed twice. The checkout returns to the tip afterwards.
+- Revert independence. A later first-parent merge is coupled to the attributed
+  merge only when it changes one of its files (`HoldScopePolicy.LaterMergeIsCoupled`).
+  An independent suspect gets the clean-revert check even when it is not the
+  newest merge.
+
+The receipt records the protocol and its facts. All new fields are optional,
+so receipts of older runners stay valid, and the run route bounds them:
+
+- `failure.attribution`: last green SHA, control results, tested points in
+  candidate order with their two results and verdict, the bisect
+  classification, the stop reason and the partial build command.
+- `testVerdicts[]`: one entry per failed test with suite id and category,
+  every attempt (`initial`, `repeat`, `control`, `bisect`) with result, SHA and
+  the duration of the run that produced it, `quarantined`, and the RT-2
+  `classificationHint` from `RedTestTriagePolicy.ClassificationHint`. The hint
+  treats envelope facts the runner does not measure (canary, reference
+  fingerprint) as not contradicting; the server's triage decides.
+- `testFile`, `coveringFolders` and `coveringFallback` per test that did not
+  recover. The test source file is found by class name in the test project.
+  Identifiers of at least eight characters that name a tracked `.cs` type file
+  outside test projects reach that file's folder; types defined in more than
+  two folders and the hub types of the Dossier's evidence script are ignored.
+  No folder, or more than 12, sets the fallback (`HoldScopePolicy.UsesSuiteAreaFallback`).
+  Vitest tests always fall back to their area. This is a static name match, not
+  runtime coverage.
+- `focusedRuns[]`: every repeat, control and bisect run and every partial build
+  with phase, SHA, test count, exit code and duration, and `durationMs` on each
+  command verdict. These replace the Dossier's unmeasured estimate of a focused
+  run's cost. A short measurement note follows here one week after the slice
+  is deployed.
+- `envelope` on the running and terminal receipt of every window and nightly
+  run: digest of the allowlisted variable names passed from the host, digest of
+  the declared environment, cgroup kind (`worker`, `daemon`, `process`,
+  `none`) and `cpu.max` when readable, processor count, SDK version, shard
+  plan, load per core at start and the peak of a 15-second load sample during
+  the run. Skip receipts run nothing and carry no envelope. Comparing
+  fingerprints with a reference envelope is RT-6.
+
+The receipt still feeds the compatibility repair flow in the next section. Quarantine starts,
+covering-folder holds and the triage ladder belong to RT-4 and RT-5.
+
 ### Red develop repair (AGT-3312)
 
 RT-2 (AGT-4003) adds the pure `RedTestTriagePolicy`, `BisectVerdictPolicy` and
@@ -553,8 +615,9 @@ first-parent suspects since the last green SHA, changed paths, and the result
 of a clean revert check. The runner excludes active test quarantines and
 re-runs a focused failure at the same SHA before attribution. It intersects
 suspect paths with the failing test project's tracked reference graph and
-tests merge points, bisecting when several candidates remain. Unknown graph
-edges retain the suspect. `RedDevelopRepairPolicy` in the pure decision
+tests merge points with the [attribution protocol](#attribution-protocol-rt-3),
+bisecting when several candidates remain. Unknown graph edges retain the
+suspect. `RedDevelopRepairPolicy` in the pure decision
 library decides with the vocabulary `Revert`, `FixForward`, `Hold` and
 `AskOwner` (RT-1, AGT-3988): revert for one clean independent suspect, fix
 forward otherwise, hold while the repair is in Auto Review, Human Review,

@@ -825,3 +825,12 @@ bounds. The existing repair API remains compatible. RT-2 does not add host
 calls or transition receipts; later slices collect facts and apply actions
 through the owning adapter. The architecture guard inventories all three
 policies.
+
+RT-3 (AGT-4004) adds two pure entry points for the post-merge runner, which
+records facts and never acts on them. `RedTestTriagePolicy.ClassificationHint`
+classifies one test from the facts the runner measures (same-SHA repeat,
+last-green control, bisect points) and treats an unmeasured envelope canary or
+reference fingerprint as not contradicting; `Classify` and `Decide` remain the
+server's decision. `HoldScopePolicy.UsesSuiteAreaFallback` is the zero or more
+than 12 covering-folder rule that `Create` applies, so the receipt's
+`coveringFallback` cannot drift from the hold scope.
