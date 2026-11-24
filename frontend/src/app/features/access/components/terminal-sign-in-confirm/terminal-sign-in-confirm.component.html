@@ -1,0 +1,124 @@
+<main class="tsi" data-testid="terminal-sign-in" aria-labelledby="terminal-sign-in-title">
+  <section class="tsi__panel">
+    <header class="tsi__head">
+      <span class="tsi__eyebrow">Agent Studio</span>
+      <h1 id="terminal-sign-in-title">Confirm terminal sign-in</h1>
+      <p class="tsi__lead">A terminal asks for an operator session. Confirm only a sign-in you started yourself with <code>studio-op login</code>.</p>
+    </header>
+
+    @if (signIn.confirmed(); as done) {
+      <div class="tsi__outcome" role="status" data-testid="terminal-sign-in-confirmed">
+        <app-status-indicator tone="success" label="Sign-in confirmed" testId="terminal-sign-in-confirmed-status" />
+        <p>The terminal receives the session at its next poll, within a few seconds. It acts as <code>{{ done.actor }}</code> until <span class="tsi__numeric">{{ time(done.expiresAt) }}</span>.</p>
+        <div class="tsi__actions">
+          <button type="button" data-testid="terminal-sign-in-done" (click)="close()">Done</button>
+          <button type="button" class="access-secondary" data-testid="terminal-sign-in-open-access" (click)="openAccess()">Open Settings &gt; Access</button>
+        </div>
+      </div>
+    } @else if (signIn.denied()) {
+      <div class="tsi__outcome" role="status" data-testid="terminal-sign-in-denied">
+        <app-status-indicator tone="neutral" label="Sign-in denied" testId="terminal-sign-in-denied-status" />
+        <p>The terminal receives no session. Its next poll reports the denial.</p>
+        <div class="tsi__actions">
+          <button type="button" data-testid="terminal-sign-in-done" (click)="close()">Done</button>
+        </div>
+      </div>
+    } @else {
+      <section class="tsi__step" aria-labelledby="terminal-sign-in-code-title">
+        <h2 id="terminal-sign-in-code-title">Code</h2>
+        @if (!manual() && checkedCode(); as code) {
+          <p class="tsi__code" data-testid="terminal-sign-in-code">{{ display(code) }}</p>
+          <label class="tsi__check">
+            <input type="checkbox" data-testid="terminal-sign-in-code-match" [checked]="codeMatches()" (change)="codeMatches.set($any($event.target).checked)" />
+            <span>This code is on my terminal now</span>
+          </label>
+          @if (signIn.error()) {
+            <button type="button" class="access-quiet tsi__switch" data-testid="terminal-sign-in-enter-code" (click)="enterCode()">Enter the code instead</button>
+          }
+        } @else {
+          <form class="tsi__lookup" (submit)="find($event)">
+            <label>Code from your terminal
+              <input data-testid="terminal-sign-in-code-input" class="tsi__code-input" autocomplete="off" autocapitalize="characters" spellcheck="false" inputmode="text" placeholder="BCDF-GHJK" maxlength="12" [value]="codeInput()" (input)="codeInput.set($any($event.target).value)" />
+            </label>
+            <button type="submit" class="access-secondary" data-testid="terminal-sign-in-lookup" [disabled]="!codeReady() || signIn.busy()">Check code</button>
+          </form>
+        }
+      </section>
+
+      @if (signIn.error(); as message) {
+        <p class="access-error" role="alert" data-testid="terminal-sign-in-error" [attr.data-code]="signIn.errorCode()">{{ message }}</p>
+      }
+
+      @if (lookup(); as found) {
+        @if (suspicious()) {
+          <p class="tsi__warning" role="note" data-testid="terminal-sign-in-warning">Unknown device on another network than this browser. If you did not just run studio-op login yourself, deny this sign-in.</p>
+        }
+        <dl class="tsi__facts" data-testid="terminal-sign-in-facts">
+          <dt>Device</dt>
+          <dd>
+            <span data-testid="terminal-sign-in-device">{{ found.deviceLabel }}</span>
+            <app-status-indicator [tone]="known() ? 'success' : 'warning'" [label]="known() ? 'Known device' : 'Unknown device'" [compact]="true" testId="terminal-sign-in-known" />
+          </dd>
+          <dt>Key thumbprint</dt>
+          <dd><code class="tsi__mono" data-testid="terminal-sign-in-thumbprint" [attr.title]="found.keyThumbprint">{{ thumb(found.keyThumbprint) }}</code></dd>
+          <dt>Requesting address</dt>
+          <dd>
+            <span class="tsi__numeric" data-testid="terminal-sign-in-address">{{ found.requestedAddress ?? 'Unknown' }}</span>
+            <app-status-indicator [tone]="found.addressMatches ? 'success' : 'warning'" [label]="found.addressMatches ? 'Same network as this browser' : 'Other network than this browser'" [detail]="found.addressMatches ? null : 'This browser: ' + (found.browserAddress ?? 'unknown')" [compact]="true" [wrap]="true" testId="terminal-sign-in-address-match" />
+          </dd>
+          <dt>Code expires</dt>
+          <dd class="tsi__numeric">{{ time(found.expiresAt) }}</dd>
+        </dl>
+
+        <div class="tsi__choices">
+          <label>Operator agent
+            <select data-testid="terminal-sign-in-agent" (change)="setAgent($any($event.target).value)">
+              <option value="" [selected]="!agentId()">Choose an operator agent</option>
+              @for (agent of found.agents; track agent.id) { <option [value]="agent.id" [selected]="agent.id === agentId()">{{ agent.name }}</option> }
+            </select>
+          </label>
+          @if (requestedAgentMissing()) {
+            <p class="access-hint" data-testid="terminal-sign-in-agent-missing">The terminal asked for "{{ found.requestedAgent }}", which is not an active operator agent.</p>
+          }
+          <label>Lifetime
+            <select data-testid="terminal-sign-in-lifetime" (change)="setLifetime($any($event.target).value)">
+              @for (hour of found.lifetimeHours; track hour) { <option [value]="'' + hour" [selected]="hour === lifetime()">{{ hour }} {{ hour === 1 ? 'hour' : 'hours' }}</option> }
+            </select>
+          </label>
+        </div>
+
+        <fieldset class="tsi__classes" data-testid="terminal-sign-in-classes">
+          <legend>Action classes</legend>
+          @for (actionClass of found.requestedClasses; track actionClass.id) {
+            <label class="tsi__check">
+              <input type="checkbox" [attr.data-testid]="'terminal-sign-in-class-' + actionClass.id" [checked]="!removed().has(actionClass.id)" (change)="toggleClass(actionClass.id, $any($event.target).checked)" />
+              <span>{{ actionClass.title }} <code class="tsi__mono">{{ actionClass.id }}</code></span>
+            </label>
+          } @empty {
+            <p class="access-hint">The terminal requested no action classes.</p>
+          }
+          @if (found.requestedClasses.length) {
+            <p class="access-hint">You can remove requested classes, never add one. Until elevated action classes are switched on, the session has the operator agent role only.</p>
+          }
+        </fieldset>
+
+        <div class="tsi__factor">
+          <label>Second factor code
+            <input data-testid="terminal-sign-in-factor" autocomplete="one-time-code" inputmode="numeric" placeholder="Empty to use a passkey" [value]="factor()" (input)="factor.set($any($event.target).value)" />
+          </label>
+          <p class="access-hint">Confirming asks for a fresh second factor.</p>
+        </div>
+
+        <div class="tsi__actions">
+          <button type="button" data-testid="terminal-sign-in-confirm" [disabled]="!canConfirm()" (click)="confirm()">Confirm sign-in</button>
+          <button type="button" class="access-secondary" data-testid="terminal-sign-in-deny" [disabled]="signIn.busy()" (click)="deny()">Deny</button>
+          <button type="button" class="access-quiet" data-testid="terminal-sign-in-close" (click)="close()">Close</button>
+        </div>
+      } @else {
+        <div class="tsi__actions">
+          <button type="button" class="access-quiet" data-testid="terminal-sign-in-close" (click)="close()">Close</button>
+        </div>
+      }
+    }
+  </section>
+</main>

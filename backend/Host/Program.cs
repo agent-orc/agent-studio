@@ -1134,6 +1134,7 @@ builder.Services.AddSingleton<AgentStudio.Git.IntegrationWorktreeStartupLockSwee
 builder.Services.AddSingleton<AgentStudio.Git.GitRefLockJanitor>();
 builder.Services.AddHostedService(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
+builder.Services.AddSingleton<AgentStudio.Pipeline.DeliveryIntegrationQueueBoard>();
 builder.Services.AddSingleton<AgentStudio.Tasks.TaskLiveStatusProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IModelEconomyAdvisor,
     AgentStudio.Pipeline.CatalogueModelEconomyAdvisor>();

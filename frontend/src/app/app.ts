@@ -145,6 +145,8 @@ import { MediaLightboxComponent } from './components/media-lightbox/media-lightb
 import { MediaLightboxService } from './services/media-lightbox.service';
 import { OfflineBannerComponent } from './components/offline-banner/offline-banner.component';
 import { RecoverySignInNoticeComponent } from './components/recovery-sign-in-notice/recovery-sign-in-notice.component';
+import { TerminalSignInRouteService } from './features/access';
+import { TerminalSignInConfirmComponent } from './features/access/lazy';
 import { PublicDemoBannerComponent } from './components/public-demo-banner/public-demo-banner.component';
 import { UpdateClientService } from './services/update.service';
 import { UpdateNotificationBridge } from './services/update-notification-bridge.service';
@@ -200,6 +202,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     OfflineBannerComponent,
     PublicDemoBannerComponent,
     RecoverySignInNoticeComponent,
+    TerminalSignInConfirmComponent,
     ProjectTabsComponent,
     E2ECleanupDialogComponent,
     TagManagerDialogComponent,
@@ -249,6 +252,8 @@ export class App implements OnInit, OnDestroy {
   private readonly firstRunLaunch = inject(FirstRunLaunchService);
   private readonly gitHubApp = inject(GitHubAppService);
   readonly auth = inject(AuthService); private studioInitialized = false;
+  /** ES-3: the Confirm terminal sign-in page, read from the hash before sign-in. */
+  readonly terminalSignIn = inject(TerminalSignInRouteService);
   readonly jobService = inject(TaskService);
   private readonly reviewerSession = inject(ReviewerSession);
   readonly errorDialog = inject(ErrorDialogService);

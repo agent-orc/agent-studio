@@ -120,6 +120,7 @@ public static class IamEndpoints
             })).RequirePermission(IamPermissions.AccessManage);
 
         iam.MapOperatorAgentEndpoints();
+        iam.MapOperatorSignInOwnerEndpoints();
         iam.MapOperatorKillSwitchEndpoints();
         iam.MapStandingGrantEndpoints();
         iam.MapOperatorApprovalEndpoints();
