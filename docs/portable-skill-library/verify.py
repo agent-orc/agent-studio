@@ -18,12 +18,18 @@ class Article(HTMLParser):
         self.sections = {}
         self.stack = []
         self.decisions = {}
+        self.prompts = {}
+        self.current_prompt = None
         self.feed(content)
         self.close()
         assert not self.stack, f"Unclosed sections: {self.stack}"
 
     def handle_starttag(self, tag, pairs):
         attrs = dict(pairs)
+        if tag == "pre" and attrs.get("data-implementation-prompt"):
+            self.current_prompt = attrs["data-implementation-prompt"]
+            assert self.current_prompt not in self.prompts, "Duplicate implementation prompt"
+            self.prompts[self.current_prompt] = ""
         if attrs.get("id"):
             assert attrs["id"] not in self.ids, f"Duplicate HTML id: {attrs['id']}"
             self.ids.add(attrs["id"])
@@ -43,17 +49,21 @@ class Article(HTMLParser):
             self.decisions[self.current_decision].add(attrs["data-option-id"])
 
     def handle_endtag(self, tag):
+        if tag == "pre":
+            self.current_prompt = None
         if tag == "section":
             assert self.stack, "Unmatched closing section"
             self.stack.pop()
 
     def handle_data(self, data):
+        if self.current_prompt is not None:
+            self.prompts[self.current_prompt] += data
         for key in self.stack:
             if key:
                 self.sections[key] += data
 
 
-def verify():
+def verify(results_dir=None):
     dossier = Path(__file__).resolve().parent
     root = dossier.parent.parent
     html = (dossier / "index.html").read_text()
@@ -102,6 +112,7 @@ def verify():
         assert task.get("dependsOn") == ([] if i == 0 else [tasks[i - 1]["id"]])
         assert set(task["dependsOn"]) <= earlier, f"Unordered dependency: {key}"
         prompt = task["promptMarkdown"]
+        assert article.prompts.get(key) == prompt, f"HTML/JSON prompt mismatch: {key}"
         for heading in ("## Scope", "## Deliver", "## Acceptance", "## Verification and result"):
             assert heading in prompt, f"Incomplete prompt: {key} {heading}"
         scope = task["acceptanceScope"]
@@ -109,6 +120,7 @@ def verify():
         assert scope["criteria"] and all(c in prompt and c in review_map for c in scope["criteria"])
         assert f'id="{key}"' in html and f"## {key}:" in review_map
         earlier.add(key)
+    assert set(article.prompts) == earlier, "HTML prompt inventory differs from JSON"
 
     for decision in workbench["openDecisions"]:
         key = decision["decisionId"]
@@ -148,14 +160,33 @@ def verify():
     assert max(entry_sizes.values()) <= 256_000 and sum(entry_sizes.values()) <= 512_000
     files = {p.name: {"bytes": p.stat().st_size, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
              for p in sorted(dossier.iterdir()) if p.is_file()}
+    delivery_checks = []
+    if results_dir is not None:
+        results_dir = Path(results_dir).resolve()
+        entry = "docs/portable-skill-library/index.html"
+        for reference in (results_dir / "deliverables.md", results_dir.parent / "status.md"):
+            assert entry in reference.read_text(), f"Missing canonical task reference: {reference}"
+            delivery_checks.append(str(reference))
+        for name in files:
+            copy = results_dir / "dossier" / name
+            assert copy.read_bytes() == (dossier / name).read_bytes(), f"Reviewer copy mismatch: {name}"
+        inventory = (results_dir / "implementation-cards.md").read_text()
+        for task in tasks:
+            assert task["promptMarkdown"] in inventory, f"Missing collected full prompt: {task['id']}"
+        delivery_checks.append("All Dossier files copied byte-for-byte; all full prompts collected")
     return {"status": "pass", "sourceTaskKey": "AGT-4032", "requiredSections": sorted(required),
             "implementationTasks": [{"id": t["id"], "dependsOn": t["dependsOn"],
                                      "acceptanceCriteria": len(t["acceptanceScope"]["criteria"])} for t in tasks],
             "openDecisionsWithRecommendations": len(article.decisions), "checkedLocalLinks": checked_links,
             "costScenariosRecalculated": 3, "canonicalTemplateCss": "exact match",
+            "htmlPromptsMatchingJson": len(article.prompts), "deliveryChecks": delivery_checks,
             "reviewEntryCharacters": entry_sizes, "files": files,
             "limits": "Structural and arithmetic checks; no skill-effect experiment, live CLI probe or operator approval."}
 
 
 if __name__ == "__main__":
-    print(json.dumps(verify(), indent=2))
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--results-dir", type=Path, help="Also verify task references and the collected reviewer copy")
+    args = parser.parse_args()
+    print(json.dumps(verify(args.results_dir), indent=2))

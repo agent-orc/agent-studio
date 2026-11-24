@@ -314,6 +314,9 @@ section, h3 { scroll-margin-top: 24px; }
 .decision + .decision { border-top: 1px solid var(--article-line); margin-top: 28px; padding-top: 4px; }
 .numeric { font-variant-numeric: tabular-nums; }
 .table-wrap:focus-visible { outline:2px solid var(--article-link); outline-offset:4px; }
+details[data-implementation-slice] { margin: 20px 0; padding: 12px 0; border-top: 1px solid var(--article-line); }
+details[data-implementation-slice] summary { cursor: pointer; min-height: 44px; font: 600 .95rem/1.6 var(--article-sans); }
+details[data-implementation-slice] pre { overflow-wrap: anywhere; white-space: pre-wrap; }
 .skill-list article + article { border-top:1px solid var(--article-line); margin-top:28px; }
 @media(max-width:760px) { .table-wrap > table { display:table; min-width:620px; } .flow { grid-template-columns:1fr; } .flow > svg { display:none; } }
 </style></head><body><main class="article">
@@ -334,7 +337,7 @@ section, h3 { scroll-margin-top: 24px; }
 <tr><td>7. Sharing, releases and customer changes</td><td><a href="#shipping">Shipping</a></td><td>SL-2, SL-12, SL-13</td></tr>
 <tr><td>8. Decisions, sequence and first three skills</td><td><a href="#open-decisions">Open decisions</a>, <a href="#implementation">Implementation</a>, <a href="#first-skills">Initial skills</a></td><td>SL-1 to SL-13</td></tr>
 </tbody></table>
-<p><a href="workbench.json">workbench.json</a> is the authoritative card source: thirteen complete <code>implementationTasks</code> entries, each with a unique id, title, full <code>promptMarkdown</code>, acceptance scope and scheduler-enforced <code>dependsOn</code>. The review map lists every slice and acceptance criterion in delivery order. Reproduce structural, navigation, decision, sequence and cost checks with <code>python3 docs/portable-skill-library/verify.py</code>. These checks establish the delivery contract; they do not establish operator approval or skill effectiveness.</p>
+<p><a href="workbench.json">workbench.json</a> is the authoritative card source: thirteen complete <code>implementationTasks</code> entries, each with a unique id, title, full <code>promptMarkdown</code>, acceptance scope and scheduler-enforced <code>dependsOn</code>. The review map lists every slice and acceptance criterion in delivery order. This entrypoint also includes every full implementation prompt in the <a href="#implementation">Implementation</a> section, so reviewing the sequence does not depend on a linked JSON excerpt. Reproduce structural, navigation, decision, sequence and cost checks with <code>python3 docs/portable-skill-library/verify.py</code>. These checks establish the delivery contract; they do not establish operator approval or skill effectiveness.</p>
 </section>
 <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
 <h2>Recommendation</h2>
@@ -579,6 +582,330 @@ Verify identity, loading, keyboard behavior and the changed user journey.</code>
 <p>Thirteen bounded slices form one dependency chain. This deliberately serializes the first implementation: enrichment/runner changes in SL-3 to SL-5, shared receipt/read-model changes in SL-6 to SL-7, catalogue and release-content changes in SL-8 to SL-10, and feedback/release/rollout changes in SL-11 to SL-13 cannot overlap. The default project execution remains sequential. Every scheduler dependency is encoded in workbench.json, not only in prose.</p>
 <p>The dispatcher forecast and Access/one-look work are external inputs with bounded fallbacks, not undocumented blocking edges. SL-3 can use cited paths; SL-10 can publish a current-baseline candidate and adopt the approved pilot revision later. If a real external prerequisite is needed, add an API-managed task dependency before scheduling it.</p>
 <div class="table-wrap"><table><thead><tr><th>Slice</th><th>Delivery</th><th>Depends on</th></tr></thead><tbody><tr id="SL-1"><td>SL-1</td><td>Skill and receipt contracts</td><td>None</td></tr><tr id="SL-2"><td>SL-2</td><td>Immutable registry and pins</td><td>SL-1</td></tr><tr id="SL-3"><td>SL-3</td><td>Typed selection and budgets</td><td>SL-2</td></tr><tr id="SL-4"><td>SL-4</td><td>Prompt and resource transport</td><td>SL-3</td></tr><tr id="SL-5"><td>SL-5</td><td>Review and continuation context</td><td>SL-4</td></tr><tr id="SL-6"><td>SL-6</td><td>Skill ledger and projections</td><td>SL-5</td></tr><tr id="SL-7"><td>SL-7</td><td>Card and library visibility</td><td>SL-6</td></tr><tr id="SL-8"><td>SL-8</td><td>Frontend best-practice artefact</td><td>SL-7</td></tr><tr id="SL-9"><td>SL-9</td><td>Backend best-practice artefact</td><td>SL-8</td></tr><tr id="SL-10"><td>SL-10</td><td>UX and visual-standard artefact</td><td>SL-9</td></tr><tr id="SL-11"><td>SL-11</td><td>Skill quality loop</td><td>SL-10</td></tr><tr id="SL-12"><td>SL-12</td><td>Portable releases and plugins</td><td>SL-11</td></tr><tr id="SL-13"><td>SL-13</td><td>Compatibility rollout and documentation</td><td>SL-12</td></tr></tbody></table></div><p>Exact implementation prompts and acceptance scopes are in <a href="workbench.json">workbench.json</a>. No implementation cards are created or approved by this concept delivery.</p>
+<p>The complete prompts below mirror <code>implementationTasks</code> in <a href="workbench.json">workbench.json</a>, in delivery order. Expand any slice to read its full scope, deliverables, acceptance criteria and verification instructions. Dependency arrays in that JSON are the scheduler contract. The HTML copy makes the full card sequence reviewable from this entrypoint alone.</p>
+<details data-implementation-slice="SL-1"><summary>SL-1: Skill and receipt contracts</summary><p><b>Scheduler dependencies:</b> None.</p><pre data-implementation-prompt="SL-1"># SL-1: Skill and receipt contracts
+
+Source: docs/portable-skill-library/index.html (AGT-4032). Read the Dossier, its evidence register, AGENTS.md and the indexed domain contracts for the touched area. Use each recommendation as the working choice unless a recorded operator decision selects another option; record the implemented options. Load fitting available skills. This is one promoted implementation slice, not authority to implement the whole programme. Keep task/workspace mutations behind the application API and Git ownership with the platform. Orchestration transition rules remain in orchestration-decisions/ and hosts apply typed decisions through the existing boundary. Do not add em dashes. Update affected contracts and docs index rows where required; avoid unrelated restyling.
+
+## Scope
+
+Package schemas, migration map and documentation contracts.
+
+Primary area: docs/app/schemas/, docs/concepts/skills-architecture.md, docs/quality/, docs/start/README.md; existing enrichment model contracts.
+
+## Deliver
+
+Define the Studio skill sidecar, release manifest, lock and receipt schemas with stable qualified ids, semantic versions, canonical file hashes, typed triggers, instruction delivery closure, dependencies, conflicts, scopes, source revisions and retention. Keep portable SKILL.md metadata and sentinel compatibility. Document proposed budgets and the 5,000-token migration procedure class. Start from the nine-slice AGT-3465 mapping in docs/portable-skill-library/review-map.md. Inspect the complete AGT-3465 card through the application API, reconcile that mapping and its external AGT-3464 pilot dependency with the live card, and map each criterion to this programme; preserve its original decision history and do not silently close it. Reconcile the prior portable concept, guide applicability and the parallel Access/one-look standard ownership. Add this Dossier to the docs index now that the promoted implementation scope permits editing that index. Define missing/unknown/native-only versus managed delivery precisely. Do not implement selection, screens or runtime state changes in this slice.
+
+## Acceptance
+
+- Schemas validate minimal and full packages and reject conflicting ids, unsafe paths, dependency cycles and missing instructional closure files.
+- A reviewed migration table covers all five legacy skills, guide blocks, AGT-3465 criteria and the old concept, with any unavailable source explicitly identified.
+- Documented authority and retention rules preserve core permissions, mandatory policy, historical receipts and direct-session lookup.
+
+## Verification and result
+
+Use relevant deterministic contract/unit tests and meaningful integration cases. For behavioral or visual frontend work run relevant Playwright coverage and retain screenshots in the task results folder. Runtime prompt changes need the matching live probe or a precise limitation. Keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green if the decision boundary is touched. Report changed files, verification, documentation updates, selected Dossier options and remaining limits. Record this bounded slice in the Dossier implementation log.
+</pre></details>
+<details data-implementation-slice="SL-2"><summary>SL-2: Immutable registry and pins</summary><p><b>Scheduler dependencies:</b> SL-1.</p><pre data-implementation-prompt="SL-2"># SL-2: Immutable registry and pins
+
+Source: docs/portable-skill-library/index.html (AGT-4032). Read the Dossier, its evidence register, AGENTS.md and the indexed domain contracts for the touched area. Use each recommendation as the working choice unless a recorded operator decision selects another option; record the implemented options. Load fitting available skills. This is one promoted implementation slice, not authority to implement the whole programme. Keep task/workspace mutations behind the application API and Git ownership with the platform. Orchestration transition rules remain in orchestration-decisions/ and hosts apply typed decisions through the existing boundary. Do not add em dashes. Update affected contracts and docs index rows where required; avoid unrelated restyling.
+
+## Scope
+
+Registry resolution across product, workspace and project scopes.
+
+Primary area: .agents/skills/ release metadata, backend skill catalogue and activation APIs, application-owned state contracts.
+
+## Deliver
+
+Implement bounded catalogue discovery and content-addressed immutable package reads under SL-1. Import the five existing skills without rewriting their instruction meaning. Resolve product, workspace and project activations to exact version+digest locks. Explicit replaces and extends relationships take precedence; equal short names alone do not shadow. Validate upstream compatibility, source revisions, dependency graphs and runtime capability requirements. Add APIs for draft/release metadata, activation preview and explicit lock adoption using existing authorization and workspace filesystem contracts. Retain referenced retired versions and preserve in-flight pins across upgrades. Package adoption executes no scripts. Keep runtime selection disabled until its slice is delivered.
+
+## Acceptance
+
+- Same id/version with different bytes is rejected; exact retained pins replay after product upgrade or local fork.
+- Two projects share one workspace package while one extends it, with distinct provenance and no cross-project knowledge leak.
+- Archive and path-containment cases, invalid manifests, conflicting replacements and missing dependencies have bounded typed errors.
+
+## Verification and result
+
+Use relevant deterministic contract/unit tests and meaningful integration cases. For behavioral or visual frontend work run relevant Playwright coverage and retain screenshots in the task results folder. Runtime prompt changes need the matching live probe or a precise limitation. Keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green if the decision boundary is touched. Report changed files, verification, documentation updates, selected Dossier options and remaining limits. Record this bounded slice in the Dossier implementation log.
+</pre></details>
+<details data-implementation-slice="SL-3"><summary>SL-3: Typed selection and budgets</summary><p><b>Scheduler dependencies:</b> SL-2.</p><pre data-implementation-prompt="SL-3"># SL-3: Typed selection and budgets
+
+Source: docs/portable-skill-library/index.html (AGT-4032). Read the Dossier, its evidence register, AGENTS.md and the indexed domain contracts for the touched area. Use each recommendation as the working choice unless a recorded operator decision selects another option; record the implemented options. Load fitting available skills. This is one promoted implementation slice, not authority to implement the whole programme. Keep task/workspace mutations behind the application API and Git ownership with the platform. Orchestration transition rules remain in orchestration-decisions/ and hosts apply typed decisions through the existing boundary. Do not add em dashes. Update affected contracts and docs index rows where required; avoid unrelated restyling.
+
+## Scope
+
+Extend pre-prompt-enrichment with deterministic skill selection.
+
+Primary area: backend/Features/Runner/IntakeRunner.cs, PromptEnrichmentService.cs, pipeline policy settings and matching tests.
+
+## Deliver
+
+Extend the existing enrichment service and report rather than creating a parallel prompt selector. Collect task kind/mode, stack, explicit requests, role requirements and forecast paths with base SHA and confidence. Consume the dispatcher forecast contract where available; cited paths and fixed kind sets work without it. Replace summary-only guide delivery for migrated packages with exact closure resolution. Apply typed triggers, required dependencies, authority/conflict rules, stable ranking, 6,000 default and 8,000 hard added-token limits with model-reserve constraints. Persist all included and rejected candidates and every omission reason. Keep an explicit legacy-summary compatibility lane and measure mismatches in shadow before activation. Add the optional single bounded classifier only for ambiguity, including cost, deterministic validation, cache key and fallback. Any admission consequence belongs in the existing decision library/gateway.
+
+## Acceptance
+
+- A backend task containing card, token and design prose does not spuriously select frontend implementation guidance.
+- Three relevant small skills can fit; required overflow or mandatory conflict produces an explicit preparation failure; no truncation or silent required omission.
+- Identical inputs/locks give identical selection and order; missing forecast and invalid classifier produce conservative declared outcomes.
+- Legacy enrichment report readers remain compatible and selector input/output usage is charged once.
+
+## Verification and result
+
+Use relevant deterministic contract/unit tests and meaningful integration cases. For behavioral or visual frontend work run relevant Playwright coverage and retain screenshots in the task results folder. Runtime prompt changes need the matching live probe or a precise limitation. Keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green if the decision boundary is touched. Report changed files, verification, documentation updates, selected Dossier options and remaining limits. Record this bounded slice in the Dossier implementation log.
+</pre></details>
+<details data-implementation-slice="SL-4"><summary>SL-4: Prompt and resource transport</summary><p><b>Scheduler dependencies:</b> SL-3.</p><pre data-implementation-prompt="SL-4"># SL-4: Prompt and resource transport
+
+Source: docs/portable-skill-library/index.html (AGT-4032). Read the Dossier, its evidence register, AGENTS.md and the indexed domain contracts for the touched area. Use each recommendation as the working choice unless a recorded operator decision selects another option; record the implemented options. Load fitting available skills. This is one promoted implementation slice, not authority to implement the whole programme. Keep task/workspace mutations behind the application API and Git ownership with the platform. Orchestration transition rules remain in orchestration-decisions/ and hosts apply typed decisions through the existing boundary. Do not add em dashes. Update affected contracts and docs index rows where required; avoid unrelated restyling.
+
+## Scope
+
+Canonical bundle compilation and local/remote materialization.
+
+Primary area: Runner prompt composition, CLI execution adapters, remote run payload and resource transfer contracts.
+
+## Deliver
+
+Compile full SKILL.md plus all declared instructional references to canonical UTF-8 LF text with hashes. Carry exact resolved text, receipt and bounded content-addressed resources to local and remote runs; never resolve latest on a remote host. Materialize under the run-owned worktree context directory outside native skill discovery and exclude generated resources from task diffs through the platform. Implement identical semantic delivery for Claude, Codex, Copilot and Gemini supported adapters without changing permission flags. Use supported stdin/message input or a safe process argument API with length checks. Introduce stable policy/skill prefix ordering before variable task metadata, preserve the authored task verbatim and keep selection reasons and absolute paths out of the shared prefix. Record unsupported/truncated transport as failed delivery. Do not edit user CLI configuration or grant tool permissions.
+
+## Acceptance
+
+- Fake transports verify byte-identical full closures for all supported adapters, including multiline text, resource bindings and platform newline behavior.
+- Remote corruption, path traversal, missing file, excessive archive size or receipt persistence failure prevents launch with a named reason.
+- Prompt-equivalence tests preserve task priority, core guardrails and permission settings; opt-in live probes for available CLIs report unsupported ones explicitly.
+- Diff inventory proves generated context cannot enter the task result commit.
+
+## Verification and result
+
+Use relevant deterministic contract/unit tests and meaningful integration cases. For behavioral or visual frontend work run relevant Playwright coverage and retain screenshots in the task results folder. Runtime prompt changes need the matching live probe or a precise limitation. Keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green if the decision boundary is touched. Report changed files, verification, documentation updates, selected Dossier options and remaining limits. Record this bounded slice in the Dossier implementation log.
+</pre></details>
+<details data-implementation-slice="SL-5"><summary>SL-5: Review and continuation context</summary><p><b>Scheduler dependencies:</b> SL-4.</p><pre data-implementation-prompt="SL-5"># SL-5: Review and continuation context
+
+Source: docs/portable-skill-library/index.html (AGT-4032). Read the Dossier, its evidence register, AGENTS.md and the indexed domain contracts for the touched area. Use each recommendation as the working choice unless a recorded operator decision selects another option; record the implemented options. Load fitting available skills. This is one promoted implementation slice, not authority to implement the whole programme. Keep task/workspace mutations behind the application API and Git ownership with the platform. Orchestration transition rules remain in orchestration-decisions/ and hosts apply typed decisions through the existing boundary. Do not add em dashes. Update affected contracts and docs index rows where required; avoid unrelated restyling.
+
+## Scope
+
+Deliver pinned skills to review, fix, concept and role invocations.
+
+Primary area: RemoteReviewPlanBuilder, aspect/review prompts, fix and concept framing, persona invocation context.
+
+## Deliver
+
+Use the shared compiler for review aspects, fixes, concept work and model-backed dispatcher/guardian sessions. Reviews receive exact implementation versions relevant to the aspect plus independent evidence/review procedure and stable criterion ids. Fix rounds retain origin pins and findings; explicit new-version adoption records the reason and prior digest. Concepts select Dossier/evidence and relevant project knowledge without activating implementation guidance from prose. Model-free decisions record no prompt applicability. Add explicit context-extension receipts for newly discovered work areas where supported, with a typed missing-context path otherwise. Keep persona grants, budgets and deterministic scheduling outside skill authority. Read the existing prompt contract and run matching live probes for touched runtime prompts, or report the exact environment limitation.
+
+## Acceptance
+
+- Review cannot retroactively fail a task against a skill version released after implementation.
+- Fix, resumed and newly spawned attempts preserve or explicitly supersede pins without double-counting a resume as a new delivery.
+- Concept and role cases have correct required sets and no new execution permissions.
+- Criterion-specific findings distinguish requirements, advice and not-applicable scope.
+
+## Verification and result
+
+Use relevant deterministic contract/unit tests and meaningful integration cases. For behavioral or visual frontend work run relevant Playwright coverage and retain screenshots in the task results folder. Runtime prompt changes need the matching live probe or a precise limitation. Keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green if the decision boundary is touched. Report changed files, verification, documentation updates, selected Dossier options and remaining limits. Record this bounded slice in the Dossier implementation log.
+</pre></details>
+<details data-implementation-slice="SL-6"><summary>SL-6: Skill ledger and projections</summary><p><b>Scheduler dependencies:</b> SL-5.</p><pre data-implementation-prompt="SL-6"># SL-6: Skill ledger and projections
+
+Source: docs/portable-skill-library/index.html (AGT-4032). Read the Dossier, its evidence register, AGENTS.md and the indexed domain contracts for the touched area. Use each recommendation as the working choice unless a recorded operator decision selects another option; record the implemented options. Load fitting available skills. This is one promoted implementation slice, not authority to implement the whole programme. Keep task/workspace mutations behind the application API and Git ownership with the platform. Orchestration transition rules remain in orchestration-decisions/ and hosts apply typed decisions through the existing boundary. Do not add em dashes. Update affected contracts and docs index rows where required; avoid unrelated restyling.
+
+## Scope
+
+Durable delivery events and reverse usage/outcome APIs.
+
+Primary area: Shared enrichment/usage models, task detail read APIs, token ledger and workspace projections.
+
+## Deliver
+
+Persist selection, bundle, delivery, usage and outcome-link events from the existing audited enrichment seam. Use invocation/bundle/item idempotency and existing attempt fence; record prepared, sent, failed and native-observed separately. Store retrievable immutable text and resource archives. Join exact skill versions to relevant review findings, remediation rounds, result SHA and terminal acceptance authority. Expose paged card-receipt and library usage read models with project/kind/mode/version/date filters, permissions and complete denominators. Keep cards, invocations and requests distinct. Legacy imports remain legacy-summary. Skill-attributed input is already in the run total, so do not add it again. Price attribution is dated and marked estimated or unknown when provider boundaries cannot establish it.
+
+## Acceptance
+
+- Replayed events and transport retries do not inflate delivery counts; prepared-only and failed events do not count as loads.
+- Fixtures demonstrate correct unique-card reach, terminal acceptance denominator, pending/censored counts, applicable review findings and rework per card.
+- Scoped library sums reconcile to child projections and do not reveal another project beyond caller access.
+- Null cache/cost data remains unknown; imported legacy summaries never become full delivery evidence.
+
+## Verification and result
+
+Use relevant deterministic contract/unit tests and meaningful integration cases. For behavioral or visual frontend work run relevant Playwright coverage and retain screenshots in the task results folder. Runtime prompt changes need the matching live probe or a precise limitation. Keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green if the decision boundary is touched. Report changed files, verification, documentation updates, selected Dossier options and remaining limits. Record this bounded slice in the Dossier implementation log.
+</pre></details>
+<details data-implementation-slice="SL-7"><summary>SL-7: Card and library visibility</summary><p><b>Scheduler dependencies:</b> SL-6.</p><pre data-implementation-prompt="SL-7"># SL-7: Card and library visibility
+
+Source: docs/portable-skill-library/index.html (AGT-4032). Read the Dossier, its evidence register, AGENTS.md and the indexed domain contracts for the touched area. Use each recommendation as the working choice unless a recorded operator decision selects another option; record the implemented options. Load fitting available skills. This is one promoted implementation slice, not authority to implement the whole programme. Keep task/workspace mutations behind the application API and Git ownership with the platform. Orchestration transition rules remain in orchestration-decisions/ and hosts apply typed decisions through the existing boundary. Do not add em dashes. Update affected contracts and docs index rows where required; avoid unrelated restyling.
+
+## Scope
+
+Show both directions from immutable delivery receipts.
+
+Primary area: Frontend task Docs/context area and workspace skill library, relevant backend read adapters and frontend documentation.
+
+## Deliver
+
+Build the proposed card journey and library view from SL-6 APIs. Every invocation shows included skills, version/digest, reason/evidence, mandatory flag, complete text/resources, token count/quality and budget decisions. Allow following a skill version to its cards and projects, and a card to its exact receipt. Library overview includes owners, scope, releases, reach, delivery count, acceptance denominators, relevant findings, rework and evaluation status. Keep native observations and legacy summaries separate. Use the existing design tokens, shared components, flat admin grammar, source-of-truth lane presentation and current UI standards. Do not make a review score look like causal proof of benefit. Load applicable frontend/UX skills available at implementation time and the hard rules.
+
+## Acceptance
+
+- Relevant Playwright cases cover both card-to-skill and skill-to-card navigation, filters, permission scope, omitted-budget and unknown-data states.
+- Light and dark desktop/phone screenshots prove the touched surfaces; keyboard focus and panel scrolling work.
+- Visible totals match filtered children, including pagination semantics; no colored left accent bars or local status primitives.
+- No claim of native delivery is inferred from a catalogue listing or sentinel echo.
+
+## Verification and result
+
+Use relevant deterministic contract/unit tests and meaningful integration cases. For behavioral or visual frontend work run relevant Playwright coverage and retain screenshots in the task results folder. Runtime prompt changes need the matching live probe or a precise limitation. Keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green if the decision boundary is touched. Report changed files, verification, documentation updates, selected Dossier options and remaining limits. Record this bounded slice in the Dossier implementation log.
+</pre></details>
+<details data-implementation-slice="SL-8"><summary>SL-8: Frontend best-practice artefact</summary><p><b>Scheduler dependencies:</b> SL-7.</p><pre data-implementation-prompt="SL-8"># SL-8: Frontend best-practice artefact
+
+Source: docs/portable-skill-library/index.html (AGT-4032). Read the Dossier, its evidence register, AGENTS.md and the indexed domain contracts for the touched area. Use each recommendation as the working choice unless a recorded operator decision selects another option; record the implemented options. Load fitting available skills. This is one promoted implementation slice, not authority to implement the whole programme. Keep task/workspace mutations behind the application API and Git ownership with the platform. Orchestration transition rules remain in orchestration-decisions/ and hosts apply typed decisions through the existing boundary. Do not add em dashes. Update affected contracts and docs index rows where required; avoid unrelated restyling.
+
+## Scope
+
+Author and evaluate the first engineering skill.
+
+Primary area: .agents/skills/frontend-best-practice/, package release evidence and source guide mappings.
+
+## Deliver
+
+Create a separately versioned frontend-best-practice package under SL-1 with typed Angular/path/task triggers and explicit exclusions. Include the content and behavioral evidence specified in the Initial skills section: component/state boundaries, identity, async states, shared tokens/components, accessibility and meaningful verification. Cite current repository source revisions and depend on project UI policy without duplicating an independently maintained rulebook. Target about 1,600 tokens in the complete instruction closure; report real provider counts or the labelled fallback. Write positive/negative routing fixtures and representative behavior comparisons. Publish a candidate with owner, licence, hashes and review evidence; broad default activation waits for SL-11 evaluation.
+
+## Acceptance
+
+- Backend prose mentioning UI, card or token does not route to this skill; actual Angular component work does.
+- Closure contains all requirements and remains within the release budget without summary truncation.
+- Behavioral evidence covers row identity/focus, stale async response and changed user journey, with no content loss.
+- The package has an independent release identity and retrievable source provenance.
+
+## Verification and result
+
+Use relevant deterministic contract/unit tests and meaningful integration cases. For behavioral or visual frontend work run relevant Playwright coverage and retain screenshots in the task results folder. Runtime prompt changes need the matching live probe or a precise limitation. Keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green if the decision boundary is touched. Report changed files, verification, documentation updates, selected Dossier options and remaining limits. Record this bounded slice in the Dossier implementation log.
+</pre></details>
+<details data-implementation-slice="SL-9"><summary>SL-9: Backend best-practice artefact</summary><p><b>Scheduler dependencies:</b> SL-8.</p><pre data-implementation-prompt="SL-9"># SL-9: Backend best-practice artefact
+
+Source: docs/portable-skill-library/index.html (AGT-4032). Read the Dossier, its evidence register, AGENTS.md and the indexed domain contracts for the touched area. Use each recommendation as the working choice unless a recorded operator decision selects another option; record the implemented options. Load fitting available skills. This is one promoted implementation slice, not authority to implement the whole programme. Keep task/workspace mutations behind the application API and Git ownership with the platform. Orchestration transition rules remain in orchestration-decisions/ and hosts apply typed decisions through the existing boundary. Do not add em dashes. Update affected contracts and docs index rows where required; avoid unrelated restyling.
+
+## Scope
+
+Author and evaluate the second engineering skill.
+
+Primary area: .agents/skills/backend-best-practice/, package release evidence and .NET source guide mappings.
+
+## Deliver
+
+Create the backend-best-practice candidate with .NET/C#/API applicability and exclusions. Include typed contracts/errors, feature ownership, cancellation, idempotency, concurrency, authorization, persistence boundaries, correlation and deterministic meaningful tests. Preserve orchestration decision-library authority, API-only task mutations and platform-owned Git. Include runtime-generated credential-shaped fixture guidance. Target about 1,400 closure tokens. Reuse current backend domain and style knowledge with pinned section revisions and avoid repeating generic coding advice. Provide routing fixtures and behavioral cases for duplicate requests, cancellation and partial failure. Publish candidate metadata and review evidence; leave general activation to SL-11.
+
+## Acceptance
+
+- Declared stack/path triggers and exclusions pass representative positive and negative cases.
+- Duplicate-request, authorization and cancellation scenarios are behaviorally assessed, and boundary guard tests remain green where touched.
+- Source mappings, complete closure count, licence, owner and immutable release evidence are present.
+- Skill instructions do not prescribe a second scheduler or direct workspace mutation.
+
+## Verification and result
+
+Use relevant deterministic contract/unit tests and meaningful integration cases. For behavioral or visual frontend work run relevant Playwright coverage and retain screenshots in the task results folder. Runtime prompt changes need the matching live probe or a precise limitation. Keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green if the decision boundary is touched. Report changed files, verification, documentation updates, selected Dossier options and remaining limits. Record this bounded slice in the Dossier implementation log.
+</pre></details>
+<details data-implementation-slice="SL-10"><summary>SL-10: UX and visual-standard artefact</summary><p><b>Scheduler dependencies:</b> SL-9.</p><pre data-implementation-prompt="SL-10"># SL-10: UX and visual-standard artefact
+
+Source: docs/portable-skill-library/index.html (AGT-4032). Read the Dossier, its evidence register, AGENTS.md and the indexed domain contracts for the touched area. Use each recommendation as the working choice unless a recorded operator decision selects another option; record the implemented options. Load fitting available skills. This is one promoted implementation slice, not authority to implement the whole programme. Keep task/workspace mutations behind the application API and Git ownership with the platform. Orchestration transition rules remain in orchestration-decisions/ and hosts apply typed decisions through the existing boundary. Do not add em dashes. Update affected contracts and docs index rows where required; avoid unrelated restyling.
+
+## Scope
+
+Author the content-first UX standard and pilot adoption seam.
+
+Primary area: .agents/skills/ux-visual-standard/, project UI-policy dependency and visual comparison fixtures.
+
+## Deliver
+
+Create the third candidate using the Initial skills section. Put user task and information completeness first; include hierarchy, density, action semantics, disclosure, accessibility, status and feedback, current hard rules and flat admin grammar. Target about 1,800 closure tokens. The parallel Access/one-look work owns new standard decisions: if its approved revision is available, bind it by revision and test it; otherwise release a current-baseline candidate with an explicit unadopted pilot reference, not a fabricated dependency or an indefinite wait. Preserve useful capture/critique guidance as a narrow procedure. Turn the owner&#x27;s content-depth blind comparison into a reproducible protected fixture using available original artefacts or a clearly labelled new representative case. Do not universalize landing-page aesthetics.
+
+## Acceptance
+
+- A content-heavy concept is not forced into implementation or decorative-layout instructions and retains every required acceptance item.
+- UI behavior, relevant states, keyboard use, content coverage and both themes are included in evaluation evidence.
+- Approved versus candidate visual standards are visibly distinct in package provenance and selection.
+- No unseen owner comparison data is presented as a replicated measurement.
+
+## Verification and result
+
+Use relevant deterministic contract/unit tests and meaningful integration cases. For behavioral or visual frontend work run relevant Playwright coverage and retain screenshots in the task results folder. Runtime prompt changes need the matching live probe or a precise limitation. Keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green if the decision boundary is touched. Report changed files, verification, documentation updates, selected Dossier options and remaining limits. Record this bounded slice in the Dossier implementation log.
+</pre></details>
+<details data-implementation-slice="SL-11"><summary>SL-11: Skill quality loop</summary><p><b>Scheduler dependencies:</b> SL-10.</p><pre data-implementation-prompt="SL-11"># SL-11: Skill quality loop
+
+Source: docs/portable-skill-library/index.html (AGT-4032). Read the Dossier, its evidence register, AGENTS.md and the indexed domain contracts for the touched area. Use each recommendation as the working choice unless a recorded operator decision selects another option; record the implemented options. Load fitting available skills. This is one promoted implementation slice, not authority to implement the whole programme. Keep task/workspace mutations behind the application API and Git ownership with the platform. Orchestration transition rules remain in orchestration-decisions/ and hosts apply typed decisions through the existing boundary. Do not add em dashes. Update affected contracts and docs index rows where required; avoid unrelated restyling.
+
+## Scope
+
+Blinded comparison, review feedback and controlled activation.
+
+Primary area: Skill evaluation tooling, review outcome attribution, library evaluation projection and feedback-task API integration.
+
+## Deliver
+
+Implement the Quality section as a reproducible workflow for optional skill presence or version comparisons. Preserve mandatory policy in all arms, freeze task/base/model/tool/reviewer conditions, isolate outputs and blind labels. Establish an initial stratified screen of at least 20 matched pairs while reporting uncertainty rather than a guaranteed statistical claim. Correctness, permission safety and content completeness precede aesthetics. Link independent review findings and owner feedback to package criterion/version, classify selection versus content versus delivery failures, and preview a normal revision card through the API. Record candidate/released/paused status and lock activation/rollback with domain maintainer attribution. Evaluate SL-8 through SL-10 candidates and activate only the supported scopes.
+
+## Acceptance
+
+- A deliberately harmful candidate that improves visual compliance but drops required content fails promotion.
+- No mandatory policy is withheld; arm leakage, missing outputs and evaluator disagreements remain visible.
+- Every reported outcome has a cohort, denominator, version, evaluator and uncertainty; usage alone cannot trigger release.
+- Feedback creates a reviewed draft/revision path and cannot edit a published package in place.
+
+## Verification and result
+
+Use relevant deterministic contract/unit tests and meaningful integration cases. For behavioral or visual frontend work run relevant Playwright coverage and retain screenshots in the task results folder. Runtime prompt changes need the matching live probe or a precise limitation. Keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green if the decision boundary is touched. Report changed files, verification, documentation updates, selected Dossier options and remaining limits. Record this bounded slice in the Dossier implementation log.
+</pre></details>
+<details data-implementation-slice="SL-12"><summary>SL-12: Portable releases and plugins</summary><p><b>Scheduler dependencies:</b> SL-11.</p><pre data-implementation-prompt="SL-12"># SL-12: Portable releases and plugins
+
+Source: docs/portable-skill-library/index.html (AGT-4032). Read the Dossier, its evidence register, AGENTS.md and the indexed domain contracts for the touched area. Use each recommendation as the working choice unless a recorded operator decision selects another option; record the implemented options. Load fitting available skills. This is one promoted implementation slice, not authority to implement the whole programme. Keep task/workspace mutations behind the application API and Git ownership with the platform. Orchestration transition rules remain in orchestration-decisions/ and hosts apply typed decisions through the existing boundary. Do not add em dashes. Update affected contracts and docs index rows where required; avoid unrelated restyling.
+
+## Scope
+
+Export, import and customer-controlled package adoption.
+
+Primary area: Product release packaging, workspace package API, import/export manifests and optional plugin container contract.
+
+## Deliver
+
+Implement deterministic archive export/import for exact packages and required dependencies, with licences, source provenance and review/evaluation receipts. Product releases ship baseline locks; private installation transfer uses the same format without a marketplace. A plugin manifest may group skills, assets and tool/connector requirements while keeping credentials and grants separate. Enforce hashes/signature or explicit local trust, schema and compatibility checks, containment, size bounds and a dry-run adoption preview. Customer forks retain upstream identity; upstream updates offer a three-way comparison and explicit lock adoption. Export private project knowledge only within explicit scope. Retain historical referenced packages and support rollback.
+
+## Acceptance
+
+- Round-trip export/import into an isolated installation preserves instruction and resource hashes offline.
+- Malformed, unsigned-unadopted, incompatible, oversized and path-traversing packages do not activate or execute.
+- Customer overrides survive product upgrade and produce distinct receipt lineage.
+- No credentials, private card content, usage history or enabled connector grants leak through default export.
+
+## Verification and result
+
+Use relevant deterministic contract/unit tests and meaningful integration cases. For behavioral or visual frontend work run relevant Playwright coverage and retain screenshots in the task results folder. Runtime prompt changes need the matching live probe or a precise limitation. Keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green if the decision boundary is touched. Report changed files, verification, documentation updates, selected Dossier options and remaining limits. Record this bounded slice in the Dossier implementation log.
+</pre></details>
+<details data-implementation-slice="SL-13"><summary>SL-13: Compatibility rollout and documentation</summary><p><b>Scheduler dependencies:</b> SL-12.</p><pre data-implementation-prompt="SL-13"># SL-13: Compatibility rollout and documentation
+
+Source: docs/portable-skill-library/index.html (AGT-4032). Read the Dossier, its evidence register, AGENTS.md and the indexed domain contracts for the touched area. Use each recommendation as the working choice unless a recorded operator decision selects another option; record the implemented options. Load fitting available skills. This is one promoted implementation slice, not authority to implement the whole programme. Keep task/workspace mutations behind the application API and Git ownership with the platform. Orchestration transition rules remain in orchestration-decisions/ and hosts apply typed decisions through the existing boundary. Do not add em dashes. Update affected contracts and docs index rows where required; avoid unrelated restyling.
+
+## Scope
+
+Enable the managed skills path with measured legacy retirement.
+
+Primary area: Pipeline feature rollout, live CLI compatibility probes, documentation index and legacy guide/native adapter migration.
+
+## Deliver
+
+Run the integration matrix for local and remote implementation, aspect review, fixes, concepts and role sessions across installed supported CLI versions. Record unavailable providers explicitly. Compare legacy selector and managed selector in shadow, reconcile required coverage and budget omissions, then enable managed delivery by reviewed project lock. Validate all three cost scenarios against real tokenizer counts and available usage telemetry, preserving unknown cache attribution. Publish an operator rollback procedure and domain documentation, update the earlier skills architecture and guide authoring contract, and retire only duplicate summary paths whose replacements are proven. Reconcile AGT-3465 acceptance mapping with the final implementation and the adopted Access/one-look standard. Keep direct CLI lookup working.
+
+## Acceptance
+
+- Every supported matrix cell has a full transport receipt and correct pinned skills, or a named unsupported state without an unenriched success claim.
+- Controlled pilot shows no missing mandatory guidance, unexplained omissions or billing double count.
+- Rollback restores a prior lock for new runs and leaves in-flight and historical receipts intact.
+- Documentation clearly states shipped capability, remaining limits, AGT-3465 disposition and how customers create and share skills.
+
+## Verification and result
+
+Use relevant deterministic contract/unit tests and meaningful integration cases. For behavioral or visual frontend work run relevant Playwright coverage and retain screenshots in the task results folder. Runtime prompt changes need the matching live probe or a precise limitation. Keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green if the decision boundary is touched. Report changed files, verification, documentation updates, selected Dossier options and remaining limits. Record this bounded slice in the Dossier implementation log.
+</pre></details>
 <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
 <!-- agent-studio:implementation-log:end -->

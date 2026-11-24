@@ -60,6 +60,8 @@ The authoritative source is the complete `implementationTasks` array in
 [workbench.json](workbench.json). The entries below mirror its order, titles,
 `dependsOn` arrays and acceptance criteria. Every entry contains full
 `promptMarkdown`, including scope, delivery, acceptance and verification.
+The HTML Implementation section now embeds every prompt verbatim in an
+expandable slice, and the verifier checks parity against the JSON source.
 No prompt is a placeholder or a request to implement the whole programme.
 The sequence is SL-1, then SL-2 through SL-13, each depending on its predecessor.
 This intentionally serializes changes to enrichment, transport, ledger,

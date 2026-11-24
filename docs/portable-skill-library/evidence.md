@@ -2,7 +2,7 @@
 
 As of 24 November 2026. Source card: AGT-4032. This register separates repository observations, owner-supplied facts, proposed contracts and planning calculations. It does not certify operator acceptance or a product implementation.
 
-Repository source revision: `128bc82a08d202ac077756ed57a6188fa57b2eca`. The inspected product files were unchanged in this task.
+Repository source revision rechecked for this repair: `4aff77820f8dbe8b265db069d8340aefb09e1ad1`. Product files were inspected read-only and remain unchanged in this task.
 
 ## Repository observations
 
@@ -23,7 +23,24 @@ Repository source revision: `128bc82a08d202ac077756ed57a6188fa57b2eca`. The insp
 
 ## Review repair
 
-The 24 November review repair adds the requirement-to-section map, the thirteen-slice acceptance inventory and the reproducible verifier. The existing article already carried the four required markers and the complete workbench array. The repair restores the missing task deliverables reference; this observation does not establish why the earlier reviewer lacked the material. The local AGT-3465 Dossier is now inspected and its nine slices mapped in [review-map.md](review-map.md#agt-3465-continuity). Its live card remains unretrieved. OpenAI API pricing/caching and Claude prompt-caching reference rates were rechecked against the linked official pages; the existing cost inputs remain valid for their stated reference routes.
+The initial collected results directory in this repair contained only
+`preparation-manifest.json`; `results/deliverables.md` and the prior verification
+artifacts named by `status.md` were absent. This is an observed handoff gap,
+not proof of the cause of either earlier review finding. The repair retains
+the canonical repository Dossier, embeds all thirteen full implementation
+prompts in the HTML entrypoint, and verifies them against the JSON source.
+A byte-identical Dossier copy, a readable full-prompt inventory, structural
+verification and a file/hash manifest are collected under the task's absolute
+results directory. Both task-file references name the canonical repository
+entrypoint. No prior absent verification artifact is claimed as new evidence.
+
+The local AGT-3465 Dossier and its nine slices remain mapped in
+[review-map.md](review-map.md#agt-3465-continuity). Its live card remains
+unretrieved; the API failure below belongs to the prior inspection.
+The current source checks reconfirmed the enrichment limits, selection,
+summary rendering and report seam. Official OpenAI pricing/caching and Claude
+caching pages were reopened; the stated reference-route rates remain the
+planning inputs. This is not a live cache measurement.
 
 ## Owner input
 
@@ -52,7 +69,7 @@ These are entrypoint-only character estimates. References, scripts, wrappers and
 
 ## External primary references
 
-All were fetched or opened during this run. Links are reference contracts, not pinned production price records.
+All were fetched or opened again during this repair on 24 November 2026. Links are reference contracts, not pinned production price records.
 
 - [Official OpenAI skills documentation](https://developers.openai.com/codex/skills): portable SKILL.md, resources, native discovery and the distinction between skills and plugin packaging. Studio chooses its own managed distribution; the provider's preferred marketplace/plugin route is not a requirement here.
 - [OpenAI API pricing](https://developers.openai.com/api/docs/pricing): Standard reference rates used in the planning model. Tier and context length matter; a subscription is not API billing.
