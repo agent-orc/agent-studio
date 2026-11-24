@@ -198,7 +198,8 @@
 
     .task-card__header {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      /* AGT-4034: the key is first and never shrinks; the signals take the rest. */
+      grid-template-columns: max-content minmax(0, 1fr);
       align-items: center;
       gap: var(--studio-spacing-2);
       min-height: 22px;
@@ -208,10 +209,13 @@
       display: inline-flex;
       align-items: center;
       justify-content: flex-end;
+      flex-wrap: wrap;
+      row-gap: 2px;
       gap: var(--studio-spacing-1);
       min-width: 0;
     }
     .task-card__project {
+      flex: 0 1 auto;
       display: inline-flex;
       align-items: center;
       gap: var(--studio-spacing-2);
@@ -247,35 +251,12 @@
       white-space: nowrap;
       min-width: 0;
     }
+    /* AGT-4034: the identity chip is the first thing to give way; it keeps a
+       small floor and ends in an ellipsis. */
     .task-card__owner-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      height: 22px;
-      padding: 0 6px;
-      border-radius: 7px;
-      font-size: 10px;
-      font-weight: 700;
-      line-height: 1;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.10);
-      color: var(--studio-fg-dim);
-      max-width: min(220px, calc(100vw - 150px));
-      overflow: hidden;
-      font-variant-numeric: tabular-nums;
-    }
-    .task-card__owner-icon,
-    .task-card__owner-emoji {
-      font-size: 11px;
-      line-height: 1;
-      opacity: 0.72;
-    }
-    .task-card__owner-name {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      min-width: 0;
-      letter-spacing: 0.02em;
+      --identity-chip-max: min(160px, 100%);
+      flex: 0 1 auto;
+      min-width: 56px;
     }
     /* Delete moved off the card into the right-click / Menu-key context menu
        (destructive row) — the hover trash button was a fehlklick-risk right

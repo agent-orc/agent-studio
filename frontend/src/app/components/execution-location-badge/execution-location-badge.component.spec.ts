@@ -111,4 +111,33 @@ describe('ExecutionLocationBadgeComponent', () => {
     }
     expect(executionLocationTone(null)).toBe('neutral');
   });
+
+  describe('host names for people (AGT-4034)', () => {
+    const RAW = 'runner_d9a38223247c41e4bab44778397c0794';
+    function render(overrides: Partial<TaskExecutionLocation>, hostNamedElsewhere = false) {
+      const fixture = TestBed.createComponent(ExecutionLocationBadgeComponent);
+      fixture.componentRef.setInput('execution', execution('remote-running', overrides));
+      fixture.componentRef.setInput('hostNamedElsewhere', hostNamedElsewhere);
+      fixture.detectChanges();
+      return { text: (fixture.nativeElement as HTMLElement).textContent ?? '', tooltip: fixture.componentInstance.tooltip() };
+    }
+
+    it('shows the display name of a raw runner id and keeps the id in the tooltip', () => {
+      const { text, tooltip } = render({ runnerId: RAW, hostDisplayName: 'agent-runner-01' });
+      expect(text).toContain('Host · agent-runner-01');
+      expect(text).not.toContain('runner_d9a3');
+      expect(tooltip).toContain(RAW);
+    });
+
+    it('shows a generated alias for a raw id without a display name', () => {
+      const { text } = render({ runnerId: RAW, hostDisplayName: null });
+      expect(text).not.toContain('runner_');
+      expect(text).toMatch(/Host · runner-[a-z]+-\d{2}/);
+    });
+
+    it('does not repeat the host when the status line names it', () => {
+      const { text } = render({ runnerId: RAW, hostDisplayName: 'agent-runner-01' }, true);
+      expect(text).not.toContain('agent-runner-01');
+    });
+  });
 });

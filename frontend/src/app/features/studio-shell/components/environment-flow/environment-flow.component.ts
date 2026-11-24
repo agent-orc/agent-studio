@@ -1,3 +1,4 @@
+import { HostNamePipe } from '../../../../components/identity-chip/host-name.pipe';
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, output, signal } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import type { TaskInfo } from '../../../../models/task.model';
@@ -21,7 +22,7 @@ interface DecisionReceipt {
 @Component({
   selector: 'app-environment-flow',
   standalone: true,
-  imports: [EnvironmentHealthOverviewComponent, ServerReadinessPanelComponent, StatusIndicatorComponent],
+  imports: [HostNamePipe, EnvironmentHealthOverviewComponent, ServerReadinessPanelComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './environment-flow.component.html',
   styleUrl: './environment-flow.component.scss',
