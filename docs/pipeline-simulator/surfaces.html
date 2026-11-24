@@ -367,7 +367,7 @@
 
   <section id="charts">
     <h2><span class="number">01</span> Charts</h2>
-    <p>Six charts sit under the world and share its time axis. A cursor on any chart moves the world to that moment. Each chart answers one of the owner's questions.</p>
+    <p>Seven charts sit under the world and share its time axis. A cursor on any chart moves the world to that moment. Each chart answers one of the owner's questions.</p>
     <figure class="breakout">
       <svg viewBox="0 0 960 370" role="img" aria-labelledby="charts-title">
         <title id="charts-title">Six small charts in two rows. Cards per hour, live solid and what-if dashed. Queue per phase as stacked areas with the gate queue tinted. A bottleneck band per hour, Integration for 15 of 21 hours. USD per hour stacked as first pass and rework. Lead time per card as dots. The weekly Claude window at 54 percent with a dashed projection of the plan to 94 percent at the reset.</title>
@@ -381,12 +381,49 @@
         <tr><td>Cards per hour</td><td>Published cards per hour; live and what-if overlaid</td><td>Throughput, and whether a change raises it</td></tr>
         <tr><td>Queue per phase</td><td>Work in progress and queue length per phase, stacked</td><td>Where cards pile up</td></tr>
         <tr><td>Bottleneck band</td><td>One cell per hour in the colour of that hour's bottleneck</td><td>Where the bottleneck is, and how it moves when a setting changes</td></tr>
+        <tr><td>Tokens over time</td><td>Million tokens per hour and cumulative tokens; first pass and rework; phase and model filters</td><td>What a wave consumes, when, and on which model</td></tr>
         <tr><td>USD per hour</td><td>List-price USD, first pass and rework stacked; filters by phase and by model</td><td>What the work costs, and how much of it is rework</td></tr>
         <tr><td>Lead time per card</td><td>One dot per card, from created to Done; p50 and p95 marked</td><td>How long a card takes, and which ones are stuck</td></tr>
         <tr><td>Weekly window</td><td>Used percent per provider, the plan's projection, and the reset</td><td>How many points a plan uses by which day</td></tr>
       </tbody>
     </table>
-    <p>The frontend has no chart library. Its charts are inline SVG (<code>quota-curve</code>, <code>workspace-token-timeline</code>, <code>operations-trend</code>). These six follow that pattern. "First pass" and "rework" follow <code>TokenUsageKindPolicy</code>: coding is first pass, and a fix round (every coding execution after the first) is rework. Reviews are split by round: the first review of a card is first pass, later ones are rework. The token analysis keeps every review under one kind, so SIM-1 adds the round number to review rows. Totals still reconcile with the token analysis.</p>
+    <p>The frontend has no chart library. Its charts are inline SVG (<code>quota-curve</code>, <code>workspace-token-timeline</code>, <code>operations-trend</code>). These seven follow that pattern. "First pass" and "rework" follow <code>TokenUsageKindPolicy</code>: coding is first pass, and a fix round (every coding execution after the first) is rework. Reviews are split by round: the first review of a card is first pass, later ones are rework. The token analysis keeps every review under one kind, so SIM-1 adds the round number to review rows. Totals still reconcile with the token analysis.</p>
+
+    <h3 id="token-timeline">Token timeline</h3>
+    <p>The seventh chart is always visible beside the USD chart on wide screens and directly above it on narrow screens. It has its own token axis. USD and quota remain separate charts. The overview figure above sketches the other six panels; this figure specifies the token panel.</p>
+    <figure class="breakout">
+      <svg viewBox="0 0 960 290" role="img" aria-labelledby="token-title token-desc">
+        <title id="token-title">Token timeline proposal, coding phase, hourly buckets</title>
+        <desc id="token-desc">Illustrative coding receipts: 42 million first-pass Claude tokens at 09:00, 2.7 million resumed Claude rework tokens and 26.6 million Codex rework tokens at 10:00. Blue is first pass; orange with hatching is rework. Model rows use the same scale. Total input plus cache read is 71.3 million. This is a specification drawing, not an installation capture.</desc>
+        <defs><pattern id="token-hatch" width="6" height="6" patternUnits="userSpaceOnUse"><path d="M0 6 L6 0" stroke="var(--article-ink)" stroke-width="0.7"/></pattern></defs>
+        <text class="d-head" x="24" y="28">Tokens over time · Coding · Input + cache read</text>
+        <text class="d-small" x="24" y="52">M tokens/hour · same 0 to 50 scale for both models</text>
+        <text class="d-text" x="80" y="78">Claude</text><text class="d-text" x="540" y="78">Codex</text>
+        <path class="d-rule" d="M80 90 H430 M80 157.5 H430 M80 225 H430 M540 90 H890 M540 157.5 H890 M540 225 H890"/>
+        <text class="d-small" x="48" y="94">50</text><text class="d-small" x="48" y="161">25</text><text class="d-small" x="55" y="229">0</text>
+        <text class="d-small" x="508" y="94">50</text><text class="d-small" x="508" y="161">25</text><text class="d-small" x="515" y="229">0</text>
+        <rect class="f-first" x="120" y="111.6" width="50" height="113.4"/><text class="d-small" x="145" y="104" text-anchor="middle">42 M</text>
+        <rect class="f-rework" x="230" y="217.71" width="50" height="7.29"/><rect x="230" y="217.71" width="50" height="7.29" fill="url(#token-hatch)"/><text class="d-small" x="255" y="210" text-anchor="middle">2.7 M</text>
+        <rect class="f-rework" x="690" y="153.18" width="50" height="71.82"/><rect x="690" y="153.18" width="50" height="71.82" fill="url(#token-hatch)"/><text class="d-small" x="715" y="145" text-anchor="middle">26.6 M</text>
+        <text class="d-small" x="145" y="246" text-anchor="middle">09:00</text><text class="d-small" x="255" y="246" text-anchor="middle">10:00</text><text class="d-small" x="365" y="246" text-anchor="middle">11:00</text>
+        <text class="d-small" x="605" y="246" text-anchor="middle">09:00</text><text class="d-small" x="715" y="246" text-anchor="middle">10:00</text><text class="d-small" x="825" y="246" text-anchor="middle">11:00</text>
+        <text class="d-small" x="24" y="275">First pass: blue · Rework: hatched orange · Total 71.3 M = 42 M first pass + 29.3 M rework</text>
+      </svg>
+      <figcaption>Proposal, not a product capture or a calibrated forecast. Three illustrative receipts explain the units and model split. Review tokens are excluded by the Coding filter; their quantity cannot be inferred from a review's USD price.</figcaption>
+    </figure>
+    <table>
+      <thead><tr><th>Contract</th><th>Rendering and calculation</th></tr></thead>
+      <tbody>
+        <tr><td>Units</td><td>Default: input plus cache-read tokens, matching the 26 to 67 million first-run anchor. A selector also exposes input, cache read, cache write, output, and all four summed. Use normalized disjoint counters so cached input is counted once. Axis says M tokens/hour; cumulative mode says M tokens since selected start (fork for a future-only run). Tooltips give exact integers and all four counters.</td></tr>
+        <tr><td>Time</td><td>UTC timestamps with local labels and timezone shown; half-open buckets [start, end), initially one hour, with 5-minute and daily options. Interval mode is a stacked column chart of bucket tokens divided by bucket hours; cumulative mode is a stacked step area. Empty complete buckets are zero; missing receipts are gaps, marked incomplete.</td></tr>
+        <tr><td>Splits</td><td>Blue first pass and orange hatched rework, with text legends. Filters combine phase and model (provider, model id and reasoning level). Group by phase or model uses labelled small multiples on the same scale; each retains the two work classes. Filtered total always equals visible first pass plus visible rework. Clearing filters restores the project total.</td></tr>
+        <tr><td>Attribution</td><td>Attribute receipt deltas to their recorded timestamps, phase and run id; de-duplicate by receipt id. If only an end-of-run receipt exists, book it at completion and label it completion-attributed. A what-if uses sampled receipts at simulated completion, labelled estimated timing; never invent a smooth live burn. Queues and CPU-only build/test gates use zero model tokens; unknown usage stays unknown.</td></tr>
+        <tr><td>Interaction</td><td>Hover, keyboard focus or scrub shows time, phase, model, round, token counters, USD and work class and moves the world to the same instant. Selecting a contribution opens its card ribbon or the shared batch receipt. Live shows recorded history; what-if shows solid history up to a labelled fork and dashed projected totals afterwards. Text badges identify both modes without colour.</td></tr>
+        <tr><td>Comparison</td><td>A and B share buckets, filters, units and scales. Show matching small multiples with A solid and B dashed outlines and a cumulative token delta in the comparison table. For 200 seeds, show median and p10 to p90 bands of totals; first pass plus rework is computed per seed before percentiles. Never sum independently calculated percentiles.</td></tr>
+        <tr><td>Checks</td><td>The drawing's Coding filter gives 42 + 2.7 + 26.6 = 71.3 M, including 29.3 M rework. Claude alone gives 44.7 M. Hourly amounts sum to the cumulative endpoint; switching to USD re-prices the same receipts without changing counters. Measured review cache-write cost share (about 95 %) does not imply 95 % of tokens. Unpriced tokens remain visible and USD is incomplete.</td></tr>
+      </tbody>
+    </table>
+
   </section>
 
   <section id="compare">
@@ -400,6 +437,7 @@
         <tr><td>Lead time p50 / p95</td><td class="num">611 / 1,034 min</td><td class="num">268 / 462 min</td><td class="num">−56 %</td></tr>
         <tr><td>Gate wait p50</td><td class="num">167 min</td><td class="num">6 min</td><td class="num">−161 min</td></tr>
         <tr><td>Cards needing a sync</td><td class="num">20.7</td><td class="num">16.0</td><td class="num">−4.7</td></tr>
+        <tr><td>Token total and rework (all phases, per model)</td><td colspan="3">Rendered from the same run receipts as the token timeline; report A, B and delta in M tokens, plus the selected counter basis. No fabricated total from USD.</td></tr>
         <tr><td>List-price USD (rework share)</td><td class="num">977 (12.5 %)</td><td class="num">923 (7.3 %)</td><td class="num">−54</td></tr>
         <tr><td>Weekly Claude points</td><td class="num">54.2</td><td class="num">51.3</td><td class="num">−2.9</td></tr>
         <tr><td>Bottleneck</td><td class="num">Integration</td><td class="num">Coding</td><td class="num">moved</td></tr>

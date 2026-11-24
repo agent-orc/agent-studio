@@ -10,7 +10,7 @@ PS-D12 and slices SIM-1 to SIM-9 are in [workbench.json](workbench.json).
 | `index.html` | Decision page: scope, questions, first answers, Alternatives, Recommendation, Evidence, Open decisions, Slices. |
 | `model.html` | Entities, phases, loops, strategies, parameters (measured or assumed, source, refresh), replay check, research cards, cost. |
 | `world.html` | Live and what-if modes, the isometric world, following one card, visual language mapped to Studio tokens. |
-| `surfaces.html` | Charts, comparing two runs, placement in the project hub, neighbouring surfaces, judging dispatcher and guardian personas. |
+| `surfaces.html` | Seven charts including the raw-token timeline contract, comparing two runs, placement in the project hub, neighbouring surfaces, judging dispatcher and guardian personas. |
 | `evidence/wave_model.py` | First-order discrete-event model of one wave under four strategies. Standard library only. |
 | `evidence/output-6ad4f5f0e.txt` | Its recorded output at develop 6ad4f5f0e. |
 | `assets/throughput-cycle-time-history-only-{light,dark}--mocked.png` | Throughput & cycle time, captured 24 November 2026 by the unchanged `frontend/e2e/project/project-cycle-time-panel.spec.ts` (route mock), cropped to the content panel. |
@@ -35,5 +35,11 @@ with `PROJECT_CYCLE_TIME_RESULTS_DIR` and `JOB_RESULTS_DIR` pointing at a
 scratch folder. No spec was added or changed.
 
 Other Dossiers are named by repository path, not linked, so that the concept
-review snapshot holds only this directory. Each HTML file stays under 38,000
-characters, below the 40,000-character cut of the review diff.
+review snapshot holds only this directory. Each HTML file stays below the 40,000-character cut of the review diff.
+
+The published evidence inventory is [evidence/publication.md](evidence/publication.md).
+It records all four inherited product captures with SHA-256 and dimensions.
+This revision preserves the original captures; it does not claim a new product
+capture run. Current document-render screenshots and validation results are
+collected under the AGT-4028 job results, alongside a byte-identical review
+copy of this Dossier. The repository directory remains the canonical delivery.

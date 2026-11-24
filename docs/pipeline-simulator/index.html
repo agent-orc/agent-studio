@@ -352,7 +352,7 @@
 
   <section id="paragraph">
     <h2><span class="number">02</span> In one paragraph</h2>
-    <p>The simulator is a project hub section, "Pipeline world", next to "Throughput &amp; cycle time". It opens on a live isometric world of the project: blue figures are cards in their first pass, orange figures are rework. The bottleneck place is highlighted, and one sentence names it. A what-if run forks this state, takes a dated parameter set measured from the installation plus the owner's changes, and plays forward under a strategy (strict, fast as built, fast as intended, with or without a dispatcher). Charts under the world show cards per hour, queues per phase, a bottleneck band, USD split into first pass and rework, lead time, and the weekly quota window. One card can be followed round by round, and two runs can be compared. The engine is a per-card discrete-event model in the backend. It applies the decision library's own policies, so a simulated strategy is the real one. The browser only plays back the event log. Every parameter set is checked by replaying recorded days, and the fit is shown.</p>
+    <p>The simulator is a project hub section, "Pipeline world", next to "Throughput &amp; cycle time". It opens on a live isometric world of the project: blue figures are cards in their first pass, orange figures are rework. The bottleneck place is highlighted, and one sentence names it. A what-if run forks this state, takes a dated parameter set measured from the installation plus the owner's changes, and plays forward under a strategy (strict, fast as built, fast as intended, with or without a dispatcher). Charts under the world show cards per hour, queues per phase, a bottleneck band, raw tokens and USD split into first pass and rework, lead time, and the weekly quota window. One card can be followed round by round, and two runs can be compared. The engine is a per-card discrete-event model in the backend. It applies the decision library's own policies, so a simulated strategy is the real one. The browser only plays back the event log. Every parameter set is checked by replaying recorded days, and the fit is shown.</p>
   </section>
 
   <section id="questions">
@@ -417,7 +417,8 @@
 
   <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
     <h2><span class="number">07</span> Evidence</h2>
-    <p>Observed facts are read from code at develop 6ad4f5f0e or from the existing views. The wave model's results are inferences. The proposals are labelled as such.</p>
+    <p>Observed facts are read from code at develop 6ad4f5f0e or from the existing views. The wave model's results are inferences. The proposals are labelled as such. The <a href="evidence/publication.md">published evidence inventory</a> names every capture, its provenance, dimensions and SHA-256. These adjacent assets are part of this repository Dossier and are also included in the task's collected review bundle.</p>
+    <p>The proposed <a href="surfaces.html#token-timeline">token timeline</a> specifies raw token units, first-pass and rework splits, phase and model filters, time attribution and reconciliation independently of USD. Its diagram is a proposal; the captures below show existing product surfaces.</p>
     <figure class="evidence-figure media-breakout">
       <div class="evidence-captures">
         <div class="evidence-capture">
@@ -431,7 +432,7 @@
         </div>
       </div>
       <figcaption>
-        <span class="figure-claim"><b>Evidence.</b> "Throughput &amp; cycle time" describes completed cards: medians, one row per UTC day, and a stage table. It has no time axis within a day, no queue per phase, no bottleneck and no control to change a setting and see the effect. The simulator adds those, and it reads the same stage boundaries for its replay check.</span>
+        <span class="figure-claim"><b>Evidence.</b> The captured "Throughput &amp; cycle time" panel shows medians, one row per UTC day and a stage table for completed cards. This captured panel has no within-day time axis, queue timeline or simulation control. The simulator adds those, and it reads the same stage boundaries for its replay check.</span>
         <span class="figure-as-of">
           <span><b>Light:</b> captured <time datetime="2026-11-24">24 November 2026</time> on develop 6ad4f5f0e by the unchanged <code>frontend/e2e/project/project-cycle-time-panel.spec.ts</code> (Last 7 days); its <code>/api/projects/{p}/cycle-time</code> response is the spec's route mock, so the data is mocked and the rendering is real. Cropped to the content panel.</span>
           <span><b>Dark:</b> captured <time datetime="2026-11-24">24 November 2026</time> in the same run (All time), same mock, same crop.</span>
@@ -451,7 +452,7 @@
         </div>
       </div>
       <figcaption>
-        <span class="figure-claim"><b>Evidence.</b> The token analysis splits recorded cost by usage kind, card and model, per UTC day, and draws the quota window as used percent from the quota history. It shows what was spent, not what a plan or a strategy would spend, and not how far a plan fills the window before its reset. The simulator takes its kinds and prices and projects them forward.</span>
+        <span class="figure-claim"><b>Evidence.</b> The captured token analysis shows cost by usage kind and card, a tokens-over-time chart by model per UTC day, and a provider quota used-percent line. These panels show recorded fixture usage and an incomplete-day marker; no simulated strategy or plan projection is visible. The simulator takes its kinds and prices and projects them forward.</span>
         <span class="figure-as-of">
           <span><b>Light:</b> captured <time datetime="2026-11-24">24 November 2026</time> on develop 6ad4f5f0e by the unchanged <code>frontend/e2e/workspace/token-analysis.spec.ts</code> at 1280 px, with the analysis response pinned to <code>token-analysis.fixtures.ts</code>. Cropped to the four panels below the filters.</span>
           <span><b>Dark:</b> captured <time datetime="2026-11-24">24 November 2026</time> in the same run, same fixture and crop.</span>
@@ -459,11 +460,11 @@
       </figcaption>
     </figure>
     <div class="evidence-list">
-      <a class="evidence" href="#ev-surfaces"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-surfaces">No surface shows the pipeline over time or a what-if</b><small>Throughput &amp; cycle time (<code>features/project-cycle-time/</code>), pipeline health, gate economics, the environment flow overlay and the token analysis all show measured history or a current count. None shows queues per phase over time, a bottleneck, or a forecast for a changed setting. The only what-if is <code>RoutingWhatIf</code> (<code>POST /api/token-pricing/what-if</code>), which re-prices recorded receipts under another model.</small></span></a>
+      <a class="evidence" href="#ev-surfaces"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-surfaces">Recorded throughput and usage panels</b><small>The two figures above establish the visible facts for these panels in their labelled fixture states. They do not establish that every Studio surface lacks a simulator. Neighbouring surfaces on the placement page are proposed integration points.</small></span></a>
       <a class="evidence" href="#ev-sources"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-sources">The facts are recorded</b><small><code>IntegrationLaneEvent</code> kinds <code>enqueued</code> to <code>published</code> (<code>backend/Features/Pipeline/IntegrationLaneEvents.cs</code>); <code>PipelineStepExecution</code> with four token counters (<code>PipelineModels.cs:219</code>); <code>TokenUsageKindPolicy</code> (coding, fix round, review aspect and others); quota history and <code>QuotaForecastPolicy</code>; gate run ledger; conflict record with <code>topFiles</code> and <code>cardPairs</code>.</small></span></a>
       <a class="evidence" href="#ev-rules"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-rules">The rules are pure policies</b><small><code>BatchFormationPolicy</code>, <code>BatchGateStartPolicy</code>, <code>BisectVerdictPolicy</code>, <code>RedTestTriagePolicy</code> and <code>DispatchPlanPolicy</code> (no caller yet) in <code>orchestration-decisions/</code>. The window close rule is in <code>runner/PostMergeRunPlan.cs</code>.</small></span></a>
       <a class="evidence" href="#ev-front"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-front">Frontend means</b><small>Hash routes from <code>studio-route.ts</code>; hub sections in <code>project-shell.config.ts</code>; no chart library, no <code>&lt;canvas&gt;</code>; inline SVG charts; Inter declared in <code>--font-ui</code> but not bundled; <code>--studio-accent</code> brand orange, <code>--studio-accent-3</code> info blue.</small></span></a>
-      <a class="evidence" href="#ev-model"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-model">Wave model results</b><small>Section 04 and <a href="evidence/output-6ad4f5f0e.txt">the recorded output</a>. It matches the sync count (fitted), fast as built (1.34 against one or two cards an hour) and roughly the median gate wait. It misses the rework share and the p95 wait.</small></span></a>
+      <a class="evidence" href="#ev-model"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-model">Wave model results</b><small>Section 04 and the recorded output linked there. It matches the sync count (fitted), fast as built (1.34 against one or two cards an hour) and roughly the median gate wait. It misses the rework share and the p95 wait.</small></span></a>
       <a class="evidence" href="#ev-proposed"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="ev-proposed">Thresholds and starting values</b><small>Replay fit of 15 % for throughput, 25 % for median gate wait and 20 % for USD; stale threshold 240 min; follow-up round 10 to 30 min; 40 figures per place. Starting values for the owner, not measurements.</small></span></a>
     </div>
   </section>
@@ -501,7 +502,7 @@
         <tr><td>SIM-3</td><td>frontend/src/app/features/pipeline-world (new), project-shell.config.ts</td><td>SIM-1</td><td>Project hub section, live world, bottleneck and statement</td></tr>
         <tr><td>SIM-4</td><td>backend/Features/Simulation/Parameters (new)</td><td>SIM-2</td><td>Dated parameter sets with provenance and owner layers</td></tr>
         <tr><td>SIM-5</td><td>backend/Features/Simulation/Replay (new), docs</td><td>SIM-4</td><td>Trace and model replay, fit report, thresholds</td></tr>
-        <tr><td>SIM-6</td><td>frontend/src/app/features/pipeline-world</td><td>SIM-3, SIM-4</td><td>Fork from now, controls, six charts</td></tr>
+        <tr><td>SIM-6</td><td>frontend/src/app/features/pipeline-world</td><td>SIM-3, SIM-4</td><td>Fork from now, controls, seven charts</td></tr>
         <tr><td>SIM-7</td><td>backend/Features/Simulation/Engine, dispatch adapter</td><td>SIM-5</td><td>DispatchPlanPolicy in the engine; replay of recorded waves per strategy</td></tr>
         <tr><td>SIM-8</td><td>frontend/src/app/features/pipeline-world</td><td>SIM-5, SIM-6</td><td>Card ribbon, comparison view, saved runs</td></tr>
         <tr><td>SIM-9</td><td>frontend: cycle-time, usage cockpit detail, token analysis, batch gate, integration conflicts, environment flow</td><td>SIM-8</td><td>Entry points into the Pipeline world</td></tr>
