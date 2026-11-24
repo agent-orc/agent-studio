@@ -1,5 +1,12 @@
 @let v = view();
 <div class="usage-detail" data-testid="usage-detail-panel">
+  @if (snapshot().shortStepReservePoints !== undefined) {
+    <p class="usage-detail__meta" data-testid="routing-short-step-reserve">
+      Short-step reserve: {{ snapshot().shortStepReservePoints }} percentage points below each quota cap.
+      New coding work switches before using this reserve.
+    </p>
+  }
+
   <nav class="usage-detail__jump" aria-label="Usage sections">
     @for (cli of v.clis; track cli.cliId) {
       <a class="usage-detail__jump-link"
@@ -60,6 +67,13 @@
         }
         @if (cli.source) { <span class="usage-detail__muted">Source {{ cli.source }}</span> }
       </p>
+
+      @if (routingUsage(cli.cliId); as routing) {
+        <p class="usage-detail__meta" [attr.data-testid]="'routing-usage-' + cli.cliId">
+          This week: <span class="usage-detail__num">{{ routing.switchExecutions }}</span> of
+          <span class="usage-detail__num">{{ routing.executions }}</span> model calls used a provider switch.
+        </p>
+      }
 
       <table class="usage-detail__table" [attr.data-testid]="'usage-detail-windows-' + cli.cliId">
         <caption class="usage-detail__caption">Quota windows, percentage used and left</caption>

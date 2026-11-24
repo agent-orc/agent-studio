@@ -20,8 +20,9 @@ public sealed record ModelSelectionCall(
     Func<string, string?, bool>? HostAcceptsFallback = null,
     Func<ModelRoutingTier?>? CorrectnessFloor = null,
     string? DecisionKey = null,
-    bool RecordEveryCall = false,
-    bool Preview = false)
+    bool RecordEveryCall = true,
+    bool Preview = false,
+    Func<string?, QuotaSnapshot?>? SnapshotOverride = null)
 {
     /// <summary>The selection call behind a legacy admission request (adapter until MS-6).</summary>
     public static ModelSelectionCall FromAdmission(QuotaAdmissionRequest request)
@@ -35,7 +36,10 @@ public sealed record ModelSelectionCall(
                 // A remote review claim rechecks quota for a route already frozen
                 // in its ReviewAttempt. Consumer defaults must not replace it.
                 IsExplicitPin = request.ExecutionPath == "remote-review-claim",
-                Pins = new SelectionPins(request.CliType, request.Model, request.ThinkingLevel),
+                StepId = request.StepId,
+                TaskKey = request.TaskKey,
+                WorkClass = request.WorkClass,
+                Pins = new SelectionPins(request.CliType, request.Model, request.ThinkingLevel, request.PinMode),
                 Required = new SelectionRequirements(SameClassOnly: request.SameClassOnly),
                 Host = request.ClaimingHost is null ? null : new SelectionHost(request.ClaimingHost),
             },
@@ -69,6 +73,7 @@ public interface IModelSelectionService
     ModelSelectionDecision Select(ModelSelectionCall call);
 
     bool IsOperatorSwitchActive(string? cliType);
+    bool RecordExecution(string? selectionId, string? provider = null, bool providerFailure = false) => false;
 }
 
 /// <summary>Collects the selection facts, asks the pure planner and writes the ledger.</summary>
@@ -86,6 +91,7 @@ public sealed class ModelSelectionService : IModelSelectionService
     private readonly ModelSelectionPolicyStore? _policy;
     private readonly TimeProvider _timeProvider;
     private readonly ITokenPricing? _pricing;
+    private readonly ProviderRoutingHealth? _health;
     private readonly object _receiptSync = new();
     private readonly Dictionary<string, string> _receiptIds = new(StringComparer.Ordinal);
 
@@ -101,7 +107,8 @@ public sealed class ModelSelectionService : IModelSelectionService
         ModelRoutingPolicyRegistry? routing = null,
         IModelSelectionLedger? ledger = null,
         ModelSelectionPolicyStore? policy = null,
-        ITokenPricing? pricing = null)
+        ITokenPricing? pricing = null,
+        ProviderRoutingHealth? health = null)
     {
         _quota = quota;
         _caps = caps;
@@ -115,6 +122,14 @@ public sealed class ModelSelectionService : IModelSelectionService
         _policy = policy;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _pricing = pricing;
+        _health = health;
+    }
+
+    public bool RecordExecution(string? selectionId, string? provider = null, bool providerFailure = false)
+    {
+        var added = selectionId is not null && _ledger?.RecordExecution(selectionId, providerFailure) == true;
+        if ((added || selectionId is null) && !string.IsNullOrWhiteSpace(provider)) _health?.Observe(provider, providerFailure);
+        return added;
     }
 
     public bool IsOperatorSwitchActive(string? cliType)
@@ -124,11 +139,29 @@ public sealed class ModelSelectionService : IModelSelectionService
     {
         ArgumentNullException.ThrowIfNull(call);
         var request = call.Request;
+        if (request.PipelineType is null && request.TaskMode is not null)
+            request = request with { PipelineType = PipelineTypes.Resolve(request.TaskType, request.TaskMode) };
         if (request.Consumer == SelectionConsumers.Persona)
             request = request with { Required = request.Required with { SameClassOnly = true } };
         var project = string.IsNullOrWhiteSpace(request.Project)
             ? null
             : _projectSettings.Get(request.Project);
+        var step = PipelineCatalogue.FindStep(request.StepId);
+        var stepSettings = PipelineTypeSettings.ForType(project, request.PipelineType)?.PipelineSteps
+            ?.GetValueOrDefault(request.StepId ?? "");
+        request = request with
+        {
+            WorkClass = request.WorkClass ?? step?.WorkClass ?? SelectionWorkClasses.ForConsumer(request.Consumer),
+            IsExplicitPin = request.IsExplicitPin || step is not null || !string.IsNullOrWhiteSpace(stepSettings?.Model)
+                || !string.IsNullOrWhiteSpace(stepSettings?.CliType),
+            Pins = stepSettings?.PinMode == "hard" ? request.Pins with { Mode = SelectionPinMode.Hard } : request.Pins,
+        };
+        if (step?.WorkClass is SelectionWorkClasses.Review or SelectionWorkClasses.Grade)
+            request = request with
+            {
+                Consumer = step.WorkClass == SelectionWorkClasses.Grade ? SelectionConsumers.ReviewGrade : SelectionConsumers.ReviewAspect,
+                Required = request.Required with { SameClassOnly = true },
+            };
         var consumer = request.Consumer.StartsWith("one-shot:", StringComparison.Ordinal)
             ? "one-shot" : request.Consumer;
         var workspacePolicy = _policy?.Get();
@@ -151,14 +184,31 @@ public sealed class ModelSelectionService : IModelSelectionService
         var modelFallbacks = _policy?.Get().ModelFallbacks;
         if (modelFallbacks is not null && modelFallbacks.TryGetValue(explicitKey, out var explicitFallback))
             configuredFallback = [explicitFallback];
+        if (request.Continuation is not null) configuredFallback = null;
         var routing = _fallback.RoutingFacts();
+        // Automatic alternatives must be published Token Economy pairs. Legacy
+        // profiles still supply primary preferences, but cannot invent equivalence.
+        var profile = routing.Profile;
+        routing = routing with { Profile = cli => profile(cli) is { } preferredProfile
+            ? preferredProfile with { FallbackCliType = null, FallbackModel = null, FallbackThinkingLevel = null }
+            : null };
+        if (configuredFallback is not null)
+            configuredFallback = configuredFallback.Where(candidate =>
+                routing.Equivalence?.Routes.Any(pair => pair.FromCliType == request.Pins.CliType
+                    && pair.FromModel == request.Pins.Model && pair.FromThinkingLevel == request.Pins.ThinkingLevel
+                    && pair.ToCliType == candidate.CliType && pair.ToModel == candidate.Model
+                    && pair.ToThinkingLevel == candidate.ThinkingLevel) == true).ToArray();
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var active = _ledger?.GetActive(request);
         var facts = new SelectionFacts
         {
             NowUtc = now,
             Caps = _caps,
-            SnapshotFor = cli => string.IsNullOrWhiteSpace(cli) ? null : _quota.GetCachedFor(cli),
+            ShortStepReservePoints = workspacePolicy?.ShortStepReservePoints ?? 10,
+            ProviderUnavailable = cli => _health?.UnavailableReason(cli),
+            SnapshotFor = call.SnapshotOverride ?? (cli => string.IsNullOrWhiteSpace(cli) ? null : _quota.GetCachedFor(cli)
+                ?? _quota.GetCached().Snapshots.Where(snapshot => snapshot.CliType == cli && snapshot.Error is not null)
+                    .FirstOrDefault()),
             Routing = routing,
             ConfiguredFallbacks = configuredFallback,
             OccupiedSlots = call.OccupiedSlots,
@@ -180,7 +230,13 @@ public sealed class ModelSelectionService : IModelSelectionService
         };
 
         var result = ModelSelectionPlanner.Plan(request, facts);
+        result = result with { EquivalentRoutes = routing.Equivalence?.Routes.Where(pair =>
+            pair.FromCliType == result.Primary.CliType && pair.FromModel == result.Primary.Model
+            && pair.FromThinkingLevel == result.Primary.ThinkingLevel
+            && (!request.Required.SameClassOnly || routing.Equivalence.SameCapabilityClass(pair.FromModel, pair.ToModel)))
+            .Select(pair => new SelectionRoute(pair.ToCliType, pair.ToModel, pair.ToThinkingLevel)).Distinct().ToArray() ?? [] };
         var entry = result.Outcome == SelectionOutcome.Primary && active is not null
+            && (request.Continuation is null || active.From == result.Route)
             ? new SelectionLedgerEntry(
                 ModelSelectionLedger.NewId(), now,
                 SelectionLedgerKinds.Returned, request.Consumer, request.Host?.HostId,

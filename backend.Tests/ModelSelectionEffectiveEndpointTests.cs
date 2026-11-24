@@ -23,6 +23,29 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "model-effective-" + Guid.NewGuid().ToString("N"));
 
+    [Fact]
+    public async Task Installation_drill_uses_fake_quotas_and_leaves_no_selection_receipts()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+            builder.UseEnvironment("Test").ConfigureAppConfiguration((_, settings) =>
+                settings.AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root })));
+        var policy = factory.Services.GetRequiredService<ModelSelectionPolicyStore>();
+        Assert.Equal(10, policy.Get().ShortStepReservePoints);
+        var ledger = factory.Services.GetRequiredService<ModelSelectionLedger>();
+        var before = ledger.Query().Events.Count;
+        using var client = factory.CreateClient();
+        var report = await client.GetFromJsonAsync<RoutingDrillReport>("/api/model-selection/drill",
+            new JsonSerializerOptions(JsonSerializerDefaults.Web) { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } });
+        Assert.True(report!.DryRun);
+        Assert.True(report.Passed, string.Join("\n", report.Cases.Where(item => !item.Passed).Select(item => item.Selection.Reason)));
+        Assert.NotEmpty(report.MissingEquivalence);
+        if (Environment.GetEnvironmentVariable("JOB_RESULTS_DIR") is { Length: > 0 } results)
+            File.WriteAllText(Path.Combine(results, "routing-drill--test-installation.json"),
+                JsonSerializer.Serialize(report, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+        Assert.Equal(before, ledger.Query().Events.Count);
+    }
+
     [Theory]
     [InlineData("quota-fallback", 98, false, "switched", "quota-cap")]
     [InlineData("quota-wait", 98, true, "waiting", "pin")]
@@ -52,14 +75,14 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
                     ServiceDescriptor.Singleton<TimeProvider>(clock))));
         factory.Services.GetRequiredService<CliQuotaFallbackService>().Set(new CliModelRouteProfile
         {
-            CliType = "claude", PrimaryModel = "claude-opus-5", FallbackCliType = "codex",
+            CliType = "claude", PrimaryModel = "claude-sonnet-5", FallbackCliType = "codex",
             FallbackModel = "gpt-6-sol", FallbackThinkingLevel = "high",
         });
         var request = new SelectionRequest
         {
             Consumer = SelectionConsumers.Coding, Project = "demo", TaskKey = "DEMO-1",
             IsExplicitPin = true,
-            Pins = new SelectionPins("claude", "claude-opus-5", "high",
+            Pins = new SelectionPins("claude", "claude-sonnet-5", "high",
                 hardPin ? SelectionPinMode.Hard : SelectionPinMode.Preference),
             Host = new SelectionHost("host-a"),
         };
@@ -70,7 +93,7 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
         var events = await client.GetFromJsonAsync<JsonElement>(
-            $"/api/model-selection/events?provider=claude&project=demo&consumer=coding&rule={rule}&from=claude-opus-5");
+            $"/api/model-selection/events?provider=claude&project=demo&consumer=coding&rule={rule}&from=claude-sonnet-5");
         var entry = Assert.Single(events.GetProperty("events").EnumerateArray());
         Assert.Equal(decision.Result.LedgerId, entry.GetProperty("id").GetString());
         Assert.Equal(kind, entry.GetProperty("kind").GetString());
@@ -80,7 +103,7 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
         {
             Assert.Equal("codex", entry.GetProperty("to").GetProperty("cliType").GetString());
             Assert.Equal("gpt-6-sol", entry.GetProperty("to").GetProperty("model").GetString());
-            Assert.Equal("high", entry.GetProperty("to").GetProperty("thinkingLevel").GetString());
+            Assert.Equal("medium", entry.GetProperty("to").GetProperty("thinkingLevel").GetString());
         }
         Assert.False(string.IsNullOrWhiteSpace(entry.GetProperty("reason").GetString()));
     }
@@ -102,11 +125,11 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
         ]);
         var quota = new QuotaService(NullLogger<QuotaService>.Instance, [], config, cache);
         var caps = new CliQuotaCapsService(NullLogger<CliQuotaCapsService>.Instance, config);
-        var fallback = new CliQuotaFallbackService(config, NullLogger<CliQuotaFallbackService>.Instance);
+        var fallback = new CliQuotaFallbackService(config, NullLogger<CliQuotaFallbackService>.Instance, new ModelEquivalenceCatalog(TokenTestServices.Pricing()));
         fallback.Set(new CliModelRouteProfile
         {
-            CliType = CliTypes.Claude, PrimaryModel = ModelIds.ClaudeOpus5,
-            FallbackCliType = CliTypes.Codex, FallbackModel = ModelIds.Gpt56Sol,
+            CliType = CliTypes.Claude, PrimaryModel = ModelIds.ClaudeSonnet5,
+            FallbackCliType = CliTypes.Codex, FallbackModel = ModelIds.Gpt6Sol,
             FallbackThinkingLevel = "high",
         });
         var wait = new CliQuotaWaitPolicyService(NullLogger<CliQuotaWaitPolicyService>.Instance, config);
@@ -117,12 +140,12 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
         var decision = service.Select(new ModelSelectionCall(new SelectionRequest
         {
             Consumer = SelectionConsumers.Coding,
-            Pins = new SelectionPins(CliTypes.Claude, ModelIds.ClaudeOpus5, "high"),
+            Pins = new SelectionPins(CliTypes.Claude, ModelIds.ClaudeSonnet5, "high"),
         }, "remote-coding-claim"));
 
         Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, decision.Admission.Outcome);
         Assert.Equal(CliTypes.Codex, decision.Admission.CliType);
-        Assert.Equal(ModelIds.Gpt56Sol, decision.Admission.Model);
+        Assert.Equal(ModelIds.Gpt6Sol, decision.Admission.Model);
         Assert.Null(decision.Result.LedgerId);
     }
 
@@ -261,7 +284,7 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
                         ["TaskRepository"] = _root,
                         ["PublicDemo:Enabled"] = "false",
                         [ReviewAspectModelPolicy.CliSetting] = CliTypes.Claude,
-                        [ReviewAspectModelPolicy.ModelSetting] = ModelIds.ClaudeOpus5,
+                        [ReviewAspectModelPolicy.ModelSetting] = ModelIds.ClaudeSonnet5,
                     }))
                 .ConfigureTestServices(services => services.Replace(
                     ServiceDescriptor.Singleton<TimeProvider>(clock))));
@@ -276,7 +299,7 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
         {
             var setting = new PipelineStepSetting
             {
-                CliType = CliTypes.Claude, Model = ModelIds.ClaudeOpus5, ThinkingLevel = "high",
+                CliType = CliTypes.Claude, Model = ModelIds.ClaudeSonnet5, ThinkingLevel = "high",
             };
             projectSettings.SetPipelineStep(project, type, "aspect-code-quality", setting);
             projectSettings.SetPipelineStep(project, type, PipelineCatalogue.CodeReviewGradeStepId, setting);

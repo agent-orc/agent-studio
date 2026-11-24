@@ -106,6 +106,7 @@
 /api/magazine/{scope}/{slug}/history	free	-	-	-
 /api/model-selection/active	free	-	-	-
 /api/model-selection/effective	free	-	-	-
+/api/model-selection/drill	free	-	-	-
 /api/model-selection/active	free	-	-	-
 /api/model-selection/policy	free	-	-	-
 /api/model-selection/events	free	-	-	-

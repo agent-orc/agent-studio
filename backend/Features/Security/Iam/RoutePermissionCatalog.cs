@@ -211,7 +211,7 @@ public static class RoutePermissionCatalog
 
         // --- Runner and engine service routes (credential scopes decide) ----
         Add("R", IamPermissions.RunnerService, "/api/quota/admission/{}");
-        Add("POST", IamPermissions.RunnerService, "/api/model-selection/events");
+        Add("POST", IamPermissions.RunnerService, "/api/model-selection/events", "/api/model-selection/plan");
         Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/claim");
         Add("PUT", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/report");
         Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/review-package-claims");
@@ -388,6 +388,7 @@ public static class RoutePermissionCatalog
             "/api/cli/quota/caps", "/api/cli/quota/fallback-preference", "/api/cli/quota/model-routes",
             "/api/cli/quota/wait-policy", "/api/cli/maintenance-model", "/api/cli/model-routing/**",
             "/api/model-selection/policy/consumers/{}",
+            "/api/model-selection/policy/reserve",
             "/api/clients/{}/defaults", "/api/clients/{}/runner-capacity", "/api/git/branch-sweep/settings",
             "/api/orchestration/rollout/**");
         Add("POST", IamPermissions.WorkspaceRead, "/api/token-pricing/calculate", "/api/token-pricing/what-if", "/api/component-routing/resolve");
@@ -402,7 +403,7 @@ public static class RoutePermissionCatalog
         // working memory, quota and model probes are installation-wide.
         Add("R", IamPermissions.WorkspaceRead,
             "/api/cli/types", "/api/cli/contracts", "/api/cli/model-migrations");
-        Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/effective");
+        Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/effective", "/api/model-selection/drill");
         Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/active");
         Add("R", IamPermissions.WorkspaceRead, "/api/model-selection/policy");
         Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/events", "/api/model-selection/active");

@@ -1,3 +1,4 @@
+using AgentStudio.TaskServer.Contracts;
 
 
 namespace AgentStudio.Pipeline;
@@ -64,6 +65,7 @@ public static class PipelineCatalogue
     public static readonly PipelineStep RemoteConceptFitStep = new()
     {
         Id = RemoteConceptFitStepId,
+        WorkClass = SelectionWorkClasses.Review,
         DisplayName = "Concept fit (Remote Review)",
         Kind = StepKind.Aspect,
         RunMode = StepRunMode.Parallel,
@@ -311,6 +313,7 @@ public static class PipelineCatalogue
     public static PipelineStep SummaryAssessmentStep => new()
     {
         Id = SummaryAssessmentStepId,
+        WorkClass = SelectionWorkClasses.Summary,
         DisplayName = "Result summary and assessment",
         Kind = StepKind.Orchestrator,
         RunMode = StepRunMode.Sequential,
@@ -499,6 +502,7 @@ public static class PipelineCatalogue
     public static PipelineStep AbortReviewStep { get; } = new()
     {
         Id = PostAbortReviewStepId,
+        WorkClass = SelectionWorkClasses.Decision,
         DisplayName = "Abort review",
         // An orchestrator-style decision step: it consumes evidence and chooses
         // rerun / reissue / accept / human-review, the same shape as the
@@ -599,6 +603,7 @@ public static class PipelineCatalogue
                 aspects.Add(new PipelineStep
                 {
                     Id = aspectId,
+                    WorkClass = SelectionWorkClasses.Review,
                     DisplayName = aspectId,
                     Kind = StepKind.Aspect,
                     RunMode = StepRunMode.Parallel,
@@ -609,6 +614,7 @@ public static class PipelineCatalogue
             aspects.Add(new PipelineStep
             {
                 Id = aspectId,
+                WorkClass = SelectionWorkClasses.Review,
                 DisplayName = def.Title,
                 Kind = StepKind.Aspect,
                 RunMode = StepRunMode.Parallel,
@@ -629,6 +635,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = LoopGuardStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Loop check",
                     Kind = StepKind.Module,
                     RunMode = StepRunMode.Sequential,
@@ -637,6 +644,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = ModelQualificationStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Model qualification",
                     Kind = StepKind.Module,
                     RunMode = StepRunMode.Sequential,
@@ -646,6 +654,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = PromptEnrichmentStepId,
+                    WorkClass = SelectionWorkClasses.Enrichment,
                     DisplayName = "Prompt enrichment",
                     Kind = StepKind.Module,
                     RunMode = StepRunMode.Sequential,
@@ -655,6 +664,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = PreOrchestratorPrepStepId,
+                    WorkClass = SelectionWorkClasses.Enrichment,
                     DisplayName = "Orchestrator prep",
                     Kind = StepKind.Module,
                     // Decoupled from the coding latch (runs on 1-preparation
@@ -669,6 +679,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = PreReissueOpenItemsStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Reissue open-items check",
                     Kind = StepKind.Module,
                     // Runs deterministically in the pre-bracket ahead of the core
@@ -685,6 +696,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = CoreAgentRunStepId,
+                    WorkClass = SelectionWorkClasses.Coding,
                     DisplayName = "Agent execution",
                     Kind = StepKind.Core,
                     RunMode = StepRunMode.Sequential,
@@ -698,6 +710,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = OrchestratorReviewStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = PostCoreReviewDisplayName,
                     Kind = StepKind.Orchestrator,
                     // Runs straight after the core run, ahead of the aspect
@@ -709,6 +722,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = DossierMaintenanceStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Dossier maintenance",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -718,6 +732,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = BuildTestGateStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Build/test gate",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -727,6 +742,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = QualityAngularRulesStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Quality Studio Angular rules",
                     Kind = StepKind.Analysis,
                     AppliesTo = PipelineStepStacks.Angular,
@@ -737,6 +753,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = QualityDotNetRulesStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Quality Studio C# rules",
                     Kind = StepKind.Analysis,
                     AppliesTo = PipelineStepStacks.DotNet,
@@ -748,6 +765,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = QualityModelReviewStepId,
+                    WorkClass = SelectionWorkClasses.Analysis,
                     DisplayName = "Quality Studio model review",
                     Kind = StepKind.Analysis,
                     RunMode = StepRunMode.Sequential,
@@ -758,6 +776,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = QualityVisualStepId,
+                    WorkClass = SelectionWorkClasses.Analysis,
                     DisplayName = "Quality Studio visual quality",
                     Kind = StepKind.Analysis,
                     AppliesTo = PipelineStepStacks.Angular,
@@ -769,6 +788,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = QualitySecurityStepId,
+                    WorkClass = SelectionWorkClasses.Analysis,
                     DisplayName = "Quality Studio security",
                     Kind = StepKind.Analysis,
                     RunMode = StepRunMode.Sequential,
@@ -779,6 +799,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = QualityRedundancyStepId,
+                    WorkClass = SelectionWorkClasses.Analysis,
                     DisplayName = "Quality Studio redundancy",
                     Kind = StepKind.Analysis,
                     RunMode = StepRunMode.Sequential,
@@ -789,6 +810,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = QualityConsistencyStepId,
+                    WorkClass = SelectionWorkClasses.Analysis,
                     DisplayName = "Quality Studio consistency",
                     Kind = StepKind.Analysis,
                     RunMode = StepRunMode.Sequential,
@@ -800,6 +822,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = WorktreeContainmentStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Worktree containment",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -809,6 +832,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = IntegrateMergeStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Integrate merge",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -818,6 +842,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = ConflictResolutionStepId,
+                    WorkClass = SelectionWorkClasses.Conflict,
                     DisplayName = "Conflict resolution",
                     Kind = StepKind.Orchestrator,
                     RunMode = StepRunMode.Sequential,
@@ -827,6 +852,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = GitCommitAttributionStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Git commit attribution",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -842,6 +868,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = MergeIntoDevelopStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Merge into Develop",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -859,6 +886,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = MergeIntoDevelopPushStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Push develop to origin",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -873,6 +901,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = LintScssStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Frontend stylelint",
                     Kind = StepKind.Tool,
                     AppliesTo = PipelineStepStacks.Angular,
@@ -883,6 +912,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = RegressionRadarStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Regression radar",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -892,6 +922,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = WikiMaintenanceStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Wiki maintenance",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -902,6 +933,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = WikiLearningsStepId,
+                    WorkClass = SelectionWorkClasses.Enrichment,
                     DisplayName = "Wiki learnings",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -914,6 +946,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = AgentsWikiSyncStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Agent skills / AGENTS wiki sync",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -931,6 +964,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = CodeReviewGradeStepId,
+                    WorkClass = SelectionWorkClasses.Grade,
                     DisplayName = "Code-review quality grade",
                     // An LLM review pass that produces a single A/B/C/D ruling,
                     // same shape as the orchestrator decision (consumes the diff,
@@ -951,6 +985,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = TaskSpawnerStepId,
+                    WorkClass = SelectionWorkClasses.Decision,
                     DisplayName = "Task spawner",
                     // An LLM relevance judgment that consumes the change set and
                     // emits a spawn/no-spawn verdict, the same shape as the grade
@@ -968,6 +1003,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = FailureInterventionStepId,
+                    WorkClass = SelectionWorkClasses.Decision,
                     DisplayName = "Failure intervention",
                     Kind = StepKind.Orchestrator,
                     RunMode = StepRunMode.Sequential,
@@ -978,6 +1014,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = OrchestratorDecisionStepId,
+                    WorkClass = SelectionWorkClasses.Decision,
                     DisplayName = FinalOrchestratorReviewDisplayName,
                     Kind = StepKind.Orchestrator,
                     RunMode = StepRunMode.Sequential,
@@ -1035,6 +1072,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = CoreAgentRunStepId,
+                    WorkClass = SelectionWorkClasses.Concept,
                     DisplayName = "Concept authoring",
                     Kind = StepKind.Core,
                     RunMode = StepRunMode.Sequential,
@@ -1048,6 +1086,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = ConceptWorkbenchPlacementStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Dossier placement",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -1057,6 +1096,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = ConceptReviewStepId,
+                    WorkClass = SelectionWorkClasses.Review,
                     DisplayName = "Concept review",
                     Kind = StepKind.Orchestrator,
                     RunMode = StepRunMode.Sequential,
@@ -1066,6 +1106,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = ConceptSightReviewGateStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Sight review",
                     Kind = StepKind.Orchestrator,
                     RunMode = StepRunMode.Sequential,
@@ -1075,6 +1116,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = ConceptPromotionStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Promote implementation cards",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -1099,6 +1141,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = UiPipelineRoutingStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "UI pipeline routing",
                     Kind = StepKind.Module,
                     RunMode = StepRunMode.Sequential,
@@ -1118,6 +1161,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = UiIterationArtifactStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "UI iteration evidence",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -1128,6 +1172,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = UiVisualCaptureStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Stable-equivalent visual capture",
                     Kind = StepKind.Tool,
                     RunMode = StepRunMode.Sequential,
@@ -1138,6 +1183,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = UiVisualVerdictStepId,
+                    WorkClass = SelectionWorkClasses.Review,
                     DisplayName = "Multimodal visual verdict",
                     Kind = StepKind.Orchestrator,
                     RunMode = StepRunMode.Sequential,
@@ -1148,6 +1194,7 @@ public static class PipelineCatalogue
                 new PipelineStep
                 {
                     Id = UiHumanReviewGateStepId,
+                    WorkClass = SelectionWorkClasses.Deterministic,
                     DisplayName = "Human iteration review",
                     Kind = StepKind.Orchestrator,
                     RunMode = StepRunMode.Sequential,
@@ -1180,6 +1227,7 @@ public static class PipelineCatalogue
             yield return new PipelineStep
             {
                 Id = id,
+                WorkClass = SelectionWorkClasses.Analysis,
                 DisplayName = name,
                 Kind = StepKind.Drift,
                 RunMode = StepRunMode.Sequential,

@@ -406,11 +406,27 @@ export const COMMANDS = {
       const capacity = await ctx.client.request('GET', '/api/operator/capacity');
       return { data: { centralPolicy: policy.status === 200 ? policy.body : null, centralPolicyStatus: policy.status,
         modelRoutingPins: capacity.modelRoutingPins ?? [] }, text: lines(
+        `Short-step reserve: ${policy.body?.shortStepReservePoints ?? 'unknown'} percentage points`,
         policy.status === 200
           ? Object.entries(policy.body?.consumers ?? {}).map(([consumer, setting]) =>
             `central ${consumer}: ${setting?.primary?.cli ?? '?'}/${setting?.primary?.model ?? 'default'}`)
           : `central model selection policy: not readable (${policy.status})`,
         (capacity.modelRoutingPins ?? []).map(pinLine)) };
+    },
+  },
+
+  'routing drill': {
+    summary: 'Dry-run model switching with fake quotas; spends no model tokens.',
+    spec: { project: 'string', pipelineType: 'string', dryRun: 'boolean' },
+    async run(ctx, _positionals, options) {
+      const data = await ctx.client.request('GET', '/api/model-selection/drill', {
+        query: { project: options.project, pipelineType: options.pipelineType },
+      });
+      return { data, ok: data.passed, exitCode: data.passed ? EXIT.OK : EXIT.FAILURE,
+        text: lines(`Routing drill: ${data.passed ? 'passed' : 'failed'} (dry run, no model tokens)`,
+          `Short-step reserve: ${data.shortStepReservePoints} percentage points`,
+          (data.cases ?? []).map(item => `${item.scenario} ${item.workClass}: ${item.selection.outcome} ${item.selection.route.cliType}/${item.selection.route.model}`),
+          (data.missingEquivalence ?? []).map(item => `Missing equivalence: ${item.stepId ?? item.consumer} ${item.preferred.cliType}/${item.preferred.model}/${item.preferred.thinkingLevel ?? 'default'}`)) };
     },
   },
 

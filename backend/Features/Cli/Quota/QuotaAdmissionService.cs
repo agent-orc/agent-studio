@@ -17,7 +17,11 @@ public sealed record QuotaAdmissionRequest(
     Func<string, string?, bool>? ModelAccepted = null,
     string? ClaimingHost = null,
     Func<string, string?, bool>? FallbackModelAccepted = null,
-    bool SameClassOnly = false);
+    bool SameClassOnly = false,
+    string? StepId = null,
+    string? TaskKey = null,
+    string? WorkClass = null,
+    AgentStudio.TaskServer.Contracts.SelectionPinMode PinMode = AgentStudio.TaskServer.Contracts.SelectionPinMode.Preference);
 
 /// <summary>
 /// Legacy admission boundary, now a thin adapter over

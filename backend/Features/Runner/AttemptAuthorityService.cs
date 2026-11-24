@@ -1250,7 +1250,7 @@ public sealed partial class AttemptAuthorityService
         IReadOnlySet<string>? capabilities = null,
         IReadOnlySet<string>? heldTaskKeys = null,
         Func<ReviewAttemptDto, bool>? admission = null,
-        IReadOnlyDictionary<string, ReviewClaimRepositoryFact>? repositoryFacts = null)
+        IReadOnlyDictionary<string, ReviewClaimRepositoryFact>? repositoryFacts = null, bool routeAgentProviders = false)
     {
         if (Blank(executorId) || Blank(hostId) || Blank(instanceId))
             return new AttemptWriteResult(
@@ -1287,7 +1287,7 @@ public sealed partial class AttemptAuthorityService
                     .Where(review => capabilities is null
                         || ((review.Subject.Plan is null
                                 || AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy.Supports(
-                                    review.Subject.Plan, capabilities))
+                                    review.Subject.Plan, capabilities, routePending: routeAgentProviders))
                             // AGT-3077: a private repository needs this host's read
                             // credential. A plan-less attempt is judged from its
                             // project, so it is skipped here instead of being

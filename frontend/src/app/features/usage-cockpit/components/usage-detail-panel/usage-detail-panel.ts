@@ -65,6 +65,10 @@ export class UsageDetailPanelComponent implements OnDestroy {
     return detailSectionId(this.idPrefix(), focus);
   }
 
+  routingUsage(provider: string) {
+    return this.snapshot().routingUsage?.find(usage => usage.provider === provider);
+  }
+
   cliFocus(cliId: string): UsageDetailFocus {
     return { kind: 'cli', cliId };
   }

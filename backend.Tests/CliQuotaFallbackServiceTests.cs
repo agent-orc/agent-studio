@@ -29,17 +29,17 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
     public void Review_switch_accepts_a_matching_capability_class()
     {
         var service = NewServiceWithCatalog();
-        var result = service.Resolve(CliTypes.Claude, ModelIds.ClaudeOpus5, "high",
+        var result = service.Resolve(CliTypes.Claude, ModelIds.ClaudeSonnet5, "high",
             _ => CapEvaluation.NotBlocked, preferFallback: true, sameClassOnly: true);
 
         Assert.True(result.IsFallback);
         Assert.Equal(CliTypes.Codex, result.CliType);
-        Assert.Equal(ModelIds.Gpt56Sol, result.Model);
-        Assert.Equal("high", result.ThinkingLevel);
+        Assert.Equal(ModelIds.Gpt6Sol, result.Model);
+        Assert.Equal("medium", result.ThinkingLevel);
     }
 
     [Fact]
-    public void Review_switch_never_reduces_an_explicit_thinking_level()
+    public void Review_profile_cannot_invent_an_unpublished_reasoning_pair()
     {
         var service = NewServiceWithCatalog();
         service.Set(new CliModelRouteProfile
@@ -54,8 +54,8 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
         var result = service.Resolve(CliTypes.Claude, ModelIds.ClaudeOpus5, "high",
             _ => CapEvaluation.NotBlocked, preferFallback: true, sameClassOnly: true);
 
-        Assert.True(result.IsFallback);
-        Assert.Equal("high", result.ThinkingLevel);
+        Assert.False(result.IsFallback);
+        Assert.Contains("published Token Economy", result.Reason);
     }
 
     [Fact]
@@ -189,15 +189,15 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
     {
         var service = NewServiceWithCatalog();
 
-        var decision = service.Resolve(CliTypes.Claude, ModelIds.ClaudeOpus5, "high", cli =>
+        var decision = service.Resolve(CliTypes.Claude, ModelIds.ClaudeSonnet5, "high", cli =>
             cli == CliTypes.Claude
                 ? new CapEvaluation(true, CliTypes.Claude, "Weekly", 95, 100)
                 : CapEvaluation.NotBlocked);
 
         Assert.True(decision.IsFallback);
         Assert.Equal(CliTypes.Codex, decision.CliType);
-        Assert.Equal(ModelIds.Gpt56Sol, decision.Model);
-        Assert.Equal("high", decision.ThinkingLevel);
+        Assert.Equal(ModelIds.Gpt6Sol, decision.Model);
+        Assert.Equal("medium", decision.ThinkingLevel);
         Assert.Equal("catalogue", decision.FallbackSource);
         Assert.Equal(new ModelEquivalenceCatalog(TokenTestServices.Pricing()).Version, decision.CatalogueVersion);
     }
@@ -226,15 +226,14 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetEffectiveProfile_NoConfiguredFallback_MarksDerivedTrue()
+    public void GetEffectiveProfile_Implicit_default_without_a_published_pair_does_not_guess()
     {
         var service = NewServiceWithCatalog();
 
         var effective = service.GetEffectiveProfile(CliTypes.Claude);
 
-        Assert.True(effective.IsFallbackDerived);
-        Assert.Equal(CliTypes.Codex, effective.FallbackCliType);
-        Assert.Equal(ModelIds.Gpt56Sol, effective.FallbackModel);
+        Assert.False(effective.IsFallbackDerived);
+        Assert.Null(effective.FallbackModel);
     }
 
     [Fact]

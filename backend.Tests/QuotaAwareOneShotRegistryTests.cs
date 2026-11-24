@@ -18,6 +18,29 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
     private readonly DateTime _now = new(2026, 9, 8, 7, 0, 0, DateTimeKind.Utc);
 
     [Fact]
+    public async Task A_report_step_hard_pin_waits_using_its_own_pipeline_settings()
+    {
+        Directory.CreateDirectory(_root);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskRepository"] = _root }).Build();
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration);
+        settings.SetPipelineStep("quota-test", PipelineTypes.Planning, "post-summary-assessment",
+            new PipelineStepSetting { CliType = "claude", Model = ModelIds.ClaudeSonnet5, ThinkingLevel = "high", PinMode = "hard" });
+        var folder = Path.Combine(_root, "report-job");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), "{\"mode\":\"research\",\"taskType\":\"task\"}");
+        var claude = new RecordingOneShot(CliTypes.Claude);
+        var codex = new RecordingOneShot(CliTypes.Codex);
+        var result = await BuildRegistry(claude, codex).Require(CliTypes.Claude).RunAsync(
+            new(CliTypes.Claude, ModelIds.ClaudeSonnet5, "bounded summary")
+            { ThinkingLevel = "high", Project = "quota-test", StepId = "post-summary-assessment", JobFolderPath = folder });
+        Assert.True(result.QuotaDeferred);
+        Assert.Contains("hard pin", result.Error);
+        Assert.Empty(claude.Requests);
+        Assert.Empty(codex.Requests);
+    }
+
+    [Fact]
     public async Task Ordinary_primary_one_shot_is_written_to_selection_ledger()
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(
@@ -34,7 +57,7 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         var registry = new CliOneShotRegistry([new RecordingOneShot(CliTypes.Claude)],
             modelSelection: selection);
         var result = await registry.Require(CliTypes.Claude).RunAsync(
-            new(CliTypes.Claude, ModelIds.ClaudeOpus5, "bounded prompt")
+            new(CliTypes.Claude, ModelIds.ClaudeSonnet5, "bounded prompt")
             { Source = "result-summary" });
         Assert.True(result.Ok);
         var entry = Assert.Single(ledger.Entries);
@@ -66,7 +89,7 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         var registry = BuildRegistryWithRecorder(claude, codex);
         var configured = new CliOneShotRequest(
             CliTypes.Claude,
-            ModelIds.ClaudeOpus5,
+            ModelIds.ClaudeSonnet5,
             "bounded prompt")
         {
             ThinkingLevel = "high",
@@ -79,27 +102,27 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         Assert.True(result.Ok);
         Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, result.QuotaAdmission?.Outcome);
         Assert.Equal(CliTypes.Codex, result.EffectiveCliType);
-        Assert.Equal(ModelIds.Gpt56Sol, result.EffectiveModel);
-        Assert.Equal("high", result.EffectiveThinkingLevel);
+        Assert.Equal(ModelIds.Gpt6Sol, result.EffectiveModel);
+        Assert.Equal("medium", result.EffectiveThinkingLevel);
         Assert.Equal("quota-cap", result.QuotaAdmission?.ModelFallback?.Reason);
         Assert.Equal("Weekly", result.QuotaAdmission?.ModelFallback?.Window);
         Assert.Contains("TokenEconomy", result.QuotaAdmission?.ModelFallback?.CatalogueVersion);
         Assert.Empty(claude.Requests);
         var dispatched = Assert.Single(codex.Requests);
         Assert.Equal(CliTypes.Codex, dispatched.CliType);
-        Assert.Equal(ModelIds.Gpt56Sol, dispatched.Model);
-        Assert.Equal("high", dispatched.ThinkingLevel);
+        Assert.Equal(ModelIds.Gpt6Sol, dispatched.Model);
+        Assert.Equal("medium", dispatched.ThinkingLevel);
         Assert.Equal(CliTypes.Claude, configured.CliType);
-        Assert.Equal(ModelIds.ClaudeOpus5, configured.Model);
+        Assert.Equal(ModelIds.ClaudeSonnet5, configured.Model);
         var ledger = new ModelSelectionLedger(new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root }).Build());
         var selection = Assert.Single(ledger.Query(provider: CliTypes.Codex, project: "quota-test",
-            consumer: source, rule: "quota-cap", from: ModelIds.ClaudeOpus5, to: ModelIds.Gpt56Sol).Events);
+            consumer: source, rule: "quota-cap", from: ModelIds.ClaudeSonnet5, to: ModelIds.Gpt6Sol).Events);
         Assert.Equal(CliTypes.Claude, selection.From?.CliType);
     }
 
     [Fact]
-    public async Task Pinned_max_uses_a_supported_codex_equivalent_without_downgrading()
+    public async Task Unpublished_max_pair_waits_without_downgrading()
     {
         var claude = new RecordingOneShot(CliTypes.Claude);
         var codex = new RecordingOneShot(CliTypes.Codex);
@@ -107,7 +130,7 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
 
         var result = await registry.Require(CliTypes.Claude).RunAsync(new CliOneShotRequest(
             CliTypes.Claude,
-            ModelIds.ClaudeOpus5,
+            ModelIds.ClaudeSonnet5,
             "correctness-critical prompt")
         {
             ThinkingLevel = "max",
@@ -115,16 +138,11 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
             Source = "orchestrator-preparation",
         });
 
-        Assert.True(result.Ok);
-        Assert.False(result.QuotaDeferred);
-        Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, result.QuotaAdmission?.Outcome);
-        Assert.Equal(CliTypes.Codex, result.EffectiveCliType);
-        Assert.Equal(ModelIds.Gpt56Sol, result.EffectiveModel);
-        Assert.Equal("max", result.EffectiveThinkingLevel);
+        Assert.False(result.Ok);
+        Assert.True(result.QuotaDeferred);
+        Assert.Equal(QuotaAdmissionOutcome.Wait, result.QuotaAdmission?.Outcome);
         Assert.Empty(claude.Requests);
-        var dispatched = Assert.Single(codex.Requests);
-        Assert.Equal(ModelIds.Gpt56Sol, dispatched.Model);
-        Assert.Equal("max", dispatched.ThinkingLevel);
+        Assert.Empty(codex.Requests);
     }
 
     [Fact]
@@ -134,7 +152,7 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         var registry = BuildRegistry(claude);
 
         var result = await registry.Require(CliTypes.Claude).RunAsync(new CliOneShotRequest(
-            CliTypes.Claude, ModelIds.ClaudeOpus5, "bounded prompt")
+            CliTypes.Claude, ModelIds.ClaudeSonnet5, "bounded prompt")
         {
             Project = "quota-test",
             Source = "title-generation",
@@ -238,16 +256,13 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
 
         var result = await runner.DecideAsync(
             "Prepare a bounded orchestration decision.",
-            ModelIds.ClaudeOpus5,
+            ModelIds.ClaudeSonnet5,
             _root);
 
-        Assert.True(result.Success);
-        Assert.Equal(CliTypes.Codex, result.CliType);
-        Assert.Equal(ModelIds.Gpt56Sol, result.Model);
-        Assert.True(result.QuotaFallback);
-        Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, result.QuotaAdmission?.Outcome);
+        Assert.False(result.Success);
+        Assert.Equal(QuotaAdmissionOutcome.Wait, result.QuotaAdmission?.Outcome);
         Assert.Empty(claude.Requests);
-        Assert.Single(codex.Requests);
+        Assert.Empty(codex.Requests);
     }
 
     [Fact]
@@ -263,7 +278,7 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         var result = await registry.Require(CliTypes.Claude).RunAsync(
             new CliOneShotRequest(
                 CliTypes.Claude,
-                ModelIds.ClaudeOpus5,
+                ModelIds.ClaudeSonnet5,
                 "Review the bounded aspect.")
             {
                 ThinkingLevel = "high",
@@ -375,7 +390,7 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         var spy = new SpyModelSelectionService();
         var claude = new RecordingOneShot(CliTypes.Claude);
         var registry = new CliOneShotRegistry([claude], modelSelection: spy);
-        var request = new CliOneShotRequest(CliTypes.Claude, ModelIds.ClaudeOpus5, "bounded prompt")
+        var request = new CliOneShotRequest(CliTypes.Claude, ModelIds.ClaudeSonnet5, "bounded prompt")
         {
             ThinkingLevel = "high",
             Project = "quota-test",
@@ -393,7 +408,7 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         Assert.Equal("quota-test", call.Request.Project);
         Assert.Equal(source, call.Request.StepId);
         Assert.Equal(
-            new AgentStudio.TaskServer.Contracts.SelectionPins(CliTypes.Claude, ModelIds.ClaudeOpus5, "high"),
+            new AgentStudio.TaskServer.Contracts.SelectionPins(CliTypes.Claude, ModelIds.ClaudeSonnet5, "high"),
             call.Request.Pins);
         Assert.Single(claude.Requests);
     }
@@ -407,7 +422,7 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         var registry = new CliOneShotRegistry([new RecordingOneShot(CliTypes.Claude)], modelSelection: spy);
 
         var result = await registry.Require(CliTypes.Claude).RunAsync(new CliOneShotRequest(
-            CliTypes.Claude, ModelIds.ClaudeOpus5, "bounded prompt")
+            CliTypes.Claude, ModelIds.ClaudeSonnet5, "bounded prompt")
         {
             StepId = step,
             SelectionConsumer = SelectionConsumers.OneShot(kind),

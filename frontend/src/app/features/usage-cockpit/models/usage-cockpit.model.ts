@@ -111,7 +111,15 @@ export interface UsageRun {
   fallbackReason: string | null;
 }
 
+export interface ProviderRoutingUsage {
+  provider: string;
+  executions: number;
+  switchExecutions: number;
+}
+
 export interface UsageCockpitResponse {
+  routingUsage?: ProviderRoutingUsage[];
+  shortStepReservePoints?: number;
   snapshotVersion: number;
   workspaceId: string;
   timeZone: string;

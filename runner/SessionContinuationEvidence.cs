@@ -48,7 +48,7 @@ internal static class SessionContinuationEvidence
             null,
             usage.TotalTokens,
             Math.Max(0, (finishedAt - startedAt).TotalSeconds),
-            DateTime.UtcNow);
+            DateTime.UtcNow, Model: slot.RunSpec?.Model, ThinkingLevel: slot.RunSpec?.ThinkingLevel);
     }
 
     /// <summary>

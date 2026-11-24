@@ -90,12 +90,14 @@ public sealed class ModelSelectionPolicyStoreTests
             Assert.Equal(1, policy.Migration.InheritedSteps);
             Assert.Equal(policy.Migration, reloaded.Migration);
             Assert.Equal("gpt-6-sol", reloaded.LegacyProfiles["claude"].FallbackModel);
-            Assert.Equal(new SelectionRoute("claude", "claude-opus-5", "xhigh"),
-                reloaded.ModelFallbacks["gpt-6-sol:xhigh"]);
+            Assert.Empty(reloaded.ModelFallbacks);
+            Assert.Equal(10, reloaded.ShortStepReservePoints);
+            var edited = new ModelSelectionPolicyStore(config, projects, ledger);
+            edited.SetReserve(7);
+            Assert.Equal(7, new ModelSelectionPolicyStore(config, projects, ledger).Get().ShortStepReservePoints);
             Assert.Equal("catalogue", reloaded.Consumers["coding"].Fallbacks?.Mode);
             Assert.Equal(reloaded.Consumers["coding"], reloaded.Consumers["CODING"]);
             Assert.Equal(reloaded.Caps["CLAUDE"]["WEEKLY"], reloaded.Caps["claude"]["weekly"]);
-            Assert.Equal(reloaded.ModelFallbacks["GPT-6-SOL:XHIGH"], reloaded.ModelFallbacks["gpt-6-sol:xhigh"]);
             Assert.Equal(reloaded.LegacyProfiles["CLAUDE"], reloaded.LegacyProfiles["claude"]);
             Assert.Equal(oldContent, File.ReadAllText(oldPath));
             Assert.True(File.Exists(Path.Combine(root, "model-selection-policy.json")));

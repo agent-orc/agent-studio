@@ -25,7 +25,8 @@ public sealed record UsageCockpitResponse(int SnapshotVersion, string WorkspaceI
     DayOfWeek WeekStart, DateTime GeneratedAt, UsageCalendar Calendar,
     IReadOnlyList<UsageCli> Clis, UsageCostProjection Cost, IReadOnlyList<UsageRun> Runs,
     IReadOnlyList<UsageSlotPool> Slots, IReadOnlyDictionary<string, UsageSourceState> Sources,
-    IReadOnlyList<RemoteChatUsage>? ChatTurns = null);
+    IReadOnlyList<RemoteChatUsage>? ChatTurns = null,
+    IReadOnlyList<ProviderRoutingUsage>? RoutingUsage = null, int? ShortStepReservePoints = null);
 
 public static class UsageCockpitEndpoints
 {
@@ -40,7 +41,8 @@ public static class UsageCockpitEndpoints
             AttemptAuthorityService reviews,
             RemoteChatWorkBroker chatWork,
             LocalChatUsageTracker localChatWork,
-            IConfiguration configuration, AgentStudio.Quota.WorkspaceQuotaService workspaceQuotas) =>
+            IConfiguration configuration, AgentStudio.Quota.WorkspaceQuotaService workspaceQuotas,
+            ModelSelectionLedger selectionLedger, ModelSelectionPolicyStore selectionPolicy) =>
         {
             var workspace = string.IsNullOrWhiteSpace(workspaceId)
                 ? workspaces.List().FirstOrDefault(item => item.IsDefault) ?? workspaces.List().FirstOrDefault()
@@ -174,7 +176,9 @@ public static class UsageCockpitEndpoints
             return Results.Ok(new UsageCockpitResponse(1, workspace.Id, calendar.TimeZone,
                 calendar.WeekStart, now, calendar, clis, cost, runs, slots, sourceStates,
                 chatWork.GetUsage().Concat(localChatWork.GetUsage())
-                    .Where(row => visibleNames.Contains(row.ProjectName)).ToArray()));
+                    .Where(row => visibleNames.Contains(row.ProjectName)).ToArray(),
+                selectionLedger.ExecutionUsage(new DateTimeOffset(calendar.WeekStartUtc, TimeSpan.Zero), visibleNames, canAssignUnattributed),
+                selectionPolicy.Get().ShortStepReservePoints));
         });
     }
 

@@ -3356,6 +3356,13 @@
           <td>The ordinary review claim path bypassed the disk admission check. Retention had no size budget or stale-sibling sweep, and partial temp deletion could remove the ownership receipt before a locked child. Historical host contents were unavailable for independent verification.</td>
           <td>Observed terminal: Escalated or a review lasting over an hour. Disk exhaustion now selects <code>DiskFull</code>, waits for recovery above warning, and schedules an infrastructure successor without consuming the card retry budget. New claims stop at critical pressure; Needs you names the host disk. No product finding is opened for this cause.</td>
         </tr>
+        <tr id="case-review-provider-exhaustion-routing">
+          <td>2026-11-24</td>
+          <td><code>AGT-4035</code><br><span class="small">review-provider-exhaustion-routing</span></td>
+          <td>The owner reported manual coding switches to preserve Claude quota for review. The deterministic exhausted-session reproduction returned Wait despite an available equivalent.</td>
+          <td>Sealed review plans skipped quota replanning; same-session routing always held its provider. No CLI crash was reproduced in this drill. Earlier quota crashes remain recorded under AGT-3972.</td>
+          <td>Before: Wait on the exhausted session, or an unchanged sealed review route. Now: a pre-dispatch equivalent route with a receipt, or a visible wait when no published equivalent is available. Hard pins wait; running work is untouched.</td>
+        </tr>
       </tbody>
     </table>
 
