@@ -248,7 +248,9 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
             await EscalateRecoveryFailureAsync(current,
                 "The delivery verdict became stale, but the current delivery could not be integrated and sent for review: "
                     + (integration?.Error ?? integration?.Outcome.ToString() ?? "integration unavailable"),
-                DeliveryChainReasons.VerdictStale, CancellationToken.None);
+                integration?.FailureCode == AcceptedIntegrationFailureCodes.GateCapacity
+                    ? AcceptedIntegrationFailureCodes.GateCapacity : DeliveryChainReasons.VerdictStale,
+                CancellationToken.None);
             return;
         }
         _timeline?.Append(current.FolderPath,

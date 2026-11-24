@@ -3356,6 +3356,12 @@
           <td>The ordinary review claim path bypassed the disk admission check. Retention had no size budget or stale-sibling sweep, and partial temp deletion could remove the ownership receipt before a locked child. Historical host contents were unavailable for independent verification.</td>
           <td>Observed terminal: Escalated or a review lasting over an hour. Disk exhaustion now selects <code>DiskFull</code>, waits for recovery above warning, and schedules an infrastructure successor without consuming the card retry budget. New claims stop at critical pressure; Needs you names the host disk. No product finding is opened for this cause.</td>
         </tr>
+        <tr>
+          <td>2026-11-24</td>
+          <td>AGT-4038 gate-capacity-strategy-switch</td>
+          <td>A strict-to-fast write left pending batch reviews on the disabled-batch full-suite fallback. Merge admission competed with suite gates; a stale-verdict recovery could escalate its queue timeout. AGT-3862's reported 03:05 failure predates the 03:07 switch, so that earlier incident cannot be attributed to the switch alone.</td>
+          <td>No CLI crash. Integration checks now use a reserved slot and three bounded admission attempts, then report gate capacity. The switch retires running batches through publication fences and hands pending members to compile-before-integration; no switch cancellation consumes a card gate-infrastructure verdict.</td>
+        </tr>
       </tbody>
     </table>
 

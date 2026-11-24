@@ -145,6 +145,8 @@ public sealed class PreDevelopBuildGate
             && plan.Commands.Any(command => command.Kind == VerifyCommandKind.Test);
     }
 
+    internal TimeSpan CapacityRetryDelay { get; set; } = TimeSpan.FromSeconds(15);
+
     /// <summary>
     /// Verifies <paramref name="request"/>'s exact subject. The level is pinned
     /// by <see cref="ResolveTestLevel"/>, so lane configuration can neither turn
@@ -157,7 +159,7 @@ public sealed class PreDevelopBuildGate
     /// <see cref="MergeIntoDevelopRunner"/> sets it, and only after
     /// <see cref="IntegrationGateReusePolicy"/> proved the base is unchanged.
     /// </summary>
-    public Task<BuildTestGateResult> RunAsync(
+    public async Task<BuildTestGateResult> RunAsync(
         BuildTestGateRequest request,
         IReadOnlyList<string> changedFiles,
         BuildProfile? profile,
@@ -165,18 +167,28 @@ public sealed class PreDevelopBuildGate
         CancellationToken ct,
         bool reuseRemoteReviewVerdict = false,
         string? postMergeLevel = null)
-        => _runner.RunAsync(
-            request with
-            {
-                RequireExactSubject = true,
-                RequiredTestLevel = postMergeLevel
-                    ?? LevelFor(changedFiles, reuseRemoteReviewVerdict, request.RepositoryPath, profile),
-            },
-            changedFiles,
-            profile,
-            PostStepMode.Fail,
-            timeout,
-            ct);
+    {
+        request = request with
+        {
+            RequireExactSubject = true,
+            IntegrationPriority = true,
+            RequiredTestLevel = postMergeLevel
+                ?? LevelFor(changedFiles, reuseRemoteReviewVerdict, request.RepositoryPath, profile),
+        };
+        for (var attempt = 1; ; attempt++)
+        {
+            var result = await _runner.RunAsync(request, changedFiles, profile,
+                PostStepMode.Fail, timeout, ct).ConfigureAwait(false);
+            if (!AgentStudio.Runner.MonolithTransitionAdapter.RetryIntegrationAdmission(
+                    result.ViolatedBudget?.Name, result.ViolatedBudget?.Phase, attempt))
+                return result;
+            if (request.JobFolderPath is { } folder)
+                IntegrationLaneEvents.Append(folder, request.Project ?? "", request.JobId ?? "",
+                    "gate-capacity-retry", reason: $"gate capacity: admission attempt {attempt}/3 timed out; "
+                        + $"retrying the same merge check in {CapacityRetryDelay.TotalSeconds:F0} seconds");
+            await Task.Delay(CapacityRetryDelay, ct).ConfigureAwait(false);
+        }
+    }
 
     /// <summary>
     /// The level the gate actually requests: <see cref="ResolveTestLevel"/>'s

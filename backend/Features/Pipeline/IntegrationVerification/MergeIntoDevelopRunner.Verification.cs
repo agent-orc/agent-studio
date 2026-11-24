@@ -172,6 +172,12 @@ public sealed partial class MergeIntoDevelopRunner
                             + $"{decision.Reason} Accepting it needs gate evidence for a tree that carries it, or an operator override.",
                 },
                 decision, gate, releaseGate, branch, noOp),
+            IntegrationVerificationAction.GateUnresolved when !releaseGate && AgentStudio.Runner.MonolithTransitionAdapter.IsGateQueueOverrun(
+                gate?.ViolatedBudget?.Name, gate?.ViolatedBudget?.Phase) => new(
+                MergeIntoIntegrationResult.Failed(AcceptedIntegrationFailureCodes.GateCapacity,
+                    $"Gate capacity: verification of {branch} could not acquire its reserved slot after 3 admission attempts; "
+                    + "the existing integration history is unchanged."),
+                decision, gate, releaseGate, branch, noOp),
             IntegrationVerificationAction.GateUnresolved when gate?.FailureKind == BuildTestGateFailureKind.Environment => new(
                 MergeIntoIntegrationResult.Of(
                     MergeIntoIntegrationOutcome.GateEnvironmentFailure,
@@ -464,7 +470,9 @@ public sealed partial class MergeIntoDevelopRunner
             changedPaths!,
             profile,
             preDevelopTimeout,
-            CancellationToken.None).ConfigureAwait(false);
+            CancellationToken.None,
+            postMergeLevel: TestingStrategies.Resolve(_projectSettings?.Get(project)) == TestingStrategies.Fast
+                ? TestExecutionLevels.CompileOnly : null).ConfigureAwait(false);
     }
 
     /// <summary>
