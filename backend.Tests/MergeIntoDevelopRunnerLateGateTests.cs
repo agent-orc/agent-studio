@@ -12,6 +12,33 @@ namespace AgentStudio.Tests;
 public sealed partial class MergeIntoDevelopRunnerTests
 {
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Queue_exhaustion_rolls_back_unpublished_merge_as_gate_capacity()
+    {
+        var fixture = SeedLateGateFixture("capacity-exhausted", "capacity", publishDelivery: false);
+        var before = RunGit(fixture.Repo, "rev-parse develop").Out.Trim();
+        var gate = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Fail, null, 0, "", "machine queue timed out", false, false)
+        {
+            FailureKind = BuildTestGateFailureKind.Environment,
+            ViolatedBudget = new("machine-gate-queue", 120000, 120006, "queue"),
+        });
+        var runner = new MergeIntoDevelopRunner(fixture.Git, fixture.Log,
+            NullLogger<MergeIntoDevelopRunner>.Instance, projectSettings: fixture.Settings,
+            preDevelopBuildGate: new PreDevelopBuildGate(gate) { CapacityRetryDelay = TimeSpan.Zero },
+            taskScanner: fixture.Scanner, timeline: fixture.Timeline);
+
+        var result = await runner.RunAsync("Fixture", "capacity", fixture.Folder,
+            fixture.WatchPath, "develop", CancellationToken.None);
+
+        Assert.Equal(3, gate.Invocations);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateCapacity, result.FailureCode);
+        Assert.Contains("3 admission attempts", result.Error);
+        Assert.False(result.GateExecuted);
+        Assert.Equal(before, RunGit(fixture.Repo, "rev-parse develop").Out.Trim());
+    }
+
+    [Fact]
     public async Task Inline_push_records_gate_after_fresh_merge_verification()
     {
         var fixture = SeedLateGateFixture("inline-published-gate", "inline", publishDelivery: false);

@@ -13,6 +13,17 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class GateQueueStallPolicyTests : IDisposable
 {
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(2, true)]
+    [InlineData(3, false)]
+    public void Integration_admission_has_three_attempts(int attempts, bool retry)
+        => Assert.Equal(retry, GateQueueStallPolicy.RetryIntegrationAdmission("machine-gate-queue", "queue", attempts));
+
+    [Fact]
+    public void Integration_does_not_retry_a_running_gate_timeout()
+        => Assert.False(GateQueueStallPolicy.RetryIntegrationAdmission("gate-run", "execution", 1));
+
     private static readonly TimeSpan Budget = TimeSpan.FromMilliseconds(9_327_000);
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 17, 8, 0, 0, TimeSpan.Zero));
     private readonly string _root = Path.Combine(Path.GetTempPath(), "atp-gate-queue-stall-" + Guid.NewGuid().ToString("N"));

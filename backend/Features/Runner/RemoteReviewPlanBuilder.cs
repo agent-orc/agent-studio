@@ -381,6 +381,24 @@ public sealed partial class RemoteReviewPlanBuilder
                 string.Join(" | ", selection.Audit.Reasons));
             if (!selection.Audit.FullSuiteRequired)
             {
+                if (TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast)
+                {
+                    var fullCommands = verify.Commands.Where(command => command.Kind == VerifyCommandKind.Test)
+                        .Select(command => (command.Command, command.WorkingSubdir)).ToHashSet();
+                    var omitted = selection.Commands.Where(command => command.Kind == VerifyCommandKind.Test
+                        && fullCommands.Contains((command.Command, command.WorkingSubdir))).ToArray();
+                    if (omitted.Length > 0)
+                        selection = DeterministicTestScope.WithDigest(selection with
+                        {
+                            Commands = selection.Commands.Except(omitted).ToArray(),
+                            Audit = selection.Audit with
+                            {
+                                SelectedCommands = selection.Audit.SelectedCommands.Except(omitted.Select(TestSelectionPlanner.Describe)).ToArray(),
+                                OmittedTestCommands = selection.Audit.OmittedTestCommands.Concat(omitted.Select(TestSelectionPlanner.Describe)).Distinct().ToArray(),
+                                Reasons = [.. selection.Audit.Reasons, "fast: unchanged full test commands run after integration"],
+                            },
+                        });
+                }
                 toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath, projectSettings.BuildProfile,
                     integrationRef, changedPaths, verify with { Commands = selection.Commands }) with
                 {
@@ -390,6 +408,31 @@ public sealed partial class RemoteReviewPlanBuilder
                 selectionDigest = selection.Audit.Digest;
                 perCardApplied = true;
             }
+        }
+        // Fast never turns an unmapped T1 selection into a full pre-merge suite.
+        // The merge window owns that coverage; keep build and lint here.
+        if (!deferBuildTest && !noChange && conceptDossier is null
+            && task is not null && !TaskModes.IsReportOnly(task.Mode)
+            && projectSettings is not null
+            && TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast
+            && !string.IsNullOrWhiteSpace(repositoryPath))
+        {
+            if (!perCardApplied)
+            {
+                var verify = VerifyCommandPlanner.Plan(repositoryPath, projectSettings.BuildProfile);
+                var selection = DeterministicTestScope.WithDigest(TestSelectionPlanner.Plan(
+                    repositoryPath, verify, changedPaths, projectSettings.TestExecution,
+                    TaskStates.AutoReview, TestExecutionLevels.BuildOnly));
+                toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath, projectSettings.BuildProfile,
+                    integrationRef, changedPaths, verify with { Commands = selection.Commands }) with
+                {
+                    RequireDifferentHostFailureDomain = projectSettings.RequireDifferentReviewHost == true,
+                };
+                testLevel = TestExecutionLevels.BuildOnly;
+                selectionDigest = selection.Audit.Digest;
+                perCardApplied = true;
+            }
+            ordinaryToolPlan = toolPlan;
         }
         if (task is null || TaskModes.IsReportOnly(task.Mode))
             return toolPlan;
