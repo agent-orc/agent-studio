@@ -14,3 +14,6 @@
 .operators__issued { display: flex; flex-direction: column; gap: var(--studio-spacing-1); padding: var(--studio-spacing-2); border-radius: 4px; background: var(--studio-card-attention-bg); color: var(--studio-fg); font-size: 0.78rem; }
 .operators__create { display: flex; flex-direction: column; gap: var(--studio-spacing-2); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.operators__device { display: flex; flex-direction: column; gap: var(--studio-spacing-1); min-width: 10rem; }
+.operators__subhead { margin: var(--studio-spacing-2) 0 0; color: var(--studio-fg-strong); font-size: 0.75rem; font-weight: 600; }
+.operators__item > .access-hint code { color: var(--studio-mono); font-family: var(--font-mono); font-size: 0.72rem; }

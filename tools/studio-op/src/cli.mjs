@@ -56,6 +56,7 @@ export function helpText() {
     '',
     'The token is read only from ~/.config/agent-studio/operator-token (chmod 600),',
     'or operator-session when studio-op.json sets "credential": "operator-session".',
+    'studio-op login writes operator-session after the Owner confirms the sign-in in Studio.',
     'There is no token option and no token environment variable.',
     'Exit codes and setup: docs/operations/setup/studio-op.md',
   ].join('\n');
@@ -85,11 +86,14 @@ export async function main(argv, { env = process.env, home = os.homedir(), stdou
     const configDir = configDirectory(home);
     const config = readConfig(configDir);
     const url = options.url ?? env.STUDIO_OP_URL ?? config.url ?? DEFAULT_URL;
-    const credential = readCredential({ home, config });
+    // `login` signs in without a credential; it never reads or sends the token file.
+    const credential = command.anonymous ? null : readCredential({ home, config });
     if (credential) output.protect(credential.token);
     let client = null;
     let clientError = null;
-    try { client = new StudioClient({ url, credential, clientId: config.clientId ?? 'local-default' }); }
+    try {
+      client = new StudioClient({ url, credential, clientId: config.clientId ?? 'local-default', anonymous: !!command.anonymous });
+    }
     catch (error) {
       // auth status reports a missing or misplaced credential instead of failing on it.
       if (!command.local) throw error;
