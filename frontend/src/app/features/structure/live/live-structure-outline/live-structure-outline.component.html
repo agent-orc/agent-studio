@@ -1,0 +1,19 @@
+<nav class="outline" aria-label="Structure outline" data-testid="live-outline">
+  <h2 class="outline__title">Outline</h2>
+  <ul class="outline__list">
+    @for (row of rows(); track row.node.id) {
+      <li>
+        <button type="button" class="outline__row" data-testid="live-outline-row" [attr.data-outline-id]="row.node.id"
+                [attr.aria-current]="selected() === row.node.id ? 'true' : null" [attr.aria-label]="label(row)"
+                (click)="pick(row.node)" (keydown.enter)="$event.preventDefault(); enter.emit(row.node.id)">
+          <span class="outline__indent" aria-hidden="true" [style.width.px]="row.depth * 14"></span>
+          <app-live-glyph [name]="row.node.kind" />
+          <span class="outline__name">{{ row.node.name }}</span>
+          @if (row.warnings) { <span class="outline__warnings">{{ row.warnings }}</span> }
+          @if (row.value) { <span class="outline__value">{{ row.value }}</span> }
+          <app-status-indicator class="outline__health" [tone]="row.node.health.tone" [label]="row.node.health.word" [compact]="true" testId="live-outline-health" />
+        </button>
+      </li>
+    }
+  </ul>
+</nav>

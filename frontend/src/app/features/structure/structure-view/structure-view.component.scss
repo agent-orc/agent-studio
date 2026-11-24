@@ -118,3 +118,9 @@
 .structure-box[data-opaque='false'] > .structure-node strong { flex: 0 1 auto; min-width: 0; }
 .structure-box[data-opaque='false'] > .structure-node small { flex: 1 1 0; min-width: 0; }
 .structure-box[data-opaque='false'] > .structure-node .structure-chip { flex: none; }
+// Live canvas (AGT-4024): the header is one quiet line, so the plan gets the height.
+.structure-view[data-mode='live'] .structure-header { padding: var(--studio-spacing-2) var(--studio-spacing-4); }
+.structure-view[data-mode='live'] .structure-header > div:first-child { display: flex; align-items: baseline; gap: var(--studio-spacing-3); min-width: 0; }
+.structure-view[data-mode='live'] .structure-header h1 { font-size: var(--studio-font-size-xl); }
+.structure-view[data-mode='live'] .structure-header .structure-eyebrow { display: none; }
+.structure-view[data-mode='live'] .structure-header p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

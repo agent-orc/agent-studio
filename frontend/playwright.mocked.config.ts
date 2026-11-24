@@ -30,6 +30,7 @@ export default defineConfig({
       '**/project/testing-strategy.spec.ts',
       '**/workspace/deployment-dashboard.spec.ts',
       '**/workspace/structure-view.spec.ts',
+      '**/workspace/structure-live.spec.ts',
       '**/persona-team/team-page.spec.ts',
       '**/project/project-deploy-area.spec.ts',
       '**/studio-shell/activity-bar-single-active.spec.ts',

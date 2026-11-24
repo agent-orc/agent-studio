@@ -35,6 +35,7 @@
     "src/app/features/usage-cockpit/components/usage-slot-chip/usage-slot-chip.html",
     "src/app/features/server-readiness/components/server-readiness-panel/server-readiness-panel.component.html",
     "src/app/features/structure/structure-view/structure-view.component.html",
+    "src/app/features/structure/live/live-structure-view/live-structure-view.component.html",
     "src/app/features/usage-cockpit/components/usage-detail-panel/usage-detail-panel.html"
   ],
   "documented": {

@@ -534,7 +534,7 @@
         @if (activeTab()?.kind === 'structure') {
           @defer (when structureComponent()) {
             @if (structureComponent(); as component) {
-              <ng-container *ngComponentOutlet="component; inputs: { projectName: $any(activeTab()).projectName ?? null }" />
+              <ng-container *ngComponentOutlet="component; inputs: { projectName: $any(activeTab()).projectName ?? null, liveCanvas: true }" />
             }
           } @placeholder { <p>Loading structure…</p> }
         }
