@@ -50,6 +50,9 @@ public sealed class OperationsTelemetryApiTests : IDisposable
             {
                 services.RemoveAll<TimeProvider>();
                 services.AddSingleton<TimeProvider>(_clock);
+                // The intake reaches the store through its single writer, a
+                // product worker test hosts start only on request.
+                services.AddHostedService(provider => provider.GetRequiredService<TelemetryWriter>());
             });
         });
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });

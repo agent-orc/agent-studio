@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.HttpOverrides;
 using AgentStudio.Telemetry;
 using AgentStudio.Host;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Serilog;
 using Serilog.Events;
 
@@ -1835,6 +1836,13 @@ if (SecurityProfiles.IsLocal(builder.Configuration))
 if (connectorProfile)
     builder.ConfigureConnectorProfile();
 
+// WebApplicationFactory runs this entry point inside xUnit. Product workers
+// are opt-in there: a test can add the hosted service it covers through
+// ConfigureTestServices, or request the complete startup path explicitly.
+// Outside xUnit the production registration set is untouched.
+if (underTestHost && !builder.Configuration.GetValue("Startup:HostedServices", false))
+    builder.Services.RemoveAll<IHostedService>();
+
 hostTimeline.Checkpoint("entryToBuild");
 // Short-lived test hosts must not leave HttpClientFactory handler-expiry timers
 // behind after their service providers have been disposed.
@@ -2062,13 +2070,12 @@ catch (Exception ex)
 // AGT-3567: the one-time repair, backfill and report sweeps below are
 // idempotent and change nothing on a workspace they already ran on, but the
 // first of them builds the task index that TaskAccess boot then rebuilds. A
-// Test host can boot without them with Startup:RepairSweeps=false; the Git
-// facts census boots 26 hosts over its 3,000-card board. Recovery (crash
-// recovery, the stale-progress archiver, run adoption unless
-// Runner:RunLiveness:Enabled is false) still runs. Outside the Test
-// environments the setting is ignored.
-var runRepairSweeps = !(app.Environment.IsEnvironment("Test") || app.Environment.IsEnvironment("Testing"))
-    || app.Configuration.GetValue("Startup:RepairSweeps", true);
+// Test hosts skip them by default and can request the production sweep path
+// with Startup:RepairSweeps=true. Recovery (crash recovery, the stale-progress
+// archiver, run adoption unless Runner:RunLiveness:Enabled is false) still
+// runs. Outside test hosts and Test environments the setting is ignored.
+var runRepairSweeps = !(underTestHost || app.Environment.IsEnvironment("Test") || app.Environment.IsEnvironment("Testing"))
+    || app.Configuration.GetValue("Startup:RepairSweeps", !underTestHost);
 
 // Backfill jobs that carry agent:"human" + cliType:null + model:null with owner
 // client defaults. Idempotent; no-op once all jobs are already migrated.

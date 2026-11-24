@@ -68,6 +68,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Orchestrator | [domains/orchestrator.md](../system/domains/orchestrator.md) |
 | Orchestration decision library, action vocabulary and architecture guard | [contracts/orchestration-decisions.md](../system/contracts/orchestration-decisions.md) |
 | Monolith hosted services: decide / apply-recover inventory, the per-transition switch that selects who decides, AI Operator deciders and the monolith decision guard (AGT-3060) | [architecture/monolith-hosted-services.md](../system/architecture/monolith-hosted-services.md) |
+| Backend test host startup: hosted-service opt-in, repair sweeps, and timeline measurements | [operations/testing/test-host-startup.md](../operations/testing/test-host-startup.md) |
 | Review | [domains/review.md](../system/domains/review.md) |
 | Quality Studio pipeline analysis policy | [pipeline domain](../system/domains/pipeline.md#quality-studio-analysis-steps) · [JSON schema](../app/schemas/quality-analysis-policy.schema.json) |
 | Runtime prompt registry, review companions, call telemetry, and costs | [contracts/runtime-prompts.md](../system/contracts/runtime-prompts.md) |
