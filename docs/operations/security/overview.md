@@ -320,7 +320,7 @@ through its groups. Code: `backend/Features/Security/Iam/`.
 | Role | Bindable at | Holds |
 |---|---|---|
 | Owner | workspace | every permission; break-glass role, the only one with `access.read`, `access.manage`, and `workspace.administer` |
-| Admin | workspace, project | settings, operation, production deploy and approval, `secrets.write` |
+| Admin | workspace, project | settings, operation, production deploy and approval, `secrets.write`, card overrides (`project.cards.override`) |
 | Developer | workspace, project, environment | cards, runs, chats, documents, magazine articles, non-production deploys, the Human Review decision (`project.cards.review`) |
 | Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys, the security view (`security.posture.read`), magazine publishing (`magazine.write`) |
 | Product (`contributor`) | project | cards and chat, narrowed further by the Product allowlist |
@@ -380,7 +380,10 @@ account role and does not use human sign-in.
   facts without waiting for a workspace scan. A scoped request must have the
   required permission in every project whose card matches the supplied id or
   key, including when a query names one project. Workspace-only bindings can
-  be decided without a task lookup. New ids and keys are reserved across the
+  be decided without a task lookup, except a card write by a principal whose
+  strongest role is `operator-agent`: it resolves the card's project like an
+  API token does, so an operator agent bound on the workspace writes cards as
+  project-addressed requests (ES-2). New ids and keys are reserved across the
   workspace, and a move that would rename a card to a conflicting identity is
   refused.
 - Hub project groups and conversation subscriptions use the current role
@@ -540,9 +543,12 @@ account role and does not use human sign-in.
   `workspace.administer`, and no `project.settings.write`. Only service
   accounts take it. A principal whose strongest granting role is
   `operator-agent` cannot make an installation-wide (unaddressed) write, so
-  `workspace.operate` stays read-only for it. It does not hold operator
-  authority: an operator override completion and the operator decider of a
-  decision card stay with Admin and Owner. `POST /api/runner/secrets/resolve`
+  `workspace.operate` stays read-only for it. Its card writes resolve the
+  card's project even through a workspace binding, so they are
+  project-addressed and not refused as installation-wide. It does not hold
+  operator authority: the operator decider of a decision card stays with Admin
+  and Owner. It does not hold `project.cards.override` either; see
+  [Card overrides](#card-overrides-as-a-permission-es-2). `POST /api/runner/secrets/resolve`
   answers 403 `secret-resolve-denied` to any service-account bearer.
   `GET /api/quota/admission/{project}` stays a Task Server and Runner claim
   route that no session or token reads; operator tokens read quota through
@@ -685,7 +691,8 @@ D1, D4, and D11).
   a service account of origin `operator-agent` (id `opa_*`) with role bindings
   like any service account, but no `sat.*` token. Its credentials are child
   sessions. The Owner creates the agent and starts each session in Settings →
-  Access → Operator agents (`/api/auth/iam/operator-agents`).
+  Access → Operator agents (`/api/auth/iam/operator-agents`), or confirms a
+  terminal sign-in that `studio-op login` started (ES-3, below).
 - Each session receives its own `oas.*` bearer, returned once and stored only
   as a hash. A session lasts 1 to 8 hours (default 8). Only an active Owner
   starts, renews (again at most 8 hours from the renewal), or revokes it;
@@ -707,6 +714,85 @@ D1, D4, and D11).
 - The operator agent runs on the Owner's machine under its own OS user,
   without the Owner's SSH agent, keys, or credential files (D11). See the
   [operator agent setup guide](../setup/operator-agent.md).
+
+### Terminal sign-in confirmed with step-up (ES-3)
+
+An operator session can reach the agent's terminal without the Owner copying a
+bearer ([elevated session Dossier](../../operator-elevated-session/index.html),
+decision ES-D2 option S2, and ES-D5 option A for the session part: the
+lifetime stays the existing 1 to 8 hours until ES-6). It follows the device
+authorization pattern (RFC 8628) with a Studio step-up as the confirmation.
+
+- **Start.** `POST /api/auth/operator-sign-in` is anonymous. It takes the
+  device's public key as a JWK (EC P-256, no private member), a device label
+  (1 to 64 printable characters), the operator agent the terminal asks for (id
+  or name, optional) and the requested elevated action classes
+  (`cards.accept-override`, `cards.archive-override`, `project.testing`;
+  anything else is refused with `action-class-unknown`). The body is bounded to
+  4 KiB before binding. Studio answers a user code of eight characters from the
+  RFC 8628 consonant alphabet (`BCDFGHJKLMNPQRSTVWXZ`, shown as `XXXX-XXXX`),
+  valid 10 minutes and once, the confirmation page `#/terminal-sign-in` and the
+  link with the code, a poll handle (`osp.*`) and an interval of 5 seconds. The
+  start does not reveal whether the named agent exists. Starts are throttled to
+  10 per client address (IPv6 per /64) within 15 minutes
+  (`Security:OperatorSignIn:MaxStartsPerAddress`), at most 100 sign-ins wait at
+  once (`Security:OperatorSignIn:MaxOpen`), and a pending out-of-band kill
+  refuses every start. Studio keeps only hashes of the code and the poll handle.
+- **Poll.** `POST /api/auth/operator-sign-in/poll` with the poll handle answers
+  `pending`, `slow-down` (a poll sooner than the interval; the interval grows by
+  5 seconds), `denied`, `expired`, or once `session` with the `oas.*` bearer,
+  the actor, the delegating Owner, the expiry, the confirmed classes and the
+  key thumbprint. A second poll after that answers `expired`. An unknown handle
+  answers 404 `signin-not-found`.
+- **Confirm.** The page **Confirm terminal sign-in** in Studio
+  (`#/terminal-sign-in`, or the link with `?code=`) needs a signed-in browser
+  session; signing in first keeps the link. It shows code entry, or the link's
+  code with an explicit "This code is on my terminal now" tick that Confirm
+  requires; the device label; whether the key thumbprint is already known for
+  the chosen agent; the requesting address and whether it is on the browser's
+  network (same address, or the same /64); the requested classes, which the
+  Owner can remove but never add (`action-class-not-requested`); the operator
+  agent (preselected from the request); and the lifetime of 1 to 8 hours
+  (default 8). Unknown device and another network together raise a warning to
+  deny a sign-in the Owner did not start. Lookup, confirm and deny
+  (`/api/auth/iam/operator-sign-ins/{lookup,confirm,deny}`) need an active
+  Owner (`owner-required`) with the browser's CSRF token. Confirm consumes a
+  fresh step-up (`step-up-required` without one); deny needs none.
+- **Codes.** An unknown code answers 404 `signin-code-unknown`, an expired one
+  410 `signin-code-expired`, a used one 409 `signin-code-used`, a denied one
+  409 `signin-code-denied`. Five unknown codes entered by one Owner within 15
+  minutes lock code entry for that Owner for 15 minutes: the sixth entry, even
+  with the right code, answers 429 `signin-locked`.
+- **Session and device record.** Confirming creates the `oas.*` session of the
+  chosen agent at once, with the device label, the key thumbprint (RFC 7638),
+  the terminal's address at confirmation, the Owner's browser address and the
+  confirming browser session id, and the kept classes. Its bearer is minted
+  when the terminal next polls, so until then the session shows as **Waiting
+  for terminal** and has no usable token. A confirmed sign-in that is not
+  collected within the 10 minutes expires and its session ends. The thumbprint
+  is stored now and enforced from ES-4 on (proof of possession); until then the
+  session is a bearer like one started in Settings. The classes are recorded
+  only; ES-7 admits their operations, so the session has the operator-agent
+  role's authority and nothing more.
+- **Devices.** Each operator agent lists its known devices (label, thumbprint,
+  last confirmation and its address, last use of any of its sessions, live
+  sessions). **Forget device** (`DELETE
+  /api/auth/iam/operator-agents/{id}/devices/{deviceId}`, no step-up) ends every
+  live session of that key for the agent at once, and a later sign-in with it
+  shows as an unknown device.
+- **Ending.** Revoking the confirming browser session from a session list
+  (one session, or "sign out other sessions"), a password reset of the
+  confirming person by an Owner, a password change by that person, and
+  disabling that person end every live session it or they confirmed, and
+  cancel those sessions' open approvals. A sign-out and the browser session's
+  ordinary expiry do not. A session started in Settings is not affected by
+  these rules.
+- **Audit.** The IAM audit records `operator-signin.start` (label, thumbprint,
+  requested agent and classes, address), `operator-signin.confirm` (agent,
+  session, known device, classes, both addresses and whether they match),
+  `operator-signin.deny`, `operator-signin.expire`, `operator-signin.issue`,
+  `operator-device.forget`, and `operator-session.revoke` with the reason for
+  each session an ending rule ended.
 
 ### Operator operation catalogue, tiers, and standing grants (SM-4)
 
@@ -731,8 +817,12 @@ refused before any role binding is read.
   command passed (D2). Without it the same request is `gate.bypass`.
 - T2 high risk: `secrets.change`, `exposure.change`, `data.delete` (every
   catalogued delete), `history.rewrite`, `gate.bypass` (merge, external
-  completion, a move into Human review or Completed), `keys.rotate`,
-  `host.enrollment`, `access.change`, `grant.change`, and `catalogue.change`.
+  completion, a move into Human review, or into Completed without
+  `operatorOverride`), `card.accept-override` (a move into Completed with
+  `operatorOverride`), `card.archive-override` (a move into Archive with
+  `archiveOverride`), `keys.rotate`, `host.enrollment`, `access.change`,
+  `grant.change`, and `catalogue.change`. A plain move into Archive is not
+  catalogued.
   A T2 request runs only under the Owner's approval of exactly that request
   (SM-5, next section); without one it is refused with `approval-required`.
   A T2 request on access administration or the Task Server plane
@@ -1008,10 +1098,57 @@ with step-up; an optional push notification only links there).
   | `POST /api/auth/iam/operator-approvals/{id}/reject` | `access.manage`, active Owner, fresh step-up | As approve. |
 
   Settled approvals stay in the identity store for 30 days.
-  `OperatorApprovalFlowTests` cover the end-to-end flow, replay, a changed
+  `OperatorApprovalFlowTests` cover the end-to-end flow, the override
+  acceptance and archive override of [ES-2](#card-overrides-as-a-permission-es-2), replay, a changed
   parameter, another session, expiry, a forged actor header, and the push
   link; `OperatorApprovalTests` cover the lifecycle matrix, step-up,
   cancellation, the queue limit, and masking.
+
+### Card overrides as a permission (ES-2)
+
+An override acceptance (`operatorOverride` on a move into Completed) and an
+archive override (`archiveOverride` on a move into Archive) need the
+permission `project.cards.override` in the card's project (Dossier
+operator-elevated-session ES-2, decision ES-D8 option A). Both move routes,
+`PUT /api/tasks/{id}/state` and `POST /api/tasks/{id}/move`, check it in place
+of the former projected Admin or Owner role and the human-Owner check.
+
+- **Who holds it.** Owner and Admin, by role. Developer, Operator agent,
+  Product, Reviewer, Viewer, and Approver do not. A caller without it is
+  refused with 403 `operator-authority-required` and
+  `permission: project.cards.override`. In the local profile without a
+  principal the local operator holds it, as it held the override completion
+  before.
+- **Operator sessions.** The catalogue resolves the two moves to
+  `card.accept-override` and `card.archive-override` (T2, project scope). A
+  request without approval opens an SM-5 approval request (403
+  `approval-required`); after the Owner approves it with step-up, the exact
+  replay carries `project.cards.override` for that one request and completes
+  or archives the card. No other operation, principal, or break-glass window
+  gains the permission. One approval covers one card (ES-D9: the single
+  request path until batch confirmation, ES-8).
+- **Reason.** The written reason stays mandatory (at least eight characters).
+  An operator session's override without a usable reason is refused with the
+  move routes' 400 reason error before it opens an approval request, so the
+  Owner is never asked about a request that cannot run.
+- **Attribution.** Every timeline event of an approved request carries the
+  session as actor, `delegatedBy`, and `details.approvalId` and
+  `details.approvedBy` (`human:<owner id>`). The integration override event
+  and the `archive_override` event carry the reason; the archive override row
+  in `<project>/.audit/archive-overrides.jsonl` names `approvalId` and
+  `approvedBy`. The operator session's control plane audit entry for the move
+  carries `operation`, `approvalId`, `approvedBy` (the Owner's user id), and
+  `reason`.
+- The lane write itself accepts an archive override only from a human actor
+  or from the operator session of an approved request, so an automated actor
+  cannot archive with an override even through an internal caller.
+
+`OperatorApprovalFlowTests` cover both operator paths, the missing reason, the
+uncatalogued plain archive, and the workspace-bound requeue;
+`IamHandlerAccessTests` cover the Developer refusal and the direct Admin and
+Owner overrides; `PermissionEvaluatorTests` and
+`OperatorOperationCatalogInventoryTests` cover the holders and the card move
+refinement.
 
 ### Break-glass windows (SM-7)
 
@@ -1400,6 +1537,12 @@ Dossier's guardrails in code:
   Studio-issued token shape and bearer header values, so an answer that echoes
   a credential is not printed. Prompt, title and log text holding a
   token-shaped value is refused instead of sent.
+- `studio-op login` (ES-3) sends no credential: it starts a terminal sign-in
+  with its P-256 device key, prints the code, the link and a terminal QR code,
+  and writes the session the Owner confirmed into `operator-session` (mode 600,
+  through a temporary file and a rename) without printing it. It refuses plain
+  HTTP to a non-loopback host. Until ES-4 the device key is kept in
+  `operator-device-key.json` (mode 600) beside the session file.
 - `studio-op watch` keeps a local lock file (mode 600) next to the token file
   in addition to the server's watcher lease, and releases both on exit.
 - `studio-op accept` refuses unless the latest review passed with proven build

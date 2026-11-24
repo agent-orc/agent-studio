@@ -123,6 +123,11 @@ export class OperatorAgentsService {
       `${OPERATORS}/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/renew`, { lifetimeHours }));
   }
 
+  /** Forgets a device: its sessions end, and a later sign-in with its key counts as an unknown device. */
+  forgetDevice(agentId: string, deviceId: string): Promise<unknown> {
+    return this.mutate(this.http.delete(`${OPERATORS}/${encodeURIComponent(agentId)}/devices/${encodeURIComponent(deviceId)}`));
+  }
+
   async loadKillSwitch(): Promise<void> {
     try {
       this.killSwitch.set(await firstValueFrom(this.http.get<OperatorKillSwitchStatus>(KILL_SWITCH)));

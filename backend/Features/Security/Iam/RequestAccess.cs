@@ -11,9 +11,20 @@ public sealed class RequestAccess(
     IReadOnlyList<RoleBinding> bindings,
     string permission,
     Func<string, string, bool> sameProject,
-    string? projectedRole = null)
+    string? projectedRole = null,
+    IReadOnlySet<string>? approvedPermissions = null)
 {
+    private readonly IReadOnlySet<string> _approved = approvedPermissions ?? new HashSet<string>(StringComparer.Ordinal);
+
     public IamSubject Subject => subject;
+
+    /// <summary>
+    /// Permissions an Owner approval of exactly this request added (ES-2):
+    /// an operator session request admitted under an approval of
+    /// <c>card.accept-override</c> or <c>card.archive-override</c> carries
+    /// <see cref="IamPermissions.ProjectCardsOverride"/>, for this request only.
+    /// </summary>
+    public IReadOnlySet<string> ApprovedPermissions => _approved;
 
     /// <summary>The permission the route declared.</summary>
     public string Permission => permission;
@@ -24,6 +35,14 @@ public sealed class RequestAccess(
     /// <summary>False for a blank project: an unresolvable target fails closed.</summary>
     public bool AllowsProject(string required, string? project)
         => !string.IsNullOrWhiteSpace(project) && Allows(required, PermissionTarget.ForProject(project));
+
+    /// <summary>
+    /// True when the principal holds <paramref name="required"/> in
+    /// <paramref name="project"/> through its role bindings, or when an
+    /// approval admitted this request with that permission.
+    /// </summary>
+    public bool HoldsInProject(string required, string? project)
+        => _approved.Contains(required) || AllowsProject(required, project);
 
     /// <summary>
     /// The strongest role that grants the route's permission in

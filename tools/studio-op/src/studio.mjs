@@ -26,7 +26,7 @@ function isLoopback(hostname) {
  * without a token file is refused before the first request.
  */
 export class StudioClient {
-  constructor({ url, credential, clientId }) {
+  constructor({ url, credential, clientId, anonymous = false }) {
     let base;
     try { base = new URL(url); }
     catch { throw new OperationError('invalid-url', `The Studio URL "${url}" is not a URL.`, { exitCode: EXIT.USAGE }); }
@@ -35,7 +35,10 @@ export class StudioClient {
     const loopback = isLoopback(base.hostname);
     if (credential && base.protocol === 'http:' && !loopback)
       throw new CredentialError('token-requires-https', 'A token is sent only over HTTPS or to a loopback address.');
-    if (!credential && !(base.protocol === 'http:' && loopback))
+    // A sign-in receives a session, so it needs the same transport a token needs.
+    if (anonymous && base.protocol === 'http:' && !loopback)
+      throw new CredentialError('token-requires-https', 'A sign-in receives a session only over HTTPS or from a loopback address.');
+    if (!anonymous && !credential && !(base.protocol === 'http:' && loopback))
       throw new CredentialError('token-file-missing',
         'A networked Studio needs a token file. Run studio-op auth status for the path and setup.');
     this.base = base;

@@ -189,7 +189,7 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.Anonymous, "/api/auth/status", "/api/auth/invite/preview", "/recovery");
         Add("POST", IamPermissions.Anonymous,
             "/api/auth/bootstrap", "/api/auth/login", "/api/auth/invite/accept", "/api/auth/runner-enroll",
-            "/api/auth/passkeys/assertion-options");
+            "/api/auth/passkeys/assertion-options", "/api/auth/operator-sign-in", "/api/auth/operator-sign-in/poll");
         Add("R", IamPermissions.SelfSession, "/api/auth/session");
         Add("R", IamPermissions.SelfSession, "/api/auth/directory");
         Add("POST", IamPermissions.SelfSession, "/api/auth/logout", "/api/auth/change-password");
@@ -390,7 +390,7 @@ public static class RoutePermissionCatalog
             "/api/model-selection/policy/consumers/{}",
             "/api/clients/{}/defaults", "/api/clients/{}/runner-capacity", "/api/git/branch-sweep/settings",
             "/api/orchestration/rollout/**");
-        Add("POST", IamPermissions.WorkspaceRead, "/api/token-pricing/calculate", "/api/component-routing/resolve");
+        Add("POST", IamPermissions.WorkspaceRead, "/api/token-pricing/calculate", "/api/token-pricing/what-if", "/api/component-routing/resolve");
         // These reads accept host paths or authority ids rather than a project
         // address. They must not inherit project-scoped workspace.read.
         Add("R", IamPermissions.WorkspaceAdminister, "/api/filesystem-layer/**");

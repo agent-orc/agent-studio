@@ -30,6 +30,7 @@ function makeDetail(state: string) {
       agent: 'claude',
       cliType: 'claude',
       model: 'claude-opus-4-7',
+      pinMode: 'preference',
       watchPath: WATCH_PATH,
       projectName: PROJECT,
       folderPath: `${WATCH_PATH}/.orchestrator/jobs/${state}/${JOB_ID}`,
@@ -359,6 +360,7 @@ async function installRoutes(page: Page, state: string, pipelineBody: () => unkn
   await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }),
   );
+  return detail;
 }
 
 const RESULTS_DIR = process.env.JOB_RESULTS_DIR ?? '';
@@ -958,4 +960,45 @@ test.describe('Pipeline: per-step metric column headers', () => {
       });
     }
   });
+});
+
+
+test('card pin mode persists hard and preference routing choices', async ({ page }) => {
+  const detail = await installRoutes(page, '2-ready', pipelineWithMetrics);
+  const bodies: { pinMode: string }[] = [];
+  let failNext = true;
+  await page.route(`**/api/tasks/${JOB_ID}/model**`, async route => {
+    const body = route.request().postDataJSON();
+    bodies.push(body);
+    if (failNext) { failNext = false; await route.fulfill({ status: 503, json: { error: 'Temporary failure' } }); return; }
+    detail.info.pinMode = body.pinMode;
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await dismissErrorDialog(page);
+  const pin = page.getByTestId('card-pin-mode');
+  await expect(pin).toHaveValue('preference');
+  await pin.selectOption('hard');
+  await expect.poll(() => bodies.length).toBe(1);
+  expect(bodies[0].pinMode).toBe('hard');
+  await expect(page.getByText('Pin mode could not be saved.', { exact: true })).toBeVisible();
+  await expect(pin).toHaveValue('preference');
+  await pin.selectOption('hard');
+  await expect.poll(() => bodies.length).toBe(2);
+  await page.reload();
+  await dismissErrorDialog(page);
+  await expect(pin).toHaveValue('hard');
+  if (RESULTS_DIR) {
+    mkdirSync(RESULTS_DIR, { recursive: true });
+    for (const width of [1280]) {
+      await page.setViewportSize({ width, height: 844 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.getByTestId('card-pin-mode-row').screenshot({ path: path.join(RESULTS_DIR, `card-pin-mode--mocked-${width}-${theme}.png`) });
+      }
+    }
+  }
+  await pin.selectOption('preference');
+  await expect.poll(() => bodies.length).toBe(3);
+  expect(bodies[2].pinMode).toBe('preference');
 });

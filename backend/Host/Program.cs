@@ -1133,6 +1133,7 @@ builder.Services.AddSingleton<AgentStudio.Git.IntegrationWorktreeStartupLockSwee
 builder.Services.AddSingleton<AgentStudio.Git.GitRefLockJanitor>();
 builder.Services.AddHostedService(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
+builder.Services.AddSingleton<AgentStudio.Pipeline.DeliveryIntegrationQueueBoard>();
 builder.Services.AddSingleton<AgentStudio.Tasks.TaskLiveStatusProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IModelEconomyAdvisor,
     AgentStudio.Pipeline.CatalogueModelEconomyAdvisor>();
@@ -1564,6 +1565,14 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorDep
     project => sp.GetRequiredService<AgentStudio.Deploy.DeployStore>().JobLabels(project)));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPostMergeCoverageFactSource(
     () => sp.GetRequiredService<AgentStudio.Pipeline.PostMergeCoverageService>().Missing()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPostMergeRedIncidentFactSource(
+    () => sp.GetRequiredService<ProjectRegistry>().List().Where(project => !project.Archived)
+        .Select(project => (project.DisplayName,
+            sp.GetRequiredService<AgentStudio.Pipeline.PostMergeRunStore>().Read(project.Id))),
+    (project, cardId) => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live is { } live
+        && TaskScannerService.FindMatches(live.Where(task => string.Equals(task.ProjectName, project,
+            StringComparison.OrdinalIgnoreCase)), cardId, null) is [var task, ..]
+        ? OperatorDecisionFacts.CardKey(task) : null));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorEnvironmentIncidentFactSource(
     sp.GetRequiredService<HealthCheckStore>(),
     () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name),

@@ -11,6 +11,13 @@ public sealed class TaskCoreCacheTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "task-core-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void PublishedCoreRetainsHardPinMode()
+    {
+        var info = MakeTask("AGT-pin", TaskStates.Ready) with { PinMode = "hard" };
+        Assert.Equal("hard", TaskCoreRecord.Create(info).PinMode);
+    }
+
+    [Fact]
     public void WarmDirtyAndArchivedCore_NeverCallScannerOnLookup()
     {
         var live = MakeTask("AGT-1", "2-ready");

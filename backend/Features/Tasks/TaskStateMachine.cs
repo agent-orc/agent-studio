@@ -239,10 +239,9 @@ public class TaskStateMachine
                     "The accepted delivery changed or is no longer integrated. Reintegrate and review the current delivery.");
             if (archiveOverride && (recheck.State != TaskStates.Completed
                 || targetState != TaskStates.Archive
-                || !TimelineActors.IsHuman(cause)
+                || !ArchiveOverrideActorPolicy.Admits(cause)
                 || !CompletionContractPolicy.IsUsableReason(reason?.Trim())))
-                return new MoveJobOutcome(MoveJobStatus.Failure,
-                    "Archive override requires a human actor and a written reason for this card.");
+                return new MoveJobOutcome(MoveJobStatus.Failure, ArchiveOverrideActorPolicy.Refusal);
         }
 
         // The admission guard has accepted the move. Keep the result write

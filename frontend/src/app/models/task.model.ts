@@ -657,6 +657,7 @@ export interface TaskInfo {
   model: string | null;
   /** False when model qualification derives the route from task type + policy. */
   modelExplicit?: boolean;
+  pinMode?: 'preference' | 'hard';
   thinkingLevel?: string | null;
   /** False when the policy supplies the reasoning level together with the model tier. */
   thinkingLevelExplicit?: boolean;

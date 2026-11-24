@@ -1809,6 +1809,25 @@ public static class ProjectSettingsEndpoints
             });
         });
 
+        // DS-0: dispatch.overlapWindow selects which cards the pick-gate compares
+        // a candidate's scope with, on the local pickup and the remote claim.
+        app.MapGet("/api/projects/{projectName}/dispatch/overlap-window", (string projectName, ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            return Results.Ok(OverlapWindowView(settings.Get(projectName)));
+        });
+
+        app.MapPut("/api/projects/{projectName}/dispatch/overlap-window", (string projectName, SetDispatchOverlapWindowRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (req.Window is not null && !OverlapWindows.IsKnown(req.Window))
+                return Results.BadRequest(new { error = "window must be 'running' or 'in-flight'." });
+            settings.SetDispatchOverlapWindow(projectName, req.Window);
+            return Results.Ok(OverlapWindowView(settings.Get(projectName)));
+        }).RequireStudioRole(StudioRoles.Owner);
+
         // Per-project orchestrator intake toggle (ready-orchestrator-intake-lane).
         // When enabled, the coding runner waits for intake to mark a 2-ready
         // card as intake-passed before picking it up. Default off so existing
@@ -1860,6 +1879,19 @@ public static class ProjectSettingsEndpoints
                 path => git.FileExistsAtCommit(repositoryPath, tip!, path));
         return (tip, definition, read);
     }
+
+    /// <summary>
+    /// The answer of the <c>dispatch.overlapWindow</c> routes (DS-0): the
+    /// effective window, the stored value (null when unset), the default and
+    /// the known windows.
+    /// </summary>
+    private static object OverlapWindowView(ProjectSettings projectSettings) => new
+    {
+        window = OverlapWindows.Resolve(projectSettings),
+        stored = projectSettings.DispatchOverlapWindow,
+        @default = OverlapWindows.Default,
+        windows = OverlapWindows.All,
+    };
 
     /// <summary>
     /// AGT-2827: a build-profile or pipeline-step edit lands here so every

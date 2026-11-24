@@ -948,6 +948,9 @@ public static class LeaseEndpoints
                 // same order the local runner and the board use.
                 var eligible = LaneSortApplier.PickupOrder(routable, settings.Get);
                 var occupiedByProject = ProjectExecutionPolicy.ProjectOccupancy(liveSnapshot);
+                // DS-0: the scope comparison set per project, built once per
+                // claim and only for a project that has a candidate.
+                var overlapSets = new Dictionary<string, OverlapComparisonSet.ProjectSet>(StringComparer.OrdinalIgnoreCase);
 
                 TaskInfo? candidate = null;
                 QuotaAdmissionPlan? candidateQuotaPlan = null;
@@ -974,6 +977,38 @@ public static class LeaseEndpoints
                     if (!projectSlot.HasSlot)
                     {
                         RecordRejection(task, "project-concurrency-full", projectSlot.Detail);
+                        continue;
+                    }
+                    // DS-0 (DS-D10 B): the remote claim applies the pick-gate
+                    // scope rule as the local pickup does, against the leased
+                    // running cards of the project and, under the in-flight
+                    // window, every card that started and has not integrated.
+                    // Slots stay with the host and project checks above.
+                    var overlapWindow = OverlapWindows.Resolve(taskProjectSettings);
+                    if (!overlapSets.TryGetValue(task.ProjectName, out var overlapSet))
+                    {
+                        overlapSet = OverlapComparisonSet.ForProject(
+                            liveSnapshot, task.ProjectName, overlapWindow, TaskScopePrediction.Predict);
+                        overlapSets[task.ProjectName] = overlapSet;
+                    }
+                    var overlap = ParallelSlotPolicy.DecideOverlap(
+                        task.Id,
+                        TaskScopePrediction.Predict(task),
+                        overlapSet.Running,
+                        OverlapComparisonSet.For(task, overlapSet.InFlight),
+                        overlapWindow);
+                    if (!overlap.Admitted)
+                    {
+                        RecordRejection(task, RunnerPickupWaitCodes.ParallelConflict, overlap.Reason);
+                        if (overlap.IsScopeConflict)
+                            logger.LogInformation(
+                                "[taskboard] overlap-serialize path=remote-claim window={Window} project={Project} candidate={Candidate} conflict={Conflict} lane={Lane} prefix={Prefix} runner={Runner}",
+                                overlap.Window, task.ProjectName, task.Id, overlap.ConflictTaskId,
+                                overlap.ConflictLane, overlap.SharedPrefix, req.RunnerName);
+                        else
+                            logger.LogInformation(
+                                "[taskboard] remote claim skipping {Candidate} on {Project} for {Runner}: {Reason}",
+                                task.Id, task.ProjectName, req.RunnerName, overlap.Reason);
                         continue;
                     }
                     var buildProfileGate = BuildProfileGate.Evaluate(taskProjectSettings.BuildProfile);

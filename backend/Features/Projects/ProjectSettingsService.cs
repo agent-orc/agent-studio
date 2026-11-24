@@ -1145,6 +1145,27 @@ public class ProjectSettingsService
         _logger.LogInformation("Intake enabled set to {Enabled} for project {Project}", enabled, projectName);
     }
 
+    /// <summary>
+    /// DS-0: stores <c>dispatch.overlapWindow</c>. A known window is stored as
+    /// chosen; null clears it and the project resolves to
+    /// <see cref="OverlapWindows.Default"/> again.
+    /// </summary>
+    public void SetDispatchOverlapWindow(string projectName, string? window)
+    {
+        var normalized = window is null ? null : OverlapWindows.Normalize(window)
+            ?? throw new ArgumentException($"Unknown overlap window '{window}'.", nameof(window));
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
+            _cache[key] = current with { DispatchOverlapWindow = normalized };
+            Persist();
+        }
+        _logger.LogInformation("Dispatch overlap window set to {Window} for project {Project}",
+            normalized ?? $"default ({OverlapWindows.Default})", projectName);
+    }
+
     public void SetAutonomyLevel(string projectName, int? level)
     {
         EnsureLoaded();

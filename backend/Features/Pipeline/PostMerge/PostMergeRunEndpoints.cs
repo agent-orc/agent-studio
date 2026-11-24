@@ -73,7 +73,7 @@ public static class PostMergeRunEndpoints
         {
             var record = registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project);
             if (record is null) return Results.NotFound();
-            incidents.EscalateOverdue(record);
+            incidents.AskOwnerWhenOverdue(record);
             return Results.NoContent();
         });
         app.MapPost("/api/runner/post-merge/projects/{project}/runs", (string project,

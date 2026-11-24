@@ -102,6 +102,9 @@ The `.header-btn` class in `app.scss` is the shipped implementation; consumers a
 ## Action button (`.btn`)
 
 Used in dialog footers and the few inline forms with explicit submit / cancel pairs.
+Standalone components with encapsulated styles use `@include m.action-buttons`
+from `styles/mixins` to apply these same `.btn` and `.btn--primary` recipes.
+This keeps action chrome available outside the shell's own style scope.
 
 ```html
 <button type="button" class="btn btn--ghost" (click)="onCancel()">Cancel</button>

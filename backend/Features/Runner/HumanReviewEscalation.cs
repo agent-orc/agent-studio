@@ -353,6 +353,11 @@ public sealed class HumanReviewEscalation
             : category;
     }
 
+    /// <summary>
+    /// Records that a repair card's own run path escalated it. Evidence only:
+    /// since RT-1 (AGT-3988) the record no longer switches the project to
+    /// pre-merge, and <see cref="AgentStudio.Pipeline.PostMergeModeService"/> ignores it.
+    /// </summary>
     private void RecordPostMergeAttributionEscalation(string project, string jobId, string category)
     {
         if (category != HumanReviewEscalationCategories.PostMergeAttribution

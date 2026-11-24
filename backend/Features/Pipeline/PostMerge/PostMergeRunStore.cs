@@ -107,7 +107,7 @@ public sealed class PostMergeRunStore
         }
     }
 
-    /// <summary>Records the repair card after its escalation move succeeds.</summary>
+    /// <summary>Records the repair card after its own escalation move succeeds; evidence only, never a placement input.</summary>
     public void RecordAttributionEscalation(string projectId, string taskId)
     {
         if (string.IsNullOrWhiteSpace(taskId))

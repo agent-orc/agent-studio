@@ -1,0 +1,10 @@
+@use '../../../../../styles/mixins' as m;
+@include m.action-buttons;
+
+:host { display: block; min-width: 0; }
+section { padding: var(--studio-spacing-3); color: var(--studio-fg); font-size: 12px; }
+.controls { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-3); align-items: end; margin-top: var(--studio-spacing-3); }
+label { display: grid; gap: var(--studio-spacing-1); min-width: 0; max-width: 100%; }
+input, select { color: var(--studio-fg); background: var(--studio-bg); border: 1px solid var(--studio-border); padding: var(--studio-spacing-2); max-width: 100%; }
+p { margin: var(--studio-spacing-2) 0; font-size: 12px; }
+.metrics { font-variant-numeric: tabular-nums; }
