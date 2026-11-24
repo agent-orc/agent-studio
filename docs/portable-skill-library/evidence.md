@@ -21,6 +21,10 @@ Repository source revision: `128bc82a08d202ac077756ed57a6188fa57b2eca`. The insp
 | [Guide index](../quality/README.md) | Applicability contract | Bounded catalogue, typed project/technology applicability, source warnings and snapshots exist. | These can be reused without keeping the 600-character summary as the skill instruction body. |
 | [Claude one-shot](../../backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs) and [Codex one-shot](../../backend/Features/Cli/Routing/OneShot/CodexOneShot.cs) | Standard input and process arguments | Both repository one-shot paths send prompt text through stdin; Codex builds an `exec` invocation with final `-`. | Does not prove every main-run adapter, resume mode or installed CLI version accepts the proposed new payload; SL-4 and SL-13 must test them. |
 
+## Review repair
+
+The 24 November review repair adds the requirement-to-section map, the thirteen-slice acceptance inventory and the reproducible verifier. The existing article already carried the four required markers and the complete workbench array. The repair restores the missing task deliverables reference; this observation does not establish why the earlier reviewer lacked the material. The local AGT-3465 Dossier is now inspected and its nine slices mapped in [review-map.md](review-map.md#agt-3465-continuity). Its live card remains unretrieved. OpenAI API pricing/caching and Claude prompt-caching reference rates were rechecked against the linked official pages; the existing cost inputs remain valid for their stated reference routes.
+
 ## Owner input
 
 The authored task is the source for these facts and directions:
@@ -30,7 +34,7 @@ The authored task is the source for these facts and directions:
 - A blind design comparison on 24 November favored the variant without the visual-design skill because of content depth. No original artefacts, scoring sheet, sample size, model controls or assignment method were supplied. The Dossier treats it as a reported observation and testable harm hypothesis.
 - The Access-page pilot and the parallel “one look and feel” concept will produce future UI standards. This task does not establish their final approved content, keys or delivery dates.
 
-Read attempt: `node .agents/skills/task-api/scripts/find-tasks.js --grep '3465'` returned `ECONNREFUSED 127.0.0.1:5031`. No service was started and no task state was changed. The original AGT-3465 acceptance criteria therefore remain unretrieved. SL-1 includes reconciliation through the API before duplicate work is retired. The task brief provides a defensible merger recommendation without blocking this concept.
+Read attempt: `node .agents/skills/task-api/scripts/find-tasks.js --grep '3465'` returned `ECONNREFUSED 127.0.0.1:5031`. No service was started and no task state was changed. The original AGT-3465 acceptance criteria therefore remain unretrieved. The local repository Dossier and all nine of its implementation entries are available and mapped during the repair. SL-1 includes reconciliation of that mapping, the live card and its external AGT-3464 pilot dependency through the API before duplicate work is retired. The task brief provides a defensible merger recommendation without blocking this concept.
 
 ## Inventory
 
