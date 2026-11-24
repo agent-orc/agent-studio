@@ -2,7 +2,7 @@
 
 As of 24 November 2026. Source card: AGT-4032. This register separates repository observations, owner-supplied facts, proposed contracts and planning calculations. It does not certify operator acceptance or a product implementation.
 
-Repository source revision rechecked for this repair: `4aff77820f8dbe8b265db069d8340aefb09e1ad1`. Product files were inspected read-only and remain unchanged in this task.
+Repository source revision rechecked for this repair: `3e292026b2c48307588da208cfc34ce6c36690af`. Product files were inspected read-only and remain unchanged in this task.
 
 ## Repository observations
 
@@ -22,6 +22,31 @@ Repository source revision rechecked for this repair: `4aff77820f8dbe8b265db069d
 | [Claude one-shot](../../backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs) and [Codex one-shot](../../backend/Features/Cli/Routing/OneShot/CodexOneShot.cs) | Standard input and process arguments | Both repository one-shot paths send prompt text through stdin; Codex builds an `exec` invocation with final `-`. | Does not prove every main-run adapter, resume mode or installed CLI version accepts the proposed new payload; SL-4 and SL-13 must test them. |
 
 ## Review repair
+
+The current collection check was repeated before writing delivery files and
+failed with a missing `results/deliverables.md`; that failure is retained in
+`verification-before.json` in the task results. Repository-only validation
+already passed for all four required sections, ten recommended decisions and
+thirteen full implementation prompts. The observed result gap is therefore
+distinct from content absence in this checkout.
+
+[ConceptDossierReviewMaterial.cs](../../backend/Features/Runner/ConceptDossierReviewMaterial.cs)
+reads the task reference and queues `index.html` and `workbench.json` first,
+with limits of 256,000 characters per file and 512,000 total. The complete
+decision and card contract fits in these first two files; the verifier measures
+their final sizes and checks every HTML prompt against the descriptor.
+[ConceptDossierSnapshot.cs](../../backend/Features/Pipeline/ConceptDossierSnapshot.cs)
+copies those two contract files at an exact revision, so completeness must not
+depend on following a supporting source link. This is code inspection, not an
+observation of the previous remote review invocation.
+
+[prepare-review.py](prepare-review.py) makes the delivery packet reproducible
+after results cleanup. It collects the complete entrypoint in HTML and readable
+text, all four actual section extracts, the thirteen complete prompts and
+dependency arrays, all Dossier files, both requested task references, verification
+and a hash manifest. The post-collection check compares those files with the
+canonical bytes. It proves local packet completeness and identity; later remote
+ingestion, concept acceptance and operator approval remain pipeline work.
 
 The initial collected results directory in this repair contained only
 `preparation-manifest.json`; `results/deliverables.md` and the prior verification

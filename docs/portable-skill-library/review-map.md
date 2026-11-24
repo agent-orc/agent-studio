@@ -223,12 +223,57 @@ Acceptance:
 - Rollback restores a prior lock for new runs and leaves in-flight and historical receipts intact.
 - Documentation clearly states shipped capability, remaining limits, AGT-3465 disposition and how customers create and share skills.
 
+## Collection
+
+The required review content lives in the repository entrypoint and descriptor.
+Linked source pages are provenance, not a prerequisite for inspecting the four
+required sections or the complete implementation-card sequence. The managed
+snapshot currently copies those two entry files first. The verifier reports an
+entrypoint-only inventory so that this distinction is explicit.
+
+Recreate the collected review packet after a repair or results cleanup:
+
+```sh
+python3 -B docs/portable-skill-library/prepare-review.py --results-dir /home/agent/runner-work/tasks/AGT-4032/results
+```
+
+The helper validates the canonical Dossier before writing. It writes only to
+the explicitly supplied absolute AGT-4032 results folder and its requested
+job-folder status reference. It does not change task lanes or project state.
+It produces:
+
+- `report.html`: the entire canonical HTML entrypoint, byte-identical.
+- `report.md`: the entire readable article, including all thirteen full prompts.
+- `required-sections.md`: the actual Alternatives, Recommendation, Evidence and
+  Open decisions section text rather than a claim that those sections exist.
+- `implementation-cards.md`: every full `promptMarkdown` plus explicit scheduler
+  ids and `dependsOn` arrays in delivery order.
+- `dossier/`: byte-identical copies of all files in this Dossier directory.
+- `workbench.json`, `review-map.md`, `evidence.md`, `cost-model.json`: directly
+  inspectable descriptor and supporting documents beside the reports.
+- `deliverables.md` and both status references: the exact canonical repository
+  entrypoint and packet inventory.
+- `verification.json` and `review-manifest.json`: structural, collected-byte and
+  prompt-parity checks, file sizes and SHA-256 identity.
+
+At the start of the current repair, the collection check failed because
+`results/deliverables.md` was missing. `verification-before.json` records that
+observation. It is not a reconstruction of an earlier review input. New
+document captures, when present, validate this HTML only. They are not
+screenshots of implemented skill-library product surfaces.
+
+The collection command is repeatable. Rerun it after any Dossier edit or new
+capture so that the copied bytes and file manifest describe the final packet.
+Local verification cannot certify which bytes a later remote review consumes;
+its file hashes provide a concrete reference for that handoff.
+
 ## Verification
 
 Run from the repository root:
 
 ```sh
 python3 docs/portable-skill-library/verify.py
+python3 -B docs/portable-skill-library/verify.py --results-dir /home/agent/runner-work/tasks/AGT-4032/results
 ```
 
 The verifier parses the actual HTML, validates required metadata, substantive

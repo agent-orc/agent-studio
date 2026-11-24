@@ -164,22 +164,35 @@ def verify(results_dir=None):
     if results_dir is not None:
         results_dir = Path(results_dir).resolve()
         entry = "docs/portable-skill-library/index.html"
-        for reference in (results_dir / "deliverables.md", results_dir.parent / "status.md"):
+        for reference in (results_dir / "deliverables.md", results_dir.parent / "status.md",
+                          results_dir / "status.md"):
             assert entry in reference.read_text(), f"Missing canonical task reference: {reference}"
             delivery_checks.append(str(reference))
         for name in files:
             copy = results_dir / "dossier" / name
             assert copy.read_bytes() == (dossier / name).read_bytes(), f"Reviewer copy mismatch: {name}"
         inventory = (results_dir / "implementation-cards.md").read_text()
+        readable_report = (results_dir / "report.md").read_text()
+        assert (results_dir / "report.html").read_bytes() == (dossier / "index.html").read_bytes(), \
+            "Collected HTML report differs from the canonical entrypoint"
+        sections = (results_dir / "required-sections.md").read_text()
+        for key in required:
+            assert article.sections[key].strip() in sections, f"Missing collected section text: {key}"
         for task in tasks:
             assert task["promptMarkdown"] in inventory, f"Missing collected full prompt: {task['id']}"
+            assert task["promptMarkdown"] in readable_report, f"Missing readable report prompt: {task['id']}"
         delivery_checks.append("All Dossier files copied byte-for-byte; all full prompts collected")
+        delivery_checks.append("Complete HTML/text reports and verbatim required section extracts present")
     return {"status": "pass", "sourceTaskKey": "AGT-4032", "requiredSections": sorted(required),
             "implementationTasks": [{"id": t["id"], "dependsOn": t["dependsOn"],
                                      "acceptanceCriteria": len(t["acceptanceScope"]["criteria"])} for t in tasks],
             "openDecisionsWithRecommendations": len(article.decisions), "checkedLocalLinks": checked_links,
             "costScenariosRecalculated": 3, "canonicalTemplateCss": "exact match",
             "htmlPromptsMatchingJson": len(article.prompts), "deliveryChecks": delivery_checks,
+            "entrypointOnlyProof": {
+                "requiredSectionCharacters": {k: len(article.sections[k].strip()) for k in sorted(required)},
+                "completePromptIds": list(article.prompts),
+                "instruction": "The HTML entrypoint and descriptor contain the complete decision and card contract; linked source files provide provenance."},
             "reviewEntryCharacters": entry_sizes, "files": files,
             "limits": "Structural and arithmetic checks; no skill-effect experiment, live CLI probe or operator approval."}
 
