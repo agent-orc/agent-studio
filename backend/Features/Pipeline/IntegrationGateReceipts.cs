@@ -125,6 +125,7 @@ public static class IntegrationGateReceipts
                         HeaderValue(provenanceLine, "pipelineDefinitionVersion="), out var definitionVersion)
                         ? definitionVersion : null,
                     ToolchainIdentity = HeaderValue(provenanceLine, "toolchainIdentity="),
+                    TestSelection = ReadSelection(path),
                 };
             }
             catch (Exception ex)
@@ -159,6 +160,18 @@ public static class IntegrationGateReceipts
             SilentCatch.Note(ex, "IntegrationGateReceipts: candidate receipt unavailable");
             return null;
         }
+    }
+
+    private static TestSelectionAudit? ReadSelection(string path)
+    {
+        const string marker = "--- test-selection.json ---\n";
+        var body = File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
+        var start = body.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0) return null;
+        start += marker.Length;
+        var end = body.IndexOf("\n--- ", start, StringComparison.Ordinal);
+        return System.Text.Json.JsonSerializer.Deserialize<TestSelectionAudit>(
+            end < 0 ? body[start..] : body[start..end]);
     }
 
     private static int EvidenceIndex(string path)
@@ -307,6 +320,7 @@ public static class IntegrationGateReceipts
             $"testSelectionAuditDigest={result.TestSelectionAuditDigest ?? "n/a"}\n" +
             $"gateRung={GateRung(result, reuse)}\n" +
             $"testLevel={result.TestSelection?.Level ?? "unknown"}\n" +
+            SuiteSelectionEvidence.Summary(result.TestSelection) + "\n" +
             $"recordedAtUtc={(time ?? TimeProvider.System).GetUtcNow():O}\n" +
             $"gateQueueWaitMs={result.GateQueueWaitMs} mergeLockWaitMs={mergeLockWaitMs?.ToString() ?? "unknown"} gateCollisionDetected={result.GateCollisionDetected.ToString().ToLowerInvariant()}\n" +
             reuseLine + "\n" +

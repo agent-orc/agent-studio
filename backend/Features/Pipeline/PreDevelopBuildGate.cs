@@ -57,11 +57,16 @@ public sealed class PreDevelopBuildGate
         BuildProfile? profile,
         IReadOnlyList<string>? changedFiles = null,
         string? repositoryPath = null)
-        => VerifyCommandPlanner.HasProfileBuildCommands(profile)
+        => HasSelectionMap(repositoryPath)
+            || VerifyCommandPlanner.HasProfileBuildCommands(profile)
             || FrontendWorkPackagePlanner.TouchesFrontend(changedFiles)
             || DotNetWorkPackagePlanner.TouchesDotNet(changedFiles)
             || ComposeRenderGatePolicy.Commands(repositoryPath, changedFiles).Count > 0
             || TouchesDeclaredCommands(profile, changedFiles, repositoryPath);
+
+    private static bool HasSelectionMap(string? repositoryPath)
+        => !string.IsNullOrWhiteSpace(repositoryPath)
+            && ProjectDefinitionReader.ReadWorkspace(repositoryPath).Definition?.TestSelection.Count > 0;
 
     /// <summary>
     /// AGT-3811: the stack-neutral rule. Commands from
@@ -119,7 +124,7 @@ public sealed class PreDevelopBuildGate
         IReadOnlyList<string>? changedFiles,
         string? repositoryPath = null,
         BuildProfile? profile = null)
-        => changedFiles is null
+        => HasSelectionMap(repositoryPath) || changedFiles is null
             || FrontendWorkPackagePlanner.TouchesFrontend(changedFiles)
             || DotNetWorkPackagePlanner.TouchesDotNet(changedFiles)
             || TouchesDeclaredStackWithoutConventionSlice(changedFiles, repositoryPath, profile)

@@ -17,7 +17,9 @@ public static class BuildTestGateStepProjection
         GrantedCores = result?.GrantedCores,
         Verdict = result?.VerdictSource == GateVerdictSource.CacheHit
             ? $"cached-{verdictToken}" : verdictToken,
-        Reason = string.IsNullOrWhiteSpace(reason) ? null : reason,
+        Reason = result?.TestSelection?.SuiteCommands.Count > 0
+            ? reason + " " + SuiteSelectionEvidence.Summary(result.TestSelection)
+            : string.IsNullOrWhiteSpace(reason) ? null : reason,
         GateVerdictSource = result?.VerdictSource,
         GateOriginEvidencePath = result?.OriginEvidencePath,
         GateOriginCompletedAtUtc = result?.GateCompletedAtUtc,

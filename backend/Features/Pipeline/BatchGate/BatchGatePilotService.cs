@@ -2694,7 +2694,7 @@ public sealed partial class BatchGatePilotService
     private BatchGateRunRecord NewRun(BatchGateManifest manifest, string sha,
         long fence, string repo, BuildProfile? profile)
     {
-        var commands = AtLevel(PlanCandidateCommands(repo, sha, profile),
+        var commands = AtLevel(PlanCandidateCommands(repo, sha, profile, BatchSelectionPaths(manifest, repo, sha)),
                 BatchTestLevel(manifest, repo, sha))
             .Select(command => command.Command).ToArray();
         return new BatchGateRunRecord(
@@ -2705,7 +2705,12 @@ public sealed partial class BatchGatePilotService
             Path.Combine(_store.BatchDirectory(manifest.BatchId), "gate-evidence.jsonl"));
     }
 
-    private IReadOnlyList<VerifyCommand> PlanCandidateCommands(string repo, string sha, BuildProfile? profile)
+    private IReadOnlyList<VerifyCommand> PlanCandidateCommands(string repo, string sha, BuildProfile? profile,
+        IReadOnlyList<string>? selectionPaths = null)
+        => PlanCandidateVerification(repo, sha, profile, selectionPaths).Commands;
+
+    private StagedVerifyPlan PlanCandidateVerification(string repo, string sha, BuildProfile? profile,
+        IReadOnlyList<string>? selectionPaths)
     {
         var inspection = Path.Combine(Path.GetTempPath(),
             "agentstudio-batch-plan-" + Guid.NewGuid().ToString("N"));
@@ -2714,7 +2719,10 @@ public sealed partial class BatchGatePilotService
             throw new IOException(added.Error ?? "Candidate command plan could not be materialized.");
         try
         {
-            return VerifyCommandPlanner.Plan(inspection, profile).Commands;
+            var plan = VerifyCommandPlanner.Plan(inspection, profile);
+            return ProjectAffectedVerifyPlanner.TryPlan(inspection, plan,
+                selectionPaths, "batch-gate", TestExecutionLevels.WorkPackage)
+                ?? new StagedVerifyPlan(plan.Commands, new TestSelectionAudit());
         }
         finally
         {
@@ -2736,6 +2744,7 @@ public sealed partial class BatchGatePilotService
         var started = _time.GetUtcNow();
         var gateHostLoadAtStart = GateRunLedger.HostLoad();
         var level = BatchTestLevel(manifest, repo, run.CandidateSha);
+        var selectionPaths = BatchSelectionPaths(manifest, repo, run.CandidateSha);
         foreach (var member in gated ?? [])
             Lane(member, "gate-requested", level: level,
                 reuseToken: run.BatchRunId, reason: $"batch:{run.BatchId}");
@@ -2780,7 +2789,7 @@ public sealed partial class BatchGatePilotService
                     foreach (var member in gated ?? [])
                         Lane(member, "gate-token-acquired", level: level);
                 },
-            }, null, _settings.Get(_store.ReadManifest(run.BatchId).Scope.Project).BuildProfile,
+            }, selectionPaths, _settings.Get(_store.ReadManifest(run.BatchId).Scope.Project).BuildProfile,
             PostStepMode.Fail,
             TimeSpan.FromMinutes(_settings.Get(_store.ReadManifest(run.BatchId).Scope.Project)
                 .BatchGate.GateTimeoutMinutes), linked.Token);
@@ -2865,12 +2874,43 @@ public sealed partial class BatchGatePilotService
         IReadOnlyList<BatchGatePendingRecord>? gated, string level, CancellationToken ct)
     {
         var settings = _settings.Get(project);
-        var verify = AtLevel(PlanCandidateCommands(repo, run.CandidateSha, settings.BuildProfile), level);
+        var selection = PlanCandidateVerification(repo, run.CandidateSha, settings.BuildProfile,
+            BatchSelectionPaths(_store.ReadManifest(run.BatchId), repo, run.CandidateSha));
+        var verify = AtLevel(selection.Commands, level);
+        if (selection.PreparationCommands is { } preparation)
+            verify = preparation.Select(command => new VerifyCommand(VerifyEcosystem.Custom,
+                VerifyCommandKind.Build, "", command)).Concat(verify).ToArray();
         _activeBatchGates[run.BatchRunId] = project;
         foreach (var member in gated ?? [])
             Lane(member, "gate-token-acquired", level: level);
         var result = await claimed.RunAsync(_store.ReadManifest(run.BatchId), run, repo, verify,
             TimeSpan.FromMinutes(settings.BatchGate.GateTimeoutMinutes), ct).ConfigureAwait(false);
+        if (selection.Audit.Selector == AgentStudio.TaskServer.Contracts.ProjectTestSelectionPolicy.Selector)
+        {
+            var stepCommands = verify.Select((command, index) =>
+                (Id: $"{command.Kind.ToString().ToLowerInvariant()}-{index + 1}", command.Command))
+                .ToDictionary(item => item.Id, item => item.Command, StringComparer.Ordinal);
+            result = result with
+            {
+                Processes = result.Processes.Select(process => process with
+                { Command = stepCommands.GetValueOrDefault(process.Command, process.Command) }).ToArray(),
+            };
+            var attempted = selection.Audit.SuiteCommands.Where(suite => result.Processes.Any(process =>
+                process.LaunchError is null && process.Command == suite.Value)).Select(suite => suite.Key).ToArray();
+            var audit = DeterministicTestScope.WithDigest(selection with
+            {
+                Audit = selection.Audit with
+                {
+                    AttemptedSuites = attempted,
+                    AttemptedTestCommands = attempted.Select(id => selection.Audit.SuiteCommands[id]).ToArray(),
+                    FullSuiteRan = selection.Audit.Level == TestExecutionLevels.Full
+                        && selection.Audit.SelectedSuites.All(attempted.Contains),
+                    OmittedTestCommands = selection.Audit.OmittedTestCommands.Concat(
+                        selection.Audit.SelectedSuites.Except(attempted).Select(id => selection.Audit.SuiteCommands[id])).ToArray(),
+                },
+            }).Audit;
+            result = result with { TestSelection = audit, TestSelectionAuditDigest = audit.Digest };
+        }
         await EmitBatchShardHangsAsync(project, run, result).ConfigureAwait(false);
         return result;
     }
@@ -3217,7 +3257,10 @@ public sealed partial class BatchGatePilotService
                                 });
                             _queueStalls.Left(pending.ReviewAttemptId);
                         },
-                    }, null, _settings.Get(pending.Subject.Project).BuildProfile,
+                    }, subject.Merged
+                        ? CandidatePaths(pending.RepositoryPath, subject.BaseSha!, subject.TestedSha!)
+                        : DeliveryPaths(pending.RepositoryPath, pending.Subject.IntegrationBranch, pending.Subject.ResultSha),
+                    _settings.Get(pending.Subject.Project).BuildProfile,
                     PostStepMode.Fail,
                     TimeSpan.FromMinutes(_settings.Get(pending.Subject.Project)
                         .BatchGate.GateTimeoutMinutes), ct).ConfigureAwait(false);
@@ -3527,6 +3570,7 @@ public sealed partial class BatchGatePilotService
         else
             paths = DeliveryPaths(pending.RepositoryPath, pending.Subject.IntegrationBranch,
                 pending.Subject.ResultSha);
+        if (HasTestSelection(pending.RepositoryPath)) return TestExecutionLevels.WorkPackage;
         return BatchGatePolicy.GateTestLevel([pending.Subject], paths,
             BuildStepPlanned(pending.RepositoryPath, pending.Subject.Project));
     }
@@ -3544,8 +3588,37 @@ public sealed partial class BatchGatePilotService
             _logger.LogWarning(ex, "batch-gate-candidate-diff-unavailable batch={BatchId}", manifest.BatchId);
             paths = null;
         }
+        if (HasTestSelection(repo)) return TestExecutionLevels.WorkPackage;
         return BatchGatePolicy.GateTestLevel(manifest.Members, paths,
             BuildStepPlanned(repo, manifest.Scope.Project));
+    }
+
+    private static bool HasTestSelection(string repo)
+        => AgentStudio.TaskServer.Contracts.ProjectDefinitionReader.ReadWorkspace(repo)
+            .Definition?.TestSelection.Count > 0;
+
+    private IReadOnlyList<string>? BatchSelectionPaths(BatchGateManifest manifest, string repo, string candidateSha)
+    {
+        var candidate = CandidatePaths(repo, manifest.BaseSha, candidateSha);
+        if (candidate is null) return null;
+        var paths = new HashSet<string>(candidate, StringComparer.OrdinalIgnoreCase);
+        foreach (var member in manifest.Members)
+        {
+            var memberPaths = CandidatePaths(repo, manifest.BaseSha, member.ResultSha);
+            if (memberPaths is null) return null;
+            paths.UnionWith(memberPaths);
+        }
+        return paths.Order(StringComparer.Ordinal).ToArray();
+    }
+
+    private IReadOnlyList<string>? CandidatePaths(string repo, string baseSha, string candidateSha)
+    {
+        try { return _git.ChangedPathsAgainstMergeBase(repo, baseSha, candidateSha); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "gate-selection-diff-unavailable candidate={CandidateSha}", candidateSha);
+            return null;
+        }
     }
 
     // A documentation-only delivery cannot change the command inventory: its

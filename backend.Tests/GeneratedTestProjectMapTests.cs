@@ -106,7 +106,7 @@ public sealed class GeneratedTestProjectMapTests
         Assert.True(stale.Audit.FullSuiteRequired);
         Assert.Contains(stale.Audit.Reasons, reason => reason.StartsWith("stale generated project map", StringComparison.Ordinal));
 
-        var missing = PerCardVerifyPlanner.Plan(Root, VerifyCommandPlanner.Plan(Root, null), null, null, null, null);
+        var missing = PerCardVerifyPlanner.Plan(Root, VerifyCommandPlanner.Plan(Root, null) with { Source = VerifyPlan.SourceAutoDiscovery }, null, null, null, null);
         Assert.True(missing.Audit.FullSuiteRequired);
         Assert.Contains("changed-file input is unavailable or empty", missing.Audit.Reasons);
     }
@@ -129,7 +129,7 @@ public sealed class GeneratedTestProjectMapTests
     }
 
     private static StagedVerifyPlan Plan(params string[] changed)
-        => PerCardVerifyPlanner.Plan(Root, VerifyCommandPlanner.Plan(Root, null), changed, null, null, null);
+        => PerCardVerifyPlanner.Plan(Root, VerifyCommandPlanner.Plan(Root, null) with { Source = VerifyPlan.SourceAutoDiscovery }, changed, null, null, null);
 
     private static IReadOnlyList<VerifyCommand> Tests(StagedVerifyPlan plan)
         => plan.Commands.Where(command => command.Kind == VerifyCommandKind.Test).ToList();

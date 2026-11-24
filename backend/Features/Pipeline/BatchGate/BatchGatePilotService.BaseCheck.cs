@@ -28,13 +28,17 @@ public sealed partial class BatchGatePilotService
     {
         try
         {
+            // A green affected gate says nothing about the suites it omitted.
+            // Only a complete full-inventory pass may become a reusable green base.
+            if (!SuiteSelectionEvidence.SupportsFullBaseVerdict(
+                    SuiteSelectionEvidence.ReadLatestAudit(run.EvidencePath))) return;
             _store.RecordBaseVerdict(new BatchGateBaseVerdict(manifest.Scope.Project,
                 run.CandidateSha, run.GateProfileDigest, "pass", null,
                 $"batch {manifest.BatchId} verified and published this tip",
                 run.EvidencePath, _time.GetUtcNow(),
                 BatchGateBaseCheckSources.PublishedBatch, 0, run.CandidateSha));
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
             _logger.LogWarning(ex, "batch-gate-published-base-verdict-failed batch={BatchId} sha={Sha}",
                 manifest.BatchId, run.CandidateSha);

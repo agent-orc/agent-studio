@@ -21,6 +21,7 @@ public sealed record PostMergeRunRecord(
     public IReadOnlyList<PostMergeFocusedRun>? FocusedRuns { get; init; }
     /// <summary>RT-3 (RT-D10 B, fingerprint part): the test envelope the run's commands saw.</summary>
     public PostMergeEnvelopeFingerprint? Envelope { get; init; }
+    public ReviewSuiteSelectionDto? SuiteSelection { get; init; }
     public IReadOnlyList<string> FlakyTests => Verdicts.SelectMany(verdict => verdict.FlakyTests ?? [])
         .Distinct(StringComparer.Ordinal).ToArray();
     public int FlakyCount => FlakyTests.Count;

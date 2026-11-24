@@ -316,9 +316,11 @@ public sealed partial class RemoteReviewPlanBuilder
                     // AGT-3085: the deferred plan alone selects .NET test classes
                     // by reference to the changed types; the batch gate's Full
                     // run on the combined candidate covers what that misses.
-                    var selection = TestSelectionPlanner.Plan(selectionRepo,
-                        verify, changedPaths, projectSettings.TestExecution, "remote-review", level,
-                        ReferenceSelection(selectionRepo, resultSha!));
+                    var selection = ProjectAffectedVerifyPlanner.TryPlan(selectionRepo, verify, changedPaths,
+                        "remote-review", TestExecutionLevels.WorkPackage)
+                        ?? TestSelectionPlanner.Plan(selectionRepo,
+                            verify, changedPaths, projectSettings.TestExecution, "remote-review", level,
+                            ReferenceSelection(selectionRepo, resultSha!));
                     LogReferenceSelection(task!, selection.Audit);
                     var selected = selection.Commands.Where(command =>
                         command.Kind != VerifyCommandKind.Test || command.BlocksWorkPackage).ToArray();

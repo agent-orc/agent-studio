@@ -291,6 +291,7 @@ public sealed record ProjectExecutionDefinition(
 {
     public ProjectDeploymentDefinition? Deployment { get; init; }
     public ProjectStructureDefinition? Structure { get; init; }
+    public IReadOnlyList<ProjectTestSelectionArea> TestSelection { get; init; } = [];
     public string? DeliveryFullSuite { get; init; }
 
     /// <summary>
@@ -369,7 +370,7 @@ public static partial class ProjectDefinitionReader
             "schemaVersion", "stack", "toolVersions", "commands", "testSuites",
             "cachePaths", "capabilities", "environment", "devServer", "image", "release",
             "project", "quality", "pipeline", "artifacts", "environments", "lifecycles", "deploy",
-            "variables", "tenants", "channels", "runbooks", "databases", "delivery", "structure",
+            "variables", "tenants", "channels", "runbooks", "databases", "delivery", "structure", "testSelection",
         };
         foreach (var line in lines.Where(line => line.Indent == 0))
         {
@@ -423,6 +424,7 @@ public static partial class ProjectDefinitionReader
         {
             Deployment = ParseDeployment(lines, issues, structure ?? ProjectStructureDefinition.Empty),
             Structure = structure,
+            TestSelection = ParseTestSelection(lines, issues),
             DeliveryFullSuite = fullSuite,
             DeliveryDeployAfterGreenWindow = deployAfterGreenWindow == "true",
         };
@@ -573,6 +575,43 @@ public static partial class ProjectDefinitionReader
         if (fields.Keys.Any(key => key is not ("id" or "category" or "expectedDurationSeconds" or "command" or "shards")))
             issues.Add(new($"testSuites[{index}]", "unknown-field", "Test suites contain an unsupported field."));
         return new(id ?? string.Empty, category ?? string.Empty, duration, command ?? string.Empty) { Shards = shards };
+    }
+
+    private static IReadOnlyList<ProjectTestSelectionArea> ParseTestSelection(
+        IReadOnlyList<YamlLine> lines, List<ProjectDefinitionIssue> issues)
+    {
+        var rows = new List<ProjectTestSelectionArea>();
+        Dictionary<string, string>? fields = null;
+        void Add()
+        {
+            if (fields is null) return;
+            IReadOnlyList<string> List(string key) => fields.TryGetValue(key, out var value)
+                ? ParseInlineList(value) : [];
+            IReadOnlyList<int> Indices(string key) => List(key).Select(value =>
+                int.TryParse(value, out var index) ? index : -1).ToArray();
+            if (fields.Keys.Any(key => key is not ("paths" or "suites" or "build" or "lint" or "prepare")))
+                issues.Add(new("testSelection", "unknown-field", "Test selection contains an unsupported field."));
+            rows.Add(new(List("paths"), List("suites"), Indices("build"), Indices("lint")) { Prepare = List("prepare") });
+        }
+        foreach (var line in Section(lines, "testSelection"))
+        {
+            if (line.Indent == 2 && line.Text.StartsWith("- ", StringComparison.Ordinal))
+            {
+                Add();
+                fields = new(StringComparer.Ordinal);
+                var pair = KeyValue(line.Text[2..]);
+                fields[pair.Key] = pair.Value;
+            }
+            else if (line.Indent == 4 && fields is not null)
+            {
+                var pair = KeyValue(line.Text);
+                fields[pair.Key] = pair.Value;
+            }
+            else issues.Add(new("testSelection", "selection-shape-invalid",
+                "Test selection rows use inline paths, suites, build, lint and prepare lists."));
+        }
+        Add();
+        return rows;
     }
 
     private static ProjectDevServerRule? DevServer(
@@ -941,6 +980,8 @@ public static partial class ProjectDefinitionValidator
         }
 
         var suiteIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var error in ProjectTestSelectionPolicy.Validate(definition))
+            issues.Add(new("testSelection", "selection-invalid", error));
         for (var index = 0; index < definition.TestSuites.Count; index++)
         {
             var suite = definition.TestSuites[index];

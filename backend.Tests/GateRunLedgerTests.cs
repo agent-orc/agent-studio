@@ -9,6 +9,25 @@ public sealed class GateRunLedgerTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "gate-ledger-test-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void SelectionEfficiencyCountsRetryMinutesOncePerDistinctCardAndKeepsMissingCohortsUnknown()
+    {
+        var day = new DateTimeOffset(2026, 11, 24, 12, 0, 0, TimeSpan.Zero);
+        var before = Row("before", "batch-gate", day) with { Cards = ["A", "B"], DurationMs = 1_200_000 };
+        var after = Row("after", "batch-gate", day) with
+        {
+            Cards = ["C", "D"], DurationMs = 120_000, BatchId = "batch",
+            TestSelector = AgentStudio.TaskServer.Contracts.ProjectTestSelectionPolicy.Selector,
+        };
+        var retry = after with { RunId = "retry", Type = "clean-diagnostic-rerun", DurationMs = 60_000 };
+        var sample = GateRunLedger.SelectionEfficiency([before, after, retry]);
+        Assert.Equal(10, sample.Before.MinutesPerCard);
+        Assert.Equal(1.5, sample.After.MinutesPerCard);
+        Assert.Equal(2, sample.After.Cards);
+        Assert.Equal(2, sample.After.Runs);
+        Assert.Null(GateRunLedger.SelectionEfficiency([after]).Before.MinutesPerCard);
+    }
+
+    [Fact]
     public void Rows_are_immutable_paged_and_filtered_by_day_and_type()
     {
         var day = new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);

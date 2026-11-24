@@ -183,6 +183,8 @@ internal static class TaskScopedTestEvidenceReader
             _ => "Build-tests command is missing from the Remote Review report.",
         };
 
+        if (frontmatter.GetValueOrDefault("suiteCoverage") is { Length: > 0 } coverage)
+            buildReason += " " + coverage;
         var baselineReuse = frontmatter.GetValueOrDefault("baselineReuse");
         var verifyReuse = frontmatter.GetValueOrDefault("verifyReuse");
         var workerRelease = frontmatter.GetValueOrDefault("workerReleaseId");
