@@ -4,7 +4,7 @@ import { ACCESS_CLOCK } from '../../services/access-clock';
 import { AccessSelectionService } from '../../services/access-selection.service';
 import { AccessService } from '../../services/access.service';
 import { SERVICE_ACCOUNT_TOKEN, accessOverview, fakeAccessService } from '../../testing/access-fixtures';
-import { ACCOUNTS, ACCOUNT_BINDINGS } from '../access-service-accounts/access-service-accounts.component.spec';
+import { ACCOUNTS, ACCOUNT_BINDINGS } from '../../testing/access-account-fixtures';
 import { AccessAccountDetailComponent } from './access-account-detail.component';
 
 describe('AccessAccountDetailComponent', () => {
