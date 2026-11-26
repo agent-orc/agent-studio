@@ -199,21 +199,14 @@ public static class IntegrationPublisher
             if (!TestQuarantineLifecyclePolicy.MayIntegrateLineStop(develop?.LineStop, command.TaskId,
                 (develop?.Incidents ?? []).Where(item => item.ResolvedAtUtc is null).Select(item => item.RepairCardId).ToArray()))
                 return new(IntegrationOutcomeKinds.BlockedFailingArea, null, "Develop line stop: " + develop!.LineStop);
-            var lastT3 = develop?.Runs.LastOrDefault(run => run.Status is "red" or "green");
-            if (lastT3?.Status == "red")
+            var holds = HoldScopePolicy.ActiveHolds(develop?.Quarantines ?? [], DateTimeOffset.UtcNow);
+            if (holds.Count > 0)
             {
-                var failingArea = (develop?.Incidents ?? []).Where(item => item.ResolvedAtUtc is null
-                    && item.RepairCardId != command.TaskId)
-                    .SelectMany(item => item.FailingPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-                if (failingArea.Length > 0)
-                {
-                    var mergeBase = (await Git(["merge-base", target, resultSha], directory, ct)).StdOut.Trim();
-                    var changed = (await Git(["diff", "--name-only", mergeBase, resultSha], directory, ct))
-                        .StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-                    if (!RedDevelopRepairPolicy.MayMerge(changed, failingArea))
-                        return new(IntegrationOutcomeKinds.BlockedFailingArea, null,
-                            "Delivery paths overlap the open red-develop incident.");
-                }
+                var mergeBase = (await Git(["merge-base", target, resultSha], directory, ct)).StdOut.Trim();
+                var changed = (await Git(["diff", "--name-only", mergeBase, resultSha], directory, ct))
+                    .StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                if (HoldScopePolicy.IntegrationBlock(changed, holds, command.TaskId) is { } reason)
+                    return new(IntegrationOutcomeKinds.BlockedFailingArea, null, reason);
             }
             string tip;
             if (await IsAncestorAsync(target, resultSha, directory, ct))

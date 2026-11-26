@@ -2066,7 +2066,7 @@ public sealed partial class BatchGatePilotService
                 {
                     RecordVerdict(run, gate, "flaky-red", baseAnswer);
                     State(manifest, BatchPhase.Paused, assembly.CandidateSha,
-                        lease.Fence, "flaky quarantine requires a fresh gate verdict");
+                        lease.Fence, "re-run cleared requires a fresh gate verdict");
                     return;
                 }
                 RecordVerdict(run, gate, "deterministic-suite-red", baseAnswer);

@@ -178,6 +178,8 @@ public enum MergeIntoIntegrationOutcome
     /// leaving this as a terminal integration refusal.
     /// </summary>
     AgentRoundRequired,
+    /// <summary>An active quarantine holds the delivery; queue again without a repair round.</summary>
+    BlockedFailingArea,
 }
 
 public static class MergeIntoIntegrationOutcomePolicy

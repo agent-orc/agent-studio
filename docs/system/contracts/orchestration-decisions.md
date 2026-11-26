@@ -862,3 +862,15 @@ The post-merge host supplies frozen per-test receipts, union quarantine facts,
 repair lanes, clocks and covering runs through `MonolithTransitionAdapter`.
 It applies the actions, persists the quarantine audit and incident decision
 log, and projects owner options. No project-wide testing strategy changes.
+
+RT-5 (AGT-4006) adopts these hold rules in both integration hosts.
+`HoldScopePolicy.ActiveHolds` projects exact active held entries to typed
+`TestQuarantineHoldFact` values; `IntegrationBlock` applies `MayIntegrate` and
+names the blocking quarantine, test and folder. Scope facts include the test
+file, covering folders, confirmed suspect files, recursive fallback areas,
+expiry and repair, revert and owner exemptions. No latest-red predicate limits
+these holds. `IntegrationResultPolicy` maps both the wire and local held outcome
+to requeue, with a thirty-second recheck and no repair round. Hosts apply that
+decision through `MonolithTransitionAdapter`; dispatcher consumption remains
+for DS-6. The shared contracts `TestQuarantinePolicy` owns file parsing and
+exact-name partitioning, rather than an orchestration transition rule.

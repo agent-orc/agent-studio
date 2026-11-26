@@ -876,6 +876,26 @@ public sealed class RemoteReviewWorkspace
                 }
             }
 
+            var declaredQuarantine = QuarantinePartition(ParsedTestFailures(execution.Process));
+            if (!ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                && ReviewTestFailureAttribution.IsTestCommand(command)
+                && !execution.Process.Success && execution.Signal is null
+                && execution.Process.ExitCode is > 0 and < 124 && declaredQuarantine.AllQuarantined
+                && !ReviewTestFailureAttribution.TestHostAborted(execution.Process.StdOut + execution.Process.StdErr))
+            {
+                commands.Add(await AddCommandEvidenceAsync(
+                    command.StepId, command.Aspect, command.FileName, command.Arguments,
+                    headBefore, treeBefore, execution.Process, execution.StartedAt, execution.FinishedAt,
+                    execution.Signal, command.TimeoutSeconds, "verification", "candidate", null, null,
+                    retryPerformed, false, null, artifacts, ct, command));
+                verdicts.Add(new(command.Aspect, "pass", "TestQuarantine",
+                    "Quarantined failures did not block: " + string.Join(", ", declaredQuarantine.Ignored
+                        .Select(hit => $"{hit.Test} ({hit.Card}, until {hit.ExpiresOn:yyyy-MM-dd})")),
+                    $"command:{command.StepId}", "none"));
+                PurgeStepTemp(command.StepId);
+                return;
+            }
+
             BaselineComparison? comparison = null;
             CommandExecution? cleanRepeat = null;
             if (!ReviewCommandKinds.IsAgent(command.ExecutionKind) && !execution.Process.Success)
@@ -886,6 +906,7 @@ public sealed class RemoteReviewWorkspace
                     commands,
                     artifacts,
                     ct);
+                comparison = ApplyDeclaredQuarantine(comparison);
                 RecordCandidateDependencyLoss($"{command.StepId} baseline comparison");
                 if (execution.Signal != "timeout"
                     && (execution.Signal is not null || execution.Process.ExitCode == 127
@@ -913,7 +934,7 @@ public sealed class RemoteReviewWorkspace
                     // The clean repeat records its own clean-repeat evidence;
                     // the candidate evidence below keeps the first run, so a
                     // failure the repeat cleared stays visible to diagnosis.
-                    var failedTests = ParsedTestFailures(execution.Process);
+                    var failedTests = QuarantinePartition(ParsedTestFailures(execution.Process)).Blocking;
                     var repeatCommand = ReviewTargetedRerunPolicy.Select(
                         command, failedTests, execution.Process.StdOut + "\n" + execution.Process.StdErr,
                         execution.Signal);
@@ -1039,7 +1060,7 @@ public sealed class RemoteReviewWorkspace
                             ct);
                     }
                     comparison = comparison.Reclassify(
-                        SubjectFailures(command, cleanRepeat.Process),
+                        QuarantinePartition(SubjectFailures(command, cleanRepeat.Process)).Blocking,
                         reviewFlakyTests,
                         repeatPassed: cleanRepeat.Process.Success && cleanRepeat.Signal is null);
                 }
@@ -1056,7 +1077,7 @@ public sealed class RemoteReviewWorkspace
                                      && !ReviewBaselineModes.IsExitStatus(command.BaselineMode)
                             ? ReviewTestFailureAttribution.Diagnose(
                                         requiredComparison.InitialFailures,
-                                        cleanRepeat is null ? null : ParsedTestFailures(cleanRepeat.Process),
+                                        cleanRepeat is null ? null : QuarantinePartition(ParsedTestFailures(cleanRepeat.Process)).Blocking,
                                         requiredComparison.BaselineFailures,
                                         requiredComparison.BaselineExitCode,
                                         ReviewTestFailureAttribution.IsBackendTestCommand(command),
@@ -1075,7 +1096,7 @@ public sealed class RemoteReviewWorkspace
                               && requiredComparison.BaselineFailures.Count > 0
                               && cleanRepeat is not null
                               && ReviewBaselineTestResultPolicy.HasResult(
-                                  ParsedTestFailures(cleanRepeat.Process),
+                                  QuarantinePartition(ParsedTestFailures(cleanRepeat.Process)).Blocking,
                                   cleanRepeat.Process.StdOut, cleanRepeat.Process.StdErr)
                                 ? DiagnoseRedTestBaseline(requiredComparison)
                             : await DiagnoseFailureAsync(
@@ -2027,7 +2048,7 @@ public sealed class RemoteReviewWorkspace
             comparison?.Diagnosis,
             repeatFilter,
             repeatObservedTests,
-            comparison?.InitialFailures,
+            comparison?.InitialFailures ?? ParsedTestFailures(process),
             verifyReusedFromAttemptId,
             (long)Math.Max(0, (verifyReusedAge ?? TimeSpan.Zero).TotalSeconds),
             !process.Success || signal is not null
@@ -2040,7 +2061,10 @@ public sealed class RemoteReviewWorkspace
                     TestFailureMessages.FirstError(process.StdOut + "\n" + process.StdErr, test), "").Stdout,
                     StringComparer.Ordinal),
             plannedCommand?.CliType,
-            plannedCommand?.ModelSelection);
+            plannedCommand?.ModelSelection)
+        {
+            QuarantinedFailures = QuarantinePartition(ParsedTestFailures(process)).Ignored,
+        };
     }
 
     private async Task<ReviewArtifactEvidenceDto> WriteArtifactAsync(
@@ -4041,6 +4065,27 @@ public sealed class RemoteReviewWorkspace
                 : $"Review command '{command.StepId}' exited {result.ExitCode}.",
             $"command:{command.StepId}",
             result.Success ? "none" : $"successful execution of {command.StepId}");
+    }
+
+    private TestQuarantinePartition QuarantinePartition(IReadOnlyList<string> failures)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var read = TestQuarantinePolicy.ReadUnion(RepositoryPath, _subject.Plan.Quarantines, now);
+        foreach (var issue in read.Issues) _log("test quarantine issue: " + issue);
+        return TestQuarantinePolicy.Partition(failures, read.Entries, DateOnly.FromDateTime(now.UtcDateTime));
+    }
+
+    private BaselineComparison ApplyDeclaredQuarantine(BaselineComparison comparison)
+    {
+        var baseline = QuarantinePartition(comparison.BaselineFailures);
+        return comparison with
+        {
+            InitialFailures = QuarantinePartition(comparison.InitialFailures).Blocking,
+            NewFailures = QuarantinePartition(comparison.NewFailures).Blocking,
+            PreExistingFailures = QuarantinePartition(comparison.PreExistingFailures).Blocking,
+            BaselineFailures = baseline.Blocking,
+            BaselineExitCode = baseline.AllQuarantined ? 0 : comparison.BaselineExitCode,
+        };
     }
 
     internal static ReviewVerdictDto BaselineVerdict(

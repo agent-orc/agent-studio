@@ -45,6 +45,14 @@ public static class MonolithTransitionAdapter
     public static string QuarantineDevelopState(string? lineStop) => TestQuarantineLifecyclePolicy.DevelopState(lineStop);
     public static bool MayReleaseQuarantines(string? lineStop, bool held)
         => TestQuarantineLifecyclePolicy.MayCreateRelease(lineStop, held);
+    public static IReadOnlyList<TestQuarantineHoldFact> ActiveQuarantineHolds(
+        IReadOnlyList<ProjectTestQuarantine> entries, DateTimeOffset now) => HoldScopePolicy.ActiveHolds(entries, now);
+    public static string? QuarantineIntegrationBlock(IReadOnlyCollection<string> paths,
+        IReadOnlyList<TestQuarantineHoldFact> holds, string cardId, IReadOnlyList<string>? aliases = null)
+        => HoldScopePolicy.IntegrationBlock(paths, holds, cardId, aliases);
+    public static IntegrationResultDecision IntegrationResult(string outcome, int attemptsUsed)
+        => IntegrationResultPolicy.Decide(outcome, attemptsUsed);
+    public static TimeSpan IntegrationHoldRecheckInterval => IntegrationResultPolicy.HoldRecheckInterval;
     public static bool MayIntegrateLineStop(string? lineStop, string cardId, IReadOnlyList<string> repairs)
         => TestQuarantineLifecyclePolicy.MayIntegrateLineStop(lineStop, cardId, repairs);
     public static ReviewBudgetDecision ReviewBudget(ReviewBudgetFacts facts) => ReviewBudgetPolicy.Decide(facts);

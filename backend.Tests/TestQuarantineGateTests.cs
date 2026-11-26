@@ -1,3 +1,4 @@
+using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Pipeline;
 using AgentStudio.Tasks;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -69,6 +70,29 @@ public sealed class TestQuarantinePolicyTests
         Assert.Equal(new DateOnly(2026, 10, 2), read.Entries[1].ResolvedOn);
         Assert.Equal(2, read.Issues.Count);
         Assert.Contains(read.Issues, issue => issue.Contains("P.B: card is required", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Union_keeps_file_dates_inclusive_and_server_expiry_exact()
+    {
+        // clock-independent: the reader receives an explicit observation.
+        var now = new DateTimeOffset(2026, 11, 26, 12, 0, 0, TimeSpan.Zero);
+        var root = Path.Combine(Path.GetTempPath(), "quarantine-union-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, ".agent-studio"));
+            File.WriteAllText(Path.Combine(root, TestQuarantineFile.RelativePath),
+                """{"tests":[{"test":"File.Test","card":"file-repair","expiresOn":"2026-11-26"}]}""");
+            var entry = new ProjectTestQuarantine("server", "Server.Test", "server-repair", new DateOnly(2026, 11, 26),
+                null, null, "held", "system", now.AddHours(-1), now.AddMinutes(1), "fingerprint", [], []);
+            var active = TestQuarantinePolicy.ReadUnion(root, [entry], now);
+            Assert.True(TestQuarantinePolicy.Partition(["File.Test", "Server.Test"], active.Entries,
+                DateOnly.FromDateTime(now.UtcDateTime)).AllQuarantined);
+            var expired = TestQuarantinePolicy.ReadUnion(root, [entry], now.AddMinutes(1));
+            Assert.Equal(["Server.Test"], TestQuarantinePolicy.Partition(["File.Test", "Server.Test"], expired.Entries,
+                DateOnly.FromDateTime(now.UtcDateTime)).Blocking);
+        }
+        finally { Directory.Delete(root, true); }
     }
 
     [Fact]
@@ -267,7 +291,20 @@ public sealed class TestQuarantineGateBehaviorTests : IDisposable
         Assert.DoesNotContain("guard violation", result.Reason);
     }
 
-    private Task<BuildTestGateResult> RunGateAsync()
+    [Fact]
+    public async Task Server_quarantine_is_reported_and_non_blocking_in_the_gate()
+    {
+        WriteFakeDotNet(guardFails: false, suiteFailures: ["Product.Tests.Isolated"]);
+        var result = await RunGateAsync([new("quarantine-one", "Product.Tests.Isolated", "repair", DateOnly.MaxValue,
+            null, "confirmed twice", "held", "system:post-merge", DateTimeOffset.UnixEpoch,
+            DateTimeOffset.MaxValue, "fingerprint", [], ["backend/Features/Pipeline/PostMerge"])]);
+        Assert.Equal(BuildTestGateVerdict.Ok, result.Verdict);
+        Assert.Equal("Product.Tests.Isolated", Assert.Single(result.QuarantinedFailures).Test);
+        Assert.Contains("repair", result.Reason);
+        Assert.False(result.RetryPerformed);
+    }
+
+    private Task<BuildTestGateResult> RunGateAsync(IReadOnlyList<ProjectTestQuarantine>? quarantines = null)
     {
         var runner = new BuildTestGateRunner(
             NullLogger<BuildTestGateRunner>.Instance,
@@ -277,6 +314,7 @@ public sealed class TestQuarantineGateBehaviorTests : IDisposable
             new BuildTestGateRequest(_root, null, "test", RequireExactSubject: false)
             {
                 RequiredTestLevel = TestExecutionLevels.Full,
+                Quarantines = quarantines ?? [],
             },
             changedFiles: null,
             new BuildProfile

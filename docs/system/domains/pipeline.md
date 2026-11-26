@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-12
+Version: 2026-11-26
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -655,7 +655,7 @@ so receipts of older runners stay valid, and the run route bounds them:
   fingerprints with a reference envelope is RT-6.
 
 The receipt still feeds the compatibility repair flow in the next section. Quarantine starts,
-covering-folder holds and the triage ladder belong to RT-4 and RT-5.
+covering-folder holds and the triage ladder are implemented by RT-4 and RT-5.
 
 #### Focused-run cost measurement
 
@@ -788,8 +788,8 @@ stop asks the owner at 60 minutes. Cap breaches and relapses within seven days
 also raise owner items with their options and recommendation. Each reason is
 asked once per incident. No timer changes testing strategy or moves a reviewed
 or settled repair. The remote integration executor holds every non-repair
-publication during a line stop. Covering-folder integration holds and adoption
-of the union by gate and review readers belong to RT-5. Model classification
+publication during a line stop. RT-5 applies covering-folder integration holds and the shared union readers
+described below. Model classification
 requests are logged for RT-8; RT-4 itself makes no model classification call.
 
 Every applied decision records the PersonaLogEntryV1 decision fields: id,
@@ -798,6 +798,48 @@ condition and a reason capped at 280 characters. The log is retained with the
 quarantine store. Replayed receipts do not create duplicate repair cards or
 log entries. Release creation refuses either an active held quarantine or a
 line stop; report-only entries do not block releases.
+
+#### Scoped integration holds and shared readers (RT-5)
+
+Working choices are RT-D6 B and RT-D3 B (readers). The remote publisher and
+local merge path evaluate `HoldScopePolicy.MayIntegrate` through its named
+block result on the delivery's merge-base diff, for every active held quarantine,
+regardless of the latest T3 verdict or develop color. Covering folders match
+immediate directories. The test file and confirmed suspect paths match exact
+files; zero or more than twelve covering folders use the generated test-project
+reference graph's recursive suite areas, collected and persisted when the
+quarantine is written so state GET routes remain free of Git. Missing graph
+evidence uses a visible repository fallback. The repair, attributed revert and explicitly owner-exempt
+cards pass their own hold. Other held quarantines still apply. An owner can
+repeat `start` for the same test and fingerprint with `ownerExemptCardIds` and
+`attributedRevertCardId` to update exemptions on an existing hold; this is audited
+and never extends its expiry.
+
+A refusal names the quarantine id, test, folder and repair. Remote publication
+keeps `blocked-failing-area` and its existing retry-budget exemption. The local
+merge records a pending `BlockedFailingArea` result. Its delivery coordinator
+requeues it after thirty seconds without completing the delivery or starting a
+repair round, so unrelated deliveries and repairs can pass. The runner state
+route exposes typed `holds` with paths, expiry and exemptions. DS-6 has not landed
+in this checkout, so dispatcher admission is unchanged; those facts are its
+future pick-gate input.
+
+`TestQuarantinePolicy` in TaskServer.Contracts owns the only repository-file
+parser, union reader and exact-name failure partition. `TestQuarantineFile`
+retains forwarding entry points for compatibility. Gate requests and frozen
+Remote Review plans carry the RT-4 state union to their workers; workers combine
+it with their exact workspace file through that reader. Post-merge reads the
+same state union. File dates stay inclusive; server expiry uses exact UTC time.
+Tests still execute. Quarantined failures remain in gate results, per-test
+post-merge receipts and typed review command evidence, and do not block any of
+the three. A review with only declared quarantined failures needs no clean
+repeat, and report admission preserves that result. Unquarantined failures,
+interrupted commands and missing test reports keep their existing checks.
+Gate verdict caching is disabled while a quarantine declaration is present,
+so a lift or expiry cannot reuse an ignored-failure verdict.
+
+The batch gate's re-run pause is called "re-run cleared" in its reason text.
+Stored `flaky-quarantined-pass` verdicts remain readable for historical evidence.
 
 #### Legacy receipt compatibility
 

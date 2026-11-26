@@ -49,6 +49,7 @@ public sealed record BuildTestGateRequest(
     bool RequireExactSubject = true)
 {
     public bool DisableVerdictCache { get; init; }
+    public IReadOnlyList<ProjectTestQuarantine> Quarantines { get; init; } = [];
     /// <summary>True when the exact delivery was integrated before this gate began.</summary>
     public bool DeliveryIntegratedAtStart { get; init; }
     public string GateId { get; init; } = PipelineCatalogue.BuildTestGateStepId;
@@ -510,7 +511,9 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
     {
         if (mode == PostStepMode.Off) return Skipped("mode=off");
         // A narrowed green is not a full-suite green; it never meets the cache.
-        if (request.NarrowCheck is not null) request = request with { DisableVerdictCache = true };
+        if (request.NarrowCheck is not null || request.Quarantines.Count > 0
+            || TestQuarantineFile.Read(request.RepositoryPath).Entries.Count > 0)
+            request = request with { DisableVerdictCache = true };
 
         var repositoryPath = Path.GetFullPath(request.RepositoryPath);
         var cacheProject = request.Project ?? repositoryPath;
@@ -666,6 +669,9 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                         string.Join(",", composeRender.Triggers));
                 }
             }
+
+            if (workspace is not null && TestQuarantineFile.Read(workspace).Entries.Count > 0)
+                request = request with { DisableVerdictCache = true };
 
             // A hit must bypass project preparation as well as verification.
             // The SHA fixes repository-owned command definitions. Resolve the
@@ -858,7 +864,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                         : await RunCommandsAsync(
                             workspace!, preparation, commands, plan.Source, mode, timeout,
                             [], projectPreparation, ct, ShardContext(request),
-                            guardFirst: request.NarrowCheck is null)
+                            guardFirst: request.NarrowCheck is null, serverQuarantines: request.Quarantines)
                             .ConfigureAwait(false);
                     if (completed.VerdictSource != GateVerdictSource.CacheHit)
                     {
@@ -1314,7 +1320,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     : GatePreparationPlanner.Plan(workspacePath, profile, commands);
             return await RunCommandsAsync(
                 workspacePath, prepCommands, commands, $"diagnostic-{role}",
-                PostStepMode.Fail, timeout, [], preparation, ct, ShardContext(request)).ConfigureAwait(false);
+                PostStepMode.Fail, timeout, [], preparation, ct, ShardContext(request), serverQuarantines: request.Quarantines).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -1450,7 +1456,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         ProjectPreparationResult? projectPreparation,
         CancellationToken ct,
         GateShardContext? sharding = null,
-        bool guardFirst = true)
+        bool guardFirst = true,
+        IReadOnlyList<ProjectTestQuarantine>? serverQuarantines = null)
     {
         var sw = Stopwatch.StartNew();
         var budget = new GateContentionBudget(timeout);
@@ -1464,7 +1471,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         var ranFrontend = false;
         var flakyQuarantined = new List<string>();
         var retryPerformed = false;
-        var quarantine = TestQuarantineFile.Read(repositoryPath);
+        var quarantine = TestQuarantinePolicy.ReadUnion(repositoryPath, serverQuarantines ?? [], DateTimeOffset.UtcNow);
         var quarantineDay = DateOnly.FromDateTime(DateTime.UtcNow);
         var quarantined = new List<TestQuarantineHit>();
         foreach (var issue in quarantine.Issues) output.AppendLine($"# test quarantine issue: {issue}");

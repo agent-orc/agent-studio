@@ -197,6 +197,42 @@ public sealed class RemoteDeliveryIntegrationPolicyTests
 
 public sealed class RemoteDeliveryIntegrationCoordinatorTests
 {
+    [Fact]
+    public async Task Held_delivery_waits_without_a_repair_round_while_unrelated_and_repair_deliveries_integrate()
+    {
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var repaired = false;
+        var rounds = 0;
+        var attempts = 0;
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(request =>
+        {
+            if (request.JobId == "repair") repaired = true;
+            if (request.JobId == "overlap" && !repaired)
+            {
+                attempts++;
+                held.TrySetResult();
+                return Task.FromResult(MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.BlockedFailingArea,
+                    error: "Quarantine quarantine-one: Product.Tests.Isolated holds backend/Features/Pipeline/PostMerge"));
+            }
+            return Task.FromResult(MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged, mergedSha: new string('a', 40)));
+        }, NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+        startAgentRound: (_, _) =>
+        {
+            rounds++;
+            return Task.FromResult(new IntegrationAgentRoundStartResult(false, "Unexpected repair round"));
+        }) { HoldRetryDelay = TimeSpan.FromMilliseconds(100) };
+        var pending = coordinator.EnqueueAsync(Request("overlap", 1));
+        await held.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(pending.IsCompleted);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged,
+            (await coordinator.EnqueueAsync(Request("frontend", 2)).WaitAsync(TimeSpan.FromSeconds(5))).Outcome);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged,
+            (await coordinator.EnqueueAsync(Request("repair", 3)).WaitAsync(TimeSpan.FromSeconds(5))).Outcome);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, (await pending.WaitAsync(TimeSpan.FromSeconds(5))).Outcome);
+        Assert.True(attempts >= 1);
+        Assert.Equal(0, rounds);
+    }
+
     [Theory]
     [InlineData(MergeIntoIntegrationOutcome.Merged, 0, RemoteIntegrationContinuationAction.None)]
     [InlineData(MergeIntoIntegrationOutcome.Conflict, 0, RemoteIntegrationContinuationAction.StartAgentRound)]
