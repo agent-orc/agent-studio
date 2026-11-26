@@ -386,6 +386,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-es1-strategy-handoff-replay">
+          <td>2026-11-26</td>
+          <td>AGT-4011 es1-strategy-handoff-replay</td>
+          <td>No CLI crash. Delivery replay conflicted with AGT-4038 in the batch-gate strategy handoff.</td>
+          <td>Retained the atomic strategy audit snapshot and the post-merge handoff guards. A strategy cancellation does not charge a failed gate verdict; pending members retain integration evidence without claiming a full-suite pass.</td>
+          <td>The handoff still targets Human Review after integration. This recovery ends in delivery for the normal review and acceptance lanes.</td>
+        </tr>
         <tr id="case-rt6-integration-recovery">
           <td>2026-11-26</td>
           <td><code>AGT-4007</code><br><span class="small">rt6-integration-recovery</span></td>
