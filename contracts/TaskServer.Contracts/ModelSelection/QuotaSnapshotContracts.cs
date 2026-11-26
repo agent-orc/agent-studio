@@ -16,6 +16,8 @@ public record QuotaWindow
 {
     /// <summary>"Premium requests" / "5-hour" / "Weekly" / etc.</summary>
     public string Label { get; init; } = "";
+    /// <summary>Elapsed share of the window at report time, 0..100; null when unknown.</summary>
+    public double? ElapsedPct { get; init; }
     /// <summary>Duration inferred by the shared backend quota policy; null for unknown labels.</summary>
     public double? WindowHours => SelectionQuotaMath.InferWindowLength(Label)?.TotalHours;
     /// <summary>Percentage used, 0..100+. May exceed 100 when over-quota.</summary>
@@ -50,6 +52,8 @@ public record QuotaSnapshot
     public string CliType { get; init; } = "";
     /// <summary>Opaque digest identifying a host subscription, when known.</summary>
     public string? SubscriptionKey { get; init; }
+    /// <summary>Time zone of the host that interpreted provider reset labels.</summary>
+    public string? HostTimeZone { get; init; }
     public DateTime FetchedAt { get; init; } = DateTime.UtcNow;
     /// <summary>
     /// Version reported by the CLI's <c>--version</c> command for this probe.

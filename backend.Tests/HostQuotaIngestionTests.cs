@@ -113,6 +113,53 @@ public sealed class HostQuotaIngestionTests : IDisposable
         Assert.NotEqual(report.Windows[0].Label, report.Windows[1].Label);
     }
 
+    [Fact]
+    public void FailureRetainsOnlyItsOwnSubscriptionsLastGoodValuesAndZone()
+    {
+        var service = NewService();
+        var observed = _clock.GetUtcNow().UtcDateTime;
+        service.IngestHostReading(Reading('a', 30, observed) with { HostTimeZone = "Europe/Berlin" });
+        service.IngestHostReading(Reading('b', 70, observed));
+        _clock.Advance(TimeSpan.FromMinutes(2));
+        service.IngestHostReading(Reading('a', 0, observed.AddMinutes(1)) with
+        {
+            Windows = [], Error = "A codex host quota probe failed.", ProbeFailedAt = observed.AddMinutes(1)
+        });
+        var report = service.GetCached();
+        var failed = Assert.Single(report.Snapshots, s => s.SubscriptionKey == new string('a', 64));
+        Assert.Equal(30, Assert.Single(failed.Windows).UsedPct);
+        Assert.Equal("Europe/Berlin", failed.HostTimeZone);
+        Assert.Equal(TimeSpan.FromMinutes(2), report.At - failed.FetchedAt);
+        Assert.NotNull(failed.Error);
+        Assert.NotNull(failed.ProbeFailedAt);
+        Assert.Equal(2, report.Snapshots.Count);
+    }
+
+    [Theory]
+    [InlineData(-84, 84, 50)]
+    [InlineData(-168, 0, 100)]
+    [InlineData(1, 169, 0)]
+    public void ReportCarriesElapsedWindowPercentage(double startHours, double resetHours, double expected)
+    {
+        var service = NewService();
+        var now = _clock.GetUtcNow().UtcDateTime;
+        service.IngestHostReading(Reading('a', 30, now) with
+        {
+            Windows = [new("Weekly", 30, now.AddHours(resetHours), null)]
+        });
+        Assert.Equal(expected, Assert.Single(Assert.Single(service.GetCached().Snapshots).Windows).ElapsedPct);
+        // Explicit anchors and unknown windows use the same response-time clock.
+        var report = QuotaWindowProjection.WithElapsedPercent(new QuotaReport { At = now, Snapshots = [new() { Windows = [
+            new() { Label = "custom", ResetAt = now.AddHours(resetHours), ObservedStartAt = now.AddHours(startHours) },
+            new() { Label = "unknown" }
+        ] }] });
+        Assert.Equal(expected, report.Snapshots[0].Windows[0].ElapsedPct);
+        Assert.Null(report.Snapshots[0].Windows[1].ElapsedPct);
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(report,
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        Assert.Equal(expected, json.GetProperty("snapshots")[0].GetProperty("windows")[0].GetProperty("elapsedPct").GetDouble());
+    }
+
     private QuotaService NewService()
         => new(NullLogger<QuotaService>.Instance, [new NeverProbe()], _config,
             new QuotaCacheStore(_config, NullLogger<QuotaCacheStore>.Instance), clock: _clock);
