@@ -274,6 +274,7 @@ public sealed partial class RemoteReviewPlanBuilder
             RequireDifferentHostFailureDomain = projectSettings?.RequireDifferentReviewHost == true,
         };
         var ordinaryToolPlan = toolPlan;
+        var usesSharedSelection = toolPlan.SuiteSelection is not null;
         // AGT-3698: a concept delivery confined to one docs/<topic>/ Dossier is
         // judged by concept-fit alone. Installing and testing the repository
         // proves nothing about the Dossier and let unrelated tooling block it.
@@ -316,9 +317,12 @@ public sealed partial class RemoteReviewPlanBuilder
                     // AGT-3085: the deferred plan alone selects .NET test classes
                     // by reference to the changed types; the batch gate's Full
                     // run on the combined candidate covers what that misses.
-                    var selection = TestSelectionPlanner.Plan(selectionRepo,
-                        verify, changedPaths, projectSettings.TestExecution, "remote-review", level,
-                        ReferenceSelection(selectionRepo, resultSha!));
+                    var selection = ProjectAffectedVerifyPlanner.TryPlan(selectionRepo, verify, changedPaths,
+                        "remote-review", TestExecutionLevels.WorkPackage)
+                        ?? TestSelectionPlanner.Plan(selectionRepo,
+                            verify, changedPaths, projectSettings.TestExecution, "remote-review", level,
+                            ReferenceSelection(selectionRepo, resultSha!));
+                    if (usesSharedSelection) level = selection.Audit.Level;
                     LogReferenceSelection(task!, selection.Audit);
                     var selected = selection.Commands.Where(command =>
                         command.Kind != VerifyCommandKind.Test || command.BlocksWorkPackage).ToArray();
@@ -366,7 +370,7 @@ public sealed partial class RemoteReviewPlanBuilder
         if (!deferBuildTest && !noChange && conceptDossier is null
             && task is not null && !TaskModes.IsReportOnly(task.Mode)
             && projectSettings is not null
-            && PerCardTestModes.Resolve(projectSettings) == PerCardTestModes.Affected
+            && (usesSharedSelection || PerCardTestModes.Resolve(projectSettings) == PerCardTestModes.Affected)
             && changedPaths is { Count: > 0 } && !string.IsNullOrWhiteSpace(repositoryPath)
             && ReviewSubjectStore.IsValidResultSha(resultSha))
         {
@@ -379,17 +383,60 @@ public sealed partial class RemoteReviewPlanBuilder
                 string.IsNullOrWhiteSpace(task.TaskKey) ? task.Id : task.TaskKey, selection.Audit.Selector,
                 selection.Audit.FullSuiteRequired, selection.Audit.ProjectMapDigest, selection.Audit.Digest,
                 string.Join(" | ", selection.Audit.Reasons));
-            if (!selection.Audit.FullSuiteRequired)
+            if (!selection.Audit.FullSuiteRequired || usesSharedSelection)
             {
+                if (!usesSharedSelection && TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast)
+                {
+                    var fullCommands = verify.Commands.Where(command => command.Kind == VerifyCommandKind.Test)
+                        .Select(command => (command.Command, command.WorkingSubdir)).ToHashSet();
+                    var omitted = selection.Commands.Where(command => command.Kind == VerifyCommandKind.Test
+                        && fullCommands.Contains((command.Command, command.WorkingSubdir))).ToArray();
+                    if (omitted.Length > 0)
+                        selection = DeterministicTestScope.WithDigest(selection with
+                        {
+                            Commands = selection.Commands.Except(omitted).ToArray(),
+                            Audit = selection.Audit with
+                            {
+                                SelectedCommands = selection.Audit.SelectedCommands.Except(omitted.Select(TestSelectionPlanner.Describe)).ToArray(),
+                                OmittedTestCommands = selection.Audit.OmittedTestCommands.Concat(omitted.Select(TestSelectionPlanner.Describe)).Distinct().ToArray(),
+                                Reasons = [.. selection.Audit.Reasons, "fast: unchanged full test commands run after integration"],
+                            },
+                        });
+                }
                 toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath, projectSettings.BuildProfile,
                     integrationRef, changedPaths, verify with { Commands = selection.Commands }) with
                 {
                     RequireDifferentHostFailureDomain = projectSettings.RequireDifferentReviewHost == true,
                 };
-                testLevel = TestExecutionLevels.WorkPackage;
+                testLevel = selection.Audit.Level;
                 selectionDigest = selection.Audit.Digest;
                 perCardApplied = true;
             }
+        }
+        // Fast never turns an unmapped T1 selection into a full pre-merge suite.
+        // The merge window owns that coverage; keep build and lint here.
+        if (!deferBuildTest && !noChange && conceptDossier is null
+            && task is not null && !TaskModes.IsReportOnly(task.Mode)
+            && projectSettings is not null
+            && TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast
+            && !string.IsNullOrWhiteSpace(repositoryPath))
+        {
+            if (!perCardApplied)
+            {
+                var verify = VerifyCommandPlanner.Plan(repositoryPath, projectSettings.BuildProfile);
+                var selection = DeterministicTestScope.WithDigest(TestSelectionPlanner.Plan(
+                    repositoryPath, verify, changedPaths, projectSettings.TestExecution,
+                    TaskStates.AutoReview, TestExecutionLevels.BuildOnly));
+                toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath, projectSettings.BuildProfile,
+                    integrationRef, changedPaths, verify with { Commands = selection.Commands }) with
+                {
+                    RequireDifferentHostFailureDomain = projectSettings.RequireDifferentReviewHost == true,
+                };
+                testLevel = TestExecutionLevels.BuildOnly;
+                selectionDigest = selection.Audit.Digest;
+                perCardApplied = true;
+            }
+            ordinaryToolPlan = toolPlan;
         }
         if (task is null || TaskModes.IsReportOnly(task.Mode))
             return toolPlan;

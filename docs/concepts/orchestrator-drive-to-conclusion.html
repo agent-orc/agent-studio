@@ -391,7 +391,7 @@
           <td><code>AGT-4002</code><br><span class="small">red-develop-project-fallback</span> (Dossier AGT-3988, RT-1)</td>
           <td>No CLI crashed. After two hours of red develop the project resolved to pre-merge, the batch gate came back and every review ran the full suite with baseline and clean repeat; nothing integrated between 23:00Z and 04:00Z for four reds that were not regressions.</td>
           <td>One project-wide timer (<code>PostMergeModeService.EscalationActive</code>, plus a second copy of the two-hour constant in <code>RedDevelopRepairPolicy</code>) mixed incident age with the need for a human, and an escalated repair card also switched the placement.</td>
-          <td>Placement is the configured one. <code>RedDevelopRepairPolicy</code> returns Revert, FixForward, Hold or AskOwner from the repair lane and the per-incident age; at two hours it raises one <code>post-merge.red-incident</code> Needs you item per incident and moves no card. Terminal: the incident waits in Needs you for the owner's answer while integration keeps flowing.</td>
+          <td>Placement is the configured one. <code>RedDevelopRepairPolicy</code> returns Revert, FixForward, Hold or AskOwner from the repair lane and the per-incident age; at two hours it raises one <code>post-merge.red-incident</code> Needs you item per incident and moves no card. Terminal: the incident waits in Needs you for the owner's answer while integration keeps flowing. RT-2 (AGT-4003) adds pure per-test classification, bounded quarantine, controlled attribution and hold-scope policies for later host adoption. It preserves this compatibility flow and adds no CLI retry or lane movement. RT-3 (AGT-4004) makes the post-merge runner collect that policy's facts: two focused runs at the last green SHA and at every bisect point after a test-project build, a stop on mixed results, revert independence by file overlap, per-test verdicts with a classification hint, covering folders and an envelope fingerprint on the receipt. The same-SHA repeat count is unchanged, and the receipt still feeds the compatibility repair flow; no lane moves.</td>
         </tr>
         <tr id="case-post-merge-daemon-cgroup">
           <td>2026-11-23</td>
@@ -3355,6 +3355,12 @@
           <td>The operator reported review lease renewal failures with <code>No space left on device</code>, a 98% full review VM, and AGT-3952 escalated as ReviewInfra / ReviewWorkerFailed.</td>
           <td>The ordinary review claim path bypassed the disk admission check. Retention had no size budget or stale-sibling sweep, and partial temp deletion could remove the ownership receipt before a locked child. Historical host contents were unavailable for independent verification.</td>
           <td>Observed terminal: Escalated or a review lasting over an hour. Disk exhaustion now selects <code>DiskFull</code>, waits for recovery above warning, and schedules an infrastructure successor without consuming the card retry budget. New claims stop at critical pressure; Needs you names the host disk. No product finding is opened for this cause.</td>
+        </tr>
+        <tr>
+          <td>2026-11-24</td>
+          <td>AGT-4038 gate-capacity-strategy-switch</td>
+          <td>A strict-to-fast write left pending batch reviews on the disabled-batch full-suite fallback. Merge admission competed with suite gates; a stale-verdict recovery could escalate its queue timeout. AGT-3862's reported 03:05 failure predates the 03:07 switch, so that earlier incident cannot be attributed to the switch alone.</td>
+          <td>No CLI crash. Integration checks now use a reserved slot and three bounded admission attempts, then report gate capacity. The switch retires running batches through publication fences and hands pending members to compile-before-integration; no switch cancellation consumes a card gate-infrastructure verdict.</td>
         </tr>
       </tbody>
     </table>

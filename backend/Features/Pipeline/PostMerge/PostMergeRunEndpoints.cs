@@ -102,7 +102,10 @@ public static class PostMergeRunEndpoints
                     || failure.FailingTests.Count > 64 || failure.FailingTests.Any(test => test.Length > 256)
                     || failure.FailingPaths is null
                     || failure.FailingPaths.Count > 128 || failure.SuspectMerges is null
-                    || failure.SuspectMerges.Count > 512))
+                    || failure.SuspectMerges.Count > 512
+                    || failure.Attribution is { } attribution && !ValidAttribution(attribution))
+                || run.Verdicts.Any(verdict => verdict.DurationMs < 0)
+                || !ValidRt3Evidence(run))
                 return Results.BadRequest(new { error = "invalid post-merge run" });
             var safe = run with
             {
@@ -117,6 +120,55 @@ public static class PostMergeRunEndpoints
                 : Results.Ok(state);
         });
     }
+
+    // RT-3 (AGT-3988) receipt fields. All are optional, so receipts of older
+    // runners stay valid; present fields are bounded and use the shared vocabulary.
+    private static bool ValidRt3Evidence(PostMergeRunRecord run)
+    {
+        if (run.TestVerdicts is { } tests && (tests.Count > 256 || tests.Any(test => test is null
+                || string.IsNullOrWhiteSpace(test.Test) || test.Test.Length > 256
+                || string.IsNullOrWhiteSpace(test.SuiteId) || test.SuiteId.Length > 128
+                || string.IsNullOrWhiteSpace(test.SuiteCategory) || test.SuiteCategory.Length > 32
+                || !PostMergeClassificationHints.All.Contains(test.ClassificationHint ?? "")
+                || test.Attempts is null || test.Attempts.Count > 32
+                || test.Attempts.Any(attempt => attempt is null
+                    || !PostMergeRunPhases.All.Contains(attempt.Phase ?? "")
+                    || !PostMergeTestResults.All.Contains(attempt.Result ?? "")
+                    || attempt.DurationMs < 0 || attempt.Sha is not null && !IsSha(attempt.Sha))
+                || test.TestFile?.Length > 256
+                || test.CoveringFolders is { } folders && (folders.Count > 64
+                    || folders.Any(folder => folder is null || folder.Length > 256)))))
+            return false;
+        if (run.FocusedRuns is { } focused && (focused.Count > 512 || focused.Any(item => item is null
+                || !PostMergeRunPhases.All.Contains(item.Phase ?? "") || !IsSha(item.Sha)
+                || item.Tests < 0 || item.Tests > 64 || item.DurationMs < 0)))
+            return false;
+        return run.Envelope is not { } envelope
+            || IsDigest(envelope.AllowlistDigest) && IsDigest(envelope.DeclaredEnvironmentDigest)
+            && envelope.CgroupKind is "worker" or "daemon" or "process" or "none"
+            && envelope.CpuMax is not { Length: > 64 }
+            && envelope.ProcessorCount is >= 0 and <= 4096
+            && envelope.SdkVersion is not { Length: > 64 }
+            && envelope.ShardPlan is { Length: <= 512 }
+            && ValidLoad(envelope.StartLoadPerCore) && ValidLoad(envelope.PeakLoadPerCore);
+    }
+
+    private static bool ValidAttribution(PostMergeAttributionEvidence attribution)
+        => (attribution.LastGreenSha is null || IsSha(attribution.LastGreenSha))
+            && attribution.ControlResults is { Count: <= 2 }
+            && attribution.ControlResults.All(result => PostMergeTestResults.All.Contains(result ?? ""))
+            && attribution.Points is { Count: <= 64 }
+            && attribution.Points.All(point => point is not null && IsSha(point.Sha)
+                && point.Results is { Count: <= 2 }
+                && point.Results.All(result => PostMergeTestResults.All.Contains(result ?? ""))
+                && point.Verdict is "pass" or "fail" or "mixed")
+            && PostMergeClassificationHints.All.Contains(attribution.Classification ?? "")
+            && attribution.StopReason is not { Length: > 256 }
+            && attribution.BuildCommand is not { Length: > 1024 };
+
+    private static bool IsSha(string? value) => value is { Length: 40 } && value.All(Uri.IsHexDigit);
+    private static bool IsDigest(string? value) => value is { Length: > 0 and <= 64 } && value.All(Uri.IsHexDigit);
+    private static bool ValidLoad(double? load) => load is not { } value || double.IsFinite(value) && value >= 0;
 }
 
 public sealed record DevelopStateSummary(string Project, string? DevelopState, string? LastGreenSha,

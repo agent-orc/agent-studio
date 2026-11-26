@@ -810,3 +810,27 @@ Run the guard with:
 ```sh
 dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter 'FullyQualifiedName~.Architecture.|Category=Guard'
 ```
+
+
+## Red test isolation policies (RT-2)
+
+`RedTestTriagePolicy`, `BisectVerdictPolicy` and `HoldScopePolicy` own the
+per-test classification, quarantine lifecycle, owner questions, repair rung,
+double-run attribution and scoped integration hold rules from
+[Red test isolation](../../red-test-isolation/index.html). All inputs are
+frozen typed facts; ages, control runs and chronological lift evidence come
+from the host. The output is a list of actions so a line stop and its owner
+question can coexist. `RedTestTriageBounds` is the single home of the new
+bounds. The existing repair API remains compatible. RT-2 does not add host
+calls or transition receipts; later slices collect facts and apply actions
+through the owning adapter. The architecture guard inventories all three
+policies.
+
+RT-3 (AGT-4004) adds two pure entry points for the post-merge runner, which
+records facts and never acts on them. `RedTestTriagePolicy.ClassificationHint`
+classifies one test from the facts the runner measures (same-SHA repeat,
+last-green control, bisect points) and treats an unmeasured envelope canary or
+reference fingerprint as not contradicting; `Classify` and `Decide` remain the
+server's decision. `HoldScopePolicy.UsesSuiteAreaFallback` is the zero or more
+than 12 covering-folder rule that `Create` applies, so the receipt's
+`coveringFallback` cannot drift from the hold scope.

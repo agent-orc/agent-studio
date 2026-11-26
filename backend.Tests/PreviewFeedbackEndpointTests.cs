@@ -4,7 +4,9 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -38,6 +40,10 @@ public sealed class PreviewFeedbackEndpointTests
                     ["WatchPaths:0:Path"] = jobs,
                     ["WatchPaths:0:RootPath"] = root,
                 }));
+                // The fix round is queued through the project runner that the runner
+                // service builds on start; test hosts start it only on request.
+                builder.ConfigureTestServices(services =>
+                    services.AddHostedService(provider => provider.GetRequiredService<TaskRunnerService>()));
             });
             using var client = factory.CreateClient();
             client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");

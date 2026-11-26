@@ -19,7 +19,12 @@ public sealed record GateRunLedgerRow(
     string Outcome, long DurationMs, long QueueWaitMs,
     IReadOnlyList<GateRunSpan> Spans, string? RerunCause, long RerunDurationMs,
     double? HostLoadStart, double? HostLoadEnd, string? TriggerEvent,
-    string? BatchId = null, IReadOnlyDictionary<string, long>? SameCodeRerunMs = null);
+    string? BatchId = null, IReadOnlyDictionary<string, long>? SameCodeRerunMs = null)
+{
+    public string? TestSelector { get; init; }
+    public IReadOnlyList<string>? AttemptedSuites { get; init; }
+    public IReadOnlyList<string>? OmittedSuites { get; init; }
+}
 
 /// <summary>AGT-3858: why a gate ran code that was already gated.</summary>
 public static class SameCodeRerunPurposes
@@ -61,7 +66,13 @@ public sealed record GateRunDailySummary(DateOnly Day,
     IReadOnlyDictionary<string, BatchPhasePercentiles>? PhaseMinutes = null,
     double? DiagnosticRerunShare = null, BatchPreCheckYield? PreCheckYield = null,
     IReadOnlyDictionary<string, double>? SameCodeRerunMinutesByPurpose = null,
-    PerCardSuiteFollowUp? PerCardSuites = null);
+    PerCardSuiteFollowUp? PerCardSuites = null)
+{
+    public GateSelectionEfficiency? SelectionEfficiency { get; init; }
+}
+
+public sealed record GateSelectionCohort(int Runs, int Cards, double Minutes, double? MinutesPerCard);
+public sealed record GateSelectionEfficiency(GateSelectionCohort Before, GateSelectionCohort After);
 
 /// <summary>
 /// AGT-3856: green per-task fallback suites requested on the day, how many of
@@ -215,7 +226,25 @@ public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null
                 .ToDictionary(group => group.Key, group => group.Sum(item => item.Value) / 60_000d,
                     StringComparer.Ordinal),
             PerCardSuites(rows, Enumerable.Range(0, FollowUpDays + 1)
-                .SelectMany(offset => ReadAll(project, day.AddDays(offset))).ToArray()));
+                .SelectMany(offset => ReadAll(project, day.AddDays(offset))).ToArray()))
+        {
+            SelectionEfficiency = SelectionEfficiency(rows),
+        };
+    }
+
+    internal static GateSelectionEfficiency SelectionEfficiency(IReadOnlyList<GateRunLedgerRow> rows)
+    {
+        var batches = rows.Where(row => row.Type == "batch-gate"
+            || row.Type == "clean-diagnostic-rerun" && row.BatchId is not null).ToArray();
+        GateSelectionCohort Cohort(bool after)
+        {
+            var samples = batches.Where(row =>
+                (row.TestSelector == AgentStudio.TaskServer.Contracts.ProjectTestSelectionPolicy.Selector) == after).ToArray();
+            var cards = samples.SelectMany(row => row.Cards).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            var minutes = samples.Sum(row => row.DurationMs) / 60_000d;
+            return new(samples.Length, cards, minutes, cards == 0 ? null : minutes / cards);
+        }
+        return new(Cohort(false), Cohort(true));
     }
 
     /// <summary>
@@ -293,7 +322,12 @@ public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null
             cleanRerun ? result.DurationMs : rerunMs,
             result.GateHostLoadAtStart ?? loadStart, result.GateHostLoadAtEnd ?? loadEnd,
             trigger, request.LedgerBatchId,
-            SameCodeRerunPurposes.Split(request.LedgerTriggerEvent, result.DurationMs, rerunMs));
+            SameCodeRerunPurposes.Split(request.LedgerTriggerEvent, result.DurationMs, rerunMs))
+        {
+            TestSelector = result.TestSelection?.Selector,
+            AttemptedSuites = result.TestSelection?.AttemptedSuites,
+            OmittedSuites = result.TestSelection?.OmittedSuites,
+        };
     }
 }
 

@@ -104,6 +104,8 @@ public sealed record BuildTestGateRequest(
     public int GateSlots { get; init; } = 1;
     /// <summary>Opportunistic work may use only slots after the first regular gate slot.</summary>
     public bool ReserveBatchSlot { get; init; }
+    /// <summary>Integration compile checks use the reserved cross-process merge slot.</summary>
+    public bool IntegrationPriority { get; init; }
 
     /// <summary>
     /// AGT-3423: the expected slot hold from the project's recent gate history,
@@ -568,7 +570,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                             fallbackCollision = true;
                             request.OnMachineGateWaiting?.Invoke();
                             request.OnMachineGateSlotWaiting?.Invoke(busy, total);
-                        }, ct, request.DurationClass, request.ReserveBatchSlot).ConfigureAwait(false);
+                        }, ct, request.DurationClass, request.ReserveBatchSlot, request.IntegrationPriority).ConfigureAwait(false);
                     fallbackQueueWaitMs = queueWatch.ElapsedMilliseconds;
                     if (lease is null)
                     {
@@ -716,7 +718,13 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 }
             }
 
-            if (completed is null)
+            var affectedPreparation = completed is null
+                ? ProjectAffectedVerifyPlanner.TryPlan(workspace!, VerifyCommandPlanner.Plan(workspace!, profile),
+                    changedFiles, request.Lane,
+                    TestSelectionPlanner.ResolveLevel(request.TestExecution, request.Lane, request.RequiredTestLevel))
+                : null;
+            if (completed is null && (affectedPreparation?.PreparationCommands is null
+                || affectedPreparation.Audit.FullSuiteRequired))
             {
                 var preparationManifestPath = PreparationManifestPath(
                     repositoryPath, _preparationCacheRoot);
@@ -835,7 +843,10 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     }
                     IReadOnlyList<GatePreparationCommand> preparation = projectPreparation?.Configured == true
                         ? []
-                        : GatePreparationPlanner.Plan(workspace!, profile, commands);
+                        : staged.PreparationCommands is { } selectedPreparation
+                            ? selectedPreparation.Select(command => new GatePreparationCommand(
+                                VerifyEcosystem.Custom, "", command, VerifyCommandShell.Bash, [])).ToArray()
+                            : GatePreparationPlanner.Plan(workspace!, profile, commands);
                     completed ??= commands.Count == 0
                         ? Skipped(request.NarrowCheck is { } empty
                             ? $"narrow check {empty.Kind} matched no verify command ({plan.Source})"
@@ -1278,23 +1289,29 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 if (lease is null) return null;
                 workspacePath = lease.Path;
             }
-            preparation = await ProjectPreparationExecutor.RunAsync(
-                workspacePath, cacheRoot, Path.Combine(cacheRoot, "manifest.json"), sha,
-                message => _logger.LogInformation("{DiagnosticPreparation}", message),
-                timeout, ct).ConfigureAwait(false);
-            if (preparation.Configured && !preparation.Succeeded)
-                return WithFailure(new BuildTestGateResult(
-                    BuildTestGateVerdict.Fail, preparation.ExitCode, 0, preparation.Output,
-                    preparation.FailureReason ?? "diagnostic preparation failed", false, false),
-                    BuildTestGateFailureKind.Environment);
             var plan = VerifyCommandPlanner.Plan(workspacePath, profile);
-            var selected = TestSelectionPlanner.Plan(
-                workspacePath, plan, changedFiles, request.TestExecution,
+            var selected = DeterministicTestScope.Plan(
+                workspacePath, plan, changedFiles, request.ChangedFileStatuses, request.TestExecution,
                 request.Lane, request.RequiredTestLevel);
+            if (selected.PreparationCommands is null || selected.Audit.FullSuiteRequired)
+            {
+                preparation = await ProjectPreparationExecutor.RunAsync(
+                    workspacePath, cacheRoot, Path.Combine(cacheRoot, "manifest.json"), sha,
+                    message => _logger.LogInformation("{DiagnosticPreparation}", message),
+                    timeout, ct).ConfigureAwait(false);
+                if (preparation.Configured && !preparation.Succeeded)
+                    return WithFailure(new BuildTestGateResult(
+                        BuildTestGateVerdict.Fail, preparation.ExitCode, 0, preparation.Output,
+                        preparation.FailureReason ?? "diagnostic preparation failed", false, false),
+                        BuildTestGateFailureKind.Environment);
+            }
             var commands = selected.Commands.Where(command => ShouldRunForChange(command, changedFiles)).ToArray();
             if (commands.Length == 0) return null;
-            IReadOnlyList<GatePreparationCommand> prepCommands = preparation.Configured
-                ? [] : GatePreparationPlanner.Plan(workspacePath, profile, commands);
+            IReadOnlyList<GatePreparationCommand> prepCommands = preparation?.Configured == true
+                ? [] : selected.PreparationCommands is { } selectedPreparation
+                    ? selectedPreparation.Select(command => new GatePreparationCommand(
+                        VerifyEcosystem.Custom, "", command, VerifyCommandShell.Bash, [])).ToArray()
+                    : GatePreparationPlanner.Plan(workspacePath, profile, commands);
             return await RunCommandsAsync(
                 workspacePath, prepCommands, commands, $"diagnostic-{role}",
                 PostStepMode.Fail, timeout, [], preparation, ct, ShardContext(request)).ConfigureAwait(false);
@@ -1696,7 +1713,17 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     ? BuildTestGateVerdict.Warn
                     : BuildTestGateVerdict.Fail;
                 var reason = FailureReason(Describe(command), process);
-                if (guardStep) reason = $"guard violation, full suite not run: {reason}";
+                // AGT-4020: only a failed guard test is a guard violation. A guard
+                // step that timed out, ran out of the gate budget, crashed or
+                // could not start found no violation; calling it one sent a fix
+                // round after a host fault and hid the real cause on the card.
+                var guardViolation = guardStep && kind == BuildTestGateFailureKind.Code
+                    && (process.FailedTestsObserved
+                        || GateTestTiming.HasFailedTests(process.StandardOutput + "\n" + process.StandardError));
+                if (guardStep)
+                    reason = guardViolation
+                        ? $"guard violation, full suite not run: {reason}"
+                        : $"guard step failed without a failing guard test ({GuardStepFailure(kind, process)}), full suite not run: {reason}";
                 return WithFailure(new BuildTestGateResult(
                     verdict, process.ExitCode, sw.ElapsedMilliseconds, output.Text,
                     QuarantineReason(reason, quarantined), ranBackend, ranFrontend)
@@ -1710,7 +1737,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     FlakyQuarantinedFailures = flakyQuarantined,
                     QuarantinedFailures = quarantined,
                     QuarantineIssues = quarantine.Issues,
-                    GuardViolation = guardStep,
+                    GuardViolation = guardViolation,
                     FailedStepKind = command.Kind,
                     TestShards = testShards,
                 }, kind);
@@ -1781,7 +1808,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
     private static string CoverageReason(string reason, TestSelectionAudit audit)
     {
         var omitted = audit.OmittedTestCommands.Count;
-        return $"{reason}; test-level={audit.Level}; selected={audit.SelectedCommands.Count}; " +
+        return $"{reason}; test-level={audit.Level}; selected={audit.SelectedCommands.Count}; "
+               + SuiteSelectionEvidence.Summary(audit) + " " +
                (audit.FullSuiteRan
                    ? audit.Selector == "deterministic-map-full-fallback"
                        ? "full-suite=map-fallback-and-run"
@@ -1794,35 +1822,27 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         IReadOnlyList<VerifyCommand> commands,
         IReadOnlyList<BuildTestGateProcessEvidence> processes)
     {
-        // Evidence is appended once per attempted command and commands execute
-        // sequentially. A failure can stop the loop, so only the matching prefix
-        // is known to have run. An empty declared test inventory is complete
+        // Match command identities because guard-first execution inserts steps
+        // ahead of the selected tests. A failure can stop before a selected
+        // suite starts. An empty declared test inventory is complete
         // after the remaining verify commands finish successfully; the verdict
         // still guards that case at the pre-main boundary.
         var verificationProcesses = processes
             .Where(process => string.Equals(process.Phase, "verification", StringComparison.OrdinalIgnoreCase))
             .ToArray();
-        var attemptedCount = Math.Min(commands.Count, verificationProcesses.Length);
-        var attempted = commands
-            .Select((command, index) => (command, index))
-            .Where(item => item.command.Kind == VerifyCommandKind.Test
-                && item.index < attemptedCount
-                && verificationProcesses[item.index].LaunchError is null)
-            .Select(item => TestSelectionPlanner.Describe(item.command))
-            .ToArray();
-        var allTestsAttempted = commands
-            .Select((command, index) => (command, index))
-            .Where(item => item.command.Kind == VerifyCommandKind.Test)
-            .All(item => item.index < attemptedCount
-                && verificationProcesses[item.index].LaunchError is null);
-        var notRun = commands
-            .Select((command, index) => (command, index))
-            .Where(item => item.command.Kind == VerifyCommandKind.Test
-                && (item.index >= attemptedCount || verificationProcesses[item.index].LaunchError is not null))
-            .Select(item => TestSelectionPlanner.Describe(item.command));
+        bool Attempted(VerifyCommand command) => verificationProcesses.Any(process =>
+            process.Command == command.Command && process.LaunchError is null);
+        var attempted = commands.Where(command => command.Kind == VerifyCommandKind.Test && Attempted(command))
+            .Select(TestSelectionPlanner.Describe).ToArray();
+        var allTestsAttempted = commands.Where(command => command.Kind == VerifyCommandKind.Test).All(Attempted);
+        var notRun = commands.Where(command => command.Kind == VerifyCommandKind.Test && !Attempted(command))
+            .Select(TestSelectionPlanner.Describe);
         return audit with
         {
             AttemptedTestCommands = attempted,
+            AttemptedSuites = audit.SuiteCommands.Where(suite => attempted.Any(command =>
+                command == suite.Value || command.EndsWith(": " + suite.Value, StringComparison.Ordinal)))
+                .Select(suite => suite.Key).ToArray(),
             FullSuiteRan = audit.Level == TestExecutionLevels.Full && allTestsAttempted,
             OmittedTestCommands = audit.OmittedTestCommands
                 .Concat(notRun)
@@ -1837,6 +1857,21 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         var lines = text.Replace("\r", string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries);
         return string.Join('\n', lines.TakeLast(40));
     }
+
+    /// <summary>What stopped a guard step that reported no failing guard test (AGT-4020).</summary>
+    internal static string GuardStepFailure(BuildTestGateFailureKind kind, BuildTestGateProcessEvidence process)
+        => kind switch
+        {
+            BuildTestGateFailureKind.Timeout or BuildTestGateFailureKind.Environment when process.TimedOut
+                => process.ViolatedBudget is { } budget ? $"timed out on the {budget.Name} budget" : "timed out",
+            BuildTestGateFailureKind.Environment => "gate environment",
+            BuildTestGateFailureKind.OutOfMemory => "out of memory",
+            BuildTestGateFailureKind.ProcessLaunch => "the test process did not start",
+            BuildTestGateFailureKind.Lock => "a build output lock",
+            BuildTestGateFailureKind.DiskFull => "disk full",
+            BuildTestGateFailureKind.Cancellation => "cancelled",
+            _ => $"exit {process.ExitCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "n/a"} before any test failed",
+        };
 
     private static string FailureReason(
         string commandDescription,

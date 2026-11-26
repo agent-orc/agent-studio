@@ -4,10 +4,10 @@
   "title": "Dispatcher personas: competing strategies that order, separate, chain and cut cards",
   "summary": "A new persona role decides which Ready card starts when, what runs in parallel and what is chained, and for packaging personas how findings are cut into cards. Dispatcher personas name pure, versioned strategies evaluated in the decision library (model-free in the hot path); one is live per project, the others run in shadow on the same facts. Five starter personas: Queue keeper (today\u0027s order), Area warden (one card per forecast module), Surveyor (file overlap), Historian (learns from a new conflict ledger with partner attribution), Packer (packages and chains overlapping findings before the start). Today\u0027s local pick-gate derives a scope from prompt paths but compares only with running cards, and the remote claim that ran the 17 November wave applies no scope rule. A replay of the 57 playthrough cards of that wave, rebuilt from git, matches history (20 replayed against 21 observed cards needing a develop sync) and shows the Area warden on forecast modules cutting that to 7 with instant integration; with an integration lag a running-only check leaves 29 to 35 cards for every strategy, an in-flight check 12 to 15. The keyword areas of the prompt enrichment are too coarse (53 of 55 cards tagged frontend, pair precision 0.23). Criteria combine into one weighted value with a parallelism gate, because a plain sum ranks a nearly sequential warden first. Ten decisions with recommendations, character sheet and review page mockups, and twelve slices whose area separation is carried entirely by dependsOn edges.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-22T13:00:00Z",
+  "updatedAt": "2026-11-24T00:00:07Z",
   "sourceTaskKeys": [
     "AGT-3974"
   ],
@@ -404,5 +404,6 @@
       "promptMarkdown": "# DS-11 \u00B7 Alternating live, champion and guard\n\nSource: \u0060docs/dispatcher-personas/index.html\u0060 (AGT-3974), replay data and script in \u0060docs/dispatcher-personas/replay/\u0060. Read AGENTS.md, docs/system/contracts/orchestration-decisions.md and \u0060docs/persona-team/index.html\u0060 (persona team, capability addendum) first. Each Dossier recommendation (DS-D1 to DS-D10) is the working decision unless a recorded operator decision selects another option; record the option implemented in the results status. Orchestration rules live only in \u0060orchestration-decisions/\u0060 as pure policies; hosts collect facts and apply returned decisions. Register backend services through \u0060AddDispatch\u0060 in \u0060backend/Features/Dispatch/\u0060 (created by DS-1), not through new lines in \u0060backend/Host/Program.cs\u0060. Workspace data only through the application API; git stays with the platform. One bounded slice; no em dashes in text.\n\n**Area:** \u0060backend/Features/Dispatch/\u0060 (lease scheduler), \u0060backend/Features/Runner/\u0060 lease read\n\n## Deliver\n1. Alternating live by wave window per project: the lease alternates between the champion and one challenger per wave (or per day when no wave id is present); a card keeps the admission it started under; conflicts count against the persona that admitted the later card.\n2. Challenger entry from DS-7 facts: value at least 5 above the champion over 100 shadow cards and two waves, gate passed; champion change after four alternating waves each with the challenger ahead.\n3. Guard: if the live persona\u0027s conflicts per 100 over its last 20 integrated cards exceed the baseline\u0027s shadow value on the same cards by 10 or more, hand the lease to the Queue keeper (T1 platform action), publish a feed item at importance 70, owner can undo.\n4. Owner controls on the review page: pin a live persona, stop alternation, undo a guard fallback (frontend change limited to the DS-8 page)."
     }
   ],
-  "key": "AGT-W3464"
+  "key": "AGT-W3464",
+  "editedBy": "AGT-3974"
 }

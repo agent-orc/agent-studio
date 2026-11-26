@@ -150,6 +150,9 @@ public static class MonolithTransitionAdapter
 
     public static TimeSpan GateQueueWaitCap(TimeSpan queueBudget) => GateQueueStallPolicy.QueueWaitCap(queueBudget);
 
+    public static bool RetryIntegrationAdmission(string? budgetName, string? phase, int attempts)
+        => GateQueueStallPolicy.RetryIntegrationAdmission(budgetName, phase, attempts);
+
     public static bool IsGateQueueOverrun(string? budgetName, string? budgetPhase)
         => GateQueueStallPolicy.IsQueueOverrun(budgetName, budgetPhase);
 

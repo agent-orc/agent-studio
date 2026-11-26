@@ -4605,12 +4605,14 @@ public abstract partial class BatchGatePilotServiceTests
 
         /// <summary>Every request in arrival order.</summary>
         public System.Collections.Concurrent.ConcurrentQueue<BuildTestGateRequest> Requests { get; } = new();
+        public System.Collections.Concurrent.ConcurrentQueue<(BuildTestGateRequest Request, IReadOnlyList<string>? Paths)> SelectionInputs { get; } = new();
 
         public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
             IReadOnlyList<string>? changedFiles, BuildProfile? profile, PostStepMode mode,
             TimeSpan timeout, CancellationToken ct)
         {
             Requests.Enqueue(request);
+            SelectionInputs.Enqueue((request, changedFiles));
             if (request.GateId == "batch-gate")
             {
                 Interlocked.Increment(ref _batchRuns);

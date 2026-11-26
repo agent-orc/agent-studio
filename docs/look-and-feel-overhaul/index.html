@@ -1,0 +1,980 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Studio look and feel | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #696762;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+  <style data-dossier="look-and-feel-overhaul">
+    /* Dossier additions: only the article template variables, no own colours or fonts. */
+    nav.toc { margin: 24px 0 8px; color: var(--article-muted); font: 0.82rem/1.8 var(--article-sans); }
+    .wide { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .wide table { margin: 16px 0 28px; }
+    td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    td code { white-space: nowrap; }
+    .rule-id { font: 700 0.8rem var(--article-mono); white-space: nowrap; }
+    .decision { margin: 22px 0; padding: 16px 20px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font-family: var(--article-sans); font-size: 0.9rem; line-height: 1.6; }
+    .decision h3 { margin: 0 0 6px; }
+    .decision ol { margin: 8px 0; }
+    .decision .rec { margin: 8px 0 0; padding: 8px 12px; border-radius: 8px; background: var(--article-link-soft); }
+    .evidence-capture.tall { max-height: 1100px; overflow: hidden; }
+    svg .d-box { fill: var(--article-surface); stroke: var(--article-line); }
+    svg .d-new { fill: var(--article-link-soft); stroke: var(--article-link); }
+    svg .d-good-box { fill: var(--article-good-soft); stroke: var(--article-good); }
+    svg .d-warn-box { fill: var(--article-warn-soft); stroke: var(--article-warn); }
+    svg .d-line { fill: none; stroke: var(--article-muted); stroke-width: 1.5; }
+    svg .d-dash { fill: none; stroke: var(--article-muted); stroke-width: 1.2; stroke-dasharray: 4 4; }
+    svg .d-rule { fill: none; stroke: var(--article-line); stroke-width: 1; }
+    svg .d-text { fill: var(--article-ink); font: 600 13px var(--article-sans); }
+    svg .d-head { fill: var(--article-faint); font: 700 11px var(--article-sans); letter-spacing: 0.06em; text-transform: uppercase; }
+    svg .d-small { fill: var(--article-muted); font: 12px var(--article-sans); }
+    svg .d-link { fill: var(--article-link); font: 600 13px var(--article-sans); }
+    svg .d-arrow { fill: var(--article-muted); }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept · Frontend · UI standard</p>
+    <h1>Studio look and feel: one component library, one standard, page by page</h1>
+    <p class="lede">The Studio has 59 shared components, but most controls are still built again in each feature. The 1,325 buttons outside the shared folder carry 548 different first class names. Their styles use 20 corner radii and 26 font sizes. 107 tables are styled separately in 69 files, and the SCSS holds 139 different font sizes. This concept makes the shared components a library project of their own inside the frontend workspace, with a catalogue that shows every state in both themes. It adds a short UI standard with checkable rules, puts that standard into the design skill and the visual review, and reworks the pages one card at a time with an owner review between cards.</p>
+    <div class="meta">
+      <span><b>Pattern</b> concept</span>
+      <span><b>Status</b> decision-pending</span>
+      <span><b>Phase</b> decision-ready</span>
+      <span><b>Source card</b> AGT-4030</span>
+      <span><b>As of</b> 24 November 2026, develop 1b5354e53</span>
+      <span><b>Builds on</b> <a href="../style-rule-delivery/index.html">Style rules in the card</a>, <a href="../operations/admin-design-guideline/index.html">Admin design guideline</a></span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Contents">
+    <a href="#scope">Scope</a> · <a href="#inventory">Inventory</a> · <a href="#pages">Pages measured</a> · <a href="#library">Library</a> · <a href="#components">Standard components</a> · <a href="#standard">UI standard</a> · <a href="#skill">Design skill and review</a> · <a href="#rollout">Rollout</a> · <a href="#cost">Cost of checks</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#slices">Slices</a> · <a href="#implementation">Implementation</a>
+  </nav>
+
+  <section id="scope">
+    <h2><span class="number">01</span> Scope</h2>
+    <p>On 24 November 2026 the owner wrote that the Access page is very confusing. He wants it reworked visually and wants the lessons from that rework to improve the design skill and become standards that apply everywhere. After that, the look and feel of all pages is reworked step by step, with his review after each step. Controls and their look must be the same everywhere, built from standard components for grids, buttons, context menus, sections and layout. The component library is an area of its own that is developed independently.</p>
+    <p>Earlier preferences still hold. Colours and type stay in the existing Studio style, with no palette of a model's own. Headers stay calm and colour sits in the depth of the page. Rich technical detail is welcome when it is ordered. Long pages get an outline to navigate by. The product hosts its own fonts.</p>
+    <p>This is a concept. It changes no product code. Each number below comes from <a href="inventory/build-inventory.mjs"><code>inventory/build-inventory.mjs</code></a>, a read-only script over the tracked frontend files at develop <code>1b5354e53</code>. Its output is <a href="inventory/inventory.json"><code>inventory/inventory.json</code></a>, which lists every file it counted. The screenshots come from <a href="capture/run.sh"><code>capture/run.sh</code></a>.</p>
+    <table>
+      <thead><tr><th>Card item</th><th>Where it is worked out</th></tr></thead>
+      <tbody>
+        <tr><td>1 · Inventory, counted by file</td><td><a href="#inventory">Inventory</a>, <a href="#pages">Pages measured</a>, <a href="#evidence">Evidence</a></td></tr>
+        <tr><td>2 · Library as an area of its own</td><td><a href="#library">Library</a>; decisions LF-D1, LF-D2, LF-D3, LF-D10, LF-D11</td></tr>
+        <tr><td>3 · Standard components in order of need</td><td><a href="#components">Standard components</a>; decision LF-D6</td></tr>
+        <tr><td>4 · UI standard as rules</td><td><a href="#standard">UI standard</a>; decisions LF-D4, LF-D5, LF-D7</td></tr>
+        <tr><td>5 · Design skill and visual review</td><td><a href="#skill">Design skill and review</a></td></tr>
+        <tr><td>6 · Rollout page by page</td><td><a href="#rollout">Rollout</a>; decisions LF-D8, LF-D9</td></tr>
+        <tr><td>7 · Cheap checks</td><td><a href="#cost">Cost of checks</a></td></tr>
+        <tr><td>8 · Decisions and slices</td><td><a href="#open-decisions">Open decisions</a> LF-D1 to LF-D11; <a href="#slices">Slices</a> LF-1 to LF-16 with <code>dependsOn</code> in <code>workbench.json</code></td></tr>
+      </tbody>
+    </table>
+    <h3>The Access pilot</h3>
+    <p>The Access page is reworked in parallel by the card "Access page: clear visual rework as the first step of the look and feel overhaul". Its pattern notes will be written to <code>docs/system/ui-standard/access-page-pilot.md</code>. This concept does not wait for the pilot. Its results feed in at three points:</p>
+    <ol>
+      <li><b>Standard.</b> Slice LF-2 reads the pilot notes when it writes <code>docs/system/ui-standard/rules.md</code>. Each pilot pattern becomes a rule, is merged into an existing rule, or is recorded as specific to Access, with the reason.</li>
+      <li><b>Library.</b> Slices LF-4 to LF-6 (page, section, outline, toolbar, button, menu, grid) take the structures the pilot built locally as their first real consumer. The pilot's markup and SCSS are the reference for what these components must cover. Access is then the first page moved onto the library, inside LF-6, with no visual change against the owner-approved pilot.</li>
+      <li><b>Skill.</b> Slice LF-8 adds the pilot's before and after pair to the design skill as the worked example for "screen in an existing product".</li>
+    </ol>
+    <p>If the pilot has not landed when LF-2 starts, LF-2 writes the rules from this Dossier and leaves one open row for each pilot pattern. The pilot card or LF-4 fills those rows in later.</p>
+  </section>
+
+  <section id="inventory">
+    <h2><span class="number">02</span> Inventory</h2>
+    <p>The frontend has 547 templates, 570 SCSS files and 537 Angular components in 49 feature folders. The shared folder <code>frontend/src/app/components/</code> holds 59 components and 5 directives. The counts below cover templates outside that folder, so they measure what features build for themselves. The heuristic for each family is written in <code>HEURISTICS</code> at the top of the script, and the per-file lists are in <code>inventory.json</code> under <code>patterns</code> and <code>scssRules</code>.</p>
+
+    <h3>Shared components today</h3>
+    <p>Usage is the number of templates outside the component's own folder that use its selector.</p>
+    <div class="wide">
+    <table>
+      <thead><tr><th>Kind</th><th>Components (templates using them)</th><th>Library candidate</th></tr></thead>
+      <tbody>
+        <tr><td>Generic primitives</td><td><code>app-status-indicator</code> 270, <code>app-studio-icon</code> 50, <code>appPendingButton</code> 47, <code>appTooltip</code> 33, <code>app-segmented-control</code> 32, <code>app-disclosure-marker</code> 30, <code>app-dialog</code> 20, <code>app-menu</code> 18, <code>app-loading-surface</code> 15, <code>app-section-header</code> 8, <code>app-tree-row</code> 8, <code>app-empty-state</code> 7, <code>app-count-badge</code> 5, <code>app-info-button</code> 4, <code>app-notification</code> 3, <code>app-sidesheet</code> 3, <code>app-pane-header</code> 2, <code>app-pane-tabs</code> 2, <code>appResizableSplitter</code> 2, <code>app-studio-sidebar-header</code> 2, <code>app-confirm-dialog</code> 1, <code>app-notification-stack</code> 1, <code>app-error-dialog</code> 1, <code>app-list-row</code> 1, <code>app-row</code> 1, <code>app-media-lightbox</code> 1, <code>app-copyable-command</code> 1</td><td>Yes: these 27 move into the library (LF-3)</td></tr>
+        <tr><td>Studio domain components</td><td><code>app-cli-model-selector</code> 10, <code>app-copyable-task-key</code> 7, <code>app-task-reference-microcard</code> 7, <code>app-concept-help</code> 5, <code>app-file-source-history</code> 5, <code>app-execution-location-badge</code> 4, <code>app-model-migration-badge</code> 4, <code>app-aspect-findings-list</code> 3, <code>app-model-level-indicator</code> 3, <code>app-tag-chips</code> 3, <code>app-tag-filters</code> 3, <code>app-tag-proposals</code> 3, <code>app-task-preview</code> 3, and 22 more with one or two users</td><td>No. They stay in the app and are built from library parts.</td></tr>
+        <tr><td>SCSS mixins in <code>_mixins.scss</code></td><td><code>deck-panel</code> in 48 files, <code>disclosure-control</code> 14, <code>thin-scroll</code> 11, <code>icon-button</code> 5, <code>type-label</code> 4, <code>action-buttons</code> 3, <code>empty-state</code> 1, <code>chip</code> 0</td><td>Surfaces and type move into library tokens. <code>chip</code> is retired.</td></tr>
+        <tr><td>Global classes in <code>styles.scss</code> and <code>app.scss</code></td><td><code>.btn</code> on 38 buttons in 16 templates, <code>.studio-button</code> on 19 buttons in 8 templates, <code>.header-btn</code> in 2 templates</td><td>Replaced by <code>sui-button</code>, then removed when their last user is gone</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>Feature-level shared parts also exist outside the shared folder: <code>app-page-action-bar</code> in <code>features/project-detail</code> (one user), <code>app-studio-empty-state</code> in <code>features/studio-shell</code> (one user), the Access mixins in <code>features/access/_access-controls.scss</code> (14 files) and the deploy mixins (9 files). Each is a local library that grew inside one feature because there was no shared place for it.</p>
+
+    <h3>Patterns built again per feature</h3>
+    <div class="wide">
+    <table>
+      <thead><tr><th>Family</th><th>Shared component and its users</th><th>Built per feature</th><th>How far they differ (SCSS values, non-hover rules)</th></tr></thead>
+      <tbody>
+        <tr><td>Grids and tables</td><td>None. <code>app-row</code> and <code>app-list-row</code> are single rows (1 user each).</td><td>107 <code>&lt;table&gt;</code> or <code>role="grid"/"table"</code> elements in 71 templates</td><td>355 table rules in 69 files. 22 font sizes and 26 cell paddings. Each table has its own header style, density and empty row.</td></tr>
+        <tr><td>Buttons</td><td><code>appPendingButton</code> 47, global <code>.btn</code> 16 templates</td><td>1,325 <code>&lt;button&gt;</code> elements in 345 templates. 548 distinct first class names, and 388 buttons have no class and are styled by element selectors.</td><td>452 button rules in 201 files. 20 corner radii (6px 77 times, 4px 36, 5px 22), 20 min-heights (28px, 34px, 26px, 24px, 30px are the most common), 26 font sizes, 45 paddings.</td></tr>
+        <tr><td>Menus and context menus</td><td><code>app-menu</code> in 16 templates. All 7 templates with a <code>(contextmenu)</code> handler use it.</td><td>8 templates with their own menu, dropdown or popover element (for example <code>filters-dropdown</code>, <code>previous-results-control</code>, <code>document-details-menu</code>)</td><td>12 menu rules in 10 files. Four corner radii. This family has converged the furthest.</td></tr>
+        <tr><td>Dialogs and drawers</td><td><code>app-dialog</code> 16 templates, <code>app-sidesheet</code> 3</td><td>26 templates declare <code>role="dialog"</code> or <code>&lt;dialog&gt;</code> without either, for example <code>create-task-dialog</code>, <code>add-host-wizard</code>, <code>runner-setup-dialog</code>, <code>update-center</code>, <code>verbose-debug-overlay</code>, <code>log-overlay</code></td><td>68 rules in 31 files. Eight radii (8px, 10px, 18px, 6px, 12px and more) and 15 paddings.</td></tr>
+        <tr><td>Form controls</td><td>None for fields. <code>app-segmented-control</code> 32 and <code>app-cli-model-selector</code> 10 cover choices.</td><td>In 142 templates: 141 text, 49 number, 49 checkbox, 10 search, 8 password, 8 radio and 13 other inputs, 153 selects and 46 textareas. Native checkboxes appear in 31 templates.</td><td>344 rules in 139 files. 17 radii, 20 min-heights (36px, 34px, 32px, 30px, token), 20 font sizes, 30 paddings.</td></tr>
+        <tr><td>Chips and status</td><td><code>app-status-indicator</code> in 249 templates (states, AGT-3402). <code>app-count-badge</code> 5. <code>app-tag-chips</code> 3.</td><td>174 own pill, chip, badge or tag elements in 85 templates. 29 files are pinned as tags or counts in <code>status-chip-baseline.json</code>.</td><td>399 rules in 109 files. 17 radii (999px, 7px, 3px, 4px, 5px), 24 font sizes, 38 paddings.</td></tr>
+        <tr><td>Toolbars</td><td><code>app-page-action-bar</code> 1 user</td><td>126 templates with containers named <code>*toolbar</code>, <code>*actions</code> or <code>*controls</code>. Only 2 product templates set <code>role="toolbar"</code>.</td><td>221 rules in 143 files. Spacing and grouping differ; keyboard behaviour is mostly absent.</td></tr>
+        <tr><td>Section headers</td><td><code>app-section-header</code> 8, <code>app-pane-header</code> 2, <code>app-studio-sidebar-header</code> 2</td><td>359 own <code>*head</code> or <code>*header</code> elements in 216 templates. Heading tags: 146 <code>h2</code>, 341 <code>h3</code>, 165 <code>h4</code>, 19 <code>h1</code>, 14 <code>h5</code>.</td><td>488 header rules in 237 files with 47 paddings and 12 min-heights. Title rules use 68 different font sizes across 271 files.</td></tr>
+        <tr><td>Page and pane layouts</td><td>None as components. The <code>deck-panel</code> mixin is in 48 files, and <code>appResizableSplitter</code> has 2 product users.</td><td>181 SCSS files declare their own root or <code>:host</code> grid with <code>grid-template-columns</code>. 4 roots set a <code>max-width</code>.</td><td>No shared page frame, section frame or pane frame. Settings pages each pick their own header, intro and section spacing (see <a href="#evidence">Evidence</a>).</td></tr>
+        <tr><td>Empty, loading and error states</td><td><code>app-empty-state</code> 7, <code>app-studio-empty-state</code> 1, <code>app-loading-surface</code> 15</td><td>107 templates with their own <code>*empty*</code> element and 128 with their own <code>*error</code> or <code>*failed</code> element</td><td>152 empty rules in 95 files with 19 font sizes and 36 paddings. Error states have no shared form.</td></tr>
+        <tr><td>Type and shape overall</td><td>Tokens <code>--studio-font-size-sm…2xl</code> and <code>--studio-radius-*</code> exist</td><td>Raw values in SCSS</td><td>139 distinct <code>font-size</code> values (11px 493 times, 12px 452, 10px 220, 0.78rem 183) and 55 distinct <code>border-radius</code> values. 11 <code>font-family</code> values and no <code>woff2</code> file in the repository, although the admin guideline requires local Inter and JetBrains Mono.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>Three families have already converged and show what works: state labels (<code>app-status-indicator</code> plus a lint gate), menus (<code>app-menu</code> plus the text-only rule) and disclosure markers (a component plus a gate with a baseline). In each case the shared component came with a guard that fails when someone builds the pattern again. The families without such a guard (buttons, tables, fields, headers, empty states) are the ones that diverge most.</p>
+  </section>
+
+  <section id="pages">
+    <h2><span class="number">03</span> Pages measured</h2>
+    <p>For each page the script starts at its root components and walks every feature component its templates use. Shared components are counted as used, not walked. "Local vocabulary" is the sum of distinct button classes, own chips, own header elements and local SCSS rules for buttons, fields, tables, chips, headers, titles, menus, dialogs and empty states. It is a measure of how many locally made control styles a reader meets on the page. "Commits" counts commits since 26 August 2026 that touched the page's files, which shows where change and owner attention have gone. No page-view telemetry exists in the product. The use classes below are inferred from each page's role, and the owner confirms them in LF-D8.</p>
+    <div class="wide">
+    <table>
+      <thead><tr><th>Page</th><th>Use</th><th class="n">Components</th><th class="n">Template lines</th><th class="n">Local vocabulary</th><th class="n">Button classes</th><th class="n">Font sizes</th><th class="n">Tables</th><th class="n">Fields</th><th class="n">Commits</th></tr></thead>
+      <tbody>
+        <tr><td>Task detail</td><td>daily</td><td class="n">102</td><td class="n">9,495</td><td class="n">696</td><td class="n">135</td><td class="n">62</td><td class="n">4</td><td class="n">31</td><td class="n">487</td></tr>
+        <tr><td>Board</td><td>daily</td><td class="n">38</td><td class="n">1,988</td><td class="n">230</td><td class="n">27</td><td class="n">32</td><td class="n">3</td><td class="n">11</td><td class="n">283</td></tr>
+        <tr><td>Dossier viewer</td><td>daily</td><td class="n">11</td><td class="n">1,092</td><td class="n">76</td><td class="n">13</td><td class="n">21</td><td class="n">0</td><td class="n">12</td><td class="n">73</td></tr>
+        <tr><td>Orchestrator side sheet</td><td>daily</td><td class="n">10</td><td class="n">735</td><td class="n">52</td><td class="n">8</td><td class="n">16</td><td class="n">0</td><td class="n">1</td><td class="n">19</td></tr>
+        <tr><td>Header and status bar</td><td>daily</td><td class="n">17</td><td class="n">863</td><td class="n">44</td><td class="n">9</td><td class="n">20</td><td class="n">1</td><td class="n">4</td><td class="n">197</td></tr>
+        <tr><td>Explorer sidebar</td><td>daily</td><td class="n">8</td><td class="n">560</td><td class="n">11</td><td class="n">5</td><td class="n">3</td><td class="n">0</td><td class="n">2</td><td class="n">29</td></tr>
+        <tr><td>Deck: deploy and environments</td><td>weekly</td><td class="n">43</td><td class="n">3,146</td><td class="n">306</td><td class="n">37</td><td class="n">33</td><td class="n">10</td><td class="n">72</td><td class="n">194</td></tr>
+        <tr><td>Deck: project settings</td><td>weekly</td><td class="n">34</td><td class="n">3,446</td><td class="n">247</td><td class="n">34</td><td class="n">37</td><td class="n">4</td><td class="n">85</td><td class="n">90</td></tr>
+        <tr><td>Deck: wiki</td><td>weekly</td><td class="n">21</td><td class="n">2,305</td><td class="n">166</td><td class="n">40</td><td class="n">30</td><td class="n">1</td><td class="n">11</td><td class="n">21</td></tr>
+        <tr><td>Deck: git and integration</td><td>weekly</td><td class="n">7</td><td class="n">692</td><td class="n">106</td><td class="n">17</td><td class="n">12</td><td class="n">1</td><td class="n">1</td><td class="n">6</td></tr>
+        <tr><td>Deck: token usage</td><td>weekly</td><td class="n">13</td><td class="n">877</td><td class="n">95</td><td class="n">11</td><td class="n">21</td><td class="n">7</td><td class="n">3</td><td class="n">17</td></tr>
+        <tr><td>Deck: overview</td><td>weekly</td><td class="n">5</td><td class="n">500</td><td class="n">63</td><td class="n">10</td><td class="n">29</td><td class="n">1</td><td class="n">7</td><td class="n">18</td></tr>
+        <tr><td>Settings: Environment (remote hosts)</td><td>occasional</td><td class="n">28</td><td class="n">1,877</td><td class="n">143</td><td class="n">18</td><td class="n">9</td><td class="n">0</td><td class="n">34</td><td class="n">90</td></tr>
+        <tr><td>Settings: CLI Management</td><td>occasional</td><td class="n">10</td><td class="n">821</td><td class="n">94</td><td class="n">5</td><td class="n">18</td><td class="n">4</td><td class="n">26</td><td class="n">24</td></tr>
+        <tr><td>Settings: System prompts</td><td>occasional</td><td class="n">9</td><td class="n">851</td><td class="n">85</td><td class="n">7</td><td class="n">18</td><td class="n">8</td><td class="n">3</td><td class="n">7</td></tr>
+        <tr><td>Settings: Access (pilot)</td><td>occasional</td><td class="n">15</td><td class="n">1,113</td><td class="n">76</td><td class="n">5</td><td class="n">8</td><td class="n">13</td><td class="n">46</td><td class="n">46</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="dim">The other 19 measured pages (Operations, Team, Retention, Magazine, Deck quality, Task Server, Deck proposals, Structure, Deployment dashboard, Workspaces, Orchestrator settings, Usage detail, Deck security, First run, GitHub, Secrets, Updates, Credentials, Appearance) each have a local vocabulary between 3 and 44. They are in <code>inventory.json</code> under <code>pages</code>.</p>
+    <p>Access is not the most divergent page by vocabulary: its components share one local mixin file, so its 76 local styles are consistent with each other. It is confusing for a different reason. With the test fixture the page renders 9 tables, 23 fields and 27 buttons under 19 headings in one column (its templates hold 13 tables and 46 fields in all states), with no outline and no clear order between reading, granting and creating (see <a href="#evidence">Evidence</a>). That is why the library starts with page, section and outline components, not with buttons.</p>
+  </section>
+
+  <section id="library">
+    <h2><span class="number">04</span> Library</h2>
+    <p>The library holds the generic building blocks: layout, sections, controls, overlays and states. It is developed, tested, documented and reviewed without running the product suites. Studio domain components (task references, lane chips, model badges) stay in the app and are built from library parts.</p>
+
+    <h3>Where it lives: three options</h3>
+    <div class="variant-grid">
+      <article class="variant"><h3>A · Library project inside the frontend workspace</h3><p><code>frontend/projects/studio-ui/</code> is an Angular library project in <code>angular.json</code>, next to the existing twelve mockup applications. The app consumes its source through a TypeScript path alias <code>@studio/ui</code>, with no separate build or publish step. A library change and the page that needs it can land in one commit.</p><p><b>Versioning:</b> none at the package level. The public surface is <code>public-api.ts</code> plus a generated API report checked in next to it, and a <code>CHANGELOG.md</code> gets one line per card. A breaking change shows up as an API report diff in review.</p><p><b>Cost:</b> lowest. It uses the existing npm install, lockfile, e2e fingerprint, Stable release identity and CI.</p></article>
+      <article class="variant"><h3>B · Separate package in this repository</h3><p><code>packages/studio-ui/</code> has its own <code>package.json</code> and is built with ng-packagr. The frontend consumes it through npm workspaces or a registry version.</p><p><b>Versioning:</b> semver with a changelog, pinned by the frontend.</p><p><b>Cost:</b> a build step before every frontend build and e2e prebuild, a second lockfile scope, and a change to <code>scripts/e2e-source-fingerprint.sh</code>. It also conflicts with the rule in <code>frontend/AGENTS.md</code> that forbids local <code>file:</code> and <code>dist</code> dependencies for Stable release identity. Every library change becomes two steps: release, then bump.</p></article>
+      <article class="variant"><h3>C · Repository of its own</h3><p>The library is a published npm package in its own repository, consumed by exact version, the way <code>coding-agent-chat</code> is today.</p><p><b>Versioning:</b> semver releases.</p><p><b>Cost:</b> highest. <code>coding-agent-chat</code> has been pinned at 0.4.1 since 7 September 2026. Two post-install scripts (<code>patch-coding-agent-chat-model-selector.mjs</code> and <code>patch-coding-agent-chat-technical-blocks.mjs</code>) rewrite its published output because fixes have not been released upstream. Its change path in <code>frontend/AGENTS.md</code> is a local checkout on another machine. Agent cards in this runner cannot change library and page in one card.</p></article>
+    </div>
+    <p><b>Recommended: A.</b> Independence comes from boundaries, not from a separate repository:</p>
+    <ul>
+      <li><b>Import boundary.</b> An ESLint <code>no-restricted-imports</code> rule fails when anything under <code>frontend/projects/studio-ui/</code> imports from <code>frontend/src/app/</code>, <code>coding-agent-chat</code> or a Studio service. The library depends only on Angular, <code>@angular/cdk</code> and the token files.</li>
+      <li><b>Tokens.</b> The library owns the component tokens (control heights, radii, type ramp, density) in <code>projects/studio-ui/src/styles/</code>. It reads the existing <code>--studio-*</code> colour tokens from <code>_tokens-primitives.scss</code> and <code>_tokens-semantic.scss</code>, which move into the library unchanged. No new palette is introduced.</li>
+      <li><b>Own checks.</b> <code>npm run ui:test</code> (the library's unit tests), <code>npm run ui:lint</code> and <code>npm run ui:catalogue:check</code> (catalogue screenshots) run without the backend, without <code>dotnet publish</code> and without the product suites.</li>
+      <li><b>Own documentation.</b> Each component folder has a <code>README.md</code> (purpose, inputs, states, keyboard, do and do not) that the catalogue renders.</li>
+      <li><b>Exit criterion.</b> If a second product ever consumes the library, it moves to option B. The import boundary keeps that move mechanical.</li>
+    </ul>
+
+    <figure class="media-breakout">
+      <svg viewBox="0 0 1060 380" role="img" aria-labelledby="lib-title lib-desc">
+        <title id="lib-title">Library inside the frontend workspace</title>
+        <desc id="lib-desc">The studio-ui library project holds tokens, components and catalogue entries. The catalogue app and the Studio app both consume it. Library checks run on the library alone; page checks run on the app.</desc>
+        <rect class="d-new" x="360" y="40" width="340" height="200" rx="10"/>
+        <text class="d-head" x="380" y="66">frontend/projects/studio-ui</text>
+        <text class="d-text" x="380" y="94">tokens: colour (moved), control, type</text>
+        <text class="d-text" x="380" y="118">layout: page, section, pane, split, outline</text>
+        <text class="d-text" x="380" y="142">controls: button, menu, grid, field</text>
+        <text class="d-text" x="380" y="166">overlays, status, tags, states</text>
+        <text class="d-small" x="380" y="194">per component: README, *.catalogue.ts, spec</text>
+        <text class="d-small" x="380" y="214">public-api.ts · api-report.md · CHANGELOG.md</text>
+        <rect class="d-box" x="40" y="70" width="240" height="140" rx="10"/>
+        <text class="d-head" x="60" y="96">studio-ui-catalogue</text>
+        <text class="d-text" x="60" y="124">every component × state</text>
+        <text class="d-text" x="60" y="148">light and dark, 1440 and 390</text>
+        <text class="d-small" x="60" y="176">no backend, static build</text>
+        <rect class="d-box" x="780" y="70" width="240" height="140" rx="10"/>
+        <text class="d-head" x="800" y="96">frontend (Studio app)</text>
+        <text class="d-text" x="800" y="124">pages import @studio/ui</text>
+        <text class="d-text" x="800" y="148">domain components stay here</text>
+        <text class="d-small" x="800" y="176">no import back into the library</text>
+        <path class="d-line" d="M360 140 H288"/><path class="d-arrow" d="M282 140 l10 -5 v10 z"/>
+        <path class="d-line" d="M700 140 H772"/><path class="d-arrow" d="M778 140 l-10 -5 v10 z"/>
+        <rect class="d-good-box" x="40" y="276" width="440" height="72" rx="10"/>
+        <text class="d-head" x="60" y="300">Library change: checks</text>
+        <text class="d-small" x="60" y="324">ui:lint · ui:test · ui:catalogue:check · api report · app typecheck if API changed</text>
+        <rect class="d-warn-box" x="580" y="276" width="440" height="72" rx="10"/>
+        <text class="d-head" x="600" y="300">Page change: checks</text>
+        <text class="d-small" x="600" y="324">page specs · page e2e · lint:structure for the page · visual review</text>
+        <path class="d-dash" d="M530 240 V276"/>
+      </svg>
+      <figcaption>Proposed layout. Arrows point from the library to its two consumers. The library never imports from the app.</figcaption>
+    </figure>
+
+    <h3>Catalogue and documentation</h3>
+    <p>The catalogue is an Angular application, <code>studio-ui-catalogue</code>, in the same workspace (option A of LF-D2), built the way the existing mockup apps are. Each component has a <code>*.catalogue.ts</code> file that lists its states as plain data: label, inputs, projected content, and the theme and width it needs. The catalogue renders every entry in both themes, with the component README beside it. A Playwright spec, <code>projects/studio-ui-catalogue/e2e/catalogue.spec.ts</code>, opens each entry against the static build (no backend) and compares it with checked-in screenshots at 1440 and 390 px. That comparison is the library's visual regression test. It is also the review material for the owner: a library card ships before and after catalogue images instead of product screenshots.</p>
+    <p>Storybook (option B) would bring a second build system and its own Angular builder. It brings several hundred megabytes of dependencies, and every Angular upgrade would wait for it. A static HTML catalogue in <code>docs/</code> (option C) would show pictures, not the live components, and would go stale. The data format of option A also feeds the design skill: an agent can read <code>*.catalogue.ts</code> to see which states exist before it builds a page.</p>
+
+    <h3>Ownership and change path</h3>
+    <ul>
+      <li><b>Owner.</b> The owner approves the UI standard and every new component family. He reviews in the catalogue (images in the card result) and, for pages, in the product.</li>
+      <li><b>Library cards.</b> A new family (grid, field, popover) is its own card with scope <code>frontend/projects/studio-ui/**</code>. It needs no product screenshots and does not change pages, apart from moving the pilot page or one named consumer onto the new family.</li>
+      <li><b>Page cards</b> consume the library. A page card may add a variant or a small component when the page needs it, under the library contract: catalogue entry, README, unit spec, both themes and a changelog line, all in their own commit in the same card. A new family is never added inside a page card.</li>
+      <li><b>Selector prefix.</b> New library components use the prefix <code>sui-</code>. Moved components keep their <code>app-</code> selector as an alias (<code>selector: 'sui-menu, app-menu'</code>) until their last <code>app-</code> user is gone. The existing gates (<code>check-status-chips.mjs</code>, <code>check-disclosure-markers.mjs</code>, <code>check-segmented-controls.mjs</code>) keep working.</li>
+    </ul>
+  </section>
+
+  <section id="components">
+    <h2><span class="number">05</span> Standard components</h2>
+    <p>The components are ordered by need. Layout and sections come first because the Access problem is structure, not control style. Each component reads only library tokens, works in both themes from those tokens, and drops all motion under <code>prefers-reduced-motion: reduce</code> (R5). "From" names what it replaces or absorbs.</p>
+    <svg viewBox="0 0 680 300" role="img" aria-labelledby="anat-title anat-desc" style="display:block;width:100%;height:auto;margin:20px 0;border:1px solid var(--article-line);border-radius:10px;background:var(--article-paper)">
+      <title id="anat-title">Anatomy of a standard page</title>
+      <desc id="anat-desc">A page frame with title row and page actions, an outline on the left, and sections on the right; each section has a heading row with its own actions, an optional toolbar, and a grid or form.</desc>
+      <rect class="d-box" x="16" y="16" width="648" height="268" rx="8"/>
+      <text class="d-head" x="32" y="40">sui-page</text>
+      <text class="d-text" x="32" y="62">Access</text><text class="d-small" x="96" y="62">one line of purpose</text>
+      <rect class="d-new" x="540" y="48" width="108" height="22" rx="5"/><text class="d-small" x="552" y="63">page actions</text>
+      <rect class="d-box" x="32" y="84" width="128" height="184" rx="6"/>
+      <text class="d-head" x="44" y="104">sui-outline</text>
+      <text class="d-link" x="44" y="128">Users</text><text class="d-small" x="44" y="150">Groups</text><text class="d-small" x="44" y="172">Service accounts</text><text class="d-small" x="44" y="194">Bindings</text><text class="d-small" x="44" y="216">Runners</text><text class="d-small" x="44" y="238">Emergency</text>
+      <rect class="d-box" x="176" y="84" width="472" height="184" rx="6"/>
+      <text class="d-head" x="192" y="104">sui-section</text>
+      <text class="d-text" x="192" y="126">Users</text><text class="d-small" x="240" y="126">2</text>
+      <rect class="d-new" x="560" y="112" width="72" height="22" rx="5"/><text class="d-small" x="572" y="127">Invite</text>
+      <rect class="d-rule" x="192" y="142" width="440" height="26" rx="4"/><text class="d-small" x="202" y="159">sui-toolbar: search · filter · density</text>
+      <rect class="d-rule" x="192" y="176" width="440" height="80" rx="4"/><text class="d-small" x="202" y="194">sui-data-grid: Name · Roles · Status · Factor · ⋯ row menu</text>
+      <path class="d-rule" d="M192 206 H632 M192 230 H632"/>
+    </svg>
+
+    <h3>1 · Layout and sections</h3>
+    <div class="wide">
+    <table>
+      <thead><tr><th>Component</th><th>Covers</th><th>States</th><th>Keyboard and screen reader</th><th>Light and dark</th></tr></thead>
+      <tbody>
+        <tr><td><code>sui-page</code></td><td>The page frame: one-line title row with an optional purpose sentence and an info disclosure, a page-actions slot, optional outline, body. Full-bleed (R2). Reading width applies only to prose blocks inside. From: the 181 local root grids, the settings panel heads.</td><td>loading (skeleton via <code>sui-loading-surface</code>), ready, denied (with sign-in slot), error (<code>sui-error-state</code>)</td><td>Exactly one <code>h1</code>, or <code>h2</code> when the page sits inside a settings shell, through an input. The landmark is <code>main</code> or <code>region</code> with the page title as name. Focus moves to the title on navigation.</td><td>Ground <code>--studio-bg-editor</code>. Calm header without a colour field; colour lives in content (owner preference).</td></tr>
+        <tr><td><code>sui-section</code></td><td>A titled block with a count, a hint, a section-actions slot, an optional toolbar and a body. Optionally collapsible through <code>app-disclosure-marker</code>. Registers itself with the outline. From: 359 own header elements, <code>deck-panel</code>, <code>deck-section-head</code>, <code>app-section-header</code> (sidebar variant).</td><td>expanded, collapsed, empty (body replaced by <code>sui-empty-state</code>), busy, attention (background tint, never a left bar, R1)</td><td>The heading level comes from nesting depth, not from local choice. <code>aria-labelledby</code> points to the heading. A collapsible section uses a button with <code>aria-expanded</code> (disclosure grammar AGT-2813).</td><td>Flat surface, one hairline separator, tint for attention from the status tokens.</td></tr>
+        <tr><td><code>sui-pane</code></td><td>A pane in a split view: header row (title, tabs, actions), the scroll owner, an optional footer. From: <code>app-pane-header</code>, the task-detail panes.</td><td>active, inactive, loading, empty, error</td><td>R8: owns ArrowUp/Down, PageUp/Down, Home and End while focus is inside its content; focus moves in when it opens.</td><td>Pane headers <code>--studio-bg-sidebar</code>, body editor ground.</td></tr>
+        <tr><td><code>sui-split</code></td><td>Two or three panes with resizable splitters and persisted sizes; collapses to stacked panes or tabs under 760 px. From: <code>appResizableSplitter</code>, local two-column grids.</td><td>default, resized, collapsed pane, narrow (stacked)</td><td>The splitter is <code>role="separator"</code> with <code>aria-valuenow</code>. Arrow keys resize in 16 px steps, and Enter collapses or restores a pane.</td><td>Splitter hairline uses <code>--studio-border-strong</code> on hover and focus.</td></tr>
+        <tr><td><code>sui-toolbar</code></td><td>A row of controls for one surface: search, filters, view switches, one primary action at most. Groups with separators; overflow moves into a <code>sui-menu</code>. From: 126 local <code>*actions</code>/<code>*controls</code> rows, <code>app-page-action-bar</code>.</td><td>default, overflowing, disabled group, busy</td><td><code>role="toolbar"</code> with roving tabindex (reuses <code>directives/roving-focus</code>). One Tab stop, arrows move inside, Home and End.</td><td>No own background; sits on the section surface.</td></tr>
+        <tr><td><code>sui-outline</code></td><td>The navigable outline of a long page, built from the registered sections, with counts and attention dots. It becomes a select under 760 px. Required on pages with more than three sections or more than two screens (rule U3).</td><td>current section, attention in section, collapsed (phone)</td><td><code>nav</code> landmark named after the page. Links carry <code>aria-current="location"</code> for the section in view. Activating a link moves focus to that section's heading.</td><td>Active entry reuses <code>--studio-nav-active-*</code> (AGT-2010), the one sanctioned bar.</td></tr>
+        <tr><td>Layout mixins</td><td><code>stack</code>, <code>cluster</code> and <code>form-grid</code> (label column plus field column, wraps on phone) as SCSS mixins with token gaps only.</td><td>n/a</td><td>DOM order equals visual order.</td><td>n/a</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>2 · Grid</h3>
+    <div class="wide">
+    <table>
+      <thead><tr><th>Component</th><th>Covers</th><th>States</th><th>Keyboard and screen reader</th><th>Light and dark</th></tr></thead>
+      <tbody>
+        <tr><td><code>sui-data-grid</code></td><td>Lists of comparable records with two or more attributes. Column definitions (label, cell template, alignment, numeric, width, sortable, hidden on phone), sticky header, density compact or default, row selection, a row actions menu, a footer aggregate that equals the sum of visible rows (R3). Under 760 px rows stack into label and value pairs, the way the Access tables already do with <code>data-label</code>. Built on native <code>&lt;table&gt;</code> (LF-D6). From: 107 local tables in 71 templates.</td><td>loading (skeleton rows after 200 ms, R6), empty (with next action), error (with retry), filtered to nothing, populated, row selected, row busy, row disabled with reason, sorted asc or desc</td><td>Native table semantics, <code>scope="col"</code>, sort buttons in headers with <code>aria-sort</code>. In selection mode it becomes an interactive grid: <code>role="grid"</code>, arrow navigation between cells, Space selects, and the ContextMenu key or Shift+F10 opens the row menu. A caption or <code>aria-labelledby</code> names the section.</td><td>Header text <code>--studio-fg-dim</code>, row hover <code>--studio-bg-hover</code>, selection <code>--studio-bg-selected</code>, numbers tabular.</td></tr>
+        <tr><td><code>sui-list</code></td><td>Single-column lists and navigation rows. From: <code>app-row</code>, <code>app-list-row</code>, <code>app-tree-row</code> (moved, unchanged).</td><td>default, hover, active, selected, disabled</td><td>Existing tree-row contract: <code>aria-current</code>, chevron rules.</td><td>Nav active tokens.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>3 · Buttons and menus</h3>
+    <div class="wide">
+    <table>
+      <thead><tr><th>Component</th><th>Covers</th><th>States</th><th>Keyboard and screen reader</th><th>Light and dark</th></tr></thead>
+      <tbody>
+        <tr><td><code>sui-button</code> (attribute on <code>&lt;button&gt;</code> and <code>&lt;a&gt;</code>)</td><td>Four variants: primary, secondary, quiet, danger. Two sizes: default (row height token) and compact. Optional leading icon. Absorbs <code>appPendingButton</code> (R6). From: <code>.btn</code>, <code>.studio-button</code>, 548 local classes.</td><td>default, hover, active, focus-visible, disabled, disabled with reason (tooltip), pending (spinner plus label, <code>aria-busy</code>)</td><td>Native button. Disabled-with-reason keeps focus and uses <code>aria-disabled</code> so the reason stays reachable. Focus ring from <code>--studio-accent</code>.</td><td>Primary on <code>--studio-accent</code> with <code>--studio-on-accent</code> text; contrast is checked in both themes by the catalogue spec.</td></tr>
+        <tr><td><code>sui-icon-button</code></td><td>Icon-only action with a required accessible name and tooltip. From: <code>m.icon-button</code> (5 files), <code>.btn-icon</code>, header buttons.</td><td>same as button, plus toggled (<code>aria-pressed</code>)</td><td>Required <code>label</code> input becomes <code>aria-label</code> and the tooltip text.</td><td>Icon <code>--studio-fg-dim</code>, hover <code>--studio-fg</code>.</td></tr>
+        <tr><td><code>sui-segmented</code></td><td>Pick one of N. Moved from <code>app-segmented-control</code> (32 users), unchanged.</td><td>as today</td><td>as today: <code>role="group"</code>, <code>aria-pressed</code></td><td>as today</td></tr>
+        <tr><td><code>sui-menu</code> and <code>[suiMenuTrigger]</code></td><td>Moved from <code>app-menu</code> (16 templates), text-only rows (menu rule in <code>frontend/AGENTS.md</code>), groups, disabled rows with reason, a danger row, submenus one level deep.</td><td>closed, open, row hover, row disabled, row danger, submenu open</td><td><code>role="menu"</code> and <code>menuitem</code>. The trigger has <code>aria-haspopup</code> and <code>aria-expanded</code>. Arrow keys, Home, End, type-ahead. Escape closes and returns focus to the trigger.</td><td>Elevated surface tokens; no icons in rows.</td></tr>
+        <tr><td><code>[suiContextMenu]</code></td><td>Right-click menu on rows, cards and tree items, opening the same <code>sui-menu</code>. The same actions are reachable from a visible <code>⋯</code> row action, so the context menu is never the only path.</td><td>as menu</td><td>The ContextMenu key and Shift+F10 open it at the focused element. Today the 7 context-menu templates handle <code>(contextmenu)</code> with the mouse; the keyboard path is new.</td><td>as menu</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>4 · Form controls</h3>
+    <div class="wide">
+    <table>
+      <thead><tr><th>Component</th><th>Covers</th><th>States</th><th>Keyboard and screen reader</th><th>Light and dark</th></tr></thead>
+      <tbody>
+        <tr><td><code>sui-field</code></td><td>Label, hint, error text, required marker and a projected native control. It owns the spacing between them, so pages never style labels. From: 142 templates with fields.</td><td>default, focused, filled, invalid (message under the field), disabled, read-only, with unit suffix</td><td>Label <code>for</code> and id wiring, hint and error through <code>aria-describedby</code>, <code>aria-invalid</code>. A visible label is required (placeholder is not a label).</td><td>Border <code>--studio-border-strong</code>, focus accent, invalid from <code>--studio-status-danger</code> with text, not colour alone.</td></tr>
+        <tr><td><code>suiInput</code>, <code>suiSelect</code>, <code>suiTextarea</code> (attributes on native controls)</td><td>One height, radius, padding and type size for text, number, search, password, url, date and time inputs, selects and textareas. Native elements stay native.</td><td>as field</td><td>Native semantics</td><td>Surface <code>--studio-bg-surface</code></td></tr>
+        <tr><td><code>sui-checkbox</code>, <code>sui-radio-group</code>, <code>sui-switch</code></td><td>Styled native checkbox and radio, plus a switch for settings that apply immediately. From: native checkboxes in 31 templates, 8 radios.</td><td>off, on, mixed (checkbox), disabled, invalid</td><td>A radio group is a <code>fieldset</code> and <code>legend</code>; a switch is <code>role="switch"</code> with <code>aria-checked</code>.</td><td>Accent fill when on</td></tr>
+        <tr><td><code>sui-form-actions</code></td><td>Footer row of a form: one primary, secondary actions, the pending state, an error summary for long forms.</td><td>idle, dirty, pending, failed (summary with links to fields)</td><td>The error summary is <code>role="alert"</code> and links move focus to the invalid field.</td><td>n/a</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>5 · Overlays</h3>
+    <div class="wide">
+    <table>
+      <thead><tr><th>Component</th><th>Covers</th><th>States</th><th>Keyboard and screen reader</th><th>Light and dark</th></tr></thead>
+      <tbody>
+        <tr><td><code>sui-dialog</code> and confirm service</td><td>Blocking decisions and short forms. Moved from <code>app-dialog</code> (sizes sm and md, kinds default, danger, primary) and <code>confirm-dialog</code>. Adds size lg for wizards. From: the 26 templates with their own <code>role="dialog"</code>.</td><td>open, busy, error inside, danger confirmation with typed reason (the <code>confirmTaskDelete</code> pattern)</td><td><code>role="dialog"</code> or <code>alertdialog</code>, <code>aria-modal</code>, focus trap (<code>modal-focus</code> directive), Escape closes unless busy, focus returns to the opener.</td><td>Scrim <code>--studio-scrim</code>, padding tokens <code>--studio-modal-padding-*</code>.</td></tr>
+        <tr><td><code>sui-side-sheet</code></td><td>Parallel work beside the page. Moved from <code>app-sidesheet</code>, with the push contract in <code>frontend/AGENTS.md</code> (row-reverse parent, <code>:host</code> width animation, inner width 100 %).</td><td>closed, open, resizing</td><td><code>complementary</code> landmark with a name; focus moves in when opened.</td><td>Sidebar ground</td></tr>
+        <tr><td><code>sui-popover</code></td><td>Anchored, non-modal detail such as token breakdowns, status detail or filter panels. Built on <code>@angular/cdk/overlay</code>. From: the 8 local popover and dropdown elements.</td><td>closed, open, pinned</td><td>Opened by a button with <code>aria-expanded</code>; Escape closes; focus goes in only when the content is interactive.</td><td>Elevated surface</td></tr>
+        <tr><td><code>suiTooltip</code>, <code>sui-toast</code></td><td>Moved from <code>appTooltip</code> and <code>app-notification</code> unchanged.</td><td>as today</td><td>as today</td><td>as today</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>6 · Status, chips and states</h3>
+    <div class="wide">
+    <table>
+      <thead><tr><th>Component</th><th>Covers</th><th>States</th><th>Keyboard and screen reader</th><th>Light and dark</th></tr></thead>
+      <tbody>
+        <tr><td><code>sui-status</code></td><td>Moved from <code>app-status-indicator</code> (six tones, AGT-3402) with its gate.</td><td>success, warning, danger, info, neutral, running; compact</td><td>Icon <code>aria-hidden</code>, text visible</td><td><code>--studio-status-*</code></td></tr>
+        <tr><td><code>sui-tag</code></td><td>Labels that are not states: role names, scopes, kinds, sources. Neutral by default with one emphasis tone. It replaces the tags and counts pinned in <code>status-chip-baseline.json</code> (29 files) and the 174 local chip elements.</td><td>neutral, emphasis, removable, interactive (filter)</td><td>A removable tag has a remove button named "Remove &lt;label&gt;".</td><td>Surface tint, never a status colour</td></tr>
+        <tr><td><code>sui-count</code></td><td>Moved from <code>app-count-badge</code>. Counts equal their visible children (R3).</td><td>zero, some, overflow (99+)</td><td>The accessible name includes the noun ("3 users").</td><td>Muted</td></tr>
+        <tr><td><code>sui-empty-state</code></td><td>Moved from <code>app-empty-state</code>. Always names why the area is empty and the next action.</td><td>nothing yet, filtered to nothing, not configured, no permission</td><td>Text in flow, the action is a button</td><td>Muted text, no illustration</td></tr>
+        <tr><td><code>sui-error-state</code></td><td>New. One sentence of what failed, the next action, and technical detail behind a disclosure (the refusal pattern of AGT-3624). From: 128 templates with their own error element.</td><td>recoverable (retry), blocked (next step elsewhere), partial (some data shown)</td><td><code>role="alert"</code> only when it appears after an action; otherwise plain text</td><td>Danger tint background (R1, no bar)</td></tr>
+        <tr><td><code>sui-loading-surface</code></td><td>Moved from <code>app-loading-surface</code> (R6 timing: hidden for 200 ms, skeleton, copy after one second).</td><td>as today</td><td><code>aria-busy</code> on the owning region</td><td>as today</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <section id="standard">
+    <h2><span class="number">06</span> UI standard</h2>
+    <p>The standard is a short list of rules in <code>docs/system/ui-standard/rules.md</code>, next to the pilot notes. Each rule has an id, one sentence, a one-line reason and the check that enforces it. Component detail (states, keyboard behaviour, inputs) lives in the component README and the catalogue, never in the rules file.</p>
+    <div class="wide">
+    <table>
+      <thead><tr><th>Rule</th><th>Text</th><th>Check</th></tr></thead>
+      <tbody>
+        <tr><td class="rule-id">U1</td><td>A page is a <code>sui-page</code> made of <code>sui-section</code>s, or a <code>sui-split</code> of <code>sui-pane</code>s. No local page header or root grid.</td><td>Guard <code>check-ui-standard.mjs</code> (enforced pages); review</td></tr>
+        <tr><td class="rule-id">U2</td><td>Headings come from page and section nesting. A template in an enforced page writes no <code>h1</code> to <code>h6</code> of its own.</td><td>Guard</td></tr>
+        <tr><td class="rule-id">U3</td><td>A page with more than three sections or more than two screens of content has a <code>sui-outline</code>.</td><td>Review aspect; catalogue states</td></tr>
+        <tr><td class="rule-id">U4</td><td>Every button is <code>sui-button</code> or <code>sui-icon-button</code> in one of four variants. A toolbar or section has at most one primary.</td><td>Guard (no other class on <code>&lt;button&gt;</code>); Stylelint (no <code>button</code> element selector in feature SCSS)</td></tr>
+        <tr><td class="rule-id">U5</td><td>Comparable records with two or more attributes are a <code>sui-data-grid</code>. A list with one attribute is a <code>sui-list</code>.</td><td>Guard (no <code>&lt;table&gt;</code> outside the library)</td></tr>
+        <tr><td class="rule-id">U6</td><td>Row, card and tree actions are a <code>sui-menu</code> behind a visible <code>⋯</code> trigger. A context menu repeats that menu and opens from the keyboard.</td><td>Guard (a <code>(contextmenu)</code> handler without <code>suiContextMenu</code> fails); review</td></tr>
+        <tr><td class="rule-id">U7</td><td>Every field is a <code>sui-field</code> with a visible label; errors stand under the field in words.</td><td>Guard (no bare <code>input</code>, <code>select</code> or <code>textarea</code> outside <code>sui-field</code>); Stylelint</td></tr>
+        <tr><td class="rule-id">U8</td><td>Blocking decisions use <code>sui-dialog</code>, parallel work uses <code>sui-side-sheet</code>, anchored detail uses <code>sui-popover</code>. No local <code>role="dialog"</code>.</td><td>Guard</td></tr>
+        <tr><td class="rule-id">U9</td><td>A state is a <code>sui-status</code>, a label is a <code>sui-tag</code>, a number is a <code>sui-count</code>.</td><td>Existing gate <code>check-status-chips.mjs</code>, extended to tags</td></tr>
+        <tr><td class="rule-id">U10</td><td>Every list, grid and section has an empty, loading and error state from the library, and each names a next action.</td><td>Catalogue states; review aspect</td></tr>
+        <tr><td class="rule-id">U11</td><td>Feature SCSS sets no <code>font-size</code>, <code>border-radius</code>, control height or <code>font-family</code>; these come from library components and tokens. Feature SCSS lays out content; it does not style controls.</td><td>Stylelint override per enforced page folder (the pattern already used for <code>features/remote-hosts/**</code>)</td></tr>
+        <tr><td class="rule-id">U12</td><td>When the library has no fitting component, the card adds one under the library contract (catalogue entry, README, spec, both themes, changelog) or records a local exception with a reason in the enforced list. It does not build the control locally without a record.</td><td>Guard baseline entry needs <code>reason</code>; review</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <h3>Relation to the existing style guide</h3>
+    <ul>
+      <li><a href="../quality/design/style-guide-hard-rules.md"><code>style-guide-hard-rules.md</code></a> stays the short non-negotiable baseline (R1 to R9). It gains one rule, R10: "Reworked pages follow the UI standard in <code>docs/system/ui-standard/rules.md</code>." The U-rules do not repeat R1 to R9; the components implement them.</li>
+      <li>The <a href="../operations/admin-design-guideline/index.html">Admin design guideline</a> stays the visual reference for admin surfaces. Its component-level contracts (one grid for comparable entries, one-line headers, disclosure grammar, panel key containment) become component behaviour in the library, and the guideline links to the components.</li>
+      <li>The family pages in <code>docs/quality/frontend/style-guide/</code> (<code>buttons.md</code>, <code>forms.md</code>, <code>pills.md</code>, <code>modals.md</code>, <code>cards.md</code>, <code>tabs.md</code> and their audits) answer the open questions they raise ("do we need <code>&lt;app-button&gt;</code>?", "do we need form controls?"). Each gets a "Superseded by" line pointing at the library component once its family ships. <code>migration-status.md</code> is replaced by the rollout ledger <code>docs/system/ui-standard/rollout.md</code>.</li>
+      <li>When the rule packs of <a href="../style-rule-delivery/index.html">Style rules in the card</a> (SR-S1) land, <code>rules.md</code> becomes the <code>ui-standard</code> pack in that format, with the same rule ids. Until then it reaches cards through <code>frontend/AGENTS.md</code>, <code>docs/quality/frontend-styling.md</code> and the design skill.</li>
+    </ul>
+    <h3>How a rule is enforced</h3>
+    <p>The repository already has a working pattern: a shared component, a structure gate in <code>npm run lint:structure</code>, and a baseline file whose entries need a written reason. Examples are <code>status-chip-baseline.json</code> (29 documented files), <code>disclosure-baseline.json</code> (28 enforced files, 22 staged adoptions) and <code>segmented-baseline.json</code>. The standard reuses that pattern:</p>
+    <ol>
+      <li><b>Guard.</b> <code>frontend/scripts/check-ui-standard.mjs</code> reads <code>ui-standard-baseline.json</code>, which has an <code>enforced</code> list of page folders. In an enforced folder it fails on rules U1, U2, U4 to U8 and U12. A page card moves its folders into <code>enforced</code>, so each reworked page is locked against regression from the day it ships, while pages that are not yet reworked are left alone.</li>
+      <li><b>Lint.</b> A Stylelint override for the enforced folders sets <code>declaration-property-value-allowed-list</code> for <code>font-size</code>, <code>border-radius</code>, <code>height</code> and <code>min-height</code> (library tokens only) and a <code>selector-disallowed-list</code> for <code>button</code>, <code>input</code>, <code>select</code>, <code>textarea</code> and <code>table</code> element selectors (U11).</li>
+      <li><b>Review aspect.</b> The visual review cites rule ids for what a script cannot see: U3 (outline), U10 (states and next actions), and whether a page reads as one product.</li>
+      <li><b>Design skill.</b> The skill makes the agent look in the catalogue first and name the components it used and added.</li>
+    </ol>
+  </section>
+
+  <section id="skill">
+    <h2><span class="number">07</span> Design skill and review</h2>
+    <h3>The design skill</h3>
+    <p><code>.agents/skills/visual-design/SKILL.md</code> is loaded for cards whose acceptance is visual. The parallel card AGT-4023 (delivered, not yet integrated at <code>1b5354e53</code>) adds "Studio views use Studio tokens" and "Content first for technical views" to it. Slice LF-8 builds on that change and adds:</p>
+    <ul>
+      <li>A new reference, <code>references/studio-ui.md</code>, for "Screen in an existing product". It says: read <code>docs/system/ui-standard/rules.md</code>, open the catalogue entries for the families the screen needs, list the components you will use, and decide for each missing need whether it is a variant, a new library component (U12) or a recorded exception.</li>
+      <li>A change to hard rule 1, "Respect the existing structure": on a rollout page card the target structure is the standard, not the old page.</li>
+      <li>A rubric check, "Standard fit": every control from the library; structure through page, section and outline; states present; no local control styles. A score below 4 blocks delivery like the other dimensions.</li>
+      <li>A delivery table, "Patterns used and added", that every UI card writes into its result: library components used, components or variants added, exceptions with reasons.</li>
+      <li>The Access pilot's before and after pair as the worked example.</li>
+    </ul>
+    <p>Every card that touches UI gets the standard even when the skill is not loaded. <code>frontend/AGENTS.md</code> names the rules file and the catalogue in its first section, and the prompt-enrichment context <code>docs/quality/frontend-styling.md</code>, which Preparation appends for frontend cards, links to it. The guard catches what an agent misses on enforced pages.</p>
+    <h3>The visual review aspect</h3>
+    <p><code>runner/VisualReviewScreenshotBundle.cs</code> already appends <code>style-guide-hard-rules.md</code> to the visual review prompt (line 248). Slice LF-9 changes three things:</p>
+    <ol>
+      <li>It appends <code>docs/system/ui-standard/rules.md</code> in the same way, and adds a "Standard fit" paragraph to <code>prompts/runtime/review-aspect-visual-review.md</code>: cite rule ids (U1 to U12) for each concern, and treat a missing outline, missing state or local control on a reworked page as <code>concerns</code>.</li>
+      <li>For a page card the aspect requires the before and after set (1440 and 390 px, light and dark), checks the "Patterns used and added" table against the diff, and names a guard baseline that grew as a concern.</li>
+      <li>For a library-only change (only <code>frontend/projects/studio-ui/**</code>) the aspect takes the catalogue before and after images as its screenshots, so no product screenshots are demanded.</li>
+    </ol>
+  </section>
+
+  <section id="rollout">
+    <h2><span class="number">08</span> Rollout</h2>
+    <p>Each page is a card of its own. The owner reviews it in the product and in the screenshots before the next page card starts; the slices chain each page card to the previous one with <code>dependsOn</code>, so the scheduler enforces the order. The library families come first because they are cheap to check and the owner can review them in the catalogue while the pilot runs.</p>
+    <h3>Order of pages</h3>
+    <p>Pages are ordered by use first (daily, weekly, occasional) and by local vocabulary within a class. Task detail is the largest page, with 102 components, so it is split into three cards along its existing panes. The order is recorded in <code>docs/system/ui-standard/rollout.md</code> and the owner can change it there.</p>
+    <div class="wide">
+    <table>
+      <thead><tr><th>#</th><th>Page card</th><th>Use</th><th class="n">Local vocabulary</th><th>Why here</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>Settings: Access (pilot, parallel card)</td><td>occasional</td><td class="n">76</td><td>Owner direction; moved onto the library in LF-6</td></tr>
+        <tr><td>1</td><td>Board (LF-15)</td><td>daily</td><td class="n">230</td><td>Daily, 27 button classes, 32 font sizes, the most-used context menu</td></tr>
+        <tr><td>2</td><td>Task detail: header and overview (LF-16)</td><td>daily</td><td class="n" rowspan="3">696</td><td rowspan="3">The most divergent page; split along panes so each review stays readable</td></tr>
+        <tr><td>3</td><td>Task detail: result, timeline and protocol</td><td>daily</td></tr>
+        <tr><td>4</td><td>Task detail: files, git and source panes</td><td>daily</td></tr>
+        <tr><td>5</td><td>Dossier viewer</td><td>daily</td><td class="n">76</td><td>The owner's decision surface</td></tr>
+        <tr><td>6</td><td>Header, status bar and orchestrator side sheet</td><td>daily</td><td class="n">96</td><td>Shell chrome; small but seen on every page</td></tr>
+        <tr><td>7</td><td>Deck: deploy and environments</td><td>weekly</td><td class="n">306</td><td>Highest vocabulary in the Deck, 72 fields</td></tr>
+        <tr><td>8</td><td>Deck: project settings</td><td>weekly</td><td class="n">247</td><td>85 fields; the form family proves itself here</td></tr>
+        <tr><td>9</td><td>Deck: wiki</td><td>weekly</td><td class="n">166</td><td>40 button classes</td></tr>
+        <tr><td>10</td><td>Deck: git and integration, token usage, overview</td><td>weekly</td><td class="n">264</td><td>One card per page, in that order</td></tr>
+        <tr><td>11</td><td>Settings: Environment</td><td>occasional</td><td class="n">143</td><td>Five local dialogs, 34 fields</td></tr>
+        <tr><td>12</td><td>Settings: CLI Management, System prompts</td><td>occasional</td><td class="n">179</td><td>Table and form heavy; one card each</td></tr>
+        <tr><td>13</td><td>Remaining Deck and settings pages</td><td>weekly or occasional</td><td class="n">3 to 44 each</td><td>By vocabulary. The five smallest settings pages (Updates, Appearance, Credentials, Secrets, GitHub, 3 to 11 each) share one card (LF-D9).</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <h3>What a page card delivers</h3>
+    <ol>
+      <li><b>Before and after screenshots</b> at 1440 and 390 px, light and dark, named <code>&lt;page&gt;/before-1440-light.png</code> and <code>&lt;page&gt;/after-1440-light.png</code> as <code>docs/system/domains/review.md</code> requires. The set covers populated, empty and error states where the page can reach them with a fixture.</li>
+      <li><b>Patterns used and added</b>: a table of library components used, components or variants added (each with its catalogue entry), and exceptions with reasons.</li>
+      <li><b>Guard.</b> The page folders move into <code>enforced</code> in <code>ui-standard-baseline.json</code> and the Stylelint override.</li>
+      <li><b>Local CSS removed</b>: lines of feature SCSS before and after, from the inventory script re-run on the branch.</li>
+      <li><b>Tests</b>: the page's existing Playwright specs pass unchanged in behaviour (selectors are <code>data-testid</code>, which the rework keeps). The page's unit specs are updated where the markup changed.</li>
+      <li><b>Rollout ledger</b>: one row in <code>docs/system/ui-standard/rollout.md</code> with the card key, date, screenshots and the owner review result once given.</li>
+    </ol>
+    <h3>Pages that are not yet reworked</h3>
+    <ul>
+      <li>Colour tokens do not change. The library reads the same <code>--studio-*</code> tokens, so pages that are not reworked keep their look.</li>
+      <li>Moved components keep their <code>app-</code> selector as an alias and their current appearance. LF-3 is a move with no visual change; the catalogue images taken at the move are the baseline.</li>
+      <li>Library styles are component-scoped. There is no global reset and no change to <code>styles.scss</code> element styles until the last page that relies on them is reworked. <code>.btn</code> and <code>.studio-button</code> stay until their last user is gone; the ledger shows the remaining count from the inventory script.</li>
+      <li>The guard and Stylelint override apply only to enforced folders.</li>
+      <li>A library change that alters a moved component's look is a library card with catalogue before and after images, and lists every page that uses the component.</li>
+      <li>The one global visible change is the self-hosted font (LF-10, LF-D7). It is its own card, reviewed by the owner on six surfaces before any page card.</li>
+    </ul>
+    <figure class="media-breakout">
+      <svg viewBox="0 0 1060 300" role="img" aria-labelledby="ro-title ro-desc">
+        <title id="ro-title">Order of slices</title>
+        <desc id="ro-desc">Foundation slices LF-1 and LF-2 run in parallel; then the primitive move, layout, buttons and menus, grid, fonts, forms, overlays and states run in sequence in the library; guard, skill and review aspect run beside them in their own areas; page cards follow one at a time.</desc>
+        <text class="d-head" x="20" y="28">Library area (serial)</text>
+        <g>
+          <rect class="d-new" x="20" y="40" width="70" height="34" rx="6"/><text class="d-text" x="34" y="62">LF-1</text>
+          <rect class="d-new" x="110" y="40" width="70" height="34" rx="6"/><text class="d-text" x="124" y="62">LF-3</text>
+          <rect class="d-new" x="200" y="40" width="70" height="34" rx="6"/><text class="d-text" x="214" y="62">LF-4</text>
+          <rect class="d-new" x="290" y="40" width="70" height="34" rx="6"/><text class="d-text" x="304" y="62">LF-5</text>
+          <rect class="d-new" x="380" y="40" width="70" height="34" rx="6"/><text class="d-text" x="394" y="62">LF-6</text>
+          <rect class="d-new" x="470" y="40" width="70" height="34" rx="6"/><text class="d-text" x="480" y="62">LF-10</text>
+          <rect class="d-new" x="560" y="40" width="70" height="34" rx="6"/><text class="d-text" x="570" y="62">LF-11</text>
+          <rect class="d-new" x="650" y="40" width="70" height="34" rx="6"/><text class="d-text" x="660" y="62">LF-12</text>
+          <rect class="d-new" x="740" y="40" width="70" height="34" rx="6"/><text class="d-text" x="750" y="62">LF-13</text>
+          <path class="d-line" d="M90 57 H110 M180 57 H200 M270 57 H290 M360 57 H380 M450 57 H470 M540 57 H560 M630 57 H650 M720 57 H740"/>
+        </g>
+        <text class="d-small" x="20" y="96">skeleton · move · layout · buttons, menus · grid, Access moved · font · forms · overlays · states</text>
+        <text class="d-head" x="20" y="136">Docs, guards, skill, review (own areas)</text>
+        <rect class="d-box" x="20" y="148" width="70" height="34" rx="6"/><text class="d-text" x="34" y="170">LF-2</text>
+        <rect class="d-box" x="290" y="148" width="70" height="34" rx="6"/><text class="d-text" x="304" y="170">LF-7</text>
+        <rect class="d-box" x="380" y="148" width="70" height="34" rx="6"/><text class="d-text" x="390" y="170">LF-14</text>
+        <rect class="d-box" x="110" y="196" width="70" height="34" rx="6"/><text class="d-text" x="124" y="218">LF-8</text>
+        <rect class="d-box" x="200" y="196" width="70" height="34" rx="6"/><text class="d-text" x="214" y="218">LF-9</text>
+        <path class="d-line" d="M360 165 H380"/>
+        <path class="d-dash" d="M55 182 V213 H110 M90 165 H235 V196"/>
+        <path class="d-dash" d="M325 74 V148"/>
+        <text class="d-small" x="470" y="170">standard docs · guard · scoped checks</text>
+        <text class="d-small" x="400" y="218">design skill · visual review aspect</text>
+        <text class="d-head" x="840" y="28">Pages (one at a time)</text>
+        <rect class="d-warn-box" x="840" y="40" width="190" height="34" rx="6"/><text class="d-text" x="854" y="62">LF-15 Board</text>
+        <rect class="d-warn-box" x="840" y="96" width="190" height="34" rx="6"/><text class="d-text" x="854" y="118">LF-16 Task detail 1</text>
+        <rect class="d-box" x="840" y="152" width="190" height="34" rx="6"/><text class="d-small" x="854" y="174">next page cards from rollout.md</text>
+        <path class="d-line" d="M810 57 H840 M935 74 V96 M935 130 V152"/>
+        <path class="d-dash" d="M325 182 V244 M145 230 V244 M235 230 V244 M145 244 H820 V57 H840"/>
+        <text class="d-small" x="20" y="272">Solid: dependsOn in the same area. Dashed: main dependencies across areas (full list in workbench.json). Owner review sits between page cards.</text>
+      </svg>
+      <figcaption>Slice order as written in <code>workbench.json</code>. No two slices that change the same area are open at the same time.</figcaption>
+    </figure>
+  </section>
+
+  <section id="cost">
+    <h2><span class="number">09</span> Cost of checks</h2>
+    <p>A page change today runs the prebuilt e2e path, which publishes the backend with <code>dotnet publish</code> and builds the whole frontend before the first spec. On the shared runner during this card that preparation took about 19 minutes before the first Access spec ran (measured from <code>/tmp/agt4030-prebuild.log</code>, the same machine running other builds). A library change needs none of that. The parallel card "Reviews and gates test what a change touches" works on choosing checks by changed paths. This concept gives it the map for the UI areas, written by LF-14 as <code>frontend/projects/studio-ui/check-scope.json</code>:</p>
+    <div class="wide">
+    <table>
+      <thead><tr><th>Change</th><th>Needs</th><th>Does not need</th></tr></thead>
+      <tbody>
+        <tr><td>Library only, public API unchanged</td><td><code>ui:lint</code>, <code>ui:test</code>, <code>ui:catalogue:check</code> (static build plus Playwright, no backend), API report unchanged, visual review on catalogue images</td><td>Backend build and tests, <code>dotnet publish</code>, product unit suite, product e2e, product screenshots</td></tr>
+        <tr><td>Library, public API changed</td><td>The above, plus <code>npm run typecheck</code> for the app and the unit specs of the components that import the changed symbol (from the import graph)</td><td>Backend, product e2e</td></tr>
+        <tr><td>Library, a moved component's look changed</td><td>The above, plus one screenshot spec per consuming page named in the catalogue entry</td><td>Backend tests, full e2e</td></tr>
+        <tr><td>One page card</td><td>The page's unit specs, the e2e specs mapped to the page's files (<code>frontend/scripts/generate-e2e-coverage-map.mjs</code> already builds that map), <code>lint:structure</code> and Stylelint for the page folders, visual review with before and after screenshots</td><td>Library tests (unless the card added to the library, then the library row applies to that commit), other pages' e2e, backend tests when no backend file changed</td></tr>
+        <tr><td>Standard docs only (<code>docs/system/ui-standard/**</code>)</td><td>Link and navigation check</td><td>Any build or test (AGENTS.md: documentation-only changes need no builds)</td></tr>
+        <tr><td>Design skill only</td><td><code>AgentSkillFrontmatterTests</code> (the skill folder's only check)</td><td>Frontend and backend suites</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>Until that card lands, LF-14 provides <code>npm run ui:affected -- &lt;changed files&gt;</code>, which prints the rows above for a diff, so a card or reviewer can run exactly those checks by hand.</p>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives">
+    <h2><span class="number">10</span> Alternatives</h2>
+    <p>Three overall approaches were weighed. The per-question options are under <a href="#open-decisions">Open decisions</a>.</p>
+    <div class="variant-grid">
+      <article class="variant"><h3>A · Library, standard, page by page (recommended)</h3><p>A library project with a catalogue, a twelve-rule standard enforced per reworked page, then one page card at a time with owner review. Visible progress comes early (pilot, catalogue), regressions are locked per page, and pages that are not yet reworked are untouched. The price is a long tail: about 20 page cards before the last page is done.</p></article>
+      <article class="variant"><h3>B · Global restyle</h3><p>Change the global element styles and the existing shared components so every page changes at once. This is fast to show, but it breaks the owner's "step by step with my review" and the incremental rule of <code>AGENTS.md</code> and R7. It cannot fix structure (outline, sections), because structure is in each page's markup, and it would produce one review the size of the whole product.</p></article>
+      <article class="variant"><h3>C · Standard and guards only, no library</h3><p>Write the rules and extend the existing mixins; pages keep building their own controls to the rules. This is the path of <code>migration-status.md</code> since mid-2026: the <code>chip</code> mixin it names as canonical now has 0 users, and the open questions on buttons, cards and forms are still open. Rules without components do not converge.</p></article>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation">
+    <h2><span class="number">11</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Recommended default</h3>
+      <p>Approach A. Create <code>frontend/projects/studio-ui</code> as an Angular library in the frontend workspace with an import boundary, its own tests and a <code>studio-ui-catalogue</code> app that shows every state in both themes (LF-D1 A, LF-D2 A). Move the 27 generic shared components into it without visual change, keeping their <code>app-</code> selectors as aliases (LF-D3 A, LF-D10 A). Build the families in order of need: layout and sections, buttons and menus, grid (with Access moved onto them), self-hosted font, forms, overlays, states (LF-D6 A, LF-D7 A). Write the twelve U-rules in <code>docs/system/ui-standard/rules.md</code> and add R10 to the hard rules (LF-D4 A). Enforce per reworked page with a guard and a Stylelint override (LF-D5 A). Feed the standard into the design skill and the visual review aspect. Then rework one page per card in the order daily, weekly, occasional, with owner review between cards (LF-D8 A, LF-D9 A, LF-D11 A).</p>
+      <p>The most important reason: the three families that already converged (status, menus, disclosure) did so because a component came with a guard. This plan gives every family both, plus a catalogue the owner can review without opening the product.</p>
+    </div>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence">
+    <h2><span class="number">12</span> Evidence</h2>
+    <div class="evidence-list">
+      <a class="evidence" href="inventory/inventory.json"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Inventory counts</b><small><code>inventory/build-inventory.mjs</code> over the tracked frontend at <code>1b5354e53</code>: 547 templates, 570 SCSS files, 537 components, the shared usage, per-family file lists, SCSS divergence and 35 measured pages. Re-run with <code>node docs/look-and-feel-overhaul/inventory/build-inventory.mjs</code>.</small></span></a>
+      <a class="evidence" href="#evidence-access"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Access page today</b><small>Screenshots below, captured through the isolated prebuilt stack with the fixture of <code>frontend/e2e/settings/access-area.spec.ts</code>.</small></span></a>
+      <a class="evidence" href="#evidence-settings"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Settings pages side by side</b><small>Screenshots of other settings sections against the isolated backend.</small></span></a>
+      <a class="evidence" href="#library"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Cost of a separate repository</b><small><code>frontend/package.json</code> pins <code>coding-agent-chat</code> 0.4.1 (since 7 September 2026, <code>git log -S</code>), and two post-install scripts in <code>frontend/scripts/</code> patch its published output.</small></span></a>
+      <a class="evidence" href="#standard"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Guard pattern that converged</b><small><code>lint:structure</code> in <code>frontend/package.json</code>; baselines <code>status-chip-baseline.json</code> (29 files), <code>disclosure-baseline.json</code> (28 enforced, 22 staged), <code>segmented-baseline.json</code>; the per-folder Stylelint override for <code>features/remote-hosts/**</code> in <code>.stylelintrc.json</code>.</small></span></a>
+      <a class="evidence" href="#skill"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Review hook</b><small><code>runner/VisualReviewScreenshotBundle.cs:248</code> appends the hard rules to the visual review prompt; <code>prompts/runtime/review-aspect-visual-review.md</code> receives them.</small></span></a>
+      <a class="evidence" href="#pages"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Use classes</b><small>Daily, weekly and occasional are inferred from each page's role; the product records no page views. Confirmed or changed by the owner in LF-D8.</small></span></a>
+      <a class="evidence" href="#components"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Components, rules, slices</b><small>The component set, U1 to U12 and LF-1 to LF-16 are proposals.</small></span></a>
+    </div>
+    <figure class="evidence-figure media-breakout" id="evidence-access">
+      <div class="evidence-captures">
+        <div class="evidence-capture tall">
+          <span class="capture-theme">Light</span>
+          <img src="assets/access-page-full-length-light--isolated.png" alt="The Access settings section from its title down to the enrolled runners table: users table, factor activity, an invite form, five role binding tables, an add-binding form, groups with a create form, service accounts with a create form, and runner enrollment, all in one column without a contents list.">
+          <span class="figure-annotation">No outline over 2,600 px</span>
+        </div>
+        <div class="evidence-capture tall">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/access-page-full-length-dark--isolated.png" alt="The same Access section in the dark theme with the same single column of tables and inline forms.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence.</b> In both themes the Access page is one column, about 2,600 px tall at 1440 px width. It has 19 headings, 9 tables, 13 selects, 10 inputs and 27 buttons. Four create forms sit between the tables (invite, add a role binding, create group, new service account), plus runner enrollment. There is no outline, and an orphan "Sessions" button stands under the users table. The figure is cut at 1,100 px; open an image for the full length.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-11-24">24 November 2026</time> by <code>capture/look-and-feel-capture.spec.ts</code> on the isolated prebuilt stack (develop <code>1b5354e53</code>, profile standard). Access API answered with the fixture of <code>frontend/e2e/settings/access-area.spec.ts</code>. Element counts from <code>capture/output/access-facts.json</code>.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-11-24">24 November 2026</time>, same run, same fixture, theme switched through <code>data-studio-theme</code>.</span>
+        </span>
+      </figcaption>
+    </figure>
+
+    <figure class="evidence-figure media-breakout" id="evidence-settings">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/settings-page-heads-five-pages-light--isolated.png" alt="Five settings page heads stacked from top to bottom: Access, CLI Management, Task Server, Environment, System prompts. The reload action is a plain text button on Access, a small button with a circular icon on CLI Management and Task Server, a taller icon button next to a filled Add host button on Environment, and System prompts starts with counts and an Only overridden toggle instead of a title.">
+          <span class="figure-annotation">One action, four buttons</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/settings-page-heads-five-pages-dark--isolated.png" alt="The same five settings page heads in the dark theme, with the same differences.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence.</b> Five settings pages in the same shell, from the top: Access, CLI Management, Task Server, Environment, System prompts. The reload action looks different on each of the first four: plain text on Access, a small button with an icon on CLI Management (with a second, differently drawn "Refresh" button under it) and on Task Server, and a taller icon button next to a filled primary on Environment. The page titles start at three different left edges, and System prompts has no title at all.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-11-24">24 November 2026</time> by <code>capture/look-and-feel-capture.spec.ts</code> on the isolated prebuilt stack (develop <code>1b5354e53</code>). Access uses the access-area fixture; the other four show what the isolated backend returned. Each strip is the region x 528 to 1440, y 133 to 300 of a 1440 × 900 capture, stacked without scaling under a 36 px margin for the theme label.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-11-24">24 November 2026</time>, same run and regions.</span>
+        </span>
+      </figcaption>
+    </figure>
+
+    <h3>Observations behind the figures</h3>
+    <ul>
+      <li><b>Font.</b> The Access headings declare <code>Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif</code>, but no Inter file ships with the product. On the capture host Chromium rendered them in WenQuanYi Zen Hei, a CJK system font (<code>CSS.getPlatformFontsForNode</code>, recorded in <code>capture/output/access-facts.json</code>). Every agent screenshot, and so every visual review, sees a different typeface from the owner. This backs LF-D7.</li>
+      <li><b>Undeclared token.</b> <code>var(--studio-radius-sm)</code> is used 50 times in 27 SCSS files, but <code>--studio-radius-sm</code> is declared nowhere in the repository or in the <code>coding-agent-chat</code> package, so those corners resolve to no radius. LF-3 adds a guard that every <code>var(--studio-*)</code> used is declared.</li>
+      <li><b>Capture health.</b> No page errors during capture. The console errors are 404 responses: on Access they are the fixture's intended 404 answers for operator agents and standing grants; on the other pages there is one 404 resource each (<code>capture/output/capture-report.json</code>).</li>
+    </ul>
+
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions">
+    <h2><span class="number">13</span> Open decisions</h2>
+    <p>Each decision has a recommended option. A promoted slice uses the recommendation unless the owner records another option.</p>
+    <div class="decision" id="lf-d1">
+      <h3>LF-D1 · Where the library lives</h3>
+      <p>Where does the component library live and how is it consumed?</p>
+      <ol type="A"><li><b>A.</b> Angular library project frontend/projects/studio-ui in the frontend workspace, consumed through a path alias</li><li><b>B.</b> Separate npm package in this repository (packages/studio-ui), built and versioned</li><li><b>C.</b> Repository of its own, published and pinned like coding-agent-chat</li></ol>
+      <p class="rec"><b>Recommended: A.</b> Lowest cost and one-commit changes across library and page; independence comes from an import boundary, own checks and own docs. coding-agent-chat shows the price of C: pinned at 0.4.1 since 7 September 2026 with two post-install patch scripts. Move to B only if a second product consumes the library.</p>
+    </div>
+    <div class="decision" id="lf-d2">
+      <h3>LF-D2 · Living catalogue</h3>
+      <p>How is the catalogue of components with their states built?</p>
+      <ol type="A"><li><b>A.</b> Own Angular catalogue app in the workspace, states as data in *.catalogue.ts, Playwright screenshots without backend</li><li><b>B.</b> Storybook</li><li><b>C.</b> Static HTML pages under docs/</li></ol>
+      <p class="rec"><b>Recommended: A.</b> Uses the existing mockup-app pattern and tooling, renders the live components, doubles as visual regression and owner review material, and its data files are readable by agents.</p>
+    </div>
+    <div class="decision" id="lf-d3">
+      <h3>LF-D3 · Selector prefix</h3>
+      <p>What prefix do library components use?</p>
+      <ol type="A"><li><b>A.</b> New prefix sui- with the old app- selector kept as an alias on moved components until the last app- user is gone</li><li><b>B.</b> Keep app- for everything</li></ol>
+      <p class="rec"><b>Recommended: A.</b> Makes library use visible in templates and in guards, while the alias keeps every existing page and lint gate working without churn.</p>
+    </div>
+    <div class="decision" id="lf-d4">
+      <h3>LF-D4 · Where the UI standard lives</h3>
+      <p>Where are the UI standard rules written?</p>
+      <ol type="A"><li><b>A.</b> docs/system/ui-standard/rules.md (U1 to U12) beside the pilot notes, with one pointer rule R10 in style-guide-hard-rules.md</li><li><b>B.</b> Inside style-guide-hard-rules.md</li><li><b>C.</b> In docs/quality/frontend/style-guide/</li></ol>
+      <p class="rec"><b>Recommended: A.</b> Keeps the hard rules short, gives the standard one file that skill, prompt and review read, and supersedes the family pages instead of adding a sixth parallel source.</p>
+    </div>
+    <div class="decision" id="lf-d5">
+      <h3>LF-D5 · How rules are enforced</h3>
+      <p>How is the standard enforced?</p>
+      <ol type="A"><li><b>A.</b> Per reworked page: guard check-ui-standard.mjs with an enforced list, a Stylelint override for enforced folders, the visual review aspect citing rule ids, and the design skill</li><li><b>B.</b> Review aspect and design skill only</li><li><b>C.</b> Global lint for the whole frontend at once</li></ol>
+      <p class="rec"><b>Recommended: A.</b> The families that converged (status, menus, disclosure) each had a component plus a guard with a baseline. A per-page enforced list locks each reworked page without breaking pages not yet reworked; C would fail hundreds of files on day one.</p>
+    </div>
+    <div class="decision" id="lf-d6">
+      <h3>LF-D6 · Grid implementation</h3>
+      <p>What is the data grid built on?</p>
+      <ol type="A"><li><b>A.</b> Own sui-data-grid on native table semantics, CDK only for focus and overlay helpers</li><li><b>B.</b> CDK table as the base</li><li><b>C.</b> Third-party data grid</li></ol>
+      <p class="rec"><b>Recommended: A.</b> The Studio&#x27;s lists are tens to hundreds of rows; native table semantics give screen reader support for free, the responsive stacked form already exists on Access, and no new dependency or theme bridge is needed.</p>
+    </div>
+    <div class="decision" id="lf-d7">
+      <h3>LF-D7 · Product-hosted fonts</h3>
+      <p>Which font does the library ship?</p>
+      <ol type="A"><li><b>A.</b> Self-host Inter and JetBrains Mono (woff2 with licences, font-display swap) as the admin guideline requires, applied globally in one owner-reviewed card</li><li><b>B.</b> Keep the system stack (Segoe UI, system-ui)</li><li><b>C.</b> Switch the font page by page</li></ol>
+      <p class="rec"><b>Recommended: A.</b> The owner wants product-hosted fonts and the admin guideline already names Inter and JetBrains Mono, yet no woff2 ships; the capture host renders the Studio in a CJK fallback, so agent screenshots and reviews see another typeface than the owner. Segoe UI cannot be redistributed. C would mix fonts across pages for months.</p>
+    </div>
+    <div class="decision" id="lf-d8">
+      <h3>LF-D8 · Order of pages</h3>
+      <p>In which order are pages reworked?</p>
+      <ol type="A"><li><b>A.</b> By use (daily, weekly, occasional) and then by local vocabulary: Board, task detail in three cards, Dossier viewer, shell chrome, Deck pages, settings pages</li><li><b>B.</b> Settings family first (closest to the Access pilot, lowest risk), then Deck, then daily surfaces</li><li><b>C.</b> By local vocabulary only</li></ol>
+      <p class="rec"><b>Recommended: A.</b> The owner gains most where he spends his day; the library is proven on Access and in the catalogue before the Board. The use classes are inferred from page roles because no page-view telemetry exists; the owner confirms or edits them in rollout.md.</p>
+    </div>
+    <div class="decision" id="lf-d9">
+      <h3>LF-D9 · Size of a page card</h3>
+      <p>How large is one page card?</p>
+      <ol type="A"><li><b>A.</b> One page per card; task detail split into three cards along its panes; the five smallest settings pages (Updates, Appearance, Credentials, Secrets, GitHub) in one card</li><li><b>B.</b> Strictly one page per card, including the smallest</li><li><b>C.</b> Several pages per card</li></ol>
+      <p class="rec"><b>Recommended: A.</b> Keeps each owner review to one readable set of before and after screenshots; the five smallest pages have a local vocabulary of 3 to 11 and would make five near-empty reviews.</p>
+    </div>
+    <div class="decision" id="lf-d10">
+      <h3>LF-D10 · Existing shared components</h3>
+      <p>What happens to the 59 shared components in src/app/components?</p>
+      <ol type="A"><li><b>A.</b> Move the 27 generic primitives into the library unchanged, with app- aliases; domain components stay in the app</li><li><b>B.</b> Wrap them with new library components</li><li><b>C.</b> Leave them and build new library components beside them</li></ol>
+      <p class="rec"><b>Recommended: A.</b> A move with no visual change gives the library its first 27 components at once, keeps all gates working, and avoids two competing versions of menu, dialog or status.</p>
+    </div>
+    <div class="decision" id="lf-d11">
+      <h3>LF-D11 · Ownership and change path</h3>
+      <p>Who changes the library and how?</p>
+      <ol type="A"><li><b>A.</b> Owner approves the standard and each new family in the catalogue; library cards own the library; page cards may add variants and small components under the library contract</li><li><b>B.</b> Every library change is its own card</li><li><b>C.</b> Page cards change the library freely</li></ol>
+      <p class="rec"><b>Recommended: A.</b> New families get their own review; small additions a page really needs land with the page under the same contract, so a page card is not blocked by a separate card for one variant.</p>
+    </div>
+  </section>
+
+  <section id="slices">
+    <h2><span class="number">14</span> Slices</h2>
+    <p>The slices are listed in delivery order, as in <code>workbench.json</code> <code>implementationTasks</code>. "Area" is what the slice changes. Slices in the same area are chained by <code>dependsOn</code>, so they never run at the same time.</p>
+    <div class="wide"><table>
+      <thead><tr><th>Slice</th><th>Depends on</th><th>Area</th><th>Acceptance</th></tr></thead>
+      <tbody>
+        <tr id="lf-1"><td><b>LF-1 · Library project, boundary and catalogue skeleton</b></td><td>none</td><td><code>frontend/angular.json</code>, <code>frontend/package.json</code> (scripts only), <code>frontend/tsconfig*.json</code> (path alias), <code>frontend/eslint.config.js</code>, new <code>frontend/projects/studio-ui/**</code>, new <code>frontend/projects/studio-ui-catalogue/**</code></td><td><code>npm run ui:test</code>, <code>npm run ui:lint</code> and <code>npm run ui:catalogue:check</code> pass without the backend and without <code>dotnet publish</code>.<br>An import from <code>src/app</code> inside the library fails <code>npm run lint</code> with the boundary rule.<br>The app builds with the alias and <code>npm run lint</code> and <code>npm test</code> stay green; no product page changes.</td></tr>
+        <tr id="lf-2"><td><b>LF-2 · UI standard documents and pointers</b></td><td>none</td><td>new <code>docs/system/ui-standard/README.md</code>, <code>rules.md</code>, <code>rollout.md</code>; <code>docs/quality/design/style-guide-hard-rules.md</code> (R10); <code>frontend/AGENTS.md</code> (first section); <code>docs/quality/frontend-styling.md</code>; <code>docs/quality/frontend/style-guide/README.md</code> and <code>migration-status.md</code>; <code>docs/start/README.md</code></td><td><code>rules.md</code> has twelve rules, each with id, sentence, reason and check, and no component detail.<br>Every new document is listed in <code>docs/start/README.md</code> and every link resolves.<br>No product code changes.</td></tr>
+        <tr id="lf-3"><td><b>LF-3 · Move the generic shared components into the library</b></td><td>LF-1</td><td><code>frontend/src/app/components/**</code> (27 generic primitives), <code>frontend/src/styles/_tokens-primitives.scss</code>, <code>_tokens-semantic.scss</code> (moved), all importing files in <code>frontend/src/app/**</code>, <code>frontend/scripts/check-status-chips.mjs</code>, <code>check-disclosure-markers.mjs</code>, <code>check-segmented-controls.mjs</code> and their baselines (paths only), <code>frontend/projects/studio-ui/**</code></td><td><code>git diff</code> shows no change to any moved template or SCSS file other than its path and selector alias.<br><code>npm run lint</code>, <code>npm test</code>, <code>npm run ui:test</code> and <code>npm run ui:catalogue:check</code> pass; the token guard passes.<br>A Playwright run of the settings, board and task-detail smoke specs shows no visual change other than the declared radius, which is screenshotted before and after.</td></tr>
+        <tr id="lf-4"><td><b>LF-4 · Layout and section components</b></td><td>LF-2, LF-3</td><td><code>frontend/projects/studio-ui/**</code> only</td><td>Every state in the Dossier table is a catalogue entry in light and dark at 1440 and 390 px.<br>Keyboard specs cover outline navigation, toolbar roving focus, splitter resize and pane key containment.<br>Only library checks run; no product file changes.</td></tr>
+        <tr id="lf-5"><td><b>LF-5 · Buttons and menus</b></td><td>LF-4</td><td><code>frontend/projects/studio-ui/**</code> only</td><td>Contrast of every button variant and state passes in both themes in the catalogue spec.<br>The context menu opens by mouse, ContextMenu key and Shift+F10 and returns focus to its trigger on Escape.<br>Only library checks run; no product file changes.</td></tr>
+        <tr id="lf-6"><td><b>LF-6 · Data grid, and Access moved onto the library</b></td><td>LF-5</td><td><code>frontend/projects/studio-ui/**</code>, <code>frontend/src/app/features/access/**</code></td><td>Every grid state is a catalogue entry; keyboard specs cover sort, selection and row menu.<br><code>frontend/e2e/settings/access-area.spec.ts</code> and the other Access specs pass unchanged.<br>Access before and after screenshots differ only where the pilot&#x27;s local controls were replaced, and the result names each difference.</td></tr>
+        <tr id="lf-7"><td><b>LF-7 · UI standard guard and Stylelint override</b></td><td>LF-2, LF-5</td><td><code>frontend/scripts/check-ui-standard.mjs</code> (new), <code>frontend/scripts/ui-standard-baseline.json</code> (new), <code>frontend/package.json</code> (<code>lint:structure</code>), <code>frontend/.stylelintrc.json</code>, <code>frontend/AGENTS.md</code> (one section)</td><td>The guard&#x27;s tests cover each rule with a passing and a failing fixture.<br><code>npm run lint</code> passes on develop with only the enforced folders checked.<br>A baseline entry without a reason fails the guard.</td></tr>
+        <tr id="lf-8"><td><b>LF-8 · Design skill takes in the UI standard</b></td><td>LF-2</td><td><code>.agents/skills/visual-design/SKILL.md</code>, <code>.agents/skills/visual-design/references/rubric.md</code>, new <code>.agents/skills/visual-design/references/studio-ui.md</code></td><td>The skill names the rules file and the catalogue and requires the patterns table.<br><code>AgentSkillFrontmatterTests</code> pass.</td></tr>
+        <tr id="lf-9"><td><b>LF-9 · Visual review aspect checks against the standard</b></td><td>LF-2</td><td><code>runner/VisualReviewScreenshotBundle.cs</code>, <code>runner.Tests/VisualReviewScreenshotTests.cs</code>, <code>prompts/runtime/review-aspect-visual-review.md</code>, <code>docs/system/domains/review.md</code></td><td>Runner tests prove the rules file is appended when present and skipped when absent.<br>A library-only fixture delivery with catalogue images does not get a missing-screenshot concern.<br>The prompt is a CLI behaviour change: run the matching live probe or state why it could not run.</td></tr>
+        <tr id="lf-10"><td><b>LF-10 · Self-hosted Inter and JetBrains Mono</b></td><td>LF-6</td><td><code>frontend/projects/studio-ui/src/styles/**</code>, <code>frontend/projects/studio-ui/assets/fonts/**</code>, <code>frontend/angular.json</code> (assets), <code>frontend/src/styles.scss</code> (font tokens only), the 11 local <code>font-family</code> declarations</td><td>The rendered font on the capture host is Inter for text and JetBrains Mono for code.<br>No network font request in the Playwright run (assert no request leaves the origin for fonts).<br>Six surfaces have before and after screenshots in both themes.</td></tr>
+        <tr id="lf-11"><td><b>LF-11 · Form controls</b></td><td>LF-10</td><td><code>frontend/projects/studio-ui/**</code> only</td><td>Every state in the table is in the catalogue in both themes.<br>Only library checks run.</td></tr>
+        <tr id="lf-12"><td><b>LF-12 · Overlays</b></td><td>LF-11</td><td><code>frontend/projects/studio-ui/**</code> only</td><td>Escape, focus trap and focus return are covered by specs for dialog and popover.<br>Only library checks run.</td></tr>
+        <tr id="lf-13"><td><b>LF-13 · Status, tags, counts, empty and error states</b></td><td>LF-12</td><td><code>frontend/projects/studio-ui/**</code>, <code>frontend/scripts/check-status-chips.mjs</code> (tag rule)</td><td>Every state in the table is in the catalogue in both themes.<br>The status-chip gate tests cover the tag rule.</td></tr>
+        <tr id="lf-14"><td><b>LF-14 · Change-scoped checks for library and pages</b></td><td>LF-7</td><td>new <code>frontend/projects/studio-ui/check-scope.json</code>, new <code>frontend/scripts/ui-affected.mjs</code> and its test, <code>frontend/package.json</code> (one script)</td><td>Tests cover each row with a fixture diff.<br>A library-only diff lists no backend or product e2e check.</td></tr>
+        <tr id="lf-15"><td><b>LF-15 · Page card: Board</b></td><td>LF-7, LF-8, LF-9, LF-13</td><td><code>frontend/src/app/features/board/**</code>, the board parts of <code>frontend/src/app/app.html</code>, <code>ui-standard-baseline.json</code>, the Stylelint override, <code>docs/system/ui-standard/rollout.md</code></td><td>Before and after screenshots in both themes and widths, the patterns table, and the guard enforcing the board folders.<br>Board Playwright specs pass unchanged in behaviour.<br>No guard baseline entry was added without a reason.</td></tr>
+        <tr id="lf-16"><td><b>LF-16 · Page card: Task detail, header and overview</b></td><td>LF-15</td><td><code>frontend/src/app/features/task-detail/components/detail-header/**</code>, <code>.../prompt-pane/overview-pane/**</code>, <code>ui-standard-baseline.json</code>, the Stylelint override, <code>docs/system/ui-standard/rollout.md</code></td><td>Before and after screenshots, patterns table, enforced folders.<br><code>e2e/task-detail/detail-lane-dropdown.spec.ts</code>, <code>detail-view-lane-pager.spec.ts</code> and the overview specs pass.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">15</span> Implementation</h2>
+    <p>Delivery slices append their current implementation status here. Decision content above remains unchanged.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

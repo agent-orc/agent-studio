@@ -563,6 +563,12 @@ public sealed partial class BatchGatePilotService
                 StringComparison.OrdinalIgnoreCase));
         if (resultReplacement is null)
             throw new InvalidDataException("Batch result replacement is missing.");
+        var coverage = "suite-coverage=unknown";
+        try { coverage = SuiteSelectionEvidence.Summary(SuiteSelectionEvidence.ReadLatestAudit(run.EvidencePath)); }
+        catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException)
+        {
+            _logger.LogWarning(ex, "batch-suite-coverage-unavailable batch={BatchId}", manifest.BatchId);
+        }
         var mapping = new TaskIntegrationRecord
         {
             Id = $"batch-map:{manifest.BatchId}:{run.BatchRunId}:{replay.TaskKey}",
@@ -574,7 +580,7 @@ public sealed partial class BatchGatePilotService
             DeliveryEpoch = member.RunAttempt,
             Evidence = $"Batch {manifest.BatchId}, run {run.BatchRunId}, "
                 + $"tested candidate and verified remote tip {run.CandidateSha}; "
-                + $"membership digest {manifest.MembershipDigest}.",
+                + $"membership digest {manifest.MembershipDigest}. {coverage}",
         };
         if (!_mutations.AppendIntegrationRecordOnFolder(folder, mapping).Succeeded)
             throw new IOException("Batch result mapping could not be recorded.");
@@ -589,7 +595,7 @@ public sealed partial class BatchGatePilotService
             CommitShas = shas,
             Evidence = $"Batch {manifest.BatchId}, run {run.BatchRunId}, "
                 + $"tested candidate and verified remote tip {run.CandidateSha}; "
-                + $"membership digest {manifest.MembershipDigest}.",
+                + $"membership digest {manifest.MembershipDigest}. {coverage}",
         };
         if (!_mutations.AppendIntegrationRecordOnFolder(folder, record).Succeeded)
             throw new IOException("Batch integration bookkeeping could not be recorded.");

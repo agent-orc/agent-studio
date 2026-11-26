@@ -44,6 +44,69 @@ public static partial class PostMergeAttributor
             : command + " --filter \"" + filter + "\"";
     }
 
+    public static bool SameTest(string reported, string test) => string.Equals(reported, test, StringComparison.Ordinal);
+
+    [GeneratedRegex(@"^(?<file>[A-Za-z0-9_./@-]+\.(?:spec|test)\.(?:ts|tsx|js|mjs|cjs))(?:\s+>|$)")]
+    private static partial Regex VitestTestFile();
+    [GeneratedRegex(@"\bdotnet\s+test\s+(?<project>['""]?[^\s'""]+\.csproj['""]?)(?<rest>.*)$", RegexOptions.IgnoreCase)]
+    private static partial Regex DotnetTestProject();
+
+    /// <summary>The spec file of a Vitest failure name such as <c>src/a.spec.ts &gt; Suite &gt; case</c>.</summary>
+    public static string? VitestFile(string test)
+    {
+        var match = VitestTestFile().Match(test);
+        return match.Success && !match.Groups["file"].Value.Contains("..", StringComparison.Ordinal)
+            ? match.Groups["file"].Value : null;
+    }
+
+    /// <summary>
+    /// RT-3: a Vitest suite run through an npm script, narrowed to the failing
+    /// spec files with the Angular unit-test builder's <c>--include</c> option
+    /// (the form the base suite already uses). Null for any other command or name.
+    /// </summary>
+    public static string? FocusedVitestCommand(string command, IReadOnlyList<string> tests)
+    {
+        if (tests.Count == 0 || command.Contains("dotnet ", StringComparison.Ordinal)
+            || !Regex.IsMatch(command, @"\b(?:npm|npx|pnpm|yarn|ng)\b|npm-[A-Za-z0-9_-]+\.sh")) return null;
+        var files = tests.Select(VitestFile).ToArray();
+        if (files.Any(file => file is null)) return null;
+        var includes = string.Join(" ", files.Distinct(StringComparer.Ordinal).Select(file => "--include " + file));
+        return command.Contains(" -- ", StringComparison.Ordinal) ? command + " " + includes : command + " -- " + includes;
+    }
+
+    /// <summary>The <c>.csproj</c> path of a <c>dotnet test</c> command, without quotes.</summary>
+    public static string? TestProject(string command)
+    {
+        var match = DotnetTestProject().Match(command);
+        return match.Success ? match.Groups["project"].Value.Trim('\'', '"') : null;
+    }
+
+    /// <summary>
+    /// RT-3 (RT-D9 B): the build a control or bisect point needs. A .NET suite
+    /// builds only its test project (<c>dotnet build &lt;project&gt; --no-restore</c>,
+    /// keeping any wrapper before <c>dotnet</c>); a Vitest suite uses the build
+    /// command that shares its launcher (the frontend build). Prepare, the
+    /// solution build and the other build commands never run at a point. Null when
+    /// no partial build is known; then no point is tested.
+    /// </summary>
+    public static string? PartialBuildCommand(ProjectExecutionDefinition definition, string failedCommand,
+        IReadOnlyList<string> tests)
+    {
+        var match = DotnetTestProject().Match(failedCommand);
+        if (match.Success)
+            return failedCommand[..match.Index] + "dotnet build " + match.Groups["project"].Value + " --no-restore";
+        if (tests.Count == 0 || tests.Any(test => VitestFile(test) is null)) return null;
+        var launcher = Launcher(failedCommand);
+        return launcher is null ? null : definition.Commands.Build.FirstOrDefault(command =>
+            !string.IsNullOrWhiteSpace(command) && Launcher(command) == launcher);
+    }
+
+    private static string? Launcher(string command)
+    {
+        var tokens = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return tokens.Length < 2 ? null : tokens[0] + " " + tokens[1];
+    }
+
     public static IReadOnlyList<string> BlockingTests(string checkout, IReadOnlyList<string> failed,
         DateTimeOffset now)
     {

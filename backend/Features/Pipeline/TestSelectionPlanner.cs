@@ -68,13 +68,20 @@ public sealed record TestSelectionAudit
     public IReadOnlyList<string> OmittedTestCommands { get; init; } = [];
     public IReadOnlyList<string> Reasons { get; init; } = [];
     public string Selector { get; init; } = "deterministic";
+    public IReadOnlyList<string> SelectedSuites { get; init; } = [];
+    public IReadOnlyList<string> AttemptedSuites { get; init; } = [];
+    public IReadOnlyDictionary<string, string> SuiteCommands { get; init; } = new Dictionary<string, string>();
+    public IReadOnlyList<string> OmittedSuites { get; init; } = [];
     public bool FullSuiteRequired { get; init; }
     public bool FullSuiteRan { get; init; }
 }
 
 public sealed record StagedVerifyPlan(
     IReadOnlyList<VerifyCommand> Commands,
-    TestSelectionAudit Audit);
+    TestSelectionAudit Audit)
+{
+    public IReadOnlyList<string>? PreparationCommands { get; init; }
+}
 
 /// <summary>
 /// Pure staged-test planner for repository inventory and deterministic impact rules.
