@@ -4,6 +4,7 @@ Durable contracts that code, CLIs, and agents must respect.
 
 | File | Contract |
 |---|---|
+| [studio-releases.md](studio-releases.md) | Studio release ancestry, revision observations and card live state. |
 | [agent-task.md](agent-task.md) | App-owned task lifecycle boundary copied into watched targets. |
 | [agent-contract-pattern.md](agent-contract-pattern.md) | Contract-bounded agent pattern and self-heal limits. |
 | [filesystem.md](filesystem.md) | Job-folder layout, lane catalog, and on-disk shape. |

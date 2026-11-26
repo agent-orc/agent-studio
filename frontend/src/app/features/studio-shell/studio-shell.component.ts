@@ -590,6 +590,7 @@ export class StudioShellComponent {
     if (tab.kind === 'board') return tab.projectName === '__all__' ? null : 'board';
     if (tab.kind === 'hub') {
       const rail = resolveProjectSection(tab.section).rail;
+      if (rail === 'studio-releases') return 'operations';
       if (rail === 'wiki' || rail === 'deploy' || rail === 'operations' || rail === 'settings') return rail;
       return 'hub';
     }
@@ -1108,6 +1109,7 @@ export class StudioShellComponent {
     const rail = resolveProjectSection(section).rail;
     if (rail === 'deploy') return 'Deploy';
     if (rail === 'operations') return 'Operations';
+    if (rail === 'studio-releases') return 'Releases';
     return null;
   }
 

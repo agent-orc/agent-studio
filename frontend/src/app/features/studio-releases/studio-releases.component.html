@@ -1,0 +1,31 @@
+<section aria-label="Studio releases" data-testid="studio-releases">
+  <header><h1>Releases</h1><span>Studio deployment history</span></header>
+  @if (loading()) { <app-loading-surface kind="list" label="Loading release records…" /> }
+  @if (error()) { <p role="status">{{ error() }}</p> }
+  @if (view(); as data) {
+    <p class="identity">Running <code>{{ data.runningRevision }}</code> · Updated {{ data.computedAtUtc | date:'medium' }}</p>
+    @if (data.detail) { <p role="status">{{ data.detail }}</p> }
+    <h2>Integrated, not yet live <span>{{ data.pending.length }}</span></h2>
+    @for (card of data.pending; track card.key) {
+      <div class="delivery" data-testid="studio-release-pending">
+        <a [href]="card.href">{{ card.key }}</a><span class="title">{{ card.title }}</span>
+        <span>{{ card.type ?? 'Type unavailable' }}</span><time [attr.datetime]="card.integratedAtUtc">{{ waiting(card.integratedAtUtc) }}</time>
+      </div>
+    } @empty { <p>No waiting deliveries in the latest release facts.</p> }
+    <h2>Deployed revisions <span>{{ data.releases.length }}</span></h2>
+    <p>Delivery history starts at the first recorded revision.</p>
+    @for (release of data.releases; track release.revision) {
+      <article data-testid="studio-release-entry">
+        <h3><code [title]="release.revision">{{ release.revision.slice(0, 12) }}</code>
+          @if (release.running) { <app-status-indicator tone="neutral" label="Running" [compact]="true" /> }
+          <time [attr.datetime]="release.atUtc">{{ release.timeBasis === 'build-baseline' ? 'Baseline build time' : release.observed ? 'First observed' : 'Deployed' }} {{ release.atUtc | date:'medium' }}</time>
+        </h3>
+        @for (card of release.cards; track card.key) {
+          <div class="delivery" data-testid="studio-release-card">
+            <a [href]="card.href">{{ card.key }}</a><span class="title">{{ card.title }}</span><span>{{ card.type ?? 'Type unavailable' }}</span>
+          </div>
+        } @empty { <p>No deliveries attributed in this recorded interval.</p> }
+      </article>
+    } @empty { <p>No deployed revisions recorded yet.</p> }
+  }
+</section>

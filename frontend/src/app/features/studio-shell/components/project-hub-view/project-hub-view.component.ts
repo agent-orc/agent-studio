@@ -1,3 +1,4 @@
+import { StudioReleasesComponent } from '../../../studio-releases/lazy';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 import { MagazineViewComponent } from '../../../magazine/magazine-view/magazine-view';
 import { TASK_REFERENCE_CHAT_PROVIDER } from '../../../../services/task-reference-chat.provider';
@@ -93,6 +94,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
   selector: 'app-project-hub-view',
   standalone: true,
   imports: [
+    StudioReleasesComponent,
     MagazineViewComponent,
     StructureViewComponent,
     ProjectShellComponent,
