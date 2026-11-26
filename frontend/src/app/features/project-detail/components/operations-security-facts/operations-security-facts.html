@@ -54,7 +54,7 @@
     @if (!hostCredentials().length) { <p class="security-facts__note">No host credentials are reported.</p> } @else {
       <ul class="security-facts__rows" data-testid="security-facts-inventory">
         @for (item of hostCredentials(); track item.id) {
-          <li><span>{{ item.label }} <small>{{ item.hostId }}</small></span>
+          <li><span>{{ item.label }} <small>{{ item.hostId | hostName }}</small></span>
             <app-status-indicator [tone]="state(item.state).tone" [label]="state(item.state).label" [compact]="true" />
             <small>@if (item.expiresAt) { Expires {{ expiry(item.expiresAt) }} · } {{ item.detail }}</small></li>
         }

@@ -21,7 +21,7 @@
         <div class="sidebar-card__header">
           <h3 class="section__title">Activity log</h3>
         </div>
-        <app-activity-log-view [lines]="cliOutput()"
+        <app-activity-log-view [lines]="shownOutput()"
                                [bodyMaxHeight]="'none'"
                                [isRunning]="isRunning()"
                                variant="embedded" />
@@ -39,7 +39,7 @@
         </div>
         @if (log().length > 0) {
           <div class="log log--overlay">
-            @for (entry of log(); track entry.timestamp) {
+            @for (entry of shownLog(); track entry.timestamp) {
               <div class="log__row" data-testid="protocol-log-row">
                 <span class="log__time" data-testid="protocol-log-time">{{ formatTime(entry.timestamp) }}</span>
                 <span class="log__event">{{ entry.event }}</span>

@@ -192,7 +192,11 @@ public sealed class VerifyDefinitionPolicyTests : IDisposable
         WriteDefinition("schemaVersion: 1\nstack: [custom]\ncommands:\n  prepare: .agent-studio/prepare\n"
                         + "  test:\n    - make test\n");
 
-        var plan = Plan(["main.go"]);
+        // The default strategy (fast) defers unchanged test commands to after
+        // integration; strict keeps the declared command in the review plan.
+        var plan = Builder().Build(Task(), _repo,
+            new ProjectSettings { Testing = new ProjectTestingSettings { Strategy = "strict" } },
+            "develop", new string('b', 40), ["main.go"], "refs/heads/agent-studio/results/task");
 
         Assert.Null(plan.VerifyDefinitionMissing);
         Assert.Contains(plan.Commands, command => command.Aspect == "build-tests");

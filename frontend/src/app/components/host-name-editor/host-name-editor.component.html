@@ -1,0 +1,9 @@
+@if (renaming()) {
+  <input data-testid="remote-host-rename-input" aria-label="Host name" [value]="shown().label" #nameInput
+    (keydown.enter)="save(nameInput.value)" (keydown.escape)="renaming.set(false)" />
+  <button type="button" data-testid="remote-host-rename-save" (click)="save(nameInput.value)">Save</button>
+} @else {
+  <h3 data-testid="remote-host-name" [attr.title]="shown().tooltip">{{ shown().label }}</h3>
+  @if (shown().generated) { <span data-testid="remote-host-alias-note">generated alias</span> }
+  <button type="button" data-testid="remote-host-rename" (click)="renaming.set(true)">Rename</button>
+}

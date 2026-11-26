@@ -5,6 +5,7 @@ import {
   computed,
   ElementRef,
   OnDestroy,
+  inject,
   input,
   output,
   signal,
@@ -16,6 +17,8 @@ import { formatTime as fmtTime } from '../../../../services/format.util';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { HostAliasService } from '../../../../components/identity-chip/host-alias.service';
+import { replaceRunnerIds } from '../../../../components/identity-chip/identity-display';
 import { TaskArtifactLinksDirective } from '../task-artifact-links/task-artifact-links.directive';
 /**
  * Modal overlay that shows the live CLI output and the parsed protocol
@@ -37,6 +40,18 @@ export class LogOverlayComponent implements AfterViewInit, OnDestroy {
   readonly isRunning = input(false);
   readonly jobId = input<string | null>(null);
   readonly watchPath = input<string | null>(null);
+
+  private readonly hosts = inject(HostAliasService);
+
+  /** Log lines for people: `runner_<hex>` ids read as the host name or its stable alias (AGT-4034). */
+  readonly shownOutput = computed(() => this.cliOutput().map(line =>
+    line.text.includes('runner_') ? { ...line, text: this.hostLabels(line.text) } : line));
+  readonly shownLog = computed(() => this.log().map(entry =>
+    entry.detail?.includes('runner_') ? { ...entry, detail: this.hostLabels(entry.detail) } : entry));
+
+  private hostLabels(text: string): string {
+    return replaceRunnerIds(text, id => this.hosts.display(id).label);
+  }
 
   readonly artifactLinkContext = computed(() => ({
     jobId: this.jobId(),

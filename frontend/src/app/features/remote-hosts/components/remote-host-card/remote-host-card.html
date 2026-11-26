@@ -1,7 +1,8 @@
 @let h = host();
 <section class="host-detail" data-testid="remote-host-detail-row">
   <header class="host-detail__head">
-    <div><h3 data-testid="remote-host-name">{{ h.name }}</h3><span>{{ roleLabel() }}</span> <app-host-credential-badge [host]="h" /></div>
+    <div><app-host-name-editor [hostId]="h.id" [name]="h.name" [role]="h.role" />
+      <span>{{ roleLabel() }}</span> <app-host-credential-badge [host]="h" /></div>
     <div class="host-detail__actions">
       @if (retired()) {
         <button type="button" data-testid="remote-host-action-revive" (click)="emit('revive')" [disabled]="!!h.busyAction">Revive</button>

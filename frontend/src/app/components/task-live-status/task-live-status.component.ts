@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, Injector, computed, effect, inject, input, signal } from '@angular/core';
+import { HostAliasService } from '../identity-chip/host-alias.service';
 import type { TaskInfo } from '../../models/task.model';
 import { TaskState } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
@@ -58,6 +59,13 @@ export class TaskLiveStatusComponent {
   readonly dense = input(false);
   readonly liveIndicatorTone = liveIndicatorTone;
   private readonly now = inject(NowTickService).now;
+  private readonly aliases = inject(HostAliasService);
+
+  /** AGT-4034: a host name for people; a raw runner_<hex> id never reaches the text. */
+  private hostLabel(id: string | null | undefined, name: string | null | undefined): string | null {
+    if (!id && !name) return null;
+    return this.aliases.display(id || name, name).label;
+  }
   private readonly injector = inject(Injector);
   private readonly tasks = inject(TaskService);
   private readonly errors = inject(ErrorDialogService);
@@ -127,10 +135,8 @@ export class TaskLiveStatusComponent {
       const startClock = startedAt === null
         ? null
         : new Date(startedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-      const host = task.executionLocation?.hostDisplayName
-        || task.runner?.runnerName
-        || task.runner?.hostname
-        || null;
+      const host = this.hostLabel(task.executionLocation?.runnerId ?? task.runner?.runnerId,
+        task.executionLocation?.hostDisplayName || task.runner?.runnerName || task.runner?.hostname);
       const runtime = [
         startClock ? `started ${startClock}` : null,
         duration ? `running ${duration}` : null,
@@ -151,7 +157,7 @@ export class TaskLiveStatusComponent {
     if (activeRun?.kind === 'remote') {
       const startedAt = timestamp(activeRun.startedAt);
       const duration = startedAt === null ? null : elapsed(this.now() - startedAt);
-      const host = activeRun.hostDisplayName || activeRun.runnerId || 'remote host';
+      const host = this.hostLabel(activeRun.runnerId, activeRun.hostDisplayName) ?? 'remote host';
       return {
         tone: 'active',
         headline: `Running remote on ${host}`,
@@ -255,8 +261,7 @@ export class TaskLiveStatusComponent {
       const remoteManual = runnerReason === 'manual-mode'
         && task.state === TaskState.Ready
         && !!task.executionLocation?.configuredRunnerId;
-      const runnerName = task.executionLocation?.hostDisplayName
-        || task.executionLocation?.configuredRunnerId
+      const runnerName = this.hostLabel(task.executionLocation?.configuredRunnerId, task.executionLocation?.hostDisplayName)
         || 'the assigned runner';
       return {
         tone: 'waiting',
