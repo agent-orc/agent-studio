@@ -1561,7 +1561,7 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBlo
     task => sp.GetRequiredService<AgentStudio.Pipeline.PipelineExecutionLog>().Read(task.FolderPath)?.Steps
         .LastOrDefault(step => step.StepId == AgentStudio.Pipeline.PipelineCatalogue.MergeIntoDevelopStepId)));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorProviderLimitFactSource(
-    sp.GetRequiredService<ProviderLimitRegistry>()));
+    sp.GetRequiredService<ProviderLimitRegistry>(), sp.GetRequiredService<AgentStudio.Cli.ModelSelectionLedger>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGateHostFactSource(
     sp.GetRequiredService<AgentStudio.Pipeline.GateHostOutageMonitor>(),
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
@@ -1745,6 +1745,8 @@ builder.Services.AddSingleton<AgentStudio.Cli.IModelSelectionLedger>(sp =>
         sp.GetRequiredService<ILogger<AgentStudio.Cli.LoggingModelSelectionLedger>>(),
         sp.GetRequiredService<IConfiguration>(),
         ledger: sp.GetRequiredService<AgentStudio.Cli.ModelSelectionLedger>()));
+builder.Services.AddSingleton<AgentStudio.Cli.ProviderRoutingHealth>();
+builder.Services.AddSingleton<AgentStudio.Cli.ModelRoutingDrill>();
 builder.Services.AddSingleton<AgentStudio.Cli.ModelSelectionService>();
 builder.Services.AddSingleton<AgentStudio.Cli.IModelSelectionService>(sp =>
     sp.GetRequiredService<AgentStudio.Cli.ModelSelectionService>());

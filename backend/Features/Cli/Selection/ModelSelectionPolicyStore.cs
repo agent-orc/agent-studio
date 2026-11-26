@@ -61,11 +61,9 @@ public sealed record ModelSelectionPolicy
         ["codex"] = new(StringComparer.OrdinalIgnoreCase) { ["weekly"] = 95 },
     };
     public double CostGuardFactor { get; init; } = 2.0;
+    public int ShortStepReservePoints { get; init; } = 10;
     public ModelSelectionHysteresis Hysteresis { get; init; } = new();
-    public Dictionary<string, SelectionRoute> ModelFallbacks { get; init; } = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["gpt-6-sol:xhigh"] = new SelectionRoute("claude", "claude-opus-5", "xhigh"),
-    };
+    public Dictionary<string, SelectionRoute> ModelFallbacks { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     // Compatibility projection for the old model-routes endpoint. The old file
     // is read once and never written again.
     public Dictionary<string, CliModelRouteProfile> LegacyProfiles { get; init; } = new(StringComparer.OrdinalIgnoreCase);
@@ -75,7 +73,7 @@ public sealed record ModelSelectionPolicy
     {
         var review = new ConsumerModelPolicy(
             new ConsumerPolicyRoute("claude", "claude-opus-5", "high"),
-            Fallbacks: new ConsumerFallbacks(null, [new ConsumerPolicyRoute("codex", "gpt-6-sol", "high")]),
+            Fallbacks: ConsumerFallbacks.Catalogue,
             SameClassOnly: true, StickyWithinCard: true);
         return new(StringComparer.OrdinalIgnoreCase)
         {
@@ -193,6 +191,17 @@ public sealed class ModelSelectionPolicyStore(
             if (!caps.TryGetValue(cli, out var windows)) caps[cli] = windows = new(StringComparer.OrdinalIgnoreCase);
             windows[window] = value;
             _cached = current with { Caps = caps };
+            Persist(_cached);
+            return _cached;
+        }
+    }
+
+    public ModelSelectionPolicy SetReserve(int points)
+    {
+        if (points is < 0 or > 50) throw new ArgumentOutOfRangeException(nameof(points));
+        lock (_lock)
+        {
+            _cached = Get() with { ShortStepReservePoints = points };
             Persist(_cached);
             return _cached;
         }

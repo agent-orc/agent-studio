@@ -109,6 +109,7 @@ public sealed partial class TaskServerStore
     private IReadOnlyDictionary<string, int> _finalHandoffStates =
         new Dictionary<string, int>(StringComparer.Ordinal);
     private readonly TaskServerModelSelectionPoster? _selectionPoster;
+    private readonly IModelRouteAdmission? _modelRouteAdmission;
 
     public TaskServerStore(IOptions<TaskServerOptions> options, TimeProvider clock)
         : this(
@@ -135,7 +136,8 @@ public sealed partial class TaskServerStore
         ITaskServerEventPublisher? operationalEvents,
         ILogger<TaskServerStore>? logger,
         IWorkspaceQuotaAdmission? workspaceQuota = null,
-        TaskServerModelSelectionPoster? selectionPoster = null)
+        TaskServerModelSelectionPoster? selectionPoster = null,
+        IModelRouteAdmission? modelRouteAdmission = null)
     {
         _options = options.Value;
         _clock = clock;
@@ -144,6 +146,7 @@ public sealed partial class TaskServerStore
         _logger = logger;
         _quotaVerdicts = workspaceQuota is null ? null : new WorkspaceQuotaVerdictCache(workspaceQuota, clock);
         _selectionPoster = selectionPoster;
+        _modelRouteAdmission = modelRouteAdmission;
         _startedAt = UtcNow;
     }
 
@@ -1722,10 +1725,11 @@ public sealed partial class TaskServerStore
             string? modelRefusal = null;
             var (task, selected) = await ProjectPlacementSelection.SelectAsync(
                 WhereCardBudgetAllowedAsync(WhereModelAcceptedAsync(
-                    ExceptHeldModelRoutesAsync(connection, transaction,
-                        ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId,
-                            RequiresHostProjectPolicy, ct),
-                        request.RunnerId, UtcNow, ct),
+                    _modelRouteAdmission is not null
+                        ? ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, RequiresHostProjectPolicy, ct)
+                        : ExceptHeldModelRoutesAsync(connection, transaction,
+                            ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId,
+                                RequiresHostProjectPolicy, ct), request.RunnerId, UtcNow, ct),
                     connection, transaction, request.RunnerId,
                     reason => modelRefusal ??= reason, ct), connection, transaction, reason => modelRefusal ??= reason, ct),
                 async projectId =>
@@ -1797,6 +1801,14 @@ public sealed partial class TaskServerStore
                 connection, transaction, task.TaskId, mechanicalDelta, previousSession, ct);
             var mechanicalBase = MechanicalFallbackBase(previousSession);
 
+            var configuredRoute = await ReadEffectiveModelRouteAsync(connection, transaction, task.TaskId, request.RunnerId, ct);
+            var modelSelection = await SelectTaskRouteAsync(connection, transaction, task.TaskId, request.RunnerId,
+                configuredRoute.Provider, configuredRoute.Model, null, ct);
+            if (modelSelection is { ShouldLaunch: false })
+            {
+                response = new ClaimResponse("empty", Message: modelSelection.Reason, PlacementReason: "model-route-wait");
+                return;
+            }
             var fence = Convert.ToInt64(await ScalarAsync(connection,
                 "SELECT last_fence FROM fence_counters WHERE task_id = $task;", ct, transaction, ("$task", task.TaskId))
                 ?? 0L, CultureInfo.InvariantCulture) + 1;
@@ -1934,6 +1946,9 @@ public sealed partial class TaskServerStore
                         "quota.meter-unavailable", new { message = cardNotice }, ct);
             }
 
+            if (modelSelection?.LedgerId is { } claimedSelectionId)
+                await AppendLifecycleEventAsync(connection, transaction, runId, task.TaskId, fence,
+                    "run.model-selection", new { selectionId = claimedSelectionId, provider = modelSelection.Route.CliType }, ct);
             var run = new RunDto(runId, task.TaskId, "running", request.RunnerId, fence, now, now, null,
                 BriefVersion: briefVersion);
             var lease = new LeaseDto(leaseId, runId, task.TaskId, request.RunnerId, request.InstanceId, fence, now, expires, "active");
@@ -1956,7 +1971,7 @@ public sealed partial class TaskServerStore
                 MechanicalFreshRoute: mechanicalFreshRoute,
                 FollowUp: followUp,
                 PlacementReason: placementReason,
-                ContinuationIntent: continuationIntent);
+                ContinuationIntent: continuationIntent, ModelSelection: modelSelection);
         }, ct);
         if (_selectionPoster is not null)
             foreach (var receipt in selectionReceipts)
@@ -2393,6 +2408,8 @@ public sealed partial class TaskServerStore
         ProviderRejectionRecoveryPlan? providerRecovery = null;
         RunDto? completed = null;
         var healthReceipts = new List<object>();
+        string? executionSelectionId = null;
+        string? executionProvider = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             if (request.OutcomeDecision is not null
@@ -2775,6 +2792,16 @@ public sealed partial class TaskServerStore
                     modelFallback = providerRecovery?.Fallback,
                     mechanicalFallbackReason = mechanicalFallback ? request.SessionContinuation!.FallbackReason : null,
                 }), ct);
+            var selectionJson = Convert.ToString(await ScalarAsync(connection,
+                "SELECT payload_json FROM events WHERE run_id = $run AND kind = 'run.model-selection' ORDER BY rowid DESC LIMIT 1;",
+                ct, transaction, ("$run", runId)), CultureInfo.InvariantCulture);
+            if (!string.IsNullOrWhiteSpace(selectionJson))
+                {
+                using var selectionDocument = JsonDocument.Parse(selectionJson);
+                executionSelectionId = selectionDocument.RootElement.GetProperty("selectionId").GetString();
+                executionProvider = selectionDocument.RootElement.TryGetProperty("provider", out var providerValue)
+                    ? providerValue.GetString() : request.SessionContinuation?.Provider;
+            }
             completed = new RunDto(
                 runId,
                 lease.TaskId,
@@ -2788,6 +2815,11 @@ public sealed partial class TaskServerStore
                 resultHandoff?.Envelope.RepositoryId,
                 BriefVersion: claimedBriefVersion);
         }, ct);
+        if (_selectionPoster is not null && executionSelectionId is not null)
+            await _selectionPoster.PostAsync(new { id = "executed:" + executionSelectionId,
+                kind = "executed", executionId = executionSelectionId, consumer = "coding", executionProvider,
+                providerFailure = request.OutcomeDecision?.Outcome is ExecutionOutcomeKind.CliCrash
+                    or ExecutionOutcomeKind.TransientModelCapacity or ExecutionOutcomeKind.ProviderRejectedRequest }, CancellationToken.None);
         if (_selectionPoster is not null)
             foreach (var receipt in healthReceipts)
                 await _selectionPoster.PostAsync(receipt, CancellationToken.None);

@@ -156,9 +156,8 @@ public sealed class ModelSelectionPlannerTests
         var capped = ModelSelectionPlanner.Plan(request, Facts(claudeUsed: 97));
         var healthy = ModelSelectionPlanner.Plan(request, Facts(claudeUsed: 30));
 
-        Assert.Equal(SelectionOutcome.Wait, capped.Outcome);
-        Assert.Equal(CliTypes.Claude, capped.Route.CliType);
-        Assert.Contains("same-session continuation", capped.Reason);
+        Assert.Equal(SelectionOutcome.Fallback, capped.Outcome);
+        Assert.Equal(CliTypes.Codex, capped.Route.CliType);
         Assert.Equal(SelectionOutcome.Primary, healthy.Outcome);
         Assert.Equal(new SelectionRoute(CliTypes.Claude, ModelIds.ClaudeOpus5, "high"), healthy.Route);
     }

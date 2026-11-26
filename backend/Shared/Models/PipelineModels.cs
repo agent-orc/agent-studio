@@ -35,6 +35,7 @@ public sealed record TaskPipeline
 /// </summary>
 public sealed record PipelineStep
 {
+    public string? WorkClass { get; init; }
     public string Id { get; init; } = string.Empty;
     public string DisplayName { get; init; } = string.Empty;
     public StepKind Kind { get; init; } = StepKind.Module;

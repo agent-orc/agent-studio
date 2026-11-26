@@ -7,6 +7,8 @@ namespace AgentStudio.Cli;
 /// routes under <c>/api/cli</c> (model catalogs, session
 /// usage, quota windows, and the dev-only PTY probe).
 /// </summary>
+public sealed record ReserveSetting(int Points);
+
 public static class CliEndpoints
 {
     public static void MapCliEndpoints(this WebApplication app)
@@ -24,6 +26,34 @@ public static class CliEndpoints
             return Results.Ok(new { project, pipelineType, routes = selection.Get(project, pipelineType) });
         });
 
+        app.MapGet("/api/model-selection/drill", (string? project, string? pipelineType, ModelRoutingDrill drill) =>
+            Results.Ok(drill.Run(project, pipelineType)));
+        app.MapPut("/api/model-selection/policy/reserve", (ReserveSetting setting, ModelSelectionPolicyStore policy) =>
+            setting.Points is < 0 or > 50 ? Results.BadRequest(new { error = "Reserve must be between 0 and 50 percentage points." })
+                : Results.Ok(policy.SetReserve(setting.Points)));
+        app.MapPost("/api/model-selection/plan", (AgentStudio.TaskServer.Contracts.ModelRouteAdmissionRequest input,
+            IModelSelectionService selection, TaskScannerService scanner, AgentStudio.Pipeline.ModelRoutingPolicyRegistry routing) =>
+        {
+            var request = input.Request;
+            var task = request.TaskKey is null ? null : scanner.FindJob(request.TaskKey);
+            if (task is not null) request = request with { PipelineType = PipelineTypes.Resolve(task), TaskMode = task.Mode };
+            if (task?.PinMode == "hard") request = request with
+            {
+                Pins = request.Pins with { Mode = AgentStudio.TaskServer.Contracts.SelectionPinMode.Hard },
+                Continuation = null,
+            };
+            return Results.Ok(selection.Select(new ModelSelectionCall(request,
+                "task-server-claim",
+                HostAccepts: (provider, model) => !input.UnavailableProviders.Contains(provider)
+                    && input.AcceptedRoutes.Any(route => route.CliType == provider
+                        && (string.IsNullOrWhiteSpace(model) || route.Model == model)),
+                HostAcceptsFallback: (provider, model) => !input.UnavailableProviders.Contains(provider)
+                    && input.AcceptedRoutes.Any(route => route.CliType == provider
+                        && (string.IsNullOrWhiteSpace(model) || route.Model == model)),
+                CorrectnessFloor: request.Consumer == AgentStudio.TaskServer.Contracts.SelectionConsumers.Coding
+                    ? () => routing.CorrectnessFloor(request.TaskType, task?.Title ?? request.TaskTitle, request.TaskPrompt) : null,
+                DecisionKey: request.AttemptId, RecordEveryCall: true)).Result);
+        });
         app.MapGet("/api/model-selection/policy", (ModelSelectionPolicyStore policy) => Results.Ok(policy.Get()));
         app.MapPut("/api/model-selection/policy/consumers/{consumer}",
             (string consumer, ConsumerModelPolicy setting, ModelSelectionPolicyStore policy) =>
@@ -45,11 +75,12 @@ public static class CliEndpoints
             Results.Ok(ledger.Query(provider, project, consumer, rule, from, to, cursor,
                 taskKey: taskKey, eventId: eventId, since: since, until: until)));
         app.MapGet("/api/model-selection/active", (ModelSelectionLedger ledger) => Results.Ok(ledger.Active()));
-        app.MapPost("/api/model-selection/events", (ModelSelectionEvent entry, ModelSelectionLedger ledger) =>
+        app.MapPost("/api/model-selection/events", (ModelSelectionEvent entry, ModelSelectionLedger ledger, IModelSelectionService selection) =>
         {
             if (string.IsNullOrWhiteSpace(entry.Id) || string.IsNullOrWhiteSpace(entry.Kind)
                 || string.IsNullOrWhiteSpace(entry.Consumer)) return Results.BadRequest(new { error = "Missing selection event fields." });
-            return Results.Ok(new { added = ledger.Append(entry), id = entry.Id });
+            return Results.Ok(new { added = entry.Kind == "executed" && entry.ExecutionId is not null
+                ? selection.RecordExecution(entry.ExecutionId, entry.ExecutionProvider, entry.ProviderFailure) : ledger.Append(entry), id = entry.Id });
         });
 
         cliGroup.MapGet("/types", () => Results.Ok(CliTypes.All));

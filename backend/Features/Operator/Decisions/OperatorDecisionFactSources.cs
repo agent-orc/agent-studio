@@ -168,7 +168,7 @@ public sealed class OperatorTaskFactSource(
     ];
 
     public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
-        => tasks() is { } published ? OperatorDecisionFacts.FromTasks(published, fallbackOf) : null;
+        => tasks() is { } published ? OperatorDecisionFacts.FromTasks(published, fallbackOf, includeLegacyQuotaWait: false) : null;
 }
 
 /// <summary>Open watcher stall cases (the watcher's own detector decides them).</summary>
@@ -308,12 +308,18 @@ public sealed class OperatorBlockedPublicationFactSource(
 }
 
 /// <summary>Provider limits the runners recorded per CLI.</summary>
-public sealed class OperatorProviderLimitFactSource(ProviderLimitRegistry limits) : IOperatorDecisionFactSource
+public sealed class OperatorProviderLimitFactSource(ProviderLimitRegistry limits, AgentStudio.Cli.ModelSelectionLedger? selection = null) : IOperatorDecisionFactSource
 {
     public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.QuotaExhausted];
 
     public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
-        => OperatorDecisionFacts.FromProviderLimits(limits.Active(nowUtc));
+        => selection is null ? OperatorDecisionFacts.FromProviderLimits(limits.Active(nowUtc))
+            : selection.Active().Where(entry => entry.Kind == "waiting" && entry.Rule != "pin"
+                && !entry.NearbyResetWait)
+                .Select(entry => new OperatorDecisionFact(OperatorDecisionTypes.QuotaExhausted,
+                    "model-class-wait:" + entry.Id, entry.Project, entry.TaskKey, entry.Reason, entry.At.UtcDateTime,
+                    [new OperatorEvidenceLink("Model routing", "/api/model-selection/events?eventId=" + entry.Id)]))
+                .ToArray();
 }
 
 /// <summary>

@@ -2010,7 +2010,7 @@ public sealed class RemoteReviewWorkspace
             _lease.ExecutorId,
             _lease.HostId,
             _lease.AttemptId,
-            plannedCommand?.Model,
+            agentUsage?.Model ?? plannedCommand?.Model,
             plannedCommand?.ThinkingLevel,
             agentUsage?.InputTokens ?? 0,
             agentUsage?.OutputTokens ?? 0,
@@ -2038,7 +2038,9 @@ public sealed class RemoteReviewWorkspace
                 .Concat(comparison?.InitialFailures ?? []).Distinct(StringComparer.Ordinal)
                 .ToDictionary(test => test, test => ReviewCommandExitDiagnosis.OutputTail(
                     TestFailureMessages.FirstError(process.StdOut + "\n" + process.StdErr, test), "").Stdout,
-                    StringComparer.Ordinal));
+                    StringComparer.Ordinal),
+            plannedCommand?.CliType,
+            plannedCommand?.ModelSelection);
     }
 
     private async Task<ReviewArtifactEvidenceDto> WriteArtifactAsync(
