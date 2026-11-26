@@ -112,6 +112,15 @@ failed collision. Integration can run again only when the delivery SHA changes,
 or when a changed target tip includes commits or a tree change on the conflicting
 paths. Unknown Git evidence retains the collision.
 
+Receipt reads catch filesystem and JSON failures, including missing required
+fields. A missing receipt is normal. An unreadable receipt is logged and leaves
+the affected delivery with an explicit integration error before Git is invoked;
+it is retained for diagnosis. Other cards can still drain. Its reservation cannot
+be reconstructed until the receipt is readable again. Retry and changed-path Git
+facts are read outside the coordinator's queue lock. A queue change during those
+reads causes selection to restart; a cached replay can be discarded only if it is
+still the completed replay that was inspected.
+
 A queued recovery reserves its conflicting paths and original delivery time.
 The individual integration queue holds later overlapping deliveries while the
 recovery is in Ready, Progress or Auto Review. A repaired delivery retains that

@@ -293,6 +293,20 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     {
         ArgumentNullException.ThrowIfNull(request);
         var deliveryKey = DeliveryKey(request);
+        DeliveryReplay? conflictReplay = null;
+        if (!discardCompletedReplay && _conflictRecovery is not null)
+        {
+            lock (_gate)
+            {
+                if (_deliveryReplays.TryGetValue(deliveryKey, out var cached)
+                    && cached.CompletedAtUtc is not null && cached.Completion.Task.IsCompletedSuccessfully
+                    && cached.Completion.Task.Result.Outcome is (MergeIntoIntegrationOutcome.Conflict or MergeIntoIntegrationOutcome.AgentRoundRequired))
+                    conflictReplay = cached;
+            }
+        }
+        // Git can wait on a repository. Never hold the shared queue lock while
+        // collecting retry facts, and only retire the replay we inspected.
+        var changedConflict = conflictReplay is not null && _conflictRecovery!.Replay(request) is null;
         ProjectQueue projectQueue;
         var startDrain = false;
         TaskCompletionSource<MergeIntoIntegrationResult> completion;
@@ -300,13 +314,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         lock (_gate)
         {
             PruneCompletedReplays(DateTimeOffset.UtcNow);
-            if ((discardCompletedReplay || _conflictRecovery is not null
-                    && _deliveryReplays.TryGetValue(deliveryKey, out var cached)
-                    && cached.Completion.Task.IsCompletedSuccessfully
-                    && cached.Completion.Task.Result.Outcome is (MergeIntoIntegrationOutcome.Conflict or MergeIntoIntegrationOutcome.AgentRoundRequired)
-                    && _conflictRecovery.Replay(request) is null)
-                && _deliveryReplays.TryGetValue(deliveryKey, out var finished)
-                && finished.CompletedAtUtc is not null)
+            if (_deliveryReplays.TryGetValue(deliveryKey, out var finished)
+                && finished.CompletedAtUtc is not null
+                && (discardCompletedReplay || changedConflict && ReferenceEquals(finished, conflictReplay)))
             {
                 _deliveryReplays.Remove(deliveryKey);
             }
@@ -344,6 +354,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 deliveryKey,
                 sequence,
                 completion));
+            projectQueue.Revision++;
             if (!projectQueue.Running)
             {
                 projectQueue.Running = true;
@@ -367,6 +378,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         {
             QueuedDelivery? delivery;
             TimeSpan wait = TimeSpan.Zero;
+            QueuedDelivery[] candidates;
+            long revision;
             lock (_gate)
             {
                 if (projectQueue.Pending.Count == 0)
@@ -382,10 +395,17 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     return;
                 }
 
-                var now = DateTimeOffset.UtcNow;
-                var candidates = projectQueue.Pending.Where(item => item.NotBeforeUtc <= now)
+                revision = projectQueue.Revision;
+                candidates = projectQueue.Pending.Where(item => item.NotBeforeUtc <= DateTimeOffset.UtcNow)
                     .OrderBy(item => item, QueuedDeliveryComparer.Instance).ToArray();
-                var eligible = _conflictRecovery?.Eligible(candidates.Select(item => item.Request).ToArray());
+            }
+            // File admission can invoke Git. Recheck the snapshot after that
+            // work so an enqueue during the read participates in selection.
+            var eligible = _conflictRecovery?.Eligible(candidates.Select(item => item.Request).ToArray());
+            lock (_gate)
+            {
+                if (revision != projectQueue.Revision) continue;
+                var now = DateTimeOffset.UtcNow;
                 delivery = eligible is null ? candidates.FirstOrDefault()
                     : candidates.FirstOrDefault(item => ReferenceEquals(item.Request, eligible.FirstOrDefault()));
                 if (delivery is null)
@@ -396,6 +416,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 else
                 {
                     projectQueue.Pending.Remove(delivery);
+                    projectQueue.Revision++;
                     projectQueue.Current = delivery;
                     projectQueue.CurrentSinceUtc = now;
                 }
@@ -464,6 +485,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                         {
                             NotBeforeUtc = DateTimeOffset.UtcNow + HoldRetryDelay,
                         });
+                        projectQueue.Revision++;
                         projectQueue.Current = null;
                         PublishBoard(project, projectQueue);
                     }
@@ -655,6 +677,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     private sealed class ProjectQueue
     {
         public List<QueuedDelivery> Pending { get; } = [];
+        public long Revision { get; set; }
         public bool Running { get; set; }
         public QueuedDelivery? Current { get; set; }
         public DateTimeOffset? CurrentSinceUtc { get; set; }

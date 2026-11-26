@@ -46,7 +46,11 @@ public sealed class IntegrationConflictRecovery
 
     internal MergeIntoIntegrationResult? Replay(RemoteDeliveryIntegrationRequest request)
     {
-        if (Read(request.JobFolderPath) is not { } receipt || receipt.Target != request.IntegrationBranch)
+        var receipt = Read(request.JobFolderPath, out var unreadable);
+        if (unreadable)
+            return MergeIntoIntegrationResult.Failed(AcceptedIntegrationFailureCodes.IntegrationError,
+                $"integration-conflict-receipt-unreadable: {FileName} could not be read; repair the receipt before retrying integration.");
+        if (receipt is null || receipt.Target != request.IntegrationBranch)
             return null;
         var oldTip = receipt.Result.ConflictReport?.IntegrationTipSha ?? receipt.Result.PreviousIntegrationSha;
         var tip = _tip(request);
@@ -125,9 +129,30 @@ public sealed class IntegrationConflictRecovery
     }
 
     private static IntegrationConflictReceipt? Read(string folder)
+        => Read(folder, out _);
+
+    private static IntegrationConflictReceipt? Read(string folder, out bool unreadable)
     {
+        unreadable = false;
         var path = Path.Combine(folder, FileName);
-        return File.Exists(path) ? JsonSerializer.Deserialize<IntegrationConflictReceipt>(File.ReadAllText(path), Json) : null;
+        try
+        {
+            var receipt = JsonSerializer.Deserialize<IntegrationConflictReceipt>(File.ReadAllText(path), Json);
+            if (receipt is null || string.IsNullOrWhiteSpace(receipt.DeliverySha)
+                || string.IsNullOrWhiteSpace(receipt.Target) || receipt.Result?.ConflictedFiles is null)
+                throw new JsonException("The integration conflict receipt is missing required fields.");
+            return receipt;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return null;
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "IntegrationConflictRecovery: read");
+            unreadable = true;
+            return null;
+        }
     }
 
     private static void Write(string folder, IntegrationConflictReceipt receipt)

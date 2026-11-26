@@ -3435,6 +3435,18 @@
             individual deliveries wait through recovery and review. The third conflict
             reaches Human Review with history. Historical AGT-4011 timings remain unverified.</td>
         </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4048</code><br><span class="small">integration-conflict-receipt-and-lock-repair</span></td>
+          <td>No CLI crashed. An invalid or locked conflict receipt could throw
+            before the project drain's error boundary.</td>
+          <td>Receipt reads were unguarded, and retry and changed-path Git facts
+            were collected under the coordinator's shared queue lock.</td>
+          <td>Unreadable receipts produce an explicit integration error for the
+            affected delivery without attempting another merge; other cards drain.
+            Fact reads run outside the lock, with replay identity and queue revision
+            checks before applying their results.</td>
+        </tr>
       </tbody>
     </table>
 
