@@ -12,6 +12,26 @@ public sealed class RemoteReviewReportEvidenceTests : IDisposable
         Path.GetTempPath(), "remote-review-evidence-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task SuiteCoverageSurvivesTheReportAndAppearsInTheCardReason()
+    {
+        Directory.CreateDirectory(_root);
+        var request = Request(new string('a', 40), []) with
+        {
+            SuiteSelection = new(["frontend-unit"], ["backend-routine"],
+                ["Only frontend/ changed."]) { AttemptedSuites = ["frontend-unit"] },
+        };
+        var now = new DateTime(2026, 11, 24, 12, 0, 0, DateTimeKind.Utc);
+        var file = await RemoteReviewReportEvidence.WriteAsync(_root, "selection", "subject",
+            request, new string('c', 64), now, default);
+        var report = await File.ReadAllTextAsync(Path.Combine(_root, file));
+        Assert.Contains("Suites ran: frontend-unit", report);
+        Assert.Contains("Suites omitted: backend-routine", report);
+        var evidence = AgentStudio.TestRuns.TaskScopedTestEvidenceReader.Read(Job(_root));
+        Assert.Contains(evidence.Sources, item => item.Reason.Contains("Suites ran: frontend-unit", StringComparison.Ordinal)
+            && item.Reason.Contains("Suites omitted: backend-routine", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Red_review_input_retains_all_errors_outside_the_output_tail()
     {
         var head = new string('a', 40);

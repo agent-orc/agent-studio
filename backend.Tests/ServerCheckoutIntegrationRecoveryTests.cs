@@ -1,10 +1,18 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Pipeline;
 using AgentStudio.Registry;
 using AgentStudio.Shared;
+using AgentStudio.Security;
 using AgentStudio.Tasks;
 using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -122,6 +130,72 @@ public sealed class ServerCheckoutIntegrationRecoveryTests : IDisposable
     }
 
     [Fact]
+    public async Task Retry_endpoint_moves_only_an_integrated_escalated_card_to_human_review()
+    {
+        var missing = Build(withCheckout: false);
+        var delivery = SeedEscalatedDelivery(missing);
+        var job = missing.Scanner.FindJob(Id, _watchPath)!;
+        await missing.Runner.RunAsync(Project, job.Id, job.FolderPath, job.WatchPath,
+            "develop", CancellationToken.None, reviewedResultSha: delivery);
+
+        var failing = Build(withCheckout: true, gateFails: true);
+        string sessionToken;
+        using (var factory = EndpointFactory(failing, withCheckout: true))
+        using (var client = factory.CreateClient())
+        {
+            sessionToken = factory.Services.GetRequiredService<AccessSecurityStore>()
+                .Bootstrap(new BootstrapRequest("retry.owner", "correct horse battery staple!", null)).SessionToken;
+            client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+            client.DefaultRequestHeaders.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={sessionToken}");
+            client.DefaultRequestHeaders.Add("Origin", "http://localhost");
+            using var refused = await client.PostAsync(RetryUrl(), null);
+            Assert.Equal(HttpStatusCode.OK, refused.StatusCode);
+            var failedBody = await refused.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("failed", failedBody.GetProperty("status").GetString());
+            Assert.Equal(JsonValueKind.Null, failedBody.GetProperty("movedTo").ValueKind);
+            Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, Id)));
+        }
+
+        var configured = Build(withCheckout: true);
+        using var readyFactory = EndpointFactory(configured, withCheckout: true);
+        using var readyClient = readyFactory.CreateClient();
+        readyClient.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        readyClient.DefaultRequestHeaders.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={sessionToken}");
+        readyClient.DefaultRequestHeaders.Add("Origin", "http://localhost");
+        using var response = await readyClient.PostAsync(RetryUrl(), null);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("integrated", body.GetProperty("status").GetString());
+        Assert.Equal(TaskStates.HumanReview, body.GetProperty("movedTo").GetString());
+        Assert.Equal(TaskStates.HumanReview,
+            readyFactory.Services.GetRequiredService<TaskScannerService>().FindJob(Id, _watchPath)!.State);
+    }
+
+    private string RetryUrl() => $"/api/tasks/{Id}/integration/retry?watchPath={Uri.EscapeDataString(_watchPath)}";
+
+    private WebApplicationFactory<Program> EndpointFactory(Stack stack, bool withCheckout)
+        => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _root,
+                ["Security:Profile"] = "local",
+                ["WatchPaths:0:Name"] = Project,
+                ["WatchPaths:0:Path"] = _watchPath,
+                ["WatchPaths:0:RootPath"] = withCheckout ? _repo : null,
+                ["WatchPaths:0:RepositoryPath"] = withCheckout ? _repo : null,
+            }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<GateEnvironmentRetryService>();
+                services.AddSingleton(stack.Retries);
+                services.RemoveAll<TaskIntegrationStatusService>();
+                services.AddSingleton(stack.Integration);
+            });
+        });
+
+    [Fact]
     public async Task MissingIntegrationBase_StaysUnreplayableUntilOriginCarriesTheBranch()
     {
         var stack = Build(withCheckout: true);
@@ -226,7 +300,7 @@ public sealed class ServerCheckoutIntegrationRecoveryTests : IDisposable
         return job.Key ?? job.TaskKey;
     }
 
-    private Stack Build(bool withCheckout)
+    private Stack Build(bool withCheckout, bool gateFails = false)
     {
         var values = new Dictionary<string, string?>
         {
@@ -258,8 +332,11 @@ public sealed class ServerCheckoutIntegrationRecoveryTests : IDisposable
             git,
             pipeline,
             NullLogger<MergeIntoDevelopRunner>.Instance,
+            pushQueue: new IntegrationPushQueue(),
             projectSettings: settings,
-            preDevelopBuildGate: new PreDevelopBuildGate(new PassingGate()));
+            preDevelopBuildGate: new PreDevelopBuildGate(gateFails ? new FailingGate() : new PassingGate()),
+            batchReservations: new BatchIntegrationReservationService(Path.Combine(_root, "reservations")),
+            refMutationLeases: new RefMutationLeaseService(Path.Combine(_root, "ref-leases")));
         var mutations = new TaskMutationService(
             scanner,
             new ClientIdentityStore(configuration, NullLogger<ClientIdentityStore>.Instance),
@@ -351,6 +428,19 @@ public sealed class ServerCheckoutIntegrationRecoveryTests : IDisposable
                 BuildTestGateVerdict.Ok, 0, 5, string.Empty, "gate passed", true, false)
             {
                 ExpectedSha = request.ExpectedSha,
+            });
+    }
+
+    private sealed class FailingGate : IBuildTestGateRunner
+    {
+        public Task<BuildTestGateResult> RunAsync(
+            BuildTestGateRequest request, IReadOnlyList<string>? changedFiles,
+            BuildProfile? profile, PostStepMode mode, TimeSpan timeout, CancellationToken ct)
+            => Task.FromResult(new BuildTestGateResult(
+                BuildTestGateVerdict.Fail, 1, 5, string.Empty, "gate environment failed", false, false)
+            {
+                ExpectedSha = request.ExpectedSha,
+                FailureKind = BuildTestGateFailureKind.Environment,
             });
     }
 }

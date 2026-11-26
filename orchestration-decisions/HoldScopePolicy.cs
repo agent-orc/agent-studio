@@ -12,10 +12,21 @@ public static class HoldScopePolicy
         IReadOnlyCollection<string> confirmedSuspectPaths, IReadOnlyCollection<string> suiteAreas)
     {
         var folders = coveringFolders.Select(Normalize).Distinct(StringComparer.Ordinal).ToArray();
-        var fallback = folders.Length == 0 || folders.Length > RedTestTriageBounds.MaximumCoveringFolders;
+        var fallback = UsesSuiteAreaFallback(folders);
         return new(fallback ? [] : folders,
             confirmedSuspectPaths.Append(testFile).Select(Normalize).Distinct(StringComparer.Ordinal).ToArray(),
             fallback ? suiteAreas.Select(Normalize).Distinct(StringComparer.Ordinal).ToArray() : []);
+    }
+
+    /// <summary>
+    /// RT-3: a test file that names no repository type, or types in more than
+    /// <see cref="RedTestTriageBounds.MaximumCoveringFolders"/> folders, is held on
+    /// its test project's area instead.
+    /// </summary>
+    public static bool UsesSuiteAreaFallback(IReadOnlyCollection<string> coveringFolders)
+    {
+        var distinct = coveringFolders.Select(Normalize).Distinct(StringComparer.Ordinal).Count();
+        return distinct == 0 || distinct > RedTestTriageBounds.MaximumCoveringFolders;
     }
 
     public static bool MayIntegrate(IReadOnlyCollection<string> changedPaths,

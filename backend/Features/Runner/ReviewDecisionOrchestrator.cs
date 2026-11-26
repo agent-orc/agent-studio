@@ -4896,6 +4896,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             JobId = current.Id,
             Lane = current.State,
             DeliveryIntegratedAtStart = deliveryIntegratedAtStart,
+            RequiredTestLevel = !deliveryIntegratedAtStart && projectSettings is not null
+                && TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast
+                    ? TestExecutionLevels.CompileOnly : null,
             TestExecution = settings?.TestExecution,
             ChangedFileStatuses = gateChanges?.ToDictionary(change => change.Path,
                 change => change.Status, StringComparer.OrdinalIgnoreCase),

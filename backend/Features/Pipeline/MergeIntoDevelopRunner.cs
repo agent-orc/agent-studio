@@ -1542,10 +1542,12 @@ public sealed partial class MergeIntoDevelopRunner
         var postMergeMode = PostMergeModeService.Effective(_postMergeMode, project, settings)
             == IntegrationTestModes.PostMerge
             && !IsReleaseBranch(integrationBranch);
+        var testingStrategy = TestingStrategies.Resolve(settings);
         var review = postMergeMode ? ReviewVerificationStore.Read(jobFolderPath) : null;
         IReadOnlyList<string>? deliveryPaths = null;
         IReadOnlyList<string>? developPaths = null;
-        if (postMergeMode && review is not null
+        if (postMergeMode && PostMergeIntegrationPolicy.NeedsPathEvidence(testingStrategy)
+            && review is not null
             && ReviewSubjectStore.IsValidResultSha(review.ResultSha)
             && !string.IsNullOrWhiteSpace(review.IntegrationTipSha)
             && !string.IsNullOrWhiteSpace(preMergeTip)
@@ -1559,10 +1561,40 @@ public sealed partial class MergeIntoDevelopRunner
                 review.IntegrationTipSha, preMergeTip);
         }
         var postMergeLevel = postMergeMode
-            ? PostMergeIntegrationPolicy.Level(review, preMergeTip, deliveryPaths,
+            ? PostMergeIntegrationPolicy.ForStrategy(testingStrategy, review, preMergeTip, deliveryPaths,
                 developPaths, result.Outcome == MergeIntoIntegrationOutcome.MergedAfterRebase
                     || result.RebasedCommits.Count > 0 || result.ConflictsResolved)
             : null;
+
+        // AGT-4020: a fast card that a post-merge train already compiled with
+        // the cards in front of it stands on that compile, provided its own
+        // merge reproduced exactly the tree the train laid out.
+        if (postMergeLevel == TestExecutionLevels.CompileOnly
+            && TestingStrategies.Normalize(testingStrategy) == TestingStrategies.Fast
+            && TrainCompileFor(repoRoot, jobFolderPath, gatedSha) is { } train)
+        {
+            var reused = new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 0, string.Empty,
+                $"Compiled in post-merge train {train.TrainId} with {train.Members.Count} card(s) "
+                + $"at {Short(train.CompiledSha!)}; no test command runs before the merge in strategy fast.",
+                false, false)
+            {
+                VerdictSource = GateVerdictSource.CacheHit,
+                ExpectedSha = gatedSha,
+                TestedSha = gatedSha,
+            };
+            IntegrationGateReceipts.Record(
+                jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, reused, _timeline,
+                mergeLockWaitMs: _mergeLockWaitMs.Value);
+            IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-finished",
+                level: "post-merge-train", durationMs: 0, outcome: reused.Verdict.ToString(),
+                reuseToken: "post-merge-train", reason: reused.Reason, receipt: train.CompiledSha);
+            IntegrationGateJournal.ClearOwned(jobFolderPath, journalOwner);
+            RecordWindowCoverage(project, jobId, jobFolderPath, gatedSha, testingStrategy, postMergeLevel, train);
+            _logger.LogInformation(
+                "merge-into-develop build gate reused the post-merge train compile for project={Project} job={JobId} integration={Integration} merged={MergedSha} train={TrainId} compiled={CompiledSha}",
+                project, jobId, integrationBranch, gatedSha, train.TrainId, train.CompiledSha);
+            return (result with { GateVerdictReused = true }, reused);
+        }
 
         // AGT-2839: the Remote Review already built, tested, and linted this
         // delivery. Reuse its verdict for the tests and lint - and only for them
@@ -1679,6 +1711,8 @@ public sealed partial class MergeIntoDevelopRunner
         }
         if (PreDevelopBuildGate.IsGreen(gate))
         {
+            if (postMergeLevel is not null)
+                RecordWindowCoverage(project, jobId, jobFolderPath, gatedSha, testingStrategy, postMergeLevel, null);
             _logger.LogInformation(
                 "merge-into-develop build gate passed for project={Project} job={JobId} integration={Integration} merged={MergedSha} verdict={Verdict} reuse={Reuse} reuseReason={ReuseReason} perTaskReuse={PerTaskReason}",
                 project, jobId, integrationBranch, gatedSha, gate.Verdict, reuse.Token, reuse.Reason, perTask.Reason);
@@ -1701,6 +1735,13 @@ public sealed partial class MergeIntoDevelopRunner
         // separately so the card is never marked
         // a conflict and no rebase-recovery steer round is spent chasing a gate
         // environment problem the delivery cannot fix.
+        if (reset.Success && MonolithTransitionAdapter.IsGateQueueOverrun(
+                gate.ViolatedBudget?.Name, gate.ViolatedBudget?.Phase))
+            return (MergeIntoIntegrationResult.Failed(AcceptedIntegrationFailureCodes.GateCapacity,
+                "Gate capacity: the integration merge check could not acquire its reserved slot after 3 admission attempts. "
+                + $"{integrationBranch} was rolled back and nothing was pushed. Retry integration when gate capacity is available.")
+                with { GateExecuted = false }, gate);
+
         var outcome = gate.FailureKind == BuildTestGateFailureKind.Environment
             ? MergeIntoIntegrationOutcome.GateEnvironmentFailure
             : MergeIntoIntegrationOutcome.GateFailed;

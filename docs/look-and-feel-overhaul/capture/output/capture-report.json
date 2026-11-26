@@ -1,0 +1,117 @@
+{
+ "access": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)",
+   "Failed to load resource: the server responded with a status of 404 (Not Found)",
+   "Failed to load resource: the server responded with a status of 404 (Not Found)",
+   "Failed to load resource: the server responded with a status of 404 (Not Found)",
+   "Failed to load resource: the server responded with a status of 404 (Not Found)",
+   "Failed to load resource: the server responded with a status of 404 (Not Found)",
+   "Failed to load resource: the server responded with a status of 404 (Not Found)",
+   "[2026-11-24T00:28:11.959Z] Error: Connection disconnected with error 'Error: Server timeout elapsed without receiving a message from the server.'.",
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/access"
+ },
+ "task-server": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/task-server"
+ },
+ "remote-hosts": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)",
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/environment"
+ },
+ "caps": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/caps"
+ },
+ "prompts": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/prompts"
+ },
+ "retention": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/retention"
+ },
+ "operations": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/operations"
+ },
+ "workspaces": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/workspaces"
+ },
+ "credentials": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/credentials"
+ },
+ "secrets": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/secrets"
+ },
+ "github": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/github"
+ },
+ "orchestrator": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/orchestrator"
+ },
+ "updates": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/updates"
+ },
+ "first-run": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)",
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/first-run"
+ },
+ "appearance": {
+  "pageErrors": [],
+  "consoleErrors": [
+   "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "url": "http://127.0.0.1:38781/#/workspace/settings/appearance"
+ }
+}

@@ -1,165 +1,110 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import {
-  ALL_RUNNER_PROJECTS,
-  formatAccessTime,
-  runHostCommand,
-  type EnrolledRunner,
-  type EnrollmentKind,
-  type RunnerEnrollment,
-} from '../../models/access.model';
-import { ACCESS_CLOCK } from '../../services/access-clock';
-import { AccessService } from '../../services/access.service';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChipComponent } from '../../../../components/chip/chip.component';
+import { DataGridComponent, GridCellDirective } from '../../../../components/data-grid';
+import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
+import type { MenuItem } from '../../../../components/menu';
+import { OverflowMenuComponent } from '../../../../components/overflow-menu/overflow-menu.component';
+import { PageSectionComponent } from '../../../../components/page-section/page-section.component';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { formatAccessTime, type EnrolledRunner, type RunnerEnrollment } from '../../models/access.model';
+import {
+  accessColumns, enrollmentIdentity, enrollmentOpen, enrollmentStatus, enrollmentTone, identityLabel, projectNames, runnerExpiry, runnerIdentity,
+  type EnrollmentStatus, type RunnerExpiry,
+} from '../../models/access-view.model';
+import { ACCESS_CLOCK } from '../../services/access-clock';
+import { AccessSelectionService } from '../../services/access-selection.service';
+import { AccessService } from '../../services/access.service';
 
-/** A credential within this many days of its end is shown as expiring. */
-const EXPIRY_WARNING_DAYS = 14;
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-export interface RunnerExpiry {
-  label: string;
-  /** Null renders the date as plain text: a distant expiry is a fact, not a state. */
-  tone: StatusTone | null;
-  notice: string | null;
+export interface RunnerRow {
+  id: string;
+  name: string;
+  sub: string;
+  runner: EnrolledRunner;
+  identity: string;
+  projects: string;
+  revoked: boolean;
+  expiry: RunnerExpiry;
+  menu: readonly MenuItem[];
 }
 
+export interface EnrollmentRow {
+  id: string;
+  name: string;
+  sub: string;
+  enrollment: RunnerEnrollment;
+  identity: string;
+  projects: string;
+  status: EnrollmentStatus;
+  tone: StatusTone;
+  expires: string;
+  menu: readonly MenuItem[];
+}
+
+const OPEN: MenuItem = { kind: 'row', id: 'open', label: 'Open details' };
+
 /**
- * Runner enrollment codes and enrolled runners (AGT-3186). Runners and the
- * engine authenticate with their enrollment credentials and Runner scopes,
- * not with role bindings. SM-9 binds every runner to an explicit project set
- * and gives each new credential a 30-day lifetime. A run host (F4) holds
- * only runner.deploy and is bound to the projects it deploys.
+ * Enrolled runners and the one-time codes that enroll them (AGT-3186).
+ * Runners and the engine authenticate with their enrollment credentials and
+ * Runner scopes, not with role bindings: the access column shows the identity
+ * and the projects it is bound to (SM-9). A run host (F4) holds only
+ * runner.deploy.
  */
 @Component({
   selector: 'app-access-runners',
   standalone: true,
-  imports: [StatusIndicatorComponent],
+  imports: [ChipComponent, DataGridComponent, EmptyStateComponent, GridCellDirective, OverflowMenuComponent, PageSectionComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-runners.component.html',
   styleUrl: './access-runners.component.scss',
 })
 export class AccessRunnersComponent {
   readonly access = inject(AccessService);
+  readonly selection = inject(AccessSelectionService);
   private readonly now = inject(ACCESS_CLOCK);
-  readonly name = signal('');
-  readonly kind = signal<EnrollmentKind>('runner');
-  readonly code = signal<string | null>(null);
-  /** Set with a run host code: the host commands that enroll it and start its deploy service (F4). */
-  readonly hostCommand = signal<string | null>(null);
-  /** Projects of the next enrollment code; none chosen binds none. */
-  readonly selected = signal<readonly string[]>([]);
-  /** The runner whose projects are being edited, and the draft of its project set. */
-  readonly editing = signal<string | null>(null);
-  readonly draft = signal<readonly string[]>([]);
-  readonly allProjects = ALL_RUNNER_PROJECTS;
-  readonly time = formatAccessTime;
+  readonly runnerColumns = accessColumns('Runner', 'Identity and projects', 'Credential');
+  readonly enrollmentColumns = accessColumns('Code for', 'Identity and projects', 'Expires');
 
-  async create(): Promise<void> {
-    const name = this.name().trim();
-    if (!name || this.access.busy()) return;
-    const kind = this.kind();
-    const created = kind === 'orchestrator'
-      ? await this.access.createEnrollment(name, 'orchestrator')
-      : await this.access.createEnrollment(name, kind, this.selected());
-    if (created) {
-      this.code.set(created.enrollmentCode);
-      this.hostCommand.set(kind === 'deploy' ? runHostCommand(location.origin, created.enrollmentCode) : null);
-      this.name.set('');
-      this.selected.set([]);
-    }
+  readonly runners = computed<RunnerRow[]>(() => this.access.runners().map(runner => {
+    const identity = runnerIdentity(runner);
+    const revoked = !!runner.revokedAt;
+    return {
+      id: runner.id, name: runner.name, sub: runner.id, runner, revoked, identity: identityLabel(identity),
+      projects: identity === 'orchestrator' ? 'Not project-bound' : projectNames(runner.projects, this.access.projects()),
+      expiry: runnerExpiry(runner, this.now()),
+      menu: revoked ? [OPEN] : [
+        OPEN,
+        ...(identity === 'orchestrator' ? [] : [{ kind: 'row', id: 'edit', label: 'Edit projects' } as MenuItem]),
+        { kind: 'separator' }, { kind: 'row', id: 'revoke', label: 'Revoke…', danger: true },
+      ],
+    };
+  }));
+
+  readonly enrollments = computed<EnrollmentRow[]>(() => this.access.enrollments().map(enrollment => {
+    const identity = enrollmentIdentity(enrollment);
+    const status = enrollmentStatus(enrollment, this.now());
+    return {
+      id: enrollment.id, name: enrollment.name, sub: '', enrollment, status, tone: enrollmentTone(status), identity: identityLabel(identity),
+      projects: identity === 'orchestrator' ? 'Not project-bound' : enrollment.projects ? projectNames(enrollment.projects, this.access.projects()) : '',
+      expires: formatAccessTime(enrollment.expiresAt),
+      menu: enrollmentOpen(enrollment, this.now())
+        ? [OPEN, { kind: 'separator' }, { kind: 'row', id: 'revoke', label: 'Revoke…', danger: true }] : [OPEN],
+    };
+  }));
+
+  readonly runnerId = (row: RunnerRow) => row.id;
+  readonly runnerLabel = (row: RunnerRow) => row.name;
+  readonly runnerTestId = (row: RunnerRow) => `access-runner-${row.id}`;
+  readonly runnerMuted = (row: RunnerRow) => row.revoked;
+  readonly enrollmentId = (row: EnrollmentRow) => row.id;
+  readonly enrollmentLabel = (row: EnrollmentRow) => `the code for ${row.name}`;
+  readonly enrollmentTestId = (row: EnrollmentRow) => `access-enrollment-${row.id}`;
+  readonly enrollmentMuted = (row: EnrollmentRow) => row.status === 'Expired or revoked';
+
+  actRunner(action: string, row: RunnerRow): void {
+    this.selection.open('runner', row.id, action === 'revoke' ? 'revoke' : null);
   }
 
-  done(): void {
-    this.code.set(null);
-    this.hostCommand.set(null);
+  actEnrollment(action: string, row: EnrollmentRow): void {
+    this.selection.open('enrollment', row.id, action === 'revoke' ? 'revoke' : null);
   }
-
-  setKind(value: string): void {
-    this.kind.set(value === 'orchestrator' || value === 'deploy' ? value : 'runner');
-  }
-
-  /** Enrollment state on the shared indicator: an open code waits, a used one succeeded. */
-  statusTone(enrollment: RunnerEnrollment): StatusTone {
-    const status = this.status(enrollment);
-    return status === 'Used' ? 'success' : status === 'Open' ? 'info' : 'neutral';
-  }
-
-  toggleSelected(project: string): void {
-    this.selected.set(toggle(this.selected(), project));
-  }
-
-  toggleDraft(project: string): void {
-    this.draft.set(toggle(this.draft(), project));
-  }
-
-  edit(runner: EnrolledRunner): void {
-    this.editing.set(runner.id);
-    this.draft.set(runner.projectsNotice ? [] : [...(runner.projects ?? [])]);
-  }
-
-  cancelEdit(): void {
-    this.editing.set(null);
-  }
-
-  async saveProjects(runner: EnrolledRunner): Promise<void> {
-    if (this.access.busy()) return;
-    const saved = await this.access.updateRunnerProjects(runner.id, this.draft());
-    if (saved !== null) this.editing.set(null);
-  }
-
-  status(enrollment: RunnerEnrollment): 'Used' | 'Open' | 'Expired or revoked' {
-    if (enrollment.usedAt) return 'Used';
-    return this.open(enrollment) ? 'Open' : 'Expired or revoked';
-  }
-
-  open(enrollment: RunnerEnrollment): boolean {
-    return !enrollment.usedAt && Date.parse(enrollment.expiresAt) > this.now();
-  }
-
-  activeCredentials(runner: EnrolledRunner): number {
-    return runner.credentials.filter(credential => !credential.revokedAt).length;
-  }
-
-  /** The engine authenticates with an orchestration credential and is not bound to projects. */
-  isEngine(runner: EnrolledRunner): boolean {
-    return runner.id.startsWith('engine_');
-  }
-
-  projectNames(projects: readonly string[] | null | undefined): string {
-    const list = projects ?? [];
-    if (list.includes(ALL_RUNNER_PROJECTS)) return 'All projects';
-    if (list.length === 0) return 'No project';
-    const names = new Map(this.access.projects().map(project => [project.id.toLowerCase(), project.displayName]));
-    return list.map(project => names.get(project.toLowerCase()) ?? project).join(', ');
-  }
-
-  /** The soonest end among the runner's active credentials, and why one has none. */
-  expiry(runner: EnrolledRunner): RunnerExpiry {
-    const active = runner.credentials.filter(credential => !credential.revokedAt);
-    const unexpiring = active.find(credential => !credential.expiresAt);
-    if (unexpiring)
-      return { label: 'No expiry', tone: 'neutral', notice: unexpiring.expiryNotice ?? null };
-    const ends = active.map(credential => Date.parse(credential.expiresAt!)).filter(value => !Number.isNaN(value));
-    if (ends.length === 0) return { label: '', tone: null, notice: null };
-    const soonest = Math.min(...ends);
-    const days = Math.ceil((soonest - this.now()) / DAY_MS);
-    if (days <= 0) return { label: 'Expired', tone: 'danger', notice: null };
-    if (days <= EXPIRY_WARNING_DAYS)
-      return { label: days === 1 ? 'Expires in 1 day' : `Expires in ${days} days`, tone: 'warning', notice: null };
-    return { label: `Expires ${formatAccessTime(new Date(soonest).toISOString())}`, tone: null, notice: null };
-  }
-
-  async revokeEnrollment(enrollment: RunnerEnrollment): Promise<void> {
-    if (!this.access.busy()) await this.access.revokeEnrollment(enrollment.id);
-  }
-
-  async revokeRunner(runner: EnrolledRunner): Promise<void> {
-    if (!this.access.busy()) await this.access.revokeRunner(runner.id);
-  }
-}
-
-/** Choosing every project replaces single choices, and a single choice leaves "every project". */
-function toggle(current: readonly string[], project: string): readonly string[] {
-  if (current.includes(project)) return current.filter(item => item !== project);
-  if (project === ALL_RUNNER_PROJECTS) return [ALL_RUNNER_PROJECTS];
-  return [...current.filter(item => item !== ALL_RUNNER_PROJECTS), project];
 }

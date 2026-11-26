@@ -142,7 +142,7 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
             File.SetUnixFileMode(prepare, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         // Exercise real command dispatch while keeping the fixture independent of an SDK invocation.
         File.WriteAllText(Path.Combine(seed, "suite.sh"),
-            "#!/bin/sh\necho attempt >> attempts\n"
+            "#!/bin/sh\ncase \"$*\" in *\"dotnet build\"*) exit 0;; esac\necho attempt >> attempts\n"
             + (recovers ? "if [ -f repeated ]; then exit 0; fi\n" : "")
             + "touch repeated\necho '  Failed Runner.Tests.NetworkRemoval(listCommand: \"exit 1\") [1 ms]'\nexit 1\n");
         await Git(seed, "add", ".");
@@ -169,7 +169,9 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         var exit = await new PostMergeRunCommand(options, output, new FixedClock(), http, () => new(0.4, 6))
             .ExecuteAsync(CancellationToken.None);
         Assert.True(exit == (recovers ? 0 : 1), output.ToString());
-        Assert.Equal(2, File.ReadAllLines(Path.Combine(checkout, "attempts")).Length);
+        // RT-3: a failure that stays red is also run twice at the last green SHA, after a
+        // build of the failing test project only.
+        Assert.Equal(recovers ? 2 : 4, File.ReadAllLines(Path.Combine(checkout, "attempts")).Length);
         var terminal = receipts[^1];
         Assert.Equal(recovers ? "green" : "red", terminal.Status);
         Assert.Equal(recovers ? 1 : 0, terminal.FlakyCount);
@@ -181,6 +183,8 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
             Assert.Empty(terminal.Failure.SuspectMerges);
             Assert.Null(terminal.Failure.AttributedMerge);
             Assert.True(terminal.Failure.NoRelevantMerges);
+            Assert.Equal(PostMergeClassificationHints.Environment, terminal.Failure.Attribution!.Classification);
+            Assert.Equal(["fail", "fail"], terminal.Failure.Attribution.ControlResults);
         }
     }
 

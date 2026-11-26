@@ -69,9 +69,23 @@ A change at layer N must not duplicate a fact at layer N-1. A button never hardc
 | Notification       | [`<app-notification>`](../../../../frontend/src/app/components/notification/notification.component.ts)                | floating toast / full-bleed notice bar | ✅ shipped (F37)  |
 | Tooltip            | [`[appTooltip]`](../../../../frontend/src/app/components/tooltip/app-tooltip.directive.ts) directive   | instant HTML body                 | ✅ shipped        |
 | Empty state        | [`<app-empty-state>`](../../../../frontend/src/app/components/empty-state/empty-state.component.ts)                    | default + named                   | ✅ shipped        |
+| Page section       | [`<app-page-section>`](../../../../frontend/src/app/components/page-section/page-section.component.ts)                | `level=section\|sub`, count, purpose, one primary action | 🟡 pilot (AGT-4029) |
+| Page outline       | [`<app-page-outline>`](../../../../frontend/src/app/components/page-outline/page-outline.component.ts)                | `orientation=vertical\|horizontal` | 🟡 pilot (AGT-4029) |
+| Data grid          | [`<app-data-grid>`](../../../../frontend/src/app/components/data-grid/data-grid.component.ts)                         | columns by role, selectable, stacked when narrow | 🟡 pilot (AGT-4029) |
+| Master and detail  | [`<app-detail-layout>`](../../../../frontend/src/app/components/detail-layout/detail-layout.component.ts)             | push panel / sheet when narrow    | 🟡 pilot (AGT-4029) |
+| Neutral chip       | [`<app-chip>`](../../../../frontend/src/app/components/chip/chip.component.ts)                                        | `emphasis=default\|strong\|quiet`, optional second segment | 🟡 pilot (AGT-4029) |
+| Confirm in place   | [`<app-inline-confirm>`](../../../../frontend/src/app/components/inline-confirm/inline-confirm.component.ts)          | two-way `armed`                   | 🟡 pilot (AGT-4029) |
+| Secret reveal      | [`<app-secret-reveal>`](../../../../frontend/src/app/components/secret-reveal/secret-reveal.component.ts)             | copy + dismiss                    | 🟡 pilot (AGT-4029) |
+| Row context menu   | [`<app-overflow-menu>`](../../../../frontend/src/app/components/overflow-menu/overflow-menu.component.ts)             | on `<app-menu>`                   | 🟡 pilot (AGT-4029) |
 | Free-form button   | _none_                                                                                                          | —                                 | ⚠️ **gap** — see [buttons.md](./buttons.md) "Open question: do we need `<app-button>`?" |
 | Card surface       | _none_                                                                                                          | —                                 | ⚠️ **gap** — see [cards.md](./cards.md) "Open question: do we need `<app-card>`?" |
 | Form controls      | _none_                                                                                                          | —                                 | ⚠️ **gap** — see [forms.md](./forms.md) "Audit + open question" |
+
+The "pilot" rows were built for the Access page pilot. Their rules, with a
+screenshot each, are in
+[docs/system/ui-standard/access-page-pilot.md](../../../system/ui-standard/access-page-pilot.md);
+they become canonical once the owner has reviewed that page, and no other
+surface adopts them before that.
 
 The "gap" rows are intentional. The audit pages enumerate every existing implementation so we can decide whether to extract a canonical component or stay with per-feature SCSS. The decision lands in [migration-status.md](./migration-status.md) as a queued task, never inline here.
 

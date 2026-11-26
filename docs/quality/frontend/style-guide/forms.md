@@ -22,6 +22,17 @@ Every form control in the shell should match this shape:
 
 Two heights, two paddings, the rest shared.
 
+## Shipped mixins (AGT-4029)
+
+`m.form-control($size)` and `m.form-field` are in
+[`_mixins.scss`](../../../../frontend/src/styles/_mixins.scss). They follow the
+table above, with two deliberate readings of it: the background is
+`--studio-bg-surface` and the resting border `--studio-border-strong`, so a
+field stays visible on the flat admin surface in both themes; heights and type
+sizes read `--studio-action-height-sm`, `--studio-row-min-h-interactive` and
+`--studio-font-size-*` instead of raw px. The Access page is the first
+consumer. The sketch below is the original proposal.
+
 ## Proposed mixin
 
 Today every form-control SCSS rebuilds the recipe. The right next step is a mixin:
