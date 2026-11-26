@@ -1719,7 +1719,10 @@ target contract and lifecycle matrix are in
 `PUT /api/projects/{project}/testing` requires `project.settings.write`, held
 by the Owner and Admins of that project. Developers and Viewers cannot change
 it. Project settings shows the strategy control to project Admins as well as
-the Owner. A successful change still rebuilds queued review plans.
+the Owner. A successful change still rebuilds queued review plans. The change also
+uses the asynchronous batch-gate strategy handoff and returns its transition
+summary. Its old and new strategy values come from the settings service
+mutation, including when the requested strategy already matches.
 
 For operator sessions, the catalogue operation `project.testing.set` is T2
 with project scope. A session with read access to the project can request an

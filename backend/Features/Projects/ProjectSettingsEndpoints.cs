@@ -1325,7 +1325,7 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(TestingView(projectName, settings, postMergeMode, coverage));
         });
 
-        app.MapPut("/api/projects/{projectName}/testing", (
+        app.MapPut("/api/projects/{projectName}/testing", async (
             string projectName,
             HttpContext context,
             ControlPlaneAuditLog audit,
@@ -1337,7 +1337,9 @@ public static class ProjectSettingsEndpoints
             RemoteReviewPlanBuilder remoteReviewPlans,
             ReviewAttemptTaskLifecycleService reviewLifecycle,
             PostMergeModeService postMergeMode,
-            PostMergeCoverageService coverage) =>
+            PostMergeCoverageService coverage,
+            BatchGatePilotService batchGate,
+            CancellationToken ct) =>
         {
             var known = scanner.GetWatchPaths().Any(entry =>
                 string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
@@ -1350,14 +1352,16 @@ public static class ProjectSettingsEndpoints
                 });
             if (!TestingStrategies.IsKnown(req.Strategy))
                 return Results.BadRequest(new { error = "strategy must be 'fast', 'balanced' or 'strict'." });
-            var (oldStrategy, newStrategy) = settings.SetTestingStrategy(projectName, req.Strategy);
+            var transition = await batchGate.SwitchTestingStrategyAsync(projectName, req.Strategy!, ct);
+            var oldStrategy = transition.PreviousStrategy;
+            var newStrategy = transition.Strategy;
             var reason = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal { Operator: not null }
                 ? AccessSecurityMiddleware.StatedReason(context.Request.Headers[OperatorApprovalHeaders.Reason].ToString()) : null;
             audit.Append(new ControlPlaneAuditRecord(ControlPlaneAuditStreams.Operator,
                 AgentStudio.Operator.OperatorEndpoints.Actor(context), OperatorOperationIds.ProjectTestingSet,
                 "updated", projectName, Details: new { project = projectName, oldStrategy, newStrategy, reason }));
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
-            return Results.Ok(TestingView(projectName, settings, postMergeMode, coverage));
+            return Results.Ok(TestingView(projectName, settings, postMergeMode, coverage, transition));
         }).RequirePermission(IamPermissions.ProjectSettingsWrite);
 
         // AGT-3400 S4: review.package. Shadow forms Dossier wave packages beside
@@ -1911,13 +1915,14 @@ public static class ProjectSettingsEndpoints
     /// </summary>
     /// <summary>The testing answer of the settings routes (AGT-3965).</summary>
     private static object TestingView(string projectName, ProjectSettingsService settings,
-        PostMergeModeService postMergeMode, PostMergeCoverageService coverage)
+        PostMergeModeService postMergeMode, PostMergeCoverageService coverage, GateStrategyTransition? transition = null)
     {
         var projectSettings = settings.Get(projectName);
         var strategy = TestingStrategies.Resolve(projectSettings);
         return new
         {
             strategy,
+            transition,
             stored = projectSettings.Testing?.Strategy is not null,
             sentence = TestingStrategies.Sentence(strategy),
             perCard = PerCardTestModes.Resolve(projectSettings),

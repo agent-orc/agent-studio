@@ -122,6 +122,12 @@ public sealed class OperatorApprovalFlowTests : IDisposable
             Assert.StartsWith("human:", entry.Actor);
             Assert.Equal("fast", entry.Details!.Value.GetProperty("oldStrategy").GetString());
             Assert.Equal("balanced", entry.Details.Value.GetProperty("newStrategy").GetString());
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var transition = body.GetProperty("transition");
+            Assert.Equal(entry.Details.Value.GetProperty("oldStrategy").GetString(),
+                transition.GetProperty("previousStrategy").GetString());
+            Assert.Equal(entry.Details.Value.GetProperty("newStrategy").GetString(),
+                transition.GetProperty("strategy").GetString());
         }
         else Assert.Empty(entries);
         using var owner = await OwnerClientAsync(factory);

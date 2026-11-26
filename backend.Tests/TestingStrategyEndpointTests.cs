@@ -68,6 +68,16 @@ public sealed class TestingStrategyEndpointTests : IDisposable
         Assert.Equal(["fast", "balanced", "strict"], testing.GetProperty("strategies").EnumerateArray()
             .Select(item => item.GetProperty("id").GetString()));
 
+        // Saving the default is still an explicit stored choice, without a gate transition.
+        using (var same = await client.PutAsJsonAsync($"/api/projects/{Project}/testing", new { strategy = "FAST" }))
+        {
+            same.EnsureSuccessStatusCode();
+            var saved = await same.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.True(saved.GetProperty("stored").GetBoolean());
+            Assert.Equal("fast", saved.GetProperty("transition").GetProperty("strategy").GetString());
+            Assert.Empty(saved.GetProperty("transition").GetProperty("cards").EnumerateArray());
+        }
+
         using (var legacy = await client.PutAsJsonAsync($"/api/projects/{Project}/testing", new { perCard = "full" }))
         {
             Assert.Equal(HttpStatusCode.BadRequest, legacy.StatusCode);
@@ -80,6 +90,10 @@ public sealed class TestingStrategyEndpointTests : IDisposable
         strict.EnsureSuccessStatusCode();
         var written = await strict.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("strict", written.GetProperty("strategy").GetString());
+        var transition = written.GetProperty("transition");
+        Assert.Equal("fast", transition.GetProperty("previousStrategy").GetString());
+        Assert.Equal("strict", transition.GetProperty("strategy").GetString());
+        Assert.Empty(transition.GetProperty("cards").EnumerateArray());
         Assert.True(written.GetProperty("stored").GetBoolean());
         Assert.Equal("full", written.GetProperty("perCard").GetString());
         Assert.Equal("pre-merge", written.GetProperty("mode").GetString());
