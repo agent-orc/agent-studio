@@ -81,5 +81,5 @@ export function shortThumbprint(thumbprint: string | null | undefined): string {
 }
 
 export function deviceBindingLabel(kind: string | null | undefined): string {
-  return kind === 'tpm' ? 'TPM key' : kind === 'secure-enclave' ? 'Secure Enclave key' : 'Memory key';
+  return kind === 'tpm' ? 'TPM key (not yet verified on real hardware)' : kind === 'secure-enclave' ? 'Secure Enclave key (not yet verified on real hardware)' : 'Memory key';
 }

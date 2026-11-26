@@ -766,7 +766,15 @@ binding's protection, as the Dossier states.
 
 ### Hardware device certification (ES-5)
 
-Decisions ES-D3 B2 (hardware part) and ES-D4 A: `studio-op` detects Windows
+Decisions ES-D3 B2 (hardware part) and ES-D4 A, amended by the operator on
+26 November 2026: hardware providers are **not yet verified on real hardware**
+and off by default on every platform. The default is the tested software memory
+key. Explicit per-platform `hardwareDeviceKeys` settings in `studio-op.json`
+(`win32`, `darwin`, `linux`, literal JSON `true`) opt in to that platform only.
+Confirmation, device and session labels mark hardware as not yet verified on real
+hardware. Provider opening, signing or certification verification failures fall
+back to memory binding with one clear login note and sign-in continues.
+`studio-op` supports Windows
 TPM through the per-user Microsoft Platform Crypto Provider, macOS Secure
 Enclave through the bundled Swift helper, or Linux TPM through the OpenSSL
 `tpm2` provider backed by `tpm2-tss`. All use P-256 and non-exportable private

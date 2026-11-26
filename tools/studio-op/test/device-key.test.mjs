@@ -12,7 +12,7 @@ test('missing hardware and failing hardware signing both fall back with a clear 
   try {
     for (const Provider of [class { constructor() { throw new Error('Absent'); } },
       class extends MemoryKeyProvider { sign() { throw new Error('Unavailable'); } }]) {
-      const { provider, note } = openDeviceKey(dir, { platform: 'fake', providers: { fake: Provider } });
+      const { provider, note } = openDeviceKey(dir, { platform: 'fake', hardwareDeviceKeys: { fake: true }, providers: { fake: Provider } });
       assert.equal(provider.bindingKind, 'memory');
       assert.match(note, /Hardware key unavailable/);
       assert.equal(certifySession(provider, 'session', 'signin'), null);
@@ -40,7 +40,7 @@ test('copying device configuration to a second fake machine does not copy a usab
   };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'device-copy-'));
   try {
-    const result = openDeviceKey(dir, { platform: 'fake', providers: { fake: FakeProvider } });
+    const result = openDeviceKey(dir, { platform: 'fake', hardwareDeviceKeys: { fake: true }, providers: { fake: FakeProvider } });
     assert.equal(result.provider.bindingKind, 'memory');
     assert.notEqual(keyThumbprint(result.provider.publicJwk), keyThumbprint(original.publicJwk));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -53,3 +53,25 @@ test('TPM DER signatures convert to the P1363 wire format', () => {
   assert.equal(signature.length, 64);
   assert.ok(crypto.verify('sha256', data, { key: publicKey, dsaEncoding: 'ieee-p1363' }, signature));
 });
+
+for (const platform of ['win32', 'darwin', 'linux']) {
+  test(`${platform} hardware is disabled unless that platform is explicitly enabled`, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'device-opt-in-'));
+    let opened = 0;
+    class FakeProvider extends MemoryKeyProvider {
+      constructor() { super(); opened++; this.bindingKind = platform === 'darwin' ? 'secure-enclave' : 'tpm'; }
+    }
+    try {
+      for (const hardwareDeviceKeys of [{}, { other: true }, { [platform]: 'true' }, { [platform]: false }]) {
+        const result = openDeviceKey(dir, { platform, hardwareDeviceKeys, providers: { [platform]: FakeProvider } });
+        assert.equal(result.provider.bindingKind, 'memory');
+        assert.match(result.note, /off by default and not yet verified on real hardware/);
+      }
+      assert.equal(opened, 0);
+      const result = openDeviceKey(dir, { platform, hardwareDeviceKeys: { [platform]: true }, providers: { [platform]: FakeProvider } });
+      assert.equal(opened, 1);
+      assert.equal(result.provider.bindingKind, platform === 'darwin' ? 'secure-enclave' : 'tpm');
+      assert.match(result.note, /not yet verified on real hardware/);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+}

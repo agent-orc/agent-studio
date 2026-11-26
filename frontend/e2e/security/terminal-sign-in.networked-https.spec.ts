@@ -150,8 +150,8 @@ test('studio-op login yields a session only after the Owner confirms with a fres
   await expect(panel.getByTestId('terminal-sign-in-code')).toHaveText(code);
   await expect(panel.getByTestId('terminal-sign-in-device')).toHaveText('opsagent@e2e-workstation');
   await expect(panel.getByTestId('terminal-sign-in-known')).toContainText('Unknown device');
-  const bindingLabel = login.stderr().includes('Device binding: tpm (') ? 'TPM key'
-    : login.stderr().includes('Device binding: secure-enclave (') ? 'Secure Enclave key' : 'Memory key';
+  const bindingLabel = login.stderr().includes('Device binding: tpm (') ? 'TPM key (not yet verified on real hardware)'
+    : login.stderr().includes('Device binding: secure-enclave (') ? 'Secure Enclave key (not yet verified on real hardware)' : 'Memory key';
   await expect(panel.getByTestId('terminal-sign-in-binding')).toHaveText(bindingLabel);
   await expect(panel.getByTestId('terminal-sign-in-address-match')).toContainText('Same network as this browser');
   await expect(panel.getByTestId('terminal-sign-in-agent')).toHaveValue(agentId);

@@ -50,6 +50,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 ## Load-Bearing Entry Points
 
 | Topic | Start here |
+| Manual Windows TPM and macOS Secure Enclave probe | [operator-elevated-session/hardware-probe.md](../operator-elevated-session/hardware-probe.md) |
 |---|---|
 | Library release commands and branches | [operations/setup/library-releases.md](../operations/setup/library-releases.md) |
 | Product installer for Windows and Linux (for published releases; none exists yet) | [operations/setup/install.md](../operations/setup/install.md) |

@@ -146,8 +146,14 @@ classes stay recorded only until ES-7.
 
 ### Hardware device keys (ES-5)
 
-Decisions ES-D3 B2 and ES-D4 A use a hardware device key where available and
-an explicit memory fallback otherwise. Login prints `Device binding: tpm`,
+Decisions ES-D3 B2 and ES-D4 A retain hardware providers under the operator's
+26 November 2026 decision: **not yet verified on real hardware**, off by default
+on every platform. The default is the tested resident software memory key.
+To opt in, add `"hardwareDeviceKeys": { "win32": true }` to the agent user's
+`~/.config/agent-studio/studio-op.json`. Use `darwin` for macOS or `linux` for
+Linux; only the current platform's literal JSON `true` enables its provider.
+Remove the setting or set it to `false` to return to the default.
+Hardware labels in the product include **not yet verified on real hardware**. Login prints `Device binding: tpm`,
 `secure-enclave` or `memory`; the confirmation page and session row show
 **TPM key**, **Secure Enclave key** or **Memory key** in both themes. The
 hardware key signs only the login certification. Request proofs continue to
@@ -170,17 +176,11 @@ state is preserved, so temporary permission failures do not replace identity.
 To intentionally replace it, first forget the device in Studio, end its
 sessions, and remove the wrapped blob (or the named CNG key) as that OS user.
 
-For a platform check, run
-`node tools/studio-op/test/hardware-key.manual.mjs` as the agent user. It fails
-if hardware is unavailable, checks signing and persistence, and reports only
-public evidence. Then run `studio-op login`, confirm, and check that the
-confirmation and session row have the same binding kind. For a copy check,
-copy just the configuration directory to a second machine with a different
-TPM or Secure Enclave and repeat the probe and login: the copied wrapped key
-must fail to sign, or Windows must create its own different user/device key;
-it must never recognize the original device. Keep output and screenshots for
-each platform. An isolated vTPM is suitable for Linux CI, but its state must
-not be copied with the configuration directory.
+The [five-line manual probe instructions](../../operator-elevated-session/hardware-probe.md)
+cover Windows TPM and macOS Secure Enclave checks. Run them only on the target
+hardware; this delivery does not claim Windows or macOS platform execution.
+The probe never silently accepts a memory fallback. For a copy check, copy only
+the configuration directory to an independent machine, never its TPM state.
 
 These signatures prove possession of the confirmed device key, not a
 manufacturer attestation of the reported binding kind. Processes running as
@@ -349,7 +349,8 @@ refusal codes are listed in the
 - **End session** ends one session at once and leaves the agent and its other
   sessions working; **Disable** ends the agent and every session. A session
   also ends when your Owner role ends.
-- A session from a terminal sign-in shows **Memory key**, its device label, key thumbprint and
+- A session from a terminal sign-in shows its binding kind (hardware kinds include
+  **not yet verified on real hardware**), device label, key thumbprint and
   the terminal's address at confirmation in the session row. **Known devices**
   under the agent lists each confirmed device key with its last confirmation
   and last use; **Forget device** ends its sessions at once, and its next

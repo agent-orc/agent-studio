@@ -76,12 +76,12 @@ export async function login(ctx, options, { wait = sleep, now = () => Date.now()
     const started = await ctx.client.request('POST', START_PATH, { body: {
       publicKey: key.publicJwk, deviceLabel: label, operatorAgent: options.agent ?? null, classes: options.class ?? [],
     } });
-    const { provider, note } = deviceKeyFactory(ctx.configDir);
-    ctx.output.note(note);
+    const { provider, note } = deviceKeyFactory(ctx.configDir, { hardwareDeviceKeys: ctx.config.hardwareDeviceKeys });
     let certification;
+    let bindingNote = note;
     try { certification = certifySession(provider, key.thumbprint, started.signInId); }
     catch {
-      ctx.output.note('Device binding: memory. Hardware signing failed; this sign-in uses the resident session key.');
+      bindingNote = 'Device binding: memory. Hardware signing failed; this sign-in uses the resident session key.';
     }
     if (certification) {
       const { proof } = await agentCall(key.endpoint, { operation: 'poll', url: String(ctx.client.url(POLL_PATH)), pollHandle: started.pollHandle });
@@ -89,8 +89,9 @@ export async function login(ctx, options, { wait = sleep, now = () => Date.now()
       const certified = await ctx.client.send('POST', POLL_PATH, { body: { pollHandle: started.pollHandle, certification }, headers: { DPoP: proof } });
       if (certified.status !== 200) throw failure('POST', POLL_PATH, certified);
       if (certified.body?.bindingKind !== provider.bindingKind)
-        ctx.output.note('Device binding: memory. Studio could not verify the device certification; this device is unknown.');
+        bindingNote = 'Device binding: memory. Studio could not verify the device certification; this device is unknown.';
     }
+    ctx.output.note(bindingNote);
     ctx.output.note([
       '',
       `Confirm this sign-in in Studio as the Owner, with your second factor.`,

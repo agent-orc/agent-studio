@@ -707,7 +707,7 @@ test('owner opens and closes a break-glass window with two fresh factor checks',
   await shoot(page, 'section[aria-labelledby="access-break-glass-title"]', 'break-glass-closed');
 });
 
-for (const [kind, label] of [['tpm', 'TPM key'], ['secure-enclave', 'Secure Enclave key'], ['memory', 'Memory key']]) {
+for (const [kind, label] of [['tpm', 'TPM key (not yet verified on real hardware)'], ['secure-enclave', 'Secure Enclave key (not yet verified on real hardware)'], ['memory', 'Memory key']]) {
   test(`hardware binding ${kind} appears on confirmation and session rows in both themes`, async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1200 });
     mkdirSync(resultDir, { recursive: true });

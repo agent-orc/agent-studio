@@ -102,10 +102,12 @@ export function derToP1363(der) {
   return Buffer.concat(values);
 }
 
-export function openDeviceKey(configDir, { platform = process.platform, providers = {
+export function openDeviceKey(configDir, { platform = process.platform, hardwareDeviceKeys = {}, providers = {
   win32: WindowsTpmKeyProvider, darwin: SecureEnclaveKeyProvider, linux: LinuxTpmKeyProvider,
 } } = {}) {
   fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
+  if (hardwareDeviceKeys?.[platform] !== true) return { provider: new MemoryKeyProvider(), note:
+    'Device binding: memory. Hardware keys are off by default and not yet verified on real hardware.' };
   try {
     const Provider = providers[platform];
     if (!Provider) throw new Error('No platform provider.');
@@ -114,7 +116,7 @@ export function openDeviceKey(configDir, { platform = process.platform, provider
     const probe = crypto.randomBytes(32);
     if (!crypto.verify('sha256', probe, { key: crypto.createPublicKey({ key: provider.publicJwk, format: 'jwk' }),
       dsaEncoding: 'ieee-p1363' }, provider.sign(probe))) throw new Error('Provider signature failed.');
-    return { provider, note: `Device binding: ${provider.bindingKind} (${keyThumbprint(provider.publicJwk)}).` };
+    return { provider, note: `Device binding: ${provider.bindingKind} (${keyThumbprint(provider.publicJwk)}), not yet verified on real hardware.` };
   } catch {
     return { provider: new MemoryKeyProvider(), note:
       'Device binding: memory. Hardware key unavailable, inaccessible or unusable; using the resident session key. See the operator agent setup guide.' };

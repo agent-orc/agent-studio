@@ -8,10 +8,10 @@ import { openDeviceKey, certifySession } from '../src/device-key.mjs';
 import { keyThumbprint } from '../src/agent.mjs';
 
 const configDir = process.argv[2] ?? path.join(os.homedir(), '.config', 'agent-studio');
-const { provider, note } = openDeviceKey(configDir);
+const { provider, note } = openDeviceKey(configDir, { hardwareDeviceKeys: { [process.platform]: true } });
 console.log(note);
 assert.notEqual(provider.bindingKind, 'memory', 'Hardware execution evidence requires an available hardware provider.');
-const again = openDeviceKey(configDir).provider;
+const again = openDeviceKey(configDir, { hardwareDeviceKeys: { [process.platform]: true } }).provider;
 assert.equal(keyThumbprint(again.publicJwk), keyThumbprint(provider.publicJwk), 'Device key must persist across opens.');
 const session = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' });
 const signInId = crypto.randomUUID();
