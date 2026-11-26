@@ -162,6 +162,8 @@ public static class TaskReferenceKinds
 /// </summary>
 public record SetTaskReferencesRequest
 {
+    /// <summary>Optional compare-and-swap snapshot for reversible API operations.</summary>
+    public TaskReferences? ExpectedReferences { get; init; }
     public List<TaskDependencyReference>? DependsOn { get; init; }
     public List<string>? RelatedTo { get; init; }
     public List<string>? BlockedBy { get; init; }

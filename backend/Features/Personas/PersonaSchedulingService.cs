@@ -98,6 +98,32 @@ public sealed class PersonaSchedulingService
         lock (_gate) return BudgetLocked(Load(workspaceId), now, workspaceLimit, activations);
     }
 
+    /// <summary>Reserve one Packer text call in the same weekly ledger as persona sessions.
+    /// An interrupted call keeps its reservation; retrying the receipt never spends twice.</summary>
+    public bool ReserveRecut(string workspaceId, string key, string project, DateTime now,
+        IReadOnlyList<PersonaActivationV1> activations, long envelope)
+    {
+        lock (_gate)
+        {
+            var state = Load(workspaceId);
+            if (state.Receipts.Any(r => r.Key == key)) return false;
+            var activation = activations.FirstOrDefault(a => a.PersonaId == "packer"
+                && a.State is PersonaStates.Active or PersonaStates.Shadow);
+            var budget = BudgetLocked(state, now, null, activations);
+            var allowance = budget.Personas.GetValueOrDefault("packer");
+            if (activation is null || allowance is null || envelope <= 0
+                || budget.Personas.Values.Sum(p => p.AllowanceTokens) > budget.PoolTokens
+                || allowance.UsedTokens + envelope > allowance.AllowanceTokens
+                || budget.UsedTokens + envelope > budget.PoolTokens
+                || allowance.UsedSessions >= allowance.AllowanceSessions) return false;
+            var row = new PersonaOccurrenceReceipt(key, workspaceId, "packer", "dispatcher",
+                activation.DescriptorRevision, now, now, PersonaOccurrenceStates.Admitted, "dispatch.recut.text",
+                [project], null, InputTokens: envelope, Project: project);
+            Save(workspaceId, state with { Receipts = [.. state.Receipts, row] });
+            return true;
+        }
+    }
+
     public void SetBudget(string workspaceId, long? poolTokens, int maxOpenPerWorkspace,
         long activeAllowances = 0)
     {

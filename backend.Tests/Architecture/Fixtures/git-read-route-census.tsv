@@ -248,6 +248,7 @@
 /api/projects/{project}/dispatch/hub-files	free	-	-	-
 /api/projects/{project}/dispatch/mode	free	-	-	-
 /api/projects/{project}/dispatch/personas	free	-	-	-
+/api/projects/{project}/dispatch/recuts	free	-	-	-
 /api/projects/{project}/dispatch/review	free	-	-	-
 /api/projects/{projectName}/environments	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/health	reachable	gap	Deploy and environments	Environment declarations from the Git fact store

@@ -937,3 +937,82 @@ The persona read route includes live plan and run receipts. Ready cards expose
 wait and optional expiry. The browser clears an expired hold on its clock tick.
 Working decisions DS-D1 through DS-D10 remain option B; rollout, scoring and
 recut workflows remain in their designated slices.
+
+## Packer wave recuts (AGT-3999, DS-9)
+
+`DispatchRecutPolicy` owns deterministic cuts of one explicitly identified source
+wave. Packages require every pair to share two non-hub forecast files, at most
+three source findings in total, and a combined source prior of at most 25 code
+files. The prior is the median real code-file count of earlier delivered cards
+of that source kind from DS-1 delivery records. Missing history stays unknown
+and prevents a package. Remaining overlap components form source-order chains
+with `origin: dispatch:packer`. More than three forecast modules, a prior above
+25, or a collection touching a conflict-hot module yields an owner split
+proposal. Hot parts name the module and the cluster cards they must follow;
+cold collections stay whole. Hot evidence uses the existing 14-day window.
+
+All Dossier decisions DS-D1 through DS-D10 retain option B. In particular,
+Packer stays in shadow by default. `AddDispatch` registers the recut services.
+The API is an owner-triggered wave boundary for source integration in DS-10:
+
+- `POST /api/projects/{project}/dispatch/recuts/waves/{wave}` accepts
+  `{ "cards": [{ "key": "P-1", "findingRefs": ["finding:source-1"] }], "apply": false }`.
+  Array order is source order. Canonical keys and finding references are
+  recorded immutably for that wave and application mode. Reusing the wave with
+  different membership is refused. No model predicts the cut or the prior.
+- `GET /api/projects/{project}/dispatch/recuts` reads saved plans, texts,
+  source snapshots, proposals, replacement keys and recovery state.
+- `POST /api/projects/{project}/dispatch/recuts/{id}/undo` restores original
+  references and lanes and archives replacement cards during the 24-hour
+  window. It preserves later owner edits and refuses undo once an affected
+  card has started. Undo is repeat-safe and resumes an interrupted undo.
+
+`apply: true` still requires live project mode, active scoped Packer and its
+fenced, unexpired lease certifying live standing grants. The same lease fence
+is checked before every mutating API call. Owner-written or started cards,
+owner pins and urgent cards, incompatible execution settings, cross-Dossier
+packages and cards with incoming dependencies remain proposals. The incoming
+edge restriction prevents archiving from satisfying a foreign dependency
+prematurely. No T2 bypass is redeemed by this API. Split cuts always remain
+proposals. Accepting a recut feed item records the owner's choice without
+promoting another Dossier or bypassing the recut checks.
+
+Application uses the existing task creation, reference and move HTTP endpoints,
+with the caller's authentication, CSRF and project authorization. Connections
+are pinned to the current listener; redirects and proxies are disabled.
+`MoveJobRequest.expectedSourceState` and `requireUnstarted` fence staging under
+the existing local and remote claim gate. Ready members first stage in Backlog.
+References retain existing gate flags and origins; the reference endpoint
+performs its existing DAG check. Merged cards retain complete source prompts,
+finding references and `supersedes` links to every original. Originals are
+archived with a `relatedTo` pointer, never deleted. New packages stay in Backlog;
+unmerged chain members regain their original lane. No lane order field changes.
+
+A durable receipt precedes model work and every replacement identity. Retry
+uses deterministic creation slugs and saved snapshots; partial applications
+can be retried or undone. Recut receipts also enter the hash-chained dispatcher
+log. One optional Claude one-shot drafts all titles and coordination prefaces
+for a wave within the Packer allowance. The complete source prompts are always
+appended verbatim. A 16,000-token reservation shares the persona scheduling
+ledger and weekly pool; an uncertain or unmetered call retains that charge.
+Missing allowance, paused model work, oversized input, invalid output or a
+failed call produces the full deterministic concatenation stub. There is no
+model retry. DS-10 owns automatic source emission; DS-11 owns promotion and
+wave-window rollout. This slice neither promotes Packer nor changes admission.
+
+A recut archive also carries `MoveJobRequest.dispatchRecutId`. The pure
+`DispatchRecutPolicy.MayArchive` admits only a recorded package original while
+applying under the same live lease, or its unstarted replacement while the
+owner's undo is in progress. The saved window must remain open, original cards
+must link to their replacement, and foreign incoming dependencies refuse the
+permit. The application-issued permit is checked again inside the keyed lane
+writer. This is archival of untouched recut work, with no completion claim or
+archive override; the ordinary delivery guard continues to protect every
+started or unrelated coding card.
+
+Reference writes also pass `SetTaskReferencesRequest.expectedReferences`.
+`TaskMutationService` compares that snapshot under the same task JSON lock as
+the atomic write, returning `references-changed` on a concurrent edit. Recut
+apply and undo always use this fence; legacy callers may omit it. Replacement
+creation keeps the automated source family and appends the Packer receipt id,
+so subsequent real deliveries continue to inform the source's size prior.
