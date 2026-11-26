@@ -66,6 +66,20 @@ describe('offlineGuardInterceptor', () => {
     expect(ok).toBe(true);
   });
 
+  it('lets the terminal sign-in code lookup through while offline, but not its confirmation', () => {
+    const { http, httpMock } = configure(true);
+    let looked = false;
+    let refused = false;
+
+    http.post('/api/auth/iam/operator-sign-ins/lookup', { code: 'WDJBMJHT' }).subscribe({ next: () => (looked = true) });
+    httpMock.expectOne('/api/auth/iam/operator-sign-ins/lookup').flush({});
+    http.post('/api/auth/iam/operator-sign-ins/confirm', { code: 'WDJBMJHT' }).subscribe({ error: () => (refused = true) });
+    httpMock.expectNone('/api/auth/iam/operator-sign-ins/confirm');
+
+    expect(looked).toBe(true);
+    expect(refused).toBe(true);
+  });
+
   it.each([...AUTH_GATE_POST_URLS])(
     'lets %s through while the live-update socket is offline', (url) => {
       const { http, httpMock } = configure(true);

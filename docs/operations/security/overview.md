@@ -691,7 +691,8 @@ D1, D4, and D11).
   a service account of origin `operator-agent` (id `opa_*`) with role bindings
   like any service account, but no `sat.*` token. Its credentials are child
   sessions. The Owner creates the agent and starts each session in Settings →
-  Access → Operator agents (`/api/auth/iam/operator-agents`).
+  Access → Operator agents (`/api/auth/iam/operator-agents`), or confirms a
+  terminal sign-in that `studio-op login` started (ES-3, below).
 - Each session receives its own `oas.*` bearer, returned once and stored only
   as a hash. A session lasts 1 to 8 hours (default 8). Only an active Owner
   starts, renews (again at most 8 hours from the renewal), or revokes it;
@@ -713,6 +714,134 @@ D1, D4, and D11).
 - The operator agent runs on the Owner's machine under its own OS user,
   without the Owner's SSH agent, keys, or credential files (D11). See the
   [operator agent setup guide](../setup/operator-agent.md).
+
+### Proof-of-possession binding (ES-4)
+
+Decisions ES-D3 B2 and ES-D4 A: every terminal sign-in binds its `oas.*`
+session to the fresh P-256 session key held only in `studio-op agent` memory.
+Hardware certification of that session key belongs to ES-5. The old Settings
+path alone issues unbound sessions; their rows say **Unbound**, while terminal
+session rows say **Memory key**. Existing terminal sessions need a new login
+because their former disk keys are no longer used.
+
+The access middleware validates [RFC 9449](https://www.rfc-editor.org/rfc/rfc9449.html)
+compact JWS proofs before route exemptions, cookie fallback and authorization:
+`typ: dpop+jwt`, `alg: ES256`, a public EC P-256 `jwk` matching the recorded
+RFC 7638 thumbprint, the ES256 signature, exact `htm`, normalized `htu` without
+query or fragment, `iat` within 60 seconds in either direction, a nonempty
+`jti` and `ath` (base64url SHA-256 of the session token). It reconstructs the
+public URI from the scheme and host resolved by trusted-proxy middleware and
+the original escaped request path, including a deployment prefix. It never
+trusts raw forwarded headers. A 100,000-entry process-local replay cache keeps
+each key/jti pair for five minutes; at capacity it refuses new proofs rather
+than evicting live entries. A restart loses the cache, so a captured proof may
+be reused inside its remaining timestamp acceptance window after a restart. This slice
+assumes one control-plane API process. The optional server nonce is omitted.
+
+Refusals are 401 with `dpop-required`, `dpop-invalid`, `dpop-replayed`,
+`dpop-stale` or `dpop-key-mismatch`. They enter the operator bearer audit stream
+and count as refused bearer requests in the installation Security view. The
+anonymous sign-in poll also requires a proof by its start key; for that proof,
+`ath` hashes the poll handle instead of a session token. A stolen poll handle
+cannot collect the confirmed session.
+
+Login starts the resident signer as the agent's OS user. POSIX uses a fresh
+socket in a mode-700 temporary directory, with socket mode 600. Windows uses
+an explicit named-pipe ACL containing only the current user's SID, through
+`agent-pipe.ps1` and Windows PowerShell. The private key is never exported or
+written by the signer. Only public metadata (endpoint, token hash, thumbprint)
+is saved in `operator-session-agent.json`; `operator-session` remains mode
+600. Commands, reconnects and event streams ask the resident for a new proof;
+redirects are refused. Missing signing state sends no proof and receives the
+server's `dpop-required` answer. Copying the session file grants no signing key.
+
+The resident stops after failed login, at session expiry, on a signed request's
+401, or within a five-second monitor interval after the session file is removed,
+replaced or the server reports revocation. The monitor uses the same signed
+read route and grants no authority during a network outage. A denied second
+login preserves the previous session and resident. Memory keys change on each
+login, so these sign-ins appear as new devices until ES-5 supplies persistent
+hardware identity. Same-user or root process access remains outside this
+binding's protection, as the Dossier states.
+
+### Terminal sign-in confirmed with step-up (ES-3)
+
+An operator session can reach the agent's terminal without the Owner copying a
+bearer ([elevated session Dossier](../../operator-elevated-session/index.html),
+decision ES-D2 option S2, and ES-D5 option A for the session part: the
+lifetime stays the existing 1 to 8 hours until ES-6). It follows the device
+authorization pattern (RFC 8628) with a Studio step-up as the confirmation.
+
+- **Start.** `POST /api/auth/operator-sign-in` is anonymous. It takes the
+  device's public key as a JWK (EC P-256, no private member), a device label
+  (1 to 64 printable characters), the operator agent the terminal asks for (id
+  or name, optional) and the requested elevated action classes
+  (`cards.accept-override`, `cards.archive-override`, `project.testing`;
+  anything else is refused with `action-class-unknown`). The body is bounded to
+  4 KiB before binding. Studio answers a user code of eight characters from the
+  RFC 8628 consonant alphabet (`BCDFGHJKLMNPQRSTVWXZ`, shown as `XXXX-XXXX`),
+  valid 10 minutes and once, the confirmation page `#/terminal-sign-in` and the
+  link with the code, a poll handle (`osp.*`) and an interval of 5 seconds. The
+  start does not reveal whether the named agent exists. Starts are throttled to
+  10 per client address (IPv6 per /64) within 15 minutes
+  (`Security:OperatorSignIn:MaxStartsPerAddress`), at most 100 sign-ins wait at
+  once (`Security:OperatorSignIn:MaxOpen`), and a pending out-of-band kill
+  refuses every start. Studio keeps only hashes of the code and the poll handle.
+- **Poll.** `POST /api/auth/operator-sign-in/poll` with the poll handle answers
+  `pending`, `slow-down` (a poll sooner than the interval; the interval grows by
+  5 seconds), `denied`, `expired`, or once `session` with the `oas.*` bearer,
+  the actor, the delegating Owner, the expiry, the confirmed classes and the
+  key thumbprint. A second poll after that answers `expired`. An unknown handle
+  answers 404 `signin-not-found`.
+- **Confirm.** The page **Confirm terminal sign-in** in Studio
+  (`#/terminal-sign-in`, or the link with `?code=`) needs a signed-in browser
+  session; signing in first keeps the link. It shows code entry, or the link's
+  code with an explicit "This code is on my terminal now" tick that Confirm
+  requires; the device label; whether the key thumbprint is already known for
+  the chosen agent; the requesting address and whether it is on the browser's
+  network (same address, or the same /64); the requested classes, which the
+  Owner can remove but never add (`action-class-not-requested`); the operator
+  agent (preselected from the request); and the lifetime of 1 to 8 hours
+  (default 8). Unknown device and another network together raise a warning to
+  deny a sign-in the Owner did not start. Lookup, confirm and deny
+  (`/api/auth/iam/operator-sign-ins/{lookup,confirm,deny}`) need an active
+  Owner (`owner-required`) with the browser's CSRF token. Confirm consumes a
+  fresh step-up (`step-up-required` without one); deny needs none.
+- **Codes.** An unknown code answers 404 `signin-code-unknown`, an expired one
+  410 `signin-code-expired`, a used one 409 `signin-code-used`, a denied one
+  409 `signin-code-denied`. Five unknown codes entered by one Owner within 15
+  minutes lock code entry for that Owner for 15 minutes: the sixth entry, even
+  with the right code, answers 429 `signin-locked`.
+- **Session and device record.** Confirming creates the `oas.*` session of the
+  chosen agent at once, with the device label, the key thumbprint (RFC 7638),
+  the terminal's address at confirmation, the Owner's browser address and the
+  confirming browser session id, and the kept classes. Its bearer is minted
+  when the terminal next polls, so until then the session shows as **Waiting
+  for terminal** and has no usable token. A confirmed sign-in that is not
+  collected within the 10 minutes expires and its session ends. ES-4 enforces the
+  thumbprint through a fresh DPoP proof on every request. Only the Settings
+  path still creates unbound bearer sessions. The classes are recorded
+  only; ES-7 admits their operations, so the session has the operator-agent
+  role's authority and nothing more.
+- **Devices.** Each operator agent lists its known devices (label, thumbprint,
+  last confirmation and its address, last use of any of its sessions, live
+  sessions). **Forget device** (`DELETE
+  /api/auth/iam/operator-agents/{id}/devices/{deviceId}`, no step-up) ends every
+  live session of that key for the agent at once, and a later sign-in with it
+  shows as an unknown device.
+- **Ending.** Revoking the confirming browser session from a session list
+  (one session, or "sign out other sessions"), a password reset of the
+  confirming person by an Owner, a password change by that person, and
+  disabling that person end every live session it or they confirmed, and
+  cancel those sessions' open approvals. A sign-out and the browser session's
+  ordinary expiry do not. A session started in Settings is not affected by
+  these rules.
+- **Audit.** The IAM audit records `operator-signin.start` (label, thumbprint,
+  requested agent and classes, address), `operator-signin.confirm` (agent,
+  session, known device, classes, both addresses and whether they match),
+  `operator-signin.deny`, `operator-signin.expire`, `operator-signin.issue`,
+  `operator-device.forget`, and `operator-session.revoke` with the reason for
+  each session an ending rule ended.
 
 ### Operator operation catalogue, tiers, and standing grants (SM-4)
 
@@ -1062,6 +1191,18 @@ of the former projected Admin or Owner role and the human-Owner check.
 - The lane write itself accepts an archive override only from a human actor
   or from the operator session of an approved request, so an automated actor
   cannot archive with an override even through an internal caller.
+
+| Caller | Override with a reason | Without a reason |
+|---|---|---|
+| Owner, Admin of the card's project | 200, the card moves | 400 reason error |
+| Developer, Product, Reviewer, Viewer, Approver | 403 `operator-authority-required`, `permission: project.cards.override` | `operatorOverride`: 400 reason error; `archiveOverride`: 403 as with a reason |
+| Operator session, no approval | 403 `approval-required` (opens an SM-5 request) | 400 reason error, no approval request |
+| Operator session, replay under the Owner's approval | 200 once; a second replay 403 `approval-used` | not reachable: no approval opens |
+
+The move routes keep their order of checks: `operatorOverride` checks the
+target lane, then the reason, then the permission, and `archiveOverride`
+checks the target lane, then the permission, then the reason. `archiveOverride` on a move to any lane
+but Archive stays 400.
 
 `OperatorApprovalFlowTests` cover both operator paths, the missing reason, the
 uncatalogued plain archive, and the workspace-bound requeue;
@@ -1457,6 +1598,12 @@ Dossier's guardrails in code:
   Studio-issued token shape and bearer header values, so an answer that echoes
   a credential is not printed. Prompt, title and log text holding a
   token-shaped value is refused instead of sent.
+- `studio-op login` (ES-3) sends no credential: it starts a terminal sign-in
+  with its P-256 device key, prints the code, the link and a terminal QR code,
+  and writes the session the Owner confirmed into `operator-session` (mode 600,
+  through a temporary file and a rename) without printing it. It refuses plain
+  HTTP to a non-loopback host. ES-4 keeps the signing key only in the resident
+  agent memory and removes the retired ES-3 `operator-device-key.json` on login.
 - `studio-op watch` keeps a local lock file (mode 600) next to the token file
   in addition to the server's watcher lease, and releases both on exit.
 - `studio-op accept` refuses unless the latest review passed with proven build

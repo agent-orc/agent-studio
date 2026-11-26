@@ -5,6 +5,8 @@ import { describeToken, inspectCredential, isTokenShaped } from './credential.mj
 import { ARTICLE_KINDS, MAX_BODY_BYTES, articlePath, parseArticle, parseSource, scopeOf, slugOf } from './magazine.mjs';
 import { EXIT } from './exit-codes.mjs';
 import { OperationError, failure } from './studio.mjs';
+import { login } from './login.mjs';
+import { serveAgent } from './agent.mjs';
 import { watchDecisions } from './watch.mjs';
 
 const enc = encodeURIComponent;
@@ -116,6 +118,25 @@ function lines(...parts) {
 }
 
 export const COMMANDS = {
+  agent: {
+    summary: 'Run the memory-only session signer under this OS user (login starts it automatically).',
+    anonymous: true,
+    spec: {},
+    run: async ctx => {
+      const agent = await serveAgent(ctx.configDir);
+      return { data: { endpoint: agent.endpoint, keyThumbprint: agent.thumbprint }, text: `Signer listening at ${agent.endpoint}. Login starts its own session signer.` };
+    },
+  },
+  login: {
+    summary: 'Sign in from this terminal; the Owner confirms the code in Studio with a second factor.',
+    spec: { agent: 'string', label: 'string', class: 'list', noQr: 'boolean' },
+    anonymous: true,
+    async run(ctx, positionals, options) {
+      if (positionals.length) throw usage('unexpected-argument', 'login takes no arguments. Use --agent <name>.');
+      return login(ctx, options);
+    },
+  },
+
   'auth status': {
     summary: 'Show the credential file, the identity check and what stays with the Owner.',
     spec: {},

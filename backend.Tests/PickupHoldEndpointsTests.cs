@@ -267,6 +267,9 @@ public sealed class PickupHoldLocalCodingDenialTests : IClassFixture<PickupHoldL
     /// <summary>The projects of <see cref="PickupHoldEndpointsTests"/>, with the host's own admission policy.</summary>
     public sealed class Host() : BoardTestHost("atp-pickup-hold-denial-", App, PickupHoldEndpointsTests.Lib)
     {
+        protected override void ConfigureServices(IServiceCollection services)
+            => services.AddHostedService(provider => provider.GetRequiredService<TaskRunnerService>());
+
         private static readonly TimeSpan RunnerTimeout = TimeSpan.FromSeconds(30);
 
         /// <summary>

@@ -944,6 +944,10 @@ public abstract class TaskFileHistoryTestBase
         builder.UseEnvironment("Test");
         builder.ConfigureTestServices(services =>
         {
+            // Historical endpoint reads join the objects published by the Git
+            // indexer. Keep that production worker explicit on these hosts.
+            services.AddHostedService(provider =>
+                provider.GetRequiredService<AgentStudio.Git.GitStateIndexService>());
             if (runner is not null)
                 services.AddSingleton(runner);
             if (gitCallBudget is not null || clock is not null)

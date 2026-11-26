@@ -12,6 +12,9 @@ namespace AgentStudio.Security;
 public sealed partial class AccessSecurityStore
 {
     public const string OperatorSessionTokenPrefix = "oas";
+    public OperatorDpopVerifier DpopVerifier { get; } = new();
+    public string? ValidateOperatorProof(HttpRequest request, string token, string thumbprint)
+        => DpopVerifier.Validate(request, token, thumbprint, _clock.GetUtcNow());
     public static readonly TimeSpan MaxOperatorSessionLifetime = TimeSpan.FromHours(8);
 
     public IReadOnlyList<ServiceAccount> ListOperatorAgents()
@@ -155,7 +158,7 @@ public sealed partial class AccessSecurityStore
     /// unrevoked and unexpired, its agent enabled, and the Owner who started it
     /// still an active Owner: a session never outlives its delegation.
     /// </summary>
-    public ServiceAccountPrincipal? AuthenticateOperatorSession(string? bearer)
+    public ServiceAccountPrincipal? AuthenticateOperatorSession(string? bearer, bool recordUse = true)
     {
         if (!TryTokenParts(bearer, OperatorSessionTokenPrefix, out var sessionId)) return null;
         // An out-of-band kill refuses every session from the moment the command writes its latch.
@@ -167,12 +170,14 @@ public sealed partial class AccessSecurityStore
             var agent = state.ServiceAccounts.FirstOrDefault(candidate => IsOperatorPrincipal(candidate)
                 && candidate.Sessions?.Any(session => session.Id == sessionId) == true);
             var session = agent?.Sessions!.First(candidate => candidate.Id == sessionId);
+            // A sign-in session has no bearer until the terminal collected it (ES-3).
             if (agent is null || session is null || agent.DisabledAt is not null || session.RevokedAt is not null
-                || session.ExpiresAt <= now || !PasswordSecretHasher.VerifySecret(bearer!, session.SecretHash))
+                || session.ExpiresAt <= now || string.IsNullOrEmpty(session.SecretHash)
+                || !PasswordSecretHasher.VerifySecret(bearer!, session.SecretHash))
                 return null;
             if (agent.Origin == ServiceAccountOrigins.Persona && session.OccurrenceId is null) return null;
             if (!ActiveOwnerIds(state.Users, state.RoleBindings, state.Groups).Contains(session.CreatedBy)) return null;
-            if (session.LastUsedAt is null || now - session.LastUsedAt >= TimeSpan.FromMinutes(1))
+            if (recordUse && (session.LastUsedAt is null || now - session.LastUsedAt >= TimeSpan.FromMinutes(1)))
             {
                 state.ServiceAccounts[state.ServiceAccounts.IndexOf(agent)] = agent with
                 {
@@ -183,21 +188,31 @@ public sealed partial class AccessSecurityStore
             }
             return new ServiceAccountPrincipal(agent.Id, agent.Name, session.Id, agent.Origin, agent.CreatedBy,
                 new AgentStudio.Shared.OperatorActor(agent.Id, session.Id, session.CreatedBy, agent.PersonaId),
-                session.OccurrenceId, agent.PersonaWorkspaceId, agent.PersonaId);
+                session.OccurrenceId, agent.PersonaWorkspaceId, agent.PersonaId, session.Device?.KeyThumbprint);
         }
     }
 
     public static string OperatorSessionState(OperatorAgentSession session, DateTime now)
         => session.RevokedAt is not null ? OperatorSessionStates.Revoked
             : session.ExpiresAt <= now ? OperatorSessionStates.Expired
+            : string.IsNullOrEmpty(session.SecretHash) ? OperatorSessionStates.Pending
             : OperatorSessionStates.Active;
 
     public OperatorAgentResponse ToOperatorAgentResponse(ServiceAccount agent)
     {
         var now = Now;
+        var sessions = agent.Sessions ?? [];
         return new OperatorAgentResponse(agent.Id, agent.Name, agent.Description, agent.CreatedAt, agent.CreatedBy, agent.DisabledAt,
-            (agent.Sessions ?? []).OrderByDescending(session => session.CreatedAt)
-                .Select(session => ToOperatorSessionResponse(agent.Id, session, now)).ToList());
+            sessions.OrderByDescending(session => session.CreatedAt)
+                .Select(session => ToOperatorSessionResponse(agent.Id, session, now)).ToList(),
+            (agent.Devices ?? []).OrderByDescending(device => device.LastConfirmedAt).Select(device =>
+            {
+                var own = sessions.Where(session => session.Device?.KeyThumbprint == device.KeyThumbprint).ToList();
+                return new OperatorDeviceResponse(device.Id, device.Label, device.KeyThumbprint, device.FirstConfirmedAt,
+                    device.LastConfirmedAt, device.LastConfirmedBy, device.LastAddress,
+                    own.Select(session => session.LastUsedAt).Where(at => at is not null).DefaultIfEmpty(null).Max(),
+                    own.Count(session => OperatorSessionState(session, now) is OperatorSessionStates.Active or OperatorSessionStates.Pending));
+            }).ToList());
     }
 
     public OperatorSessionResponse ToOperatorSessionResponse(string agentId, OperatorAgentSession session)
@@ -208,7 +223,12 @@ public sealed partial class AccessSecurityStore
         var actor = new AgentStudio.Shared.OperatorActor(agentId, session.Id, session.CreatedBy);
         return new OperatorSessionResponse(session.Id, agentId, session.Name, actor.Actor, actor.DelegatedBy, session.CreatedAt,
             session.CreatedBy, session.ExpiresAt, session.RenewedAt, session.LastUsedAt, session.RevokedAt,
-            OperatorSessionState(session, now));
+            OperatorSessionState(session, now),
+            session.Device is { } device
+                ? new OperatorSessionDeviceResponse(device.DeviceId, device.Label, device.KeyThumbprint, device.RequestedAddress,
+                    device.ConfirmedAddress, device.SignInId)
+                : null,
+            session.Classes);
     }
 
     private static bool IsOperatorAgent(ServiceAccount account) => account.Origin == ServiceAccountOrigins.OperatorAgent;

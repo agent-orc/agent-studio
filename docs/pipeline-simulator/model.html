@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pipeline simulator: model | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #696762;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+  <style data-dossier="pipeline-simulator">
+/* Diagram and mockup classes: only the article template variables, no own colours.
+       --mix-rework mixes two article tones as the stand-in for the Studio brand orange. */
+    :root { --mix-rework: color-mix(in srgb, var(--article-bad) 55%, var(--article-warn)); }
+    nav.toc { margin: 24px 0 8px; color: var(--article-muted); font-size: 0.82rem; line-height: 1.8; font-family: var(--article-sans); }
+    .pages { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; font: 0.8rem var(--article-sans); }
+    .pages a, .pages span { padding: 3px 10px; border: 1px solid var(--article-line); border-radius: 999px; text-decoration: none; }
+    .pages span { background: var(--article-link-soft); color: var(--article-link); border-color: color-mix(in srgb, var(--article-link) 35%, var(--article-line)); }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    svg .d-box { fill: var(--article-surface); stroke: var(--article-line); }
+    svg .d-new { fill: var(--article-link-soft); stroke: var(--article-link); }
+    svg .d-hot { fill: var(--article-warn-soft); stroke: var(--article-warn); stroke-width: 1.5; }
+    svg .d-ground { fill: var(--article-paper); stroke: none; }
+    svg .d-grid { fill: none; stroke: color-mix(in srgb, var(--article-link) 18%, transparent); stroke-width: 0.6; }
+    svg .d-top { fill: color-mix(in srgb, var(--article-link) 9%, var(--article-paper)); stroke: var(--article-ink); stroke-width: 0.8; }
+    svg .d-side { fill: color-mix(in srgb, var(--article-link) 16%, var(--article-paper)); stroke: var(--article-ink); stroke-width: 0.8; }
+    svg .d-side2 { fill: color-mix(in srgb, var(--article-link) 24%, var(--article-paper)); stroke: var(--article-ink); stroke-width: 0.8; }
+    svg .d-hot-top { fill: color-mix(in srgb, var(--article-warn) 22%, var(--article-paper)); stroke: var(--article-ink); stroke-width: 0.8; }
+    svg .f-first { fill: var(--article-link); }
+    svg .f-rework { fill: var(--mix-rework); }
+    svg .f-ghost { fill: color-mix(in srgb, var(--article-link) 22%, var(--article-paper)); stroke: var(--article-link); stroke-width: 1; }
+    svg .d-line { fill: none; stroke: var(--article-muted); stroke-width: 1.4; }
+    svg .d-loop { fill: none; stroke: var(--mix-rework); stroke-width: 1.3; stroke-dasharray: 5 4; }
+    svg .d-rule { fill: none; stroke: var(--article-line); stroke-width: 1; }
+    svg .d-series1 { fill: none; stroke: var(--article-link); stroke-width: 2; }
+    svg .d-series2 { fill: none; stroke: var(--mix-rework); stroke-width: 2; }
+    svg .d-area1 { fill: color-mix(in srgb, var(--article-link) 45%, transparent); }
+    svg .d-area2 { fill: color-mix(in srgb, var(--mix-rework) 45%, transparent); }
+    svg .d-band-hot { fill: var(--article-warn-soft); }
+    svg .d-band-cool { fill: var(--article-link-soft); }
+    svg .d-text { fill: var(--article-ink); font: 600 13px var(--article-sans); }
+    svg .d-big { fill: var(--article-ink); font: 800 22px var(--article-sans); letter-spacing: -0.02em; }
+    svg .d-head { fill: var(--article-faint); font: 700 11px var(--article-sans); letter-spacing: 0.06em; text-transform: uppercase; }
+    svg .d-small { fill: var(--article-muted); font: 12px var(--article-sans); }
+    svg .d-link { fill: var(--article-link); font: 600 12px var(--article-sans); }
+    svg .d-warn { fill: var(--article-warn); font: 700 12px var(--article-sans); }
+    svg .d-pill { fill: var(--article-surface); stroke: var(--article-line); }
+    svg .d-pill-on { fill: var(--article-link-soft); stroke: var(--article-link); }
+    svg .d-dot { fill: var(--article-good); }
+    svg marker path { fill: var(--article-muted); }
+    svg .m-loop path { fill: var(--mix-rework); }    svg .f-ghost-rework { stroke: var(--mix-rework); }
+    svg .d-chip-assume { fill: none; stroke: var(--article-muted); stroke-dasharray: 4 3; }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept · Pipeline simulator · Model</p>
+    <h1>The model</h1>
+    <p class="lede">What the simulator counts, how a card moves, which loops send it back, how the four integration strategies differ, which numbers come from the installation and which the owner sets, and how the model is checked against a recorded day.</p>
+    <div class="meta">
+      <span><b>Source card</b> AGT-4028</span>
+      <span><b>As of</b> 24 November 2026, develop 6ad4f5f0e</span>
+    </div>
+    <nav class="pages" aria-label="Dossier pages"><a href="index.html">Decision page</a><span aria-current="page">Model</span><a href="world.html">The world</a><a href="surfaces.html">Charts and placement</a></nav>
+  </header>
+
+  <nav class="toc" aria-label="Contents">
+    <a href="#entities">Entities</a> · <a href="#phases">Phases</a> · <a href="#loops">Loops</a> · <a href="#strategies">Strategies</a> · <a href="#parameters">Parameters</a> · <a href="#check">Check against reality</a> · <a href="#research">Research cards</a> · <a href="#cost">Cost</a>
+  </nav>
+
+  <section id="entities">
+    <h2><span class="number">01</span> Entities</h2>
+    <p>The model is a per-card discrete-event model, which means each card is followed as its own object and time jumps from one event to the next. The same entities drive the live picture and a what-if run. Only the source of events differs.</p>
+    <table>
+      <thead><tr><th>Entity</th><th>Carries</th><th>Recorded today in</th></tr></thead>
+      <tbody>
+        <tr><td>Card</td><td>Key, area, predicted file set, base commit, round count, verdict time, tokens and USD per round, kind (first pass, sync round, fix round, repair)</td><td>Job folder, <code>pipeline-execution.json</code>, <code>task.json</code> token receipts</td></tr>
+        <tr><td>Run</td><td>Phase, slot, model and level, start, end, the four token counters, list-price USD</td><td><code>PipelineStepExecution</code> (<code>backend/Shared/Models/PipelineModels.cs:219</code>)</td></tr>
+        <tr><td>Slot pool</td><td>Coding, review, gate lanes and gate tokens, each with a count and an occupancy</td><td>Runner settings, <code>/api/system/execution-infrastructure</code></td></tr>
+        <tr><td>Queue</td><td>Ready, waiting for review, waiting for the gate, waiting for publication, plus each card's position</td><td>Lanes, <code>IntegrationLaneEvent</code> kinds <code>enqueued</code> to <code>published</code></td></tr>
+        <tr><td>Develop</td><td>Ordered merges, tip, red or quarantine state, held areas</td><td>Lane events, <code>PostMergeRunStore</code>, <code>/api/develop-states</code></td></tr>
+        <tr><td>Batch and window</td><td>Members, verdict, isolation order; post-merge window merges and age</td><td><code>BatchGateStore</code>, gate run ledger, post-merge runs</td></tr>
+        <tr><td>Quota window</td><td>Provider, used percent, reset day and hour, USD per point</td><td><code>QuotaSnapshotWindowEvent</code>, <code>.runtime/quota-history/</code></td></tr>
+        <tr><td>Strategy</td><td>Test placement, gate shape, dispatch rule, each one a policy choice</td><td><code>testing.strategy</code>, <code>BatchGate</code> settings</td></tr>
+        <tr><td>Parameter set</td><td>Dated values, each with its class (measured or assumed), source and sample size</td><td>New (SIM-4)</td></tr>
+        <tr><td>Event</td><td>Time, card, kind, phase, slot, tokens. A simulated event has the same schema as a recorded one, plus a run id</td><td>New schema over the existing lane event kinds (SIM-1)</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="phases">
+    <h2><span class="number">02</span> Phases</h2>
+    <figure class="breakout">
+      <svg viewBox="0 0 1060 300" role="img" aria-labelledby="phases-title">
+        <title id="phases-title">Ready, Coding, Review, Integration and Done in a row, with four return paths drawn as dashed lines: conflict and red gate back to Coding, stale verdict back to Review, red after integration as a repair card in Coding.</title>
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z"/></marker>
+          <marker id="arr-loop" class="m-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+        <rect class="d-box" x="20" y="120" width="140" height="70" rx="10"/><text class="d-text" x="90" y="150" text-anchor="middle">Ready</text><text class="d-small" x="90" y="170" text-anchor="middle">arrival in waves</text>
+        <rect class="d-box" x="230" y="120" width="170" height="70" rx="10"/><text class="d-text" x="315" y="150" text-anchor="middle">Coding</text><text class="d-small" x="315" y="170" text-anchor="middle">10 slots · 25 to 140 min</text>
+        <rect class="d-box" x="470" y="120" width="170" height="70" rx="10"/><text class="d-text" x="555" y="150" text-anchor="middle">Review</text><text class="d-small" x="555" y="170" text-anchor="middle">7 slots · 5 to 14 min</text>
+        <rect class="d-hot" x="710" y="120" width="190" height="70" rx="10"/><text class="d-text" x="805" y="150" text-anchor="middle">Integration</text><text class="d-small" x="805" y="170" text-anchor="middle">gate per strategy</text>
+        <rect class="d-box" x="960" y="120" width="80" height="70" rx="10"/><text class="d-text" x="1000" y="160" text-anchor="middle">Done</text>
+        <path class="d-line" d="M160 155 H226" marker-end="url(#arr)"/><path class="d-line" d="M400 155 H466" marker-end="url(#arr)"/><path class="d-line" d="M640 155 H706" marker-end="url(#arr)"/><path class="d-line" d="M900 155 H956" marker-end="url(#arr)"/>
+        <path class="d-loop" d="M780 120 C780 40, 330 40, 330 116" marker-end="url(#arr-loop)"/><text class="d-small" x="555" y="50" text-anchor="middle">conflict: develop moved, sync round, review again</text>
+        <path class="d-loop" d="M830 120 C830 74, 300 74, 300 116" marker-end="url(#arr-loop)"/><text class="d-small" x="555" y="88" text-anchor="middle">red gate: batch isolated, fix round</text>
+        <path class="d-loop" d="M760 190 C760 240, 580 240, 580 194" marker-end="url(#arr-loop)"/><text class="d-small" x="670" y="252" text-anchor="middle">stale verdict: review again</text>
+        <path class="d-loop" d="M1000 190 C1000 290, 280 290, 280 194" marker-end="url(#arr-loop)"/><text class="d-small" x="430" y="284" text-anchor="middle">red after integration: repair card, area held</text>
+      </svg>
+      <figcaption>Phases and return paths. Integration is tinted because it is the bottleneck under the strategies in use on 17 to 23 November (wave model, decision page section 04). Diagram, not a capture.</figcaption>
+    </figure>
+    <table>
+      <thead><tr><th>Phase</th><th>Slots</th><th>Duration</th><th>Leaves to</th><th>Fails back to</th></tr></thead>
+      <tbody>
+        <tr><td>Ready</td><td>none (queue)</td><td>until picked</td><td>Coding, in the order the dispatch rule allows</td><td>nothing</td></tr>
+        <tr><td>Coding</td><td>10</td><td>first run 25 to 140 min, typically 60; a follow-up round is shorter (assumption 10 to 30 min)</td><td>Review</td><td>Coding (a failed run)</td></tr>
+        <tr><td>Review</td><td>about 7</td><td>5 to 14 min with build only; 60 min and more with full suite, baseline and clean repeat</td><td>Integration</td><td>Coding (findings)</td></tr>
+        <tr><td>Integration</td><td>per strategy</td><td>per strategy</td><td>Done</td><td>Coding (conflict, red gate), Review (stale verdict)</td></tr>
+        <tr><td>Done</td><td>none</td><td>none</td><td>none</td><td>A repair card after a red post-merge test, under a post-merge strategy</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="loops">
+    <h2><span class="number">03</span> Loops</h2>
+    <table>
+      <thead><tr><th>Loop</th><th>Trigger in the model</th><th>Cost of one turn</th><th>Measured anchor</th></tr></thead>
+      <tbody>
+        <tr><td>Conflict</td><td>At merge time, any merge since the card's base that overlaps its files and conflicts. The base is reset when the sync round starts.</td><td>One follow-up coding round, one review, a new wait at the gate</td><td>75 of 95 repeat coding runs followed a passed review. One card needed 7 rounds. In the dispatcher replay of the 17 November wave, 21 of 57 cards needed a develop sync.</td></tr>
+        <tr><td>Red gate</td><td>A batch with a defective member is red. Members are isolated one by one, the defective one goes back for a fix round, and green members publish.</td><td>The batch run, one isolation run per member, a fix round</td><td>48 % of strict batches green. A red batch is isolated card by card.</td></tr>
+        <tr><td>Stale verdict</td><td>A card that waited longer than a threshold after its review pass goes back to Review.</td><td>One review, a new wait</td><td>The rule exists; the threshold is an assumption until SIM-2 reads it from the review plane.</td></tr>
+        <tr><td>Red after integration</td><td>Under a post-merge strategy the next window finds the defect. Today: the project could switch to the slow path for hours (removed by RT-1). Intended: the test is quarantined, a repair card goes first, only cards in its area wait.</td><td>A repair round; held cards wait</td><td>Four reds of 22 and 23 November, none a regression of the blamed merge (<code>docs/red-test-isolation/</code>).</td></tr>
+      </tbody>
+    </table>
+    <p>The first three loops feed each other. A long wait at the gate lets more merges land, so a conflict becomes more likely. Every sync round adds another review and another wait. A card that waits past the threshold is reviewed again. The simulator has to show this compounding, because it is what turns a 60-minute card into a 7-round card.</p>
+  </section>
+
+  <section id="strategies">
+    <h2><span class="number">04</span> Strategies</h2>
+    <p>A strategy is a combination of three choices: where tests run, what the gate does, and which cards may run together. The simulator lets the owner pick each one. The four named strategies are presets.</p>
+    <table>
+      <thead><tr><th>Preset</th><th>Tests</th><th>Gate</th><th>Dispatch</th><th>Measured anchor</th></tr></thead>
+      <tbody>
+        <tr><td>strict</td><td>Build only in review; full suite in the batch gate</td><td>One lane; up to 8 cards a run of about 40 min; a red batch is isolated card by card</td><td>Today's order</td><td>48 % green; median wait 133 min, p95 598</td></tr>
+        <tr><td>fast as built</td><td>Affected tests in review; a test run before each merge</td><td>One card at a time, 15 to 55 min, repeated on failure</td><td>Today's order</td><td>One or two cards an hour on 23 November</td></tr>
+        <tr><td>fast as intended</td><td>Affected tests in review; base suite (about 10 min) and full suite (about 45 min) after the merge, in a window of up to 6 merges or 30 min</td><td>Compile check, then merge at once; a red test is quarantined and only its area waits</td><td>Today's order</td><td>The design in <code>docs/system/domains/pipeline.md</code>; not yet run at full speed</td></tr>
+        <tr><td>with a dispatcher</td><td>As the chosen test placement</td><td>As the chosen gate</td><td>Cards predicted to touch the same files do not run at the same time</td><td>Replay of the 17 November wave in <code>docs/dispatcher-personas/</code></td></tr>
+      </tbody>
+    </table>
+    <p>The engine does not carry its own copy of these rules. Batch formation, batch start, isolation and red-test triage are already pure policies in <code>orchestration-decisions/</code> (<code>BatchFormationPolicy</code>, <code>BatchGateStartPolicy</code>, <code>BisectVerdictPolicy</code>, <code>RedTestTriagePolicy</code> since RT-2). <code>DispatchPlanPolicy</code> (AGT-3993) exists there with no caller yet. The engine calls them with simulated facts. Two rules are pure but sit elsewhere: the window close rule in <code>runner/PostMergeRunPlan.cs</code> and the stale-verdict check in the review plane. SIM-2 moves each into the library before the engine uses it. This keeps the AGENTS.md rule that transition rules live only in the decision library, and it means a simulated strategy is the real strategy. A preset that has no policy yet, such as "fast as intended" with quarantine scope, is marked in the strategy picker as a model of a design, not of shipped code.</p>
+  </section>
+
+  <section id="parameters">
+    <h2><span class="number">05</span> Parameters</h2>
+    <p>Every number is editable in a what-if run. Each one is either <b>measured</b> (read from the installation with a sample size) or an <b>assumption</b> (set by the owner, shown with a dashed outline in the controls). The starting values are those of 17 to 23 November 2026.</p>
+    <table>
+      <thead><tr><th>Parameter</th><th>Start value</th><th>Class</th><th>Source in the installation</th><th>Refresh</th></tr></thead>
+      <tbody>
+        <tr><td>Arrival</td><td>Waves; 57 cards in one minute on 17 November</td><td>measured</td><td>Card creation times</td><td>Replay uses the day; a what-if uses a wave the owner draws or a saved plan</td></tr>
+        <tr><td>File overlap per area</td><td>Two series shared a code file with 16 to 19 other cards, the third with 0.7</td><td>measured</td><td>Conflict record (<code>/api/projects/{p}/integration-conflicts</code>, <code>topFiles</code>, <code>cardPairs</code>), changed paths</td><td>Nightly</td></tr>
+        <tr><td>Conflict share of overlapping pairs</td><td>0.18 (wave model)</td><td>assumption, calibrated</td><td>Fitted so a replay reproduces the recorded sync count</td><td>Nightly fit</td></tr>
+        <tr><td>Coding slots, first-run duration</td><td>10; 25 to 140 min, typically 60</td><td>measured</td><td>Runner settings; <code>pipeline-execution.json</code> coding steps</td><td>Slots live at fork; durations nightly over 7 days</td></tr>
+        <tr><td>Follow-up round duration</td><td>10 to 30 min</td><td>assumption</td><td>Coding steps after the first, once enough are recorded</td><td>Nightly</td></tr>
+        <tr><td>Review slots, duration</td><td>7; 5 to 14 min build only, 60 min and more full suite</td><td>measured</td><td>Aspect steps in <code>pipeline-execution.json</code></td><td>Slots live; durations nightly</td></tr>
+        <tr><td>Defect rate per card</td><td>8.8 % (from 48 % green 8-card batches)</td><td>measured, derived</td><td>Batch gate ledger and post-merge receipts</td><td>Nightly</td></tr>
+        <tr><td>Flaky share</td><td>10 %</td><td>assumption</td><td><code>flakyTests</code> on post-merge receipts, <code>mostFlakyTests14Days</code></td><td>Nightly</td></tr>
+        <tr><td>Gate durations</td><td>Batch 40 min; isolation 20 to 25 min; serial test 15 to 55 min; compile 3 to 6 min; base suite 10 min, full 45 min</td><td>measured (compile assumed)</td><td>Gate run ledger (<code>/batch-gate/ledger</code>), post-merge runs</td><td>Nightly</td></tr>
+        <tr><td>Window close</td><td>6 merges or 30 min</td><td>measured (setting)</td><td>Project look-ahead settings, runner state</td><td>Live at fork</td></tr>
+        <tr><td>Stale verdict threshold</td><td>240 min</td><td>assumption</td><td>Review plane rule (SIM-2 reads it)</td><td>Live at fork</td></tr>
+        <tr><td>Tokens per run</td><td>First run 26 to 67 million; Claude round 2.7 million; Codex round 26.6 million</td><td>measured</td><td>Token analysis (<code>TokenAnalysisService</code>, kinds coding and fix round)</td><td>Nightly</td></tr>
+        <tr><td>Review usage</td><td>About 1 USD; about 95 % of cost in cache writes; four to five model aspects plus build or tests</td><td>measured anchors; counter mix from calibration</td><td>Per-aspect receipts and review settings; cache-write cost share is not token share</td><td>Nightly receipts; aspect count live at fork; all editable</td></tr>
+        <tr><td>USD per run</td><td>First run 9 to 19 (Opus 5.5 medium); Claude round 1 to 2.4; Codex round 6 to 13; review about 1</td><td>measured</td><td><code>TokenPricingService</code>, list price at the recorded time</td><td>Nightly; prices follow <code>TokenEconomy</code></td></tr>
+        <tr><td>Codex share of rounds</td><td>0 % in the wave model</td><td>assumption</td><td>Model per step in <code>pipeline-execution.json</code></td><td>Nightly</td></tr>
+        <tr><td>Quota</td><td>About 18 USD per point of the weekly Claude window; fixed reset day and hour</td><td>measured</td><td>Quota snapshots and history, <code>QuotaForecastPolicy</code></td><td>Used percent and reset live at fork; USD per point nightly</td></tr>
+      </tbody>
+    </table>
+    <p>A parameter set is dated and versioned. A what-if run names the set it started from, and the owner's changes are a named layer on top, for example "two more review slots". A nightly refresh creates a new set and never changes an old one, so a saved comparison stays reproducible.</p>
+  </section>
+
+  <section id="check">
+    <h2><span class="number">06</span> Check against reality</h2>
+    <p>Two replays check two different things.</p>
+    <ul>
+      <li><b>Trace replay</b> takes the recorded day as it was: arrivals, durations of every run, which merge conflicted. Only queueing and the rules are simulated. If its waits and publication times differ from the recording, a rule or a slot count is wrong in the model.</li>
+      <li><b>Model replay</b> keeps the recorded arrivals and slot counts but draws durations, conflicts and defects from the parameter set, over 200 seeded runs. If its distribution misses the recording, a parameter is wrong.</li>
+    </ul>
+    <p>Each replay reports, per hour and for the day: cards per hour, median and p95 wait at the gate, lead time, rounds per card, the number of sync rounds, tokens and USD split into first pass and rework, and quota points used. The first replay days are 17 November (the wave), 18 November (the rework day of the 40 % finding) and 23 November (fast as built). A replay fits when throughput is within 15 %, median gate wait within 25 % and USD within 20 % of the recording. The p95 is shown but not gated, because one stuck card moves it. The nightly fit is shown next to the parameter set. A set that does not fit is marked as such and is never silently used.</p>
+    <p>The wave model in this Dossier is a first, rough check. It reproduces some recorded values and misses others:</p>
+    <table>
+      <thead><tr><th>Quantity</th><th class="num">Recorded</th><th class="num">Wave model</th><th>Reading</th></tr></thead>
+      <tbody>
+        <tr><td>Cards needing a sync, 17 November wave</td><td class="num">21 of 57</td><td class="num">20.7</td><td>Calibrated: the conflict share of 0.18 was fitted to this</td></tr>
+        <tr><td>Median gate wait, strict</td><td class="num">133 min</td><td class="num">167 min</td><td>Close; the recording spans a week of smaller arrivals, not one wave</td></tr>
+        <tr><td>p95 gate wait, strict</td><td class="num">598 min</td><td class="num">303 min</td><td>The model has no host outages, stalls or retries; a trace replay will show which of them it lacks</td></tr>
+        <tr><td>Cards per hour, fast as built</td><td class="num">1 to 2</td><td class="num">1.34</td><td>Fits</td></tr>
+        <tr><td>Rework share of Claude USD</td><td class="num">about 40 %</td><td class="num">12.5 %</td><td>Misses: the resumed-round price alone does not explain 40 %. Fresh sessions, failed runs, reviews with the full suite or Codex rounds must account for the rest (with half the rounds on Codex the model gives 24 %). This is the first question for the calibration card.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="research">
+    <h2><span class="number">07</span> Research cards</h2>
+    <p>Three research cards run in parallel with this Dossier. Nothing here waits for them. Their results feed in as follows.</p>
+    <table>
+      <thead><tr><th>Card</th><th>Delivers</th><th>Feeds</th></tr></thead>
+      <tbody>
+        <tr><td>Pipeline simulation prototype, variant 1</td><td>A stand-alone interactive prototype</td><td>The owner compares the two variants side by side (decision PS-D12). The findings on world layout, figure density, controls and the headline statement go into SIM-3, SIM-6 and SIM-8 as acceptance notes. Prototype code is not ported: its rules would be a second copy outside the decision library.</td></tr>
+        <tr><td>Pipeline simulation prototype, variant 2</td><td>A second, independent prototype</td><td>As variant 1. If one variant shows something this Dossier lacks, for example a better way to show a loop, the implementing slice records which one it followed.</td></tr>
+        <tr><td>Calibration data</td><td>Measured values with provenance, recorded days</td><td>Parameter set v0 in SIM-4, replacing the starting values above wherever they differ. Its recorded days become the replay targets of SIM-5. Every quantity it could not find becomes a recording gap that SIM-1 closes, or an assumption with an owner default. It also answers the 40 % rework question above.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="cost">
+    <h2><span class="number">08</span> Cost</h2>
+    <p>The simulation uses no model tokens. The engine is plain code over recorded facts and the decision library's pure policies. A replay reads records. Dispatcher strategies are model-free in the decision path (<code>docs/dispatcher-personas/</code>). The wave model in this Dossier ran 4 strategies with 200 seeded runs each, a total of 45,600 card journeys, in about 2.5 seconds of processor time in Python on one core. An engine in .NET will be at least as fast, so a what-if run can be repeated after every slider move.</p>
+    <p>Three things would use tokens, and none is proposed as part of the simulator:</p>
+    <ul>
+      <li>A narrated explanation of a run written by a model ("why did the gate fill at 14:00"). The headline statement and the bottleneck reading are computed, not written by a model. A narration can be added later as a persona action on the persona budget (decision PS-D10).</li>
+      <li>Replaying a persona that has a model step, such as the line guardian's bounded classification call or the Packer's recut. A replay uses that step's recorded output and never calls the model again.</li>
+      <li>Building the simulator. At the starting values each implementation card costs about one point of the weekly Claude window (a first run of 9 to 19 USD plus reviews and rounds, at about 18 USD a point).</li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

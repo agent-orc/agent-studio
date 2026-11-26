@@ -9,6 +9,7 @@ using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -84,6 +85,10 @@ public sealed class HumanReviewDecisionTests : IDisposable
                 ["WatchPaths:0:RootPath"] = projectPath,
                 ["WatchPaths:0:RepositoryPath"] = projectPath,
             }));
+            // Send back queues the follow-up through the project runner that the
+            // runner service builds on start; test hosts start it only on request.
+            builder.ConfigureTestServices(services =>
+                services.AddHostedService(provider => provider.GetRequiredService<TaskRunnerService>()));
         });
         using var http = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
