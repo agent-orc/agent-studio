@@ -159,4 +159,5 @@ export interface TaskGitData {
 export type TaskOverviewData = Pick<TaskInfo,
   'decision' | 'planningSpawn' | 'conceptDossier' | 'olderBriefDelivery'
   | 'relatedWikiPages' | 'creationSource' | 'completionClaim' | 'parkedBlocker' | 'needsInput'
-  | 'references' | 'waitsOn' | 'acceptanceAttemptGap' | 'executionLocation' | 'pendingIntent'>;
+  | 'references' | 'waitsOn' | 'acceptanceAttemptGap' | 'executionLocation' | 'pendingIntent'
+  | 'waitingReason' | 'transitiveWaiters'>;

@@ -10,6 +10,27 @@ public sealed class HostQuotaCoordinatorTests
     private static readonly DateTime Now = new(2026, 11, 1, 22, 0, 0, DateTimeKind.Utc);
 
     [Fact]
+    public void FailedProbeKeepsItsSubscriptionsLastGoodReadingAndHostZone()
+    {
+        var coordinator = new HostQuotaCoordinator();
+        var hosts = new HashSet<string> { "host-a" };
+        var first = coordinator.Claim("host-a", new("i-a", "codex", AccountOne), Now, true, hosts);
+        Assert.True(coordinator.Report("host-a", new("i-a", "codex", AccountOne, first.ProbeId!,
+            Now, "0.150.0", "Plus", [new("Weekly", 30, Now.AddDays(1), "9:49 PM on 27 Nov")],
+            null, "Europe/Berlin"), Now, true));
+        var later = Now.AddMinutes(11);
+        var next = coordinator.Claim("host-a", new("i-a", "codex", AccountOne), later, true, hosts);
+        Assert.True(coordinator.Report("host-a", new("i-a", "codex", AccountOne, next.ProbeId!,
+            later, null, null, [], "Host quota probe failed.", "UTC"), later, true));
+        var reading = Assert.Single(coordinator.Readings());
+        Assert.Equal("Europe/Berlin", reading.HostTimeZone);
+        Assert.Equal(Now, reading.ObservedAt);
+        Assert.Equal(later, reading.ProbeFailedAt);
+        Assert.Equal(30, Assert.Single(reading.Windows).UsedPct);
+        Assert.Equal("A codex host quota probe failed.", reading.Error);
+    }
+
+    [Fact]
     public void FiveHealthyHostsProduceOneReadingPerTtl()
     {
         var coordinator = new HostQuotaCoordinator();

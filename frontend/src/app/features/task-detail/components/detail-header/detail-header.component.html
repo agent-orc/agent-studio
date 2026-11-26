@@ -91,6 +91,7 @@
             <span class="detail__meta-item" data-testid="detail-attention-holder">Attention: {{ holder }}</span>
           }
         </div>
+        <app-card-waiting-line [task]="info()" [detail]="true" />
         <app-remote-dispatch-rejection [execution]="info().executionLocation" />
       }
     </div>

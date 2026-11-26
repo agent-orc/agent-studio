@@ -419,7 +419,8 @@ public static class TaskCrudEndpoints
                 ? null : new Dictionary<string, TaskTokenSummary> { [detail.Info.TaskKey] = tokenSummary };
             var verdictLookup = TaskSwitchTrace.Run("runtime", () => BuildOrchestratorVerdictLookup(new[] { detail.Info }, configuration));
             var needsDependencyProjection = detail.Info.References.DependsOn.Count > 0
-                || detail.Info.State == TaskStates.HumanReview;
+                || detail.Info.State is TaskStates.HumanReview or TaskStates.Escalated or TaskStates.CodeNotComplete
+                || detail.Info.ParkedBlocker is not null;
             var eligibleWaiters = needsDependencyProjection
                 ? ProjectAccessAuthorization.FilterTasks(context, index.GetResidentTasks(), projects)
                     .Where(job => !job.Fixture)
@@ -435,6 +436,7 @@ public static class TaskCrudEndpoints
                 new[] { withRuntime.Info }, publishedRunnerStatus: true));
             if (liveLookup.TryGetValue(withRuntime.Info.TaskKey, out var currentLiveStatus))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { LiveStatus = currentLiveStatus } };
+            withRuntime = withRuntime with { Info = CardWaitingReason.Attach(withRuntime.Info) };
             if (gitFacts is not null)
                 withRuntime = withRuntime with { Info = withRuntime.Info with
                 {

@@ -416,6 +416,7 @@ internal static class BoardCardSummary
             };
         Add(fields, "blockedBy", job.BlockedBy.Count == 0 ? null : job.BlockedBy);
         Add(fields, "transitiveWaiters", job.TransitiveWaiters);
+        Add(fields, "waitingReason", job.WaitingReason);
         if (job.PickupHold is { } hold)
             fields["pickupHold"] = new
             {

@@ -232,10 +232,13 @@ public sealed class WaitsOnEndpointsTests : IClassFixture<WaitsOnEndpointsTests.
             Assert.Equal(JsonValueKind.Null, waitsOn.ValueKind);
     }
 
-    [Fact]
-    public async Task Grouped_HumanReviewCard_CarriesSortedTransitiveDecisionBacklogImpact()
+    [Theory]
+    [InlineData(TaskStates.HumanReview, "humanReview")]
+    [InlineData(TaskStates.Escalated, "escalated")]
+    [InlineData(TaskStates.CodeNotComplete, "codeNotComplete")]
+    public async Task Grouped_DecisionCard_CarriesSortedTransitiveDecisionBacklogImpact(string state, string lane)
     {
-        WriteJob(_libWatch, TaskStates.HumanReview, "decision", "LIB-1");
+        WriteJob(_libWatch, state, "decision", "LIB-1");
         WriteJob(_appWatch, TaskStates.Ready, "direct", "APP-1", dependsOn: new[] { "LIB-1" });
         WriteJob(_appWatch, TaskStates.Ready, "branch-a", "APP-2", dependsOn: new[] { "APP-1" });
         WriteJob(_appWatch, TaskStates.Ready, "branch-b", "APP-3", dependsOn: new[] { "APP-1" });
@@ -246,7 +249,11 @@ public sealed class WaitsOnEndpointsTests : IClassFixture<WaitsOnEndpointsTests.
         resp.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
 
-        var card = FindCard(doc.RootElement.GetProperty("humanReview"), "decision");
+        var direct = FindCard(doc.RootElement.GetProperty("ready"), "direct");
+        var expectedState = state == TaskStates.HumanReview ? "human review"
+            : state == TaskStates.Escalated ? "escalated" : "parked";
+        Assert.Equal($"waits for LIB-1 ({expectedState})", direct.GetProperty("waitingReason").GetString());
+        var card = FindCard(doc.RootElement.GetProperty(lane), "decision");
         var impact = card.GetProperty("transitiveWaiters");
         Assert.Equal(3, impact.GetProperty("count").GetInt32());
         Assert.Equal(
@@ -261,6 +268,22 @@ public sealed class WaitsOnEndpointsTests : IClassFixture<WaitsOnEndpointsTests.
             3,
             detailDoc.RootElement.GetProperty("info")
                 .GetProperty("transitiveWaiters").GetProperty("count").GetInt32());
+
+        var registry = _host.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
+        var projectId = registry.FindByStorageLocation(_libWatch)!.Id;
+        using var overviewResponse = await client.GetAsync(
+            $"/api/tasks/decision/details/overview?project={Uri.EscapeDataString(projectId)}");
+        overviewResponse.EnsureSuccessStatusCode();
+        using var overview = JsonDocument.Parse(await overviewResponse.Content.ReadAsStringAsync());
+        Assert.Equal(3, overview.RootElement.GetProperty("data")
+            .GetProperty("transitiveWaiters").GetProperty("count").GetInt32());
+        var appId = registry.FindByStorageLocation(_appWatch)!.Id;
+        using var consumerResponse = await client.GetAsync(
+            $"/api/tasks/direct/details/overview?project={Uri.EscapeDataString(appId)}");
+        consumerResponse.EnsureSuccessStatusCode();
+        using var consumer = JsonDocument.Parse(await consumerResponse.Content.ReadAsStringAsync());
+        Assert.Equal(direct.GetProperty("waitingReason").GetString(),
+            consumer.RootElement.GetProperty("data").GetProperty("waitingReason").GetString());
     }
 
     // ---- WRITE endpoint: PUT /references response shape ------------------

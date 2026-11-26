@@ -288,7 +288,7 @@ describe('StatusBarComponent review entry', () => {
 describe('StatusBarComponent usage chip name (AGT-3835)', () => {
   it('starts each CLI chip name with its visible text', async () => {
     const snapshot = signal<unknown>({
-      timeZone: 'UTC', runs: [], cost: null,
+      timeZone: 'Asia/Tokyo', runs: [], cost: null,
       clis: [{
         cliId: 'claude', primary: true, plan: 'Max', source: '/status',
         windows: [
@@ -312,7 +312,20 @@ describe('StatusBarComponent usage chip name (AGT-3835)', () => {
 
     const chip = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="footer-usage-claude"]')!;
     const visible = chip.textContent!.replace(/\s+/g, ' ').trim();
-    expect(visible).toBe('Claude WK 35% Session 24%');
+    expect(visible).toBe('Claude WK 35% reset unknown Session 24% reset unknown');
     expect(chip.getAttribute('aria-label')!.startsWith(`${visible}, Claude, weekly 35 percent used`)).toBe(true);
+    const current = snapshot() as { clis: { windows: { resetAtUtc: string | null }[] }[] };
+    current.clis[0].windows[0].resetAtUtc = new Date(Date.now() + 23 * 3_600_000).toISOString();
+    snapshot.set({ ...current, clis: [current.clis[0], { ...current.clis[0], subscriptionKey: 'second',
+      probeFailedAt: new Date().toISOString() }] });
+    fixture.detectChanges();
+    const entries = (fixture.nativeElement as HTMLElement).querySelectorAll('[data-testid="footer-usage-claude"]');
+    expect(entries.length).toBe(2);
+    for (const entry of entries) {
+      expect(entry.textContent).toContain('in 23 h');
+      expect(entry.textContent).toContain(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    }
+    expect(entries[1].textContent).toContain('Probe failed');
+    expect(entries[1].textContent).toContain('old');
   });
 });

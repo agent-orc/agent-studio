@@ -875,6 +875,8 @@ export interface TaskInfo {
    * genuinely queued and the lane position is honest.
    */
   pickupHold?: PickupHoldStatus | null;
+  /** Short reason computed by the server from recorded claim facts. */
+  waitingReason?: string | null;
   dispatchPlanPosition?: number | null;
   /** Active cards that reach this human-review card through dependsOn edges. */
   transitiveWaiters?: TransitiveWaitersStatus | null;

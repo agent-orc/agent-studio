@@ -51,6 +51,7 @@ public sealed class HostQuotaCoordinator
             || report.Windows.Count > 12 || report.Windows.Any(w => !SafeLabel.IsMatch(w.Label)
                 || w.ResetLabel is { } reset && !SafeReset.IsMatch(reset)
                 || w.UsedPct is < 0 or > 1000)
+            || report.HostTimeZone is { } zone && !SafeReset.IsMatch(zone)
             || report.Plan is { } plan && !SafeVersion.IsMatch(plan)
             || report.CliVersion is { } version && !SafeVersion.IsMatch(version)
             || report.Error is { Length: > 120 }
@@ -69,13 +70,13 @@ public sealed class HostQuotaCoordinator
                 state.Reading = state.Reading is { } prior
                     ? prior with { Error = SafeError(report.Provider, report.Error), ProbeFailedAt = report.ObservedAt }
                     : new(report.Provider, report.SubscriptionKey, runnerId, report.ObservedAt,
-                        null, null, [], SafeError(report.Provider, report.Error), report.ObservedAt);
+                        null, null, [], SafeError(report.Provider, report.Error), report.ObservedAt, report.HostTimeZone);
             }
             else
             {
                 state.FailedHosts.Remove(runnerId);
                 state.Reading = new(report.Provider, report.SubscriptionKey, runnerId, report.ObservedAt,
-                    report.CliVersion, report.Plan, report.Windows, null);
+                    report.CliVersion, report.Plan, report.Windows, null, HostTimeZone: report.HostTimeZone);
             }
             return true;
         }

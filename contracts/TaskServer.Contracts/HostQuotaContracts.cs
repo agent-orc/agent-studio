@@ -11,9 +11,9 @@ public sealed record HostQuotaWindowDto(string Label, double? UsedPct, DateTime?
 public sealed record HostQuotaReportRequest(
     string InstanceId, string Provider, string SubscriptionKey, string ProbeId,
     DateTime ObservedAt, string? CliVersion, string? Plan,
-    IReadOnlyList<HostQuotaWindowDto> Windows, string? Error);
+    IReadOnlyList<HostQuotaWindowDto> Windows, string? Error, string? HostTimeZone = null);
 
 public sealed record HostQuotaReadingDto(
     string Provider, string SubscriptionKey, string HostId, DateTime ObservedAt,
     string? CliVersion, string? Plan, IReadOnlyList<HostQuotaWindowDto> Windows,
-    string? Error, DateTime? ProbeFailedAt = null);
+    string? Error, DateTime? ProbeFailedAt = null, string? HostTimeZone = null);

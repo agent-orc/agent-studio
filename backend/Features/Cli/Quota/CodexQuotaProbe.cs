@@ -82,7 +82,8 @@ public sealed class CodexQuotaProbe : QuotaProbeBase
                     }
                 });
 
-            var snapshot = ParseSnapshot(snap, cliVersion);
+            var snapshot = ParseSnapshot(snap, cliVersion,
+                message => _logger.LogWarning("{ResetParseWarning}", message));
 
             // Log the parsed windows next to the raw sample so a future false
             // snapshot (AGT-2064) is diagnosable from logs alone, without having
@@ -103,6 +104,7 @@ public sealed class CodexQuotaProbe : QuotaProbeBase
             return new QuotaSnapshot
             {
                 CliType = CliType,
+                HostTimeZone = TimeZoneInfo.Local.Id,
                 CliVersion = cliVersion,
                 Source = "/status",
                 Error = DescribeProbeFailure(ex)
@@ -133,16 +135,19 @@ public sealed class CodexQuotaProbe : QuotaProbeBase
             new ProbeStep("await-status", WaitForPattern: StatusPattern, WaitTimeoutMs: 10000, SettleIdleMs: 1500, SettleTimeoutMs: 6000)
         ];
 
-    internal static QuotaSnapshot ParseSnapshot(string snap, string? cliVersion = null)
+    internal static QuotaSnapshot ParseSnapshot(string snap, string? cliVersion = null, Action<string>? warn = null)
     {
         var plan = ParsePlan(snap);
-        var windows = ParseStatusWindows(snap);
+        var observed = DateTime.UtcNow;
+        var windows = ParseStatusWindows(snap, observed, warn);
         var hookReviewBlockedStatus = HookReviewPattern.IsMatch(snap)
             && !StatusPattern.IsMatch(snap);
 
         return new QuotaSnapshot
         {
             CliType = CliTypes.Codex,
+            HostTimeZone = TimeZoneInfo.Local.Id,
+            FetchedAt = observed,
             CliVersion = cliVersion,
             Plan = plan,
             Source = "/status",
@@ -156,8 +161,8 @@ public sealed class CodexQuotaProbe : QuotaProbeBase
         };
     }
 
-    public static List<QuotaWindow> ParseStatusWindows(string snap)
-        => AgentStudio.CliHosting.SubscriptionQuotaParser.ParseCodex(snap, DateTime.UtcNow)
+    public static List<QuotaWindow> ParseStatusWindows(string snap, DateTime? nowUtc = null, Action<string>? warn = null)
+        => AgentStudio.CliHosting.SubscriptionQuotaParser.ParseCodex(snap, nowUtc ?? DateTime.UtcNow, TimeZoneInfo.Local, warn)
             .Select(window => new QuotaWindow
             {
                 Label = window.Label, UsedPct = window.UsedPct, Unit = "%",
