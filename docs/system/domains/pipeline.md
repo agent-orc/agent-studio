@@ -755,6 +755,16 @@ and `lineStop`. Develop is green for isolated routine failures and red for a
 line stop. `inconclusiveRunId` identifies an environment or unconfirmed receipt
 without treating it as proof of a code regression. Raw run evidence is retained.
 
+RT-7 (AGT-4008), working choice RT-D11 B, projects this state through the shared
+header status indicator: green, green with a quarantine count, running, or
+stopped with the line-stop reason. Only the line stop uses error tone. Its
+accessible tooltip lists quarantined tests, kinds and end times. Project
+Operations lists active isolated tests, held areas, fix cards and time remaining
+from `/api/projects/{name}/test-quarantines`, with local loading, empty and error
+states. Needs you presents the policy's owner options and marks its recommended
+option via the additive `ownerOptions` attention field. Existing repair-card
+and testing-settings actions remain the places to apply an owner answer.
+
 The owner can `POST` to `/api/projects/{name}/test-quarantines/start`,
 `/{id}/renew` and `/{id}/lift`. A runner with the completion scope applies the
 persisted receipt as the system principal until RT-8; it cannot choose a class,

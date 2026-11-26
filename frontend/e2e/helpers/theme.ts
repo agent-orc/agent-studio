@@ -13,7 +13,7 @@
  * including translucent `color-mix(...)` chips that Chromium serialises as
  * `color(srgb r g b / a)` — so the integer-only parser in `./contrast` copes.
  */
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 export type Theme = 'dark' | 'light';
 
@@ -100,4 +100,17 @@ export async function sampleColours(
       bg: `rgb(${acc[0]}, ${acc[1]}, ${acc[2]})`,
     };
   });
+}
+
+/** Switch the real shell theme, including its responsive More-menu destination. */
+export async function setThemeThroughControl(page: Page, theme: Theme): Promise<void> {
+  if (await page.locator('html').getAttribute('data-studio-theme') !== theme) {
+    const button = page.getByTestId('studio-titlebar-theme');
+    if (await button.isVisible()) await button.click();
+    else {
+      await page.getByTestId('cockpit-header-more').click();
+      await page.getByRole('menuitem', { name: 'Switch theme', exact: true }).click();
+    }
+  }
+  await expect(page.locator('html')).toHaveAttribute('data-studio-theme', theme);
 }

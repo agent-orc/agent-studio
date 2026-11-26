@@ -64,6 +64,21 @@ describe('AttentionControlComponent', () => {
     });
   }
 
+  it('updates policy recommendations without changing the owner-item identity', async () => {
+    const item: OperatorAttentionItem = { id: 'expired', type: 'post-merge.red-incident',
+      project: 'alpha', cardKey: 'AGT-1', cards: ['AGT-1'], reason: 'Quarantine expired.',
+      observedAt: '2026-11-09T09:00:00Z', suggestedOperations: ['card.inspect'],
+      ownerOptions: [{ id: 'report', label: 'report-only with a card', recommended: false }] };
+    const { fixture, http } = await setup('ok', 0, [item]);
+    fixture.componentInstance.toggle();
+    http.expectOne('/api/operator/attention').flush({ items: [{ ...item,
+      ownerOptions: [{ ...item.ownerOptions![0], recommended: true }] }], count: 1 });
+    await fixture.whenStable();
+    expect(document.querySelector('[data-testid="attention-owner-options"]')?.textContent)
+      .toContain('report-only with a card Recommended');
+    expect(rows()).toHaveLength(1);
+  });
+
   it('keeps an overlap wait after refusal and removes it only after Run anyway succeeds', async () => {
     const item: OperatorAttentionItem = { id: 'dispatch.overlap-starved|alpha/AGT-3988|state', type: 'dispatch.overlap-starved',
       project: 'alpha', cardKey: 'AGT-3988', cards: ['AGT-3988', 'AGT-3481'], reason: 'AGT-3988 waits for AGT-3481.',

@@ -1,3 +1,4 @@
+import { IsolatedTestsComponent } from '../isolated-tests/isolated-tests';
 import { historyRunStateTone } from '../../state/deploy-status-tone';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { DatePipe } from '@angular/common';
@@ -11,7 +12,7 @@ import { studioProjectSlug } from '../../../../services/studio-project-slug.util
 import type { PostMergeCoverage, ProjectTesting } from '../../../../models/task.model';
 
 @Component({
-  selector: 'app-project-operations', standalone: true, imports: [StatusIndicatorComponent, DatePipe, OperationsTrendComponent, LoadingSurfaceComponent, PendingButtonDirective],
+  selector: 'app-project-operations', standalone: true, imports: [IsolatedTestsComponent, StatusIndicatorComponent, DatePipe, OperationsTrendComponent, LoadingSurfaceComponent, PendingButtonDirective],
   templateUrl: './project-operations.html', styleUrl: './project-operations.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

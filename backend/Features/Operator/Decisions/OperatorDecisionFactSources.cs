@@ -394,7 +394,9 @@ public sealed class OperatorPostMergeRedIncidentFactSource(
                         + (question.Reason is null ? "" : $"|{incident.TestId}|{question.Reason}"),
                     project, card, reason, asked.UtcDateTime, evidence,
                     Title: incident.TestId is null ? $"{project} · develop red for two hours"
-                        : $"{project} · {QuestionTitle(question.Reason)}: {incident.TestId}"));
+                        : $"{project} · {QuestionTitle(question.Reason)}: {incident.TestId}",
+                    OwnerOptions: question.Options.Select(option => new OperatorOwnerOption(option,
+                        OptionText(option, incident), option == question.Recommended)).ToArray()));
             }
         }
         return facts;

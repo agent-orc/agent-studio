@@ -126,7 +126,8 @@ public sealed record OperatorDecisionFact(
     DateTime ObservedAtUtc,
     IReadOnlyList<OperatorEvidenceLink> Evidence,
     IReadOnlyList<string>? Cards = null,
-    string? Title = null);
+    string? Title = null,
+    IReadOnlyList<OperatorOwnerOption>? OwnerOptions = null);
 
 /// <summary>
 /// One published event. <see cref="Cursor"/> is the decimal sequence of the
@@ -162,3 +163,6 @@ public sealed record OperatorDecisionsResponse(
     bool HasMore,
     bool Gap,
     int RetentionHours);
+
+/// <summary>A policy-provided owner choice for attention-list presentation.</summary>
+public sealed record OperatorOwnerOption(string Id, string Label, bool Recommended);
