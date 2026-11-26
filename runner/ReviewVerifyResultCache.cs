@@ -34,7 +34,10 @@ internal sealed record VerifyCacheEntry(
     string VerdictStatus,
     string StdOut,
     string StdErr,
-    DateTime CreatedAt);
+    DateTime CreatedAt)
+{
+    public PostMergeEnvelopeFingerprint? Envelope { get; init; }
+}
 
 /// <summary>
 /// Per-host store of passed candidate verify results (AGT-2841). A ReviewInfra

@@ -356,7 +356,7 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         }
         Assert.Equal("report-only", Assert.Single(service.ActiveQuarantines(project)).Kind);
         Assert.Equal("green", store.Read(project.Id).DevelopState);
-        var environment = TypedRed(test: "Environment.Fail") with { Id = "environment", EnvelopeCanaryPassed = false };
+        var environment = TypedRed(test: "Environment.Fail") with { Id = "environment", Status = "inconclusive", EnvelopeCanaryPassed = false };
         Record(store, service, project, environment);
         Assert.Equal("environment", store.Read(project.Id).InconclusiveRunId);
         Assert.Null(store.Read(project.Id).LineStop);

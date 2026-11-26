@@ -159,6 +159,7 @@ public sealed record BuildTestGateRequest(
 
 public sealed record BuildTestGateProcessEvidence
 {
+    public PostMergeEnvelopeFingerprint? Envelope { get; init; }
     public string? Host { get; init; }
     public GateResourceEvidence? Resources { get; init; }
     public GateBudgetExtensionEvidence? BudgetExtension { get; init; }
@@ -446,6 +447,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
     private readonly MachineGateSlots _machineSlots = new(MachineGateLockPath);
     private readonly int _localGateSlots;
     private static readonly AsyncLocal<int?> ActiveSlot = new();
+    private static readonly AsyncLocal<TestEnvelopeWorkspace?> ActiveTestWorkspace = new();
+    private static readonly AsyncLocal<IReadOnlyDictionary<string, string>?> ActiveDeclaredEnvironment = new();
     private readonly Func<int, IGateProcessResources> _resourceFactory = pid => new GateProcessResources(pid);
     private readonly Func<CancellationToken, Task<bool>> _composeRenderHost = ComposeRenderHostProbe.IsAvailableAsync;
     internal TimeSpan? ShardIdleBoundForTesting { get; set; }
@@ -509,6 +512,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         TimeSpan timeout,
         CancellationToken ct)
     {
+        using var testWorkspace = new TestEnvelopeWorkspace();
+        ActiveTestWorkspace.Value = testWorkspace;
         if (mode == PostStepMode.Off) return Skipped("mode=off");
         // A narrowed green is not a full-suite green; it never meets the cache.
         if (request.NarrowCheck is not null || request.Quarantines.Count > 0
@@ -538,6 +543,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
 
         MachineGateSlots.Lease? machineLease = null;
         ExactWorkspaceLease? workspaceLease = null;
+        IDisposable? cacheExecutionLease = null;
         ProjectPreparationResult? projectPreparation = null;
         BuildTestGateResult? completed = null;
         string? workspace = null;
@@ -700,6 +706,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                             toolchainIdentity ??= GateResultCache.LocalToolchainIdentity(preflightCommands, workspace!);
                             profileDigest = GateResultCache.ProfileDigest(
                                 request, profile, mode, preflightCommands, toolchainIdentity);
+                            cacheExecutionLease ??= await _verdictCache.AcquireExecutionAsync(
+                                cacheProject, testedSha!, profileDigest, ct).ConfigureAwait(false);
                             BuildTestGateResult? cached;
                             using (await _verdictCache.AcquireAsync(cacheProject, ct).ConfigureAwait(false))
                                 cached = _verdictCache.TryRead(cacheProject, testedSha!, profileDigest);
@@ -823,6 +831,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                             toolchainIdentity ??= GateResultCache.LocalToolchainIdentity(commands, workspace!);
                             profileDigest = GateResultCache.ProfileDigest(
                                 request, profile, mode, commands, toolchainIdentity);
+                            cacheExecutionLease ??= await _verdictCache.AcquireExecutionAsync(
+                                cacheProject, testedSha!, profileDigest, ct).ConfigureAwait(false);
                             BuildTestGateResult? cached = null;
                             if (staged.Audit.UnmappedSourceDirectories.Count == 0)
                             {
@@ -999,6 +1009,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         }
         finally
         {
+            cacheExecutionLease?.Dispose();
             if (workspaceLease is not null)
             {
                 await workspaceLease.RemoveBestEffortAsync(infrastructureTimeout).ConfigureAwait(false);
@@ -1459,6 +1470,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         bool guardFirst = true,
         IReadOnlyList<ProjectTestQuarantine>? serverQuarantines = null)
     {
+        ActiveDeclaredEnvironment.Value = ProjectDefinitionReader.ReadWorkspace(repositoryPath).Definition?.Environment
+            ?? TestEnvelope.EmptyEnvironment;
         var sw = Stopwatch.StartNew();
         var budget = new GateContentionBudget(timeout);
         var output = new RingOutput(MaxOutputLines);
@@ -2448,16 +2461,23 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         GateShardHangWatch? shardWatch = null)
     {
         var startedAt = DateTimeOffset.UtcNow;
+        var declared = ActiveDeclaredEnvironment.Value ?? ProjectDefinitionReader.ReadWorkspace(workingDirectory).Definition?.Environment
+            ?? TestEnvelope.EmptyEnvironment;
+        using var envelope = new TestCommandEnvelope(declared, output.AppendLine, ActiveTestWorkspace.Value?.Home, ActiveTestWorkspace.Value?.Temp);
+        await envelope.ProbeSdkAsync(workingDirectory, ct);
+        var launch = envelope.Launch(fileName, args);
         var psi = new ProcessStartInfo
         {
-            FileName = fileName,
+            FileName = launch.FileName,
             WorkingDirectory = workingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        foreach (var arg in args) psi.ArgumentList.Add(arg);
+        foreach (var arg in launch.Arguments) psi.ArgumentList.Add(arg);
+        psi.Environment.Clear();
+        foreach (var (name, value) in envelope.Environment) psi.Environment[name] = value;
         var npmCache = ActiveNpmCachePath;
         psi.Environment["NPM_CONFIG_CACHE"] = npmCache;
         if (GateArtifactOutput.Current is { } artifactDirectory)
@@ -2617,6 +2637,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             var signal = ResolveTerminationSignal(exitCode, timedOut, cancelled);
             return NewProcessEvidence(startedAt, command, fileName, args, workingDirectory, phase) with
             {
+                Envelope = envelope.Fingerprint(declared, command),
                 CompletedAtUtc = completedAt,
                 ExitCode = exitCode,
                 TerminationSignal = signal,
@@ -2683,6 +2704,10 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
     internal static BuildTestGateFailureKind ClassifyFailure(BuildTestGateProcessEvidence process)
     {
         var evidence = process.StandardError + "\n" + process.StandardOutput;
+        if (evidence.Contains("test envelope attach failed", StringComparison.Ordinal)) return BuildTestGateFailureKind.Environment;
+        if (TestEnvelope.CanaryFailed(process.TestReport?.FailedTests
+                ?? GateFlakyRerunPolicy.ParseFailedTests(evidence)))
+            return BuildTestGateFailureKind.Environment;
         if (process.ShardHang is not null) return BuildTestGateFailureKind.Environment;
         if (ContainsAny(evidence, "no space left on device", "out of diskspace", "disk full"))
             return BuildTestGateFailureKind.DiskFull;

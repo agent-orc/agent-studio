@@ -3184,7 +3184,18 @@ and reuses the existing Runner credential. Window observations are durable
 facts in `PostMergeRunStore`, independent of green/red receipts, and flow to
 `/api/develop-states` and the project Operations alert. Nightly routine checks
 are retried between 02:15 and 06:15 UTC and deduplicated by terminal receipts
-for the UTC day. On Linux each project command receives the same per-worker
-cgroup envelope as coding work, in a sibling leaf of the daemon. Required
-attachment keeps project tests out of the daemon leaf, and command teardown
-kills leftovers. A host without delegation defers execution. See [host setup and legacy timer retirement](../../operations/setup/linux-runner-host.md#post-merge-develop-checks).
+for the UTC day. Review and post-merge project commands use the shared RT-6 test envelope in
+TaskServer.Contracts, also used by the build-test gate. Each command has a fresh
+Linux worker leaf with one token of CPU (3 cores by default), and the same
+`DOTNET_PROCESSOR_COUNT`. Configure `TEST_ENVELOPE_CORES` consistently on the
+execution services. HOME and temp belong to the run; provider, Git and daemon
+credentials do not enter the test environment. Missing delegation is recorded
+as `unavailable` in the fingerprint and no longer defers the scheduler. Command
+teardown kills cgroup leftovers. Review receipts, including reused evidence,
+and post-merge receipts record the digests, resource shape, SDK, shard plan and
+load observations. Confirmed failures get a serial one-process `reference=1`
+repeat; a recovery is recorded as flaky and skips attribution. A failed base envelope canary is RT-2 environment evidence and yields
+an inconclusive receipt without merge attribution. See the
+[shared test envelope](pipeline.md#shared-test-envelope-rt-6) for the allowlist,
+canary and reference contract.
+See [host setup and legacy timer retirement](../../operations/setup/linux-runner-host.md#post-merge-develop-checks).

@@ -833,7 +833,7 @@ RT-D6 B, RT-D7 B and RT-D9 B. The lifecycle contract is:
 |---|---|
 | Confirmed build, prepare or base failure without an environment explanation | `LineStop`, with no automatic quarantine |
 | Confirmed routine regression or ambiguous failure | `StartHeld` within the project caps |
-| Recovering same-SHA repeat or mixed bisect point | `CountFlaky`; `StartReportOnly` after three distinct runs in 14 days or immediately for a mixed point |
+| Recovering same-SHA or matching reference repeat, or mixed bisect point | `CountFlaky`; `StartReportOnly` after three distinct runs in 14 days or immediately for a mixed point |
 | Failed canary, passing reference-envelope repeat after a fingerprint mismatch, or failing last-green control | `MarkInconclusive`, no merge attribution; recurring environment incidents may start report-only |
 | Two latest covering passes in the standard envelope on tips containing the repair | `Lift` |
 | Held expiry at 24 hours with the repair in Progress or Auto Review | One `Renew` for 24 hours, bounded by 48 hours from the original start |
@@ -862,6 +862,13 @@ The post-merge host supplies frozen per-test receipts, union quarantine facts,
 repair lanes, clocks and covering runs through `MonolithTransitionAdapter`.
 It applies the actions, persists the quarantine audit and incident decision
 log, and projects owner options. No project-wide testing strategy changes.
+
+RT-6 (AGT-4007) supplies measured envelope canaries, fingerprints and reference
+attempts. Environment evidence takes precedence over attribution. A recovery
+in a matching reference envelope is flaky, including for a base test, and
+cannot stop the line. A recovery after a fingerprint mismatch remains
+environment evidence. These classifications stay in `RedTestTriagePolicy`;
+hosts record attempts and apply the resulting disposition.
 
 RT-5 (AGT-4006) adopts these hold rules in both integration hosts.
 `HoldScopePolicy.ActiveHolds` projects exact active held entries to typed
