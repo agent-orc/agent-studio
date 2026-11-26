@@ -7,6 +7,17 @@ public sealed partial class DispatchStore
 {
     private static readonly ConcurrentDictionary<string, object> ConflictLocks = new(StringComparer.Ordinal);
 
+    internal static string ConflictId(string project, string card, string kind, string evidenceId)
+        => Key($"{project.ToUpperInvariant()}\n{card}\n{kind}\n{evidenceId}").ToLowerInvariant();
+
+    private string ConflictPath(string project, string id)
+        => Path.Combine(Project(project), "conflicts", Key(id) + ".json");
+
+    internal DispatchConflictRecordV1? ReadConflict(string project, string id)
+        => Read<DispatchConflictRecordV1>(ConflictPath(project, id));
+
+    internal bool HasConflict(string project, string id) => File.Exists(ConflictPath(project, id));
+
     /// <summary>Write once by evidence identity, including across retries and backfill reruns.</summary>
     public bool AppendConflict(DispatchConflictRecordV1 record)
     {
@@ -14,7 +25,7 @@ public sealed partial class DispatchStore
         lock (ConflictLocks.GetOrAdd(folder, _ => new object()))
         {
             Directory.CreateDirectory(folder);
-            var path = Path.Combine(folder, Key(record.Id) + ".json");
+            var path = ConflictPath(record.Project, record.Id);
             if (File.Exists(path)) return false;
             var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try

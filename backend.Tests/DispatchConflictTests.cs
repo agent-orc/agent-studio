@@ -40,6 +40,22 @@ public sealed class DispatchConflictTests : IDisposable
         Assert.Empty(store.ReadConflicts("other"));
     }
 
+    [Fact]
+    public void LegacyCollisionLookupReadsOnlyTheExactIdentity()
+    {
+        var root = Path.Combine(_root, "legacy");
+        var ledger = new IntegrationConflictLedger(root);
+        var id = IntegrationConflictLedger.Hash("PROJECT\nAGT-1\ndevelop\ndelivery\ntip");
+        var row = new IntegrationConflictEntry(1, id, "project", "AGT-1", "develop", "delivery", "base", "tip",
+            At, null, null, 1, [new("shared.cs", null, ["AGT-2"])], "pending", At);
+        ledger.Record(row);
+        File.WriteAllText(Path.Combine(Directory.GetDirectories(root).Single(), "unrelated.json"), "invalid json");
+        Assert.Equal(row.Id, ledger.ReadCollision("PROJECT", "agt-1", "develop", "delivery", "tip")!.Id);
+        Assert.Null(ledger.ReadCollision("project", "AGT-2", "develop", "delivery", "tip"));
+        Assert.Null(ledger.ReadCollision("project", "AGT-1", "other", "delivery", "tip"));
+        Assert.Null(ledger.ReadCollision("other", "AGT-1", "develop", "delivery", "tip"));
+    }
+
     [Theory]
     [InlineData(true, true, 2, true, true, true)]
     [InlineData(false, true, 2, true, true, false)]
@@ -156,12 +172,16 @@ public sealed class DispatchConflictTests : IDisposable
         var service = Service();
         service.RecordDispatchConflict(Repo, "project", "AGT-1", "integration-conflict", baseSha, tip, files,
             delivery + ":" + tip, At);
+        // An unrelated damaged record must not be read by recovery or delivery backfill.
+        var folder = Directory.GetDirectories(Path.Combine(_root, "ledger")).Single();
+        File.WriteAllText(Path.Combine(folder, "conflicts", "unrelated.json"), "invalid json");
         var subject = new AgentStudio.Pipeline.ReviewSubjectRecord { ResultSha = delivery, BaseSha = baseSha };
         var report = new IntegrationConflictReport { DeliverySha = delivery, IntegrationTipSha = tip,
             ConflictedFiles = files.Take(20).ToList(), ConflictedFilesTruncated = true };
         var card = new TaskInfo { Id = "AGT-1", Key = "AGT-1", ProjectName = "project" };
         service.TryRecordDispatchRecovery(card, subject, report, "merge-round", "merge");
         service.TryRecordDispatchRecovery(card, subject, report, "develop-sync", "sync");
+        File.Delete(Path.Combine(folder, "conflicts", "unrelated.json"));
         var rows = new DispatchStore(Config).ReadConflicts("project");
         Assert.Equal(3, rows.Count);
         Assert.All(rows, row => Assert.Equal(26, row.ConflictedFiles.Count));
@@ -191,7 +211,11 @@ public sealed class DispatchConflictTests : IDisposable
         Commit("AGT-3: sync develop", "2026-09-01T12:00:00Z");
         var service = Service();
         Assert.Equal(2, service.BackfillDispatchConflicts(Repo, "project", At));
+        var unrelated = Path.Combine(Directory.GetDirectories(Path.Combine(_root, "ledger")).Single(),
+            "conflicts", "unrelated.json");
+        File.WriteAllText(unrelated, "invalid json");
         Assert.Equal(0, service.BackfillDispatchConflicts(Repo, "project", At));
+        File.Delete(unrelated);
         var rows = new DispatchStore(Config).ReadConflicts("project");
         Assert.Equal(2, rows.Count);
         Assert.All(rows, row => Assert.True(row.Backfilled));

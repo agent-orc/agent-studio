@@ -40,7 +40,7 @@ public partial class GitService
         }
         partners.Remove(card);
         var ordered = partners.Order(StringComparer.Ordinal).ToArray();
-        var id = IntegrationConflictLedger.Hash($"{project.ToUpperInvariant()}\n{card}\n{kind}\n{evidenceId}");
+        var id = DispatchStore.ConflictId(project, card, kind, evidenceId);
         var record = new DispatchConflictRecordV1(id, project, card, kind, baseSha, tip,
             files.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(), ordered, at)
         {
@@ -77,11 +77,13 @@ public partial class GitService
         }
         var (mergeBase, baseError, baseCode) = RunGitArgs(repo, "merge-base", subject.ResultSha, tip);
         if (baseCode != 0) throw new IOException($"Dispatch delivery base unavailable: {baseError}");
-        var prior = DispatchConflicts.ReadConflicts(card.ProjectName)
-            .LastOrDefault(row => row.Card == (card.Key ?? card.Id) && row.Kind == "integration-conflict" && row.IntegrationTipSha == tip && row.EvidenceId == subject.ResultSha + ":" + tip);
-        var captured = IntegrationConflictLedger.Default.Read(card.ProjectName)
-            .Where(row => row.DeliverySha == subject.ResultSha && row.IntegrationTipSha == tip)
-            .SelectMany(row => row.Files.Select(file => file.Path)).Distinct(StringComparer.Ordinal).ToArray();
+        var prior = DispatchConflicts.ReadConflict(card.ProjectName, DispatchStore.ConflictId(
+            card.ProjectName, card.Key ?? card.Id, "integration-conflict", subject.ResultSha + ":" + tip));
+        var branchName = report?.IntegrationBranch
+            ?? TaskIntegrationBranch.Name(_projectSettings?.Get(card.ProjectName).IntegrationBranch);
+        var captured = prior is not null ? [] : IntegrationConflictLedger.Default.ReadCollision(
+                card.ProjectName, string.IsNullOrWhiteSpace(subject.TaskKey) ? card.TaskKey : subject.TaskKey,
+                branchName, subject.ResultSha, tip)?.Files.Select(file => file.Path).ToArray() ?? [];
         RecordDispatchConflict(repo, card.ProjectName, card.Key ?? card.Id, kind, subject.BaseSha ?? mergeBase.Trim(), tip,
             prior?.ConflictedFiles ?? (captured.Length > 0 ? captured : report?.ConflictedFiles ?? []), evidenceId, DateTimeOffset.UtcNow);
     }
@@ -108,7 +110,6 @@ public partial class GitService
         var fields = log.Split('\0');
         var count = 0;
         DispatchConflictAttribution? attribution = null;
-        var existing = DispatchConflicts.ReadConflicts(project).Select(row => row.Id).ToHashSet(StringComparer.Ordinal);
         for (var index = 0; index + 3 < fields.Length; index += 4)
         {
             var sha = fields[index].Trim();
@@ -133,8 +134,8 @@ public partial class GitService
             var baseSha = syncParents.Length > 1 ? baseValue.Trim() : deliveryBase ?? parents[0];
             var (paths, pathError, pathCode) = RunGitArgs(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", parents[0], sha, "--");
             if (pathCode != 0) throw new IOException($"Dispatch backfill paths unavailable: {pathError}");
-            var id = IntegrationConflictLedger.Hash($"{project.ToUpperInvariant()}\n{card}\ndevelop-sync\n{sha}");
-            if (!existing.Add(id)) continue;
+            var id = DispatchStore.ConflictId(project, card, "develop-sync", sha);
+            if (DispatchConflicts.HasConflict(project, id)) continue;
             RecordDispatchConflict(repo, project, card, "develop-sync", baseSha, tip,
                 paths.Split('\0', StringSplitOptions.RemoveEmptyEntries), sha,
                 DateTimeOffset.Parse(fields[index + 2], System.Globalization.CultureInfo.InvariantCulture), backfilled,

@@ -94,9 +94,11 @@ public sealed class DispatchEndpointTests : IDisposable
 
     [Theory]
     [InlineData("DeterministicSuiteRed", true, 1)]
+    [InlineData("DeterministicSuiteRed", true, 1, "write")]
+    [InlineData("DeterministicSuiteRed", true, 1, "forecast")]
     [InlineData("InfrastructureRed", true, 0)]
     [InlineData("DeterministicSuiteRed", false, 0)]
-    public async Task IsolationWritesOnlyDeterministicOverlappingPairs(string classification, bool overlaps, int expected)
+    public async Task IsolationWritesOnlyDeterministicOverlappingPairs(string classification, bool overlaps, int expected, string? failure = null)
     {
         await using var factory = Factory();
         using var client = factory.CreateClient();
@@ -126,8 +128,24 @@ public sealed class DispatchEndpointTests : IDisposable
         dispatch.Write(scope.Project, "AGT-1", new([], ["shared.cs"], [], [], "high", "revision"));
         dispatch.Write(scope.Project, "AGT-2", new([], [overlaps ? "shared.cs" : "other.cs"], [], [], "high", "revision"));
         var pilot = factory.Services.GetRequiredService<AgentStudio.Pipeline.BatchGatePilotService>();
-        pilot.DeriveIsolationFindings(parent, [child]);
-        pilot.DeriveIsolationFindings(parent, [child]);
+        var conflictFolder = Path.Combine(_root, ".dispatch",
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(scope.Project.ToUpperInvariant()))), "conflicts");
+        var forecastFolder = Path.Combine(Path.GetDirectoryName(conflictFolder)!, "cards");
+        var forecastPath = Directory.GetFiles(forecastFolder).First();
+        var forecastJson = File.ReadAllText(forecastPath);
+        if (failure == "write") File.WriteAllText(conflictFolder, "unavailable");
+        if (failure == "forecast") File.WriteAllText(forecastPath, "invalid json");
+        if (failure is not null)
+        {
+            // Evidence failure must leave isolation derivation usable and retryable.
+            pilot.DeriveIsolationFindings(parent, [child], skipSettled: true);
+            Assert.Empty(dispatch.ReadConflicts(scope.Project));
+            if (failure == "write") File.Delete(conflictFolder);
+            if (failure == "forecast") File.WriteAllText(forecastPath, forecastJson);
+        }
+        pilot.DeriveIsolationFindings(parent, [child], skipSettled: true);
+        pilot.DeriveIsolationFindings(parent, [child], skipSettled: true);
         var rows = dispatch.ReadConflicts(scope.Project);
         Assert.Equal(expected, rows.Count);
         if (expected > 0)

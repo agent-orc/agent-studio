@@ -4478,9 +4478,12 @@ commits and provenance, with the primary owning card in a commit subject as
 historical fallback. Other card references in a subject are not owners.
 Ownership lookup is shared per task-index publication, including archived cards,
 and refreshed when card metadata publishes a new generation. Backfill captures
-one ownership lookup and one existing-record inventory for the run. Delivery-time
-conflict collection logs evidence failures and lets forecast delivery facts persist;
-the owner backfill command still reports failures to its caller.
+one ownership lookup for the run and checks existing evidence by its record id.
+Recovery reads the matching collision directly, without scanning unrelated ledger
+records. Delivery-time conflict collection logs evidence failures and lets forecast
+delivery facts persist; the owner backfill command still reports failures to its caller.
+Semantic evidence failures are logged without interrupting isolation findings, and
+failed collection remains eligible for retry after storage recovers.
 
 Integration reports, delivery-chain merge decisions, queued agent sync rounds,
 and sync commits observed at delivery produce separate evidence kinds.
