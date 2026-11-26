@@ -50,6 +50,7 @@ public sealed class BoardCardProjector(
                       .WithRecordedIntegrationFailure(integrationStatus)
                       .WithPublishSignal(gitLookup.Publish)
                       .WithTestRunEvidence(gitLookup.TestRuns)
+                      .Select(CardWaitingReason.Attach)
                       .Select(job => WithReviewQueue(job, reviewQueue))
                       .ToList();
     }

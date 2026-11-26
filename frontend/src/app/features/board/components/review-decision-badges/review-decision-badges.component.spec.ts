@@ -23,7 +23,7 @@ describe('ReviewDecisionBadgesComponent', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('[data-testid="task-card-decision-dam"]')?.textContent)
-      .toContain('Dams 2 cards');
+      .toContain('holds 2 cards');
     expect(fixture.nativeElement.querySelector('[data-testid="task-card-decision-dam"]')?.getAttribute('data-tone'))
       .toBe('danger');
     expect(fixture.nativeElement.querySelector('[data-testid="task-card-human-review"]')).toBeNull();

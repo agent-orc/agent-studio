@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace AgentStudio.Tasks;
 
@@ -155,11 +156,20 @@ public static class BoardSummaryPolicy
     {
         IReadOnlyList<byte[]> SortLane(string lane) => cards
             .Where(card => card.State == lane)
-            .OrderBy(card => card.ProjectName, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(card => lane is TaskStates.HumanReview or TaskStates.Escalated ? HeldCount(card) : 0)
+            .ThenBy(card => card.ProjectName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(card => card.LaneRank)
             .Select(card => card.Summary)
             .ToList();
         return BoardCardSummary.SerializeSummaryGrouped(
             BoardCardSummary.GroupedLanes(SortLane, legacyReviewLane), gitStateAt, stale: true);
     }
+    private static int HeldCount(BoardSummaryCard card)
+    {
+        using var doc = JsonDocument.Parse(card.Summary);
+        return doc.RootElement.TryGetProperty("transitiveWaiters", out var impact)
+            && impact.ValueKind == JsonValueKind.Object
+            && impact.TryGetProperty("count", out var count) ? count.GetInt32() : 0;
+    }
+
 }

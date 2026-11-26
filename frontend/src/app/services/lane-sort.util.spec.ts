@@ -25,6 +25,15 @@ function card(id: string, projectName: string, order: number, extra: Partial<Tas
 const ids = (jobs: readonly TaskInfo[]) => jobs.map((job) => job.id);
 
 describe('sortLaneLikeBoard (AGT-3587)', () => {
+  for (const state of ['5-human-review', '5e-escalated']) {
+    it(`keeps holders first across projects after a pushed detail update in ${state}`, () => {
+      const jobs = [card('free', 'A', 1), card('holder', 'Z', 2, {
+        transitiveWaiters: { count: 2, keys: ['AGT-1', 'AGT-2'] },
+      }), card('also-free', 'A', 3)];
+      expect(ids(sortLaneLikeBoard(jobs, state, {}))).toEqual(['holder', 'free', 'also-free']);
+    });
+  }
+
   it('groups projects alphabetically instead of sorting the lane by order across projects', () => {
     // The walkthrough case: DEMO-55 (order 50) sorted after PLAT-2 (order 200)
     // once a pushed card re-sorted the whole lane by `order`.

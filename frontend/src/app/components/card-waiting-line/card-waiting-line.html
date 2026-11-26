@@ -1,0 +1,22 @@
+@if (task().waitingReason; as reason) {
+  <div class="waiting-line" data-testid="card-waiting-reason" [title]="reason">{{ reason }}</div>
+}
+@if (detail()) {
+  @if (task().transitiveWaiters; as impact) {
+    @if (impact.count > 0) {
+      <div class="waiting-links" data-testid="detail-held-cards">
+        <span>holds {{ impact.count }} {{ impact.count === 1 ? 'card' : 'cards' }}:</span>
+        @for (key of impact.keys; track key) {
+          <a [href]="'#task:' + key" (click)="open(key, $event)">{{ key }}</a>
+        }
+      </div>
+    }
+  }
+  @if (dependencyKeys().length > 0) {
+    <div class="waiting-links" data-testid="detail-waiting-links">
+      @for (key of dependencyKeys(); track key) {
+        <a [href]="'#task:' + key" (click)="open(key, $event)">{{ key }}</a>
+      }
+    </div>
+  }
+}

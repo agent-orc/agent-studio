@@ -197,6 +197,16 @@ title of a fulfilled edge. The client restores them on the parsed grouped cards
 (`restoreBoardCardDefaults` in `task.service.ts`). The production-shaped Human
 Review fixture in `BoardCardSummaryTests` holds the card to 2 KB on average. ETag
 validation remains a separate HTTP optimization from the card contract.
+Ready cards also carry `waitingReason`, a short server-computed line selected
+from unresolved dependencies, pickup or dispatch holds, then recorded runner
+waits (slot capacity or quota). With no recorded hold it is absent. This is a
+visibility projection, not a second claim admission policy. Human Review,
+Escalated and parked cards carry `transitiveWaiters` with distinct open
+successor keys; completed and archived successors stop traversal. The board
+shows "holds N cards", with keys on hover, and the detail header links them.
+Human Review and Escalated put the largest hold counts first across projects,
+keeping the configured lane order for ties, including restored board reads.
+
 `Board:Source` selects who answers the grouped board read: the workspace task
 index (`workspace`, default), the workspace with a mirrored and compared Task
 Server read model (`task-server-shadow`), or the Task Server read model

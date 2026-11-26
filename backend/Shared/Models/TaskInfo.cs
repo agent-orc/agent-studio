@@ -558,6 +558,9 @@ public record TaskInfo
     /// every lane that is not a pickup lane. Never persisted to <c>task.json</c>.
     /// </summary>
     public PickupHoldStatus? PickupHold { get; init; }
+
+    /// <summary>Short server-computed reason a Ready card cannot be claimed; absent without a recorded hold.</summary>
+    public string? WaitingReason { get; init; }
     public int? DispatchPlanPosition { get; init; }
 
     /// <summary>

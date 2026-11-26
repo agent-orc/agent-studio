@@ -34,6 +34,18 @@ public sealed class BoardSummaryPolicyTests
 
     private static string[] Ids(JsonElement lane) => lane.EnumerateArray().Select(card => card.GetProperty("id").GetString()!).ToArray();
 
+    [Theory]
+    [InlineData(TaskStates.HumanReview, "humanReview")]
+    [InlineData(TaskStates.Escalated, "escalated")]
+    public void Restored_decision_lanes_put_holders_before_other_projects(string state, string lane)
+    {
+        var free = Row("free", state, 0, 0, project: "alpha");
+        var holder = Row("holder", state, 1, 1, project: "zeta") with
+        { Summary = JsonSerializer.SerializeToUtf8Bytes(new { id = "holder", transitiveWaiters = new { count = 2 } }) };
+        using var doc = JsonDocument.Parse(BoardSummaryPolicy.ComposeGrouped([free, holder], false, At));
+        Assert.Equal(new[] { "holder", "free" }, Ids(doc.RootElement.GetProperty(lane)));
+    }
+
     [Fact]
     public void Build_records_index_order_scan_ranks_and_the_lane_sort_rank()
     {

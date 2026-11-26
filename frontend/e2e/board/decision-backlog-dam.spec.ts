@@ -63,6 +63,13 @@ async function json(route: Route, body: unknown): Promise<void> {
 
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', (route) => json(route, []));
+  await page.route('**/api/v1/management/credential-inventory**', route => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ generatedAt: '2026-11-26T09:00:00Z', items: [] }),
+  }));
+  await page.route(/\/api\/usage\/cockpit(\?|$)/, route => json(route, { workspaceId: 'fixture', clis: [], cost: null }));
+  await page.route(/\/api\/v1\/projects(\?|$)/, route => json(route, [{
+    id: PROJECT, displayName: PROJECT, storageLocation: WATCH_PATH, archived: false,
+  }]));
   await page.route('**/api/tasks/archive**', (route) => json(route, {
     items: [],
     total: 0,
@@ -140,7 +147,7 @@ test.describe('transitive decision backlog dam', () => {
 
     const card = page.getByTestId('task-card').filter({ hasText: PRIMARY_DECISION.title });
     const badge = card.getByTestId('task-card-decision-dam');
-    await expect(badge).toContainText('Dams 10 cards');
+    await expect(badge).toContainText('holds 10 cards');
     await badge.hover();
     await expect(page.getByTestId('cac-tooltip')).toContainText(WAITING_KEYS.join(', '));
 
@@ -165,7 +172,7 @@ test.describe('transitive decision backlog dam', () => {
       await expect(
         page.getByTestId('task-card').filter({ hasText: PRIMARY_DECISION.title })
           .getByTestId('task-card-decision-dam'),
-      ).toContainText('Dams 10 cards');
+      ).toContainText('holds 10 cards');
 
       const resultsDir = process.env['JOB_RESULTS_DIR'] ?? process.env['DECISION_BACKLOG_RESULTS_DIR'];
       if (resultsDir) {

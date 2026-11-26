@@ -1,3 +1,4 @@
+import { CardWaitingLineComponent } from '../../../../components/card-waiting-line/card-waiting-line';
 import { deriveActiveTaskRun } from '../../../../services/run-activity.util';
 import { identityDisplay } from '../../../../components/identity-chip/identity-display';
 import { IdentityChipComponent } from '../../../../components/identity-chip/identity-chip.component';
@@ -106,7 +107,7 @@ if (typeof window !== 'undefined') {
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [IdentityChipComponent, StatusIndicatorComponent, TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskPreviewComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent, CardEnvironmentBadgesComponent, DossierSliceLinkComponent, AcceptanceReadinessNoteComponent, ServerCheckoutNoticeComponent],
+  imports: [CardWaitingLineComponent, IdentityChipComponent, StatusIndicatorComponent, TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskPreviewComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent, CardEnvironmentBadgesComponent, DossierSliceLinkComponent, AcceptanceReadinessNoteComponent, ServerCheckoutNoticeComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',
@@ -142,7 +143,6 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   private readonly hostRef = inject(ElementRef<HTMLElement>);
   /** True when this card should render the just-created highlight. */
   readonly isJustCreated = computed(() => this.highlightJobId() === this.job().id);
-
   /** Scroll a newly created card into view; take the focus the closed create dialog dropped or handed back to its opener (AGT-3834). */
   private readonly scrollEffect = effect(() => {
     if (!this.isJustCreated()) return;
@@ -176,7 +176,6 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   /** AGT-2795: decision kind badge (title) and the Pick next block explanation. */
   readonly decisionBadge = computed(() => buildDecisionBadge(this.job(), (id) => this.clients.byId().get(id)?.displayName));
   readonly decisionBlockTooltip = computed(() => decisionBlockReason(decisionBlockers(this.job())));
-
   readonly tagChips = computed(() => buildTagChips(this.job().tags, this.tagRegistry.byIdForProject(this.job().projectName), this.job().state));
 
   readonly publishableChip = computed(() => {
