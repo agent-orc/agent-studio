@@ -93,9 +93,13 @@ export async function login(ctx, options, { wait = sleep, now = () => Date.now()
     if (certification) {
       const { proof } = await agentCall(key.endpoint, { operation: 'poll', url: String(ctx.client.url(POLL_PATH)), pollHandle: started.pollHandle });
       // Register certification before displaying the code to the Owner.
-      const certified = await ctx.client.send('POST', POLL_PATH, { body: { pollHandle: started.pollHandle, certification }, headers: { DPoP: proof } });
-      if (certified.status !== 200) throw failure('POST', POLL_PATH, certified);
-      if (certified.body?.bindingKind !== expectedBinding)
+      let certified;
+      try {
+        certified = await ctx.client.send('POST', POLL_PATH, { body: { pollHandle: started.pollHandle, certification }, headers: { DPoP: proof } });
+      } catch {
+        // Certification is optional. Normal signed polling still enforces the sign-in outcome.
+      }
+      if (certified?.status !== 200 || certified.body?.bindingKind !== expectedBinding)
         bindingNote = 'Device binding: memory. Studio could not verify the device certification; this device is unknown.';
     }
     ctx.output.note(bindingNote);
