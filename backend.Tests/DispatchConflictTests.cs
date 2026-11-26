@@ -41,6 +41,30 @@ public sealed class DispatchConflictTests : IDisposable
     }
 
     [Fact]
+    public void ReadSkipsDamagedRecordsWithoutChangingEvidenceOrLosingValidRows()
+    {
+        var store = new DispatchStore(Config);
+        var row = new DispatchConflictRecordV1("later", "project", "AGT-1", "merge-round", "base", "tip",
+            ["shared.cs"], ["AGT-2"], At);
+        store.AppendConflict(row);
+        store.AppendConflict(row with { Id = "earlier", At = At.AddHours(-1) });
+        var folder = Path.Combine(Directory.GetDirectories(Path.Combine(_root, "ledger")).Single(), "conflicts");
+        var damaged = new[] { "invalid json", "null", "{\"at\":\"invalid date\"}", "[]", "" };
+        for (var i = 0; i < damaged.Length; i++)
+            File.WriteAllText(Path.Combine(folder, $"damaged-{i}.json"), damaged[i]);
+
+        var reopened = new DispatchStore(Config);
+        Assert.Equal(new[] { "earlier", "later" }, reopened.ReadConflicts("PROJECT").Select(record => record.Id));
+        Assert.Equal("later", Assert.Single(reopened.ReadConflicts("project", At, At.AddTicks(1))).Id);
+        Assert.Empty(reopened.ReadConflicts("project", to: At.AddHours(-1)));
+        Assert.Empty(reopened.ReadConflicts("other"));
+        Assert.False(reopened.AppendConflict(row with { At = At.AddDays(1) }));
+        for (var i = 0; i < damaged.Length; i++)
+            Assert.Equal(damaged[i], File.ReadAllText(Path.Combine(folder, $"damaged-{i}.json")));
+        Assert.Equal(damaged.Length + 2, Directory.GetFiles(folder).Length);
+    }
+
+    [Fact]
     public void LegacyCollisionLookupReadsOnlyTheExactIdentity()
     {
         var root = Path.Combine(_root, "legacy");

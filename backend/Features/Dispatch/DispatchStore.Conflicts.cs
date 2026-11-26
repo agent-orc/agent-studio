@@ -45,8 +45,18 @@ public sealed partial class DispatchStore
         var folder = Path.Combine(Project(project), "conflicts");
         if (!Directory.Exists(folder)) return [];
         return Directory.EnumerateFiles(folder, "*.json")
-            .Select(path => Read<DispatchConflictRecordV1>(path)!)
+            .Select(TryReadConflictFile).OfType<DispatchConflictRecordV1>()
             .Where(row => (from is null || row.At >= from) && (to is null || row.At < to))
             .OrderBy(row => row.At).ThenBy(row => row.Id, StringComparer.Ordinal).ToArray();
+    }
+
+    private static DispatchConflictRecordV1? TryReadConflictFile(string path)
+    {
+        try { return Read<DispatchConflictRecordV1>(path); }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            AgentStudio.Diagnostics.SilentCatch.Warn(ex, $"Dispatch conflict record could not be read: {path}");
+            return null;
+        }
     }
 }

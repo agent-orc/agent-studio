@@ -4494,7 +4494,9 @@ Decision ids and persona identity remain null until DS-6 supplies admission
 receipts. No persona selection or pickup behavior changes in DS-2.
 
 `GET /api/projects/{project}/dispatch/conflicts?from=&to=` requires project read
-access and returns a UTC half-open interval. The owner can run the one-shot
+access and returns a UTC half-open interval. Reads skip malformed, null or
+unreadable records individually, logging read failures and leaving the original
+files unchanged so valid evidence remains available. The owner can run the one-shot
 30-day Git backfill with:
 
 ```sh

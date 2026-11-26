@@ -83,6 +83,11 @@ public sealed class DispatchEndpointTests : IDisposable
         store.AppendConflict(new("one", "Forecast Project", "AGT-1", "integration-conflict", "base", "tip",
             ["a.cs"], ["AGT-2"], at));
         store.AppendConflict(new("other", "Other", "AGT-3", "semantic", "base", "tip", [], [], at));
+        var conflictFolder = Path.Combine(_root, ".dispatch",
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes("FORECAST PROJECT"))), "conflicts");
+        File.WriteAllText(Path.Combine(conflictFolder, "damaged.json"), "invalid json");
+        File.WriteAllText(Path.Combine(conflictFolder, "null.json"), "null");
         const string route = "/api/projects/Forecast%20Project/dispatch/conflicts";
         var rows = await client.GetFromJsonAsync<DispatchConflictRecordV1[]>(route + "?from=2026-11-20T12:00:00Z&to=2026-11-21T00:00:00Z");
         Assert.Equal("AGT-1", Assert.Single(rows!).Card);
