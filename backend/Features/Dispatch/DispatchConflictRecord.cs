@@ -12,4 +12,5 @@ public sealed record DispatchConflictRecordV1(
     public string? PersonaMode { get; init; }
     public bool Backfilled { get; init; }
     public string? EvidenceId { get; init; }
+    public string? AdmittedLaterCard { get; init; }
 }

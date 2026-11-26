@@ -128,7 +128,28 @@
           </section>
         }
         <section class="section"><h3>Champion</h3><p>{{ champion() ? label(champion()!) : 'No champion evaluation available' }}</p>
-          <p>Replay, then shadow, then alternating live by wave window. Ranking never switches a lease.</p>
+          <p>Replay, then shadow, then alternating live by wave window.</p>
+          @if (!persona() && review.lease; as lease) {
+            <div class="lease-controls" data-testid="dispatch-lease-controls"><h4>Live lease</h4>
+              <p>{{ label(lease.persona) }} · {{ lease.window || 'No window recorded' }} · fence {{ lease.fence }}</p>
+              @if (lease.rollout; as rollout) {
+                <p>{{ rollout.stopped ? 'Alternation stopped' : 'Alternation enabled' }}{{ rollout.pinned ? ' · pinned to ' + label(rollout.pinned) : '' }}</p>
+                @if (rollout.challenger) { <p>Challenger {{ label(rollout.challenger) }}</p> }
+                @if (rollout.guard; as guard) {
+                  <p role="status">Guard fallback active since {{ guard.at | date:'medium':'UTC' }}. Queue keeper holds the lease.</p>
+                  <button type="button" data-testid="dispatch-undo-guard" [disabled]="!isOwner() || controlling() || saving()" [appPendingButton]="controlling()" (click)="controlLease('undo-guard')">Undo guard fallback</button>
+                }
+              }
+              <fieldset [disabled]="!isOwner() || controlling() || saving()"><legend>Owner controls</legend>
+                <label>Live persona<select data-testid="dispatch-live-persona" [value]="pinnedPersona()" (change)="pinnedPersona.set($any($event.target).value)">
+                  @for (row of liveCandidates(); track row.raw.persona) { <option [value]="row.raw.persona" [selected]="row.raw.persona === pinnedPersona()">{{ label(row.raw.persona) }}</option> }
+                </select></label>
+                <div class="actions"><button type="button" class="primary" data-testid="dispatch-pin" [appPendingButton]="controlling()" (click)="controlLease('pin')">Pin live persona</button>
+                  <button type="button" data-testid="dispatch-stop" [disabled]="!!lease.rollout?.stopped" [appPendingButton]="controlling()" (click)="controlLease('stop')">Stop alternation</button></div>
+              </fieldset>
+              <p class="muted">Pins keep guard monitoring active. Every bypass still requires T2. Controls apply to future admissions.</p>
+            </div>
+          }
           <p class="muted">Challenger: +5 value, 100 shadow cards and 2 waves. Guard: +10 conflicts per 100 over the same 20 cards, returning to Queue keeper.</p>
           <details><summary>Rollout policy</summary><p>Area warden uses forecast modules after its shadow gate. Packer remains in shadow with proposals. Every in-flight project card stays in the overlap window through integration.</p></details>
           @for (entry of review.competition; track entry.challenger) {

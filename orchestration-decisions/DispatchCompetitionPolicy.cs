@@ -4,7 +4,10 @@ namespace AgentStudio.OrchestrationDecisions;
 public sealed record DispatchCompetitionFacts(double? ChampionValue, double? ChallengerValue,
     int ShadowIntegratedCards, int ShadowWaves, int AlternatingLiveWaves,
     bool AheadInEveryLiveWave, int GuardCards, double? LiveConflictsPer100,
-    double? BaselineShadowConflictsPer100, bool SameGuardCards);
+    double? BaselineShadowConflictsPer100, bool SameGuardCards)
+{
+    public bool GatePassed { get; init; } = true;
+}
 public sealed record DispatchCompetitionEvaluation(bool EligibleForAlternatingLive,
     bool ChampionEligible, bool GuardExceeded, string FallbackStrategy, int FeedImportance, bool OwnerUndo)
 {
@@ -15,11 +18,13 @@ public static class DispatchCompetitionPolicy
 {
     public static DispatchCompetitionEvaluation Evaluate(DispatchCompetitionFacts facts)
     {
-        var shadow = facts.ShadowIntegratedCards >= 100 && facts.ShadowWaves >= 2
-            && facts.ChampionValue.HasValue && facts.ChallengerValue >= facts.ChampionValue + 5;
+        var shadow = facts.GatePassed && facts.ShadowIntegratedCards >= 100 && facts.ShadowWaves >= 2
+            && facts.ChampionValue is { } champion && double.IsFinite(champion)
+            && facts.ChallengerValue is { } challenger && double.IsFinite(challenger) && challenger >= champion + 5;
         var guard = facts.SameGuardCards && facts.GuardCards == 20
-            && facts.LiveConflictsPer100.HasValue && facts.BaselineShadowConflictsPer100.HasValue
-            && facts.LiveConflictsPer100 >= facts.BaselineShadowConflictsPer100 + 10;
+            && facts.LiveConflictsPer100 is { } live && double.IsFinite(live)
+            && facts.BaselineShadowConflictsPer100 is { } baseline && double.IsFinite(baseline)
+            && live >= baseline + 10;
         return new(shadow, shadow && facts.AlternatingLiveWaves >= 4 && facts.AheadInEveryLiveWave,
             guard, DispatchStrategies.LaneEntry, 70, true);
     }

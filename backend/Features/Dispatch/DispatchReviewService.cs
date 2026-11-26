@@ -28,20 +28,62 @@ public sealed class DispatchReviewService(DispatchStore store, WorkspaceSettings
             store.WriteReviewWindow(raw);
         }
         var projection = DispatchReviewScoring.Score(raw, revision, revisions);
-        var champion = store.ReadLease(project)?.Persona ?? "queue-keeper";
+        var lease = store.ReadLease(project);
+        var champion = lease?.Rollout?.Champion ?? lease?.Persona ?? "queue-keeper";
         var championRow = projection.Personas.FirstOrDefault(r => r.Raw.Persona == champion);
         var evidence = store.ReadCompetitionEvidence(project, from, to);
-        return projection with { Competition = projection.Personas.Where(r => r.Raw.Persona != champion).Select(row =>
+        return projection with { Lease = lease, Competition = projection.Personas.Where(r => r.Raw.Persona != champion).Select(row =>
         {
             var observed = evidence.FirstOrDefault(e => e.Challenger == row.Raw.Persona);
+            var shadow = ShadowEvidence(project, row.Raw.Persona, row.Raw.Cards, from, to);
             var facts = new DispatchCompetitionFacts(championRow?.Value, row.Value,
-                row.Raw.Mode == "shadow" && observed is not null ? Math.Min(row.Raw.IntegratedCards, observed.ShadowIntegratedCards) : 0,
-                observed?.ShadowWaves ?? 0, observed?.AlternatingLiveWaves ?? 0,
+                shadow.Cards, shadow.Waves, observed?.AlternatingLiveWaves ?? 0,
                 observed?.AheadInEveryLiveWave ?? false, observed?.GuardCards ?? 0,
-                observed?.LiveConflictsPer100, observed?.BaselineShadowConflictsPer100, observed?.SameGuardCards ?? false);
+                observed?.LiveConflictsPer100, observed?.BaselineShadowConflictsPer100, observed?.SameGuardCards ?? false)
+            { GatePassed = row.GateMultiplier >= 1 };
             return new DispatchReviewCompetition(champion, row.Raw.Persona, facts, MonolithTransitionAdapter.DispatchCompetition(facts));
         }).ToArray() };
     }
+
+    public DispatchReviewProjection Cohort(string project, string workspace, string watchPath,
+        DateTimeOffset from, DateTimeOffset to, IReadOnlySet<string> cards, string? settledWindow = null)
+    {
+        var revisions = settings.Get(workspace).DispatchReviewWeights;
+        if (revisions.Count == 0) revisions = [DispatchWeightRevision.Default];
+        var raw = settledWindow is null ? null : store.ReadAlternatingWindow(project, settledWindow);
+        raw ??= Collect(project, workspace, watchPath, from, to, cards);
+        var scored = DispatchReviewScoring.Score(raw, revisions[^1], revisions);
+        if (settledWindow is not null && scored.Personas.All(p => p.Value.HasValue))
+            store.WriteAlternatingWindow(project, settledWindow, raw);
+        return scored;
+    }
+
+    internal (int Cards, int Waves) ShadowEvidence(string project, string persona, IReadOnlyList<string> cohort,
+        DateTimeOffset from, DateTimeOffset to)
+    {
+        var cards = scanner.ScanAllJobsWithArchive().Where(c => !c.Fixture
+            && c.ProjectName.Equals(project, StringComparison.OrdinalIgnoreCase) && cohort.Contains(c.Key ?? c.TaskKey))
+            .ToDictionary(c => c.Key ?? c.TaskKey);
+        var starts = store.ReadRunDecisions(project).Where(r => r.Claimed && r.Admitted).GroupBy(r => r.Card)
+            .ToDictionary(g => g.Key, g => g.Min(r => r.At));
+        var shadows = store.ReadShadow(project).Where(r => r.Shadow && r.Plan.Persona == persona && r.At >= from && r.At < to);
+        var observed = shadows.SelectMany(r => r.Plan.Order.Select(o => (o.CardKey, r.At)))
+            .Where(pair => cards.ContainsKey(pair.CardKey)).Where(pair =>
+            {
+                var start = starts.GetValueOrDefault(pair.CardKey,
+                    TaskGitFactReads.Runs(cards[pair.CardKey]).Select(r => new DateTimeOffset(DateTime.SpecifyKind(r.StartedAt, DateTimeKind.Utc)))
+                        .DefaultIfEmpty(DateTimeOffset.MinValue).Min());
+                return pair.At <= start;
+            }).Select(pair => pair.CardKey).Distinct().ToArray();
+        return (observed.Length, observed.Select(key => cards[key].WaveId).OfType<string>().Distinct(StringComparer.Ordinal).Count());
+    }
+
+    internal static DateTimeOffset? IntegratedAt(TaskInfo card, IReadOnlyList<TimelineEvent> events)
+        => events.Where(e => e.Kind == TimelineEventKinds.IntegrationSucceeded)
+            .Select(e => (DateTimeOffset?)new DateTimeOffset(DateTime.SpecifyKind(e.Ts, DateTimeKind.Utc))).Max()
+            ?? card.IntegrationRecords.Where(r => r.Classification is IntegrationRecordClasses.IntegratedVerified
+                or IntegrationRecordClasses.IntegratedHistorical or IntegrationRecordClasses.CuratedMapping)
+                .Select(r => (DateTimeOffset?)new DateTimeOffset(DateTime.SpecifyKind(r.AcceptedAtUtc ?? r.RecordedAtUtc, DateTimeKind.Utc))).Max();
 
     public static (DateTimeOffset From, DateTimeOffset To) ParseWindow(string? window, DateTimeOffset now)
     {
@@ -62,20 +104,18 @@ public sealed class DispatchReviewService(DispatchStore store, WorkspaceSettings
     private sealed record CardEvidence(TaskInfo Card, TouchForecastV1 Forecast, TouchDelivery Delivery,
         DateTimeOffset IntegratedAt, IReadOnlyList<TimelineEvent> Events, IReadOnlyList<RunRecord> Runs);
 
-    private DispatchReviewWindow Collect(string project, string workspace, string watchPath, DateTimeOffset from, DateTimeOffset to)
+    private DispatchReviewWindow Collect(string project, string workspace, string watchPath, DateTimeOffset from, DateTimeOffset to,
+        IReadOnlySet<string>? cohortCards = null)
     {
         var cards = new List<CardEvidence>();
         foreach (var card in scanner.ScanAllJobsWithArchive().Where(card => !card.Fixture
-            && card.ProjectName.Equals(project, StringComparison.OrdinalIgnoreCase)))
+            && card.ProjectName.Equals(project, StringComparison.OrdinalIgnoreCase)
+            && (cohortCards is null || cohortCards.Contains(card.Key ?? card.TaskKey))))
         {
             var forecast = store.Read(project, card.TaskKey);
             if (forecast is null || forecast.Deliveries.Count == 0) continue;
             var events = timeline.ReadAll(card.FolderPath);
-            var integrated = events.Where(e => e.Kind == TimelineEventKinds.IntegrationSucceeded)
-                .Select(e => (DateTimeOffset?)new DateTimeOffset(DateTime.SpecifyKind(e.Ts, DateTimeKind.Utc))).Max()
-                ?? card.IntegrationRecords.Where(r => r.Classification is IntegrationRecordClasses.IntegratedVerified
-                        or IntegrationRecordClasses.IntegratedHistorical or IntegrationRecordClasses.CuratedMapping)
-                    .Select(r => (DateTimeOffset?)new DateTimeOffset(DateTime.SpecifyKind(r.AcceptedAtUtc ?? r.RecordedAtUtc, DateTimeKind.Utc))).Max();
+            var integrated = IntegratedAt(card, events);
             if (integrated is null || integrated < from || integrated >= to) continue;
             var delivery = forecast.Deliveries.Where(d => d.RecordedAt <= integrated).LastOrDefault() ?? forecast.Deliveries[^1];
             cards.Add(new(card, delivery.Forecast ?? forecast, delivery, integrated.Value, events, TaskGitFactReads.Runs(card)));
@@ -123,7 +163,12 @@ public sealed class DispatchReviewService(DispatchStore store, WorkspaceSettings
             ? Math.Min(1, codingHours / (slots * elapsedHours) / report.ConflictFreeBound.SlotUse) : (double?)null;
         var logs = store.ReadDispatcherLog(project).Where(e => e.At >= from && e.At < to).ToArray();
         var plans = store.ReadShadow(project).ToDictionary(r => r.DecisionId);
-        var conflicts = store.ReadConflicts(project, from, to).Where(conflict => cards.Any(c => Matches(c, conflict.Card))).ToArray();
+        var conflicts = store.ReadConflicts(project, from, to).Select(conflict =>
+        {
+            var admission = store.ConflictAdmission(project, conflict);
+            return admission is null ? conflict : conflict with { Card = admission.Card,
+                PersonaId = plans.GetValueOrDefault(admission.DecisionId)?.Plan.Persona };
+        }).Where(conflict => cards.Any(c => Matches(c, conflict.Card))).ToArray();
         var receipts = occurrences.Receipts(workspace).Where(r => r.Project == project && r.CreatedAtUtc >= from.UtcDateTime
             && r.CreatedAtUtc < to.UtcDateTime).ToArray();
         var admissions = store.ReadRunDecisions(project).Where(r => r.Claimed).GroupBy(r => r.Card)

@@ -12,6 +12,9 @@ public static class DispatchRegistration
         services.AddSingleton<IDispatchRecutDrafting, DispatchRecutDrafting>();
         services.AddSingleton<DispatchRecutService>();
         services.AddSingleton<DispatchReviewService>();
+        services.AddSingleton<DispatchLeaseScheduler>();
+        services.AddSingleton<AgentStudio.Runner.IAiOperatorEffect>(provider => provider.GetRequiredService<DispatchLeaseScheduler>());
+        services.AddHostedService(provider => provider.GetRequiredService<DispatchLeaseScheduler>());
         services.AddSingleton<DispatcherShadowService>();
         services.AddSingleton<DispatchForecastService>();
         services.AddHostedService(provider => provider.GetRequiredService<DispatchForecastService>());

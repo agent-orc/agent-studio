@@ -43,6 +43,7 @@ public sealed record DispatchReviewProjection(string Project, DateTimeOffset Fro
     DispatchWeightRevision Weights, IReadOnlyList<DispatchReviewRow> Personas,
     IReadOnlyList<DispatchWeightRevision> WeightRevisions)
 {
+    public DispatchLeaseV1? Lease { get; init; }
     public IReadOnlyList<DispatchReviewRaw> ObservedPersonas { get; init; } = [];
     public IReadOnlyList<DispatchReviewCompetition> Competition { get; init; } = [];
 }

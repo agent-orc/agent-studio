@@ -29,6 +29,12 @@ public static class MonolithTransitionAdapter
     public static DispatchCompetitionEvaluation DispatchCompetition(DispatchCompetitionFacts facts)
         => DispatchCompetitionPolicy.Evaluate(facts);
 
+    public static DispatchLeaseDecision DispatchLease(DispatchLeaseState state, DispatchLeaseFacts facts)
+        => DispatchLeasePolicy.Decide(state, facts);
+    public static string DispatchWindow(string? wave, DateTimeOffset now) => DispatchLeasePolicy.Window(wave, now);
+    public static string? DispatchLaterCard(IReadOnlyList<(string Card, DateTimeOffset At)> admissions)
+        => DispatchLeasePolicy.LaterCard(admissions);
+
     public static bool DispatchDependencyRemoval(string persona, string? origin, bool redeemedT2)
         => DispatcherAuthorityPolicy.MayRemoveDependency(persona, origin, redeemedT2);
 

@@ -5,11 +5,19 @@ The existing Team route hosts the per-project review at
 Dispatch API calls use the scanner's project display name. Dispatcher Sheet
 uses the same projection, scoped to its workspace and persona.
 
-DS-D1 through DS-D10 use option B. This slice presents those choices; it does
-not grant authority, switch a lease, recut cards, or compute policy scores.
+DS-D1 through DS-D10 use option B. Review presents those choices and the
+DS-11 lease controls; it does not grant authority, recut cards, or compute policy scores.
 The server owns normalization, the comparison cohort, eligibility, and gates.
 The source switch selects stored modes and always retains the baseline.
 Observed live cohorts remain separate because they can cover different cards.
+
+The project review shows the current lease independently of its historical
+metrics window. A human Owner can pin an eligible live persona, stop
+alternation, or undo the named guard fallback. Writes carry the current fence
+and, for undo, the guard id. A failed write keeps the last confirmed lease and
+asks the Owner to reload. Pin and stop retain guard monitoring; undo restores
+the displaced persona and the previous controls. The backend still enforces active scoped
+grants, rollout gates and every T2 bypass. Packer remains in shadow with proposals.
 
 Review weights are workspace revisions. The eight integer weights must total
 100 and the gate must be between 0.5 and 1. A human Owner can save; API

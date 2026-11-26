@@ -54,11 +54,12 @@ public static class AiOperatorDeciders
 
     /// <summary>AGT-3207: interventions on operational stall events of hosts, containers, gates and queues.</summary>
     public const string StallIntervention = "stall-intervention";
+    public const string DispatchLease = "dispatch-lease";
 
     public static readonly IReadOnlyList<string> All =
     [
         RunLiveness, StaleProgress, SteerTimeout, TimeoutSalvage, GateEnvironmentRetry,
-        DeliveryChain, CauseBreaker, IntakeRouting, AcceptanceRail, StallIntervention,
+        DeliveryChain, CauseBreaker, IntakeRouting, AcceptanceRail, StallIntervention, DispatchLease,
     ];
 }
 
@@ -109,7 +110,8 @@ public sealed record AiOperatorDecisionPayload(
     CauseBreakerOperatorFacts? CauseBreaker = null,
     IntakeOperatorFacts? IntakeRouting = null,
     AcceptanceRailOperatorFacts? AcceptanceRail = null,
-    StallInterventionFacts? StallIntervention = null);
+    StallInterventionFacts? StallIntervention = null,
+    DispatchLeaseOccurrence? DispatchLease = null);
 
 /// <summary>The receipt-bearing answer of one AI Operator occurrence.</summary>
 public sealed record AiOperatorDecision(
@@ -121,7 +123,8 @@ public sealed record AiOperatorDecision(
     string ReasonCode,
     string Detail,
     string? AnswerText = null,
-    StallInterventionPlan? Intervention = null)
+    StallInterventionPlan? Intervention = null,
+    DispatchLeaseDecision? DispatchLease = null)
 {
     /// <summary>The action recorded on the occurrence receipt.</summary>
     public string ReceiptAction => $"{Disposition}:{Effect}";
@@ -160,6 +163,7 @@ public static class AiOperatorDecisionPolicy
                 Required(payload.AcceptanceRail, payload.Decider)),
             AiOperatorDeciders.StallIntervention => StallIntervention(payload,
                 Required(payload.StallIntervention, payload.Decider)),
+            AiOperatorDeciders.DispatchLease => DispatchLease(payload, Required(payload.DispatchLease, payload.Decider)),
             _ => throw new ArgumentOutOfRangeException(nameof(payload), payload.Decider,
                 "Unknown AI Operator decider."),
         };
@@ -172,6 +176,15 @@ public static class AiOperatorDecisionPolicy
         AutonomyClass.A2 => AiOperatorDisposition.Propose,
         _ => AiOperatorDisposition.Ask,
     };
+
+    private static AiOperatorDecision DispatchLease(AiOperatorDecisionPayload payload, DispatchLeaseOccurrence occurrence)
+    {
+        var decision = DispatchLeasePolicy.Decide(occurrence.State, occurrence.Facts);
+        var held = decision.State == occurrence.State && decision.Persona == occurrence.Facts.CurrentPersona
+            && occurrence.LeaseExpiresAt > occurrence.Facts.Now.AddHours(1);
+        return new(payload.Decider, payload.SubjectKey, held ? AiOperatorDisposition.Hold : AiOperatorDisposition.Act,
+            AutonomyClass.A1, "dispatch-lease", decision.Reason, decision.Reason, DispatchLease: decision);
+    }
 
     private static AiOperatorDecision RunLiveness(AiOperatorDecisionPayload payload, RunLivenessFacts facts)
     {

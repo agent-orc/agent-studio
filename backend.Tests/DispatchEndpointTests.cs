@@ -19,7 +19,7 @@ public sealed class DispatchEndpointTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "dispatch-api-" + Guid.NewGuid().ToString("N"));
     private string Watch => Path.Combine(_root, "cards");
 
-    private WebApplicationFactory<Program> Factory()
+    private WebApplicationFactory<Program> Factory(TimeProvider? clock = null)
     {
         foreach (var state in TaskStates.All) Directory.CreateDirectory(Path.Combine(Watch, state));
         var folder = Path.Combine(Watch, TaskStates.Ready, "sample");
@@ -36,8 +36,117 @@ public sealed class DispatchEndpointTests : IDisposable
                 ["WatchPaths:0:Path"] = Watch,
                 ["WatchPaths:0:RootPath"] = Watch,
             }));
-            builder.ConfigureTestServices(TestHostFactory.RemoveBackgroundHostedServices);
+            builder.ConfigureTestServices(services =>
+            {
+                TestHostFactory.RemoveBackgroundHostedServices(services);
+                if (clock is not null) { services.RemoveAll<TimeProvider>(); services.AddSingleton(clock); }
+            });
         });
+    }
+
+    [Fact]
+    public async Task Same_card_guard_persists_a_single_importance_70_fallback_and_recovers_its_feed()
+    {
+        var at = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(at.AddHours(2));
+        await using var factory = Factory(clock);
+        using var client = factory.CreateClient();
+        var services = factory.Services;
+        var scanner = services.GetRequiredService<TaskScannerService>();
+        var mutations = services.GetRequiredService<TaskMutationService>();
+        var cards = new List<TaskInfo> { scanner.FindJob("sample", Watch)! };
+        for (var i = 1; i < 20; i++)
+        {
+            var id = mutations.CreateJob(new() { Title = "Guard evidence " + i, WatchPath = Watch, Agent = "codex", TargetState = TaskStates.Ready });
+            cards.Add(scanner.FindJob(id!, Watch)!);
+        }
+        var project = cards[0].ProjectName;
+        services.GetRequiredService<ProjectSettingsService>().SetDispatchMode(project, "live");
+        var store = services.GetRequiredService<DispatchStore>();
+        var timeline = services.GetRequiredService<AgentStudio.Tasks.TimelineLog>();
+        var baseline = AgentStudio.OrchestrationDecisions.DispatchPlanPolicy.Plan(new(project, at,
+            cards.Select((c, i) => new AgentStudio.OrchestrationDecisions.DispatchReadyCard(c.Key ?? c.TaskKey, 999, at,
+                [], true, new(["file-" + i + ".cs"], ["file-" + i], AgentStudio.OrchestrationDecisions.DispatchForecastConfidence.High), [])).ToArray(),
+            [], 1, AgentStudio.OrchestrationDecisions.DispatchLedgerSummary.Empty, [], Persona: "queue-keeper"),
+            AgentStudio.OrchestrationDecisions.DispatchStrategies.Starter(AgentStudio.OrchestrationDecisions.DispatchStrategies.LaneEntry));
+        store.AppendShadow(new("shadow", "baseline", "digest", at, "local", baseline));
+        store.AppendShadow(new("live", "area", "digest", at, "remote-claim", baseline with { Persona = "area-warden" }, false));
+        for (var i = 0; i < cards.Count; i++)
+        {
+            var card = cards[i]; var key = card.Key ?? card.TaskKey;
+            var forecast = new TouchForecastV1(["file-" + i + ".cs"], ["file-" + i + ".cs"], ["file-" + i], [], "high", "index")
+                { ReadyEntryAt = at.UtcDateTime };
+            store.Write(project, card.TaskKey, forecast with { Deliveries = [new("result-" + i, "base", at.AddMinutes(30),
+                forecast.ForecastFiles, forecast.Modules, new(1, 1), new(1, 1)) { Forecast = forecast }] });
+            timeline.Append(card.FolderPath, new TimelineEvent { Ts = at.AddHours(1).AddMinutes(i).UtcDateTime,
+                Kind = TimelineEventKinds.IntegrationSucceeded });
+            store.AppendRunDecision(project, new("area", key, at.AddMinutes(i + 1), "remote-claim", true, "admit", null));
+            store.BindRun(project, key, "area", "attempt-" + i);
+            if (i >= 18)
+                store.AppendConflict(new("conflict-" + i, project, key, "merge", "base", "tip", ["shared.cs"], [cards[0].Key ?? cards[0].TaskKey], at.AddHours(1))
+                { DispatchDecisionIds = new Dictionary<string, string?> { [key] = "area", [cards[0].Key ?? cards[0].TaskKey] = "area" } });
+        }
+        Assert.NotNull(store.AcquireLease(project, "area-warden", 0, clock.GetUtcNow(), TimeSpan.FromHours(1), true, true, true));
+        var scheduler = services.GetRequiredService<DispatchLeaseScheduler>();
+        var lease = scheduler.Refresh(project, "guard-wave")!;
+        Assert.Equal("queue-keeper", lease.Persona);
+        Assert.Equal("guard-fallback", lease.Reason);
+        Assert.NotNull(lease.Rollout!.Guard);
+        var registered = services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>().FindByIdOrDisplayName(project)!;
+        var items = services.GetRequiredService<AgentStudio.Personas.PersonaItemStore>();
+        Assert.Equal(70, Assert.Single(items.List(registered.WorkspaceId)).Importance);
+        clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.Equal(lease.Rollout.Guard.Id, scheduler.Refresh(project, "guard-wave")!.Rollout!.Guard!.Id);
+        Assert.Single(items.List(registered.WorkspaceId));
+        // A restart sees the persisted guard and the same feed item rather than making a new intervention.
+        Assert.Equal(lease.Rollout.Guard.Id, new DispatchStore(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskRepository"] = _root }).Build()).ReadLease(project)!.Rollout!.Guard!.Id);
+    }
+
+    [Fact]
+    public async Task Lease_scheduler_is_registered_and_both_pickup_paths_use_the_platform_baseline()
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        var services = factory.Services;
+        var index = services.GetRequiredService<TaskIndexCache>();
+        index.GetSnapshot();
+        var card = services.GetRequiredService<TaskScannerService>().FindJob("sample", Watch)!;
+        services.GetRequiredService<ProjectSettingsService>().SetDispatchMode(card.ProjectName, "live");
+        var scheduler = services.GetRequiredService<DispatchLeaseScheduler>();
+        var lease = scheduler.Refresh(card.ProjectName, "wave-one")!;
+        Assert.Equal("queue-keeper", lease.Persona);
+        Assert.Equal("wave:wave-one", lease.Window);
+        Assert.NotNull(lease.Rollout);
+        var dispatcher = services.GetRequiredService<DispatcherShadowService>();
+        foreach (var path in new[] { "local", "remote-claim" })
+        {
+            var plan = dispatcher.RecordPick(card with { WaveId = "wave-one" }, [], [], path);
+            Assert.NotNull(plan);
+            Assert.Equal("queue-keeper", plan.Plan.Persona);
+            Assert.Equal("wave:wave-one", plan.Window);
+            // This card is not a completed source wave; the wave gate remains hard.
+            Assert.Equal("source-wave-releasing", dispatcher.Pickup(card with { WaveId = "wave-one" }, plan).Reason);
+        }
+        var store = services.GetRequiredService<DispatchStore>();
+        Assert.True(store.VerifyDispatcherLog(card.ProjectName));
+        Assert.Contains(store.ReadShadow(card.ProjectName), p => p.Shadow && p.Plan.Persona == "queue-keeper");
+        Assert.NotNull(scheduler.Refresh(card.ProjectName, action: "stop", expectedFence: store.ReadLease(card.ProjectName)!.Fence, actor: "test-owner"));
+        Assert.True(store.ReadLease(card.ProjectName)!.Rollout!.Stopped);
+    }
+
+    [Theory]
+    [InlineData("pin")]
+    [InlineData("stop")]
+    [InlineData("undo-guard")]
+    public async Task Lease_controls_refuse_non_human_credentials(string action)
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var response = await client.PutAsJsonAsync("/api/projects/Forecast%20Project/dispatch/review/lease", new
+            { action, fence = 0, persona = "queue-keeper" });
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
     [Fact]
@@ -542,6 +651,17 @@ public sealed class DispatchEndpointTests : IDisposable
         Assert.Equal(2, factory.Services.GetRequiredService<AgentStudio.Registry.WorkspaceSettingsService>().Get(workspace).DispatchReviewWeights.Count);
         Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync(route, request with { Gate = .2 })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.PutAsJsonAsync("/api/workspaces/missing/dispatch/review/weights", request)).StatusCode);
+        const string leaseRoute = "/api/projects/Forecast%20Project/dispatch/review/lease";
+        var projectSettings = factory.Services.GetRequiredService<ProjectSettingsService>();
+        projectSettings.SetDispatchMode("Forecast Project", "live");
+        var lease = factory.Services.GetRequiredService<DispatchLeaseScheduler>().Refresh("Forecast Project")!;
+        var pinned = await client.PutAsJsonAsync(leaseRoute, new DispatchLeaseControlRequest("pin", lease.Fence, "queue-keeper"));
+        pinned.EnsureSuccessStatusCode();
+        var pinnedLease = (await pinned.Content.ReadFromJsonAsync<DispatchLeaseV1>())!;
+        Assert.Equal(owner.User.Id, pinnedLease.Actor);
+        Assert.Equal("queue-keeper", pinnedLease.Rollout!.Pinned);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PutAsJsonAsync(leaseRoute, new DispatchLeaseControlRequest("stop", lease.Fence))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync(leaseRoute, new DispatchLeaseControlRequest("bypass", pinnedLease.Fence))).StatusCode);
         client.DefaultRequestHeaders.Remove("Cookie");
         client.DefaultRequestHeaders.Remove("X-CSRF-Token");
         var refused = await client.PutAsJsonAsync(route, request);

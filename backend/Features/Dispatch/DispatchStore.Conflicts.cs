@@ -21,6 +21,10 @@ public sealed partial class DispatchStore
     /// <summary>Write once by evidence identity, including across retries and backfill reruns.</summary>
     public bool AppendConflict(DispatchConflictRecordV1 record)
     {
+        if (!record.Backfilled && ConflictAdmission(record.Project, record) is { } admission)
+            record = record with { AdmittedLaterCard = admission.Card,
+                PersonaId = ReadShadow(record.Project).FirstOrDefault(p => p.DecisionId == admission.DecisionId)?.Plan.Persona,
+                PersonaMode = "live" };
         var folder = Path.Combine(Project(record.Project), "conflicts");
         lock (ConflictLocks.GetOrAdd(folder, _ => new object()))
         {

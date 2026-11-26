@@ -12,7 +12,8 @@ namespace AgentStudio.Dispatch;
 /// <summary>Collect once, freeze once, evaluate all active dispatchers against identical project facts.</summary>
 public sealed class DispatcherShadowService(DispatchStore store, PersonaActivationStore activations,
     ProjectRegistry projects, TaskIndexCache tasks, ProjectSettingsService settings, TimeProvider time,
-    ILogger<DispatcherShadowService> logger, AgentStudio.Tasks.TaskListGitProjectionCache? gitProjection = null)
+    ILogger<DispatcherShadowService> logger, AgentStudio.Tasks.TaskListGitProjectionCache? gitProjection = null,
+    DispatchLeaseScheduler? scheduler = null)
 {
     public DispatchShadowRecordV1? RecordPick(TaskInfo candidate, IReadOnlyList<RunningTask> running,
         IReadOnlyList<InFlightTask> inFlight, string path, IReadOnlyList<string>? pickupCandidates = null, string? planningWave = null)
@@ -21,13 +22,15 @@ public sealed class DispatcherShadowService(DispatchStore store, PersonaActivati
         {
             var project = projects.FindByIdOrDisplayName(candidate.ProjectName);
             if (project is null || settings.Get(candidate.ProjectName).DispatchMode == "off") return null;
+            if (scheduler is not null && settings.Get(candidate.ProjectName).DispatchMode == "live"
+                && scheduler.Refresh(candidate.ProjectName, planningWave ?? candidate.WaveId) is null) return null;
             var active = activations.List(project.WorkspaceId).Personas.Select(p => p.Activation)
                 .OfType<PersonaActivationV1>().Where(a => a.Descriptor.Kind == PersonaKinds.Dispatcher
                     && a.State is PersonaStates.Active or PersonaStates.Shadow
                     && (a.Operations.Contains("dispatch.shadow.record") || a.Operations.Contains("dispatch.plan.write"))
                     && (a.Scope.Projects.Contains("*") || a.Scope.Projects.Contains(project.Id)
                         || a.Scope.Projects.Contains(project.DisplayName))).ToArray();
-            if (active.Length == 0) return null;
+            if (active.Length == 0 && store.ReadLease(candidate.ProjectName)?.Rollout is null) return null;
             var cards = tasks.GetAllResidentTasks().Where(c => !c.Fixture).ToArray();
             var referenceIndex = tasks.GetCoreReferenceIndex();
             var config = settings.Get(candidate.ProjectName);
@@ -107,17 +110,21 @@ public sealed class DispatcherShadowService(DispatchStore store, PersonaActivati
             if (config.DispatchMode != "live") return null;
             var lease = store.ReadLease(candidate.ProjectName);
             var owner = active.FirstOrDefault(a => a.PersonaId == lease?.Persona && a.State == PersonaStates.Active);
-            if (lease is null || lease.ExpiresAt <= now || owner?.Descriptor.Dispatch is not { } dispatch) return null;
+            var baseline = lease?.Persona == "queue-keeper" && lease.Rollout is not null;
+            var dispatch = owner?.Descriptor.Dispatch;
+            if (lease is null || lease.ExpiresAt <= now || dispatch is null && !baseline) return null;
             // Lease acquisition certifies the live standing grant; descriptor mode has no authority.
-            if (!DispatcherCapabilities.Admits(new("dispatch.plan.write", owner.PersonaId, false, true,
+            if (!DispatcherCapabilities.Admits(new("dispatch.plan.write", lease.Persona, false, true,
                 true, Now: now))) return null;
-            facts = facts with { Persona = owner.PersonaId };
+            facts = facts with { Persona = lease.Persona };
             var plan = MonolithTransitionAdapter.DispatchPlan(facts,
-                new(dispatch.Strategy.Id, dispatch.Strategy.Revision, dispatch.Parameters));
+                baseline ? DispatchStrategies.Starter(DispatchStrategies.LaneEntry)
+                    : new(dispatch!.Strategy.Id, dispatch.Strategy.Revision, dispatch.Parameters));
             var visibleKeys = facts.Ready.Select(c => c.Key).Concat(facts.InFlight.Select(c => c.Key)).ToHashSet(StringComparer.OrdinalIgnoreCase);
             plan = MonolithTransitionAdapter.DispatchExclusive(plan, prior?.Record.Plan.ExclusiveMarks ?? [], visibleKeys);
             var record = new DispatchShadowRecordV1(shadows.FirstOrDefault()?.EvaluationId ?? Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"),
-                "sha256:" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(facts with { Persona = null })))), now, path, plan, false);
+                "sha256:" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(facts with { Persona = null })))), now, path, plan, false)
+            { Window = lease.Window ?? MonolithTransitionAdapter.DispatchWindow(planningWave ?? candidate.WaveId, now) };
             return store.WriteLive(new(record, lease.Fence, expired), now) ? record : null;
 
             DispatchForecast Forecast(string key)
@@ -127,7 +134,7 @@ public sealed class DispatcherShadowService(DispatchStore store, PersonaActivati
                     f.CitedFiles.Count > 0 ? DispatchForecastConfidence.High : DispatchForecastConfidence.Low);
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
         { logger.LogWarning(ex, "dispatcher-shadow-record-failed project={Project}", candidate.ProjectName); return null; }
     }
 
@@ -140,6 +147,8 @@ public sealed class DispatcherShadowService(DispatchStore store, PersonaActivati
     }
 
     public bool IsLive(string project) => settings.Get(project).DispatchMode == "live";
+
+    public void RefreshLease(string project, string? wave) => scheduler?.Refresh(project, wave);
 
     public TaskParallelism Predict(TaskInfo card)
         => IsLive(card.ProjectName) ? PredictScope(card.Key ?? card.TaskKey, TaskScopePrediction.Predict(card), card.ProjectName)
@@ -169,7 +178,8 @@ public sealed class DispatcherShadowService(DispatchStore store, PersonaActivati
             || !OverlapComparisonSet.IsInFlight(c) && c.Integration?.Status == IntegrationStatuses.Integrated)
             .Select(c => c.Key ?? c.TaskKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var decision = MonolithTransitionAdapter.DispatchPickup(record?.Plan, card.Key ?? card.TaskKey, time.GetUtcNow(),
-            record is not null && owner is not null && live?.Record.DecisionId == record.DecisionId && lease?.Fence == live.Fence
+            record is not null && (owner is not null || lease is { Persona: "queue-keeper", Rollout: not null })
+                && live?.Record.DecisionId == record.DecisionId && lease?.Fence == live.Fence
                 && lease?.ExpiresAt > time.GetUtcNow(), satisfied);
         return MonolithTransitionAdapter.DispatchWavePickup(decision, card.WaveId,
             card.WaveId is null || store.ReadWaveRelease(card.ProjectName, card.WaveId)?.Complete == true);
@@ -212,6 +222,15 @@ public sealed class DispatcherShadowService(DispatchStore store, PersonaActivati
                 facts.NowUtc, path, plan);
             store.AppendShadow(record);
             records.Add(record);
+        }
+        // The reference never retires. Guard samples need baseline shadow on the same decision-time facts.
+        if (!records.Any(r => r.Plan.Persona == "queue-keeper"))
+        {
+            var plan = MonolithTransitionAdapter.DispatchPlan(facts with { Persona = "queue-keeper" },
+                DispatchStrategies.Starter(DispatchStrategies.LaneEntry));
+            var baseline = new DispatchShadowRecordV1(evaluation, Guid.NewGuid().ToString("N"), digest, facts.NowUtc, path, plan);
+            store.AppendShadow(baseline);
+            records.Add(baseline);
         }
         return records;
     }

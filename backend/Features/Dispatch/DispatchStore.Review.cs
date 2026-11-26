@@ -4,6 +4,14 @@ public sealed record DispatchExplanationRating(string EntryId, string Persona, d
 
 public sealed partial class DispatchStore
 {
+    internal DispatchReviewWindow? ReadAlternatingWindow(string project, string key)
+    {
+        lock (PersonaGate(project)) return Read<DispatchReviewWindow>(Path.Combine(Project(project), "alternating-windows", Key(key) + ".json"));
+    }
+    internal void WriteAlternatingWindow(string project, string key, DispatchReviewWindow window)
+    {
+        lock (PersonaGate(project)) Write(Path.Combine(Project(project), "alternating-windows", Key(key) + ".json"), window);
+    }
     public IReadOnlyList<DispatchCompetitionEvidence> ReadCompetitionEvidence(string project, DateTimeOffset from, DateTimeOffset to)
     {
         lock (PersonaGate(project)) return Read<DispatchCompetitionEvidence[]>(ReviewPath(project, from, to) + ".competition") ?? [];
