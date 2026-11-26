@@ -750,6 +750,7 @@ public sealed class BatchGateReviewPlanTests
             var settings = new ProjectSettings
             {
                 BatchGate = new(Enabled: batchGate, Scope: "code", ReviewTestLevel: "build-only"),
+                Testing = new() { Strategy = TestingStrategies.Strict },
             };
 
             var plan = fixture.Builder.Build(fixture.Task, fixture.Repo, settings, "develop",

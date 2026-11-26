@@ -31,7 +31,7 @@ public static class DispatchRecutEndpoints
             catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
             catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
             catch (HttpRequestException) { return Results.Conflict(new { error = "The task API refused a recut operation. The receipt retains recovery and undo information." }); }
-        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.ProjectCardsWrite);
+        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.WorkspaceAdminister);
 
         app.MapPost("/api/projects/{project}/dispatch/recuts/{id}/undo", async (string project, string id,
             HttpContext context, ProjectRegistry projects, DispatchRecutService service) =>
@@ -46,7 +46,7 @@ public static class DispatchRecutEndpoints
             catch (KeyNotFoundException) { return Results.NotFound(); }
             catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
             catch (HttpRequestException) { return Results.Conflict(new { error = "The task API refused an undo operation. Retry the saved undo receipt." }); }
-        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.ProjectCardsWrite);
+        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.WorkspaceAdminister);
     }
 
     internal static HttpClient Client(HttpContext context)

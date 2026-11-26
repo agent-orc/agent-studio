@@ -26,7 +26,7 @@ public static class DispatchReviewEndpoints
                 expectedFence: request.Fence, expectedGuard: request.GuardId, actor: owner.User.Id)); }
             catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
             catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
-        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.ProjectSettingsWrite);
+        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.WorkspaceAdminister);
 
         app.MapGet("/api/projects/{project}/dispatch/review", (string project, string? window, string? weights,
             HttpContext context, TaskScannerService scanner, ProjectRegistry projects, DispatchReviewService review) =>
