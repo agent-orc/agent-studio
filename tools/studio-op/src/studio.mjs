@@ -137,6 +137,8 @@ export function failure(method, path, { status, body }) {
   const code = slug(body?.error) ?? slug(body?.code) ?? prefixed ?? (status === 401 ? 'unauthenticated' : status === 403 ? 'forbidden'
       : status === 404 ? 'not-found' : `http-${status}`);
   const detail = body?.message ?? (typeof body?.error === 'string' && body.error !== code ? body.error : null);
-  return new OperationError(code, `${method} ${path} answered ${status} ${code}${detail ? `: ${detail}` : ''}`,
+  const login = ['session-ended', 'renewal-device-key-missing', 'limit-lowered', 'dpop-required', 'dpop-key-mismatch'].includes(code)
+    ? ' Run studio-op login.' : '';
+  return new OperationError(code, `${method} ${path} answered ${status} ${code}${detail ? `: ${detail}` : ''}${login}`,
     { exitCode: httpExitCode(status, code), status, body });
 }

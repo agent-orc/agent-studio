@@ -9,7 +9,7 @@
     @if (signIn.confirmed(); as done) {
       <div class="tsi__outcome" role="status" data-testid="terminal-sign-in-confirmed">
         <app-status-indicator tone="success" label="Sign-in confirmed" testId="terminal-sign-in-confirmed-status" />
-        <p>The terminal receives the session at its next poll, within a few seconds. It acts as <code>{{ done.actor }}</code> until <span class="tsi__numeric">{{ time(done.expiresAt) }}</span>.</p>
+        <p>The terminal receives the session at its next poll, within a few seconds. It acts as <code>{{ done.actor }}</code> until <span class="tsi__numeric">{{ done.chosenLifetimeHours === 0 ? 'revoked' : time(done.chosenEnd ?? done.expiresAt) }}</span>.</p>
         <div class="tsi__actions">
           <button type="button" data-testid="terminal-sign-in-done" (click)="close()">Done</button>
           <button type="button" class="access-secondary" data-testid="terminal-sign-in-open-access" (click)="openAccess()">Open Settings &gt; Access</button>
@@ -83,7 +83,7 @@
           }
           <label>Lifetime
             <select data-testid="terminal-sign-in-lifetime" (change)="setLifetime($any($event.target).value)">
-              @for (hour of found.lifetimeHours; track hour) { <option [value]="'' + hour" [selected]="hour === lifetime()">{{ hour }} {{ hour === 1 ? 'hour' : 'hours' }}</option> }
+              @for (hour of allowedLifetimes(); track hour) { <option [value]="'' + hour" [selected]="hour === lifetime()">{{ lifetimeLabel(hour) }}</option> }
             </select>
           </label>
         </div>

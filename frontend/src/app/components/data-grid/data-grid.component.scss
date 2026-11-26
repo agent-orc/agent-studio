@@ -110,6 +110,8 @@ td[data-role='actions'] { position: relative; z-index: 1; overflow: visible; }
   td[data-role='identity'] { grid-row: 1; grid-column: 1; }
   td[data-role='state'] { grid-row: 1; grid-column: 2; }
   td[data-role='actions'] { grid-row: 1; grid-column: 3; padding-right: 0; }
+  .grid--stack-actions td[data-role='identity'] { grid-column: 1 / -1; }
+  .grid--stack-actions td[data-role='actions'] { grid-row: auto; grid-column: 1 / -1; text-align: left; }
   td[data-role='meta']:not(:empty)::before { content: attr(data-label) ': '; color: var(--studio-fg-muted); }
   td[data-role='meta'] .grid__line { display: inline; white-space: normal; }
   .grid__open { min-height: var(--studio-row-min-h-interactive); }

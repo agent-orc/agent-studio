@@ -32,7 +32,7 @@ public sealed partial class AccessSecurityStore
             });
             var statement = Encoding.UTF8.GetBytes(DeviceCertificationStatement(signIn.KeyThumbprint, signIn.Id, certification.IssuedAt));
             return verifier.VerifyData(statement, signature, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation)
-                ? result with { BindingKind = certification.BindingKind, DeviceKeyThumbprint = key.Thumbprint() }
+                ? result with { BindingKind = certification.BindingKind, DeviceKeyThumbprint = key.Thumbprint(), DevicePublicKey = key }
                 : result;
         }
         catch (Exception error) when (error is CryptographicException or FormatException or SecurityOperationException or ArgumentException)

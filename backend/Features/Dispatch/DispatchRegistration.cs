@@ -47,7 +47,7 @@ public static class DispatchRegistration
             var repo = git.ResolveRepositoryRoot(entry);
             if (repo is null) return Results.Conflict(new { error = "The project repository is unavailable." });
             return Results.Ok(new { added = git.BackfillDispatchConflicts(repo, entry.Name, DateTimeOffset.UtcNow) });
-        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.ProjectSettingsWrite);
+        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.WorkspaceAdminister);
 
         app.MapGet("/api/projects/{project}/dispatch/forecasts", async (string project, string? cards,
             HttpContext context, TaskScannerService scanner, TaskIndexCache tasks, ProjectRegistry projects, DispatchStore store) =>
@@ -97,7 +97,7 @@ public static class DispatchRegistration
             settings.SetDispatchHubFiles(entry.Name, request.Files);
             forecasts.Refresh();
             return Results.Ok(settings.Get(entry.Name).DispatchHubFiles ?? TouchForecast.DefaultHubFiles);
-        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.ProjectSettingsWrite);
+        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.WorkspaceAdminister);
     }
 }
 
