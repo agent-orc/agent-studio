@@ -51,7 +51,41 @@ public sealed partial class PostMergeIncidentService
     }
 
     public IReadOnlyList<ProjectTestQuarantine> ActiveQuarantines(ProjectRecord project)
-        => _quarantines.Active(project.Id, Repository(project), _clock.GetUtcNow());
+    {
+        var repository = Repository(project);
+        var active = _quarantines.Active(project.Id, repository, _clock.GetUtcNow());
+        if (!active.Any(entry => entry.Kind == "held")) return active;
+        var state = _store.Read(project.Id);
+        return active.Select(entry => entry.Kind != "held" ? entry : entry with
+        {
+            TestFile = entry.TestFile ?? state.Runs.SelectMany(run => run.TestVerdicts ?? [])
+                .LastOrDefault(test => test.Test == entry.Test)?.TestFile,
+            SuiteAreas = entry.SuiteAreas.Count > 0 ? entry.SuiteAreas : [""],
+        }).ToArray();
+    }
+
+    /// <summary>Collect graph facts on the mutation path; state reads never invoke Git.</summary>
+    public ProjectTestQuarantine PrepareQuarantine(ProjectRecord project, ProjectTestQuarantine entry)
+    {
+        if (entry.Kind != "held") return entry;
+        var repository = Repository(project);
+        if (repository is null) return entry with { SuiteAreas = [""] };
+        var state = _store.Read(project.Id);
+        var map = GeneratedTestProjectMap.Generate(repository, VerifyCommandPlanner.Plan(repository, null));
+        var command = state.Runs.SelectMany(run => run.Verdicts)
+            .LastOrDefault(verdict => entry.SuiteId is not null && verdict.SuiteId == entry.SuiteId)?.Command
+            ?? ProjectDefinitionReader.ReadWorkspace(repository).Definition?.TestSuites
+                .FirstOrDefault(suite => suite.Id == entry.SuiteId)?.Command;
+        var suites = map.SuiteCommands.Where(pair => pair.Key == entry.SuiteId || pair.Value == command)
+            .Select(pair => pair.Key).Concat(map.ProjectFiles.Where(path =>
+                command?.Replace('\\', '/').Contains(path, StringComparison.OrdinalIgnoreCase) == true)).ToArray();
+        var areas = map.Rows.Where(row => row.TestProjects.Intersect(suites, StringComparer.Ordinal).Any())
+            .Select(row => row.Folder.TrimEnd('/')).ToArray();
+        return entry with { SuiteAreas = areas.Length > 0 ? areas : [""] };
+    }
+
+    public IReadOnlyList<TestQuarantineHoldFact> ActiveHolds(ProjectRecord project)
+        => MonolithTransitionAdapter.ActiveQuarantineHolds(ActiveQuarantines(project), _clock.GetUtcNow());
 
     private string? Repository(ProjectRecord project)
         => AgentStudio.Docs.ProjectRepoResolver.Resolve(project,
@@ -198,10 +232,16 @@ public sealed partial class PostMergeIncidentService
             case RedTestAction.StartHeld:
             case RedTestAction.StartReportOnly:
                 var expires = now + action.Duration!.Value;
-                _quarantines.Start(project.Id, new(Guid.NewGuid().ToString("N"), test.Test, incident!.RepairCardId,
+                _quarantines.Start(project.Id, PrepareQuarantine(project, new(Guid.NewGuid().ToString("N"), test.Test, incident!.RepairCardId,
                     DateOnly.FromDateTime(expires.UtcDateTime), null, action.Reason,
                     action.Action == RedTestAction.StartHeld ? "held" : "report-only", SystemPrincipal, now, expires,
-                    fingerprint, [run.Id], test.CoveringFolders ?? []) { SuiteId = test.SuiteId }, ActiveQuarantines(project));
+                    fingerprint, [run.Id], test.CoveringFolders ?? [])
+                    {
+                        SuiteId = test.SuiteId, TestFile = test.TestFile,
+                        ConfirmedSuspectPaths = incident.AttributedMerge is not null
+                            ? run.Failure?.FailingPaths ?? [] : [],
+                        AttributedRevertCardId = incident.Action == "Revert" ? incident.RepairCardId : null,
+                    }), ActiveQuarantines(project));
                 break;
             case RedTestAction.Renew when entry is not null:
                 _quarantines.Renew(project.Id, entry.Id, SystemPrincipal, false, facts.RepairCardLane, now);

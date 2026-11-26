@@ -1964,6 +1964,35 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
         Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, report.FailureClassification);
     }
 
+    [Theory]
+    [InlineData(false, "Pass")]
+    [InlineData(true, "ReviewInfra")]
+    public async Task Declared_quarantine_admission_requires_hits_for_every_original_failure(bool mixed, string expected)
+    {
+        using var temp = _fixture.CreateDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 26, 12, 0, 0, TimeSpan.Zero));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto([new ReviewCommandDto("verify-3", "build-tests", "dotnet", ["test"],
+            CompareToBaseline: true)], ["build-tests"], IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim);
+        request = request with
+        {
+            Commands = request.Commands.Select(command => command with
+            {
+                ExitCode = 1,
+                InitialFailures = mixed ? ["Product.Tests.Isolated", "Product.Tests.RealFailure"] : ["Product.Tests.Isolated"],
+                QuarantinedFailures = [new("Product.Tests.Isolated", "repair", new DateOnly(2026, 11, 27))],
+            }).ToArray(),
+            Verdicts = [new("build-tests", "pass", "TestQuarantine", "Product.Tests.Isolated (repair) did not block")],
+        };
+        var report = await store.ReportReviewAsync(claim.Attempt!.AttemptId, request, "review-a", default);
+        Assert.Equal(expected, report.Outcome);
+    }
+
     /// <summary>
     /// AGT-3089 (AGT-3033 shape): a worker that predates the diagnosis contract
     /// reports ProductFailure with an undiagnosed failed verify command and no

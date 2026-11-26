@@ -54,7 +54,8 @@ public sealed class RemoteBuildTestGateRunner(
     IRemoteGateTransport transport,
     ILogger<RemoteBuildTestGateRunner> logger,
     TaskGateCancellationRegistry? cancellationRegistry = null,
-    GateHostOutageMonitor? hostHealth = null, SshGateHostProbe? diskMonitor = null) : IBuildTestGateRunner
+    GateHostOutageMonitor? hostHealth = null, SshGateHostProbe? diskMonitor = null,
+    PostMergeModeService? postMergeMode = null) : IBuildTestGateRunner
 {
     internal const int MaxTransportAttempts = 3;
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -67,6 +68,8 @@ public sealed class RemoteBuildTestGateRunner(
     {
         if (mode == PostStepMode.Off)
             return new(BuildTestGateVerdict.Skipped, null, 0, "", "mode=off", false, false);
+        if (request.Project is { } project && postMergeMode?.ReadState(project) is { } state)
+            request = request with { Quarantines = state.Quarantines };
         if (!request.RequireExactSubject || !ValidSha(request.ExpectedSha))
             return Failure(request, BuildTestGateFailureKind.MissingSource,
                 "Remote verification requires an exact commit SHA.");

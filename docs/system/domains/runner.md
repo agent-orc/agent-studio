@@ -3163,6 +3163,15 @@ seam.
 
 ## Automatic post-merge checks
 
+RT-5 (AGT-4006) makes the runner's gate, Remote Review and post-merge readers
+use the RT-4 quarantine union and the single `TestQuarantinePolicy` parser in
+TaskServer.Contracts. Failures remain in receipts and are non-blocking only
+for exact active test names. `IntegrationPublisher` applies active held scopes
+regardless of develop color and reports `blocked-failing-area` with quarantine,
+test and folder. Repair, attributed-revert and owner-exempt cards pass their own
+hold. Typed `holds` on the state route are available for the future dispatcher
+pick gate. See [scoped holds and readers](pipeline.md#scoped-integration-holds-and-shared-readers-rt-5).
+
 The coding daemon owns `PostMergeHostScheduler`, discovering the projects
 whose testing strategy is `fast` or `balanced` (derived `testingMode`
 `post-merge`, AGT-3965) through Studio's Runner-scoped

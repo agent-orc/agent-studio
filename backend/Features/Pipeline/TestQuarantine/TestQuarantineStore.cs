@@ -39,14 +39,22 @@ public sealed class TestQuarantineStore
     }
 
     public ProjectTestQuarantine Start(string projectId, ProjectTestQuarantine entry,
-        IReadOnlyList<ProjectTestQuarantine> active, bool baseTest = false)
+        IReadOnlyList<ProjectTestQuarantine> active, bool baseTest = false, bool owner = false)
     {
         lock (_gate)
         {
             var state = ReadLocked(projectId);
             var existing = state.Entries.FirstOrDefault(item => item.Test == entry.Test
                 && item.IncidentFingerprint == entry.IncidentFingerprint && item.LiftedAtUtc is null);
-            if (existing?.Kind == entry.Kind) return existing;
+            if (existing?.Kind == entry.Kind)
+            {
+                if (!owner || existing.AttributedRevertCardId == entry.AttributedRevertCardId
+                    && existing.OwnerExemptCardIds.SequenceEqual(entry.OwnerExemptCardIds)) return existing;
+                var exempted = existing with { AttributedRevertCardId = entry.AttributedRevertCardId,
+                    OwnerExemptCardIds = entry.OwnerExemptCardIds };
+                SaveChange(projectId, state, existing, exempted, "exemptions", entry.StartedBy, entry.StartedAtUtc);
+                return exempted;
+            }
             // Refresh store facts under the write lock; callers supply only the repository-file portion.
             var union = state.Entries.Where(item => item.Id != existing?.Id
                     && MonolithTransitionAdapter.QuarantineActive(item, entry.StartedAtUtc))

@@ -1473,6 +1473,7 @@ public sealed partial class TaskServerStore
             .Where(command => command.Phase == "verification"
                               && command.WorkspaceRole == "candidate"
                               && command.ExitCode != 0
+                              && !TestQuarantinePolicy.CoversReviewFailure(command)
                               && !ReviewCommandKinds.IsAgent(command.ExecutionKind))
             .ToArray();
         foreach (var failed in failedDeterministic)
