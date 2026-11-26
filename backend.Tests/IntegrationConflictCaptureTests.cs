@@ -35,7 +35,8 @@ public sealed class IntegrationConflictCaptureTests : IDisposable
         File.WriteAllText(Path.Combine(_root, "shared file.cs"), additions ? "start\nbase\nsecond\nend\n" : "start\nsecond\nend\n");
         Git("commit", "-qam", "feat(AGT-2): second card");
         var delivery = Git("rev-parse", "HEAD");
-        var config = new ConfigurationBuilder().Build();
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["Dispatch:StoragePath"] = Path.Combine(_root, ".git", "dispatch-ledger") }).Build();
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
             new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
         var service = new GitService(NullLogger<GitService>.Instance, scanner, config);
@@ -101,7 +102,8 @@ public sealed class IntegrationConflictCaptureTests : IDisposable
         Git("add", ".");
         Git("commit", "-qm", "AGT-2: second card");
         var delivery = Git("rev-parse", "HEAD");
-        var config = new ConfigurationBuilder().Build();
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["Dispatch:StoragePath"] = Path.Combine(_root, ".git", "dispatch-ledger") }).Build();
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
             new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
         var service = new GitService(NullLogger<GitService>.Instance, scanner, config);
@@ -126,7 +128,8 @@ public sealed class IntegrationConflictCaptureTests : IDisposable
         Git("add", ".");
         Git("commit", "-qm", "base");
         var tip = Git("rev-parse", "HEAD");
-        var config = new ConfigurationBuilder().Build();
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["Dispatch:StoragePath"] = Path.Combine(_root, ".git", "dispatch-ledger") }).Build();
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
             new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
         var service = new GitService(NullLogger<GitService>.Instance, scanner, config);

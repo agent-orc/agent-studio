@@ -73,6 +73,72 @@ public sealed class DispatchEndpointTests : IDisposable
     }
 
     [Fact]
+    public async Task ConflictReadIsProjectScopedAndUsesAHalfOpenRange()
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var store = factory.Services.GetRequiredService<DispatchStore>();
+        var at = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+        store.AppendConflict(new("one", "Forecast Project", "AGT-1", "integration-conflict", "base", "tip",
+            ["a.cs"], ["AGT-2"], at));
+        store.AppendConflict(new("other", "Other", "AGT-3", "semantic", "base", "tip", [], [], at));
+        const string route = "/api/projects/Forecast%20Project/dispatch/conflicts";
+        var rows = await client.GetFromJsonAsync<DispatchConflictRecordV1[]>(route + "?from=2026-11-20T12:00:00Z&to=2026-11-21T00:00:00Z");
+        Assert.Equal("AGT-1", Assert.Single(rows!).Card);
+        Assert.Empty((await client.GetFromJsonAsync<DispatchConflictRecordV1[]>(route + "?to=2026-11-20T12:00:00Z"))!);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync(route + "?from=2026-11-21&to=2026-11-20")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync(route + "?from=invalid")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/projects/missing/dispatch/conflicts")).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("DeterministicSuiteRed", true, 1)]
+    [InlineData("InfrastructureRed", true, 0)]
+    [InlineData("DeterministicSuiteRed", false, 0)]
+    public async Task IsolationWritesOnlyDeterministicOverlappingPairs(string classification, bool overlaps, int expected)
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        var at = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+        const string sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        var scope = new AgentStudio.Pipeline.BatchGateScope("Forecast Project", "repo", "develop", "full", "digest", "v1");
+        AgentStudio.Pipeline.BatchGateSubject Subject(string key, int order) => new(
+            key, scope.Project, "repo", "develop", "full", "digest", "v1", "refs/heads/result", sha, "attempt", 1, 1,
+            sha, true, true, true, true, false, null, true, at, order);
+        var members = new[] { Subject("AGT-1", 1), Subject("AGT-2", 2), Subject("AGT-3", 3) };
+        var parent = new AgentStudio.Pipeline.BatchGateManifest("dispatch-parent", scope, sha,
+            AgentStudio.Pipeline.BatchGatePolicy.MembershipDigest(sha, scope, members), at, members, [], members.Select(member => member.TaskKey).ToArray());
+        var child = parent with { BatchId = "dispatch-pair", MembershipDigest = AgentStudio.Pipeline.BatchGatePolicy.MembershipDigest(sha, scope, members.Take(2).ToArray()),
+            Members = members.Take(2).ToArray(), ParentBatchId = parent.BatchId, EligibleKeys = ["AGT-1", "AGT-2"], Diagnostic = true };
+        var batch = factory.Services.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>();
+        batch.CloseManifest(parent);
+        batch.CloseManifest(child);
+        BatchGateStates.Reach(batch, new(child.BatchId, child.MembershipDigest,
+            AgentStudio.Pipeline.BatchPhase.Assembled, sha, 1, at));
+        var evidence = Path.Combine(_root, "pair-evidence.jsonl");
+        File.WriteAllText(evidence, "{}\n");
+        batch.RecordRun(new("pair-run", child.BatchId, child.MembershipDigest, sha, sha, "full", "digest", "runner", 1, ["dotnet test"], at, evidence));
+        batch.RecordVerdict(new("pair-run", child.BatchId, child.MembershipDigest, sha, "digest", "fail", classification, evidence, at));
+        BatchGateStates.Reach(batch, new(child.BatchId, child.MembershipDigest,
+            AgentStudio.Pipeline.BatchPhase.Red, sha, 1, at));
+        var dispatch = factory.Services.GetRequiredService<DispatchStore>();
+        dispatch.Write(scope.Project, "AGT-1", new([], ["shared.cs"], [], [], "high", "revision"));
+        dispatch.Write(scope.Project, "AGT-2", new([], [overlaps ? "shared.cs" : "other.cs"], [], [], "high", "revision"));
+        var pilot = factory.Services.GetRequiredService<AgentStudio.Pipeline.BatchGatePilotService>();
+        pilot.DeriveIsolationFindings(parent, [child]);
+        pilot.DeriveIsolationFindings(parent, [child]);
+        var rows = dispatch.ReadConflicts(scope.Project);
+        Assert.Equal(expected, rows.Count);
+        if (expected > 0)
+        {
+            Assert.Equal("semantic", rows[0].Kind);
+            Assert.Equal("AGT-1", rows[0].Card);
+            Assert.Equal(new[] { "AGT-2" }, rows[0].PartnerCards);
+        }
+    }
+
+    [Fact]
     public async Task RoutineRefreshSelectsOnlyChangedCardsAndRecoversArchiveOncePerDay()
     {
         await using var factory = Factory();

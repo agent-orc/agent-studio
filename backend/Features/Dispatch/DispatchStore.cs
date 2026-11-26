@@ -7,7 +7,7 @@ using System.Globalization;
 namespace AgentStudio.Dispatch;
 
 /// <summary>Dated project indexes and per-card forecasts, separate from platform-owned task folders.</summary>
-public sealed class DispatchStore
+public sealed partial class DispatchStore
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly string _root;

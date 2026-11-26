@@ -124,6 +124,8 @@ public sealed class DispatchForecastService(TaskScannerService scanner, TaskInde
                                     var subject = ReviewSubjectStore.Read(card.FolderPath);
                                     if (subject is not null && !previous.Deliveries.Any(delivery => delivery.ResultSha == subject.ResultSha))
                                     {
+                                        git.BackfillDispatchConflicts(repo, project.Name, now, subject.BaseSha,
+                                            subject.ResultSha, card.Key ?? card.Id, backfilled: false);
                                         var delivery = ReadDelivery(repo, tip, subject, previous, now, stoppingToken);
                                         previous = previous with { Deliveries = [.. previous.Deliveries, delivery] };
                                         store.Write(project.Name, key, previous);
