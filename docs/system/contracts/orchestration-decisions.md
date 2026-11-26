@@ -1016,3 +1016,9 @@ the atomic write, returning `references-changed` on a concurrent edit. Recut
 apply and undo always use this fence; legacy callers may omit it. Replacement
 creation keeps the automated source family and appends the Packer receipt id,
 so subsequent real deliveries continue to inform the source's size prior.
+
+RT-9 (AGT-4010) adds the pure `LineGuardianPolicy.ShadowWeekComplete` authority
+fact. The host uses the adapter result to refuse an initial live switch until
+seven elapsed days after shadow began; reporting uses the same result. Only a
+human Owner can request the switch. Weekly criteria and min-max reporting are
+read projections and have no authority to apply triage or change test placement.

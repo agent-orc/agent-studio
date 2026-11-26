@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTheme } from '../helpers/theme';
 
@@ -65,6 +65,7 @@ const exportedHtml = existsSync(exportFixture) ? readFileSync(exportFixture, 'ut
 interface Fixture { releaseStop(): void; releaseDecision(): void; decisions: { itemId: string; outcome: string }[] }
 
 async function setup(page: Page, options: { failStop?: boolean; holdDecision?: boolean } = {}): Promise<Fixture> {
+  await page.route(url => url.pathname === '/healthz', route => route.fulfill({ status: 200, contentType: 'text/plain', body: 'Healthy' }));
   let items = initialItems();
   let ratings: { reportId: string; rating: string }[] = [];
   let releaseStop: (() => void) | undefined;
@@ -84,7 +85,7 @@ async function setup(page: Page, options: { failStop?: boolean; holdDecision?: b
     const path = new URL(route.request().url()).pathname;
     const json = (body: unknown) => route.fulfill({ json: body });
     if (path === '/api/v1/studio/auth/status') return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
-    if (path === '/api/v1/management/remote-hosts' || path.startsWith('/api/bus/')) return json([]);
+    if (path === '/api/v1/management/remote-hosts' || path === '/api/deploy/run-hosts' || path.startsWith('/api/bus/')) return json([]);
     if (/\/api\/(tags|clients|watch-paths)\/?$/.test(path) || /\/api\/(?:tasks|jobs)$/.test(path)) return json([]);
     if (path.startsWith('/api/v1/management/') && !path.endsWith('/credential-inventory')) return json([]);
     if (path.endsWith('/runner/status')) return json({ projects: {} });
@@ -377,3 +378,92 @@ test('weekly issue renders in both themes and its HTML export prints to PDF', as
   }
   await page.pdf({ path: join(resultDir, 'weekly-export.pdf'), format: 'A4', printBackground: true });
 });
+
+for (const theme of ['light', 'dark'] as const) {
+  for (const width of [1280, 390]) {
+    test(`guardian review ${theme} ${width}`, async ({ page }) => {
+      const errors: string[] = [];
+      page.on('pageerror', error => errors.push(error.message));
+      page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+      const syntheticSheetRequests: string[] = [];
+      page.on('request', request => {
+        const path = new URL(request.url()).pathname;
+        if (/\/personas\/(line-guardian|dispatch[^/]*)\/sheet$/.test(path)) syntheticSheetRequests.push(path);
+      });
+      await setup(page);
+      await expect(page.getByRole('button', { name: 'Demo Project · Dispatch review', exact: true })).toBeVisible();
+      await page.route('**/dispatch/**', route => {
+        if (new URL(route.request().url()).pathname.endsWith('/conflicts')) return route.fulfill({ json: [] });
+        return route.fulfill({ json: { project: 'PROJ-002', from: '2026-11-16T00:00:00Z', to: '2026-11-23T00:00:00Z',
+          weights: { id: 'recovery-fixture', author: 'fixture', at: stamp, reason: null, weights: {}, gate: .8 },
+          personas: [], weightRevisions: [], observedPersonas: [], competition: [] } });
+      });
+      let live = false;
+      const weights: Record<string, number> = { 'false-blames': 25, 'unusable-minutes': 20, escapes: 20, 'isolation-minutes': 15, 'repair-cost': 10, 'held-wait': 10 };
+      const labels = ['False blames', 'Time develop was really unusable', 'Escapes', 'Time to isolate', 'Cost of repairs', 'Held-card wait'];
+      const applied = [5, 120, 1, 30, 1.2, 90]; const guardian = [0, 60, 1, 15, .8, 45];
+      await page.route('**/api/projects/PROJ-002/line-guardian/**', route => {
+        const path = new URL(route.request().url()).pathname;
+        if (path.endsWith('/mode')) { live = route.request().postDataJSON().live; return route.fulfill({ json: { live } }); }
+        if (path.endsWith('/weights')) { Object.assign(weights, route.request().postDataJSON()); return route.fulfill({ json: weights }); }
+        return route.fulfill({ json: { project: 'PROJ-002', template: 'guardian-v1', from: '2026-11-16T00:00:00Z', to: '2026-11-23T00:00:00Z', live,
+          shadowSince: '2026-11-16T00:00:00Z', shadowWeekComplete: true, appliedValue: weights.escapes * 100 / Object.values(weights).reduce((a, b) => a + b, 0), guardianValue: 100,
+          criteria: Object.entries(weights).map(([id, weight], i) => ({ id, label: labels[i], weight, applied: applied[i], guardian: guardian[i],
+            appliedScore: i === 2 ? 100 : 0, guardianScore: 100, unit: ['per 10 incidents', 'min', 'events', 'min (p50 / p95)', 'relative to previous week', 'card-min'][i],
+            target: ['0', 'Line stop < 60 min per incident; unrelated refusals 0', '0; includes relapses within 7 days', 'p50 15 min; p95 45 min', 'Falls week on week', 'Reported, used to tune scope'][i],
+            provenance: ['incident:fixture-A', 'receipt:fixture-B'], window: '[2026-11-16, 2026-11-23) UTC',
+            note: i === 3 ? 'Applied p50 30 min / p95 42 min; guardian fixture p50 15 min / p95 38 min. Two terminal red receipts.' : i === 4 ? 'Applied: 30,000 tokens, 120 core-min / 2 incidents. Guardian fixture: 20,000 tokens, 80 core-min / 2 incidents. Previous week: 25,000 tokens, 100 core-min / 2 incidents.' : 'Two incidents in the same comparison week. Lower is better.' })),
+          disagreements: [{ id: 'decision:fixture-A', test: 'Tests.BackupRace', at: '2026-11-17T08:00:00Z', guardian: 'Flaky: StartReportOnly', applied: 'Regression: StartHeld', outcome: 'False blame withdrawn; control run failed.', provenance: ['receipt:control-A'] },
+            { id: 'decision:fixture-B', test: 'Tests.Environment', at: '2026-11-18T09:00:00Z', guardian: 'Environment: StartReportOnly', applied: 'Ambiguous: StartHeld', outcome: null, provenance: ['receipt:fixture-B'] }], missingSources: [] } });
+      });
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+      await setTheme(page, theme);
+      await page.getByTestId('guardian-open').click();
+      const review = page.getByTestId('guardian-review');
+      await expect(review).toBeVisible();
+      for (const id of Object.keys(weights)) await expect(page.getByTestId(`guardian-${id}`)).toBeVisible();
+      await expect(page.getByTestId('guardian-disagreements')).toContainText('False blame withdrawn');
+      await expect(page.getByTestId('guardian-disagreements')).toContainText('Pending evidence');
+      await expect(page.getByTestId('guardian-switch-live')).toBeEnabled();
+      await page.getByTestId('guardian-false-blames').getByRole('spinbutton').fill('30');
+      await review.getByRole('button', { name: 'Save weights' }).click();
+      await expect(page.getByTestId('guardian-false-blames').getByRole('spinbutton')).toHaveValue('30');
+      await page.getByTestId('guardian-false-blames').getByRole('spinbutton').fill('25');
+      await review.getByRole('button', { name: 'Save weights' }).click();
+      await expect(page.getByTestId('guardian-false-blames').getByRole('spinbutton')).toHaveValue('25');
+      const round = process.env.GUARDIAN_CAPTURE_ROUND || 'round2';
+      mkdirSync(resultDir, { recursive: true });
+      const capture = (part: string) => page.screenshot({ path: join(resultDir, `guardian-${theme}-${width}-${round}${part}--mocked.png`) });
+      const frame = async (testId: string) => page.getByTestId(testId).evaluate(element => element.scrollIntoView({ block: 'start', behavior: 'instant' }));
+      await page.getByTestId('guardian-false-blames').getByText('Window and provenance', { exact: false }).click();
+      await expect(page.getByTestId('guardian-false-blames')).toContainText('receipt:fixture-B');
+      await frame('guardian-false-blames');
+      await capture('-provenance');
+      await page.getByTestId('guardian-false-blames').getByText('Window and provenance', { exact: false }).click();
+      await review.getByRole('heading', { name: 'Weekly evidence' }).evaluate(element => element.scrollIntoView({ block: 'start', behavior: 'instant' }));
+      await capture('');
+      await frame('guardian-unusable-minutes'); await capture('-criteria-2');
+      await frame('guardian-isolation-minutes'); await capture('-isolation');
+      await frame('guardian-repair-cost'); await capture('-criteria-3');
+      await frame('guardian-disagreements'); await capture('-disagreements');
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+      expect(overflow).toBeFalsy();
+      await page.getByTestId('guardian-switch-live').click();
+      await expect(review.getByRole('heading', { name: 'Live authority' })).toBeVisible();
+      await expect(page.getByTestId('guardian-switch-live')).toHaveText('Return to shadow');
+      const downloadPromise = page.waitForEvent('download');
+      await review.getByRole('button', { name: 'Download guardian-v1 report' }).click();
+      expect((await downloadPromise).suggestedFilename()).toContain('guardian-v1-PROJ-002');
+      await page.getByRole('button', { name: '← Team', exact: true }).click();
+      await page.getByRole('button', { name: 'Demo Project · Dispatch review', exact: true }).click();
+      await expect(page.getByRole('heading', { name: 'Dispatch review', exact: true })).toBeVisible();
+      await expect(page.getByTestId('dispatch-ranking')).toBeVisible();
+      await expect(review).toHaveCount(0);
+      expect(syntheticSheetRequests).toEqual([]);
+      await page.screenshot({ path: join(resultDir, `guardian-dispatch-coexistence-${theme}-${width}-${round}--mocked.png`) });
+      writeFileSync(join(resultDir, `guardian-capture-${theme}-${width}-${round}.json`), JSON.stringify({ theme, width,
+        height: width === 390 ? 844 : 900, provenance: 'API receipts mocked; application rendering real', errors, overflow }, null, 2));
+      expect(errors).toEqual([]);
+    });
+  }
+}

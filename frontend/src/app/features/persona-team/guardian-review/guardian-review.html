@@ -1,0 +1,46 @@
+<section aria-label="Line guardian weekly review" data-testid="guardian-review">
+  <header><h2>Weekly evidence</h2>
+    <label>Project <select data-testid="guardian-project" [value]="project()" (change)="selectProject($any($event.target).value)">
+      @for (entry of projects(); track entry.id) { <option [value]="entry.id">{{ entry.displayName }}</option> }
+    </select></label>
+    <label>Week starting Monday (UTC) <input type="date" [value]="week()" (change)="week.set($any($event.target).value); load()" /></label>
+  </header>
+  @if (!projects().length) { <p>No projects in this workspace.</p> }
+  @if (loading()) { <p role="status">Loading guardian evidence…</p> }
+  @if (error()) { <p role="alert">{{ error() }} <button type="button" class="btn" (click)="load()">Retry</button></p> }
+  @if (review(); as report) {
+    <div class="summary"><div><h3>{{ report.live ? 'Live authority' : 'Shadow comparison' }}</h3>
+      <p>{{ report.from | date:'mediumDate':'UTC' }} to {{ report.to | date:'mediumDate':'UTC' }} (end exclusive, UTC)</p>
+      <p>Weighted value: guardian <strong>{{ report.guardianValue === null ? 'Unavailable' : (report.guardianValue | number:'1.0-1') }}</strong> / applied <strong>{{ report.appliedValue === null ? 'Unavailable' : (report.appliedValue | number:'1.0-1') }}</strong></p>
+      <p>Shadow since {{ report.shadowSince ? (report.shadowSince | date:'medium':'UTC') : 'no receipts yet' }} · {{ report.shadowWeekComplete ? 'One week complete' : 'One week still required' }}</p></div>
+      <div class="actions">@if (owner()) { <button type="button" class="btn" [class.btn--primary]="!report.live" data-testid="guardian-switch-live" [disabled]="busy() || (!report.live && !report.shadowWeekComplete)" (click)="switchMode(!report.live)">{{ report.live ? 'Return to shadow' : 'Switch project live' }}</button> }
+      <button type="button" class="btn" (click)="exportReport()">Download guardian-v1 report</button></div>
+    </div>
+    <details><summary>How scoring works</summary><p>Scores compare the same week using min-max normalization. Equal measured values tie at 100. Missing evidence leaves the weighted value unavailable. Shadow outcomes remain counterfactual.</p></details>
+    <div class="criteria" aria-label="Six guardian criteria">
+      @for (criterion of report.criteria; track criterion.id) {
+        <article [attr.data-testid]="'guardian-' + criterion.id"><h3>{{ criterion.label }}</h3>
+          <p class="target">Target: {{ criterion.target }}</p>
+          <dl><dt>Applied</dt><dd [class.unknown]="criterion.applied === null" [attr.aria-label]="criterion.applied === null ? 'Unavailable. ' + criterion.note : null">{{ criterion.applied === null ? '–' : (criterion.applied | number:'1.0-2') }} {{ criterion.applied === null ? '' : criterion.unit }}</dd>
+            <dt>Guardian</dt><dd [class.unknown]="criterion.guardian === null" [attr.aria-label]="criterion.guardian === null ? 'Unavailable. ' + criterion.note : null">{{ criterion.guardian === null ? '–' : (criterion.guardian | number:'1.0-2') }} {{ criterion.guardian === null ? '' : criterion.unit }}</dd>
+            <dt>Score, guardian / applied</dt><dd>{{ criterion.guardianScore ?? '–' }} / {{ criterion.appliedScore ?? '–' }}</dd></dl>
+          <label>Weight <input type="number" min="0" [disabled]="!owner() || busy()" [value]="weights()[criterion.id]" (input)="editWeight(criterion.id, $any($event.target).value)" /></label>
+          @if (criterion.id === 'isolation-minutes' || criterion.id === 'repair-cost') { <p class="measurement">{{ criterion.note }}</p> }
+          <details><summary>Window and provenance ({{ criterion.provenance.length }})</summary>
+            @if (criterion.id !== 'isolation-minutes' && criterion.id !== 'repair-cost') { <p>{{ criterion.note }}</p> }
+            <p>{{ criterion.window }}</p><ul>@for (source of criterion.provenance; track source) { <li>{{ source }}</li> } @empty { <li>No evidence recorded.</li> }</ul>
+          </details>
+        </article>
+      }
+    </div>
+    @if (owner()) { <button type="button" class="btn save-weights" [disabled]="busy()" (click)="saveWeights()">Save weights</button> }
+    <h3>Shadow disagreements · {{ report.disagreements.length }}</h3>
+    <div class="disagreements" data-testid="guardian-disagreements">@for (item of report.disagreements; track item.id) {
+      <article><h4>{{ item.test }}</h4><p>{{ item.at | date:'medium':'UTC' }} UTC · {{ item.id }}</p>
+        <dl><dt>Guardian</dt><dd>{{ item.guardian }}</dd><dt>Applied</dt><dd>{{ item.applied }}</dd><dt>Outcome</dt><dd>{{ item.outcome ?? 'Pending evidence' }}</dd></dl>
+        <details><summary>Provenance</summary><ul>@for (source of item.provenance; track source) { <li>{{ source }}</li> }</ul></details>
+      </article>
+    } @empty { <p>No disagreements recorded in this week.</p> }</div>
+    @if (report.missingSources.length) { <h3>Evidence gaps</h3><ul>@for (source of report.missingSources; track source) { <li>{{ source }}</li> }</ul> }
+  }
+</section>

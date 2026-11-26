@@ -1578,3 +1578,23 @@ loading and retryable error states remain local to the panel.
 Needs you renders policy-provided `ownerOptions` with the recommendation marked;
 the existing repair-card action owns the next step. No client triage rules or
 new owner mutation routes are introduced.
+
+## Line guardian weekly review (RT-9)
+
+Team opens the project-scoped Line guardian persona section. It shows the six
+Dossier criteria in table order, applied and guardian values, normalized scores,
+editable Owner weights, targets, half-open UTC windows and provenance. The
+latest completed UTC week is the default; a Monday date selects another week.
+Shadow disagreements retain pending outcomes and later evidence. The Owner can
+switch the project live beside the shadow-week numbers after one week, or return
+to shadow. The weekly JSON download uses `guardian-v1`. Missing measurements
+remain unavailable and prevent a weighted value when their weight is positive.
+The focused `guardian review` cases in `e2e/persona-team/team-page.spec.ts` cover
+weights, authority, download and screenshots at 1280 and 390 px in both themes.
+
+The guardian route `line-guardian` and project dispatcher routes `dispatch:<id>`
+coexist in the Team view. Both retain their navigation entry, heading and
+component; neither requests a generic persona sheet. Integration recovery
+against DS-8/DS-9 preserves dispatcher character sheets and project reviews.
+The guardian Playwright cases also navigate back to the project dispatch review
+and reject generic sheet requests for either synthetic route.

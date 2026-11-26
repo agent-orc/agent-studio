@@ -50,8 +50,9 @@ public sealed class LineGuardianTests : IDisposable
         Assert.Equal(1, classifier.Calls);
         Assert.Equal(500, Assert.Single(store.Read(Project).Models).TokensUsed);
         Assert.Throws<UnauthorizedAccessException>(() => store.SetLive(Project, true, "runner", false, Now));
-        store.SetLive(Project, true, "owner", true, Now);
-        var live = new LineGuardianStore(_root, classifier).Evaluate(Project, Run("next"), Facts(), system, Now);
+        Assert.Throws<InvalidOperationException>(() => store.SetLive(Project, true, "owner", true, Now.AddDays(7).AddTicks(-1)));
+        store.SetLive(Project, true, "owner", true, Now.AddDays(7));
+        var live = new LineGuardianStore(_root, classifier).Evaluate(Project, Run("next"), Facts(), system, Now.AddDays(7));
         Assert.False(live.Shadow);
         Assert.Equal(live.Guardian, live.Applied);
         Assert.Equal(1, classifier.Calls);

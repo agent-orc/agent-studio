@@ -11,12 +11,13 @@ import type { RegistryWorkspaceListItem } from '../../../models/task.model';
 import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';
 import { OrchestratorPanelStateService } from '../../orchestrator/state/orchestrator-panel-state.service';
 import { PersonaAttributes, PersonaBudget, PersonaEntry, PersonaItem, PersonaReport, PersonaReportRating, PersonaSheet, isOpenPersonaItem, personaCards, poolTotals } from './persona-team.model';
+import { GuardianReviewComponent } from '../guardian-review/guardian-review';
 import { DispatchReviewComponent } from '../dispatch-review/dispatch-review';
 import { dispatchRoute } from '../dispatch-review/dispatch-review.model';
 import { WeeklyIssueViewComponent } from '../weekly-issue-view/weekly-issue-view';
 
 @Component({ selector: 'app-persona-team-view', standalone: true,
-  imports: [DatePipe, DecimalPipe, KeyValuePipe, LoadingSurfaceComponent, PendingButtonDirective, StatusIndicatorComponent, SegmentedControlComponent, WeeklyIssueViewComponent, DispatchReviewComponent], templateUrl: './persona-team-view.html', styleUrl: './persona-team-view.scss',
+  imports: [GuardianReviewComponent, DatePipe, DecimalPipe, KeyValuePipe, LoadingSurfaceComponent, PendingButtonDirective, StatusIndicatorComponent, SegmentedControlComponent, WeeklyIssueViewComponent, DispatchReviewComponent], templateUrl: './persona-team-view.html', styleUrl: './persona-team-view.scss',
   changeDetection: ChangeDetectionStrategy.OnPush })
 export class PersonaTeamViewComponent {
   readonly dispatchRoute = dispatchRoute;
@@ -50,6 +51,7 @@ export class PersonaTeamViewComponent {
   readonly state = signal('open');
   readonly cards = computed(() => personaCards(this.entries(), this.budget(), this.items(), this.reports()));
   readonly totals = computed(() => poolTotals(this.cards(), this.budget()?.poolTokens ?? 0));
+  readonly guardianProjects = computed(() => this.workspaces().find(w => w.id === this.workspaceId())?.projects ?? []);
   readonly current = computed(() => this.entries().find(entry => entry.id === this.personaId()) ?? null);
   readonly currentCard = computed(() => this.cards().find(card => card.entry.id === this.personaId()) ?? null);
   readonly feed = computed(() => this.items().filter(item => item.personaId === this.personaId()
@@ -75,7 +77,7 @@ export class PersonaTeamViewComponent {
       if (!this.workspaceId() && workspaces.length) this.selectWorkspace(workspaces[0].id);
     });
     effect(() => { const id = this.personaId(); const workspace = this.workspaceId();
-      if (id && workspace && !id.startsWith('dispatch:')) this.loadSheet(workspace, id); });
+      if (id && workspace && id !== 'line-guardian' && !id.startsWith('dispatch:')) this.loadSheet(workspace, id); });
     effect(() => { const active = this.current()?.activation;
       this.editedAttributes.set(active ? structuredClone(active.attributes) : null); });
   }

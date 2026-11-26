@@ -3,7 +3,7 @@
     <div>
       @if (personaId()) { <button type="button" class="team-link" (click)="open(null)">← Team</button> }
       <p class="team-kicker">Workspace personas</p>
-      <h1>{{ dispatchProject() ? 'Dispatch review' : personaId() === 'magazine' ? 'Magazine' : current()?.title ?? 'Team' }}</h1>
+      <h1>{{ dispatchProject() ? 'Dispatch review' : personaId() === 'line-guardian' ? 'Line guardian' : personaId() === 'magazine' ? 'Magazine' : current()?.title ?? 'Team' }}</h1>
       @if (current(); as person) { <p>{{ person.activation?.roleId ? roleLabel(person.activation!.roleId!) : roleLabel(person.aspect) }} · {{ person.id }}</p> }
     </div>
     <div class="team-actions">
@@ -31,10 +31,13 @@
   @if (error()) { <p class="team-error" role="alert">{{ error() }} <button type="button" (click)="load()">Retry</button></p> }
   @if (dispatchProject(); as project) {
     <app-dispatch-review [workspaces]="workspaces()" [projectId]="project" />
+  } @else if (personaId() === 'line-guardian') {
+    <app-guardian-review [projects]="guardianProjects()" />
   } @else if (personaId() === 'magazine') {
     @if (workspaceId()) { <app-weekly-issue-view [workspaceId]="workspaceId()" /> }
   } @else if (!personaId()) {
     @if (workspaceId()) { <app-weekly-issue-view [workspaceId]="workspaceId()" [compact]="true" /> }
+    <button type="button" class="team-link" (click)="open('line-guardian')" data-testid="guardian-open">Line guardian weekly review</button>
     <section class="team-group"><h2>Dispatch review by project</h2><div class="team-actions">
       @for (workspace of selectedWorkspaces(); track workspace.id) { @for (project of workspace.projects; track project.id) {
         <button type="button" (click)="open(dispatchRoute(project.id))">{{ project.displayName }} · Dispatch review</button>
