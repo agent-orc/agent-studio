@@ -2891,7 +2891,9 @@ requeues it.
 DS-D4 option B supplies a shared model-free `TouchForecastV1`. `AddDispatch`
 registers its store and background collector; `MapDispatchEndpoints` maps its
 routes. The collector wakes on task creation, mutation and lane transitions,
-with a one-minute recovery sweep. A Ready entry or changed title, prompt or hub
+with a one-minute retry wake and a daily full recovery pass. Path events resolve
+one resident card through the folder index; requested refreshes resolve canonical
+card keys without scanning the board. A Ready entry or changed title, prompt or hub
 setting refreshes the forecast. `IntakeRunner.DetectTaskAreas` still enriches
 prompts independently. No dispatch order or admission rule changes in this slice.
 
@@ -2903,6 +2905,12 @@ of the cited file's eligible commits. Commits over 40 code files and merge
 commits are excluded. The index covers 60 days and refreshes on the first
 background pass of each UTC day. Dated snapshots remain available through
 `DispatchStore.IndexAsOf(project, waveStart)`; a future snapshot is never used.
+Each index write prunes snapshots older than 60 days before the newest stored
+index, keeping the last snapshot before that boundary for as-of lookups. Late
+historical writes do not move the retention window backwards. Timestamps are
+UTC; snapshot selection filters file dates before reading index contents. This
+retention covers the 30-day replay window. Card forecasts and their delivery
+evidence are retained independently.
 
 Modules follow `frontend/src/app/features/<x>`, `frontend/src/app/<x>`,
 `frontend/e2e/<x>`, `backend/Features/<X>`, then the top folder. Hubs remain in

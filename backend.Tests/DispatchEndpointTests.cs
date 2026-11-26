@@ -120,6 +120,35 @@ public sealed class DispatchEndpointTests : IDisposable
     }
 
     [Fact]
+    public async Task PathRefreshUsesTheCurrentFolderAndKeepsDuplicateIdsProjectScoped()
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        var cache = factory.Services.GetRequiredService<TaskIndexCache>();
+        var service = factory.Services.GetRequiredService<DispatchForecastService>();
+        var now = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+        var original = Assert.Single(service.CollectRefreshCards(now, out _)).Card;
+        var otherWatch = Path.Combine(_root, "other-cards");
+        var other = original with
+        {
+            WatchPath = otherWatch, ProjectName = "Other", TaskKey = TaskIdentity.CreateKey(otherWatch, original.Id),
+            FolderPath = Path.Combine(otherWatch, TaskStates.Ready, original.Id),
+        };
+        cache.PublishCore(other);
+        service.PathChanged(Path.Combine(other.FolderPath, "prompt.md"));
+        Assert.Equal(other.TaskKey, Assert.Single(service.CollectRefreshCards(now, out _)).Card.TaskKey);
+
+        var moved = original with { State = TaskStates.Archive, FolderPath = Path.Combine(Watch, TaskStates.Archive, original.Id) };
+        cache.PublishCore(moved, original.FolderPath);
+        service.PathChanged(Path.Combine(original.FolderPath, "prompt.md"));
+        service.PathChanged(Path.Combine(Watch, TaskStates.Ready, "absent", "prompt.md"));
+        service.PathChanged(Path.Combine(Path.GetPathRoot(Watch)!, AgentStudio.Pipeline.ReviewSubjectStore.FileName));
+        Assert.Empty(service.CollectRefreshCards(now, out _));
+        service.PathChanged(AgentStudio.Pipeline.ReviewSubjectStore.PathFor(moved.FolderPath));
+        Assert.Equal(moved.FolderPath, Assert.Single(service.CollectRefreshCards(now, out _)).Card.FolderPath);
+    }
+
+    [Fact]
     public async Task HubSettingSupportsDefaultsOverrideEmptyAndResetAndRejectsTraversal()
     {
         await using var factory = Factory();

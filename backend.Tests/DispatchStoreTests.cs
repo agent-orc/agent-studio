@@ -4,6 +4,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: Index dates are explicit replay observations; retention never reads the wall clock.
 public sealed class DispatchStoreTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "dispatch-store-" + Guid.NewGuid().ToString("N"));
@@ -22,6 +23,40 @@ public sealed class DispatchStoreTests : IDisposable
         Assert.Equal(old.Revision, Store().IndexAsOf("PROJECT", old.AsOf.AddHours(2))!.Revision);
         Assert.Equal(newer.Revision, Store().IndexAsOf("project", newer.AsOf)!.Revision);
         Assert.Null(store.IndexAsOf("other", newer.AsOf));
+    }
+
+    [Fact]
+    public void IndexRetentionKeepsSixtyDaysAndTheBoundaryPredecessorWithoutTouchingOtherProjectsOrCards()
+    {
+        var store = Store();
+        var start = new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero);
+        var forecast = TouchForecast.Compute("a.cs", TouchForecast.BuildIndex("tip", start, ["a.cs"], []), []);
+        store.Write("project", "card", forecast);
+        store.WriteIndex("other", TouchForecast.BuildIndex("other", start, [], []));
+        for (var day = 0; day <= 120; day++)
+            store.WriteIndex("project", TouchForecast.BuildIndex($"tip-{day}", start.AddDays(day), [], []));
+
+        // A late historical import must not move the retention window backwards.
+        store.WriteIndex("PROJECT", TouchForecast.BuildIndex("backfill", start.AddDays(-1), [], []));
+        Assert.Null(Store().IndexAsOf("project", start.AddDays(58)));
+        Assert.Equal("tip-59", Store().IndexAsOf("project", start.AddDays(60).AddTicks(-1))!.IntegrationTip);
+        Assert.Equal("tip-60", Store().IndexAsOf("project", start.AddDays(60))!.IntegrationTip);
+        Assert.Equal("tip-120", Store().IndexAsOf("project", start.AddDays(120))!.IntegrationTip);
+        Assert.Equal("other", Store().IndexAsOf("other", start)!.IntegrationTip);
+        Assert.Equal(forecast.IndexRevision, Store().Read("project", "card")!.IndexRevision);
+        Assert.Equal(64, Directory.GetFiles(_root, "*.json", SearchOption.AllDirectories).Length);
+    }
+
+    [Fact]
+    public void IndexDatesAreOrderedByUtcInstantAcrossOffsets()
+    {
+        var store = Store();
+        var first = TouchForecast.BuildIndex("first", new(2026, 11, 17, 23, 0, 0, TimeSpan.Zero), [], []);
+        var second = TouchForecast.BuildIndex("second", first.AsOf.AddHours(1).ToOffset(TimeSpan.FromHours(-5)), [], []);
+        store.WriteIndex("project", first);
+        store.WriteIndex("project", second);
+        Assert.Equal("second", Store().IndexAsOf("project", second.AsOf)!.IntegrationTip);
+        Assert.Equal("first", Store().IndexAsOf("project", first.AsOf)!.IntegrationTip);
     }
 
     [Fact]

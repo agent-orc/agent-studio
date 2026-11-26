@@ -43,10 +43,18 @@ public sealed class DispatchForecastService(TaskScannerService scanner, TaskInde
             if (_requested.TryRemove(key, out var ready)) requested[key] = ready;
         if (!reconcile && requested.Count == 0) return [];
         if (reconcile) _lastRecoveryDate = now.UtcDateTime.Date;
-        var partitions = tasks.GetCleanSnapshotPartitions();
-        var fullScan = reconcile;
-        return partitions.Live.Concat(partitions.Archive)
-            .Where(card => fullScan || requested.ContainsKey(card.TaskKey))
+        IEnumerable<TaskInfo> cards;
+        if (reconcile)
+        {
+            var partitions = tasks.GetCleanSnapshotPartitions();
+            cards = partitions.Live.Concat(partitions.Archive);
+        }
+        else
+        {
+            cards = requested.Keys.SelectMany(key => tasks.GetMatchingCoreFacts(key)
+                .Where(card => card.TaskKey == key));
+        }
+        return cards
             .Select(card => (card, requested.GetValueOrDefault(card.TaskKey), requested.ContainsKey(card.TaskKey))).ToArray();
     }
     private void Changed(TaskChangeEvent change) => RequestCardRefresh(change.WatchPath, change.JobId);
@@ -59,9 +67,12 @@ public sealed class DispatchForecastService(TaskScannerService scanner, TaskInde
         if (name is not ("prompt.md" or ReviewSubjectStore.FileName)) return;
         var folder = Path.GetDirectoryName(path);
         if (folder is null) return;
-        if (name == ReviewSubjectStore.FileName) folder = Path.GetDirectoryName(folder);
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        var card = tasks.GetAllResidentTasks().FirstOrDefault(card => card.FolderPath.Equals(folder, comparison));
+        if (name == ReviewSubjectStore.FileName)
+        {
+            folder = Path.GetDirectoryName(folder);
+            if (folder is null) return;
+        }
+        var card = tasks.GetResidentTaskByFolder(folder);
         if (card is not null) RequestCardRefresh(card.WatchPath, card.Id);
     }
 
