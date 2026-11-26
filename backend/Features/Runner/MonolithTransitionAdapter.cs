@@ -15,6 +15,9 @@ public static class MonolithTransitionAdapter
     public static bool DispatchDependencyRemoval(string persona, string? origin, bool redeemedT2)
         => DispatcherAuthorityPolicy.MayRemoveDependency(persona, origin, redeemedT2);
 
+    public static bool GuardianShadowWeekComplete(DateTimeOffset? since, DateTimeOffset now)
+        => LineGuardianPolicy.ShadowWeekComplete(since, now);
+
     public static bool GuardianComputeExhausted(GuardianBudgetFacts facts) => LineGuardianPolicy.ComputeExhausted(facts);
     public static bool GuardianMayClassify(GuardianBudgetFacts facts) => LineGuardianPolicy.MayClassify(facts);
     public static GuardianPermission GuardianOperation(GuardianOperationFacts facts) => LineGuardianPolicy.Authorize(facts);

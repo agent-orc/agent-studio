@@ -50,11 +50,32 @@ public sealed class TestQuarantineEndpointsTests : IDisposable
         Assert.Equal("guardian", role.GetProperty("role").GetProperty("kind").GetString());
         var guardian = await client.GetFromJsonAsync<AgentStudio.Personas.GuardianProjectState>("/api/projects/demo/line-guardian");
         Assert.False(guardian!.Live);
+        using (var early = await client.PutAsJsonAsync("/api/projects/demo/line-guardian/mode",
+            new AgentStudio.Personas.GuardianModeRequest(true)))
+            Assert.Equal(HttpStatusCode.Conflict, early.StatusCode);
+        factory.Services.GetRequiredService<AgentStudio.Personas.LineGuardianStore>()
+            .SetLive(project.Id, false, "owner", true, _clock.GetUtcNow().AddDays(-7));
         (await client.PutAsJsonAsync("/api/projects/demo/line-guardian/mode",
             new AgentStudio.Personas.GuardianModeRequest(true))).EnsureSuccessStatusCode();
         Assert.True((await client.GetFromJsonAsync<AgentStudio.Personas.GuardianProjectState>("/api/projects/demo/line-guardian"))!.Live);
         (await client.PutAsJsonAsync("/api/projects/demo/line-guardian/mode",
             new AgentStudio.Personas.GuardianModeRequest(false))).EnsureSuccessStatusCode();
+        var review = await client.GetFromJsonAsync<AgentStudio.Personas.GuardianReview>("/api/projects/demo/line-guardian/review");
+        Assert.Equal("guardian-v1", review!.Template);
+        Assert.Equal(6, review.Criteria.Count);
+        Assert.True(review.ShadowWeekComplete);
+        using (var invalid = await client.PutAsJsonAsync("/api/projects/demo/line-guardian/review/weights", new Dictionary<string, double>()))
+            Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        var weights = AgentStudio.Personas.GuardianReviewProjection.DefaultWeights.ToDictionary(p => p.Key, p => p.Value);
+        weights["false-blames"] = 30;
+        (await client.PutAsJsonAsync("/api/projects/demo/line-guardian/review/weights", weights)).EnsureSuccessStatusCode();
+        review = await client.GetFromJsonAsync<AgentStudio.Personas.GuardianReview>("/api/projects/demo/line-guardian/review");
+        Assert.Equal(30, review!.Criteria.Single(c => c.Id == "false-blames").Weight);
+        (await client.PostAsJsonAsync("/api/projects/demo/line-guardian/review/evidence",
+            new AgentStudio.Personas.GuardianReviewEvidence("http-proof", "fixture", _clock.GetUtcNow(), "false-blame", "receipt:http-proof")))
+            .EnsureSuccessStatusCode();
+        Assert.Equal("http-proof", Assert.Single((await client.GetFromJsonAsync<AgentStudio.Personas.GuardianProjectState>(
+            "/api/projects/demo/line-guardian"))!.ReviewEvidence).Id);
         var mutations = factory.Services.GetRequiredService<TaskMutationService>();
         var card = mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
             { Project = project.Id, Title = "Repair", TargetState = TaskStates.Preparation })!;

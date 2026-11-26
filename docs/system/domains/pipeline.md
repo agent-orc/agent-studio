@@ -4727,3 +4727,48 @@ Its `/role` subroute exposes the charter and rights catalogue.
 receipt. Owner items also appear through the existing post-merge Needs you
 fact source. One closed-incident feed observation is emitted on an evidence
 or owner lift. The weekly criteria projection and switch UI remain RT-9.
+
+### Guardian weekly evidence (RT-9, AGT-4010)
+
+`GET /api/projects/{name}/line-guardian/review?week=<Monday-00:00Z>` projects
+the latest completed UTC week by default. `guardian-v1` covers false blames,
+unusable-develop minutes, escapes, isolation p50/p95, repair token/compute cost
+and held-card wait. Receipts, immutable incident decisions and quarantine history
+supply measured facts. Owner evidence annotations add withdrawn attributions,
+unrelated holds, integration-refusal intervals and disagreement outcomes through
+`POST .../review/evidence`; an id is immutable and retries are idempotent.
+Each annotation names its incident and source receipt. `held-wait` and
+`unrelated-refusal` intervals use `at` and `end`; `outcome` names `decisionId`.
+Evidence arriving after the report week can resolve its earlier disagreement.
+
+`PUT .../review/weights` accepts exactly the six criterion ids, finite
+non-negative values and a positive total. Defaults implement RT-D13 B in Dossier
+table order: 25/20/20/15/10/10. Min-max compares the same weekly cohort with the
+applied baseline; ties score 100. Cost uses the mean of token and core-minute
+per-incident ratios to the previous week, including retained repair pipeline
+attempts and earlier step runs. A zero previous amount with positive current cost
+is unmeasured. Legacy compute receipts use one core. Missing required receipts
+or unobserved shadow runtime outcomes remain unavailable, rather than invented
+zeros or projected savings. A zero weight can exclude an unavailable criterion.
+These reporting conventions add no dispatch parallelism gate to the guardian.
+No review projection applies an orchestration decision or changes testing strategy.
+
+The local integration hold check records `integration_quarantine_wait` only at
+blocked/released boundaries, with delivery and whether merge-base paths were
+known. The weekly collector reads these timeline receipts, including open waits
+and archived cards; a successful integration also closes a wait. Unknown path
+scope remains unmeasured. Remote or historical refusal intervals without these
+receipts can be supplied through the evidence API. This telemetry changes no
+admission or retry decision.
+The first live switch also enforces the seven-day shadow floor on the server,
+using the pure `LineGuardianPolicy.ShadowWeekComplete` policy through the monolith
+adapter. An early switch returns 409. Returning to shadow remains available.
+Refusal annotations can name `card`; overlapping held waits are unioned per card
+before adding card-minutes. Without `card`, `incident` is the grouping identity.
+Incident-denominated rates use incidents whose terminal red receipt falls in the
+selected week. Escape events use their event week even if no incident opened
+then. Repeated confirmations of one formerly misclassified regression do not
+create new escape events. Archiving a waiting card ends its measured wait.
+Observed metrics are shared with an identical shadow plan only when every
+incident in the selected cohort has a matching guardian observation. A partial
+first shadow week never borrows unobserved baseline outcomes.

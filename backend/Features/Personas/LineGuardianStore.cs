@@ -19,7 +19,11 @@ public sealed record GuardianShadowRecord(PostMergeIncidentLogEntry Log, bool Sh
 public sealed record GuardianProjectState(bool Live, DateTimeOffset? ShadowSince, string? ChangedBy,
     IReadOnlyList<GuardianUsage> Receipts, IReadOnlyList<GuardianModelAttempt> Models,
     IReadOnlyList<GuardianShadowRecord> Decisions, IReadOnlyList<GuardianOwnerItem> OwnerItems,
-    IReadOnlyList<string> ClosedIncidents);
+    IReadOnlyList<string> ClosedIncidents)
+{
+    public IReadOnlyDictionary<string, double> ReviewWeights { get; init; } = GuardianReviewProjection.DefaultWeights;
+    public IReadOnlyList<GuardianReviewEvidence> ReviewEvidence { get; init; } = [];
+}
 
 /// <summary>Project-scoped authority, reservations and comparison journal. No task workspace writes.</summary>
 public sealed class LineGuardianStore
@@ -43,7 +47,38 @@ public sealed class LineGuardianStore
     public void SetLive(string project, bool live, string owner, bool isOwner, DateTimeOffset now)
     {
         if (!isOwner) throw new UnauthorizedAccessException("Only the owner may change guardian authority.");
-        lock (_gate) Save(project, Read(project) with { Live = live, ChangedBy = owner, ShadowSince = Read(project).ShadowSince ?? now });
+        lock (_gate)
+        {
+            var state = Read(project);
+            if (live && !state.Live && !MonolithTransitionAdapter.GuardianShadowWeekComplete(state.ShadowSince, now))
+                throw new InvalidOperationException("The guardian requires one complete shadow week before going live.");
+            Save(project, state with { Live = live, ChangedBy = owner, ShadowSince = state.ShadowSince ?? now });
+        }
+    }
+    public void SetReviewWeights(string project, IReadOnlyDictionary<string, double> weights)
+    {
+        if (weights.Count != GuardianReviewProjection.DefaultWeights.Count
+            || GuardianReviewProjection.DefaultWeights.Keys.Any(key => !weights.ContainsKey(key))
+            || weights.Values.Any(value => !double.IsFinite(value) || value < 0) || weights.Values.Sum() <= 0)
+            throw new ArgumentException("Provide six finite, non-negative weights with a positive total.");
+        lock (_gate) Save(project, Read(project) with { ReviewWeights = weights });
+    }
+    public void RecordReviewEvidence(string project, GuardianReviewEvidence evidence)
+    {
+        if (string.IsNullOrWhiteSpace(evidence.Id) || string.IsNullOrWhiteSpace(evidence.Source)
+            || string.IsNullOrWhiteSpace(evidence.Incident) || !double.IsFinite(evidence.Value) || evidence.Value < 0
+            || evidence.End < evidence.At
+            || (evidence.Kind is "held-wait" or "unrelated-refusal") && evidence.End is null
+            || evidence.Kind == "outcome" && (string.IsNullOrWhiteSpace(evidence.DecisionId) || string.IsNullOrWhiteSpace(evidence.Outcome))
+            || evidence.Kind is not ("false-blame" or "unrelated-hold" or "escape" or "unrelated-refusal" or "held-wait" or "outcome"))
+            throw new ArgumentException("Evidence requires an id, incident, source, supported kind and valid non-negative value or interval.");
+        lock (_gate)
+        {
+            var state = Read(project);
+            var old = state.ReviewEvidence.FirstOrDefault(e => e.Id == evidence.Id);
+            if (old is not null && old != evidence) throw new InvalidOperationException("Evidence ids are immutable.");
+            if (old is null) Save(project, state with { ReviewEvidence = [.. state.ReviewEvidence, evidence] });
+        }
     }
     public GuardianOwnerItem? Request(string project, string incident, GuardianOperationFacts facts)
     {

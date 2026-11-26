@@ -170,6 +170,7 @@
 /api/projects/settings	free	-	-	-
 /api/projects/{name}/integration-conflicts	free	-	-	-
 /api/projects/{name}/line-guardian	free	-	-	-
+/api/projects/{name}/line-guardian/review	free	-	-	-
 /api/projects/{name}/line-guardian/role	free	-	-	-
 /api/projects/{name}/test-quarantines	free	-	-	-
 /api/projects/{projId:regex(^PROJ-\d{{3,}}$)}	free	-	-	-
