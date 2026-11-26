@@ -1301,6 +1301,7 @@ public class TaskMutationService
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         var clean = TaskReferenceValidator.Normalize(references ?? new TaskReferences());
+        clean = AuthorizeDependencyChanges(info, clean);
         if (!TaskJsonFile.UpdateField(info.FolderPath, "references", clean, _logger, _keyFileWriter)) return false;
         _logger.LogInformation(
             "task-references-set job={JobId} dependsOn={DependsOn} relatedTo={RelatedTo} blockedBy={BlockedBy} supersedes={Supersedes} followUpOf={FollowUpOf} raisedFollowUps={RaisedFollowUps} workbenches={Workbenches}",
@@ -1308,6 +1309,29 @@ public class TaskMutationService
             clean.Supersedes.Count, clean.FollowUpOf.Count, clean.RaisedFollowUps.Count,
             clean.Workbenches.Count);
         return Updated(info);
+    }
+
+    private static TaskReferences AuthorizeDependencyChanges(TaskInfo info, TaskReferences clean)
+    {
+        if (OperatorActorScope.Current is { PersonaId: { } persona } actor)
+        {
+            var old = info.References?.DependsOn ?? [];
+            var approved = actor.ApprovalId is not null && actor.ApprovedBy is not null;
+            foreach (var edge in old)
+            {
+                var replacement = clean.DependsOn.FirstOrDefault(e => e.Key.Equals(edge.Key, StringComparison.OrdinalIgnoreCase));
+                if (replacement == edge) continue;
+                // Approval metadata is installed only after middleware redeems a live, use-capped owner approval.
+                var permitted = AgentStudio.Runner.MonolithTransitionAdapter.DispatchDependencyRemoval(
+                    persona, edge.Origin, approved);
+                if (!permitted) throw new AgentStudio.Security.SecurityOperationException(403,
+                    "dispatch-foreign-edge", "Removing or changing another actor's dependency requires an explicit T2 approval.");
+            }
+            clean = clean with { DependsOn = clean.DependsOn.Select(edge =>
+                old.Any(e => e.Key.Equals(edge.Key, StringComparison.OrdinalIgnoreCase)) ? edge
+                    : edge with { Origin = "dispatch:" + persona }).ToList() };
+        }
+        return clean;
     }
 
     /// <summary>Atomically changes kind and content for the operator migration.</summary>
@@ -1456,6 +1480,7 @@ public class TaskMutationService
         {
             DependsOn = dependencies,
         });
+        references = AuthorizeDependencyChanges(info, references);
         TaskJsonFile.UpdateField(info.FolderPath, "references", references, _logger);
         _timeline?.Append(info.FolderPath, new TimelineEvent
         {

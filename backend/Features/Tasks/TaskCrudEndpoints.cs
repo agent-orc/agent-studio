@@ -1514,7 +1514,10 @@ public static class TaskCrudEndpoints
                     })
                 });
 
-            var success = mutations.SetTaskReferences(jobId, proposed, watchPath);
+            bool success;
+            try { success = mutations.SetTaskReferences(jobId, proposed, watchPath); }
+            catch (AgentStudio.Security.SecurityOperationException ex)
+            { return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status); }
             if (!success) return Results.NotFound();
             return Results.Ok(new
             {
@@ -1589,8 +1592,11 @@ public static class TaskCrudEndpoints
                     }),
                 });
 
-            var changed = mutations.EditTaskWaitsOn(
-                jobId, req.Add ?? [], removed, req.Reason, OperatorActor(ctx), watchPath);
+            bool changed;
+            try { changed = mutations.EditTaskWaitsOn(
+                jobId, req.Add ?? [], removed, req.Reason, OperatorActor(ctx), watchPath); }
+            catch (AgentStudio.Security.SecurityOperationException ex)
+            { return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status); }
             if (!changed) return Results.NotFound();
             var cycleResolved = !req.RequireCycleEdge
                 || !WaitsOnEvaluator.SitsOnCycle(

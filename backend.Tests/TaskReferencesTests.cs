@@ -395,6 +395,48 @@ public class TaskReferencesTests : IDisposable
         Assert.Contains("\"requiresCompletion\": true", disk);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("owner")]
+    [InlineData("dossier")]
+    [InlineData("dispatch:historian")]
+    public void Dispatcher_cannot_remove_or_relabel_foreign_edges_without_redeemed_owner_approval(string? origin)
+    {
+        var (machine, scanner, mutations) = Build();
+        machine.EnsureStateFoldersAndMigrate();
+        CreateJob(mutations, "a");
+        CreateJob(mutations, "b");
+        var key = scanner.FindJob("b", _watchPath)!.Key!;
+        mutations.SetTaskReferences("a", new TaskReferences { DependsOn = [new(key, origin: origin)] }, _watchPath);
+        using (OperatorActorScope.Enter(new("agent", "session", "owner", "surveyor")))
+        {
+            Assert.Throws<AgentStudio.Security.SecurityOperationException>(() =>
+                mutations.SetTaskReferences("a", new TaskReferences(), _watchPath));
+            Assert.Throws<AgentStudio.Security.SecurityOperationException>(() =>
+                mutations.EditTaskWaitsOn("a", [], [key], "Remove foreign edge", "persona", _watchPath));
+            Assert.Throws<AgentStudio.Security.SecurityOperationException>(() => mutations.SetTaskReferences("a",
+                new TaskReferences { DependsOn = [new(key, origin: "dispatch:surveyor")] }, _watchPath));
+        }
+        using (OperatorActorScope.Enter(new("agent", "session", "owner", "surveyor")
+            { ApprovalId = "redeemed-approval", ApprovedBy = "owner" }))
+            Assert.True(mutations.SetTaskReferences("a", new TaskReferences(), _watchPath));
+        Assert.Empty(scanner.FindJob("a", _watchPath)!.References.DependsOn);
+    }
+
+    [Fact]
+    public void Dispatcher_new_edges_are_attributed_and_own_edges_can_be_removed()
+    {
+        var (machine, scanner, mutations) = Build();
+        machine.EnsureStateFoldersAndMigrate();
+        CreateJob(mutations, "a");
+        CreateJob(mutations, "b");
+        var key = scanner.FindJob("b", _watchPath)!.Key!;
+        using var actor = OperatorActorScope.Enter(new("agent", "session", "owner", "surveyor"));
+        Assert.True(mutations.SetTaskReferences("a", new TaskReferences { DependsOn = [new(key, origin: "owner")] }, _watchPath));
+        Assert.Equal("dispatch:surveyor", Assert.Single(scanner.FindJob("a", _watchPath)!.References.DependsOn).Origin);
+        Assert.True(mutations.SetTaskReferences("a", new TaskReferences(), _watchPath));
+    }
+
     // ---- helpers --------------------------------------------------------
 
     private static IReadOnlySet<string> Keys(params string[] keys) =>

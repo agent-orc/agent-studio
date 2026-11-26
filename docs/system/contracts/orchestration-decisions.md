@@ -862,3 +862,30 @@ The post-merge host supplies frozen per-test receipts, union quarantine facts,
 repair lanes, clocks and covering runs through `MonolithTransitionAdapter`.
 It applies the actions, persists the quarantine audit and incident decision
 log, and projects owner options. No project-wide testing strategy changes.
+
+
+AGT-3995 (DS-5): `DispatcherAuthorityPolicy` owns the narrow dispatcher
+operation authority and fenced lease admission. Shadow activations hold only `observe` and `dispatch.shadow.record`, with no
+generic IAM write grant. The standalone operation data
+lives in `backend/Policies/personas/dispatcher.grants.v1.json`; it grants no
+capacity or test-placement changes. A foreign dependency removal requires an
+explicit, unexpired, use-capped T2 grant. Existing API mutation paths also
+protect foreign edges using the middleware's redeemed owner approval receipt.
+Optional dependency origins are `owner`, `dossier` or `dispatch:<persona>`;
+legacy string edges remain owner-controlled. Normalization preserves origin
+and treats conflicting duplicate origins as owner-controlled.
+
+`AddDispatch` registers `DispatcherShadowService`. Both admission paths call
+it through the shared overlap guard. It collects the project queue, forecasts,
+slot holders, delivery exposure and conflict pairs, then records all active
+dispatcher strategies on the same frozen facts and time. It applies no plan.
+Records under the application-owned `.dispatch` store have evaluation and
+decision ids; the append-only dispatcher log chains entry digests and keeps
+strategy revisions, rules, fact digests, pass-overs, expected overlaps and a
+reason capped at 280 characters. `GET /api/projects/{project}/dispatch/personas`
+requires project read access and returns the lease, shadow records, log and
+chain verification. Logs carry ids and rule evidence, not prompts or secrets.
+The lease is project-scoped, persisted and fenced; descriptor mode alone has
+no authority. DS-6 applies live plans, DS-7 supplies rollout gates, and DS-8
+projects weekly and wave reports. Source-wave and source-prior inputs remain
+unknown until their source integration lands; no model is called on pickup.

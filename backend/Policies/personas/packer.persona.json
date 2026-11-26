@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "id": "packer",
+  "revision": "2026.11.1",
+  "title": "Packer",
+  "aspect": "delivery",
+  "kind": "dispatcher",
+  "charter": "Dispatch like Surveyor. Package at most three automated findings sharing two non-hub files with size prior at most 25 files. Chain remaining overlaps in source order. Propose splits above three modules. Never package across projects or Dossiers. Apply only unstarted automated recuts with 24-hour undo; bypasses need T2.",
+  "scope": {
+    "projects": [
+      "*"
+    ],
+    "areas": [
+      "dispatch.cards",
+      "dispatch.forecasts",
+      "dispatch.conflicts",
+      "dispatch.slots"
+    ]
+  },
+  "attributes": {
+    "autonomy": "A1",
+    "riskAppetite": "low",
+    "thoroughness": 3,
+    "signalThreshold": 40
+  },
+  "operations": [
+    "observe",
+    "dispatch.shadow.record",
+    "dispatch.plan.write",
+    "dispatch.hold",
+    "dispatch.release",
+    "dispatch.dependency.add",
+    "dispatch.dependency.remove",
+    "dispatch.exclusive.set",
+    "dispatch.recut.propose",
+    "dispatch.recut.apply"
+  ],
+  "model": {
+    "capabilityClass": "balanced",
+    "thinking": "medium"
+  },
+  "cadence": {
+    "report": "P7D",
+    "window": "P7D"
+  },
+  "triggers": [
+    "dispatch.wave.integrated",
+    "dispatch.conflict.attributed"
+  ],
+  "budget": {
+    "tokensPerWeek": 60000,
+    "sessionsPerWeek": 1,
+    "proposalsPerWeek": 3,
+    "draftCardsPerWeek": 2,
+    "minutesPerSession": 5
+  },
+  "report": {
+    "template": "dispatcher-v1",
+    "maxItems": 6,
+    "maxWords": 350
+  },
+  "floors": [
+    "dispatch.conflict.attributed:60"
+  ],
+  "dispatch": {
+    "strategy": {
+      "id": "package-then-chain-v1",
+      "revision": "2026.11.1"
+    },
+    "parameters": {},
+    "mode": "shadow",
+    "forecast": "model-free"
+  }
+}

@@ -70,14 +70,18 @@ public sealed partial class AccessSecurityStore
             if (!next.RoleBindings.Any(binding => binding.PrincipalId == account.Id && binding.Role == IamRoles.OperatorAgent))
                 next.RoleBindings.Add(NewBinding(IamPrincipalKind.ServiceAccount, account.Id,
                     new IamGrantRequest(IamRoles.OperatorAgent, IamScope.Workspace), IamBindingSources.RoleAssignment, ownerId));
-            var operations = ValidateGrantOperations(activation.Operations.Where(id => id != OperatorOperationIds.Observe).ToList());
-            var grant = NewPersonaGrant(account.Id, operations, activation.Scope.Projects, ownerId, now);
-            next.StandingGrants.Add(grant);
+            // Dispatcher grants stay in its narrow allow list until PT-15 imports them.
+            // Observe-only dispatchers have no generic IAM write grant.
+            var operations = activation.Operations.Where(id => id != OperatorOperationIds.Observe
+                && !AgentStudio.Dispatch.DispatcherCapabilities.Operations.Contains(id)).ToList();
+            var grant = operations.Count == 0 ? null : NewPersonaGrant(account.Id,
+                ValidateGrantOperations(operations), activation.Scope.Projects, ownerId, now);
+            if (grant is not null) next.StandingGrants.Add(grant);
             SaveLocked(next);
             foreach (var oldGrant in oldGrants) AuditPersonaGrant(ownerId, "standing-grant.revoke", oldGrant);
             AppendIamAudit(ownerId, existing is null ? "persona-principal.create" : "persona-principal.enable",
                 "persona-principal", account.Id, new { workspaceId, activation.PersonaId, account.PersonaRoleId });
-            AuditPersonaGrant(ownerId, "standing-grant.create", grant);
+            if (grant is not null) AuditPersonaGrant(ownerId, "standing-grant.create", grant);
             return account;
         }
     }

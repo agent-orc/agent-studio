@@ -273,6 +273,23 @@ public sealed class PersonaActivationStoreTests : IDisposable
         Assert.Equal("attributes", changed.History[^1].Action);
     }
 
+    [Theory]
+    [InlineData("queue-keeper")]
+    [InlineData("area-warden")]
+    [InlineData("surveyor")]
+    [InlineData("historian")]
+    [InlineData("packer")]
+    public void Dispatcher_activation_keeps_dispatch_authority_in_the_narrow_allow_list(string persona)
+    {
+        var activation = Store().Activate(Workspace, persona, new PersonaActivateRequest(), SteppedUpOwner());
+        Assert.Equal(PersonaStates.Shadow, activation.State);
+        Assert.Contains("dispatch.shadow.record", activation.Operations);
+        Assert.DoesNotContain("dispatch.plan.write", activation.Operations);
+        Assert.NotNull(_security.FindPersonaPrincipal(Workspace, persona));
+        Assert.False(_security.HasLivePersonaGrant(Workspace, persona));
+        Assert.Equal(new[] { "observe", "dispatch.shadow.record" }, activation.Operations);
+    }
+
     private PersonaActivationStore Store(PersonaCatalogue? catalogue = null)
         => new(Path.Combine(_root, ".metadata", "personas"), catalogue ?? new PersonaCatalogue(), _security,
             id => string.Equals(id, Workspace, StringComparison.OrdinalIgnoreCase) ? Workspace : null, _clock);

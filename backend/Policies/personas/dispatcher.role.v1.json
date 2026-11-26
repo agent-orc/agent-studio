@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "dispatcher",
+  "kind": "dispatcher",
+  "aspect": "delivery",
+  "charter": "Prevent conflicts by sequencing Ready work within priority classes. Pure strategies dispatch; model work is limited to recut text and optional weekly narrative. Respect owner pins, urgent, dependencies, exclusive runs and slots.",
+  "defaultGrants": "dispatcher.grants.v1.json",
+  "shadowGrants": [
+    "observe",
+    "dispatch.shadow.record"
+  ],
+  "reportTemplate": "dispatcher-v1",
+  "floors": [
+    "dispatch.conflict.attributed:60"
+  ],
+  "reads": [
+    "backlog-ready.metadata",
+    "backlog-ready.prompts",
+    "forecasts",
+    "conflict-ledger",
+    "run-round-ledgers",
+    "card-token-use",
+    "slot-state"
+  ]
+}
