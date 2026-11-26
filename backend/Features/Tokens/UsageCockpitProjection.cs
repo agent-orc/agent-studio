@@ -57,7 +57,10 @@ public static class UsageCockpitProjection
                 if (price.ModelKnown) provisional += price.Total;
                 else hasUnpriced = true;
             }
-            catch (Exception) { hasUnpriced = true; }
+            catch (Exception)
+            {
+                hasUnpriced = true;
+            }
         }
         var runId = task?.Runner?.AttemptId
             ?? $"{project.Id}:{status.ActiveJobId}:{execution?.StartedAt.Ticks ?? 0}";
@@ -127,7 +130,8 @@ public static class UsageCockpitProjection
                 {
                     estimate = pricing.EstimateReceipt(usage, at);
                 }
-                catch (Exception) {
+                catch (Exception)
+                {
                     unpriced = true;
                     unpricedModels.Add(usage.Model ?? "Unknown model");
                     var runId = entry.JobId ?? $"receipt:{at.Ticks}";
@@ -138,7 +142,8 @@ public static class UsageCockpitProjection
                 var missingCacheSplit = ReceiptTokenPricing.MissingCacheSplit(usage.Model, usage.InputTokens,
                     usage.CacheReadTokens, usage.InputIncludesCached, usage.UsageNormalization);
                 cacheSplitMissing |= missingCacheSplit;
-                if (!estimate.ModelKnown) {
+                if (!estimate.ModelKnown)
+                {
                     unpriced = true;
                     if (!missingCacheSplit) unpricedModels.Add(usage.Model ?? "Unknown model");
                     var runId = entry.JobId ?? $"receipt:{at.Ticks}";

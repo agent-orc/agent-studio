@@ -44,12 +44,13 @@ internal static class StoredUsageNormalization
         // frame omitted cached_input_tokens. That boolean alone cannot prove
         // a zero cache split. New imports stamp the normalization version only
         // after observing the field; legacy zero-cache receipts stay unpriced.
-        if (ProviderUsageNormalization.IsOpenAiModel(call.Model)
-            && call.InputTokens > 0 && call.CacheReadTokens == 0
-            && string.IsNullOrWhiteSpace(call.UsageNormalization)
+        if (ReceiptTokenPricing.MissingCacheSplit(call.Model, call.InputTokens, call.CacheReadTokens,
+                inputIncludesCached: null, call.UsageNormalization)
             && call.ParticipantId?.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix,
                 StringComparison.Ordinal) == true)
+        {
             return call with { InputIncludesCached = null };
+        }
 
         if (call.InputIncludesCached is not null
             || string.Equals(call.UsageNormalization,

@@ -607,8 +607,10 @@ public class TaskMutationService
                     source.InputTokens, source.CacheReadTokens, source.InputIncludesCached, source.UsageNormalization))
                     original = original with
                     {
-                        InputIncludesCached = null, UsageNormalization = null,
-                        ModelPriced = false, EstimatedApiCostUsd = 0m,
+                        InputIncludesCached = null,
+                        UsageNormalization = null,
+                        ModelPriced = false,
+                        EstimatedApiCostUsd = 0m,
                     };
                 else if (original is not null && !string.IsNullOrWhiteSpace(source.UsageNormalization))
                     original = original with

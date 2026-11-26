@@ -367,9 +367,8 @@ public static class TokenAnalysisFold
         var output = keepTokens ? run.OutputTokens : 0;
         var cacheRead = keepTokens ? run.CacheReadTokens : 0;
         var cacheWrite = keepTokens ? run.CacheCreationTokens : 0;
-        var (cost, priced) = ReceiptTokenPricing.MissingCacheSplit(run.Model, input, cacheRead,
-            run.InputIncludesCached, run.UsageNormalization)
-            ? (0m, false) : Price(pricing, run.Model, input, output, cacheRead, cacheWrite, at);
+        var (cost, priced) = Price(pricing, run.Model, input, output, cacheRead, cacheWrite, at,
+            run.InputIncludesCached, run.UsageNormalization);
         var host = !string.IsNullOrWhiteSpace(step.ExecutionHostId) ? step.ExecutionHostId!.Trim()
             : string.Equals(step.ExecutionLocation, "remote", StringComparison.OrdinalIgnoreCase)
                 ? TokenUsageHost.UnrecordedRemote : TokenUsageHost.Local;
@@ -416,10 +415,12 @@ public static class TokenAnalysisFold
            ?? (string.IsNullOrWhiteSpace(entry.Topic) ? entry.ParticipantId ?? Unknown : entry.Topic);
 
     private static (decimal Cost, bool Priced) Price(
-        ITokenPricing pricing, string? model, long input, long output, long cacheRead, long cacheWrite, DateTime at)
+        ITokenPricing pricing, string? model, long input, long output, long cacheRead, long cacheWrite, DateTime at,
+        bool? inputIncludesCached, string? normalization)
     {
         if (input + output + cacheRead + cacheWrite <= 0) return (0m, true);
-        var estimate = pricing.Estimate(model, input, output, cacheRead, cacheWrite, at);
+        var estimate = pricing.EstimateRecorded(model, input, output, cacheRead, cacheWrite, at,
+            inputIncludesCached, normalization);
         return estimate.ModelKnown ? (estimate.Total, true) : (0m, false);
     }
 
