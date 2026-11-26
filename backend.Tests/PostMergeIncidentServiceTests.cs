@@ -228,7 +228,11 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
     {
         var (project, clock, scanner, mutations, states, store, service) = Setup();
         var guardian = new AgentStudio.Personas.LineGuardianStore(Path.Combine(store.Root, "..", "line-guardian"));
-        if (live) guardian.SetLive(project.Id, true, "owner", true, clock.GetUtcNow());
+        if (live)
+        {
+            guardian.SetLive(project.Id, false, "owner", true, clock.GetUtcNow().AddDays(-7));
+            guardian.SetLive(project.Id, true, "owner", true, clock.GetUtcNow());
+        }
         Record(store, service, project, TypedRed());
         var entry = Assert.Single(service.ActiveQuarantines(project));
         var expected = live ? AgentStudio.Personas.LineGuardianStore.Principal(project.Id) : "system:post-merge";

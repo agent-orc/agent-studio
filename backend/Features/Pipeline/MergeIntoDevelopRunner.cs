@@ -1119,13 +1119,18 @@ public sealed partial class MergeIntoDevelopRunner
         var state = _postMergeMode?.ReadState(project);
         if (state is null) return null;
         var holds = MonolithTransitionAdapter.ActiveQuarantineHolds(state.Quarantines, _gateTime.GetUtcNow());
-        if (holds.Count == 0) return null;
         var task = _taskScanner?.FindJob(jobId, watchPath);
         var aliases = new[] { task?.Id, task?.Key, task?.TaskKey }
             .Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id!).ToArray();
-        var paths = _git.ChangedPathsAgainstMergeBase(repository, _git.IntegrationBaseRef(repository, branch), deliveryRef);
-        return paths is null ? "Active quarantine hold: delivery merge-base paths are unavailable."
+        var paths = holds.Count == 0 ? Array.Empty<string>()
+            : _git.ChangedPathsAgainstMergeBase(repository, _git.IntegrationBaseRef(repository, branch), deliveryRef);
+        var reason = holds.Count == 0 ? null : paths is null
+            ? "Active quarantine hold: delivery merge-base paths are unavailable."
             : MonolithTransitionAdapter.QuarantineIntegrationBlock(paths, holds, jobId, aliases);
+        if (task is not null && _timeline is not null)
+            GuardianIntegrationWaitJournal.Record(_timeline, task.FolderPath, reason is not null,
+                paths is not null, _gateTime.GetUtcNow(), deliveryRef);
+        return reason;
     }
 
     private async Task MaybeRaiseInterventionAsync(

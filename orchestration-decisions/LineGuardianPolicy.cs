@@ -14,6 +14,8 @@ public static class LineGuardianPolicy
     public const int WeeklyTokens = 60_000;
     public const int IncidentCoreMinutes = 90;
     public const int WeeklyCoreMinutes = 600;
+    public static bool ShadowWeekComplete(DateTimeOffset? since, DateTimeOffset now)
+        => since is { } started && now - started >= TimeSpan.FromDays(7);
     public static bool ComputeExhausted(GuardianBudgetFacts f) => f.IncidentCoreMinutes >= IncidentCoreMinutes
         || f.WeeklyCoreMinutes >= WeeklyCoreMinutes;
     public static bool MayClassify(GuardianBudgetFacts f) => !f.Attempted
