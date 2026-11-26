@@ -128,58 +128,17 @@ public sealed class RemoteReviewWorkspace
 
     public IReadOnlyDictionary<string, string?> ProcessEnvironment()
     {
-        var environment = new Dictionary<string, string?>(StringComparer.Ordinal)
-        {
-            ["PATH"] = Environment.GetEnvironmentVariable("PATH"),
-            ["LANG"] = Environment.GetEnvironmentVariable("LANG") ?? "C.UTF-8",
-            ["LC_ALL"] = Environment.GetEnvironmentVariable("LC_ALL") ?? "C.UTF-8",
-            ["SSL_CERT_FILE"] = Environment.GetEnvironmentVariable("SSL_CERT_FILE"),
-            ["SSL_CERT_DIR"] = Environment.GetEnvironmentVariable("SSL_CERT_DIR"),
-            ["HOME"] = HomePath,
-            ["TMPDIR"] = TempPath,
-            ["TMP"] = TempPath,
-            ["TEMP"] = TempPath,
-            ["XDG_CACHE_HOME"] = CachePath,
-            ["NUGET_PACKAGES"] = NuGetPackagesPath,
-            ["NUGET_SCRATCH"] = NuGetScratchPath,
-            ["npm_config_cache"] = Path.Combine(CachePath, "npm"),
-            ["PIP_CACHE_DIR"] = Path.Combine(CachePath, "pip"),
-            ["CARGO_HOME"] = Path.Combine(CachePath, "cargo"),
-            ["GRADLE_USER_HOME"] = Path.Combine(CachePath, "gradle"),
-            ["DOTNET_CLI_HOME"] = Path.Combine(CachePath, "dotnet"),
-            // AGT-2820: a reused MSBuild node outlives the build that created it
-            // and is reparented to init when its review worker goes away. The
-            // frozen plan already passes -nodeReuse:false; this covers the
-            // MSBuild invocations a preparation script nests underneath it.
-            ["MSBUILDDISABLENODEREUSE"] = "1",
-            ["COMPOSE_PROJECT_NAME"] = _lease.ResourceNamespace,
-            ["AGENT_REVIEW_NAMESPACE"] = _lease.ResourceNamespace,
-            ["AGENT_REVIEW_DATABASE_NAMESPACE"] = _lease.ResourceNamespace,
-            ["AGENT_REVIEW_PORT_BASE"] = _lease.PortBase.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["PORT"] = _lease.PortBase.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["GIT_CONFIG_NOSYSTEM"] = "1",
-            ["GIT_TERMINAL_PROMPT"] = "0",
-            ["GIT_OPTIONAL_LOCKS"] = "0",
-        };
-        if (OperatingSystem.IsWindows())
-        {
-            // The hermetic set above is Linux-shaped. A Windows process tree is
-            // not functional without the OS plumbing variables (powershell.exe
-            // and most tools hard-require SystemRoot; cmd shims need ComSpec and
-            // PATHEXT), so on a Windows host they pass through - they carry no
-            // credentials and no per-project state.
-            foreach (var name in new[] { "SystemRoot", "windir", "SystemDrive", "ComSpec", "PATHEXT" })
-            {
-                var value = Environment.GetEnvironmentVariable(name);
-                if (!string.IsNullOrWhiteSpace(value)) environment[name] = value;
-            }
-        }
-        foreach (var name in _options.ReviewCredentialEnvironment)
-        {
-            if (!SafeEnvironmentName(name))
-                throw new InvalidOperationException($"Invalid review credential environment name '{name}'.");
-            environment[name] = Environment.GetEnvironmentVariable(name);
-        }
+        var declared = ProjectDefinitionReader.ReadWorkspace(RepositoryPath).Definition?.Environment
+            ?? TestEnvelope.EmptyEnvironment;
+        var environment = TestEnvelope.BuildEnvironment(declared, HomePath, TempPath);
+        environment["NUGET_PACKAGES"] = NuGetPackagesPath;
+        environment["NUGET_SCRATCH"] = NuGetScratchPath;
+        environment["npm_config_cache"] = Path.Combine(CachePath, "npm");
+        environment["COMPOSE_PROJECT_NAME"] = _lease.ResourceNamespace;
+        environment["AGENT_REVIEW_NAMESPACE"] = _lease.ResourceNamespace;
+        environment["AGENT_REVIEW_DATABASE_NAMESPACE"] = _lease.ResourceNamespace;
+        environment["AGENT_REVIEW_PORT_BASE"] = _lease.PortBase.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        environment["PORT"] = environment["AGENT_REVIEW_PORT_BASE"];
         // AGT-2831, applied last on purpose: TMPDIR does not fence the .NET
         // build servers. VBCSCompiler and the reusable MSBuild nodes listen on
         // host-global /tmp sockets, so concurrent attempts otherwise share one
@@ -1560,6 +1519,17 @@ public sealed class RemoteReviewWorkspace
         CancellationToken ct,
         IReadOnlyDictionary<string, string?>? environment = null)
     {
+        var declared = ProjectDefinitionReader.ReadWorkspace(RepositoryPath).Definition?.Environment
+            ?? TestEnvelope.EmptyEnvironment;
+        var supplied = environment ?? ProcessEnvironment();
+        using var envelope = WorkerCgroup.PrepareTestCommand(declared, _log,
+            supplied.GetValueOrDefault("HOME") ?? HomePath, supplied.GetValueOrDefault("TMPDIR") ?? TempPath);
+        var childEnvironment = new Dictionary<string, string?>(supplied, StringComparer.OrdinalIgnoreCase);
+        foreach (var key in new[] { "TEST_ENVELOPE_HOME", "TEST_ENVELOPE_TEMP", "TEST_ENVELOPE_CGROUP", "DOTNET_PROCESSOR_COUNT" })
+            childEnvironment[key] = envelope.Environment[key];
+        await envelope.ProbeSdkAsync(workingDirectory, ct);
+        var launch = envelope.Launch(fileName, arguments);
+        _lastEnvelope = envelope.Fingerprint(declared, stepId);
         var started = DateTime.UtcNow;
         ProcessResult process;
         string? signal = null;
@@ -1597,8 +1567,8 @@ public sealed class RemoteReviewWorkspace
             try
             {
                 var boundedProcess = await ProcessRunner.RunAsync(
-                    fileName,
-                    arguments,
+                    launch.FileName,
+                    launch.Arguments,
                     workingDirectory,
                     onStdOut: line =>
                     {
@@ -1612,7 +1582,7 @@ public sealed class RemoteReviewWorkspace
                         completeStderr.Append(line.Length > reviewStderrChars
                             ? line[^reviewStderrChars..] : line);
                     },
-                    environment: environment ?? ProcessEnvironment(),
+                    environment: childEnvironment,
                     clearEnvironment: true,
                     onStarted: processId => watchdog = new CommandProgressWatchdog(
                         () => ProcessTreeCpu.Sample(processId),
@@ -1689,7 +1659,11 @@ public sealed class RemoteReviewWorkspace
         {
             if (watchdog is not null) await watchdog.DisposeAsync();
         }
+        _lastEnvelope = envelope.Fingerprint(declared, stepId);
         ThrowIfDiskFull(process);
+        if (!process.Success && (TestEnvelope.CanaryFailed(ParsedTestFailures(process))
+            || (process.StdOut + process.StdErr).Contains("test envelope attach failed", StringComparison.Ordinal)))
+            throw new ReviewInfrastructureException("TestEnvelopeInconclusive", "The test envelope canary failed; the run is inconclusive.");
         return new CommandExecution(process, started, DateTime.UtcNow, signal, Stall: stall.ToDiagnostics());
     }
 
@@ -2063,6 +2037,7 @@ public sealed class RemoteReviewWorkspace
             plannedCommand?.CliType,
             plannedCommand?.ModelSelection)
         {
+            Envelope = _lastEnvelope,
             QuarantinedFailures = QuarantinePartition(ParsedTestFailures(process)).Ignored,
         };
     }
@@ -3090,6 +3065,7 @@ public sealed class RemoteReviewWorkspace
     {
         var now = _utcNow();
         var age = ReviewVerifyResultCache.Age(cached, now);
+        _lastEnvelope = cached.Envelope;
         var process = new ProcessResult(cached.ExitCode, cached.StdOut, cached.StdErr);
         commands.Add(await AddCommandEvidenceAsync(
             command.StepId,
@@ -3153,7 +3129,7 @@ public sealed class RemoteReviewWorkspace
                 "pass",
                 process.StdOut,
                 process.StdErr,
-                _utcNow()),
+                _utcNow()) { Envelope = _lastEnvelope },
             ct);
     }
 
@@ -3596,6 +3572,8 @@ public sealed class RemoteReviewWorkspace
         }
     }
 
+    private PostMergeEnvelopeFingerprint? _lastEnvelope;
+
     public ReviewEnvironmentDto EnvironmentEvidence(
         ReviewLeaseDto? authority = null,
         ReviewWorkerProvenanceDto? worker = null)
@@ -3644,7 +3622,7 @@ public sealed class RemoteReviewWorkspace
                 ["databases"] = _lease.ResourceNamespace,
                 ["credentials"] = "review-read-only",
             },
-            worker);
+            worker) { Envelope = _lastEnvelope };
     }
 
     /// <summary>
@@ -4288,6 +4266,8 @@ public sealed class RemoteReviewWorkspace
     private static string CommandHash(ReviewCommandDto command)
     {
         var text = new StringBuilder(command.FileName);
+        // Both baseline and candidate caches are bound to the shared resource shape.
+        text.Append("\0test-envelope-v1=").Append(TestEnvelope.ProcessorCount);
         foreach (var argument in command.Arguments)
             text.Append('\0').Append(argument);
         text.Append('\0').Append(command.WorkingSubdir);

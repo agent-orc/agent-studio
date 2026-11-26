@@ -169,10 +169,11 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         var exit = await new PostMergeRunCommand(options, output, new FixedClock(), http, () => new(0.4, 6))
             .ExecuteAsync(CancellationToken.None);
         Assert.True(exit == (recovers ? 0 : 1), output.ToString());
-        // RT-3: a failure that stays red is also run twice at the last green SHA, after a
-        // build of the failing test project only.
-        Assert.Equal(recovers ? 2 : 4, File.ReadAllLines(Path.Combine(checkout, "attempts")).Length);
+        // RT-6 repeats a persistent failure once in the reference envelope before
+        // RT-3's two last-green controls and their test-project-only build.
+        Assert.Equal(recovers ? 2 : 5, File.ReadAllLines(Path.Combine(checkout, "attempts")).Length);
         var terminal = receipts[^1];
+        Assert.Equal(recovers ? 0 : 1, terminal.FocusedRuns!.Count(run => run.Phase == PostMergeRunPhases.Reference));
         Assert.Equal(recovers ? "green" : "red", terminal.Status);
         Assert.Equal(recovers ? 1 : 0, terminal.FlakyCount);
         Assert.Equal(0.4, terminal.StartLoadPerCore);

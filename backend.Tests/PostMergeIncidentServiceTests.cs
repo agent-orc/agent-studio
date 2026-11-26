@@ -256,13 +256,15 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         Assert.Empty(service.ActiveQuarantines(project));
     }
 
-    [Fact]
-    public void Running_and_terminal_receipts_each_have_a_guardian_observation()
+    [Theory]
+    [InlineData("green")]
+    [InlineData("inconclusive")]
+    public void Running_and_terminal_receipts_each_have_a_guardian_observation(string terminalStatus)
     {
         var (project, clock, scanner, mutations, states, store, service) = Setup();
         var green = Green("green", clock.GetUtcNow());
         service.Apply(project, green with { Status = "running", FinishedAtUtc = null });
-        service.Apply(project, green);
+        service.Apply(project, green with { Status = terminalStatus });
         var guardian = new AgentStudio.Personas.LineGuardianStore(Path.Combine(store.Root, "..", "line-guardian"));
         Assert.Equal(2, guardian.Read(project.Id).Decisions.Count);
         Assert.Equal(2, guardian.Read(project.Id).Decisions.Select(d => d.Log.DecisionId).Distinct().Count());
@@ -403,10 +405,15 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         }
         Assert.Equal("report-only", Assert.Single(service.ActiveQuarantines(project)).Kind);
         Assert.Equal("green", store.Read(project.Id).DevelopState);
-        var environment = TypedRed(test: "Environment.Fail") with { Id = "environment", EnvelopeCanaryPassed = false };
+        var environment = TypedRed(test: "Environment.Fail") with { Id = "environment", Status = "inconclusive", EnvelopeCanaryPassed = false };
         Record(store, service, project, environment);
         Assert.Equal("environment", store.Read(project.Id).InconclusiveRunId);
         Assert.Null(store.Read(project.Id).LineStop);
+        var guardian = new AgentStudio.Personas.LineGuardianStore(Path.Combine(store.Root, "..", "line-guardian"));
+        var comparison = Assert.Single(guardian.Read(project.Id).Decisions, item => item.Log.RunId == environment.Id
+            && item.Log.Test == "Environment.Fail");
+        Assert.Equal(RedTestClassification.Environment, comparison.Applied.Classification);
+        Assert.Equal(RedTestClassification.Environment, comparison.Guardian.Classification);
     }
 
     [Fact]

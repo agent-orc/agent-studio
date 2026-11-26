@@ -124,12 +124,6 @@ public sealed class PostMergeHostScheduler(HttpClient http, string stateDirector
         {
             if (!System.Text.RegularExpressions.Regex.IsMatch(project.ProjectId, "^PROJ-[0-9]{3,}$"))
                 throw new IOException("Post-merge target has an invalid stable project ID.");
-            if (!observeOnly && hostOptions is not null && OperatingSystem.IsLinux()
-                && (!hostOptions.WorkerEnvelopeEnabled || WorkerCgroup.EnsureDelegationRoot(log) is null))
-            {
-                log($"post-merge project={project.ProjectId} deferred: worker cgroup delegation is unavailable");
-                return;
-            }
             var checkout = Path.Combine(stateDirectory, "post-merge", project.ProjectId);
             var options = new PostMergeRunOptions(project.Project, checkout, http.BaseAddress!.ToString(),
                 project.Branch, "origin", "", mode, PostMergeRunPlan.DefaultMaxMerges,

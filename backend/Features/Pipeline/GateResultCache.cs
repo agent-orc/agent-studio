@@ -53,6 +53,10 @@ public sealed class GateResultCache
         return new Releaser(gate);
     }
 
+    /// <summary>Coalesces identical executions without holding the project's persistence lock.</summary>
+    public Task<IDisposable> AcquireExecutionAsync(string project, string sha, string digest, CancellationToken ct)
+        => AcquireAsync("execution:" + project + "\0" + sha + "\0" + digest, ct);
+
     public BuildTestGateResult? TryRead(string project, string sha, string digest)
     {
         try
@@ -145,7 +149,8 @@ public sealed class GateResultCache
     {
         var payload = JsonSerializer.Serialize(new
         {
-            Version = 2,
+            Version = 3,
+            TestEnvelopeCores = AgentStudio.TaskServer.Contracts.TestEnvelope.ProcessorCount,
             request.GateId,
             request.PipelineDefinitionVersion,
             ToolchainIdentity = toolchainIdentity,

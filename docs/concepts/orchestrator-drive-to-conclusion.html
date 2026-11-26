@@ -386,6 +386,20 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-rt6-integration-recovery">
+          <td>2026-11-26</td>
+          <td><code>AGT-4007</code><br><span class="small">rt6-integration-recovery</span></td>
+          <td>No CLI crashed. The delivery stopped at <code>merge-into-develop</code> after direct merge, mechanical merge and rebase fallback conflicted in <code>PostMergeIncidentService.Triage.cs</code>.</td>
+          <td>RT-6 added inconclusive receipts to per-test triage at the same entry point where RT-8 added guardian observations for other receipt states.</td>
+          <td>The recovery retains both paths: inconclusive receipts with per-test facts reach RT-2 and the guardian, and other receipt states retain their guardian observation. The delivery patch and Linux host setup correction are restored for focused checks. Publication and integration remain pipeline-owned.</td>
+        </tr>
+        <tr id="case-test-envelope-canary">
+          <td>2026-11-26</td>
+          <td><code>AGT-4007</code><br><span class="small">test-envelope-canary</span> (RT-6)</td>
+          <td>No CLI crashed. The AGT-3981 daemon-environment failure is replayed with a base canary and an intentionally declared runner setting.</td>
+          <td>Review, gate and post-merge previously built different process environments and resource limits.</td>
+          <td>All three use the shared test envelope. The first real canary exposed the test bootstrap escaping a long temp path; short run roots keep its child directory inside the envelope. RT-2 consumes a failed canary as environment evidence. Terminal in the regression fixture: an inconclusive receipt, no line stop and no merge attribution. A confirmed non-canary failure also records one serial reference-envelope repeat.</td>
+        </tr>
         <tr>
           <td>2026-11-26</td>
           <td>overlap-dispatch-starvation (AGT-4037)</td>
