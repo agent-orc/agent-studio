@@ -22,12 +22,14 @@ public sealed class GuardianReviewService(LineGuardianStore guardian, PostMergeR
         var observedTo = now < end ? now : end;
         bool InWeek(DateTimeOffset at) => at >= start && at < end && at <= now;
         var incidents = (post.Incidents ?? []).Where(i => InWeek(i.FirstRedAtUtc)).ToArray();
+        var cards = scanner?.ScanAllJobsWithArchive()
+            .Where(c => c.ProjectName == project || c.ProjectName == displayName).ToArray() ?? [];
         var refusalEvidence = new List<GuardianReviewEvidence>();
         var unknownRefusals = false;
         if (scanner is not null && timeline is not null)
-            foreach (var card in scanner.ScanAllJobsWithArchive().Where(c => c.ProjectName == project || c.ProjectName == displayName))
+            foreach (var card in cards)
             {
-                var events = timeline.ReadAll(card.FolderPath).OrderBy(e => e.Ts).ToArray();
+                var events = timeline.ReadIntegrationWaitHistory(card.FolderPath).OrderBy(e => e.Ts).ToArray();
                 AgentStudio.Shared.TimelineEvent? opened = null;
                 foreach (var entry in events)
                 {
@@ -120,7 +122,7 @@ public sealed class GuardianReviewService(LineGuardianStore guardian, PostMergeR
         var missingRepair = repairCards.ToHashSet(StringComparer.Ordinal);
         if (scanner is not null && executions is not null)
         {
-            foreach (var card in scanner.ScanAllJobsWithArchive())
+            foreach (var card in cards)
             {
                 if (!repairCards.Contains(card.Id) && !repairCards.Contains(card.TaskKey) && !repairCards.Contains(card.Key ?? "")) continue;
                 var execution = executions.Read(card.FolderPath);

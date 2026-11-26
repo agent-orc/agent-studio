@@ -8,7 +8,7 @@ public static class GuardianIntegrationWaitJournal
     public static void Record(TimelineLog timeline, string folder, bool blocked, bool pathsKnown,
         DateTimeOffset at, string delivery)
     {
-        var previous = timeline.ReadAll(folder).LastOrDefault(e => e.Kind == TimelineEventKinds.IntegrationQuarantineWait);
+        var previous = timeline.ReadIntegrationWaitHistory(folder).LastOrDefault(e => e.Kind == TimelineEventKinds.IntegrationQuarantineWait);
         var state = blocked ? "blocked" : "released";
         if (previous?.Details?.GetValueOrDefault("state") == state || previous is null && !blocked) return;
         timeline.Append(folder, new TimelineEvent

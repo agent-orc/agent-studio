@@ -127,7 +127,7 @@ public sealed class GuardianReviewTests
     public void Integration_wait_journal_records_boundaries_without_repeated_poll_noise()
     {
         var folder = Path.Combine(Path.GetTempPath(), "guardian-wait-" + Guid.NewGuid().ToString("N"));
-        var timeline = new AgentStudio.Tasks.TimelineLog(Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentStudio.Tasks.TimelineLog>.Instance);
+        using var timeline = new AgentStudio.Tasks.TimelineLog(Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentStudio.Tasks.TimelineLog>.Instance);
         try
         {
             AgentStudio.Pipeline.GuardianIntegrationWaitJournal.Record(timeline, folder, false, true, Monday, "delivery");
@@ -142,6 +142,71 @@ public sealed class GuardianReviewTests
             Assert.Equal("released", events[1].Details!["state"]);
             Assert.Equal("held-area", events[0].Details!["scope"]);
             Assert.Equal(15, (events[1].Ts - events[0].Ts).TotalMinutes);
+        }
+        finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
+    }
+    [Fact]
+    public void Weekly_collector_scans_card_inventory_once_for_waits_and_repairs()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "guardian-inventory-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(root);
+            var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["WatchPaths:0:Name"] = "PROJ-001", ["WatchPaths:0:Path"] = root,
+            }).Build();
+            var summary = new SummaryGenerationService(Microsoft.Extensions.Logging.Abstractions.NullLogger<SummaryGenerationService>.Instance, config);
+            var scanner = new TaskScannerService(config, Microsoft.Extensions.Logging.Abstractions.NullLogger<TaskScannerService>.Instance, summary);
+            using var timeline = new TimelineLog(Microsoft.Extensions.Logging.Abstractions.NullLogger<TimelineLog>.Instance);
+            var executions = new PipelineExecutionLog(TokenTestServices.Pricing(), Microsoft.Extensions.Logging.Abstractions.NullLogger<PipelineExecutionLog>.Instance);
+            var service = new GuardianReviewService(new LineGuardianStore(Path.Combine(root, "guardian")),
+                new PostMergeRunStore(Path.Combine(root, "runs")), new TestQuarantineStore(Path.Combine(root, "quarantine")),
+                new Microsoft.Extensions.Time.Testing.FakeTimeProvider(Monday.AddDays(7)), scanner, executions, timeline);
+            var before = scanner.RawScanCalls;
+            service.Review("PROJ-001", Monday);
+            Assert.Equal(1, scanner.RawScanCalls - before);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+    [Fact]
+    public void Wait_history_reuses_unchanged_receipts_and_refreshes_after_external_changes()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "guardian-history-" + Guid.NewGuid().ToString("N"));
+        using var timeline = new AgentStudio.Tasks.TimelineLog(Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentStudio.Tasks.TimelineLog>.Instance);
+        using var otherWriter = new AgentStudio.Tasks.TimelineLog(Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentStudio.Tasks.TimelineLog>.Instance);
+        try
+        {
+            AgentStudio.Pipeline.GuardianIntegrationWaitJournal.Record(timeline, folder, true, true, Monday, "delivery");
+            var first = timeline.ReadIntegrationWaitHistory(folder);
+            for (var poll = 0; poll < 20; poll++)
+            {
+                AgentStudio.Pipeline.GuardianIntegrationWaitJournal.Record(timeline, folder, true, true, Monday.AddMinutes(poll), "delivery");
+                Assert.Same(first, timeline.ReadIntegrationWaitHistory(folder));
+            }
+            Assert.Single(first);
+            otherWriter.Append(folder, TimelineEventKinds.IntegrationSucceeded, TimelineActors.System, "Integrated");
+            var updated = timeline.ReadIntegrationWaitHistory(folder);
+            Assert.NotSame(first, updated);
+            Assert.Equal(2, updated.Count);
+            Assert.Same(updated, timeline.ReadIntegrationWaitHistory(folder));
+            // Recreate the reader as on restart, and use another folder as after a lane move.
+            Assert.Equal(2, otherWriter.ReadIntegrationWaitHistory(folder).Count);
+            var moved = folder + "-moved";
+            Directory.Move(folder, moved);
+            try
+            {
+                Assert.Empty(timeline.ReadIntegrationWaitHistory(folder));
+                Assert.Equal(2, timeline.ReadIntegrationWaitHistory(moved).Count);
+                File.WriteAllText(TaskPaths.TimelineLog(moved), "{torn");
+                Assert.Empty(timeline.ReadIntegrationWaitHistory(moved));
+                otherWriter.Append(moved, TimelineEventKinds.PromptCreated, TimelineActors.System, "Ignored");
+                Assert.Empty(timeline.ReadIntegrationWaitHistory(moved));
+                otherWriter.Append(moved, TimelineEventKinds.LaneChanged, TimelineActors.System, "Archived",
+                    details: new() { ["to"] = TaskStates.Archive });
+                Assert.Equal(TimelineEventKinds.LaneChanged, Assert.Single(timeline.ReadIntegrationWaitHistory(moved)).Kind);
+            }
+            finally { Directory.Delete(moved, true); }
         }
         finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
     }

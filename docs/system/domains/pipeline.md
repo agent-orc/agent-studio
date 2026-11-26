@@ -4758,8 +4758,13 @@ blocked/released boundaries, with delivery and whether merge-base paths were
 known. The weekly collector reads these timeline receipts, including open waits
 and archived cards; a successful integration also closes a wait. Unknown path
 scope remains unmeasured. Remote or historical refusal intervals without these
-receipts can be supplied through the evidence API. This telemetry changes no
-admission or retry decision.
+receipts can be supplied through the evidence API. Each review uses one project-filtered
+card inventory for waits and repair receipts. Timeline readers retain a bounded,
+ten-minute sliding cache of wait, integration-success and archive receipts,
+keyed by path and file length/write/creation timestamps. Unchanged reviews and
+hold polls reuse it; appended, replaced, truncated or moved logs are read again.
+A read racing a file change is not cached. This telemetry changes no admission
+or retry decision.
 The first live switch also enforces the seven-day shadow floor on the server,
 using the pure `LineGuardianPolicy.ShadowWeekComplete` policy through the monolith
 adapter. An early switch returns 409. Returning to shadow remains available.
