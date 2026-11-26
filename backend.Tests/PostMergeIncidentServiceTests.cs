@@ -221,6 +221,53 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         Assert.False(Assert.Single(store.Read(project.Id).Incidents!).OriginalReopened);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Guardian_receipts_are_shadow_by_default_and_owner_live_switch_attributes_mutations(bool live)
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup();
+        var guardian = new AgentStudio.Personas.LineGuardianStore(Path.Combine(store.Root, "..", "line-guardian"));
+        if (live) guardian.SetLive(project.Id, true, "owner", true, clock.GetUtcNow());
+        Record(store, service, project, TypedRed());
+        var entry = Assert.Single(service.ActiveQuarantines(project));
+        var expected = live ? AgentStudio.Personas.LineGuardianStore.Principal(project.Id) : "system:post-merge";
+        Assert.Equal(expected, entry.StartedBy);
+        Assert.Equal(expected, scanner.FindJob(entry.Card, project.StorageLocation)!.CreatedBy);
+        Assert.Equal(expected, Assert.Single(Quarantines(store).Read(project.Id).Audit).Actor);
+        var comparison = Assert.Single(guardian.Read(project.Id).Decisions);
+        Assert.Equal(!live, comparison.Shadow);
+        Assert.Equal(expected, Assert.Single(Quarantines(store).Read(project.Id).IncidentLog).Principal);
+        var request = service.RequestGuardianOperation(project, "red", "Demo.Tests.Fails", "quarantine.lift");
+        Assert.NotNull(request);
+        Assert.Null(entry.LiftedAtUtc);
+    }
+
+    [Fact]
+    public void Guardian_base_quarantine_request_creates_owner_item_without_applying_it()
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup();
+        Record(store, service, project, TypedRed(category: "base"));
+        var item = service.RequestGuardianOperation(project, "red", "Demo.Tests.Fails", "quarantine.hold.start");
+        Assert.NotNull(item);
+        Assert.Equal("Refuse", item.Recommended);
+        Assert.Equal(1, item.UseCap);
+        Assert.Equal(clock.GetUtcNow().AddHours(24), item.ExpiresAt);
+        Assert.Empty(service.ActiveQuarantines(project));
+    }
+
+    [Fact]
+    public void Running_and_terminal_receipts_each_have_a_guardian_observation()
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup();
+        var green = Green("green", clock.GetUtcNow());
+        service.Apply(project, green with { Status = "running", FinishedAtUtc = null });
+        service.Apply(project, green);
+        var guardian = new AgentStudio.Personas.LineGuardianStore(Path.Combine(store.Root, "..", "line-guardian"));
+        Assert.Equal(2, guardian.Read(project.Id).Decisions.Count);
+        Assert.Equal(2, guardian.Read(project.Id).Decisions.Select(d => d.Log.DecisionId).Distinct().Count());
+    }
+
     [Fact]
     public void Routine_twice_red_is_green_with_one_held_entry_one_first_repair_and_one_log()
     {

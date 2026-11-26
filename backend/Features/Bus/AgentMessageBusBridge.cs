@@ -861,6 +861,13 @@ public sealed class AgentMessageBusBridge
     /// mismatch against the off-host sink, or a sink that stopped accepting
     /// entries. The caller de-duplicates, so one condition is one event.
     /// </summary>
+    public Task EmitLineGuardianAsync(string project, string incident, string kind, string summary,
+        CancellationToken ct = default)
+        => EmitAsync(NewMessage(participantId: "persona:line-guardian:" + project,
+            role: "system", kind: "observation", severity: "Info", project: project,
+            topic: "line_guardian_" + kind, summary: TruncateSummary(summary),
+            payload: new { incident, kind }, tags: ["line-guardian", "incident:" + incident]), ct);
+
     public Task EmitControlPlaneAuditAlertAsync(string code, string message, long? sequence, CancellationToken ct = default)
     {
         var msg = NewMessage(

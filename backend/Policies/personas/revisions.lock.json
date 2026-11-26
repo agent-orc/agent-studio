@@ -52,6 +52,9 @@
     },
     "packer": {
       "2026.11.1": "sha256:388988cc7a5d7846b2ef4f629c5eabc24c395819e3e85e9b3eb076dfa7e603c9"
+    },
+    "line-guardian": {
+      "2026.11.1": "sha256:292c403d13f050ba5f93cbedfa908a6f3bd301f09489cc3f6a1d0c9901a67e07"
     }
   }
 }

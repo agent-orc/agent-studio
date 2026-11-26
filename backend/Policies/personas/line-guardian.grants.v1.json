@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "role": "line-guardian",
+  "grants": [
+    {
+      "operation": "observe",
+      "tier": "T0",
+      "condition": "Receipts, envelope fingerprints, quarantine store, conflict record, card metadata; excerpts at most 2000 characters; no secrets."
+    },
+    {
+      "operation": "triage.classify",
+      "tier": "T1",
+      "condition": "Writes a class and evidence, never an action from a model."
+    },
+    {
+      "operation": "quarantine.hold.start",
+      "tier": "T1",
+      "condition": "Confirmed routine red; at most 3 held and 8 total."
+    },
+    {
+      "operation": "quarantine.report-only.start",
+      "tier": "T1",
+      "condition": "Flaky or environment class and an owning card."
+    },
+    {
+      "operation": "quarantine.renew",
+      "tier": "T1",
+      "condition": "Once for 24 hours while repair is in progress; at most 48 hours total."
+    },
+    {
+      "operation": "quarantine.lift",
+      "tier": "T1",
+      "condition": "Two consecutive covering passes on tips containing repair integration."
+    },
+    {
+      "operation": "hold.area",
+      "tier": "T1",
+      "condition": "Active held quarantine only; ends with quarantine."
+    },
+    {
+      "operation": "repair.create",
+      "tier": "T1",
+      "condition": "Create or reuse a repair within the project; class selects rung within economy dial."
+    },
+    {
+      "operation": "repair.first",
+      "tier": "T1",
+      "condition": "First in Preparation and Ready only; never move reviewed or settled cards."
+    },
+    {
+      "operation": "revert.propose",
+      "tier": "T1",
+      "condition": "One confirmed clean independent suspect; normal card integration flow."
+    }
+  ],
+  "ownerRequired": [
+    "Quarantine a base test",
+    "Exceed the cap",
+    "Renew past 48 hours",
+    "Lift without evidence"
+  ],
+  "grantBounds": {
+    "expiryRequired": true,
+    "useCapRequired": true
+  },
+  "nonGrantable": [
+    "Change testing strategy",
+    "Move or reopen reviewed or completed cards",
+    "Supersede reviews",
+    "Edit tests or product code"
+  ]
+}

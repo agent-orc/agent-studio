@@ -4684,3 +4684,46 @@ change, not a reconstructed textual-conflict list. A surviving sync merge
 provides its incoming integration tip and merge base; linear history without
 those anchors has no recoverable partner evidence. These historical limits do
 not turn a clean shared-file change into proof of a textual conflict.
+
+#### Line guardian authority and shadow journal (RT-8, AGT-4009)
+
+Working decisions are RT-D8 B and RT-D13 B (shadow portion). The separate
+`line-guardian` role has kind `guardian`, aspect `delivery` and project scope.
+It starts in shadow with a recommended seven-day comparison period; only an
+owner changes authority. No timer promotes it. The DS-5 role and rights files
+live in `backend/Policies/personas/` with an append-only revision lock.
+
+`LineGuardianStore` persists per-project authority, immutable decision
+comparisons, model reservations, receipt compute and expiring, use-capped
+owner requests beside `post-merge/` in `line-guardian/`. Each receipt records
+its proposed guardian decision beside the applied system decision. Shadow
+writes only this journal. Once live, per-test quarantine audit and repair
+creation use `persona:line-guardian:<project-id>`. RT-4 retains the mutation
+path, evidence requirements and review-lane protections. Legacy receipts keep
+their compatibility repair path and also get a guardian observation.
+
+The model sees at most 2,000 redacted excerpt characters, an envelope
+comparison and a bounded suspect-path summary. One read-only one-shot call
+per incident returns a strict class, evidence and confidence object. Unknown
+fields, actions and invalid values are discarded. The pure triage policy
+then chooses actions. A reservation survives a crash, timeout or invalid
+response, so no receipt retry makes another call for that incident.
+
+Admission reserves 8,000 tokens, with metered overages charged, against
+60,000 tokens per project per UTC calendar week. Confirmation, control and
+bisect compute is charged from focused-run durations times the receipt's
+processor count, conservatively charging the run to each participating
+incident, and once per run for the project. At 90 core-minutes per incident
+or 600 per project week, model work stops and one budget owner item is raised;
+the deterministic rules keep running. A T2 operation request is never applied
+by the request route. Its owner item states the proposed expiry and one-use
+cap. Non-grantable operations fail closed in `LineGuardianPolicy`.
+
+`GET /api/projects/{name}/line-guardian` exposes the journal and owner items.
+Its `/role` subroute exposes the charter and rights catalogue.
+`PUT /api/projects/{name}/line-guardian/mode` accepts `{ "live": true }` or
+`{ "live": false }` from the owner only. `POST /api/projects/{name}/line-guardian/requests` takes
+`runId`, `test`, and `operation`; it collects policy facts from a persisted
+receipt. Owner items also appear through the existing post-merge Needs you
+fact source. One closed-incident feed observation is emitted on an evidence
+or owner lift. The weekly criteria projection and switch UI remain RT-9.

@@ -45,6 +45,8 @@ public static class RedTestTriagePolicy
     public static RedTestTriageDecision Decide(RedTestTriageFacts facts)
     {
         var classification = Classify(facts);
+        if (classification == RedTestClassification.Ambiguous && facts.AmbiguousClassificationAttempted
+            && facts.ModelClassification is { } modelClass) classification = modelClass;
         var attributed = classification == RedTestClassification.Regression
             ? BisectVerdictPolicy.Decide(facts.LastGreenControlResults, facts.BisectPoints).AttributedMerge : null;
         var actions = new List<RedTestDecision>();

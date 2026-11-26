@@ -354,7 +354,8 @@ public sealed class OperatorPostMergeCoverageFactSource(Func<IReadOnlyList<PostM
 /// </summary>
 public sealed class OperatorPostMergeRedIncidentFactSource(
     Func<IEnumerable<(string Project, AgentStudio.TaskServer.Contracts.PostMergeProjectState State)>> states,
-    Func<string, string, string?>? cardKey = null) : IOperatorDecisionFactSource
+    Func<string, string, string?>? cardKey = null,
+    Func<IEnumerable<(string Project, AgentStudio.Personas.GuardianProjectState State)>>? guardianStates = null) : IOperatorDecisionFactSource
 {
     public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.PostMergeRedIncident];
 
@@ -398,6 +399,21 @@ public sealed class OperatorPostMergeRedIncidentFactSource(
                     OwnerOptions: question.Options.Select(option => new OperatorOwnerOption(option,
                         OptionText(option, incident), option == question.Recommended)).ToArray()));
             }
+        }
+        foreach (var (project, state) in guardianStates?.Invoke() ?? [])
+        foreach (var item in state.OwnerItems.Where(i => !state.ClosedIncidents.Contains(i.Incident)))
+        {
+            var budget = item.Operation == "budget";
+            facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.PostMergeRedIncident,
+                $"{OperatorDecisionTypes.PostMergeRedIncident}|{project}|guardian|{item.Id}", project, null,
+                $"Line guardian requests {item.Operation} for {item.Incident}. Recommended: {item.Recommended}. "
+                    + $"Any grant expires at {item.ExpiresAt:O} and permits at most {item.UseCap} use(s). Rules keep running.",
+                item.ExpiresAt.AddHours(-24).UtcDateTime,
+                [new("guardian evidence", "/api/projects/" + Uri.EscapeDataString(project) + "/line-guardian")],
+                Title: project + (budget ? " · Guardian budget exhausted" : " · Guardian owner grant requested"),
+                OwnerOptions: budget
+                    ? [new("KeepHeld", "Keep held and review budget", true)]
+                    : [new("Refuse", "Refuse", true), new("GrantWithExpiry", "Grant with expiry and use cap", false)]));
         }
         return facts;
     }
