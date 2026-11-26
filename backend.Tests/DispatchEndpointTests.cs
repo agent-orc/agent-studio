@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -362,5 +363,140 @@ public sealed class DispatchEndpointTests : IDisposable
         Assert.Equal(TouchForecast.DefaultHubFiles, await client.GetFromJsonAsync<string[]>(route));
     }
 
-    public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
+    [Fact]
+    public async Task Review_reads_integrated_real_file_cohort_and_validates_window_and_revision()
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        factory.Services.GetRequiredService<TaskIndexCache>().GetSnapshot();
+        var card = factory.Services.GetRequiredService<TaskScannerService>().FindJob("sample", Watch)!;
+        var at = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+        var log = factory.Services.GetRequiredService<AgentStudio.Tasks.TimelineLog>();
+        log.Append(card.FolderPath, new TimelineEvent { Ts = at.AddHours(-4).UtcDateTime,
+            Kind = TimelineEventKinds.LaneChanged,
+            Details = new() { ["to"] = TaskStates.Ready } });
+        log.Append(card.FolderPath, new TimelineEvent { Ts = at.UtcDateTime,
+            Kind = TimelineEventKinds.IntegrationSucceeded });
+        factory.Services.GetRequiredService<DispatchStore>().Write(card.ProjectName, card.TaskKey,
+            new(["a.cs"], ["a.cs"], ["a.cs"], [], "high", "index")
+            {
+                ReadyEntryAt = at.AddHours(-4).UtcDateTime,
+                Deliveries = [new("result", "base", at.AddHours(-1), ["a.cs", "b.cs"], ["a.cs", "b.cs"], new(1, .5), new(1, .5))],
+            });
+        const string route = "/api/projects/Forecast%20Project/dispatch/review";
+        var result = (await client.GetFromJsonAsync<DispatchReviewProjection>(route + "?window=2026-11-20/2026-11-21&weights=w1"))!;
+        Assert.Equal(5, result.Personas.Count);
+        Assert.Contains(result.Personas, r => r.Raw.Persona == "queue-keeper");
+        Assert.All(result.Personas, r =>
+        {
+            Assert.Equal(1, r.Raw.IntegratedCards);
+            Assert.Equal("too few cards", r.Status);
+            Assert.Null(r.Value);
+            Assert.Equal(2.0 / 3, r.Raw.FileF1);
+            Assert.Null(r.Raw.Criteria["tokens"]);
+            Assert.True(r.Raw.TokensEstimated);
+        });
+        Assert.All(result.Competition, c => Assert.False(c.Evaluation.ChampionEligible));
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync(route + "?weights=w999")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync(route + "?window=invalid")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/projects/missing/dispatch/review")).StatusCode);
+        var outside = (await client.GetFromJsonAsync<DispatchReviewProjection>(route + "?window=2026-11-21/2026-11-22"))!;
+        Assert.All(outside.Personas, r => Assert.Equal(0, r.Raw.IntegratedCards));
+    }
+
+    [Fact]
+    public async Task Review_weights_require_human_owner_and_preserve_revision_history()
+    {
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero));
+        await using var factory = Factory().WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Security:Profile"] = "networked", ["AllowedHosts"] = "studio.test",
+                ["Secrets:KeyFile"] = Path.Combine(_root + "-keys", "test.kek"),
+                ["Secrets:KeyEnvironmentVariable"] = "AGT3997_UNSET_" + Guid.NewGuid().ToString("N"),
+            }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(clock);
+            });
+        });
+        var security = factory.Services.GetRequiredService<AgentStudio.Security.AccessSecurityStore>();
+        var bootstrap = security.Bootstrap(new("review.owner", "correct horse battery staple!", null));
+        var owner = security.AuthenticateSession(bootstrap.SessionToken)!;
+        var secret = security.BeginTotpEnrollment(owner);
+        security.ConfirmTotpEnrollment(owner, AgentStudio.Security.SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
+        var workspace = factory.Services.GetRequiredService<AgentStudio.Registry.WorkspaceRegistry>().EnsureDefaultWorkspace(clock).Id;
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
+        client.DefaultRequestHeaders.Add("Cookie", AgentStudio.Security.AccessSecurityStore.SessionCookieName + "=" + bootstrap.SessionToken);
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", bootstrap.CsrfToken);
+        var route = $"/api/workspaces/{workspace}/dispatch/review/weights";
+        var request = new DispatchWeightsRequest(DispatchWeightRevision.Default.Weights, .9, "Calibrate gate");
+        var saved = await client.PutAsJsonAsync(route, request);
+        saved.EnsureSuccessStatusCode();
+        var revision = (await saved.Content.ReadFromJsonAsync<DispatchWeightRevision>())!;
+        Assert.Equal("w2", revision.Id);
+        Assert.Equal(owner.User.Id, revision.Author);
+        Assert.Equal(.9, revision.Gate);
+        Assert.Equal(2, factory.Services.GetRequiredService<AgentStudio.Registry.WorkspaceSettingsService>().Get(workspace).DispatchReviewWeights.Count);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync(route, request with { Gate = .2 })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PutAsJsonAsync("/api/workspaces/missing/dispatch/review/weights", request)).StatusCode);
+        client.DefaultRequestHeaders.Remove("Cookie");
+        client.DefaultRequestHeaders.Remove("X-CSRF-Token");
+        var refused = await client.PutAsJsonAsync(route, request);
+        Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+    }
+
+    [Fact]
+    public async Task Review_observed_admission_includes_coding_and_review_tokens_per_accepted_card()
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        factory.Services.GetRequiredService<TaskIndexCache>().GetSnapshot();
+        var card = factory.Services.GetRequiredService<TaskScannerService>().FindJob("sample", Watch)!;
+        var key = card.Key ?? card.TaskKey;
+        var at = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+        var store = factory.Services.GetRequiredService<DispatchStore>();
+        var plan = AgentStudio.OrchestrationDecisions.DispatchPlanPolicy.Plan(new(card.ProjectName, at,
+            [new(key, 999, at.AddHours(-4), [], true, AgentStudio.OrchestrationDecisions.DispatchForecast.Unknown, [])], [], 1,
+            AgentStudio.OrchestrationDecisions.DispatchLedgerSummary.Empty, []),
+            AgentStudio.OrchestrationDecisions.DispatchStrategies.Starter(AgentStudio.OrchestrationDecisions.DispatchStrategies.LaneEntry));
+        store.AppendShadow(new("evaluation", "admission", "facts", at.AddHours(-3), "local", plan, false));
+        store.AppendRunDecision(card.ProjectName, new("admission", key, at.AddHours(-3), "local", true, "admit", null, "attempt", true));
+        store.Write(card.ProjectName, card.TaskKey, new(["a.cs"], ["a.cs"], ["a.cs"], [], "high", "index")
+        {
+            ReadyEntryAt = at.AddHours(-4).UtcDateTime,
+            Deliveries = [new("result", "base", at.AddHours(-1), ["a.cs"], ["a.cs"], new(1, 1), new(1, 1))],
+        });
+        var log = factory.Services.GetRequiredService<AgentStudio.Tasks.TimelineLog>();
+        log.Append(card.FolderPath, new TimelineEvent { Ts = at.UtcDateTime, Kind = TimelineEventKinds.IntegrationSucceeded });
+        log.Append(card.FolderPath, new TimelineEvent { Ts = at.AddHours(1).UtcDateTime, Kind = TimelineEventKinds.LaneChanged,
+            Details = new() { ["to"] = TaskStates.Completed } });
+        var bridge = factory.Services.GetRequiredService<AgentMessageBusBridge>();
+        await bridge.EmitTokenUsageAsync(card.ProjectName, card.Id, "coder", "coding",
+            new OrchestratorTokenUsage { Model = "test-model", InputTokens = 100, OutputTokens = 10 }, createdAt: at.AddHours(-2).UtcDateTime);
+        await bridge.EmitTokenUsageAsync(card.ProjectName, card.Id, "aspect:review", "review",
+            new OrchestratorTokenUsage { Model = "test-model", InputTokens = 200, OutputTokens = 20 }, createdAt: at.AddHours(-1).UtcDateTime);
+        var result = (await client.GetFromJsonAsync<DispatchReviewProjection>(
+            "/api/projects/Forecast%20Project/dispatch/review?window=2026-11-20/2026-11-21"))!;
+        var observed = Assert.Single(result.ObservedPersonas);
+        Assert.Equal("queue-keeper", observed.Persona);
+        Assert.Equal(1, observed.AcceptedCards);
+        Assert.Equal(330, observed.Criteria["tokens"]);
+        Assert.Equal(0, observed.Criteria["conflicts"]);
+        Assert.Equal(4, observed.Criteria["lead"]);
+        Assert.False(observed.TokensEstimated);
+        Assert.Null(observed.Criteria["rework"]);
+        Assert.Null(observed.Criteria["parallelism"]);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_root)) Directory.Delete(_root, true);
+        if (Directory.Exists(_root + "-keys")) Directory.Delete(_root + "-keys", true);
+    }
 }

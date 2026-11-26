@@ -8,6 +8,7 @@ public static class DispatchRegistration
     public static IServiceCollection AddDispatch(this IServiceCollection services)
     {
         services.AddSingleton<DispatchStore>();
+        services.AddSingleton<DispatchReviewService>();
         services.AddSingleton<DispatcherShadowService>();
         services.AddSingleton<DispatchForecastService>();
         services.AddHostedService(provider => provider.GetRequiredService<DispatchForecastService>());
@@ -16,6 +17,7 @@ public static class DispatchRegistration
 
     public static void MapDispatchEndpoints(this WebApplication app)
     {
+        app.MapDispatchReviewEndpoints();
         app.MapGet("/api/projects/{project}/dispatch/mode", (string project,
             TaskScannerService scanner, ProjectSettingsService settings, HttpContext context, ProjectRegistry projects) =>
         {
