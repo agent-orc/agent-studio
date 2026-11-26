@@ -1,6 +1,3 @@
-using AgentStudio.Tasks;
-using AgentStudio.TaskServer.Contracts.BatchGate;
-
 namespace AgentStudio.Pipeline;
 
 public sealed record GateStrategyCardTransition(string TaskKey, string Work, string Action);

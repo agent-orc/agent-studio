@@ -1722,7 +1722,10 @@ it. Project settings shows the strategy control to project Admins as well as
 the Owner. A successful change still rebuilds queued review plans. The change also
 uses the asynchronous batch-gate strategy handoff and returns its transition
 summary. Its old and new strategy values come from the settings service
-mutation, including when the requested strategy already matches.
+mutation, including when the requested strategy already matches. Switching to
+post-merge testing stops pending full gates and cancels running fallback gates
+without recording a failed test verdict. The handoff records integration
+evidence separately from a full-suite pass.
 
 For operator sessions, the catalogue operation `project.testing.set` is T2
 with project scope. A session with read access to the project can request an
