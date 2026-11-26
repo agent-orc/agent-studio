@@ -86,6 +86,23 @@ public static class TokenAnalysisFold
             if (kind == TokenUsageKinds.Coding) agentCalls.Add((entry, SlotOf(slots, entry.Ts)));
             else otherCalls.Add(entry);
         }
+        if (slots.Count == 0)
+        {
+            // Remote receipts retain their attempt even when no local pipeline
+            // lifecycle was written. Do not fold all historical runs together.
+            var receiptSlots = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (var index = 0; index < agentCalls.Count; index++)
+            {
+                var entry = agentCalls[index].Entry;
+                var participant = entry.ParticipantId ?? "";
+                var marker = participant.IndexOf(":usage:", StringComparison.Ordinal);
+                var owner = participant.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix, StringComparison.Ordinal)
+                    ? marker < 0 ? participant : participant[..marker] : "legacy";
+                if (!receiptSlots.TryGetValue(owner, out var slot))
+                    receiptSlots[owner] = slot = receiptSlots.Count;
+                agentCalls[index] = (entry, slot);
+            }
+        }
         var backedSlots = agentCalls.Select(call => call.Slot).ToHashSet();
 
         for (var i = 0; i < slots.Count; i++)
@@ -99,9 +116,9 @@ public static class TokenAnalysisFold
         }
         foreach (var (entry, slot) in agentCalls)
         {
-            var kind = slots.Count == 0 || slot <= 0 ? TokenUsageKinds.Coding : TokenUsageKinds.FixRound;
-            var attempt = slots.Count == 0 ? AttemptOf(attempts, entry.Ts) : slots[slot].Attempt;
-            items.Add(LedgerItem(pricing, entry, kind, attempt, slots.Count == 0 ? 0 : slot));
+            var kind = slot <= 0 ? TokenUsageKinds.Coding : TokenUsageKinds.FixRound;
+            var attempt = slots.Count == 0 ? 1 : slots[slot].Attempt;
+            items.Add(LedgerItem(pricing, entry, kind, attempt, slot));
         }
 
         // Measured non-coding executions own their step; equal ledger calls are dropped.
@@ -266,6 +283,18 @@ public static class TokenAnalysisFold
         return events.OrderBy(e => e.At).ThenBy(e => e.Label, StringComparer.Ordinal).ToList();
     }
 
+    /// <summary>Flag equal coding counters for inspection; equal-sized real runs remain valid.</summary>
+    public static IReadOnlyList<TokenAnalysisDuplicateWarning> DuplicateCodingEvents(
+        IReadOnlyList<TokenAnalysisEvent> events)
+        => events.Select((item, index) => (Item: item, Index: index))
+            .Where(row => row.Item.Kind is TokenUsageKinds.Coding or TokenUsageKinds.FixRound
+                && row.Item.Total > 0)
+            .GroupBy(row => (row.Item.Input, row.Item.Output, row.Item.CacheRead, row.Item.CacheWrite))
+            .Where(group => group.Count() > 1)
+            .Select(group => new TokenAnalysisDuplicateWarning(
+                "identical-coding-token-counters", group.Select(row => row.Index).ToList()))
+            .ToList();
+
     private sealed record CoreSlot(int Attempt, DateTime StartedAt, PipelineStepExecution Step, PipelineStepRunSummary Run);
 
     private static List<PipelineExecutionRecord> Attempts(PipelineExecutionRecord? log)
@@ -338,7 +367,9 @@ public static class TokenAnalysisFold
         var output = keepTokens ? run.OutputTokens : 0;
         var cacheRead = keepTokens ? run.CacheReadTokens : 0;
         var cacheWrite = keepTokens ? run.CacheCreationTokens : 0;
-        var (cost, priced) = Price(pricing, run.Model, input, output, cacheRead, cacheWrite, at);
+        var (cost, priced) = ReceiptTokenPricing.MissingCacheSplit(run.Model, input, cacheRead,
+            run.InputIncludesCached, run.UsageNormalization)
+            ? (0m, false) : Price(pricing, run.Model, input, output, cacheRead, cacheWrite, at);
         var host = !string.IsNullOrWhiteSpace(step.ExecutionHostId) ? step.ExecutionHostId!.Trim()
             : string.Equals(step.ExecutionLocation, "remote", StringComparison.OrdinalIgnoreCase)
                 ? TokenUsageHost.UnrecordedRemote : TokenUsageHost.Local;
@@ -360,8 +391,8 @@ public static class TokenAnalysisFold
     {
         var usage = entry.TokenUsage!;
         var at = entry.Ts.ToUniversalTime();
-        var (cost, priced) = Price(pricing, usage.Model, usage.InputTokens, usage.OutputTokens,
-            usage.CacheReadTokens, usage.CacheCreationTokens, at);
+        var estimate = pricing.EstimateReceipt(usage, at);
+        var (cost, priced) = (estimate.ModelKnown ? estimate.Total : 0m, estimate.ModelKnown);
         return new TokenAnalysisItem(
             at, null, kind,
             LedgerLabel(entry),

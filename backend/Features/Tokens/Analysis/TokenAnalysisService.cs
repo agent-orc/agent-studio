@@ -121,8 +121,9 @@ public sealed class TokenAnalysisService
         if (job is null) return null;
         var card = TokenAnalysisFold.Card(project.Name, job.Input, job.Items, DateTime.MinValue, DateTime.MaxValue);
         if (card is null) return null;
-        return new TokenAnalysisCardDetail(card, TokenAnalysisFold.Events(job.Items), build.Freshness,
-            TokenAnalysisFold.Disclaimer);
+        var events = TokenAnalysisFold.Events(job.Items);
+        return new TokenAnalysisCardDetail(card, events, build.Freshness,
+            TokenAnalysisFold.Disclaimer, TokenAnalysisFold.DuplicateCodingEvents(events));
     }
 
     /// <summary>Reconciled receipts in the provider's current weekly window.</summary>

@@ -592,10 +592,31 @@ public class TaskMutationService
                         StringComparison.Ordinal) ?? false))
                 .Select(entry => TokenLedgerDuplicates.CallFingerprint(entry, includeParticipant: false))
                 .ToHashSet();
+            var originalCalls = (persisted?.Entries ?? [])
+                .Where(previous => TokenLedgerDuplicates.UsageIdentity(previous) is not null)
+                .OrderBy(previous => previous.Ts)
+                .GroupBy(TokenLedgerDuplicates.CallIdentityFingerprint)
+                .ToDictionary(group => group.Key, group => group.First());
             var attemptEntries = new List<TaskTokenCall>();
             foreach (var source in entries)
             {
-                var entry = source with
+                // Preserve the original receipt when a source log turn is replayed
+                // after its file date or the card's model changed.
+                originalCalls.TryGetValue(TokenLedgerDuplicates.CallIdentityFingerprint(source), out var original);
+                if (original is not null && ReceiptTokenPricing.MissingCacheSplit(source.Model,
+                    source.InputTokens, source.CacheReadTokens, source.InputIncludesCached, source.UsageNormalization))
+                    original = original with
+                    {
+                        InputIncludesCached = null, UsageNormalization = null,
+                        ModelPriced = false, EstimatedApiCostUsd = 0m,
+                    };
+                else if (original is not null && !string.IsNullOrWhiteSpace(source.UsageNormalization))
+                    original = original with
+                    {
+                        InputIncludesCached = source.InputIncludesCached,
+                        UsageNormalization = source.UsageNormalization,
+                    };
+                var entry = (original ?? source) with
                 {
                     ParticipantId = ((isRemoteAttempt &&
                         (source.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false))
