@@ -3,7 +3,7 @@
     <div>
       @if (personaId()) { <button type="button" class="team-link" (click)="open(null)">← Team</button> }
       <p class="team-kicker">Workspace personas</p>
-      <h1>{{ personaId() === 'magazine' ? 'Magazine' : current()?.title ?? 'Team' }}</h1>
+      <h1>{{ dispatchProject() ? 'Dispatch review' : personaId() === 'magazine' ? 'Magazine' : current()?.title ?? 'Team' }}</h1>
       @if (current(); as person) { <p>{{ person.activation?.roleId ? roleLabel(person.activation!.roleId!) : roleLabel(person.aspect) }} · {{ person.id }}</p> }
     </div>
     <div class="team-actions">
@@ -29,10 +29,17 @@
   </header>
   @if (loading()) { <app-loading-surface kind="list" label="Loading team…" /> }
   @if (error()) { <p class="team-error" role="alert">{{ error() }} <button type="button" (click)="load()">Retry</button></p> }
-  @if (personaId() === 'magazine') {
+  @if (dispatchProject(); as project) {
+    <app-dispatch-review [workspaces]="workspaces()" [projectId]="project" />
+  } @else if (personaId() === 'magazine') {
     @if (workspaceId()) { <app-weekly-issue-view [workspaceId]="workspaceId()" /> }
   } @else if (!personaId()) {
     @if (workspaceId()) { <app-weekly-issue-view [workspaceId]="workspaceId()" [compact]="true" /> }
+    <section class="team-group"><h2>Dispatch review by project</h2><div class="team-actions">
+      @for (workspace of selectedWorkspaces(); track workspace.id) { @for (project of workspace.projects; track project.id) {
+        <button type="button" (click)="open(dispatchRoute(project.id))">{{ project.displayName }} · Dispatch review</button>
+      } }
+    </div></section>
     <section class="team-pool" aria-label="Weekly persona pool">
       <div><span>Used</span><strong data-testid="team-used">{{ totals().used | number }}</strong></div>
       <div><span>Allocated</span><strong data-testid="team-allocated">{{ totals().allocated | number }}</strong></div>
@@ -97,6 +104,9 @@
       } @empty { <p class="team-message">No proposals yet.</p> }</div> }
       @case ('budget') { <section class="team-pool"><div><span>Used this week</span><strong>{{ currentCard()?.used ?? 0 | number }}</strong></div><div><span>Allowance</span><strong>{{ currentCard()?.allowance ?? 0 | number }}</strong></div><div><span>Team pool</span><strong>{{ totals().pool | number }}</strong></div></section> }
       @case ('sheet') {
+        @if (person.kind === 'dispatcher') {
+          <app-dispatch-review [workspaces]="selectedWorkspaces()" [persona]="person" />
+        } @else {
         <section class="team-sheet" data-testid="persona-sheet">
           <div class="team-sheet-heading"><div><h2>Character sheet</h2><p>Role: {{ person.activation?.roleId || person.id }} · Activation revision {{ person.activation?.activationRevision }}</p></div>
             @if (sheet(); as record) { <div><strong>{{ record.rank }}</strong><p>{{ record.eligibility }} · Experience {{ record.experience | number:'1.1-1' }}</p></div> }</div>
@@ -157,6 +167,7 @@
             }</div>
           }
         </section>
+        }
       }
       @case ('charter') { <section class="team-charter"><h2>Charter</h2><p>{{ person.descriptor.charter }}</p><p>Role: {{ person.activation?.roleId || person.id }} · Revision: {{ person.activation?.descriptorRevision || person.revision }}</p>
         @if (person.activation?.state !== 'retired' && person.adoptableRevision) { <label>Verification code <input type="text" autocomplete="one-time-code" [value]="stepUpCode()" (input)="stepUpCode.set($any($event.target).value)" /></label><button type="button" [disabled]="!!busy()" (click)="change(person, 'adopt')">Adopt revision {{ person.adoptableRevision }}</button> }
