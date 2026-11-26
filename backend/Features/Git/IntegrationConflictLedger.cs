@@ -84,6 +84,20 @@ public sealed class IntegrationConflictLedger(string? root = null)
         }
     }
 
+    /// <summary>Read one known collision without enumerating the project ledger.</summary>
+    internal IntegrationConflictEntry? ReadCollision(string project, string cardKey, string target,
+        string deliverySha, string tip)
+    {
+        var id = Hash($"{project.ToUpperInvariant()}\n{cardKey.ToUpperInvariant()}\n{target}\n{deliverySha}\n{tip}");
+        var folder = Folder(project);
+        lock (Locks.GetOrAdd(folder, _ => new object()))
+        {
+            var path = Path.Combine(folder, id + ".json");
+            return File.Exists(path)
+                ? JsonSerializer.Deserialize<IntegrationConflictEntry>(File.ReadAllText(path), Json) : null;
+        }
+    }
+
     public IReadOnlyList<IntegrationConflictEntry> Read(string project, DateTimeOffset? from = null, DateTimeOffset? to = null, string? target = null)
     {
         var folder = Folder(project);

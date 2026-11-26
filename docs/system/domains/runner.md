@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-11-22
+Version: 2026-11-26
 Status: System-of-record map for runner-side changes.
 
 Review role release drift becomes operator attention as soon as that role has
@@ -9,44 +9,87 @@ compares the role's commit and image with Stable. An idle role still uses the
 host release watchdog's grace period. A fresh heartbeat reporting the expected
 commit and image clears the attention fact.
 
-## Overlap window of the pick-gate, DS-0
+## Dispatch overlap admission, DS-0 and AGT-4037
 
-`ParallelSlotPolicy.Decide` runs on both claim paths: the local pickup in
-`ProjectRunner` and the remote claim in `LeaseEndpoints`, which walks
-`LaneSortApplier.PickupOrder`. Both read the card scope from
-`TaskScopePrediction`: the parent directory of every `backend/`, `frontend/`,
-`src/`, `docs/` or `tools/` path named in the title and `prompt.md`, at most
-24. A card without such a path has unknown scope and is admitted
-optimistically.
+Both the local pickup in `ProjectRunner` and the remote claim in
+`LeaseEndpoints` use `OverlapDispatchGuard` and `ParallelSlotPolicy`. Host and
+project capacity, exclusive runs, routing, capability and quota checks keep their
+existing authority. Scope admission never owns the serial integration lane.
 
-The project setting `dispatch.overlapWindow` (`GET` and `PUT
-/api/projects/{project}/dispatch/overlap-window`) selects the comparison set.
-`in-flight` is the default (Dossier decision DS-D10 B in
-[dispatcher personas](../../dispatcher-personas/index.html)). It compares a
-candidate with the running cards and with every card of the project that
-started a coding run and has not integrated yet: Progress, Auto Review
-(including cards waiting for the batch gate), Human Review (cards waiting for
-the acceptance integration) and queued merge rounds (a started card back in
-Ready with a pending follow-up). `OverlapComparisonSet` collects that set from
-the card snapshot without git: a card stops being exposed when a provenance
-merge record or an integrated-class integration record is newer than its last
-entry into Progress. Escalated, Failed pickup, Code not complete, Completed,
-planning and research cards are not in the set. A candidate that already
-started is compared only with running and post-coding cards, so two started
-cards never hold each other. `running` keeps the local behaviour before DS-0.
+`TaskScopePrediction` retains an explicitly cited file's complete path and a
+folder's deepest cited prefix. It does not broaden a file to its parent.
+Folder-only documentation citations, repository roots and their first folder
+level, `results/`, generated output directories, generated source suffixes and
+lockfiles cannot serialize work. Exact documentation files can collide. A deep
+code folder can collide with a file below it. Up to 24 distinct paths are kept;
+unknown scope is admitted because coding runs have isolated worktrees.
 
-In-flight cards take no slot, and an exclusive card blocks only while it runs.
-A scope serialize is a `parallel-conflict` pickup skip on the local pickup and a
-`parallel-conflict` dispatch rejection on the remote claim. Its reason names
-the window, the conflicting card, its lane and the shared prefix, for example
-`scope conflict with 'AGT-1' on 'backend/features/runner' (window in-flight,
-4-auto-review)`. Each scope serialize also writes one `overlap-serialize` log line
-with `path` (`local` or `remote-claim`), `window`, `project`, `candidate`,
-`conflict`, `lane` and `prefix`, all card ids, so over-serialization can be
-counted per window. A serialize without a scope conflict (no free slot, a
-running exclusive card) keeps its plain skip line. The remote claim asks
-`ParallelSlotPolicy.DecideOverlap`, the same rules without the slot count,
-because it checks host and project concurrency before.
+`GET` and `PUT /api/projects/{project}/dispatch/overlap-window` read and set
+`dispatch.overlapWindow`. PUT requires `project.settings.write`, which Admin
+has, without an Owner floor. Its body accepts `window` and optional
+`starvationMinutes` (1 to 1440), stored as
+`dispatch.overlapStarvationMinutes` (default 30).
+
+| Window | Scope behavior |
+| --- | --- |
+| `off` (default, including unset or invalid stored values) | Predict against running and open deliveries, record and log each pair once, admit scope overlaps. |
+| `running` | Serialize overlapping running deliveries only. |
+| `in-flight` | Serialize overlapping running deliveries and open deliveries waiting for review or integration. |
+
+An open delivery has not reached its integration branch. A current branch
+membership projection ends exposure even when verification or the human verdict
+is still outstanding (`integrated-unverified`, for example). The shared check
+reads the existing signature-validated Git projection without spawning Git.
+Provenance merges and integrated integration records since the last coding start
+remain durable fallback evidence. Progress, Auto Review and started cards with a
+pending continuation in Ready can be exposed. Human Review and Escalated require
+an attributed delivery or review subject. Completed, Archive, report-only and
+explicit no-branch cards never block. A snapshot whose persisted lane changed,
+or whose folder disappeared, is excluded, so an old review snapshot cannot hold
+work behind a now completed card. A move between live lanes is reconsidered on
+the next published snapshot.
+
+Pipeline delivery recovery bypasses scope serialization on both claim paths:
+attribution recovery, merge conflicts, source rebase, acceptance-rail merge
+rounds and stale-verdict redelivery. Capacity and exclusive-run checks still
+apply and name their ordinary wait reason. `RemoteDeliveryIntegrationCoordinator`
+queues the bounded recovery intent, ejects that unmerged delivery and takes the
+next serial lane member; it does not await a runner claim or the coding round.
+A stale verdict that only needs another review uses the existing review path.
+
+The guard caches admission by candidate generation, window, capacity, cited
+scope and comparison delivery state. An unchanged poll reuses the decision.
+`overlap-serialize` logs on a changed comparison and at most once per five-minute
+reminder interval for an unchanged comparison. It includes path, window,
+project, candidate, conflicting card, lane and shared path. `off` writes an
+`overlap-advisory` once per recorded pair instead. Remote rejection persistence
+retains its existing idempotence.
+
+When a claim sweep has ready candidates and free capacity and every candidate
+is held solely by scope, a continuous wait beyond the project's threshold
+produces `dispatch.overlap-starved` in Needs you. It names both cards and the
+path. Run anyway posts the occurrence `fact` to
+`POST /api/projects/{project}/dispatch/run-anyway` with
+`project.runs.operate`. The server validates the current wait. The permit is
+bound to that candidate and exact comparison, expires after ten minutes and is
+consumed by a successful claim. A new state, another refusal, missing free
+capacity or stale claim observations clear the attention condition. Process
+restart discards permits; an unchanged wait is measured again from observation.
+
+`OverlapPredictionLedger` stores application-owned prediction snapshots under
+`agentstudio/overlap-predictions` in the local state root. Claim binds a snapshot
+to its RunAttempt. `GET /api/projects/{project}/dispatch/overlap-evidence`
+compares it with the DS-2 `IntegrationConflictLedger` using project, target,
+immutable attempt/result SHA and conflicting card attribution. Historical run results
+retain positive evidence after a conflict starts a new round. A pair with an
+attributed conflict is correct. A delivered, observed integrated subject with no
+such conflict is incorrect. Pending and unobserved subjects, and superseded subjects without an attributed
+conflict, are unknown, never counted as successful predictions. Conflicts with
+missing counterpart attribution remain unknown even after integration. This is precision of predicted
+pairs, not recall of every integration conflict. No production paired dataset
+was available for AGT-4037; explicit operator selection is required to enforce a
+window while the default collects advisory evidence. The setting does not
+rewrite existing explicit `running` or `in-flight` choices.
 
 ## Persona occurrences, PT-4
 
@@ -3120,6 +3163,15 @@ seam.
 
 ## Automatic post-merge checks
 
+RT-5 (AGT-4006) makes the runner's gate, Remote Review and post-merge readers
+use the RT-4 quarantine union and the single `TestQuarantinePolicy` parser in
+TaskServer.Contracts. Failures remain in receipts and are non-blocking only
+for exact active test names. `IntegrationPublisher` applies active held scopes
+regardless of develop color and reports `blocked-failing-area` with quarantine,
+test and folder. Repair, attributed-revert and owner-exempt cards pass their own
+hold. Typed `holds` on the state route are available for the future dispatcher
+pick gate. See [scoped holds and readers](pipeline.md#scoped-integration-holds-and-shared-readers-rt-5).
+
 The coding daemon owns `PostMergeHostScheduler`, discovering the projects
 whose testing strategy is `fast` or `balanced` (derived `testingMode`
 `post-merge`, AGT-3965) through Studio's Runner-scoped
@@ -3132,7 +3184,18 @@ and reuses the existing Runner credential. Window observations are durable
 facts in `PostMergeRunStore`, independent of green/red receipts, and flow to
 `/api/develop-states` and the project Operations alert. Nightly routine checks
 are retried between 02:15 and 06:15 UTC and deduplicated by terminal receipts
-for the UTC day. On Linux each project command receives the same per-worker
-cgroup envelope as coding work, in a sibling leaf of the daemon. Required
-attachment keeps project tests out of the daemon leaf, and command teardown
-kills leftovers. A host without delegation defers execution. See [host setup and legacy timer retirement](../../operations/setup/linux-runner-host.md#post-merge-develop-checks).
+for the UTC day. Review and post-merge project commands use the shared RT-6 test envelope in
+TaskServer.Contracts, also used by the build-test gate. Each command has a fresh
+Linux worker leaf with one token of CPU (3 cores by default), and the same
+`DOTNET_PROCESSOR_COUNT`. Configure `TEST_ENVELOPE_CORES` consistently on the
+execution services. HOME and temp belong to the run; provider, Git and daemon
+credentials do not enter the test environment. Missing delegation is recorded
+as `unavailable` in the fingerprint and no longer defers the scheduler. Command
+teardown kills cgroup leftovers. Review receipts, including reused evidence,
+and post-merge receipts record the digests, resource shape, SDK, shard plan and
+load observations. Confirmed failures get a serial one-process `reference=1`
+repeat; a recovery is recorded as flaky and skips attribution. A failed base envelope canary is RT-2 environment evidence and yields
+an inconclusive receipt without merge attribution. See the
+[shared test envelope](pipeline.md#shared-test-envelope-rt-6) for the allowlist,
+canary and reference contract.
+See [host setup and legacy timer retirement](../../operations/setup/linux-runner-host.md#post-merge-develop-checks).

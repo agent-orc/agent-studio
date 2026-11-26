@@ -99,13 +99,15 @@ public static class StepCostMeasurement
             // Price legacy OpenAI usage as exclusive input, but keep the recorded
             // counters intact for telemetry, review evidence and run history.
             var pricedUsage = PipelineStoredUsageNormalization.Normalize(row);
-            var estimate = pricing.Estimate(
+            var estimate = pricing.EstimateRecorded(
                 pricedUsage.Model,
                 pricedUsage.InputTokens,
                 pricedUsage.OutputTokens,
                 pricedUsage.CacheReadTokens,
                 pricedUsage.CacheCreationTokens,
-                row.StartedAt ?? row.CompletedAt);
+                row.StartedAt ?? row.CompletedAt,
+                pricedUsage.InputIncludesCached,
+                pricedUsage.UsageNormalization);
             return row with
             {
                 CostBasis = StepCostBasis.Model,

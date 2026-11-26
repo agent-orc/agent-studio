@@ -1,0 +1,13 @@
+:host { display: block; min-width: 0; }
+.grants { display: flex; align-items: center; gap: var(--studio-spacing-1); min-width: 0; }
+.grants__list { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; gap: var(--studio-spacing-1); min-width: 0; }
+.grants__more { flex: 0 0 auto; }
+.grants__none { color: var(--studio-fg-muted); font-size: var(--studio-font-size-sm); }
+
+// One line: a chip that does not fit wraps below the visible line and is counted instead.
+.grants--fit .grants__list { flex: 0 0 auto; max-width: 100%; height: var(--studio-card-pill-height); overflow: hidden; }
+
+// Inside a stacked (narrow) grid there is room below: every chip shows.
+@container (max-width: 760px) {
+  .grants--fit .grants__list { height: auto; overflow: visible; }
+}

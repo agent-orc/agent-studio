@@ -32,6 +32,65 @@ public sealed class StepCostMeasurementTests : IDisposable
     private static PipelineExecutionLog NewLog() => new(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
 
     [Fact]
+    public void Missing_Codex_cache_split_stays_unpriced_in_step_stamp_and_rollups()
+    {
+        var step = Step(PipelineCatalogue.CoreAgentRunStepId, StepKind.Core,
+            LegacyCodexModel, 61_600_000, 111_000) with
+        {
+            InputIncludesCached = null, UsageNormalization = null,
+        };
+        var pricing = TokenTestServices.Pricing();
+        var stamped = StepCostMeasurement.Stamp(pricing, step);
+        Assert.False(stamped.ModelPriced);
+        Assert.Null(stamped.EstimatedCostUsd);
+        var summary = new PipelineCostCalculator(pricing).Summarize(Record("J1", TestAt, step));
+        Assert.Equal(0m, summary.TotalCostUsd);
+        Assert.Contains(Assert.Single(summary.Steps).PricingGaps, gap => gap.Reason == "missing-cache-split");
+    }
+
+    [Theory]
+    [InlineData(null, null, false)]
+    [InlineData(null, " ", false)]
+    [InlineData(true, null, true)]
+    [InlineData(false, null, true)]
+    [InlineData(null, "openai-input-includes-cached-v1", true)]
+    public void Zero_cache_cost_uses_recorded_input_provenance_across_pricing_paths(
+        bool? inputIncludesCached, string? normalization, bool expectedPriced)
+    {
+        var step = Step(PipelineCatalogue.CoreAgentRunStepId, StepKind.Core,
+            LegacyCodexModel, 1_000, 100) with
+        {
+            StartedAt = TestAt,
+            InputIncludesCached = inputIncludesCached,
+            UsageNormalization = normalization,
+        };
+        var usage = new OrchestratorTokenUsage
+        {
+            Model = step.Model,
+            InputTokens = checked((int)step.InputTokens),
+            OutputTokens = checked((int)step.OutputTokens),
+            InputIncludesCached = inputIncludesCached,
+            UsageNormalization = normalization,
+        };
+        var pricing = TokenTestServices.Pricing();
+        var estimate = pricing.EstimateReceipt(usage, TestAt);
+        var stamped = StepCostMeasurement.Stamp(pricing, step);
+
+        Assert.Equal(expectedPriced, estimate.ModelKnown);
+        Assert.Equal(expectedPriced, stamped.ModelPriced);
+        Assert.Equal(expectedPriced ? estimate.Total : (decimal?)null, stamped.EstimatedCostUsd);
+        Assert.Equal(expectedPriced ? null : "missing-cache-split", estimate.IncompleteReason);
+        Assert.Equal(step.InputTokens, stamped.InputTokens);
+        Assert.Equal(0, stamped.CacheReadTokens);
+        if (!expectedPriced)
+        {
+            Assert.Equal(0m, estimate.InputUsd);
+            Assert.Equal(0m, estimate.OutputUsd);
+            Assert.Equal(0m, estimate.Total);
+        }
+    }
+
+    [Fact]
     public void Recording_legacy_step_preserves_counters_while_cost_reads_normalize_them()
     {
         var log = NewLog();

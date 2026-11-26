@@ -13,6 +13,7 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 |---|---|---|---|---|
 | App 1 | Navigation | Home and primary destinations | Studio shell open | Single top row, text-only More menu below inline breakpoints; `d6b11df5d`, AGT-2963 (`3de9c213b1`) responsive correction. |
 | App 2 | Workspace breadcrumb and project picker | Active workspace, project, auto mode, open task count | Workspace/project known; picker always | Breadcrumb text and one picker pill; `d6b11df5d`. |
+| App 2a | Develop state | Develop usability and active quarantine count | Operator on a board tab, state known | Shared status indicator; green, quiet warning with count, running, or error only with a line-stop reason. Test, kind and end time in the accessible tooltip (RT-7). |
 | App 3 | Search | Global search action | Studio shell open | Header button; `5962926653`. |
 | App 4 | Task defaults, Environment, Project Chat | Defaults and workspace tools | Capabilities available | Shared header buttons; defaults `7fb0177069`, Environment `958fbf2411`, chat `8e1228f292`. |
 | App 5 | Theme, Needs you, Settings, account | User actions and the operator attention count | Needs you always; its count takes the warning tint only when nonzero | Icon or text buttons plus account control; theme `d6b11df5d`, settings/account `7fb0177069`, AGT-3356 moved usage to footer, AGT-3576 replaced the stall bell with `app-attention-control`. |

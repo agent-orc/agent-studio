@@ -722,7 +722,8 @@ public sealed partial class TaskServerStore
                 _ => IntegrationCommandStates.Escalated,
             };
             string? taskState = null;
-            var reason = decision.Reason;
+            var reason = heldForRedDevelop && !string.IsNullOrWhiteSpace(request.Detail)
+                ? decision.Reason + " " + request.Detail : decision.Reason;
             if (decision.TaskState is not null)
             {
                 var moved = await ExecuteAsync(connection, """

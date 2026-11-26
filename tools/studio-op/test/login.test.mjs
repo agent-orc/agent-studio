@@ -14,12 +14,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fakeToken } from './fake-studio.mjs';
 import { keyThumbprint } from '../src/login.mjs';
+import { stopAgent } from '../src/agent.mjs';
 
 const bin = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'studio-op.mjs');
 const posix = process.platform !== 'win32';
 const servers = [];
+const homes = [];
 
-after(() => { for (const server of servers) server.close(); });
+after(async () => {
+  for (const home of homes) { await stopAgent(path.join(home, '.config', 'agent-studio')); fs.rmSync(home, { recursive: true, force: true }); }
+  for (const server of servers) server.close();
+});
 
 /** A Studio that answers one sign-in: the start, then the scripted poll answers in order. */
 async function signInStudio(polls) {
@@ -29,7 +34,7 @@ async function signInStudio(polls) {
     req.on('data', chunk => { body += chunk; });
     req.on('end', () => {
       const parsed = body ? JSON.parse(body) : null;
-      requests.push({ method: req.method, path: req.url, authorization: req.headers.authorization ?? null, body: parsed });
+      requests.push({ method: req.method, path: req.url, authorization: req.headers.authorization ?? null, proof: req.headers.dpop ?? null, body: parsed });
       const send = (status, payload) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(payload)); };
       if (req.method === 'POST' && req.url === '/api/auth/operator-sign-in')
         return send(200, { signInId: 'sign-in-1', userCode: 'WDJB-MJHT', verificationUri: `${studio.url}/#/terminal-sign-in`,
@@ -51,6 +56,7 @@ async function signInStudio(polls) {
 
 function makeHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-op-login-'));
+  homes.push(home);
   fs.mkdirSync(path.join(home, '.config', 'agent-studio'), { recursive: true, mode: 0o700 });
   return home;
 }
@@ -76,14 +82,17 @@ test('login writes the confirmed session to operator-session with mode 600 and n
     { status: 'pending', interval: 1 },
     { status: 'slow-down', interval: 1 },
     { status: 'session', interval: 1, token: session, operatorAgentId: 'opa_1', sessionId: session.split('.')[1],
-      actor: 'operator-agent:opa_1/session:x', delegatedBy: 'human:owner', expiresAt: '2026-11-23T18:00:00Z',
+      actor: 'operator-agent:opa_1/session:x', delegatedBy: 'human:owner', expiresAt: new Date(Date.now() + 3600_000).toISOString(),
       classes: ['project.testing'], keyThumbprint: 'thumb' },
   ]);
   const home = makeHome();
-  const result = await run(['login', '--agent', 'ops console', '--label', 'agent@workstation', '--class', 'project.testing', '--json'],
+  const hardwareDeviceKeys = { win32: false, darwin: false, linux: false };
+  fs.writeFileSync(path.join(home, '.config', 'agent-studio', 'studio-op.json'), JSON.stringify({ hardwareDeviceKeys }));
+  const result = await run(['login', '--agent', 'ops console', '--label', 'agent@workstation', '--class', 'project.testing', '--lifetime', '24h', '--json'],
     home, studio.url);
   assert.equal(result.code, 0, result.stderr);
   assert.equal(result.json.ok, true);
+  assert.match(result.stderr, /Hardware keys are off by default/);
   assert.equal(result.json.actor, 'operator-agent:opa_1/session:x');
   assert.ok(!result.stdout.includes(session) && !result.stderr.includes(session));
   // The code, the link and a QR code go to stderr, so --json keeps stdout parseable.
@@ -95,15 +104,18 @@ test('login writes the confirmed session to operator-session with mode 600 and n
   const file = path.join(folder, 'operator-session');
   assert.equal(fs.readFileSync(file, 'utf8').trim(), session);
   if (posix) assert.equal(fs.statSync(file).mode & 0o777, 0o600);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'studio-op.json'), 'utf8')).credential, 'operator-session');
+  const savedConfig = JSON.parse(fs.readFileSync(path.join(folder, 'studio-op.json'), 'utf8'));
+  assert.equal(savedConfig.credential, 'operator-session');
+  assert.deepEqual(savedConfig.hardwareDeviceKeys, hardwareDeviceKeys);
 
   const [start] = studio.requests;
   assert.equal(start.authorization, null);
+  assert.equal(start.body.lifetimeHours, 24);
   assert.deepEqual(Object.keys(start.body.publicKey).sort(), ['crv', 'kty', 'x', 'y']);
   assert.equal(start.body.publicKey.crv, 'P-256');
   assert.deepEqual([start.body.deviceLabel, start.body.operatorAgent, start.body.classes], ['agent@workstation', 'ops console', ['project.testing']]);
   const keyFile = path.join(folder, 'operator-device-key.json');
-  if (posix) assert.equal(fs.statSync(keyFile).mode & 0o777, 0o600);
+  assert.equal(fs.existsSync(keyFile), false, 'the private key is never persisted');
   assert.equal(studio.requests.filter(request => request.path === '/api/auth/operator-sign-in/poll').length, 3);
 
   // auth status reads the session file the login selected.
@@ -112,14 +124,16 @@ test('login writes the confirmed session to operator-session with mode 600 and n
   assert.equal(status.json.credential.name, 'operator-session');
   assert.equal(status.json.credential.prefix, 'oas');
   assert.equal(status.json.server.authenticated, true);
+  assert.ok(studio.requests.find(request => request.authorization)?.proof, 'CLI commands carry DPoP');
+  assert.ok(studio.requests.filter(request => request.path === '/api/auth/operator-sign-in/poll').every(request => request.proof));
   assert.ok(!status.stdout.includes(session));
 
-  // A second login reuses the device key, so Studio sees a known device.
+  // A second login gets a fresh memory key; denial keeps the earlier session and signer.
   const again = await signInStudio([{ status: 'denied', interval: 1, message: 'The Owner denied this sign-in.' }]);
   const denied = await run(['login', '--no-qr', '--json'], home, again.url);
   assert.equal(denied.code, 13);
   assert.equal(denied.json.error, 'sign-in-denied');
-  assert.deepEqual(again.requests[0].body.publicKey, start.body.publicKey);
+  assert.notDeepEqual(again.requests[0].body.publicKey, start.body.publicKey);
   assert.equal(fs.readFileSync(file, 'utf8').trim(), session, 'a denied login keeps the earlier session file');
 });
 
@@ -130,7 +144,7 @@ test('an expired code ends login with its own exit code', async () => {
   assert.match(result.stderr, /sign-in-expired/);
 });
 
-test('login refuses plain HTTP to another host and an unsafe device key file', async () => {
+test('login refuses plain HTTP to another host and retires the ES-3 disk key', async () => {
   const home = makeHome();
   const remote = await run(['login', '--no-qr'], home, 'http://studio.example.test');
   assert.equal(remote.code, 3);
@@ -139,8 +153,55 @@ test('login refuses plain HTTP to another host and an unsafe device key file', a
   const keyFile = path.join(home, '.config', 'agent-studio', 'operator-device-key.json');
   fs.writeFileSync(keyFile, '{}', { mode: 0o644 });
   fs.chmodSync(keyFile, 0o644);
-  const studio = await signInStudio([]);
+  const studio = await signInStudio([{ status: 'denied', interval: 1 }]);
   const unsafe = await run(['login', '--no-qr'], home, studio.url);
-  assert.equal(unsafe.code, 3);
-  assert.match(unsafe.stderr, /device-key-permissions/);
+  assert.equal(unsafe.code, 13);
+  assert.equal(fs.existsSync(keyFile), false);
+});
+
+for (const outcome of ['hardware', 'signing-fails', 'http-error', 'transport-error', 'unverified']) test(`login completes with certification outcome: ${outcome}`, async () => {
+  const signingFails = outcome === 'signing-fails';
+  const memoryBinding = outcome !== 'hardware';
+  const { login } = await import('../src/login.mjs');
+  const { MemoryKeyProvider } = await import('../src/device-key.mjs');
+  const configDir = path.join(makeHome(), '.config', 'agent-studio');
+  const provider = new MemoryKeyProvider(); provider.bindingKind = 'tpm';
+  if (signingFails) provider.sign = () => { throw new Error('Hardware lost after opening'); };
+  const notes = [];
+  let certified = false;
+  let certificationAttempts = 0;
+  const token = fakeToken('oas');
+  const pollHandle = fakeToken('osp');
+  const ctx = { configDir, config: { hardwareDeviceKeys: { linux: true } }, output: { note(text) { notes.push(text); }, protect() {} },
+    client: { base: new URL('https://studio.test/'), url: p => new URL(p, 'https://studio.test/'),
+      async request() { return { signInId: 'signin-test', pollHandle, userCode: 'WDJB-MJHT', interval: 5,
+        expiresAt: new Date(Date.now() + 600_000).toISOString(), verificationUriComplete: 'https://studio.test/#/terminal-sign-in' }; },
+      async send(method, url, { body, headers }) {
+        assert.ok(headers.DPoP);
+        if (body.certification) {
+          certificationAttempts++;
+          assert.equal(notes.some(note => note.includes('Code:')), false, 'Owner code is not shown before certification');
+          assert.deepEqual(body.certification.publicKey, provider.publicJwk);
+          certified = true;
+          if (outcome === 'http-error') return { status: 503, body: { error: 'unavailable' } };
+          if (outcome === 'transport-error') throw Object.assign(new Error('Connection lost'), { code: 'studio-unreachable' });
+          return { status: 200, body: { status: 'pending', bindingKind: memoryBinding ? 'memory' : 'tpm' } };
+        }
+        assert.equal(certified, !signingFails);
+        return { status: 200, body: { status: 'session', token, bindingKind: memoryBinding ? 'memory' : 'tpm', expiresAt: new Date(Date.now() + 3600_000).toISOString() } };
+      } } };
+  try {
+    const result = await login(ctx, { noQr: true }, { wait: async () => {}, deviceKeyFactory: (directory, settings) => {
+      assert.equal(directory, configDir);
+      assert.deepEqual(settings.hardwareDeviceKeys, { linux: true });
+      return { provider, note: 'Device binding: tpm' };
+    } });
+    assert.equal(result.data.bindingKind, memoryBinding ? 'memory' : 'tpm');
+    assert.equal(certificationAttempts, signingFails ? 0 : 1, 'certification is not retried');
+    assert.equal(notes.filter(note => note.startsWith('Device binding:')).length, 1);
+    if (signingFails) assert.ok(notes.some(note => note.includes('Hardware signing failed')));
+    else if (memoryBinding) assert.ok(notes.some(note => note.startsWith('Device binding: memory.')));
+    assert.equal(fs.readFileSync(path.join(configDir, 'operator-session'), 'utf8').trim(), token);
+    assert.ok(notes.some(note => note.includes('Code:')));
+  } finally { await stopAgent(configDir); }
 });

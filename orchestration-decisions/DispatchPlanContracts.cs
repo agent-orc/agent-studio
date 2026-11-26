@@ -116,7 +116,10 @@ public sealed record DispatchFacts(
     IReadOnlyList<DispatchHold>? ActiveHolds = null,
     IReadOnlyList<string>? ActiveExclusiveMarks = null,
     IReadOnlyList<string>? DecisionRequestedHolds = null,
-    string? Persona = null);
+    string? Persona = null,
+    IReadOnlyList<string>? PickupCandidates = null,
+    IReadOnlyList<DispatchDependencyEdge>? ActiveDependencies = null,
+    IReadOnlyList<string>? SatisfiedDependencies = null);
 
 /// <summary>
 /// A strategy as data (<c>dispatch-strategy.v1</c>): id, revision and string

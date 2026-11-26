@@ -1,3 +1,4 @@
+import { HostNamePipe } from '../../../components/identity-chip/host-name.pipe';
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { WorkspaceOverlaysService } from '../../shell/state/workspace-overlays.service';
 import { CredentialInventoryService } from '../credential-inventory.service';
@@ -7,7 +8,7 @@ import { StatusIndicatorComponent } from '../../../components/status-indicator/s
 @Component({
   selector: 'app-credential-alerts',
   standalone: true,
-  imports: [StatusIndicatorComponent],
+  imports: [HostNamePipe, StatusIndicatorComponent],
   templateUrl: './credential-alerts.component.html',
   styleUrl: './credential-alerts.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

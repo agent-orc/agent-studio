@@ -1,10 +1,34 @@
 using AgentStudio.OrchestrationDecisions;
+using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentStudio.Tests;
 
 public sealed class HoldScopePolicyTests
 {
+    [Fact]
+    public void Active_hold_facts_exclude_report_only_lifted_and_expired_entries_and_preserve_exemptions()
+    {
+        // clock-independent: lifecycle admission uses the supplied fixed observation.
+        var now = new DateTimeOffset(2026, 11, 26, 12, 0, 0, TimeSpan.Zero);
+        var held = new ProjectTestQuarantine("quarantine-one", "Product.Tests.Isolated", "repair", DateOnly.MaxValue,
+            null, "confirmed twice", "held", "system:post-merge", now, now.AddHours(24), "fingerprint", [],
+            ["backend/Features/Pipeline/PostMerge"])
+        { TestFile = "backend.Tests/IsolatedTests.cs", ConfirmedSuspectPaths = ["contracts/Suspect.cs"],
+            AttributedRevertCardId = "revert", OwnerExemptCardIds = ["exempt"] };
+        var facts = HoldScopePolicy.ActiveHolds([held, held with { Id = "report", Kind = "report-only" },
+            held with { Id = "expired", ExpiresAtUtc = now }, held with { Id = "lifted", LiftedAtUtc = now }], now);
+        var fact = Assert.Single(facts);
+        Assert.Equal("quarantine-one", fact.QuarantineId);
+        Assert.Equal(held.ExpiresAtUtc, fact.ExpiresAtUtc);
+        Assert.Contains("backend.Tests/IsolatedTests.cs", fact.Files);
+        Assert.Contains("quarantine-one", HoldScopePolicy.IntegrationBlock(["backend/Features/Pipeline/PostMerge/A.cs"], facts, "ordinary"));
+        Assert.Null(HoldScopePolicy.IntegrationBlock(["frontend/A.ts"], facts, "ordinary"));
+        foreach (var card in new[] { "repair", "revert", "exempt" })
+            Assert.Null(HoldScopePolicy.IntegrationBlock(["backend/Features/Pipeline/PostMerge/A.cs"], facts, card));
+        Assert.NotNull(HoldScopePolicy.IntegrationBlock(["contracts/Suspect.cs"], facts, "ordinary"));
+    }
+
     [Theory]
     [InlineData("backend/Feature/A.cs", false)]
     [InlineData("backend/Feature/Sub/A.cs", true)]

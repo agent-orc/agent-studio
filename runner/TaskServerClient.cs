@@ -821,7 +821,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         // selection, then a provider-refusal fallback) is the shared
         // model-selection planner's (MS-5).
         var route = ModelSelectionPlanner.ClaimRoute(
-            claim.MechanicalFreshRoute, claim.ContinuationIntent, claim.ModelFallback);
+            claim.MechanicalFreshRoute, claim.ContinuationIntent, claim.ModelFallback, claim.ModelSelection);
         return new RunnerClaimResponse(
             RunnerClaimStatus.Claimed,
             claim.Task.TaskKey,

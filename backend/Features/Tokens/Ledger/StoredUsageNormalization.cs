@@ -40,6 +40,18 @@ internal static class StoredUsageNormalization
     /// </summary>
     public static TaskTokenCall Normalize(TaskTokenCall call)
     {
+        // Older remote imports asserted input semantics even when the Codex
+        // frame omitted cached_input_tokens. That boolean alone cannot prove
+        // a zero cache split. New imports stamp the normalization version only
+        // after observing the field; legacy zero-cache receipts stay unpriced.
+        if (ReceiptTokenPricing.MissingCacheSplit(call.Model, call.InputTokens, call.CacheReadTokens,
+                inputIncludesCached: null, call.UsageNormalization)
+            && call.ParticipantId?.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix,
+                StringComparison.Ordinal) == true)
+        {
+            return call with { InputIncludesCached = null };
+        }
+
         if (call.InputIncludesCached is not null
             || string.Equals(call.UsageNormalization,
                 ProviderUsageNormalization.OpenAiInputIncludesCachedV1,

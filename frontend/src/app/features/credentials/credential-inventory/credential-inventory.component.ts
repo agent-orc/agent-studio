@@ -1,3 +1,4 @@
+import { HostNamePipe } from '../../../components/identity-chip/host-name.pipe';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { CredentialInventoryService } from '../credential-inventory.service';
 import { WorkspaceOverlaysService } from '../../shell/state/workspace-overlays.service';
@@ -29,7 +30,7 @@ const loginTones: Readonly<Record<string, StatusTone>> = {
 @Component({
   selector: 'app-credential-inventory',
   standalone: true,
-  imports: [StatusIndicatorComponent],
+  imports: [HostNamePipe, StatusIndicatorComponent],
   templateUrl: './credential-inventory.component.html',
   styleUrl: './credential-inventory.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

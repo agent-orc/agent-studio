@@ -35,6 +35,26 @@
 .session-manager--access .session-manager__panel { top: calc(100% + var(--studio-spacing-2)); bottom: auto; }
 .session-manager--self-access .session-manager__panel { right: auto; left: 0; }
 :host-context(app-account-control) .session-manager__panel { top: calc(100% + var(--studio-spacing-2)); bottom: auto; }
+// Next to the actions of a page section or a detail area the toggle takes their geometry.
+:host-context(app-page-section) .session-manager__toggle {
+  min-height: var(--studio-action-height-sm);
+  border-radius: var(--studio-action-radius-sm);
+  font-size: var(--studio-font-size-sm);
+}
+@media (max-width: 640px) {
+  :host-context(app-page-section) .session-manager__toggle { min-height: var(--studio-target-coarse-min); }
+}
+// In a section header the control sits at the right edge, so its panel opens leftwards.
+:host-context(app-page-section) .session-manager--self-access .session-manager__panel { right: 0; left: auto; }
+// In the detail area the panel is part of the flow instead of a popover that the panel edge would cut off.
+:host-context(app-detail-layout .detail-layout__panel) { flex: 1 1 100%; }
+:host-context(app-detail-layout .detail-layout__panel) .session-manager { flex-wrap: wrap; width: 100%; }
+:host-context(app-detail-layout .detail-layout__panel) .session-manager__panel {
+  position: static;
+  flex: 1 1 100%;
+  width: auto;
+  max-height: none;
+}
 .session-manager__panel header { display: flex; align-items: center; justify-content: space-between; gap: var(--studio-spacing-2); }
 .session-manager__panel h3 { margin: 0; font-size: 1rem; }
 .session-manager__rows { display: grid; gap: var(--studio-spacing-2); margin: var(--studio-spacing-3) 0; }

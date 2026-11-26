@@ -618,6 +618,9 @@ public sealed class OperatorApprovalFlowTests : IDisposable
                 services.AddSingleton<TimeProvider>(_clock);
                 services.RemoveAll<IOperatorApprovalPush>();
                 services.AddSingleton<IOperatorApprovalPush>(_push);
+                // The notifier is the background reader of the approval notice
+                // queue; test hosts start product workers only on request.
+                services.AddHostedService(provider => provider.GetRequiredService<OperatorApprovalNotifier>());
             });
         });
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();

@@ -1,0 +1,70 @@
+<header class="page">
+  <p class="kicker">Concept Dossier · AGT-3950 · Deployment dashboard charts</p>
+  <h1>Live prototype</h1>
+  <p class="lede">Workspace / Deployments as charts: figures, tile map, release flow, deploy timeline and the opt-in 3D landscape, on the recommended stack (uPlot plus three small own forms on Canvas 2D and SVG), drawn with the Studio tokens. All views read one aggregate; a click on a mark filters the others; the state is in the link.</p>
+</header>
+<div class="dd" id="dd" data-studio-theme="light" data-motion="off">
+  <div class="dd-top">
+    <h2>Workspace / Deployments <small>prototype</small></h2>
+    <div class="dd-seg" role="group" aria-label="Data set"><span>Data</span><button type="button" data-set="large">Large synthetic set</button><button type="button" data-set="installation">Installation by role</button></div>
+    <div class="dd-seg" role="group" aria-label="Theme"><span>Theme</span><button type="button" data-theme="auto">Auto</button><button type="button" data-theme="light">Light</button><button type="button" data-theme="dark">Dark</button></div>
+  </div>
+  <div class="dd-filters" role="group" aria-label="Filters for every view">
+    <div class="dd-seg" role="group" aria-label="Time range"><span>Range</span><button type="button" data-days="30">30 days</button><button type="button" data-days="90">90 days</button><button type="button" data-days="180">180 days</button></div>
+    <label><span>From</span><input type="date" id="f-from"></label>
+    <label><span>To</span><input type="date" id="f-to"></label>
+    <label><span>Project group</span><select id="f-group"></select></label>
+    <label><span>Project</span><select id="f-project"></select></label>
+    <label><span>Environment</span><select id="f-env"></select></label>
+    <label><span>Tenant</span><select id="f-tenant"></select></label>
+    <label><span>Outcome</span><select id="f-outcome"></select></label>
+  </div>
+  <div class="dd-chips"><span id="dd-chips" class="dd-chips" aria-live="polite"></span><span class="dd-count" id="dd-count"></span></div>
+  <div class="dd-seg" role="group" aria-label="Assessment shown"><span>Assessment by</span><button type="button" data-persona="facts">Facts only</button><button type="button" data-persona="operations-warden">Operations warden</button><button type="button" data-persona="reliability-engineer">Reliability engineer</button><button type="button" data-persona="rejected">Rejected example</button></div>
+  <div class="dd-assess" id="dd-assess" aria-live="polite"></div>
+  <div class="dd-views">
+    <section class="dd-view" data-view="figures" aria-labelledby="h-figures">
+      <header><h3 id="h-figures">Delivery figures, Production</h3><p>Selected range against the same number of days before it; trend by week.</p></header>
+      <div class="dd-figs">
+        <div class="dd-fig" id="fig-0"><span class="n" hidden></span><div class="l"></div><span class="v"></span><span class="u"></span><div class="d"></div><div class="s"></div></div>
+        <div class="dd-fig" id="fig-1"><span class="n" hidden></span><div class="l"></div><span class="v"></span><span class="u"></span><div class="d"></div><div class="s"></div></div>
+        <div class="dd-fig" id="fig-2"><span class="n" hidden></span><div class="l"></div><span class="v"></span><span class="u"></span><div class="d"></div><div class="s"></div></div>
+        <div class="dd-fig" id="fig-3"><span class="n" hidden></span><div class="l"></div><span class="v"></span><span class="u"></span><div class="d"></div><div class="s"></div></div>
+      </div>
+    </section>
+    <section class="dd-view" data-view="overview" aria-labelledby="h-overview">
+      <header><h3 id="h-overview">Overview: projects by environments</h3><p>State now. Click a tile to filter every view to it; arrow keys move, Enter selects.</p>
+        <div class="dd-seg"><button type="button" id="f-split" aria-pressed="false">Split by tenant</button><button type="button" id="t-table" aria-pressed="false">Table</button></div></header>
+      <div class="dd-legend" aria-label="Legend">
+        <span class="ramp">Releases behind <i class="r0"></i><i class="r1"></i><i class="r2"></i><i class="r3"></i><i class="r4"></i> 0, 1 to 2, 3 to 4, 5 to 7, 8 or more</span>
+        <span>Last run: check succeeded, disc failed, triangle rolled back, ring running</span>
+        <span><i class="dot" style="background:var(--dd-ok)"></i>up <i class="dot" style="background:var(--dd-warn)"></i>degraded <i class="dot" style="background:var(--dd-bad)"></i>down</span>
+        <span>Clock pill: cards waiting for approval</span>
+        <span><i class="flag"></i>no verified off-host backup</span><span><i class="flag w"></i>construction site or warning</span>
+      </div>
+      <div id="v-overview"></div><div class="dd-table" id="dd-table" hidden></div>
+    </section>
+    <section class="dd-view" data-view="flow" aria-labelledby="h-flow">
+      <header><h3 id="h-flow">Release flow: Integrated, Staging, Production</h3><p>Where the cards integrated in the range are now. Click a state on the right to list its cards.</p></header>
+      <div class="dd-legend"><span><i class="s0"></i>integrated, not deployed</span><span><i class="s1"></i>on Staging only</span><span><i class="s2"></i>waiting for approval</span><span><i style="background:var(--dd-ok)"></i>live in Production</span></div>
+      <div id="v-flow"></div>
+      <div class="dd-cards-wrap" id="dd-cards-wrap" hidden><header><b id="dd-cards-title"></b><span id="dd-cards-count"></span></header><div class="dd-cards" id="dd-cards" tabindex="0" role="table" aria-label="Cards of the selected state"><div id="dd-cards-inner"></div></div></div>
+    </section>
+    <section class="dd-view" data-view="timeline" aria-labelledby="h-timeline">
+      <header><h3 id="h-timeline">Deploy timeline</h3><p>One dot per deploy run in its environment lane (rolled back: a ring); higher in the lane is longer (lane top = 15 min or more). The lower chart counts runs a day (a week on a narrow screen) over the whole 180 days. Drag across either chart to set the range, double-click the lower chart to release it.</p></header>
+      <div class="dd-legend"><span>Outcome</span><button type="button" data-outcome="0"><i class="dot" style="background:var(--dd-ok)"></i>Succeeded</button><button type="button" data-outcome="1"><i class="dot" style="background:var(--dd-bad)"></i>Failed</button><button type="button" data-outcome="2"><i class="dot" style="background:none;border:2px solid var(--dd-warn)"></i>Rolled back</button><button type="button" data-outcome="3"><i class="dot" style="background:var(--studio-fg-muted)"></i>Cancelled</button></div>
+      <div id="v-timeline"></div><div id="v-brush"></div>
+    </section>
+    <section class="dd-view" data-view="3d" style="order:99" aria-labelledby="h-3d">
+      <header><h3 id="h-3d">Deploy landscape, 3D</h3><p>Opt-in. Weeks by projects; height = deploy runs in the week, colour = share failed or rolled back.</p></header>
+      <button type="button" id="dd-3d-open">Open the 3D view (loads its chunk now)</button>
+      <div id="dd-3d" hidden>
+        <div class="dd-3d-bar"><button type="button" data-turn="-0.2" aria-label="Turn left">Turn left</button><button type="button" data-turn="0.2" aria-label="Turn right">Turn right</button><button type="button" id="dd-3d-flat" aria-pressed="false">Flatten to 2D</button><button type="button" id="dd-3d-close">Close</button>
+          <span class="dd-legend" style="margin:0"><span>Failed share <i style="background:color-mix(in srgb, var(--studio-fg-dim) 55%, var(--studio-bg-editor))"></i>0 % <i style="background:var(--dd-bad)"></i>60 % or more</span></span></div>
+        <div id="v-3d"></div><p id="dd-3d-readout" aria-live="polite"></p>
+      </div>
+    </section>
+  </div>
+  <div class="dd-linkrow"><label for="dd-link" style="flex-direction:row">Link state</label><input type="text" id="dd-link" readonly aria-label="State of this view as a link fragment"></div>
+  <p class="dd-perf" id="dd-perf" aria-live="off"></p>
+</div>

@@ -1,0 +1,15 @@
+<app-data-grid label="People" testId="access-users" [columns]="columns" [rows]="rows()" [rowId]="rowId" [rowLabel]="rowLabel"
+               [rowTestId]="rowTestId" [rowMuted]="muted" [selectable]="true" [selectedId]="selection.selectedId('user')"
+               (rowSelect)="selection.open('user', $event.id)">
+  <ng-template appGridCell="access" [appGridCellOf]="rows()" let-row>
+    <app-access-grants [grants]="row.grants" [fit]="true" />
+  </ng-template>
+  <ng-template appGridCell="state" [appGridCellOf]="rows()" let-row>
+    <app-status-indicator [tone]="row.tone" [label]="row.status" [compact]="true" [testId]="'access-user-status-' + row.sub" />
+  </ng-template>
+  <ng-template appGridCell="meta" [appGridCellOf]="rows()" let-row>{{ row.signIn }}</ng-template>
+  <ng-template appGridCell="actions" [appGridCellOf]="rows()" let-row>
+    <app-overflow-menu [label]="'Actions for ' + row.name" [items]="row.menu" [testId]="'access-user-menu-' + row.sub" (itemSelect)="act($event, row)" />
+  </ng-template>
+  <app-empty-state gridEmpty title="No people yet" body="Everyone with their own sign-in is listed here. Invite the first person to give them a role." />
+</app-data-grid>

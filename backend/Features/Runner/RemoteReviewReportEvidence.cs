@@ -64,6 +64,12 @@ internal static class RemoteReviewReportEvidence
         text.AppendLine($"subjectId: {Yaml(subjectId)}");
         text.AppendLine($"receivedAt: {receivedAt:O}");
         text.AppendLine($"outcome: {Yaml(request.Outcome)}");
+        var coverage = request.SuiteSelection is { } suites
+            ? $"Suites ran: {string.Join(", ", suites.AttemptedSuites)}. "
+                + $"Suites selected but not started: {string.Join(", ", suites.SelectedSuites.Except(suites.AttemptedSuites))}. "
+                + $"Suites omitted: {string.Join(", ", suites.OmittedSuites)}. {string.Join(" ", suites.Reasons)}"
+            : null;
+        if (coverage is not null) text.AppendLine($"suiteCoverage: {Yaml(coverage)}");
         if (!string.IsNullOrWhiteSpace(request.FailureClassification))
             text.AppendLine($"failureClassification: {Yaml(request.FailureClassification)}");
         text.AppendLine($"expectedResultSha: {Yaml(request.Workspace.ExpectedResultSha)}");
@@ -120,6 +126,13 @@ internal static class RemoteReviewReportEvidence
             text.AppendLine();
         }
 
+        if (coverage is not null)
+        {
+            text.AppendLine("## Test suite coverage");
+            text.AppendLine();
+            text.AppendLine(coverage);
+            text.AppendLine();
+        }
         text.AppendLine("## Skipped applicable aspects");
         text.AppendLine();
         if (request.SkippedAspects is not { Count: > 0 })

@@ -11,6 +11,9 @@
   <app-dialog eyebrow="Operator" title="Needs you" widthTier="lg" testid="studio-attention-list"
               (closeRequest)="close()" (backdropClick)="close()">
     <div class="attention-list" data-testid="attention-list-body">
+      @if (overlapError()) {
+        <p class="attention-list__reason" role="alert" data-testid="attention-overlap-error">{{ overlapError() }}</p>
+      }
       @if (attention.error() && count() === 0) {
         <p class="attention-list__empty" data-testid="attention-list-error">The attention list could not be read. It retries every 15 seconds.</p>
       } @else if (attention.loaded() && count() === 0) {
@@ -60,9 +63,20 @@
                   } @else {
                     <p class="attention-list__reason" data-testid="attention-row-reason" [attr.title]="item.reason">{{ item.reason }}</p>
                   }
+                  @if (item.ownerOptions?.length) {
+                    <ul class="attention-list__options" data-testid="attention-owner-options">
+                      @for (option of item.ownerOptions; track option.id) {
+                        <li>{{ option.label }} @if (option.recommended) { <strong>Recommended</strong> }</li>
+                      }
+                    </ul>
+                  }
                 </div>
                 <button type="button" class="attention-list__action" data-testid="attention-row-action"
                         (click)="act(item, group.spec)">{{ actionLabel(item, group.spec) }}</button>
+                @if (item.type === 'dispatch.overlap-starved' && item.project && item.suggestedOperations.includes('dispatch.run-anyway')) {
+                  <button type="button" class="attention-list__action attention-list__action--secondary" data-testid="attention-run-anyway"
+                          [disabled]="overlapPending() !== null" (click)="runAnyway(item)">Run anyway</button>
+                }
                 @if (item.type === 'environment.incident-open') {
                   <button type="button" class="attention-list__action attention-list__action--secondary" data-testid="attention-open-operations"
                           (click)="openOperations(item)">Open Operations</button>

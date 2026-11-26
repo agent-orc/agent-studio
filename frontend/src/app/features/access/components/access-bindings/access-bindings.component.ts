@@ -1,80 +1,88 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import {
-  groupBindingsByScope,
-  principalKindLabel,
-  principalName,
-  scopeLabel,
-  type IamGrant,
-  type IamPrincipalKind,
-  type RoleBinding,
-} from '../../models/access.model';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChipComponent } from '../../../../components/chip/chip.component';
+import { DataGridComponent, GridCellDirective, type GridColumn } from '../../../../components/data-grid';
+import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
+import type { MenuItem } from '../../../../components/menu';
+import { OverflowMenuComponent } from '../../../../components/overflow-menu/overflow-menu.component';
+import { PageSectionComponent } from '../../../../components/page-section/page-section.component';
+import { groupBindingsByScope, principalKindLabel, principalName, scopeLabel, type IamScopeKind, type RoleBinding } from '../../models/access.model';
+import { accessColumns, isApiToken, roleName } from '../../models/access-view.model';
+import { AccessSelectionService, type AccessDetailKind } from '../../services/access-selection.service';
 import { AccessService } from '../../services/access.service';
-import { AccessGrantFormComponent } from '../access-grant-form/access-grant-form.component';
 
-interface PrincipalOption {
-  value: string;
-  kind: IamPrincipalKind;
+export interface BindingRow {
   id: string;
-  label: string;
+  name: string;
+  /** The kind of principal, shown as the second line of the identity cell. */
+  sub: string;
+  role: string;
+  owner: boolean;
+  meta: string;
+  binding: RoleBinding;
+  /** The detail this principal opens in; an API token has its own section. */
+  detail: AccessDetailKind;
+  menu: readonly MenuItem[];
 }
 
-/** Role bindings per scope, with removal and a form to add one. */
+interface ScopeView {
+  key: string;
+  title: string;
+  kind: string;
+  rows: readonly BindingRow[];
+}
+
+const KIND: Record<IamScopeKind, string> = { workspace: 'The whole workspace.', project: 'One project.', environment: 'One environment of a project.' };
+const MENU: readonly MenuItem[] = [
+  { kind: 'row', id: 'open', label: 'Open principal' },
+  { kind: 'separator' },
+  { kind: 'row', id: 'remove', label: 'Remove role…', danger: true },
+];
+
+/**
+ * Role bindings by scope: for the workspace, each project and each
+ * environment, who holds which role there. A row opens its principal, where
+ * roles are added and removed.
+ */
 @Component({
   selector: 'app-access-bindings',
   standalone: true,
-  imports: [AccessGrantFormComponent],
+  imports: [ChipComponent, DataGridComponent, EmptyStateComponent, GridCellDirective, OverflowMenuComponent, PageSectionComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-bindings.component.html',
   styleUrl: './access-bindings.component.scss',
 })
 export class AccessBindingsComponent {
   readonly access = inject(AccessService);
+  readonly selection = inject(AccessSelectionService);
+  readonly columns: GridColumn[] = accessColumns('Principal', 'Role', 'Source', null);
 
-  readonly groups = computed(() => groupBindingsByScope(this.access.overview()?.bindings ?? [], this.access.projects()));
-  readonly principals = computed<PrincipalOption[]>(() => {
+  readonly scopes = computed<ScopeView[]>(() => {
     const overview = this.access.overview();
-    if (!overview) return [];
-    return [
-      ...overview.users.map(user => option('user', user.id, `${user.displayName} (${user.username})`)),
-      ...overview.groups.map(group => option('group', group.id, group.name)),
-      ...overview.serviceAccounts.filter(account => !account.disabledAt)
-        .map(account => option('service-account', account.id, account.name)),
-    ];
+    const projects = this.access.projects();
+    return groupBindingsByScope(overview?.bindings ?? [], projects).map(group => ({
+      key: group.key,
+      title: scopeLabel(group.scope, projects),
+      kind: KIND[group.scope.kind],
+      rows: group.bindings.map(binding => {
+        const account = binding.principalKind === 'service-account'
+          ? overview?.serviceAccounts.find(candidate => candidate.id === binding.principalId) : undefined;
+        return {
+          id: binding.id, name: principalName(binding.principalKind, binding.principalId, overview),
+          sub: account && isApiToken(account) ? 'API token' : principalKindLabel(binding.principalKind),
+          role: roleName(overview, binding.role), owner: binding.role === 'owner', meta: binding.source, binding,
+          detail: binding.principalKind === 'service-account' ? (account && isApiToken(account) ? 'api-token' : 'service-account') : binding.principalKind,
+          menu: MENU,
+        };
+      }),
+    }));
   });
-  readonly principal = signal('');
-  readonly selectedPrincipal = computed<PrincipalOption | null>(() =>
-    this.principals().find(candidate => candidate.value === this.principal()) ?? this.principals()[0] ?? null);
-  readonly grant = signal<IamGrant | null>(null);
 
-  scopeTitle(binding: RoleBinding): string {
-    return scopeLabel(binding.scope, this.access.projects());
+  readonly rowId = (row: BindingRow) => row.id;
+  readonly rowLabel = (row: BindingRow) => row.name;
+  readonly rowTestId = (row: BindingRow) => `access-binding-${row.id}`;
+
+  /** The detail of the row's principal; "Remove role" opens its confirmation there. */
+  open(row: BindingRow, remove = false): void {
+    this.selection.open(row.detail, row.binding.principalId, remove ? `remove-binding:${row.id}` : null);
   }
-
-  principalLabel(binding: RoleBinding): string {
-    return principalName(binding.principalKind, binding.principalId, this.access.overview());
-  }
-
-  kindLabel(kind: IamPrincipalKind): string {
-    return principalKindLabel(kind);
-  }
-
-  roleName(id: string): string {
-    return this.access.overview()?.roles.find(role => role.id === id)?.displayName ?? id;
-  }
-
-  async add(): Promise<void> {
-    const principal = this.selectedPrincipal();
-    const grant = this.grant();
-    if (!principal || !grant || this.access.busy()) return;
-    await this.access.addBinding(principal.kind, principal.id, grant.role, grant.scope);
-  }
-
-  async remove(binding: RoleBinding): Promise<void> {
-    if (this.access.busy()) return;
-    await this.access.removeBinding(binding.id);
-  }
-}
-
-function option(kind: IamPrincipalKind, id: string, label: string): PrincipalOption {
-  return { value: `${kind}:${id}`, kind, id, label: `${principalKindLabel(kind)}: ${label}` };
 }

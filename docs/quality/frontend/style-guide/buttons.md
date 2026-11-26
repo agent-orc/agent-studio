@@ -121,6 +121,14 @@ This keeps action chrome available outside the shell's own style scope.
 | `.btn--ghost`    | Tertiary reveal, cancel, or dismiss action                       |
 | `.btn--create`   | One-off "Create task" purple variant in the top header          |
 
+`m.action-buttons` carries `.btn`, `.btn--primary`, `.btn--ghost` and
+`.btn--danger` (AGT-4029). `.btn--danger` is the confirming action of a
+destructive step and fills with `--studio-error`. The destructive action at
+rest is the combination `.btn--ghost.btn--danger`: quiet red text that leads to
+a confirmation, so a row of safe actions never carries a red fill. The shared
+`<app-inline-confirm>` renders both; see pattern 7 of the
+[Access page pilot](../../../system/ui-standard/access-page-pilot.md).
+
 Sibling text buttons share one height, inset, radius, type size, focus ring,
 and disabled treatment. A group has at most one primary. Danger communicates
 impact, not general importance. A static label beside the group does not use

@@ -198,6 +198,7 @@ public sealed record SecurityPostureFacts
     public IReadOnlyList<StudioApiToken> ApiTokens { get; init; } = [];
     public IReadOnlyList<ServiceAccountFact> ServiceAccounts { get; init; } = [];
     public IReadOnlyList<OperatorAgentFact> OperatorAgents { get; init; } = [];
+    public int OperatorIdleHours { get; init; } = 24;
     public IReadOnlyList<CredentialInventoryItemDto> Inventory { get; init; } = [];
     public string InventorySource { get; init; } = SecurityPostureSources.Local;
     public string? InventoryProblem { get; init; }

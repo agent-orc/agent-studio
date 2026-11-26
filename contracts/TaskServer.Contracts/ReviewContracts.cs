@@ -102,7 +102,9 @@ public sealed record ReviewCommandDto(
     string? ThinkingLevel = null,
     string BaselineMode = ReviewBaselineModes.TestFailures,
     string WorkingSubdir = "",
-    ReviewLibraryStepDto? LibraryStep = null);
+    ReviewLibraryStepDto? LibraryStep = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    SelectionResult? ModelSelection = null);
 
 public sealed record ReviewPlanDto(
     IReadOnlyList<ReviewCommandDto> Commands,
@@ -145,7 +147,19 @@ public sealed record ReviewPlanDto(
     string? BuildTestDeferralDisabledReason = null,
     IReadOnlyList<ReviewPreparationSkipDto>? PreparationSkips = null,
     /// <summary>Exact target-branch commit from which the command plan was read.</summary>
-    string? PlanCommitSha = null);
+    string? PlanCommitSha = null,
+    ReviewSuiteSelectionDto? SuiteSelection = null)
+{
+    public IReadOnlyList<ProjectTestQuarantine> Quarantines { get; init; } = [];
+}
+
+public sealed record ReviewSuiteSelectionDto(IReadOnlyList<string> SelectedSuites,
+    IReadOnlyList<string> OmittedSuites, IReadOnlyList<string> Reasons)
+{
+    public IReadOnlyDictionary<string, string> SuiteCommands { get; init; } = new Dictionary<string, string>();
+    public IReadOnlyList<string> AttemptedSuites { get; init; } = [];
+    public IReadOnlyDictionary<string, string> SuiteSteps { get; init; } = new Dictionary<string, string>();
+}
 
 /// <summary>Frozen engine decision visible with the review subject before any review command runs.</summary>
 public sealed record DeepReviewDecisionDto(string ReceiptId, string Mode, bool Selected,
@@ -439,7 +453,13 @@ public sealed record ReviewCommandEvidenceDto(
     /// the failure names had no shape the repeat output could be checked for.
     /// </summary>
     string? RepeatObservation = null,
-    IReadOnlyDictionary<string, string>? FailureMessages = null);
+    IReadOnlyDictionary<string, string>? FailureMessages = null,
+    string? CliType = null,
+    SelectionResult? ModelSelection = null)
+{
+    public PostMergeEnvelopeFingerprint? Envelope { get; init; }
+    public IReadOnlyList<TestQuarantineHit> QuarantinedFailures { get; init; } = [];
+}
 
 /// <summary>
 /// Evidence levels for a passing clean repeat (AGT-3650). A test-name proof
@@ -573,7 +593,10 @@ public sealed record ReviewEnvironmentDto(
     string RuntimeVersion,
     IReadOnlyDictionary<string, string> Toolchain,
     IReadOnlyDictionary<string, string> Isolation,
-    ReviewWorkerProvenanceDto? Worker = null);
+    ReviewWorkerProvenanceDto? Worker = null)
+{
+    public PostMergeEnvelopeFingerprint? Envelope { get; init; }
+}
 
 /// <summary>
 /// Which agent-host build actually produced a verdict. The detached review
@@ -760,7 +783,11 @@ public sealed record ReviewReportRequest(
     string? BriefSha256 = null,
     IReadOnlyList<ReviewSkippedAspectDto>? SkippedAspects = null,
     bool ArtifactsReduced = false,
-    string? QualityStudioCodeQualityMode = null);
+    string? QualityStudioCodeQualityMode = null,
+    ReviewSuiteSelectionDto? SuiteSelection = null)
+{
+    public IReadOnlyList<ProjectTestQuarantine> Quarantines { get; init; } = [];
+}
 
 /// <summary>
 /// State of the task-folder evidence write (grade markdown, aspect files,

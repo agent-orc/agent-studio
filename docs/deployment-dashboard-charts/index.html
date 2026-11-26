@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en" data-document-pattern="concept">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deployment dashboard charts | Agent Studio Dossier</title>
+<!--g:STYLE--><style data-article-template="v2">/* docs/app/templates/article-document-v2.html, minified by build.mjs */:root{color-scheme:light;--article-paper: #fcfcfb;--article-surface: #f2f1ee;--article-surface-strong: #e9e8e3;--article-ink: #151515;--article-muted: #5f5e59;--article-faint: #696762;--article-line: #d8d6cf;--article-link: #1f67b2;--article-link-soft: #eaf1fb;--article-good: #18753a;--article-good-soft: #eaf4ea;--article-warn: #8b6100;--article-warn-soft: #f8f0dd;--article-bad: #b72f2f;--article-bad-soft: #fbecec;--article-serif: Georgia, "Times New Roman", serif;--article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;--article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace}@media(prefers-color-scheme:dark){:root{color-scheme:dark;--article-paper: #1a1a19;--article-surface: #232322;--article-surface-strong: #2c2c2a;--article-ink: #f7f7f4;--article-muted: #c3c2b7;--article-faint: #9d9c94;--article-line: #3d3d3a;--article-link: #78aef0;--article-link-soft: #1e2a3a;--article-good: #67b867;--article-good-soft: #1f2f1f;--article-warn: #d9a63f;--article-warn-soft: #33301e;--article-bad: #e66767;--article-bad-soft: #382222}}*{box-sizing:border-box}html{background:var(--article-paper)}body{margin:0;background:var(--article-paper);color:var(--article-ink);font:17px/1.75 var(--article-serif);text-rendering:optimizeLegibility}main,.article{width:min(70ch,calc(100% - 48px));margin:0 auto;padding:0 0 80px}header.page{margin-bottom:12px;padding:48px 0 28px;border-bottom:1px solid var(--article-line)}h1,h2,h3,h4,.kicker,.meta,.number,nav,table,figcaption,.box,.callout,.evidence-figure,.variant-grid,.evidence-list{font-family:var(--article-sans)}h1{margin:0 0 14px;font-size:clamp(2.2rem,6vw,3.4rem);line-height:1.08;letter-spacing:-.025em}h2{margin:56px 0 10px;font-size:1.55rem;line-height:1.25}h3{margin:34px 0 8px;font-size:1.08rem;line-height:1.35}h4{margin:0 0 8px;font-size:.94rem}p{margin:0 0 18px}p:last-child{margin-bottom:0}.kicker,.number{margin:0 0 12px;color:var(--article-faint);font-size:.75rem;font-weight:700;letter-spacing:.12em;line-height:1;text-transform:uppercase}.lede{margin:0;color:var(--article-muted);font-size:1.18rem;line-height:1.6}.meta{display:flex;flex-wrap:wrap;gap:10px 18px;margin-top:20px;color:var(--article-faint);font-size:.78rem}.meta b{color:var(--article-muted);font-weight:650}a{color:var(--article-link);text-underline-offset:.16em}a:focus-visible{outline:2px solid var(--article-link);outline-offset:3px;border-radius:2px}code{padding:.08em .34em;border-radius:4px;background:var(--article-surface-strong);font:.84em/1.5 var(--article-mono);overflow-wrap:anywhere}pre{overflow-x:auto;margin:24px 0;padding:16px 18px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface)}pre code{padding:0;background:transparent}ul,ol{margin:0 0 18px;padding-left:24px}li+li{margin-top:6px}table{width:100%;margin:24px 0;border-collapse:collapse;font-size:.88rem;line-height:1.5}th,td{padding:10px 12px;border-bottom:1px solid var(--article-line);text-align:left;vertical-align:top}th{color:var(--article-faint);font-size:.74rem;letter-spacing:.06em;text-transform:uppercase}.box,.callout{margin:24px 0;padding:18px 22px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface);font-size:.92rem;line-height:1.65}.box.accent,.callout[data-tone=accent]{border-color:color-mix(in srgb,var(--article-link) 30%,var(--article-line));background:var(--article-link-soft)}.box.good,.callout[data-tone=good]{border-color:color-mix(in srgb,var(--article-good) 30%,var(--article-line));background:var(--article-good-soft)}.box.warn,.callout[data-tone=warn]{border-color:color-mix(in srgb,var(--article-warn) 35%,var(--article-line));background:var(--article-warn-soft)}.box.bad,.callout[data-tone=bad]{border-color:color-mix(in srgb,var(--article-bad) 30%,var(--article-line));background:var(--article-bad-soft)}figure{margin:30px 0}figure>img,figure>svg{display:block;width:100%;height:auto;border:1px solid var(--article-line);border-radius:10px;background:var(--article-paper)}figcaption{margin-top:10px;color:var(--article-muted);font-size:.8rem;line-height:1.5}.evidence-figure{margin-top:38px;margin-bottom:38px}.evidence-captures{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:12px}.evidence-capture{position:relative;min-width:0;overflow:hidden;border:1px solid var(--article-line);border-radius:10px;background:var(--article-paper)}.evidence-capture>img{display:block;width:100%;height:auto}.capture-theme,.figure-annotation{position:absolute;z-index:1;border:1px solid var(--article-line);border-radius:999px;background:var(--article-surface);color:var(--article-muted);font-size:.68rem;font-weight:750;letter-spacing:.04em;line-height:1.35}.capture-theme{top:10px;left:10px;padding:3px 8px;text-transform:uppercase}.figure-annotation{right:12px;bottom:12px;max-width:min(28ch,calc(100% - 24px));padding:5px 10px;border-color:color-mix(in srgb,var(--article-link) 45%,var(--article-line));background:var(--article-link-soft);color:var(--article-link);letter-spacing:0;text-transform:none}.figure-claim{display:block;color:var(--article-ink);font-size:.84rem}.figure-as-of{display:flex;flex-wrap:wrap;gap:2px 14px;margin-top:6px;color:var(--article-faint);font-size:.72rem}.breakout,.media-breakout{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%)}.variant-grid{display:grid;grid-template-columns:1fr;gap:14px;margin:24px 0}.variant{min-width:0;padding:16px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface)}.variant h3{margin:0 0 8px}.variant img,.variant svg{display:block;width:100%;height:auto;margin-top:12px}[data-document-pattern=ui] .variant-grid{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%);grid-template-columns:repeat(2,minmax(0,1fr))}[data-document-pattern=ui] .mockup{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%)}.evidence-list{display:grid;gap:10px;margin:24px 0}.evidence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px 14px;align-items:start;padding:14px;border:1px solid var(--article-line);border-radius:9px;background:var(--article-surface);color:var(--article-ink);text-decoration:none}.evidence:hover{border-color:var(--article-link);background:var(--article-link-soft)}.evidence-class{display:inline-flex;align-items:center;min-height:22px;padding:2px 8px;border-radius:999px;background:var(--article-surface-strong);color:var(--article-muted);font-size:.68rem;font-weight:750;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}[data-document-pattern=concept] .evidence-class[data-evidence-class=observed]{background:var(--article-good-soft);color:var(--article-good)}[data-document-pattern=concept] .evidence-class[data-evidence-class=inferred]{background:var(--article-warn-soft);color:var(--article-warn)}[data-document-pattern=concept] .evidence-class[data-evidence-class=proposed]{background:var(--article-link-soft);color:var(--article-link)}.evidence b{display:block;margin-bottom:2px;font-size:.88rem}.evidence small{display:block;color:var(--article-muted);font-size:.78rem;line-height:1.45}.dim{color:var(--article-muted)}@media(max-width:760px){main,.article{width:min(100% - 28px,70ch);padding-bottom:52px}header.page{padding-top:32px}.breakout,.media-breakout,[data-document-pattern=ui] .variant-grid,[data-document-pattern=ui] .mockup{width:calc(100vw - 20px)}[data-document-pattern=ui] .variant-grid,.evidence,.evidence-captures{grid-template-columns:1fr}table{display:block;overflow-x:auto}}@media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition-duration:0s!important;animation-duration:0s!important}}</style>
+<style data-dossier="deployment-dashboard-charts">nav.chapters{margin:20px 0 32px;font:.82rem/1.7 var(--article-sans)}nav.chapters ol{display:flex;flex-wrap:wrap;gap:4px 18px;margin:0;padding:0;list-style:none}nav.chapters [aria-current]{color:var(--article-ink);font-weight:650;text-decoration:none}.tablewrap{overflow-x:auto}table code{overflow-wrap:anywhere}.decision{margin:18px 0;padding:14px 20px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface);font:.9rem/1.55 var(--article-sans)}.decision h3{margin:0 0 4px}.decision p{margin:4px 0}.decision label{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:start;margin:6px 0;cursor:pointer}.decision label input{margin-top:5px}.decision textarea{width:100%;min-height:54px;margin-top:6px;padding:8px;border:1px solid var(--article-line);border-radius:8px;background:var(--article-paper);color:var(--article-ink);font:inherit}.rec{display:inline-block;margin-left:6px;padding:0 7px;border-radius:99px;background:var(--article-link-soft);color:var(--article-link);font-size:.7rem;font-weight:700}.rec{margin-left:8px;padding:1px 8px;border-radius:999px;background:var(--article-link-soft);color:var(--article-link);font-size:.72rem;font-weight:650;white-space:nowrap}</style><!--/g-->
+</head>
+<body>
+<main class="article">
+<header class="page">
+  <p class="kicker">Concept Dossier · AGT-3950</p>
+  <h1>Deployment dashboard charts</h1>
+  <p class="lede">Workspace / Deployments as strongly visual, dynamically drawn charts: a tile map of projects by environments, a release flow, a deploy timeline with a time brush, delivery figures and an opt-in 3D landscape. One aggregate request, filters in the link, a click on a mark filters the other views, and persona assessments on top of plain facts. Framework and budget are measured in a working prototype.</p>
+  <div class="meta"><span><b>Status</b> decision-pending</span><span><b>Phase</b> decision-ready</span><span><b>Source</b> AGT-3950</span><span><b>Updated</b> <!--g:UPDATED-->26 November 2026<!--/g--></span><span><b>Family</b> AGT-3879, AGT-3949, AGT-3950, AGT-3954, AGT-3955</span></div>
+</header>
+<!--g:NAV--><nav class="chapters" aria-label="Pages of this Dossier"><ol><li><a href="index.html" aria-current="page">Decision page</a></li><li><a href="views.html">Views and filters</a></li><li><a href="stack.html">Framework, budget and data</a></li><li><a href="assessments.html">Assessments, goals and warnings</a></li><li><a href="prototype.html">Live prototype</a></li></ol></nav><!--/g-->
+
+<section id="summary">
+<h2>Summary</h2>
+<p>On 17 November 2026 the owner said of Workspace / Deployments, a plain table and a long card column: "Das ist keine coole Darstellung", and asked for strongly visual, dynamically created graphics on a standard framework, gladly 3D, gladly with interactive filters, with performance as the condition. This page holds what the owner decides: alternatives, recommendation, evidence, <!--g:DECISION_COUNT-->10<!--/g--> open decisions and <!--g:SLICE_COUNT-->8<!--/g--> slices. Three chapters carry the detail and <a href="prototype.html">the live prototype</a> can be used.</p>
+<p><b>Where this stands.</b> The card belongs to the hosting family. The live structure canvas (AGT-3955, <code>docs/live-structure-canvas/</code>, on develop, accepted) decides the visual stack of the hosting area and recommends uPlot as the one chart library and an own Canvas 2D engine as the one canvas renderer. This Dossier tests that choice on the deployment views against Apache ECharts and Chart.js and builds on it. The topology of hosts, containers and services is not drawn here: it is that canvas (D6). Dashboard data (AGT-3949) and structure facts (AGT-3954) are on develop; the instance deploy records (AGT-3879) are not, and are assumed as its card describes them.</p>
+<!--g:FIG_DASHBOARD--><figure class="evidence-figure media-breakout" id="fig-dashboard">
+  <div class="evidence-captures">
+    <div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/dashboard-light-1440.png" alt="Workspace / Deployments prototype at 1440 px: filter row, four delivery figures with sparklines, the tile map of 40 projects by four environments, the release flow with counts, and the deploy timeline with its brush." loading="lazy"></div>
+    <div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/dashboard-dark-1440.png" alt="The same view in the dark theme of the Studio tokens." loading="lazy"></div>
+  </div>
+  <figcaption><span class="figure-claim"><b>Prototype.</b> One page shows the four delivery figures, every project by environment with drift, last run, health and waiting approvals, where the 2,747 cards of the range are, and 830 deploy runs on a timeline; projects without environments are drawn as not set up.</span>
+  <span class="figure-as-of"><span>Captured <time datetime="2026-11-26">26 November 2026</time> from this Dossier's prototype (<code>prototype.html</code>, commit base ca26ce2ef) by <code>capture.mjs</code>, headless Chromium, 1440 px, light and dark. Data: the seeded synthetic set of <code>src/data.js</code>, not a product state.</span></span></figcaption>
+</figure><!--/g-->
+</section>
+
+<section id="answers">
+<h2>Answers to the brief</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>Asked</th><th>Answer</th><th>Detail</th></tr></thead>
+<tbody>
+<tr><td>Framework, measured</td><td>Three candidates drew the same four views from the same aggregate. uPlot with three small own forms has the smallest chunk and the fastest filter change; it is also the library the structure canvas Dossier recommends, so the Studio keeps one.</td><td><a href="stack.html#framework">Framework</a></td></tr>
+<tr><td>Wrapper</td><td>A thin own chart host: signal inputs, one instance reused, <code>ResizeObserver</code>, dispose on destroy, behind a dynamic import.</td><td><a href="stack.html#wrapper">Wrapper</a></td></tr>
+<tr><td>3D where it carries data</td><td>One opt-in view, the deploy landscape: weeks by projects, height = runs, colour = failed share. Drawn with Canvas 2D, loaded when opened, flattens into its 2D heat map. echarts-gl and three.js were measured as the WebGL routes.</td><td><a href="stack.html#three-d">3D</a></td></tr>
+<tr><td>Views</td><td>Overview tile map, release flow with a virtualised card list, deploy timeline with brush, delivery figures; on the synthetic large set and on an installation-shaped set by role.</td><td><a href="views.html">Views and filters</a></td></tr>
+<tr><td>Topology</td><td>Dropped here as the addendum asks; it is the live structure canvas, <code>docs/live-structure-canvas/index.html</code>. A tile links to its node there.</td><td>D6</td></tr>
+<tr><td>Filters</td><td>Project group, project, environment, tenant, time range, outcome; a clicked tile, flow state, legend entry or brushed range filters every view; state in the link; keyboard reachable.</td><td><a href="views.html#filters">Filters</a></td></tr>
+<tr><td>Performance budget</td><td>Measured in the prototype and written down with the limit for each item; the aggregation each view needs is named.</td><td><a href="stack.html#budget">Budget</a></td></tr>
+<tr><td>Assessments by personas</td><td>Facts from the APIs, assessments as validated view specifications by the operations warden and the reliability engineer; backup goal and construction sites pinned to tiles; cost and freshness stated.</td><td><a href="assessments.html">Assessments</a></td></tr>
+<tr><td>Screenshots</td><td>Every view in light and dark at 1440 px and 390 px.</td><td><a href="views.html#captures">Captures</a></td></tr>
+</tbody></table></div>
+</section>
+
+<section id="alternatives" data-concept-section="alternatives">
+<h2>Alternatives</h2>
+<h3>Chart framework</h3>
+<div class="variant-grid">
+<div class="variant"><h4>A · uPlot plus small own forms</h4><p>uPlot (MIT) draws the two time charts. The tile map and the sparklines are drawn on Canvas 2D and the release flow as SVG, 6.6 kB gzip together, on the Studio tokens. Smallest and fastest; the forms are ours to maintain, and so is accessibility. uPlot's last release is of March 2025.</p></div>
+<div class="variant"><h4>B · Apache ECharts 6</h4><p>The baseline of the brief (Apache-2.0, active): heat map, sankey, scatter, brush, dataZoom, legend and an aria module out of the box, tree-shaken from <code>echarts/core</code>. One framework for every form; the largest chunk and the slowest update of the three.</p></div>
+<div class="variant"><h4>C · Chart.js 4 with plugins</h4><p>Familiar API (MIT, active); matrix, sankey and zoom come from three separate plugins with their own release rhythm. Middle size; no brush component, no built-in accessibility.</p></div>
+</div>
+<!--g:BENCH_BRIEF--><div class="tablewrap"><table><thead><tr><th>Candidate</th><th>Chunk, gzip</th><th>First chart</th><th>All views</th><th>Filter change, median and p95</th></tr></thead><tbody>
+<tr><td>A · uPlot 1.6 plus own forms</td><td>29.9 kB</td><td>50 ms</td><td>83 ms</td><td>33 ms, 53 ms</td></tr>
+<tr><td>B · Apache ECharts 6.1</td><td>220.7 kB</td><td>132 ms</td><td>392 ms</td><td>83 ms, 383 ms</td></tr>
+<tr><td>C · Chart.js 4.6 with matrix, sankey and zoom plugins</td><td>82.1 kB</td><td>74 ms</td><td>141 ms</td><td>33 ms, 67 ms</td></tr>
+</tbody></table></div><!--/g-->
+<h3>3D</h3>
+<div class="variant-grid">
+<div class="variant"><h4>A · Canvas 2D, opt-in</h4><p>An orthographic scene of boxes sorted back to front. No WebGL, no library, a chunk of its own; turns, tilts and flattens.</p></div>
+<div class="variant"><h4>B · three.js</h4><p>Real lighting and far more bars than this view needs, for a second renderer in the Studio and a chunk many times the 2D charts.</p></div>
+<div class="variant"><h4>C · echarts-gl</h4><p>Only with ECharts. Its package declares ECharts 6 support in the one release since March 2022; see the measurement for whether it ran.</p></div>
+</div>
+<h3>Wrapper, data and composition</h3>
+<p>Wrapper: a thin own host, a wrapper library, or none (D2). Data: one aggregate for all views, one endpoint a view, or today's joins of per-project requests in the browser (D10). Composition: facts only, a persona's assessment on top of facts, or a model-composed page (D9). Each is laid out in <a href="stack.html">Framework, budget and data</a> and <a href="assessments.html">Assessments</a>.</p>
+</section>
+
+<section id="recommendation" data-concept-section="recommendation">
+<h2>Recommendation</h2>
+<div class="callout" data-tone="accent"><p><b>Build the deployment page on candidate A, on one aggregate, with 2D as the default and the landscape as the one opt-in 3D view.</b></p></div>
+<ul>
+<li><b>Framework A</b>, uPlot plus small own forms (D1), hosted by a thin own Angular chart host (D2). It meets every budget item with the largest margin and keeps the hosting area on one chart library and one canvas technique, as the structure canvas Dossier recommends. ECharts is the fallback if the owner weighs "standard framework for every form" higher than bytes and update time: the measurement shows what that costs.</li>
+<li><b>Overview and release flow first</b> (D3), on real data through <code>GET /api/deploy/dashboard</code> (D10). These two need no library at all, so slice DDC-1 proves the aggregate, the filters and the budget; uPlot arrives with the timeline in DDC-3.</li>
+<li><b>Landing view</b>: delivery figures and the tile map, flow and timeline below (D5). <b>Topology</b> stays in Operations as the structure canvas (D6).</li>
+<li><b>3D</b>: yes, opt-in, the deploy landscape on Canvas 2D (D4). Honest cost: bars hide bars, a height is harder to compare than a colour step, and labels thin out; the bytes are small because no WebGL library is loaded. The 2D heat map stays the reference and one button flattens the scene into it.</li>
+<li><b>Assessments</b>: operations warden and reliability engineer (D7) write validated view specifications on top of facts (D9), refreshed on fact changes with a 12-hour check (D8). The backup goal and every missing backup are visible on the tiles with Facts only too.</li>
+</ul>
+</section>
+
+<section id="evidence" data-concept-section="evidence">
+<h2>Evidence</h2>
+<p><!--g:BENCH_READING-->The same aggregate, the same four views and the brush, drawn by each candidate in the bench harness (<code>bench/</code>): A needs 29.9 kB gzip, B 220.7 kB and C 82.1 kB. All five views are painted 83 ms after the data arrives with A, 392 ms with B and 141 ms with C; a filter change costs 3.2, 57.2 and 19.2 ms of script. B meets the 300 ms budget for the first chart but not for the page, and its p95 filter change of 383 ms is over the 100 ms budget; A and C are inside every limit, A with the largest margin and a third of C's bytes. The full table and the method are in <a href="stack.html#framework">Framework</a>.<!--/g--></p>
+<!--g:BUDGET_BRIEF--><div class="tablewrap"><table><thead><tr><th>Budget</th><th>Limit</th><th>Measured in the prototype</th></tr></thead><tbody>
+<tr><td>2D chart chunk</td><td>At most 35 kB gzip with uPlot and its styles</td><td>29.4 kB gzip (67.5 kB raw), of which uPlot 23.3 kB</td></tr>
+<tr><td>3D chunk</td><td>At most 4 kB gzip, requested only when the 3D view opens</td><td>2.4 kB gzip; requests for it before opening: 0, after opening: 1</td></tr>
+<tr><td>First chart</td><td>Within 300 ms after the data arrives, mid-range laptop</td><td>59 ms to the first chart and 95 ms to all views (median of 5 loads of the prototype, large set, 1440 px)</td></tr>
+<tr><td>Filter change</td><td>Within 100 ms on the large set</td><td>19 ms median, 42 ms p95 over 20 scripted changes, to the painted frame</td></tr>
+<tr><td>DOM</td><td>No element per card outside a virtualised list</td><td>297 elements in the whole view with 2,000 runs and 5,000 cards; 17 row elements in the list of 4,019 cards</td></tr>
+</tbody></table></div><!--/g-->
+<!--g:FIG_ASSESS--><figure class="evidence-figure media-breakout" id="fig-assess">
+  <div class="evidence-captures">
+    <div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/assessment-reliability-light-1440.png" alt="The page with the assessment of the reliability engineer: headline, judgement, provenance line, five numbered callouts and a goal; the timeline is moved to the top and a shaded band with the number 1 marks two weeks of failures." loading="lazy"></div>
+    <div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/assessment-reliability-dark-1440.png" alt="The same view in the dark theme of the Studio tokens." loading="lazy"></div>
+  </div>
+  <figcaption><span class="figure-claim"><b>Assessment on top of facts.</b> The reliability engineer's specification moves the timeline first, marks the failure cluster as a band with callout 1 and stresses the change failure rate; author, time, model, confidence and the facts used are stated.</span>
+  <span class="figure-as-of"><span>Captured <time datetime="2026-11-26">26 November 2026</time> from this Dossier's prototype (<code>prototype.html</code>, commit base ca26ce2ef) by <code>capture.mjs</code>, headless Chromium, 1440 px, light and dark. Data: the seeded synthetic set of <code>src/data.js</code>, not a product state.</span></span></figcaption>
+</figure><!--/g-->
+<!--g:FIG_3D--><figure class="evidence-figure media-breakout" id="fig-3d">
+  <div class="evidence-captures">
+    <div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/view-3d-light-1440.png" alt="Deploy landscape: a field of bars, weeks by projects in six groups, bar height for the number of deploy runs in a week and red for the share that failed; month and group labels and a height scale." loading="lazy"></div>
+    <div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/view-3d-dark-1440.png" alt="The same view in the dark theme of the Studio tokens." loading="lazy"></div>
+  </div>
+  <figcaption><span class="figure-claim"><b>3D, opt-in.</b> Height carries the run count and colour the failed share at once; the two projects with the failure cluster stand out as red bars. Bars in front hide bars behind them, which is why the view is not the default.</span>
+  <span class="figure-as-of"><span>Captured <time datetime="2026-11-26">26 November 2026</time> from this Dossier's prototype (<code>prototype.html</code>, commit base ca26ce2ef) by <code>capture.mjs</code>, headless Chromium, 1440 px, light and dark. Data: the seeded synthetic set of <code>src/data.js</code>, not a product state.</span></span></figcaption>
+</figure><!--/g-->
+<div class="evidence-list">
+<div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Today's page</b><small>One <code>/api/deploy/matrix</code> request, read once, and one <code>delivery-lanes</code> request per project, polled every 15 seconds; filters are not in the URL; no list is virtualised (<code>frontend/src/app/features/deployments/</code>).</small></span></div>
+<div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Charts in the product</b><small>The frontend has no chart library; the token analysis charts are div stacks and the product's structure view already draws with its own Canvas 2D code (<code>frontend/src/app/features/structure/live/</code>).</small></span></div>
+<div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Measurements</b><small><code>bench/results.json</code> (frameworks and 3D routes, five runs each), <code>bench/chunks.json</code> (lazy chunks of the prototype) and <code>assets/prototype-metrics.json</code> (budget rows, written by <code>verify.mjs</code>).</small></span></div>
+<div class="evidence"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Installation data</b><small>The installation-shaped set is built from the card's description by role. This run had no credentials for the live API, so no live snapshot was read; DDC-1 carries the check on real data.</small></span></div>
+</div>
+</section>
+
+<section id="open-decisions" data-concept-section="open-decisions">
+<h2>Open decisions</h2>
+<p>Each decision has a recommended working option; it stands until the owner records another. D1 and D7 repeat choices the structure canvas Dossier recommends (its D2 and D9), and D4 stays inside its D1 and D3 (2D by default, no WebGL renderer), so that both pages get one stack and one pair of assessors.</p>
+<!--g:DECISIONS--><div class="decision" id="D1" data-decision-id="ddc-framework" data-decision-kind="single">
+<h3>D1 · Chart framework</h3><p>Which chart framework draws the deployment dashboard and, with it, every chart of the hosting area?</p>
+<label data-option-id="ddc-framework-a"><input type="radio" name="D1"><span><b>A</b> · uPlot for time charts plus small own forms on Canvas 2D and SVG (the D2 recommendation of the live structure canvas Dossier)<span class="rec">Recommended</span></span></label>
+<label data-option-id="ddc-framework-b"><input type="radio" name="D1"><span><b>B</b> · Apache ECharts 6, tree-shaken</span></label>
+<label data-option-id="ddc-framework-c"><input type="radio" name="D1"><span><b>C</b> · Chart.js 4 with the matrix, sankey and zoom plugins</span></label>
+<p class="dim">Smallest lazy chunk and fastest filter change in the prototype, one library for the Studio as the structure canvas Dossier already recommends; ECharts stays the measured fallback when a form is needed that is not worth building.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D2" data-decision-id="ddc-wrapper" data-decision-kind="single">
+<h3>D2 · Angular wrapper</h3><p>How do Angular components host a chart?</p>
+<label data-option-id="ddc-wrapper-a"><input type="radio" name="D2"><span><b>A</b> · A thin own chart host: signal inputs, one instance reused, ResizeObserver, dispose on destroy, loaded with a dynamic import<span class="rec">Recommended</span></span></label>
+<label data-option-id="ddc-wrapper-b"><input type="radio" name="D2"><span><b>B</b> · A wrapper library of the chosen framework</span></label>
+<label data-option-id="ddc-wrapper-c"><input type="radio" name="D2"><span><b>C</b> · No wrapper, each view talks to the library</span></label>
+<p class="dim">A small component, no second dependency to keep in step with Angular and the library, and the same host serves uPlot and the own forms.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D3" data-decision-id="ddc-order" data-decision-kind="single">
+<h3>D3 · Views first</h3><p>Which views are built first?</p>
+<label data-option-id="ddc-order-a"><input type="radio" name="D3"><span><b>A</b> · Overview and release flow, then the timeline, then the delivery figures<span class="rec">Recommended</span></span></label>
+<label data-option-id="ddc-order-b"><input type="radio" name="D3"><span><b>B</b> · Delivery figures and timeline first</span></label>
+<label data-option-id="ddc-order-c"><input type="radio" name="D3"><span><b>C</b> · All views in one card</span></label>
+<p class="dim">Overview and flow replace the table and the long card column the owner criticised; they need no library, so the first slice proves data, filters and budget.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D4" data-decision-id="ddc-3d" data-decision-kind="single">
+<h3>D4 · 3D</h3><p>Is there a 3D view, and with which renderer?</p>
+<label data-option-id="ddc-3d-a"><input type="radio" name="D4"><span><b>A</b> · Yes, opt-in: the deploy landscape drawn with Canvas 2D, loaded when opened; default views stay 2D<span class="rec">Recommended</span></span></label>
+<label data-option-id="ddc-3d-b"><input type="radio" name="D4"><span><b>B</b> · Yes, opt-in, with three.js (WebGL)</span></label>
+<label data-option-id="ddc-3d-c"><input type="radio" name="D4"><span><b>C</b> · No 3D</span></label>
+<p class="dim">The third axis carries the run count and the view flattens into its 2D heat map; 2.4 kB gzip instead of a second renderer of more than 100 kB, in line with one canvas renderer for the Studio.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D5" data-decision-id="ddc-landing" data-decision-kind="single">
+<h3>D5 · Landing view</h3><p>What does Workspace / Deployments open with?</p>
+<label data-option-id="ddc-landing-a"><input type="radio" name="D5"><span><b>A</b> · Delivery figures and the overview tile map, release flow and timeline below on the same page<span class="rec">Recommended</span></span></label>
+<label data-option-id="ddc-landing-b"><input type="radio" name="D5"><span><b>B</b> · The release flow first</span></label>
+<label data-option-id="ddc-landing-c"><input type="radio" name="D5"><span><b>C</b> · Today's table, charts on a second tab</span></label>
+<p class="dim">Answers what is live where and what is behind before any scrolling; a persona may reorder the views for its reader (D9).</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D6" data-decision-id="ddc-topology" data-decision-kind="single">
+<h3>D6 · Topology</h3><p>Where does the topology of hosts, containers and services live?</p>
+<label data-option-id="ddc-topology-a"><input type="radio" name="D6"><span><b>A</b> · In Operations, as the live structure canvas; the deployment page links to it with the project and environment as filter<span class="rec">Recommended</span></span></label>
+<label data-option-id="ddc-topology-b"><input type="radio" name="D6"><span><b>B</b> · As a tab of the deployment page</span></label>
+<label data-option-id="ddc-topology-c"><input type="radio" name="D6"><span><b>C</b> · In both places</span></label>
+<p class="dim">One drawing of the machines; the canvas has its own concept (AGT-3955) and renderer, and two copies would drift apart.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D7" data-decision-id="ddc-roles" data-decision-kind="single">
+<h3>D7 · Roles that assess</h3><p>Which personas assess the deployment views?</p>
+<label data-option-id="ddc-roles-a"><input type="radio" name="D7"><span><b>A</b> · Operations warden and reliability engineer, both already in the catalogue<span class="rec">Recommended</span></span></label>
+<label data-option-id="ddc-roles-b"><input type="radio" name="D7"><span><b>B</b> · Reliability engineer only</span></label>
+<label data-option-id="ddc-roles-c"><input type="radio" name="D7"><span><b>C</b> · Every aspect persona</span></label>
+<p class="dim">Backups, credentials and goals belong to the warden, failure clusters and flow to the reliability engineer; same choice as the structure canvas, so one occurrence can serve both views.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D8" data-decision-id="ddc-cadence" data-decision-kind="single">
+<h3>D8 · Refresh cadence</h3><p>When do the personas reassess the deployment views?</p>
+<label data-option-id="ddc-cadence-a"><input type="radio" name="D8"><span><b>A</b> · On relevant fact changes, coalesced, plus a check every 12 hours that calls the model only when the facts digest changed<span class="rec">Recommended</span></span></label>
+<label data-option-id="ddc-cadence-b"><input type="radio" name="D8"><span><b>B</b> · Every hour</span></label>
+<label data-option-id="ddc-cadence-c"><input type="radio" name="D8"><span><b>C</b> · Only on demand</span></label>
+<p class="dim">Fresh after a deploy or a failure, no model call when nothing changed, and inside the weekly allowance of each persona.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D9" data-decision-id="ddc-composition" data-decision-kind="single">
+<h3>D9 · How much the model composes</h3><p>How much of the deployment page may be LLM-composed?</p>
+<label data-option-id="ddc-composition-a"><input type="radio" name="D9"><span><b>A</b> · Facts only</span></label>
+<label data-option-id="ddc-composition-b"><input type="radio" name="D9"><span><b>B</b> · Assessment on top of facts: order of views, emphasised figures and tiles, callouts, goals and a judgement, as a validated view specification<span class="rec">Recommended</span></span></label>
+<label data-option-id="ddc-composition-c"><input type="radio" name="D9"><span><b>C</b> · The model also chooses chart types, grouping and scales</span></label>
+<p class="dim">Facts, scales and colours stay deterministic and comparable from day to day; the persona says what matters and what to do next, and an invalid answer falls back to the facts.</p><div data-comment="Note (optional)"></div>
+</div>
+<div class="decision" id="D10" data-decision-id="ddc-aggregate" data-decision-kind="single">
+<h3>D10 · Aggregation API</h3><p>How do the views get their data?</p>
+<label data-option-id="ddc-aggregate-a"><input type="radio" name="D10"><span><b>A</b> · One aggregate, GET /api/deploy/dashboard, for all views, plus a paged card list<span class="rec">Recommended</span></span></label>
+<label data-option-id="ddc-aggregate-b"><input type="radio" name="D10"><span><b>B</b> · One endpoint per view</span></label>
+<label data-option-id="ddc-aggregate-c"><input type="radio" name="D10"><span><b>C</b> · Keep joining per-project endpoints in the browser</span></label>
+<p class="dim">One request and one consistent as-of for every view instead of 1 + N requests; filters change the query, not the number of calls.</p><div data-comment="Note (optional)"></div>
+</div><!--/g-->
+</section>
+
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation">
+<h2>Implementation</h2>
+<p>The slices are in <code>workbench.json</code> in delivery order, each with prompt and acceptance criteria. Already covered elsewhere: instance deploy records (AGT-3879), dashboard data (AGT-3949), structure facts and warnings (AGT-3954), the topology canvas (LSC-1 to LSC-10 of AGT-3955), persona scheduling and ledger (PT-3, PT-4). The links the brief asks for in the Nordstern map and in the Dossiers continued here are slice DDC-8, because a concept delivery may change only its own directory. No product code is changed here.</p>
+<!--g:SLICES--><div class="tablewrap"><table><thead><tr><th>Slice</th><th>Delivers</th><th>After</th></tr></thead><tbody>
+<tr><td><b>DDC-1</b> Deployment overview and release flow on the dashboard aggregate</td><td>Aggregate endpoint, chart host, overview tile map and release flow on real data, filters in the URL with cross-filter, budget checks as tests.</td><td>none</td></tr>
+<tr><td><b>DDC-2</b> Card drill-down as a virtualised list</td><td>Paged card list of a flow state, windowed rendering, no DOM element per card outside the window.</td><td>DDC-1</td></tr>
+<tr><td><b>DDC-3</b> Deploy timeline with time brush on uPlot</td><td>uPlot as the Studio's chart library in its own lazy chunk; runs per environment over time with duration, outcome and failing step; brush sets the time range for every view.</td><td>DDC-1</td></tr>
+<tr><td><b>DDC-4</b> Delivery figures with sparklines</td><td>Deploy frequency, lead time from integration to Production, change failure rate and time to restore as stat tiles with weekly trend.</td><td>DDC-1</td></tr>
+<tr><td><b>DDC-5</b> Backup and construction-site marks on the deployment tiles</td><td>Every Production tile whose data has no verified off-host copy is marked; open warnings of the host or container an environment runs on are pinned to its tile.</td><td>DDC-1</td></tr>
+<tr><td><b>DDC-6</b> Persona view specifications for the deployment dashboard</td><td>Validated, cached view specifications by the operations warden and the reliability engineer on top of the facts; picker, provenance, goals, fallback to facts.</td><td>DDC-1, DDC-5</td></tr>
+<tr><td><b>DDC-7</b> Deploy landscape, the opt-in 3D view</td><td>Weeks by projects with height = runs and colour = failed share, drawn with Canvas 2D in its own chunk, loaded when opened.</td><td>DDC-3</td></tr>
+<tr><td><b>DDC-8</b> Register the deployment dashboard charts Dossier in the Nordstern map and add forward links</td><td>One map entry and one forward link each in the Dossiers this concept continues; no recorded decision changes.</td><td>none</td></tr>
+</tbody></table></div><!--/g-->
+<ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+</ol>
+</section>
+<!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

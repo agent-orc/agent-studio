@@ -1,0 +1,275 @@
+[
+  {
+    "key": "AGT-3909",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C01",
+        "title": "Connect the Operations view to the telemetry store it already has",
+        "problem": "The project Operations tab (Deploy > Operations) always says 'Telemetry is not available yet. Monitoring, usage, load and logs will appear when the intake store is connected.' and log search answers 'Application logs are not available until the telemetry intake store is connected.' In the drill the OTLP store held the app's http.server.request.duration and system.filesystem.usage series and every ERROR and FATAL log line (stack traces, ENOSPC, upstream timeouts), yet /api/projects/{p}/deploy/operations returned telemetryAvailable=false and metrics=null for both environments. The raw query API works but no screen uses it, so the owner cannot see a single metric or log line without the API.",
+        "cause": "backend/Host/Program.cs:719-720 registers UnavailableOperationsTelemetryReader, the 'temporary adapter until the OTLP intake store implements IOperationsTelemetryReader' (backend/Features/Projects/Operations/OperationsTelemetry.cs:32-37). No implementation over backend/Features/Telemetry/Query/TelemetryQueries.cs exists. AGT-3262 (IP-16) delivered the view against the stub and AGT-3227 (IP-15) delivered the store; no card connects them (docs/system/domains/frontend.md:180-182 names the boundary).",
+        "acceptanceCriteria": [
+          "IOperationsTelemetryReader is implemented over the per-environment telemetry store and registered in Program.cs; the Unavailable adapter is only used when the store is disabled.",
+          "Response p50/p95, error rate and request count come from http.server.request.duration (OpenTelemetry HTTP semantic conventions, status from http.response.status_code); disk, memory and CPU from the system.* / process.* / container.* conventions; the mapping is documented in docs/operations/setup/app-telemetry-intake.md.",
+          "Log search in Operations returns the stored records filtered by time, level, release (service.version or release.id attribute) and text, newest first, with paging beyond 100 lines.",
+          "A failing store read shows a named error, not the 'not connected' empty state.",
+          "Backend tests feed OTLP JSON through the intake and assert the Operations API values; a Playwright spec shows the trends and a log hit in both themes and at 390 px.",
+          "UI work follows frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md (no left accent bars R1, calm settled states R4, both themes R5, appPendingButton and app-loading-surface R6, shared status indicator, spacing tokens) and ships Playwright coverage with screenshots at 1280 px light and dark and 390 px."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3910",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C02",
+        "title": "Alert on errors, latency and saturation, not only on a dead health URL",
+        "problem": "Three of four night failures raised nothing at all. With /health still answering 200, the app returned HTTP 500 to every request for 6.5 minutes (night 2), failed every write with ENOSPC while disk use jumped from 2.1 GB to 10 GB (night 3), and returned 504 after 4 s to every request (night 4). In each case Production stayed 'Up' in Deploy, Operations and the Environment view ('0 open incidents'), no Activity entry or card was created, and the telemetry store held the evidence (500 series, ERROR logs, the disk gauge). IP-14 promises a card 'on failure or a rising error rate'.",
+        "cause": "The only incident rule is consecutive probe failures (backend/Features/Projects/HealthChecks/HealthIncidentPolicy.cs:20-45). Nothing evaluates telemetry: the intake's only background service is TelemetryWriter. Error rate, latency, restarts and disk are not alert inputs anywhere.",
+        "acceptanceCriteria": [
+          "Each production environment has default alert rules on the golden signals from telemetry: 5xx share of http.server.request.duration above a threshold over N minutes, p95 latency above a threshold, filesystem or volume usage above a share of the reservation, and restart count; thresholds are declarable per environment in the environment declaration.",
+          "A firing rule opens the same environment incident (Activity alert plus card) as a failed health check, naming the rule, the measured value and the window; recovery follows the recovery rule.",
+          "An environment that sends no telemetry shows 'not observed' for these rules instead of 'Up'.",
+          "Tests with an injected clock cover firing, flapping and recovery for each rule; the drill's three silent failures each produce an incident within 5 minutes."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3911",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C03",
+        "title": "Mask secret-provider values and common connection strings before telemetry is stored",
+        "problem": "The app's crash log line contained its DATABASE_URL, a value the owner had stored write-only in Studio's secret provider. The password was stored unmasked in telemetry/<project>/production.sqlite and returned by GET .../telemetry/logs. A probe through the real intake showed three more shapes passing unmasked: a bare 'sk_live_...' key, 'apiKey=<value>' and 'redis://:<password>@host'. A 'Bearer <token>' value was masked. Cards, Activity, deploy logs and runbook logs held no secret.",
+        "cause": "Telemetry masking is CredentialRedactor only (backend/Features/Telemetry/Intake/TelemetryIngestCredentials.cs:62-65). Its UrlCredentials pattern covers only https?, git, ssh and ftp schemes (backend/Features/Security/CredentialRedactor.cs:33-34), and provider tokens only 'sk-' with a hyphen. SecretValueScrubber, which knows resolved provider values, is used by runner log ingestion only and forgets values after 24 h (backend/Features/Secrets/SecretValueScrubber.cs:18). docs/operations/setup/app-telemetry-intake.md:115-116 still says provider values 'will be masked once that provider exists'; the provider (AGT-3222) exists.",
+        "acceptanceCriteria": [
+          "Values held by the secret provider for the project and environment are masked in log bodies, attributes, event names and severity text before durable staging, independent of how long ago they were resolved.",
+          "The URL credential rule covers any scheme with userinfo (postgres, postgresql, mysql, mariadb, redis, rediss, mongodb, mongodb+srv, amqp, amqps), and key=value / key: value pairs for apiKey, api_key, secret, token and password variants are masked.",
+          "Unit tests for each shape, including the four from this drill; an intake test asserts no stored row contains a provider value.",
+          "Already stored rows: a one-time masking pass or documented purge per environment.",
+          "app-telemetry-intake.md describes the masking that actually applies."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3912",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C04",
+        "title": "Put open environment incidents in Needs you, and stop listing successful deploys there",
+        "problem": "After the crash-loop night Needs you showed 32 items: 26 Dossier decisions, installation notices and four 'Deployment completed.' entries titled by raw job id (e.g. 2038eddb34544e8ebf470ebf541a3b5e). The Production outage was not in the list. By the end of the drill there were eight 'Deployment completed.' entries and still no incident. The only cue was a '1' badge on the Activity rail icon.",
+        "cause": "Operator decision types (backend/Features/Operator/Decisions/OperatorDecisionContracts.cs:10-32) include deploy.completed, fed by OperatorDecisionFactSources.cs:24-32 with the job id as title, but no environment incident type; HealthAlerts writes only an Activity entry and a Backlog card.",
+        "acceptanceCriteria": [
+          "An open environment incident (health or alert rule) appears in Needs you at the top with project, environment, since-time and the failing signal; it leaves Needs you when the incident recovers.",
+          "Successful deploys are not attention items; a failed or waiting deploy may be, titled by project, environment and release version, never by job id.",
+          "The attention entry links to the incident card and to the environment's Operations view.",
+          "UI work follows frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md (no left accent bars R1, calm settled states R4, both themes R5, appPendingButton and app-loading-surface R6, shared status indicator, spacing tokens) and ships Playwright coverage with screenshots at 1280 px light and dark and 390 px."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3913",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C05",
+        "title": "Notify the owner outside the browser when production goes down",
+        "problem": "The promise is that the owner learns about a night failure in time. Studio has no email, web push, chat webhook or other channel; the incident exists only as an Activity row, a rail badge in an open browser tab and a card at the bottom of Backlog.",
+        "cause": "No notification channel exists in backend or frontend for environment incidents (the only browser Notification use is the crash-recovery prompt).",
+        "acceptanceCriteria": [
+          "An owner can configure at least one out-of-band channel per project (web push, email or a generic HTTPS webhook) in Settings, with a test message.",
+          "Incident opened and recovered events for production are sent within one minute; repeated failures of the same incident do not resend.",
+          "Payloads carry project, environment, signal, start time and a link, and never secret values or target userinfo.",
+          "Tests cover delivery, de-duplication and redaction."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3914",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C06",
+        "title": "Make the incident card describe this incident and lead to its evidence and fixes",
+        "problem": "Night 1's crash loop did not get its own card. It became a one-line 'Incident reopened since 18:55 UTC: http failed 3 times in a row (connection-failed)' comment on NS-2, a card created 12 minutes earlier for a pre-deploy false alarm whose title, body and probe table all describe that earlier incident. The card names no release, no log excerpt, no restart count and links nothing (Operations, logs, rollback, runbooks). It opens as a coding task: agent picker 'opus 5', a pending coding pipeline, 'Start the task to follow the agent output live', delivery chips 'Staging pending / Not yet in Production', and at 390 px a large orange 'Promote to Preparation' as the main action.",
+        "cause": "HealthAlerts.ReportOpened reuses any still-open card of the environment and only comments (backend/Features/Projects/HealthChecks/HealthAlerts.cs:33-37); since recovery never closes the card (C08) every later incident lands on the first one. IncidentPrompt (HealthAlerts.cs:203-226) contains checks and probes only. The card is a plain Bug created through CreateJob with agent defaults; task detail has no incident presentation.",
+        "acceptanceCriteria": [
+          "Each incident is readable on its own: either a new card per incident, or the reused card's title, summary and first section are rewritten to the current incident with the earlier ones listed as history.",
+          "The card states the running release (version, deploy time, cards of that release), restart count and last crash or error log lines from telemetry (masked), and links to Operations filtered to the incident window, the environment's runbooks and its rollback.",
+          "Incident cards render an incident layout: no agent picker, coding pipeline or delivery chips; the primary actions are 'Open Operations', 'Roll back' and 'Run runbook'.",
+          "UI work follows frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md (no left accent bars R1, calm settled states R4, both themes R5, appPendingButton and app-loading-surface R6, shared status indicator, spacing tokens) and ships Playwright coverage with screenshots at 1280 px light and dark and 390 px."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3915",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C07",
+        "title": "Show crash loops: restart count, crash output and run-host events",
+        "problem": "During night 1 the app restarted 102 times, each start ending in a FATAL line. Studio showed none of it: Operations 'Restarts' is 'No data', the deploy run drawer says 'host command output is not stored', the deployment tools and Runbooks tab call Production 'healthy', and the only signal was the external probe failing. An app that sends no OTLP has no crash output anywhere in the product.",
+        "cause": "The container template runs Docker without log collection (runner/DeployHostCommand.cs:552); SSH step logs carry only a stderr tail on failure (runner/SshDeployExecutor.cs:115-118). Run-target hosts do detect crash-restart, crash-loop and crash-rollback (runner/RunTargets/RunTargetReconciler.cs:340-413) and report RunTargetObservation with Restarts and Events (backend/Features/Projects/RunTargets/RunTargetContracts.cs:73-81), but nothing creates an Activity entry from them and no project-detail component renders them.",
+        "acceptanceCriteria": [
+          "Hosts report restart count and the last N lines of container stdout/stderr (masked, bounded) per environment for both the container template and run-target role.",
+          "A crash-loop or crash-rollback observation opens or updates the environment incident and writes an Activity alert.",
+          "Operations shows restarts and the last crash output; environment cards show 'Crash loop' instead of 'healthy'.",
+          "Tests: host reporting, incident from observation, UI states; UI work follows frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md (no left accent bars R1, calm settled states R4, both themes R5, appPendingButton and app-loading-surface R6, shared status indicator, spacing tokens) and ships Playwright coverage with screenshots at 1280 px light and dark and 390 px."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3916",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C08",
+        "title": "Close the incident with a record of what fixed it",
+        "problem": "Night 1 was fixed by a rollback and night 3 by the free-disk runbook. Neither action appears on the incident card or in its Activity entries. On recovery the card gets a 'recovered after 6 min' comment and stays in Backlog; after the drill both incident cards (one a false alarm) were still open. DORA showed 'Time to restore: No data, 0 recoveries measured' after a 6-minute recovery.",
+        "cause": "HealthAlerts.ReportRecovered only comments and appends an observation (HealthAlerts.cs:90-118); it calls no lane transition. RunbookRun and rollback records carry no incident or card id (backend/Features/Deploy/Runbooks/RunbookService.cs:6-10). DORA counts only failed deploy runs (backend/Features/Projects/Operations/DoraMetrics.cs:9-12).",
+        "acceptanceCriteria": [
+          "A rollback, redeploy or runbook run started while an environment incident is open is linked to it and appears on its card with actor, release and result.",
+          "On recovery the card moves to a terminal lane (or a dedicated 'Resolved' state) with a summary: duration, failed probes, the linked actions and the release now running; a reopen within a cool-down returns it.",
+          "DORA time to restore and change failure rate include environment incidents.",
+          "Tests for linking, closing and DORA inputs."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3917",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C09",
+        "title": "Do not probe or alert on an environment before its first deploy",
+        "problem": "Declaring staging and production started probing at once. Four minutes later, before anything had been deployed, two incidents opened with Backlog cards 'Health incident: Staging is failing' and 'Production is failing'. They skewed 24 h uptime (14.28 % for Production), were grouped with the real night-1 alert in Activity ('07:45 PM to 07:57 PM') and captured the real incident (C06).",
+        "cause": "EnvironmentHealthService runs effective checks for every valid declaration (backend/Features/Projects/HealthChecks/EnvironmentHealthService.cs:181) without looking at deploy state.",
+        "acceptanceCriteria": [
+          "Checks of an environment with no successful deploy report 'not deployed' and do not count toward uptime or open incidents; probing starts after the first healthy deploy report.",
+          "A stopped environment is treated the same way.",
+          "Tests with an injected clock."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3918",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C10",
+        "title": "One health truth per environment across Deploy, deployment tools, Runbooks and Operations",
+        "problem": "While Production was down, the Health panel said 'Down' but deployment tools said 'Health: healthy' and the Runbooks tab 'Healthy' (both from the last deploy report). Versions there are raw image digests ('registry.night-shop.test/app@sha256:2bac...') instead of release versions.",
+        "cause": "project-deployment-panel and the runbook environment overview read ProjectEnvironmentView.health (the host's last deploy report) while the overview cards use /deploy/status plus control-plane health.",
+        "acceptanceCriteria": [
+          "Every surface that shows an environment state uses the same projection (open incident first, then control-plane health, then last report) and the shared status indicator.",
+          "Release version and age are shown; the digest is secondary.",
+          "UI work follows frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md (no left accent bars R1, calm settled states R4, both themes R5, appPendingButton and app-loading-surface R6, shared status indicator, spacing tokens) and ships Playwright coverage with screenshots at 1280 px light and dark and 390 px."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3919",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C11",
+        "title": "Make production rollback discoverable, explicit about its target and confirmed",
+        "problem": "Rollback is only in Deploy > Overview > 'deployment tools', a nested page. One click on 'Roll back' for Production queued a rollback immediately (no confirmation, no target release shown), while Approve does ask. History records the crash-looping v2 as 'healthy', so the owner cannot tell from the UI which release a rollback will pick.",
+        "cause": "project-deployment-panel calls the legacy POST /api/projects/{p}/environments/{e}/rollback (ProjectOperatorDashboardEndpoints.cs:171-185) without confirmation; the lifecycle route /deploy/environments/{e}/rollback has no frontend caller; release health is only the deploy-time check.",
+        "acceptanceCriteria": [
+          "Rollback is offered on the Production environment card, in the deploy run drawer and on the incident card, showing the target release version, its age and its last known runtime health.",
+          "Production rollback asks for confirmation naming current and target release and uses the lifecycle route with its approval rules.",
+          "A release that had a production incident while running is marked so it is not offered as a silent rollback target.",
+          "UI work follows frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md (no left accent bars R1, calm settled states R4, both themes R5, appPendingButton and app-loading-surface R6, shared status indicator, spacing tokens) and ships Playwright coverage with screenshots at 1280 px light and dark and 390 px."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3920",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C12",
+        "title": "Runbook runs: keep output, judge success by the symptom, refresh live",
+        "problem": "free-disk fixed the disk failure, but the history stayed on 'queued' until a manual Refresh and the log contains only 'Operation succeeded.' per step. During the dependency timeout the 'restart' runbook reported 'succeeded' while the app still answered 504 after 4 s. Requester and approver show as 'usr_ecaff70110...'. Runbook steps need operator-installed scripts under /etc/agent-host/runbooks/<project>/ on the host; the project templates ship none.",
+        "cause": "RunbookHostExecutor discards stdout and stderr (runner/RunbookHostExecutor.cs:101-102); RunbookService logs status lines only; project-runbooks.ts has no polling; the 'health' step uses the shallow health URL.",
+        "acceptanceCriteria": [
+          "Bounded, masked script output per step is stored and shown in the run log.",
+          "Run state refreshes while a run is queued or running (shared polling or hub event) and uses appPendingButton for Run/Approve.",
+          "Users are shown by display name.",
+          "A runbook may name a verification (health check id or alert rule) that must pass; the result says what was verified.",
+          "The container-service template ships restart and disk-cleanup runbook scripts and documents installing them.",
+          "UI work follows frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md (no left accent bars R1, calm settled states R4, both themes R5, appPendingButton and app-loading-surface R6, shared status indicator, spacing tokens) and ships Playwright coverage with screenshots at 1280 px light and dark and 390 px."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3921",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C13",
+        "title": "Make 'operations built in' true for a template app: telemetry wiring, health depth, runbooks",
+        "problem": "project-templates/container-service has schema 1 project.yml, no environment declarations, a /health that always returns 200 without checking anything, no OpenTelemetry SDK and no runbooks. Connecting telemetry needs an API call (POST .../telemetry/tokens) because there is no ingest-token UI, and the deploy does not inject OTEL_EXPORTER_OTLP_ENDPOINT or the token.",
+        "cause": "Templates predate IP-10..IP-16; TelemetryEndpoints.cs:96-122 has no frontend caller; runner/DeployHostCommand.cs builds the container environment only from declared variables.",
+        "acceptanceCriteria": [
+          "Studio has an ingest-token page per environment (create, show once, revoke, last seen).",
+          "Deploy injects OTEL_EXPORTER_OTLP_ENDPOINT, protocol and a scoped token into the workload as a secret variable when the environment has telemetry enabled.",
+          "The container-service template ships the OpenTelemetry Node SDK with HTTP and runtime metrics, a /health that reports dependency state, schema 2 environments and runbooks.",
+          "A new project from the template reaches Operations trends and log search without API calls."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3922",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C14",
+        "title": "Accept OTLP traces and link logs to them",
+        "problem": "The dependency timeout (night 4) is a tracing problem: which downstream call is slow. OTLP /v1/traces is not accepted, there is no trace view, and log lines carry trace ids in storage but no link.",
+        "cause": "Only /v1/metrics and /v1/logs are mapped (backend/Features/Telemetry/TelemetryEndpoints.cs:34-37); app-telemetry-intake.md:32 'Traces are not accepted yet'.",
+        "acceptanceCriteria": [
+          "POST /api/telemetry/otlp/v1/traces is accepted with the same token, limits and masking as logs.",
+          "Operations offers a trace list for slow or failed requests in the incident window and a span waterfall showing the slow downstream call.",
+          "Log lines with trace ids link to the trace."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3923",
+    "sourceTask": "AGT-3886",
+    "findings": [
+      {
+        "id": "C15",
+        "title": "Incident wording and attribution: owner label, raw ids, card links, empty band",
+        "problem": "Activity files system-created incident cards under 'Owner' ('Created NS-2: Health incident...'). Raw ids appear where names are expected: 'Approved by usr_ecaff70110...', Needs you titles by deploy job id, the Health panel names the card by slug 'health-production-20261116184314' without a link. The task detail route shows an empty band under the top bar at 1280 and 390 px.",
+        "cause": "The card timeline's prompt_created event has actor 'human:local-default' although createdBy is system (evidence/NS-2-timeline.jsonl); deploy and runbook views print principal ids; the health panel renders cardId as text.",
+        "acceptanceCriteria": [
+          "System-created cards are attributed to System in timeline and Activity.",
+          "User ids render as display names everywhere in Deploy, Runbooks and Needs you.",
+          "The Health panel links the incident card by its key (NS-2).",
+          "No empty band on the task detail route at 1280 and 390 px.",
+          "UI work follows frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md (no left accent bars R1, calm settled states R4, both themes R5, appPendingButton and app-loading-surface R6, shared status indicator, spacing tokens) and ships Playwright coverage with screenshots at 1280 px light and dark and 390 px."
+        ]
+      }
+    ]
+  }
+]

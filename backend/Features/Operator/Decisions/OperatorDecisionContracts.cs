@@ -30,6 +30,7 @@ public static class OperatorDecisionTypes
     public const string PostMergeRunsMissing = "post-merge.missing";
     /// <summary>RT-1 (AGT-3988): a post-merge incident red for two hours waits for the owner's answer.</summary>
     public const string PostMergeRedIncident = "post-merge.red-incident";
+    public const string OverlapStarved = "dispatch.overlap-starved";
     public const string DeployCompleted = "deploy.completed";
     public const string WatcherHeartbeat = "watcher.heartbeat";
 
@@ -39,7 +40,7 @@ public static class OperatorDecisionTypes
         BatchRed, BatchIsolating, BatchRecordUnreadable, BatchRunningWithoutGate, PushPendingOverdue, PushBlocked, QuotaExhausted, QuotaFallbackActive,
         GateHostUnreachable, HostDiskPressure, ReviewHostDrift, ReviewRetrySchedulerStalled, EnvironmentIncidentOpen, PostMergeRunsMissing,
         PostMergeRedIncident,
-        DeployCompleted, WatcherHeartbeat,
+        OverlapStarved, DeployCompleted, WatcherHeartbeat,
     ];
 
     /// <summary>The type a fact key names: every key starts with its type and a <c>|</c>.</summary>
@@ -57,6 +58,7 @@ public static class OperatorDecisionTypes
 /// </summary>
 public static class OperatorOperations
 {
+    public const string RunAnyway = "dispatch.run-anyway";
     public const string CardInspect = "card.inspect";
     public const string CardContinue = "card.continue";
     public const string CardMove = "card.move";
@@ -100,6 +102,7 @@ public static class OperatorOperations
         OperatorDecisionTypes.PostMergeRunsMissing => [OwnerDecide],
         // Revert, fix forward or strict are the owner's answers; the repair card is the evidence (RT-1).
         OperatorDecisionTypes.PostMergeRedIncident => [OwnerDecide, CardInspect],
+        OperatorDecisionTypes.OverlapStarved => [RunAnyway, CardInspect],
         OperatorDecisionTypes.DeployCompleted => [CardInspect],
         OperatorDecisionTypes.WatcherHeartbeat => [WatcherStatus],
         _ => [],
@@ -123,7 +126,8 @@ public sealed record OperatorDecisionFact(
     DateTime ObservedAtUtc,
     IReadOnlyList<OperatorEvidenceLink> Evidence,
     IReadOnlyList<string>? Cards = null,
-    string? Title = null);
+    string? Title = null,
+    IReadOnlyList<OperatorOwnerOption>? OwnerOptions = null);
 
 /// <summary>
 /// One published event. <see cref="Cursor"/> is the decimal sequence of the
@@ -159,3 +163,6 @@ public sealed record OperatorDecisionsResponse(
     bool HasMore,
     bool Gap,
     int RetentionHours);
+
+/// <summary>A policy-provided owner choice for attention-list presentation.</summary>
+public sealed record OperatorOwnerOption(string Id, string Label, bool Recommended);

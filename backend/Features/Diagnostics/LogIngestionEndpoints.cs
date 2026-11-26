@@ -4,7 +4,7 @@ namespace AgentStudio.Diagnostics;
 /// Runner → Server log-ingestion API under <c>/api/runner/logs</c> (Step 6).
 /// A Runner — local today, remote tomorrow — ships the output lines it produced
 /// for a task and the server appends them to that task's durable
-/// <c>logs/cli-output.log</c>, in the same <c>[HH:mm:ss.fff] [stream] text</c>
+/// <c>logs/cli-output.log</c>, in the <c>[yyyy-MM-ddTHH:mm:ss.fffZ] [stream] text</c>
 /// format the in-process consolidation writes, so the existing projection and
 /// the ~7 durable-log readers consume it unchanged.
 ///
@@ -43,7 +43,7 @@ public static class LogIngestionEndpoints
             var logPath = Path.Combine(logsDir, "cli-output.log");
 
             var rendered = string.Join(Environment.NewLine,
-                req.Lines.Select(l => $"[{l.Timestamp:HH:mm:ss.fff}] [{l.Stream}] {secretValues.Scrub(CredentialRedactor.Redact(AnsiText.Strip(l.Text)))}"));
+                req.Lines.Select(l => $"[{l.Timestamp.ToUniversalTime():yyyy-MM-ddTHH:mm:ss.fffZ}] [{l.Stream}] {secretValues.Scrub(CredentialRedactor.Redact(AnsiText.Strip(l.Text)))}"));
             var deliveryReceipt = DeliveryReceipt(req);
 
             try
@@ -54,7 +54,7 @@ public static class LogIngestionEndpoints
                     var receiptLine = deliveryReceipt is null
                         ? string.Empty
                         : Environment.NewLine
-                          + $"[{req.Lines[^1].Timestamp:HH:mm:ss.fff}] [system] {deliveryReceipt}";
+                          + $"[{req.Lines[^1].Timestamp.ToUniversalTime():yyyy-MM-ddTHH:mm:ss.fffZ}] [system] {deliveryReceipt}";
                     AppendBounded(
                         logPath,
                         rendered + receiptLine,

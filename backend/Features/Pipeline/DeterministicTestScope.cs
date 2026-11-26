@@ -35,6 +35,9 @@ public static partial class DeterministicTestScope
         DotNetReferenceSelection? referenceSelection = null)
     {
         var level = TestSelectionPlanner.ResolveLevel(policy, lane, requiredLevel);
+        var projectSelection = ProjectAffectedVerifyPlanner.TryPlan(repositoryPath, verifyPlan,
+            changedFiles, lane, level);
+        if (projectSelection is not null) return WithDigest(projectSelection, statuses);
         if (level is TestExecutionLevels.BatchPreCheck or TestExecutionLevels.BuildOnly or TestExecutionLevels.CompileOnly
             or TestExecutionLevels.Continuous or TestExecutionLevels.Full)
             return WithDigest(TestSelectionPlanner.Plan(repositoryPath, verifyPlan, changedFiles,
@@ -239,6 +242,7 @@ public static partial class DeterministicTestScope
             audit.SelectedCommands, audit.AttemptedTestCommands,
             audit.OmittedTestCommands, audit.Reasons,
             audit.UnmappedSourceDirectories, audit.FullSuiteRequired, audit.FullSuiteRan,
+            audit.SelectedSuites, audit.OmittedSuites,
         });
         // A generated map's digest joins the hash only when present, so the
         // digest of a configured-map plan stays what it was.

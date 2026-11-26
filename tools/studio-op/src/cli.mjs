@@ -11,7 +11,7 @@ import { OperationError, StudioClient } from './studio.mjs';
 export const VERSION = '1.0.0';
 export const CONFIG_FILE = 'studio-op.json';
 export const DEFAULT_URL = 'http://127.0.0.1:5031';
-const CONFIG_KEYS = new Set(['url', 'credential', 'clientId']);
+const CONFIG_KEYS = new Set(['url', 'credential', 'clientId', 'hardwareDeviceKeys']);
 const GROUPS = { auth: ['status'], deploy: ['plan'], host: ['drain', 'status', 'resume'], log: ['append'], magazine: ['publish'], routing: ['set-step'] };
 // These groups also run without a subcommand: `log` reads, `routing` shows.
 const BARE_GROUPS = new Set(['log', 'routing']);
@@ -92,7 +92,7 @@ export async function main(argv, { env = process.env, home = os.homedir(), stdou
     let client = null;
     let clientError = null;
     try {
-      client = new StudioClient({ url, credential, clientId: config.clientId ?? 'local-default', anonymous: !!command.anonymous });
+      client = new StudioClient({ url, credential, clientId: config.clientId ?? 'local-default', anonymous: !!command.anonymous, configDir });
     }
     catch (error) {
       // auth status reports a missing or misplaced credential instead of failing on it.

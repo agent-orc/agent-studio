@@ -1,3 +1,4 @@
+using AgentStudio.Dispatch;
 using AgentStudio.Operator;
 using AgentStudio.Magazine;
 using AgentStudio.Deploy;
@@ -120,6 +121,7 @@ public static class EndpointMapping
         app.MapWorkspaceQuotaEndpoints();
         AgentStudio.Personas.PersonaEndpoints.MapPersonaEndpoints(app);
         app.MapProjectSettingsEndpoints();
+        app.MapDispatchEndpoints();
         app.MapOperatorBatchTriageEndpoints();
         app.MapProjectCheckoutEndpoints();
         app.MapCrashRecoveryEndpoints();
@@ -141,6 +143,8 @@ public static class EndpointMapping
         app.MapPipelineHealthEndpoints();
         app.MapGateEconomicsEndpoints();
         app.MapPostMergeRunEndpoints();
+        app.MapTestQuarantineEndpoints();
+        AgentStudio.Personas.LineGuardianEndpoints.MapLineGuardianEndpoints(app);
         app.MapOperatorSweepEndpoints();
         app.MapPostWorkEndpoints();
         app.MapFailureInterventionEndpoints();

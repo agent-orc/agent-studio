@@ -1,0 +1,68 @@
+<section class="lsv" data-testid="live-structure" aria-label="Live structure of the installation"
+         [attr.data-layers]="activeLayers()" [attr.data-selected]="selected()" [attr.data-selected-link]="selectedLink()"
+         [attr.data-level]="level()" [attr.data-mode]="mode()" [attr.data-live]="live()" [attr.data-revision]="scene().revision">
+  <app-live-structure-layers [layers]="layers()" [summaries]="summaries()" (layerToggle)="toggleLayer($event)" />
+  <div class="lsv__body">
+    @if (!phone()) {
+      <app-live-structure-outline class="lsv__outline" [scene]="scene()" [selected]="selected()" (jump)="jumpTo($event)" />
+    }
+    <div class="lsv__stage" #stage>
+      <canvas #canvas class="lsv__canvas" tabindex="0" role="application" data-testid="live-canvas"
+              aria-label="Plan of the installation. Drag to pan, scroll or pinch to zoom, arrow keys move, plus and minus zoom, zero shows everything, Enter brings the selected node to the container level, Escape goes back, slash opens the jump field, 1 to 5 switch the layers. The outline lists every node for keyboard use."></canvas>
+      <div class="lsv__top">
+        <button type="button" class="lsv__back" data-testid="live-back" aria-keyshortcuts="Escape" [disabled]="!canBack()" (click)="back(); focusCanvas()">
+          <app-studio-icon name="chevronLeft" [size]="12" />Back<span class="lsv__key" aria-hidden="true">Esc</span></button>
+        <nav class="lsv__crumbs" aria-label="Where the view is" data-testid="live-crumbs">
+          @for (crumb of crumbTrail(); track crumb.id; let last = $last) {
+            @if (!crumb.hidden) {
+              <button type="button" class="lsv__crumb" [attr.aria-current]="last ? 'true' : null" (click)="jumpTo(crumb.id)">{{ crumb.name }}</button>
+              @if (!last) { <span class="lsv__sep" aria-hidden="true">/</span> }
+            } @else if (crumb.gap) {
+              <span class="lsv__sep" aria-label="steps in between">…</span><span class="lsv__sep" aria-hidden="true">/</span>
+            }
+          }
+        </nav>
+      </div>
+      <app-live-structure-jump class="lsv__jump" [scene]="scene()" (jump)="jumpTo($event)" (left)="focusCanvas()" />
+      <p class="lsv__level" data-testid="live-level" aria-live="polite">
+        <span class="lsv__level-steps" aria-hidden="true">@for (step of [1, 2, 3, 4]; track step) { <i [attr.data-on]="step <= level() || null"></i> }</span>
+        Detail level {{ level() }} of 4 · {{ levelName().name }}
+      </p>
+      <div class="lsv__zoom" role="group" aria-label="Zoom">
+        <button type="button" class="lsv__zoom-btn" aria-label="Zoom in" data-testid="live-zoom-in" (click)="zoomBy(1.6)">+</button>
+        <button type="button" class="lsv__zoom-btn" aria-label="Zoom out" data-testid="live-zoom-out" (click)="zoomBy(1 / 1.6)">−</button>
+        <button type="button" class="lsv__zoom-btn lsv__zoom-btn--fit" aria-label="Fit: show the whole installation" data-testid="live-zoom-fit" (click)="fit()">Fit</button>
+      </div>
+      @if (!phone()) {
+        <canvas #minimap class="lsv__minimap" data-testid="live-minimap" aria-label="Key plan. Click or drag to move the view."
+                (pointerdown)="onMinimap($event)" (pointermove)="onMinimap($event)"></canvas>
+      }
+      <div class="lsv__probes" aria-hidden="true">
+        @for (probe of probes(); track probe.id) {
+          <span data-testid="live-node" [attr.data-node-id]="probe.id" [attr.data-level]="probe.level" [attr.data-box]="probe.box" [attr.data-facts]="probe.facts"></span>
+        }
+      </div>
+    </div>
+    <aside class="lsv__panel" aria-label="Details" [attr.data-sheet]="phone() ? sheet() : null" data-testid="live-panel">
+      @if (phone()) {
+        <button type="button" class="lsv__handle" data-testid="live-sheet-handle" [attr.aria-expanded]="sheet() === 'open'" (click)="toggleSheet()">
+          <app-disclosure-marker [open]="sheet() === 'open'" />
+          <span class="lsv__handle-name">{{ sheetTitle() }}</span>
+          <app-status-indicator [tone]="scene().warnings.length ? 'warning' : 'success'" [compact]="true"
+                                [label]="scene().warnings.length + ' open ' + (scene().warnings.length === 1 ? 'warning' : 'warnings')" />
+        </button>
+      }
+      @if (phone()) {
+        <div class="lsv__tabs"><app-segmented-control [options]="panelTabs" [value]="panelTab()" ariaLabel="Panel" (valueChange)="panelTab.set($event)" /></div>
+      }
+      <div class="lsv__scroll" tabindex="-1">
+        @if (phone() && panelTab() === 'outline') {
+          <app-live-structure-outline [scene]="scene()" [selected]="selected()" (jump)="jumpTo($event)" />
+        } @else {
+          <app-live-structure-details [scene]="scene()" [node]="selectedNode()" [link]="selectedLinkModel()" [layers]="layers()" [level]="selectedLevel()"
+                                      (choose)="choose($event)" (chooseLink)="chooseLink($event)" (zoom)="jumpTo($event)" (closed)="clear(); focusCanvas()" />
+        }
+      </div>
+    </aside>
+  </div>
+</section>

@@ -243,6 +243,44 @@ and the open view follows `structureDelta` pushes on the Studio hub with an
 entity-tag read as fallback (AGT-3954). Response shape, ids, facts and the
 placement file: [structure-placement.md](../../operations/setup/structure-placement.md).
 
+The workspace Structure tab opens on the live canvas (AGT-4024), with the
+drawing above as "Classic" one switch away in the header. An address with
+`mode=classic`, or with the classic `view`, `level` or `overlay`, opens the
+classic drawing; the project tab and the embedded uses stay classic by
+default. The canvas lives in `features/structure/live/`: `buildLiveScene`
+turns the structure read into role-named nodes (machine, virtual machine,
+container, service, storage, external, backup target), `layoutLiveScene`
+places them for the pane and routes links through the free gutters, and
+`LiveRenderer` draws them on a Canvas 2D element with colours and fonts read
+from the Studio tokens. It is a semantic zoom: a node shows the facts of the
+level its size on screen gives it (1 overview, 2 machine, 3 container,
+4 closest; `live-structure.facts.ts` holds the catalogue), text is never
+shrunk or cut, and a fact without a fitting wording is left out. From the
+container level on no node is a bare box: every node has a state fact, and
+values nobody reports are said on the node as "Not observed: ..." with the
+reason (`canvasGaps`); the card details give the reason per value. One action
+brings a node into view at the container level (double click, Enter, an
+outline row, a breadcrumb, or the jump field, which `/` opens); the same
+action again goes to the closest level. `live-structure.navigation.ts` holds
+these rules, the way back (the Back control and Escape, which the view
+registers with `ModalStackService` because the shell hands Escape to the last
+registration and a plain key handler never sees it), and the anchor that keeps
+the view on the node it rests on when a layer is switched or new data
+rearranges the plan. The camera moves like a map: drag with a short glide,
+wheel and pinch about the pointer, arrow keys in eased steps, plus and minus.
+Five layers
+(performance, network, storage, backup, warnings) each have a labelled switch,
+their own sign and drawing on the canvas, and their own section in the card
+details; `layers` and `focus` in the address restore them. Besides the
+structure read the canvas reads `GET /api/operator/backups`,
+`GET /api/v1/management/remote-hosts` and
+`GET /api/v1/management/environment`; a read that fails, and every value no
+source reports, shows as "not observed". The owner's reference prototype is
+kept under `docs/live-structure-canvas/reference/owner-choice-2026-11-24/`.
+Coverage: `live-structure.model.spec.ts`, `live-structure.navigation.spec.ts`,
+`live-structure.renderer.spec.ts`, the component specs beside them, and
+`e2e/workspace/structure-live.spec.ts`.
+
 The same view lists library registries declared in schema 2
 `structure.registries` (artifact, provider, package, optional repository and
 private registry `secretRef`). `GET /api/v1/operations/structure/library` returns
@@ -1235,6 +1273,17 @@ occur. It is not a claim about tunnel transfer time.
   before each decision; a `?approval=<id>` query, the target of the push link,
   puts that request in focus. The rights model is described in
   [docs/operations/security/overview.md](../../operations/security/overview.md).
+  Since AGT-4029 the page is the pilot of the UI standard: an outline with
+  counts, one section per kind of principal (People, Groups, Service accounts,
+  API tokens, Runners, Role bindings by scope), each a `<app-data-grid>` with
+  the same column roles, and one detail panel (`<app-detail-layout>`) for the
+  selected row or the form that creates an entry. `AccessSelectionService`,
+  provided by the page, holds that one selection and the destructive action
+  whose in-place confirmation is open. Bindings and tokens are shown in the
+  detail, a new secret in `<app-secret-reveal>`, and every destructive action
+  through `<app-inline-confirm>`. The patterns and the shared components are
+  recorded in
+  [docs/system/ui-standard/access-page-pilot.md](../ui-standard/access-page-pilot.md).
 - The Retention destination at `#/workspace/settings/retention` owns the
   versioned workspace rule table, dry-run and explicit apply reports, run
   history, and a pointer to the Task Server backup controls. Project Settings mounts the same rule
@@ -1492,6 +1541,11 @@ warnings.
 
 ## Verification
 
+- Vitest workers share a module cache (`isolate: false`). Shared test data
+  belongs in helpers under the feature's `testing/` directory, never in an
+  imported `.spec.ts` file. Importing a spec can register its tests in another
+  suite and leave its own collection empty. The access account, detail and
+  bindings specs share `access-account-fixtures.ts` without importing a suite.
 - Visual or behavioral changes require relevant Playwright specs. Add or extend
   a spec when none covers the changed behavior.
 - Capture screenshots for review-relevant states and persist them in the task
@@ -1509,3 +1563,31 @@ warnings.
   `frontend/e2e/project/project-overview-dashboard.spec.ts`. The interactive
   design contract is covered separately by
   `frontend/e2e/mockups/project-overview-dashboard-mockup.spec.ts`.
+
+## Develop isolation visibility (RT-7)
+
+The global develop indicator reads `/api/develop-states` and uses the shared
+status indicator. A line-stop reason is the only error state. Running uses the
+running tone; green with quarantines uses the quiet warning tone and count.
+Its keyboard-accessible tooltip lists each test, kind and UTC end time.
+Project Operations owns the Isolated tests panel, reading
+`/api/projects/{name}/test-quarantines` independently of application telemetry.
+It refreshes every 30 seconds, excludes expired or lifted entries, and shows
+held areas, report-only entries, owning card links and time remaining. Empty,
+loading and retryable error states remain local to the panel.
+Needs you renders policy-provided `ownerOptions` with the recommendation marked;
+the existing repair-card action owns the next step. No client triage rules or
+new owner mutation routes are introduced.
+
+## Line guardian weekly review (RT-9)
+
+Team opens the project-scoped Line guardian persona section. It shows the six
+Dossier criteria in table order, applied and guardian values, normalized scores,
+editable Owner weights, targets, half-open UTC windows and provenance. The
+latest completed UTC week is the default; a Monday date selects another week.
+Shadow disagreements retain pending outcomes and later evidence. The Owner can
+switch the project live beside the shadow-week numbers after one week, or return
+to shadow. The weekly JSON download uses `guardian-v1`. Missing measurements
+remain unavailable and prevent a weighted value when their weight is positive.
+The focused `guardian review` cases in `e2e/persona-team/team-page.spec.ts` cover
+weights, authority, download and screenshots at 1280 and 390 px in both themes.

@@ -19,6 +19,8 @@ export interface TerminalSignInClass {
 export interface TerminalSignInAgent {
   id: string;
   name: string;
+  lifetimeHours?: readonly number[];
+  defaultLifetimeHours?: number;
 }
 
 export interface TerminalSignInLookup {
@@ -27,6 +29,8 @@ export interface TerminalSignInLookup {
   state: string;
   deviceLabel: string;
   keyThumbprint: string;
+  bindingKind?: 'tpm' | 'secure-enclave' | 'memory';
+  deviceKeyThumbprint?: string | null;
   /** Operator agents that already know this device key. */
   knownForAgentIds: readonly string[];
   requestedAgent: string | null;
@@ -47,6 +51,8 @@ export interface TerminalSignInConfirmation {
   operatorAgentId: string;
   sessionId: string;
   actor: string;
+  chosenEnd?: string | null;
+  chosenLifetimeHours?: number | null;
   expiresAt: string;
   classes: readonly string[];
 }
@@ -76,4 +82,8 @@ export function displaySignInCode(code: string): string {
 /** The first 16 characters of a key thumbprint; the full value goes into a title attribute. */
 export function shortThumbprint(thumbprint: string | null | undefined): string {
   return thumbprint ? (thumbprint.length > 16 ? `${thumbprint.slice(0, 16)}…` : thumbprint) : '';
+}
+
+export function deviceBindingLabel(kind: string | null | undefined): string {
+  return kind === 'tpm' ? 'TPM key (not yet verified on real hardware)' : kind === 'secure-enclave' ? 'Secure Enclave key (not yet verified on real hardware)' : 'Memory key';
 }

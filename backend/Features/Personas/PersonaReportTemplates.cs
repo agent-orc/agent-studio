@@ -9,6 +9,8 @@ public static class PersonaReportTemplates
     private static readonly IReadOnlyDictionary<string, PersonaReportTemplateV1> Templates =
         new Dictionary<string, PersonaReportTemplateV1>(StringComparer.Ordinal)
         {
+            ["guardian-v1"] = new("guardian-v1", ["false-blames", "unusable-minutes", "escapes", "isolation-minutes", "repair-cost", "held-wait", "shadow-disagreements"], ["incident-log", "post-merge-receipt", "integration-refusal", "repair-receipt"]),
+            ["dispatcher-v1"] = new("dispatcher-v1", ["cards", "conflicts", "attribution", "holds", "chains", "recuts", "forecast-accuracy", "parallelism", "own-cost"], ["dispatch-decision", "dispatch-wave", "dispatch-conflict"]),
             ["security-v1"] = new("security-v1", ["code", "dependencies", "permissions", "prompts"], ["watcher-case", "card", "dossier"]),
             ["reliability-v1"] = new("reliability-v1", ["runs", "batches", "latency", "hosts"], ["watcher-case", "card"]),
             ["quality-v1"] = new("quality-v1", ["review", "tests", "evidence"], ["watcher-case", "card"]),

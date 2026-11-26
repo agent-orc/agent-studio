@@ -9,6 +9,64 @@ namespace AgentStudio.Runner;
 /// <summary>Host boundary for the shared decision library. No transition rules belong here.</summary>
 public static class MonolithTransitionAdapter
 {
+    public static int DispatchWaveOrder(int requested, int allocated, string? wave)
+        => DispatchWavePolicy.InitialOrder(requested, allocated, wave);
+    public static bool DispatchNeedsWave(int count) => DispatchWavePolicy.NeedsWave(count);
+    public static string DispatchWaveLanding(string requested, string? wave, string mode, bool decision)
+        => DispatchWavePolicy.Landing(requested, wave, mode, decision);
+    public static DispatchPickupDecision DispatchWavePickup(DispatchPickupDecision planned, string? wave, bool complete)
+        => DispatchWavePolicy.Pickup(planned, wave, complete);
+    public static bool DispatchWaveRelease(string mode, bool lease, bool planned, bool packerSettled)
+        => DispatchWavePolicy.MayRelease(mode, lease, planned, packerSettled);
+
+    public static DispatchRecutPlan DispatchRecut(DispatchRecutFacts facts) => DispatchRecutPolicy.Plan(facts);
+    public static bool DispatchRecutArchive(DispatchRecutArchiveFacts facts) => DispatchRecutPolicy.MayArchive(facts);
+    public static string DispatchSourceKind(string source) => DispatchRecutPolicy.SourceKind(source);
+    public static double? DispatchSizePrior(IReadOnlyList<int> counts) => DispatchRecutPolicy.Median(counts);
+    public static bool DispatchRecutUndo(string state, DateTimeOffset? until, DateTimeOffset now)
+        => DispatchRecutPolicy.MayUndo(state, until, now);
+
+    public static DispatchCompetitionEvaluation DispatchCompetition(DispatchCompetitionFacts facts)
+        => DispatchCompetitionPolicy.Evaluate(facts);
+
+    public static DispatchLeaseDecision DispatchLease(DispatchLeaseState state, DispatchLeaseFacts facts)
+        => DispatchLeasePolicy.Decide(state, facts);
+    public static string DispatchWindow(string? wave, DateTimeOffset now) => DispatchLeasePolicy.Window(wave, now);
+    public static string? DispatchLaterCard(IReadOnlyList<(string Card, DateTimeOffset At)> admissions)
+        => DispatchLeasePolicy.LaterCard(admissions);
+
+    public static bool DispatchDependencyRemoval(string persona, string? origin, bool redeemedT2)
+        => DispatcherAuthorityPolicy.MayRemoveDependency(persona, origin, redeemedT2);
+
+    public static bool GuardianShadowWeekComplete(DateTimeOffset? since, DateTimeOffset now)
+        => LineGuardianPolicy.ShadowWeekComplete(since, now);
+
+    public static bool GuardianComputeExhausted(GuardianBudgetFacts facts) => LineGuardianPolicy.ComputeExhausted(facts);
+    public static bool GuardianMayClassify(GuardianBudgetFacts facts) => LineGuardianPolicy.MayClassify(facts);
+    public static GuardianPermission GuardianOperation(GuardianOperationFacts facts) => LineGuardianPolicy.Authorize(facts);
+
+    public static bool DispatcherOperation(DispatcherOperationFacts facts)
+        => DispatcherAuthorityPolicy.Admits(facts);
+
+    public static bool DispatcherLease(string persona, bool active, bool grants, bool shadowGate,
+        bool expired, long expectedFence, long fence)
+        => DispatcherAuthorityPolicy.MayAcquireLease(persona, active, grants, shadowGate, expired, expectedFence, fence);
+
+    public static DispatchPlan DispatchExclusive(DispatchPlan plan, IReadOnlyList<DispatchExclusiveMark> prior,
+        IReadOnlySet<string> present) => DispatchPickupPolicy.PreserveExclusive(plan, prior, present);
+
+    public static DispatchPickupDecision DispatchPickup(DispatchPlan? plan, string card, DateTimeOffset now,
+        bool authority, IReadOnlySet<string> satisfied)
+        => DispatchPickupPolicy.Decide(plan, card, now, authority, satisfied);
+
+    public static DispatchPlan DispatchPlan(DispatchFacts facts, DispatchStrategy strategy)
+        => DispatchPlanPolicy.Plan(facts, strategy);
+
+    public static bool DispatchSemanticPair(bool deterministicRed, bool sameWindow, int members,
+        bool namedByIsolation, IReadOnlyList<string> forecastOverlap)
+        => DispatchConflictPolicy.IsSemanticPair(deterministicRed, sameWindow, members,
+            namedByIsolation, forecastOverlap);
+
     public static AutoReviewStrandingAction AutoReviewStranding(AutoReviewStrandingFacts facts)
         => AutoReviewStrandingPolicy.Decide(facts);
     public static AutoReviewStrandingAction AutoReviewBatchRoute(AutoReviewStrandingAction decided,
@@ -28,6 +86,28 @@ public static class MonolithTransitionAdapter
         => RedDevelopRepairPolicy.RecurringCard(lane);
     public static bool MayCreateRelease(bool developRed)
         => RedDevelopRepairPolicy.MayCreateRelease(developRed);
+    public static RedTestTriageDecision RedTestTriage(RedTestTriageFacts facts) => RedTestTriagePolicy.Decide(facts);
+    public static bool QuarantineActive(AgentStudio.TaskServer.Contracts.ProjectTestQuarantine entry, DateTimeOffset now)
+        => TestQuarantineLifecyclePolicy.Active(entry, now);
+    public static string? QuarantineStartRefusal(IReadOnlyList<AgentStudio.TaskServer.Contracts.ProjectTestQuarantine> active,
+        string kind, bool baseTest) => TestQuarantineLifecyclePolicy.StartRefusal(active, kind, baseTest);
+    public static string? QuarantineRenewRefusal(AgentStudio.TaskServer.Contracts.ProjectTestQuarantine entry,
+        bool owner, string? lane, DateTimeOffset now) => TestQuarantineLifecyclePolicy.RenewRefusal(entry, owner, lane, now);
+    public static string? QuarantineLiftRefusal(bool owner, IReadOnlyList<RedTestLiftRun> runs)
+        => TestQuarantineLifecyclePolicy.LiftRefusal(owner, runs);
+    public static string QuarantineDevelopState(string? lineStop) => TestQuarantineLifecyclePolicy.DevelopState(lineStop);
+    public static bool MayReleaseQuarantines(string? lineStop, bool held)
+        => TestQuarantineLifecyclePolicy.MayCreateRelease(lineStop, held);
+    public static IReadOnlyList<TestQuarantineHoldFact> ActiveQuarantineHolds(
+        IReadOnlyList<ProjectTestQuarantine> entries, DateTimeOffset now) => HoldScopePolicy.ActiveHolds(entries, now);
+    public static string? QuarantineIntegrationBlock(IReadOnlyCollection<string> paths,
+        IReadOnlyList<TestQuarantineHoldFact> holds, string cardId, IReadOnlyList<string>? aliases = null)
+        => HoldScopePolicy.IntegrationBlock(paths, holds, cardId, aliases);
+    public static IntegrationResultDecision IntegrationResult(string outcome, int attemptsUsed)
+        => IntegrationResultPolicy.Decide(outcome, attemptsUsed);
+    public static TimeSpan IntegrationHoldRecheckInterval => IntegrationResultPolicy.HoldRecheckInterval;
+    public static bool MayIntegrateLineStop(string? lineStop, string cardId, IReadOnlyList<string> repairs)
+        => TestQuarantineLifecyclePolicy.MayIntegrateLineStop(lineStop, cardId, repairs);
     public static ReviewBudgetDecision ReviewBudget(ReviewBudgetFacts facts) => ReviewBudgetPolicy.Decide(facts);
     public static DeepReviewDecision DeepReview(DeepReviewGrounds facts, string mode,
         string? ruleVersionId = null, bool? ruleSelection = null, string? ruleModel = null,
@@ -149,6 +229,9 @@ public static class MonolithTransitionAdapter
             totalQueueWait, queueWaitCap);
 
     public static TimeSpan GateQueueWaitCap(TimeSpan queueBudget) => GateQueueStallPolicy.QueueWaitCap(queueBudget);
+
+    public static bool RetryIntegrationAdmission(string? budgetName, string? phase, int attempts)
+        => GateQueueStallPolicy.RetryIntegrationAdmission(budgetName, phase, attempts);
 
     public static bool IsGateQueueOverrun(string? budgetName, string? budgetPhase)
         => GateQueueStallPolicy.IsQueueOverrun(budgetName, budgetPhase);

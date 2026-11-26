@@ -21,6 +21,7 @@ internal sealed class ActiveRun
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public required string JobId { get; init; }
+    public string? SelectionEventId { get; init; }
     /// <summary>CLI driving this run; null between claim and CLI resolution.</summary>
     public string? CliType { get; set; }
     /// <summary>Primary CLI whose exhausted quota caused this run to use a fallback.</summary>

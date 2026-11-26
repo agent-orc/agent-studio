@@ -189,7 +189,8 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.Anonymous, "/api/auth/status", "/api/auth/invite/preview", "/recovery");
         Add("POST", IamPermissions.Anonymous,
             "/api/auth/bootstrap", "/api/auth/login", "/api/auth/invite/accept", "/api/auth/runner-enroll",
-            "/api/auth/passkeys/assertion-options", "/api/auth/operator-sign-in", "/api/auth/operator-sign-in/poll");
+            "/api/auth/passkeys/assertion-options", "/api/auth/operator-sign-in", "/api/auth/operator-sign-in/poll", OperatorSessionEndpoints.RenewPath);
+        Add("GET", IamPermissions.Anonymous, OperatorSessionEndpoints.StatusPath);
         Add("R", IamPermissions.SelfSession, "/api/auth/session");
         Add("R", IamPermissions.SelfSession, "/api/auth/directory");
         Add("POST", IamPermissions.SelfSession, "/api/auth/logout", "/api/auth/change-password");
@@ -211,7 +212,7 @@ public static class RoutePermissionCatalog
 
         // --- Runner and engine service routes (credential scopes decide) ----
         Add("R", IamPermissions.RunnerService, "/api/quota/admission/{}");
-        Add("POST", IamPermissions.RunnerService, "/api/model-selection/events");
+        Add("POST", IamPermissions.RunnerService, "/api/model-selection/events", "/api/model-selection/plan");
         Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/claim");
         Add("PUT", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/report");
         Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/review-package-claims");
@@ -388,6 +389,7 @@ public static class RoutePermissionCatalog
             "/api/cli/quota/caps", "/api/cli/quota/fallback-preference", "/api/cli/quota/model-routes",
             "/api/cli/quota/wait-policy", "/api/cli/maintenance-model", "/api/cli/model-routing/**",
             "/api/model-selection/policy/consumers/{}",
+            "/api/model-selection/policy/reserve",
             "/api/clients/{}/defaults", "/api/clients/{}/runner-capacity", "/api/git/branch-sweep/settings",
             "/api/orchestration/rollout/**");
         Add("POST", IamPermissions.WorkspaceRead, "/api/token-pricing/calculate", "/api/token-pricing/what-if", "/api/component-routing/resolve");
@@ -402,7 +404,7 @@ public static class RoutePermissionCatalog
         // working memory, quota and model probes are installation-wide.
         Add("R", IamPermissions.WorkspaceRead,
             "/api/cli/types", "/api/cli/contracts", "/api/cli/model-migrations");
-        Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/effective");
+        Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/effective", "/api/model-selection/drill");
         Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/active");
         Add("R", IamPermissions.WorkspaceRead, "/api/model-selection/policy");
         Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/events", "/api/model-selection/active");
@@ -453,7 +455,7 @@ public static class RoutePermissionCatalog
         AddProjectChecked("POST", IamPermissions.ProjectRead, "/api/tasks/acceptance-readiness");
         // Creation, reorder, and batch-move check every affected project in
         // the handler; title and prompt helpers touch no project.
-        AddProjectChecked("POST", IamPermissions.ProjectCardsWrite, "/api/tasks", "/api/tasks/reorder", "/api/tasks/batch-move",
+        AddProjectChecked("POST", IamPermissions.ProjectCardsWrite, "/api/tasks", "/api/tasks/batch", "/api/tasks/reorder", "/api/tasks/batch-move",
             "/api/title/generate", "/api/prompt/enhance");
         Add("DELETE", IamPermissions.ProjectCardsWrite, "/api/tasks/{}");
         Under("W", IamPermissions.ProjectCardsWrite, "/api/tasks/{}",

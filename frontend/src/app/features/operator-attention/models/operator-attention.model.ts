@@ -14,6 +14,7 @@ export interface OperatorAttentionItem {
   reason: string;
   observedAt: string;
   suggestedOperations: string[];
+  ownerOptions?: { id: string; label: string; recommended: boolean }[] | null;
   evidence?: { label: string; href: string }[];
 }
 
@@ -25,7 +26,7 @@ export interface OperatorAttentionResponse {
 /** The decision-event classes of the operator stream, in the order the list shows them. */
 export type AttentionClass =
   | 'incident' | 'decision' | 'dossier' | 'escalation' | 'human-review' | 'push-blocked' | 'gate-host' | 'post-merge'
-  | 'red-develop'
+  | 'red-develop' | 'overlap'
   | 'batch' | 'batch-record' | 'push'
   | 'quota'
   | 'host' | 'disk' | 'review-host' | 'installation' | 'other';
@@ -52,7 +53,8 @@ const CLASSES: readonly AttentionClassSpec[] = [
   // AGT-3965: a fast or balanced project integrates untested while no post-merge run reports.
   { key: 'post-merge', label: 'Post-merge runs missing', action: 'Open operations', target: 'operations' },
   // RT-1 (AGT-3988): a red develop incident of two hours asks the owner; the repair card holds the evidence.
-  { key: 'red-develop', label: 'Develop red for two hours', action: 'Open repair card', target: 'card' },
+  { key: 'red-develop', label: 'Develop incidents', action: 'Open repair card', target: 'card' },
+  { key: 'overlap', label: 'Dispatch overlap', action: 'Open card', target: 'card' },
   { key: 'batch', label: 'Batch needs attention', action: 'Open batch panel', target: 'batch-gate' },
   { key: 'batch-record', label: 'Batch record unreadable', action: 'Open batch gate', target: 'batch-gate' },
   { key: 'push', label: 'Overdue pending push', action: 'Open batch gate', target: 'batch-gate' },
@@ -65,6 +67,7 @@ const CLASSES: readonly AttentionClassSpec[] = [
 ];
 
 const CLASS_OF_TYPE: Readonly<Record<string, AttentionClass>> = {
+  'dispatch.overlap-starved': 'overlap',
   'environment.incident-open': 'incident',
   'decision-card.opened': 'decision',
   'dossier.decision-open': 'dossier',

@@ -429,8 +429,6 @@ public sealed class StallInterventionAdapterTests : IDisposable
             services.AddSingleton(new BatchGateStore(gates));
             services.RemoveAll<TimeProvider>();
             services.AddSingleton<TimeProvider>(_clock);
-            services.Remove(services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
-                && descriptor.ImplementationType == typeof(BatchGatePilotHostedService)));
         });
     });
 

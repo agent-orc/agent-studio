@@ -24,9 +24,18 @@ internal sealed class MachineGateSlots
     internal async Task<Lease?> AcquireAsync(int count, TimeSpan timeout,
         Action<int, int>? waiting, CancellationToken ct,
         GateDurationClass durationClass = GateDurationClass.Unknown,
-        bool reserveFirstSlot = false)
+        bool reserveFirstSlot = false, bool integrationPriority = false)
     {
         if (count is < 1 or > 64) throw new ArgumentOutOfRangeException(nameof(count));
+        if (integrationPriority)
+        {
+            var merge = await new MachineGateSlots(_lockPrefix + ".integration", _clock)
+                .AcquireAsync(1, timeout, (busy, _) => waiting?.Invoke(busy, count + 1), ct)
+                .ConfigureAwait(false);
+            // Report a distinct lane instead of appearing to hold regular slot zero.
+            if (merge is not null) { merge.Slot = count; merge.Count = count + 1; }
+            return merge;
+        }
         if (reserveFirstSlot && count == 1) return null;
         var started = _clock.GetTimestamp();
         var collision = false;
@@ -132,8 +141,8 @@ internal sealed class MachineGateSlots
         long queueWaitMs, bool collision) : IDisposable
     {
         private int _disposed;
-        public int Slot { get; } = slot;
-        public int Count { get; } = count;
+        public int Slot { get; internal set; } = slot;
+        public int Count { get; internal set; } = count;
         public long QueueWaitMs { get; } = queueWaitMs;
         public bool CollisionDetected { get; } = collision;
         public void Dispose()

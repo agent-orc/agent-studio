@@ -1160,7 +1160,9 @@ describe('TaskCardComponent (smoke)', () => {
     const pill = fixture.nativeElement.querySelector('[data-testid="execution-location-badge"]') as HTMLElement | null;
     expect(pill).not.toBeNull();
     expect(pill?.getAttribute('data-execution-state')).toBe('remote-running');
-    expect(pill?.textContent).toContain('agent-runner-01');
+    // AGT-4034: the status line names the host, so the badge does not repeat it.
+    expect(pill?.textContent).toContain('Host');
+    expect(pill?.textContent).not.toContain('agent-runner-01');
   });
 
   it('treats a live remote lease as running when no local execution exists', async () => {

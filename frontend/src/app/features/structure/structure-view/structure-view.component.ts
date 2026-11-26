@@ -1,5 +1,5 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, HostListener, OnDestroy, afterNextRender, computed, effect, inject, input, signal, untracked } from '@angular/core';
-import { DatePipe } from '@angular/common';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, HostListener, OnDestroy, Type, afterNextRender, computed, effect, inject, input, signal, untracked } from '@angular/core';
+import { DatePipe, NgComponentOutlet } from '@angular/common';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { AuthSessionState } from '../../../services/auth.service';
@@ -9,6 +9,7 @@ import { replaceStudioRouteQuery } from '../../studio-shell/services/studio-rout
 import { DisclosureMarkerComponent } from '../../../components/disclosure-marker/disclosure-marker.component';
 import { SegmentedControlComponent } from '../../../components/segmented-control/segmented-control.component';
 import { LAYOUT, layoutStructure, leafDetail, type LayoutBox, type RoutedLink } from '../structure-layout';
+import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
 import { applyStructureDelta, factLines, isGroup, isPlacement, isStructuralDelta, isUndeclared, kindText, observationGlyph, observationText,
   observationWord, projectStructure, summaryText, visibleBoxes,
   type StructureBox, type StructureData, type StructureDelta, type StructureObservation } from '../structure.model';
@@ -34,7 +35,7 @@ let instances = 0;
 @Component({
   selector: 'app-structure-view',
   standalone: true,
-  imports: [DatePipe, DisclosureMarkerComponent, SegmentedControlComponent],
+  imports: [DatePipe, DisclosureMarkerComponent, NgComponentOutlet, SegmentedControlComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './structure-view.component.html',
   styleUrl: './structure-view.component.scss',
@@ -48,6 +49,18 @@ export class StructureViewComponent implements OnDestroy {
   readonly projectSlug = studioProjectSlug;
   readonly embedded = input(false);
   readonly hostOnly = input(false);
+  /** The Operations tab offers the live canvas (AGT-4024); embedded uses keep the classic drawing. */
+  readonly liveCanvas = input(false);
+  readonly mode = signal<'live' | 'classic'>('classic');
+  readonly modeOptions = [{ value: 'live', label: 'Live' }, { value: 'classic', label: 'Classic' }] as const;
+  /** Layers and focus of the live canvas as the address carried them when the view opened. */
+  readonly liveLayers = signal<string | null>(null);
+  readonly liveFocus = signal<string | null>(null);
+  private liveState: { layers: string; focus: string | null } | null = null;
+  /** The canvas is its own chunk, loaded when the live drawing is first shown. */
+  readonly liveComponent = signal<Type<unknown> | null>(null);
+  readonly liveInputs = computed(() => ({ data: this.data(), live: this.live(), initialLayers: this.liveLayers(), initialFocus: this.liveFocus(),
+    persist: (state: { layers: string; focus: string | null }) => this.rememberLive(state) }));
   readonly data = signal<StructureData>({ nodes: [], links: [] });
   readonly viewOptions = [{ value: 'host', label: 'Host' }, { value: 'container', label: 'Container' }] as const;
   readonly levelOptions = [{ value: 1, label: '1' }, { value: 2, label: '2' }, { value: 3, label: '3' }] as const;
@@ -162,7 +175,7 @@ export class StructureViewComponent implements OnDestroy {
     destroyRef.onDestroy(() => this.ngOnDestroy());
     afterNextRender(() => {
       const main = this.element.nativeElement.querySelector<HTMLElement>('.structure-main');
-      main?.focus();
+      if (this.mode() === 'classic') main?.focus();
       if (!main) return;
       this.measureWidth(main);
       if (typeof ResizeObserver === 'undefined') return;
@@ -172,23 +185,32 @@ export class StructureViewComponent implements OnDestroy {
     });
     void this.loadLibrary(false);
     effect(() => {
+      if (this.mode() === 'live' && !untracked(this.liveComponent))
+        void import('../live/live-structure-view/live-structure-view.component').then(m => this.liveComponent.set(m.LiveStructureViewComponent));
+    });
+    effect(() => {
       this.projectName();
       this.auth.status();
       this.embedded();
       this.hostOnly();
+      this.liveCanvas();
       untracked(() => {
         const query = new URLSearchParams(this.embedded() ? '' : location.hash.split('?')[1] ?? '');
         try {
           const saved = JSON.parse(localStorage.getItem(this.preferenceKey()) || '{}') as
-            { view?: 'host' | 'container'; level?: 1 | 2 | 3; overlay?: 'health' | 'version' | 'drift' | 'load' };
+            { view?: 'host' | 'container'; level?: 1 | 2 | 3; overlay?: 'health' | 'version' | 'drift' | 'load'; mode?: string; layers?: string };
+          this.mode.set(this.startMode(query, saved.mode));
+          this.liveLayers.set(query.get('layers') ?? (typeof saved.layers === 'string' ? saved.layers : null));
           if (saved.view === 'host' || saved.view === 'container') this.view.set(saved.view);
           if (saved.level === 1 || saved.level === 2 || saved.level === 3) this.level.set(saved.level);
           if (saved.overlay && ['health', 'version', 'drift', 'load'].includes(saved.overlay)) this.overlay.set(saved.overlay);
-        } catch { /* Optional preference. */ }
+        } catch { this.mode.set(this.startMode(query, undefined)); }
+        this.liveFocus.set(query.get('focus'));
         if (query.get('view') === 'host' || query.get('view') === 'container') this.view.set(query.get('view') as 'host' | 'container');
         if (['1', '2', '3'].includes(query.get('level') ?? '')) this.level.set(Number(query.get('level')) as 1 | 2 | 3);
         if (['health', 'version', 'drift', 'load'].includes(query.get('overlay') ?? '')) this.overlay.set(query.get('overlay') as 'health' | 'version' | 'drift' | 'load');
-        this.environment.set(query.get('env') ?? '');
+        // Hosts that only report exist in the whole picture alone, so the live canvas reads without an environment filter.
+        this.environment.set(this.mode() === 'live' ? '' : query.get('env') ?? '');
         this.selected.set(query.get('focus'));
         if (this.hostOnly()) this.view.set('host');
         void this.load();
@@ -310,6 +332,29 @@ export class StructureViewComponent implements OnDestroy {
     }
   }
 
+  /**
+   * The live canvas opens first in the Operations tab of the workspace. An address
+   * that names the classic drawing's view, level or overlay still opens the classic
+   * drawing, so links from before the canvas keep their target.
+   */
+  private startMode(query: URLSearchParams, saved: string | undefined): 'live' | 'classic' {
+    if (!this.liveCanvas() || this.embedded() || this.hostOnly()) return 'classic';
+    const asked = query.get('mode');
+    if (asked === 'live' || asked === 'classic') return asked;
+    if (query.has('view') || query.has('level') || query.has('overlay')) return 'classic';
+    if (saved === 'live' || saved === 'classic') return saved;
+    return this.projectName() ? 'classic' : 'live';
+  }
+  setMode(mode: 'live' | 'classic'): void {
+    if (mode === this.mode()) return;
+    this.mode.set(mode);
+    if (mode === 'live' && this.environment()) { this.environment.set(''); void this.load(); }
+    this.remember();
+  }
+  rememberLive(state: { layers: string; focus: string | null }): void {
+    this.liveState = state;
+    this.remember();
+  }
   setView(view: 'host' | 'container'): void {
     if (this.hostOnly()) return;
     this.view.set(view);
@@ -347,14 +392,20 @@ export class StructureViewComponent implements OnDestroy {
   }
   private preferenceKey(): string { return `studio.structure.${this.auth.status()?.user?.id ?? 'local'}.${this.hostOnly() ? 'settings' : this.projectName() ?? 'workspace'}`; }
   private remember(): void {
-    if (!this.embedded()) replaceStudioRouteQuery({ view: this.view(), level: String(this.level()), overlay: this.overlay(), env: this.environment(), focus: this.selected() });
-    try { localStorage.setItem(this.preferenceKey(), JSON.stringify({ view: this.view(), level: this.level(), overlay: this.overlay() })); }
-    catch { /* Preference storage is optional. */ }
+    const live = this.mode() === 'live', layers = this.liveState?.layers ?? this.liveLayers();
+    if (!this.embedded()) replaceStudioRouteQuery(live
+      ? { mode: 'live', layers, focus: this.liveState ? this.liveState.focus : this.liveFocus(), view: null, level: null, overlay: null, env: null }
+      : { mode: this.liveCanvas() ? 'classic' : null, layers: null, view: this.view(), level: String(this.level()), overlay: this.overlay(), env: this.environment(), focus: this.selected() });
+    try {
+      localStorage.setItem(this.preferenceKey(), JSON.stringify({ view: this.view(), level: this.level(), overlay: this.overlay(),
+        ...(this.liveCanvas() ? { mode: this.mode(), ...(layers !== null ? { layers } : {}) } : {}) }));
+    } catch { /* Preference storage is optional. */ }
   }
 
   @HostListener('document:keydown', ['$event'])
   onKeydown(event: KeyboardEvent): void {
-    if (event.altKey || event.ctrlKey || event.metaKey ||
+    // The live canvas owns its keys (1 to 5 switch layers there).
+    if (this.mode() === 'live' || event.altKey || event.ctrlKey || event.metaKey ||
         event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
     const key = event.key.toLowerCase();
     if (key === '1' || key === '2' || key === '3') this.setLevel(Number(key) as 1 | 2 | 3);

@@ -63,6 +63,13 @@ export class OperatorAttentionService {
   readonly readinessLoading = this._readinessLoading.asReadonly();
   readonly readinessError = this._readinessError.asReadonly();
 
+  async runAnyway(item: OperatorAttentionItem): Promise<void> {
+    if (!item.project) return;
+    await firstValueFrom(this.http.post(`/api/projects/${encodeURIComponent(item.project)}/dispatch/run-anyway`, { fact: item.id }));
+    this._facts.update(items => items.filter(fact => fact.id !== item.id));
+    this.refresh();
+  }
+
   setArchivedProjects(names: readonly string[]): void {
     this._archivedProjects.set(new Set(names.map(name => name.toLowerCase())));
   }
@@ -211,5 +218,6 @@ function readinessKey(project: string, card: string): string {
 function sameRows(current: readonly OperatorAttentionItem[], next: readonly OperatorAttentionItem[]): boolean {
   return current.length === next.length
     && current.every((item, index) => item.id === next[index].id && item.reason === next[index].reason
-      && item.title === next[index].title);
+      && item.title === next[index].title
+      && JSON.stringify(item.ownerOptions ?? []) === JSON.stringify(next[index].ownerOptions ?? []));
 }

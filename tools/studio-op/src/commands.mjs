@@ -6,6 +6,7 @@ import { ARTICLE_KINDS, MAX_BODY_BYTES, articlePath, parseArticle, parseSource, 
 import { EXIT } from './exit-codes.mjs';
 import { OperationError, failure } from './studio.mjs';
 import { login } from './login.mjs';
+import { serveAgent } from './agent.mjs';
 import { watchDecisions } from './watch.mjs';
 
 const enc = encodeURIComponent;
@@ -19,7 +20,7 @@ const ACCEPTED_LANES = ['6-completed', '7-archive', '5-completed', 'completed', 
 
 /** Routes an operator credential never calls; Studio refuses them (security overview). */
 const REFUSED_ROUTES = [
-  '/api/auth/* (access, tokens, sessions)',
+  '/api/auth/* (access, tokens, sessions; own bound-session status and device renewal are exceptions)',
   '/api/v1/* (Task Server plane)',
   'Runner service routes',
   'SignalR hubs (/hubs/*)',
@@ -117,9 +118,18 @@ function lines(...parts) {
 }
 
 export const COMMANDS = {
+  agent: {
+    summary: 'Run the memory-only session signer under this OS user (login starts it automatically).',
+    anonymous: true,
+    spec: {},
+    run: async ctx => {
+      const agent = await serveAgent(ctx.configDir);
+      return { data: { endpoint: agent.endpoint, keyThumbprint: agent.thumbprint }, text: `Signer listening at ${agent.endpoint}. Login starts its own session signer.` };
+    },
+  },
   login: {
     summary: 'Sign in from this terminal; the Owner confirms the code in Studio with a second factor.',
-    spec: { agent: 'string', label: 'string', class: 'list', noQr: 'boolean' },
+    spec: { agent: 'string', label: 'string', class: 'list', noQr: 'boolean', lifetime: 'string' },
     anonymous: true,
     async run(ctx, positionals, options) {
       if (positionals.length) throw usage('unexpected-argument', 'login takes no arguments. Use --agent <name>.');
@@ -155,12 +165,18 @@ export const COMMANDS = {
           server.error = probe.body?.error ?? `http-${probe.status}`;
         }
       }
-      const data = { credential, server, refusedRoutes: REFUSED_ROUTES, ownerKeeps: OWNER_KEEPS,
+      let session = null;
+      if (credential.prefix === 'oas' && ctx.client) {
+        const response = await ctx.client.send('GET', '/api/auth/operator-session/status');
+        if (response.status === 200) session = response.body;
+      }
+      const data = { credential, server, session, refusedRoutes: REFUSED_ROUTES, ownerKeeps: OWNER_KEEPS,
         securityModel: 'docs/security-model/index.html' };
       return { exitCode, ok: exitCode === EXIT.OK, data, text: lines(
         `Studio:      ${ctx.url}`,
         `Credential:  ${credential.file} (${credential.exists ? `mode ${credential.mode}${credential.ownerOnly ? ', owner-only' : ', NOT owner-only'}` : 'missing'})`,
         credential.prefix ? `Token:       ${credential.kind}, prefix ${credential.prefix}${credential.id ? `, id ${credential.id}` : ''}` : null,
+        session ? `Chosen end:  ${session.chosenEnd ?? 'until revoked'}\nIdle end:    ${session.idleEnd ?? 'none'}\nBinding:     ${session.device?.bindingKind ?? 'unbound'}` : null,
         `Server:      ${server.authenticated ? 'authenticated' : `not authenticated (${server.error ?? server.status})`}`,
         server.projects.length ? `Projects:    ${server.projects.join(', ')}` : null,
         'Refused to operator credentials:', REFUSED_ROUTES.map(item => `  - ${item}`),
@@ -406,11 +422,27 @@ export const COMMANDS = {
       const capacity = await ctx.client.request('GET', '/api/operator/capacity');
       return { data: { centralPolicy: policy.status === 200 ? policy.body : null, centralPolicyStatus: policy.status,
         modelRoutingPins: capacity.modelRoutingPins ?? [] }, text: lines(
+        `Short-step reserve: ${policy.body?.shortStepReservePoints ?? 'unknown'} percentage points`,
         policy.status === 200
           ? Object.entries(policy.body?.consumers ?? {}).map(([consumer, setting]) =>
             `central ${consumer}: ${setting?.primary?.cli ?? '?'}/${setting?.primary?.model ?? 'default'}`)
           : `central model selection policy: not readable (${policy.status})`,
         (capacity.modelRoutingPins ?? []).map(pinLine)) };
+    },
+  },
+
+  'routing drill': {
+    summary: 'Dry-run model switching with fake quotas; spends no model tokens.',
+    spec: { project: 'string', pipelineType: 'string', dryRun: 'boolean' },
+    async run(ctx, _positionals, options) {
+      const data = await ctx.client.request('GET', '/api/model-selection/drill', {
+        query: { project: options.project, pipelineType: options.pipelineType },
+      });
+      return { data, ok: data.passed, exitCode: data.passed ? EXIT.OK : EXIT.FAILURE,
+        text: lines(`Routing drill: ${data.passed ? 'passed' : 'failed'} (dry run, no model tokens)`,
+          `Short-step reserve: ${data.shortStepReservePoints} percentage points`,
+          (data.cases ?? []).map(item => `${item.scenario} ${item.workClass}: ${item.selection.outcome} ${item.selection.route.cliType}/${item.selection.route.model}`),
+          (data.missingEquivalence ?? []).map(item => `Missing equivalence: ${item.stepId ?? item.consumer} ${item.preferred.cliType}/${item.preferred.model}/${item.preferred.thinkingLevel ?? 'default'}`)) };
     },
   },
 

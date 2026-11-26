@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Route } from '@playwright/test';
+import { test, expect, type Locator, type Page, type Route } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTheme } from '../helpers/theme';
@@ -108,15 +108,30 @@ async function openAccess(page: Page) {
   await page.goto('/#/workspace/settings/access', { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await expect(page.getByTestId('workspace-settings-rail-access')).toBeAttached({ timeout: 30_000 });
   const access = page.getByTestId('access-area');
-  await expect(access.getByRole('heading', { name: 'Users' })).toBeVisible();
+  await expect(access.getByRole('heading', { name: /^People/ })).toBeVisible();
   return access;
+}
+
+/** Opens the detail of a grid row; the detail area is the one panel of the page. */
+async function openRow(access: Locator, rowTestId: string): Promise<Locator> {
+  await access.getByTestId(rowTestId).getByRole('button', { name: /^Open details of/ }).click();
+  const panel = access.getByTestId('access-detail-panel');
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
+async function openInvite(access: Locator): Promise<Locator> {
+  await access.getByTestId('access-invite-open').click();
+  const invite = access.getByTestId('access-invite-form');
+  await expect(invite).toBeVisible();
+  return invite;
 }
 
 test('a second invitation hides the first one-use link while pending', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await stubNetworkedOwner(page);
   const access = await openAccess(page);
-  const invite = access.getByTestId('access-invite-form');
+  const invite = await openInvite(access);
   await invite.getByTestId('access-invite-username').fill('first.contributor');
   await invite.getByTestId('access-grant-project').selectOption('PROJ-001');
   await invite.getByTestId('access-grant-role').selectOption('contributor');
@@ -136,7 +151,7 @@ test('a second invitation hides the first one-use link while pending', async ({ 
   await invite.getByTestId('access-grant-role').selectOption('viewer');
   await invite.getByTestId('access-invite-submit').click();
   await expect(invite.getByTestId('access-invite-link')).toHaveCount(0);
-  await expect(invite.getByTestId('access-invite-copy')).toHaveCount(0);
+  await expect(invite.getByTestId('access-invite-link-copy')).toHaveCount(0);
   await expect(invite.getByTestId('access-invite-pending')).toContainText('second.reviewer');
   await expect(invite.getByTestId('access-invite-pending')).toContainText('Viewer');
   await expect(invite.getByTestId('access-invite-submit')).toBeDisabled();
@@ -161,8 +176,9 @@ test('Owner sees factor changes and verifies the current factor before replaceme
   await page.route('**/api/auth/step-up', route => json(route, {}));
   await page.route('**/api/auth/totp/start', route => json(route, { secret: 'TESTSECRET' }));
   const access = await openAccess(page);
-  await expect(access.getByTestId('access-user-robert')).toContainText('Registered');
+  await expect(access.getByTestId('access-user-robert')).toContainText('Registered, 20 Oct 2026');
   await expect(access.getByTestId('factor-activity')).toContainText('factor.bound');
+  await expect(access.getByTestId('factor-activity')).toContainText('20 Oct 2026, 09:00 UTC');
   mkdirSync(resultDir, { recursive: true });
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
@@ -171,12 +187,13 @@ test('Owner sees factor changes and verifies the current factor before replaceme
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await access.getByTestId('access-user-robert').scrollIntoViewIfNeeded();
-  await expect(access.getByTestId('access-user-robert').getByRole('cell', { name: 'Registered' })).toBeInViewport();
-  await expect(access.getByTestId('access-user-robert').getByRole('cell', { name: /Oct 20, 2026/ })).toBeInViewport();
+  await expect(access.getByTestId('access-user-robert').getByText('Registered, 20 Oct 2026')).toBeInViewport();
   await page.screenshot({ path: join(resultDir, 'owner-factor-access-390px.png') });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await access.getByTestId('session-manager-toggle').last().click();
-  await access.getByRole('button', { name: 'Add authenticator' }).click();
+  // The Owner's own sessions and second factors sit in the People section head.
+  const own = access.locator('#access-people');
+  await own.getByTestId('session-manager-toggle').click();
+  await own.getByRole('button', { name: 'Add authenticator' }).click();
   const challenge = access.getByTestId('enrollment-step-up');
   await expect(challenge).toBeVisible();
   for (const theme of ['light', 'dark'] as const) {
@@ -195,7 +212,7 @@ test('Owner sees factor changes and verifies the current factor before replaceme
   await expect(access.getByTestId('session-totp-secret')).toHaveText('TESTSECRET');
 });
 
-test('disabling a user confirms that open sessions end', async ({ page }) => {
+test('disabling a user confirms in place that open sessions end', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const state = await stubNetworkedOwner(page);
   let updates = 0;
@@ -205,9 +222,10 @@ test('disabling a user confirms that open sessions end', async ({ page }) => {
     return json(route, state.users[1]);
   });
   const access = await openAccess(page);
-  await access.getByTestId('access-user-toggle-product.lead').click();
-  const dialog = page.getByTestId('confirm-dialog');
-  await expect(dialog).toContainText('Open sessions end immediately');
+  const panel = await openRow(access, 'access-user-product.lead');
+  await panel.getByTestId('access-user-toggle-product.lead').click();
+  const confirm = panel.getByTestId('access-user-toggle-product.lead-panel');
+  await expect(confirm).toContainText('Open sessions of Product Lead end immediately');
   expect(updates).toBe(0);
   mkdirSync(resultDir, { recursive: true });
   for (const theme of ['light', 'dark'] as const) {
@@ -215,11 +233,13 @@ test('disabling a user confirms that open sessions end', async ({ page }) => {
     await page.screenshot({ path: join(resultDir, `access-disable-confirm-${theme}.png`) });
   }
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(confirm).toBeVisible();
   await page.screenshot({ path: join(resultDir, 'access-disable-confirm-390.png') });
-  await page.getByTestId('confirm-dialog-cancel').click();
+  await panel.getByTestId('access-user-toggle-product.lead-cancel').click();
+  await expect(confirm).toHaveCount(0);
   expect(updates).toBe(0);
-  await access.getByTestId('access-user-toggle-product.lead').click();
-  await page.getByTestId('confirm-dialog-confirm').click();
+  await panel.getByTestId('access-user-toggle-product.lead').click();
+  await panel.getByTestId('access-user-toggle-product.lead-confirm').click();
   await expect(access.getByTestId('access-user-status-product.lead')).toContainText('Disabled');
   expect(updates).toBe(1);
 });
@@ -229,27 +249,34 @@ test('owner sees users, groups, service accounts with API tokens, runners, and r
   await stubNetworkedOwner(page);
   const access = await openAccess(page);
 
-  await expect(access.getByTestId('access-summary')).toContainText('6 role bindings');
-  await expect(access.getByTestId('access-user-product.lead')).toContainText('Product · Website');
-  await expect(access.getByTestId('access-user-product.lead')).toContainText('Viewer · Mobile App (group)');
+  await expect(access.getByTestId('access-outline-access-bindings')).toContainText('6');
+  const product = access.getByTestId('access-user-product.lead');
+  await expect(product.getByTitle('Product · Website', { exact: true })).toBeAttached();
+  await expect(product.getByTitle('Viewer · Mobile App', { exact: true })).toBeAttached();
   await expect(access.getByTestId('access-scope-workspace')).toContainText('Owner');
   await expect(access.getByTestId('access-scope-environment:proj-001/production')).toContainText('Approver');
   await expect(access.getByTestId('access-scope-environment:proj-001/stage')).toContainText('deploy-bot');
   await expect(access.getByTestId('access-group-grp_web')).toContainText('Product Lead');
-  await expect(access.getByTestId('access-service-account-sa_tok_build')).toContainText('API token');
+  await expect(access.getByTestId('access-api-tokens').getByTestId('access-service-account-sa_tok_build')).toContainText('build bot');
+  await expect(access.getByTestId('access-service-accounts').getByTestId('access-service-account-sa_tok_build')).toHaveCount(0);
   await expect(access.getByTestId('access-runner-runner_coding')).toContainText('coding-host');
+
+  // The group role of a person is named with its group in the detail.
+  const panel = await openRow(access, 'access-user-product.lead');
+  await expect(panel.getByTestId('access-binding-rb_group')).toContainText('Through the group Team Website');
+  await page.keyboard.press('Escape');
 
   mkdirSync(resultDir, { recursive: true });
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
-    await access.getByTestId('access-summary').scrollIntoViewIfNeeded();
+    await access.getByTestId('access-outline').scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(resultDir, `access-area-1440-${theme}.png`) });
     await access.getByTestId('access-bindings').scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(resultDir, `access-area-1440-${theme}-bindings.png`) });
   }
 });
 
-test('users stack with status and actions visible at 390 px in both themes', async ({ page }) => {
+test('people stack with status and the row menu visible at 390 px in both themes', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await stubNetworkedOwner(page);
   const access = await openAccess(page);
@@ -261,16 +288,24 @@ test('users stack with status and actions visible at 390 px in both themes', asy
     await setTheme(page, theme);
     await users.scrollIntoViewIfNeeded();
     await expect(product.getByTestId('access-user-status-product.lead')).toBeVisible();
-    for (const name of ['Sessions', 'Reset password', 'Disable']) {
-      const button = product.getByRole('button', { name });
-      await expect(button).toBeVisible();
-      const box = await button.boundingBox();
+    for (const control of [product.getByRole('button', { name: 'Open details of Product Lead' }), product.getByRole('button', { name: 'Actions for Product Lead' })]) {
+      await expect(control).toBeVisible();
+      const box = await control.boundingBox();
       expect(box).not.toBeNull();
       expect(box!.x).toBeGreaterThanOrEqual(0);
       expect(box!.x + box!.width).toBeLessThanOrEqual(390);
     }
     expect(await users.evaluate(table => table.scrollWidth <= table.clientWidth + 1)).toBe(true);
     await page.screenshot({ path: join(resultDir, `access-users-390-${theme}.png`) });
+  }
+  // Every action of the person is in the detail, which covers the phone as a sheet.
+  const panel = await openRow(access, 'access-user-product.lead');
+  for (const name of ['Sessions', 'Reset password', 'Disable user']) {
+    const button = panel.getByRole('button', { name, exact: true });
+    await button.scrollIntoViewIfNeeded();
+    const box = await button.boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
   }
 });
 
@@ -280,10 +315,11 @@ test('an operator API token shows its operator-agent role in both themes', async
   const access = await openAccess(page);
 
   const token = access.getByTestId('access-service-account-sa_tok_build');
-  await expect(token).toContainText('API token');
-  await expect(access.getByTestId('access-api-token-role-sa_tok_build')).toContainText('Role: Operator agent');
-  await expect(token).toContainText('Operator agent · Workspace');
+  await expect(token.getByTitle('Operator agent · Workspace', { exact: true })).toBeVisible();
   await expect(token).not.toContainText('Admin');
+  const panel = await openRow(access, 'access-service-account-sa_tok_build');
+  await expect(panel).toHaveAccessibleName('API token: build bot');
+  await expect(panel.getByTestId('access-api-token-role-sa_tok_build')).toContainText('Role: Operator agent');
 
   mkdirSync(resultDir, { recursive: true });
   for (const theme of ['light', 'dark'] as const) {
@@ -313,14 +349,16 @@ test('owner verifies a second factor before revoking another user session', asyn
     return json(route, { revoked: true });
   });
   const access = await openAccess(page);
-  await access.getByTestId('access-user-product.lead').getByTestId('session-manager-toggle').click();
-  await access.getByTestId('access-user-product.lead').getByRole('button', { name: 'Revoke all other sessions' }).click();
+  const panel = await openRow(access, 'access-user-product.lead');
+  await panel.getByTestId('session-manager-toggle').click();
+  await panel.getByRole('button', { name: 'Revoke all other sessions' }).click();
   const challenge = access.getByTestId('session-step-up');
   await expect(challenge).toBeVisible();
   expect(revokeCount).toBe(0);
   mkdirSync(resultDir, { recursive: true });
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
+    await challenge.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(resultDir, `session-step-up-${theme}--mocked.png`) });
   }
   await challenge.getByLabel('Authenticator or recovery code').fill('123456');
@@ -335,7 +373,7 @@ test('owner invites a developer through the invitation flow and issues a service
   await stubNetworkedOwner(page);
   const access = await openAccess(page);
 
-  const invite = access.getByTestId('access-invite-form');
+  const invite = await openInvite(access);
   await invite.getByTestId('access-invite-username').fill('new.developer');
   await invite.getByTestId('access-invite-display-name').fill('New Developer');
   await invite.getByTestId('access-grant-project').selectOption('PROJ-002');
@@ -345,8 +383,8 @@ test('owner invites a developer through the invitation flow and issues a service
   await expect(invite.getByTestId('access-invite-link')).toContainText('works once');
   await expect(invite.getByTestId('access-invite-link')).toContainText('second factor is recommended');
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
-  await invite.getByTestId('access-invite-copy').click();
-  await expect(invite.getByTestId('access-invite-copy')).toHaveText('Copied');
+  await invite.getByTestId('access-invite-link-copy').click();
+  await expect(invite.getByTestId('access-invite-link-copy')).toHaveText('Copied');
   expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('/?invite=inv.e2e-invite');
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
@@ -357,20 +395,22 @@ test('owner invites a developer through the invitation flow and issues a service
     }
   }
   await page.setViewportSize({ width: 1920, height: 1080 });
-  await expect(access.getByTestId('access-user-new.developer')).toContainText('Developer · Mobile App');
+  await expect(access.getByTestId('access-user-new.developer').getByTitle('Developer · Mobile App', { exact: true })).toBeVisible();
   await expect(access.getByTestId('access-user-new.developer')).toContainText('Invited');
 
-  await access.getByTestId('access-token-create-sa_deploy').click();
-  await expect(access.getByTestId('access-token-issued')).toContainText(oneTimeToken);
+  const panel = await openRow(access, 'access-service-account-sa_deploy');
+  await panel.getByTestId('access-token-create-sa_deploy').click();
+  await expect(panel.getByTestId('access-token-issued')).toContainText(oneTimeToken);
   await setTheme(page, 'dark');
   await page.screenshot({ path: join(resultDir, 'access-area-1920-dark-invite-and-token.png'), fullPage: true });
-  await access.getByRole('button', { name: 'Done' }).click();
+  await panel.getByTestId('access-token-issued-done').click();
   await expect(access).not.toContainText(oneTimeToken);
-  await expect(access.getByTestId('access-service-account-sa_deploy')).toContainText('deploy-bot token');
+  await expect(panel.getByTestId('access-token-list')).toContainText('deploy-bot token');
 
-  await access.getByTestId('access-enrollment-name').fill('build-host');
-  await access.getByTestId('access-enrollment-create').click();
-  await expect(access.getByTestId('access-enrollment-code')).toContainText(enrollmentCode);
+  await access.getByTestId('access-enrollment-open').click();
+  await panel.getByTestId('access-enrollment-name').fill('build-host');
+  await panel.getByTestId('access-enrollment-create').click();
+  await expect(panel.getByTestId('access-enrollment-code')).toContainText(enrollmentCode);
   await access.getByTestId('access-runners').scrollIntoViewIfNeeded();
   await setTheme(page, 'light');
   await page.screenshot({ path: join(resultDir, 'access-area-1920-light-runners.png'), fullPage: true });
@@ -415,13 +455,15 @@ test('a denied reload clears cached access data and the issued token', async ({ 
   await page.setViewportSize({ width: 1440, height: 900 });
   await stubNetworkedOwner(page);
   const access = await openAccess(page);
-  await access.getByTestId('access-token-create-sa_deploy').click();
-  await expect(access.getByTestId('access-token-issued')).toContainText(oneTimeToken);
+  const panel = await openRow(access, 'access-service-account-sa_deploy');
+  await panel.getByTestId('access-token-create-sa_deploy').click();
+  await expect(panel.getByTestId('access-token-issued')).toContainText(oneTimeToken);
 
   await page.route('**/api/auth/iam', route => json(route, { message: 'Denied Access' }, 403));
   await access.getByTestId('access-reload').click();
   await expect(access.getByTestId('access-error')).toContainText('cannot view access settings');
   await expect(access.getByTestId('access-users')).toHaveCount(0);
+  await expect(access.getByTestId('access-detail-panel')).toHaveCount(0);
   await expect(access.getByTestId('access-token-issued')).toHaveCount(0);
   await expect(access).not.toContainText(oneTimeToken);
 
@@ -461,13 +503,13 @@ test('owner binds runners to projects and sees credential expiry and pre-binding
   });
   const access = await openAccess(page);
   const list = access.getByTestId('access-runners');
+  const panel = access.getByTestId('access-detail-panel');
 
   await expect(list.getByTestId('access-runner-projects-runner_web')).toContainText('Website');
   await expect(list.getByTestId('access-runner-expiry-runner_web')).toContainText('Expires 30 Nov 2026');
   await expect(list.getByTestId('access-runner-expiry-runner_soon')).toContainText('Expires in 4 days');
   await expect(list.getByTestId('access-runner-projects-runner_old')).toContainText('Before binding');
   await expect(list.getByTestId('access-runner-expiry-runner_old')).toContainText('No expiry');
-  await expect(list.getByTestId('access-enrollment-no-project')).toContainText('claims and reads nothing');
 
   mkdirSync(resultDir, { recursive: true });
   for (const theme of ['light', 'dark'] as const) {
@@ -476,21 +518,25 @@ test('owner binds runners to projects and sees credential expiry and pre-binding
     await list.screenshot({ path: join(resultDir, `access-runner-binding-1440-${theme}.png`) });
   }
 
-  await list.getByTestId('access-enrollment-name').fill('build-host');
-  await list.getByTestId('access-enrollment-project-PROJ-001').check();
-  await list.getByTestId('access-enrollment-create').click();
-  await expect(list.getByTestId('access-enrollment-code')).toContainText('expires 30 days after enrollment');
+  await access.getByTestId('access-enrollment-open').click();
+  await expect(panel.getByTestId('access-enrollment-no-project')).toContainText('claims and reads nothing');
+  await panel.getByTestId('access-enrollment-name').fill('build-host');
+  await panel.getByTestId('access-enrollment-project-PROJ-001').check();
+  await panel.getByTestId('access-enrollment-create').click();
+  await expect(panel.getByTestId('access-enrollment-code')).toContainText('expires 30 days after enrollment');
   expect(enrollmentBodies).toEqual([{ name: 'build-host', projects: ['PROJ-001'] }]);
 
-  await list.getByTestId('access-runner-edit-projects-runner_old').click();
-  await list.getByTestId('access-runner-project-runner_old-PROJ-002').check();
+  await openRow(access, 'access-runner-runner_old');
+  await expect(panel).toContainText('Rotate it to adopt the default');
+  await panel.getByTestId('access-runner-edit-projects-runner_old').click();
+  await panel.getByTestId('access-runner-project-runner_old-PROJ-002').check();
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
-    await list.getByTestId('access-runner-project-editor-runner_old').scrollIntoViewIfNeeded();
-    await list.screenshot({ path: join(resultDir, `access-runner-project-editor-1440-${theme}.png`) });
+    await panel.getByTestId('access-runner-project-editor-runner_old').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(resultDir, `access-runner-project-editor-1440-${theme}.png`) });
   }
-  await list.getByTestId('access-runner-save-projects-runner_old').click();
-  await expect(list.getByTestId('access-runner-project-editor-runner_old')).toHaveCount(0);
+  await panel.getByTestId('access-runner-save-projects-runner_old').click();
+  await expect(panel.getByTestId('access-runner-project-editor-runner_old')).toHaveCount(0);
   expect(projectUpdates).toEqual([{ projects: ['PROJ-002'] }]);
   await expect(list.getByTestId('access-runner-projects-runner_old')).toContainText('Mobile App');
   await expect(list.getByTestId('access-runner-projects-runner_old')).not.toContainText('Before binding');

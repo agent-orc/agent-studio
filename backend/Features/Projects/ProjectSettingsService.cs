@@ -1145,12 +1145,38 @@ public class ProjectSettingsService
         _logger.LogInformation("Intake enabled set to {Enabled} for project {Project}", enabled, projectName);
     }
 
+    /// <summary>Stores the project hub-file override; null restores the defaults.</summary>
+    public void SetDispatchMode(string projectName, string mode)
+    {
+        if (mode is not ("off" or "shadow" or "live")) throw new ArgumentException("Unknown dispatch mode.", nameof(mode));
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { DispatchMode = mode };
+            Persist();
+        }
+    }
+
+    public void SetDispatchHubFiles(string projectName, IReadOnlyList<string>? files)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { DispatchHubFiles = files?.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray() };
+            Persist();
+        }
+    }
+
     /// <summary>
     /// DS-0: stores <c>dispatch.overlapWindow</c>. A known window is stored as
     /// chosen; null clears it and the project resolves to
     /// <see cref="OverlapWindows.Default"/> again.
     /// </summary>
-    public void SetDispatchOverlapWindow(string projectName, string? window)
+    public void SetDispatchOverlapWindow(string projectName, string? window, int? starvationMinutes = null)
     {
         var normalized = window is null ? null : OverlapWindows.Normalize(window)
             ?? throw new ArgumentException($"Unknown overlap window '{window}'.", nameof(window));
@@ -1159,7 +1185,8 @@ public class ProjectSettingsService
         {
             var key = ResolveAliasLocked(projectName);
             var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
-            _cache[key] = current with { DispatchOverlapWindow = normalized };
+            _cache[key] = current with { DispatchOverlapWindow = normalized,
+                DispatchOverlapStarvationMinutes = starvationMinutes ?? current.DispatchOverlapStarvationMinutes };
             Persist();
         }
         _logger.LogInformation("Dispatch overlap window set to {Window} for project {Project}",

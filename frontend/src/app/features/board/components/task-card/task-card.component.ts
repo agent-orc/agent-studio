@@ -1,3 +1,6 @@
+import { deriveActiveTaskRun } from '../../../../services/run-activity.util';
+import { identityDisplay } from '../../../../components/identity-chip/identity-display';
+import { IdentityChipComponent } from '../../../../components/identity-chip/identity-chip.component';
 import { commitEmptyTone, decisionTone, dependencyTone, executionTone, gradeTone, issueTone, loopTone, mergeTone, phaseTone, reviewTone } from './task-card-status-tones';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, OnInit, computed, effect, inject, input, output, signal } from '@angular/core';
@@ -39,7 +42,6 @@ import {
   buildMergeSignal,
   buildModeBadge,
   buildOutcomeIssueBadge,
-  buildOwnerChip,
   buildPendingTooltip,
   buildPhaseBadge,
   buildPipelineDots,
@@ -104,7 +106,7 @@ if (typeof window !== 'undefined') {
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [StatusIndicatorComponent, TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskPreviewComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent, CardEnvironmentBadgesComponent, DossierSliceLinkComponent, AcceptanceReadinessNoteComponent, ServerCheckoutNoticeComponent],
+  imports: [IdentityChipComponent, StatusIndicatorComponent, TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskPreviewComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent, CardEnvironmentBadgesComponent, DossierSliceLinkComponent, AcceptanceReadinessNoteComponent, ServerCheckoutNoticeComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',
@@ -207,7 +209,9 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   readonly ownerChip = computed(() => {
     const ownerId = this.job().ownerClientId;
     if (!ownerId) return null;
-    return buildOwnerChip(this.clients.resolve(ownerId));
+    const owner = this.clients.resolve(ownerId);
+    const kind = owner.kind === 'human' ? 'human' : null;
+    return { id: owner.id, name: owner.displayName, kind, label: identityDisplay(owner.id, { name: owner.displayName, kind }).label };
   });
 
   // Live working-tree state (branch + uncommitted file count) only makes
@@ -270,6 +274,9 @@ export class TaskCardComponent implements OnInit, OnDestroy {
     if (this.job().state === TaskState.AutoReview) return null;
     return buildPhaseBadge(this.job().phase, this.job().steerPendingSince ?? this.job().phaseEnteredAt, taskCardNow(), this.job().state);
   }
+
+  /** AGT-4034: the live status line names the host of a remote run, so no second host line. */
+  readonly statusNamesHost = computed(() => deriveActiveTaskRun(this.job())?.kind === 'remote');
 
   executionBadge() { return buildExecutionBadge(this.job()); }
 

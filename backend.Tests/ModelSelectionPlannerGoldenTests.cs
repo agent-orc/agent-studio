@@ -245,6 +245,9 @@ public sealed class ModelSelectionPlannerGoldenTests : IDisposable
         var request = new SelectionRequest
         {
             Consumer = testCase.SameClassOnly ? SelectionConsumers.ReviewAspect : SelectionConsumers.Coding,
+            // This legacy matrix varies capability requirements for long work.
+            // Short-step reserve/projection behavior has its own routing drill.
+            WorkClass = SelectionWorkClasses.Coding,
             Pins = new SelectionPins(testCase.Route.CliType, testCase.Route.Model, testCase.Route.ThinkingLevel),
             Required = new SelectionRequirements(SameClassOnly: testCase.SameClassOnly),
             Host = facts.ClaimingHost is null ? null : new SelectionHost(facts.ClaimingHost),

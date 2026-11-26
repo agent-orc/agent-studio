@@ -20,6 +20,7 @@ public sealed record IntegrationResultDecision(
 public static class IntegrationResultPolicy
 {
     public const int MaximumStaleBaseAttempts = 3;
+    public static TimeSpan HoldRecheckInterval => TimeSpan.FromSeconds(30);
 
     public static IntegrationResultDecision Decide(string outcome, int attemptsUsed,
         int maximumAttempts = MaximumStaleBaseAttempts)
@@ -33,9 +34,9 @@ public static class IntegrationResultPolicy
         if (normalized == IntegrationOutcomeKinds.StaleBase && attemptsUsed < maximumAttempts)
             return new(IntegrationResultAction.Requeue, null,
                 $"The integration ref moved during publication; retry {attemptsUsed + 1} of {maximumAttempts} on the new tip.");
-        if (normalized == IntegrationOutcomeKinds.BlockedFailingArea)
+        if (normalized is IntegrationOutcomeKinds.BlockedFailingArea or "blockedfailingarea")
             return new(IntegrationResultAction.Requeue, null,
-                "This delivery overlaps the failing area of red develop; wait for the repair while unrelated deliveries continue.");
+                "This delivery overlaps an active quarantine hold; wait for the repair while unrelated deliveries continue.");
         var reason = normalized switch
         {
             IntegrationOutcomeKinds.Conflict => "The accepted delivery conflicts with the integration ref.",

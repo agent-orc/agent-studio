@@ -11,7 +11,7 @@ namespace AgentStudio.Tests;
 /// </summary>
 public class TokenSummaryTests
 {
-    private static OrchestratorLogEntry Entry(string model, long input, long output, long cacheRead = 0, long cacheCreate = 0)
+    private static OrchestratorLogEntry Entry(string model, long input, long output, long cacheRead = 0, long cacheCreate = 0, bool? inputIncludesCached = null)
         => new()
         {
             Kind = OrchestratorLogKinds.Decision,
@@ -23,7 +23,8 @@ public class TokenSummaryTests
                 InputTokens = (int)input,
                 OutputTokens = (int)output,
                 CacheReadTokens = (int)cacheRead,
-                CacheCreationTokens = (int)cacheCreate
+                CacheCreationTokens = (int)cacheCreate,
+                InputIncludesCached = inputIncludesCached
             }
         };
 
@@ -35,7 +36,8 @@ public class TokenSummaryTests
         string jobId = "job-a",
         string? participantId = null,
         string? pinnedModel = null,
-        bool modelMismatch = false)
+        bool modelMismatch = false,
+        bool? inputIncludesCached = null)
         => new()
         {
             Ts = ts,
@@ -49,6 +51,7 @@ public class TokenSummaryTests
                 Model = model,
                 PinnedModel = pinnedModel,
                 ModelMismatch = modelMismatch,
+                InputIncludesCached = inputIncludesCached,
                 InputTokens = (int)input,
                 OutputTokens = (int)output,
             }
@@ -112,7 +115,7 @@ public class TokenSummaryTests
     [Fact]
     public void Summarize_HistoricalGpt56SolUsage_IsPriced()
     {
-        var entry = Entry("gpt-5.6-sol", 1_000_000, 100_000) with
+        var entry = Entry("gpt-5.6-sol", 1_000_000, 100_000, inputIncludesCached: true) with
         {
             Ts = new DateTime(2026, 7, 11, 0, 0, 0, DateTimeKind.Utc),
         };
@@ -126,6 +129,32 @@ public class TokenSummaryTests
         Assert.True(model.ModelPriced);
         Assert.True(model.ModelInCatalog);
         Assert.True(model.EstimatedApiCostUsd > 0m);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public void Summarize_OpenAiZeroCacheRequiresInputEvidence(bool? inputIncludesCached, bool priced)
+    {
+        var at = new DateTime(2026, 7, 11, 0, 0, 0, DateTimeKind.Utc);
+        var entry = JobEntry("gpt-5.6-sol", 10_000, 1_000, at,
+            participantId: "agent:codex", inputIncludesCached: inputIncludesCached);
+        var ledger = TokenTestServices.Pricing().Price([entry]);
+
+        var project = TokenSummaryFold.ForProject("Demo", ledger);
+        var job = TaskTokenSummaryFold.PerJob(ledger)["job-a"];
+
+        Assert.Equal(10_000, project.TotalInputTokens);
+        Assert.Equal(1_000, project.TotalOutputTokens);
+        Assert.Equal(0, project.TotalCacheReadTokens);
+        Assert.Equal(0, project.UnknownModelCount);
+        Assert.True(Assert.Single(project.ByModel).ModelInCatalog);
+        Assert.Equal(priced, project.AllModelsPriced);
+        Assert.Equal(priced, job.AllModelsPriced);
+        Assert.Equal(priced, Assert.Single(job.Entries).ModelPriced);
+        Assert.Equal(priced, project.EstimatedApiCostUsd > 0m);
+        Assert.Equal(project.EstimatedApiCostUsd, job.EstimatedApiCostUsd);
     }
 
     [Fact]
@@ -227,7 +256,7 @@ public class TokenSummaryTests
         var t = new DateTime(2026, 7, 23, 8, 0, 0, DateTimeKind.Utc);
         var entries = new[]
         {
-            JobEntry("gpt-5-codex", 1_000, 100, t, participantId: "agent:codex"),
+            JobEntry("gpt-5-codex", 1_000, 100, t, participantId: "agent:codex", inputIncludesCached: true),
             JobEntry("claude-haiku-4.5", 2_000, 200, t.AddMinutes(5), participantId: "orchestrator:Demo"),
         };
 

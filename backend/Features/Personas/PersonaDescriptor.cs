@@ -30,7 +30,12 @@ public sealed record PersonaDescriptorV1(
     PersonaBudgetV1 Budget,
     PersonaReportV1 Report,
     IReadOnlyList<string> Floors,
-    bool? StartsActive = null);
+    bool? StartsActive = null,
+    PersonaDispatchV1? Dispatch = null);
+
+public sealed record PersonaDispatchStrategyV1(string Id, string Revision);
+public sealed record PersonaDispatchV1(PersonaDispatchStrategyV1 Strategy,
+    IReadOnlyDictionary<string, string>? Parameters = null, string Mode = "shadow", string Forecast = "model-free");
 
 public sealed record PersonaScopeV1(
     IReadOnlyList<string> Projects,
@@ -73,6 +78,7 @@ public static class PersonaKinds
     public const string Persona = "persona";
     public const string Presenter = "presenter";
     public const string Manager = "manager";
+    public const string Dispatcher = "dispatcher";
 }
 
 public static class PersonaAutonomy
@@ -105,6 +111,8 @@ public static class PersonaAutonomy
             Propose => [.. ObserveOperations, .. ProposeOperations],
             _ => ObserveOperations,
         };
+        if (descriptor.Kind == PersonaKinds.Dispatcher)
+            return descriptor.Operations.Where(op => op is "observe" or "dispatch.shadow.record").ToList();
         return descriptor.Operations.Where(allowed.Contains).ToList();
     }
 }
@@ -158,9 +166,9 @@ public static partial class PersonaDescriptorValidator
     private static readonly string[] Aspects =
     [
         "security", "operations", "reliability", "quality", "design", "product", "cost", "documentation",
-        "improvement", "presentation", "management",
+        "improvement", "presentation", "management", "delivery",
     ];
-    private static readonly string[] Kinds = [PersonaKinds.Persona, PersonaKinds.Presenter, PersonaKinds.Manager];
+    private static readonly string[] Kinds = [PersonaKinds.Persona, PersonaKinds.Presenter, PersonaKinds.Manager, PersonaKinds.Dispatcher];
     private static readonly string[] Autonomies = [PersonaAutonomy.Observe, PersonaAutonomy.Propose, PersonaAutonomy.Decide];
     private static readonly string[] RiskAppetites = ["low", "medium", "high"];
     private static readonly string[] CapabilityClasses = ["balanced", "frontier"];
@@ -186,14 +194,15 @@ public static partial class PersonaDescriptorValidator
         Check(d.Revision is not null && RevisionPattern().IsMatch(d.Revision), "revision must be year.month.sequence.");
         Check(d.Title is { Length: >= 1 and <= 80 }, "title must have 1 to 80 characters.");
         Check(Aspects.Contains(d.Aspect), "aspect is not a catalogued aspect.");
-        Check(Kinds.Contains(d.Kind), "kind must be persona, presenter or manager.");
+        Check(Kinds.Contains(d.Kind), "kind must be persona, presenter, manager or dispatcher.");
         Check(d.Kind != PersonaKinds.Manager || d.Aspect == "management", "a manager has aspect management.");
         Check(d.Kind != PersonaKinds.Presenter || d.Aspect == "presentation", "a presenter has aspect presentation.");
         Check(d.Charter is { Length: >= 1 and <= MaxCharterLength }, $"charter must have 1 to {MaxCharterLength} characters.");
         ValidateScope(d.Scope, errors);
         ValidateAttributes(d.Kind, d.Attributes, errors);
         Check(d.Operations is { Count: > 0 } && d.Operations.Distinct().Count() == d.Operations.Count
-              && d.Operations.All(PersonaAutonomy.AllOperations.Contains), "operations must be distinct catalogued persona operations.");
+              && d.Operations.All(op => PersonaAutonomy.AllOperations.Contains(op)
+                  || (d.Kind == PersonaKinds.Dispatcher && AgentStudio.Dispatch.DispatcherCapabilities.Operations.Contains(op))), "operations must be distinct catalogued persona operations.");
         Check(d.Kind == PersonaKinds.Manager || d.Operations?.Any(PersonaAutonomy.ManagerOperations.Contains) != true,
             "only a manager holds manager operations.");
         Check(d.Model is not null && CapabilityClasses.Contains(d.Model.CapabilityClass) && ThinkingLevels.Contains(d.Model.Thinking),
@@ -208,6 +217,23 @@ public static partial class PersonaDescriptorValidator
                   && d.Report.Sections.All(Slug().IsMatch))), "report needs a versioned template, 1 to 20 items and 50 to 1200 words.");
         Check(d.Floors is not null && d.Floors.Distinct().Count() == d.Floors.Count && d.Floors.All(Floor().IsMatch),
             "floors must be distinct '<fact>[<op><threshold>]:<0-100>' rules.");
+        if (d.Kind == PersonaKinds.Dispatcher)
+        {
+            Check(d.Aspect == "delivery", "a dispatcher has aspect delivery.");
+            Check(d.Dispatch is not null, "a dispatcher requires a dispatch block.");
+        }
+        else Check(d.Dispatch is null, "only a dispatcher has a dispatch block.");
+        if (d.Dispatch is { } dispatch)
+        {
+            Check(dispatch.Mode is "shadow" or "live", "dispatch.mode must be shadow or live; live authority requires a lease.");
+            Check(dispatch.Forecast is "model-free" or "model-assisted", "dispatch.forecast must be model-free or model-assisted.");
+            if (dispatch.Strategy is null) errors.Add("dispatch.strategy is required.");
+            else errors.AddRange(AgentStudio.OrchestrationDecisions.DispatchStrategies.Validate(
+                new(dispatch.Strategy.Id, dispatch.Strategy.Revision, dispatch.Parameters)));
+            Check(dispatch.Strategy?.Id == AgentStudio.OrchestrationDecisions.DispatchStrategies.PackageThenChain
+                  || d.Operations?.Any(op => op.StartsWith("dispatch.recut.", StringComparison.Ordinal)) != true,
+                "recut operations are for packaging personas only.");
+        }
         return errors;
     }
 

@@ -168,7 +168,7 @@ public sealed class OperatorTaskFactSource(
     ];
 
     public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
-        => tasks() is { } published ? OperatorDecisionFacts.FromTasks(published, fallbackOf) : null;
+        => tasks() is { } published ? OperatorDecisionFacts.FromTasks(published, fallbackOf, includeLegacyQuotaWait: false) : null;
 }
 
 /// <summary>Open watcher stall cases (the watcher's own detector decides them).</summary>
@@ -308,12 +308,18 @@ public sealed class OperatorBlockedPublicationFactSource(
 }
 
 /// <summary>Provider limits the runners recorded per CLI.</summary>
-public sealed class OperatorProviderLimitFactSource(ProviderLimitRegistry limits) : IOperatorDecisionFactSource
+public sealed class OperatorProviderLimitFactSource(ProviderLimitRegistry limits, AgentStudio.Cli.ModelSelectionLedger? selection = null) : IOperatorDecisionFactSource
 {
     public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.QuotaExhausted];
 
     public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
-        => OperatorDecisionFacts.FromProviderLimits(limits.Active(nowUtc));
+        => selection is null ? OperatorDecisionFacts.FromProviderLimits(limits.Active(nowUtc))
+            : selection.Active().Where(entry => entry.Kind == "waiting" && entry.Rule != "pin"
+                && !entry.NearbyResetWait)
+                .Select(entry => new OperatorDecisionFact(OperatorDecisionTypes.QuotaExhausted,
+                    "model-class-wait:" + entry.Id, entry.Project, entry.TaskKey, entry.Reason, entry.At.UtcDateTime,
+                    [new OperatorEvidenceLink("Model routing", "/api/model-selection/events?eventId=" + entry.Id)]))
+                .ToArray();
 }
 
 /// <summary>
@@ -348,7 +354,8 @@ public sealed class OperatorPostMergeCoverageFactSource(Func<IReadOnlyList<PostM
 /// </summary>
 public sealed class OperatorPostMergeRedIncidentFactSource(
     Func<IEnumerable<(string Project, AgentStudio.TaskServer.Contracts.PostMergeProjectState State)>> states,
-    Func<string, string, string?>? cardKey = null) : IOperatorDecisionFactSource
+    Func<string, string, string?>? cardKey = null,
+    Func<IEnumerable<(string Project, AgentStudio.Personas.GuardianProjectState State)>>? guardianStates = null) : IOperatorDecisionFactSource
 {
     public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.PostMergeRedIncident];
 
@@ -358,34 +365,69 @@ public sealed class OperatorPostMergeRedIncidentFactSource(
         foreach (var (project, state) in states())
         foreach (var incident in state.Incidents ?? [])
         {
-            if (incident.ResolvedAtUtc is not null || incident.OwnerQuestion is not { } question
-                || incident.OwnerAskedAtUtc is not { } asked) continue;
-            var card = cardKey?.Invoke(project, incident.RepairCardId) ?? incident.RepairCardId;
-            var receipt = state.Runs.LastOrDefault(run => run.Id == question.RedRunId);
-            var evidence = new List<OperatorEvidenceLink>
+            if (incident.ResolvedAtUtc is not null) continue;
+            var questions = incident.OwnerQuestions.Count > 0 ? incident.OwnerQuestions
+                : incident.OwnerQuestion is { } legacy ? [legacy with { AskedAtUtc = incident.OwnerAskedAtUtc }] : [];
+            foreach (var question in questions)
             {
-                new("repair card", "/#/tasks/" + Uri.EscapeDataString(card)),
-                new("latest red receipt", "/api/runner/post-merge/projects/" + Uri.EscapeDataString(project)),
-                new("testing strategy", "/api/projects/" + Uri.EscapeDataString(project) + "/testing"),
-            };
-            var tests = incident.FailingTests.Count == 0 ? "unknown" : string.Join(", ", incident.FailingTests.Take(5))
-                + (incident.FailingTests.Count > 5 ? $" and {incident.FailingTests.Count - 5} more" : "");
-            var tip = question.RedTipSha is { Length: >= 12 } sha ? sha[..12] : question.RedTipSha ?? "unknown";
-            var reason = $"Develop has been red for incident {incident.Fingerprint} since "
-                + $"{incident.FirstRedAtUtc.UtcDateTime:yyyy-MM-dd HH:mm} UTC. Latest red receipt "
-                + $"{question.RedRunId ?? "unknown"} at {tip}"
-                + (receipt?.FinishedAtUtc is { } finished ? $" ({finished.UtcDateTime:yyyy-MM-dd HH:mm} UTC)" : "")
-                + $". Failing tests: {tests}. Attributed merge: {incident.AttributedMerge ?? "none"}. "
-                + "Options: " + string.Join("; ", question.Options.Select(option => OptionText(option, incident)))
-                + $". Recommended: {OptionText(question.Recommended, incident)}, because {Lower(question.RecommendationReason)}"
-                + " Studio moves no card and keeps the project's test placement until you answer.";
+                if (question.AskedAtUtc is not { } asked) continue;
+                var card = cardKey?.Invoke(project, incident.RepairCardId) ?? incident.RepairCardId;
+                var receipt = state.Runs.LastOrDefault(run => run.Id == question.RedRunId);
+                var evidence = new List<OperatorEvidenceLink>
+                {
+                    new("repair card", "/#/tasks/" + Uri.EscapeDataString(card)),
+                    new("latest red receipt", "/api/runner/post-merge/projects/" + Uri.EscapeDataString(project)),
+                    new("testing strategy", "/api/projects/" + Uri.EscapeDataString(project) + "/testing"),
+                };
+                var tests = incident.FailingTests.Count == 0 ? "unknown" : string.Join(", ", incident.FailingTests.Take(5))
+                    + (incident.FailingTests.Count > 5 ? $" and {incident.FailingTests.Count - 5} more" : "");
+                var tip = question.RedTipSha is { Length: >= 12 } sha ? sha[..12] : question.RedTipSha ?? "unknown";
+                var reason = $"Post-merge incident {incident.Fingerprint} since "
+                    + $"{incident.FirstRedAtUtc.UtcDateTime:yyyy-MM-dd HH:mm} UTC. Latest red receipt "
+                    + $"{question.RedRunId ?? "unknown"} at {tip}"
+                    + (receipt?.FinishedAtUtc is { } finished ? $" ({finished.UtcDateTime:yyyy-MM-dd HH:mm} UTC)" : "")
+                    + $". Failing tests: {tests}. Attributed merge: {incident.AttributedMerge ?? "none"}. "
+                    + "Options: " + string.Join("; ", question.Options.Select(option => OptionText(option, incident)))
+                    + $". Recommended: {OptionText(question.Recommended, incident)}, because {Lower(question.RecommendationReason)}"
+                    + " Studio moves no card and keeps the project's test placement until you answer.";
+                facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.PostMergeRedIncident,
+                    $"{OperatorDecisionTypes.PostMergeRedIncident}|{project}|{incident.Fingerprint}|{incident.FirstRedAtUtc:O}"
+                        + (question.Reason is null ? "" : $"|{incident.TestId}|{question.Reason}"),
+                    project, card, reason, asked.UtcDateTime, evidence,
+                    Title: incident.TestId is null ? $"{project} · develop red for two hours"
+                        : $"{project} · {QuestionTitle(question.Reason)}: {incident.TestId}",
+                    OwnerOptions: question.Options.Select(option => new OperatorOwnerOption(option,
+                        OptionText(option, incident), option == question.Recommended)).ToArray()));
+            }
+        }
+        foreach (var (project, state) in guardianStates?.Invoke() ?? [])
+        foreach (var item in state.OwnerItems.Where(i => !state.ClosedIncidents.Contains(i.Incident)))
+        {
+            var budget = item.Operation == "budget";
             facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.PostMergeRedIncident,
-                $"{OperatorDecisionTypes.PostMergeRedIncident}|{project}|{incident.Fingerprint}|{incident.FirstRedAtUtc:O}",
-                project, card, reason, asked.UtcDateTime, evidence,
-                Title: $"{project} · develop red for two hours"));
+                $"{OperatorDecisionTypes.PostMergeRedIncident}|{project}|guardian|{item.Id}", project, null,
+                $"Line guardian requests {item.Operation} for {item.Incident}. Recommended: {item.Recommended}. "
+                    + $"Any grant expires at {item.ExpiresAt:O} and permits at most {item.UseCap} use(s). Rules keep running.",
+                item.ExpiresAt.AddHours(-24).UtcDateTime,
+                [new("guardian evidence", "/api/projects/" + Uri.EscapeDataString(project) + "/line-guardian")],
+                Title: project + (budget ? " · Guardian budget exhausted" : " · Guardian owner grant requested"),
+                OwnerOptions: budget
+                    ? [new("KeepHeld", "Keep held and review budget", true)]
+                    : [new("Refuse", "Refuse", true), new("GrantWithExpiry", "Grant with expiry and use cap", false)]));
         }
         return facts;
     }
+
+    private static string QuestionTitle(string? reason) => reason switch
+    {
+        "LineStopAge" => "Line stopped for 60 minutes",
+        "RenewalLimit" => "Quarantine reached 48 hours",
+        "RepairNotInProgress" => "Quarantine expired",
+        "CapExceeded" => "Quarantine cap reached",
+        "Relapse" => "Test relapsed",
+        "T2Request" => "Owner permission required",
+        _ => "Test incident needs a decision",
+    };
 
     private static string OptionText(string option, AgentStudio.TaskServer.Contracts.PostMergeIncident incident) => option switch
     {
@@ -396,6 +438,15 @@ public sealed class OperatorPostMergeRedIncidentFactSource(
         nameof(AgentStudio.OrchestrationDecisions.RedDevelopOwnerOption.KeepFixingForward) => "keep fixing forward",
         nameof(AgentStudio.OrchestrationDecisions.RedDevelopOwnerOption.SwitchProjectToStrict) =>
             "switch the project to strict until develop is green",
+        nameof(AgentStudio.OrchestrationDecisions.RedTestOwnerOption.Extend24Hours) => "extend 24 hours",
+        nameof(AgentStudio.OrchestrationDecisions.RedTestOwnerOption.ReportOnlyWithCard) => "report-only with a card",
+        nameof(AgentStudio.OrchestrationDecisions.RedTestOwnerOption.StopLine) => "stop the line",
+        nameof(AgentStudio.OrchestrationDecisions.RedTestOwnerOption.RaiseCapOnce) => "raise the cap once",
+        nameof(AgentStudio.OrchestrationDecisions.RedTestOwnerOption.ReholdSameCard) => "re-hold with the same card",
+        nameof(AgentStudio.OrchestrationDecisions.RedTestOwnerOption.ReholdNewCardHigherRung) => "re-hold with a new card one rung up",
+        nameof(AgentStudio.OrchestrationDecisions.RedTestOwnerOption.ReportOnly) => "report-only",
+        nameof(AgentStudio.OrchestrationDecisions.RedTestOwnerOption.GrantWithExpiry) => "grant with an expiry",
+        nameof(AgentStudio.OrchestrationDecisions.RedTestOwnerOption.Refuse) => "refuse",
         _ => option,
     };
 

@@ -91,12 +91,13 @@ public sealed record SelectionHost(
     IReadOnlyDictionary<string, string>? CliVersions = null);
 
 /// <summary>A same-session resume keeps the session's CLI and model.</summary>
-public sealed record SelectionContinuation(string? SessionCli = null, string? SessionModel = null);
+public sealed record SelectionContinuation(string? SessionCli = null, string? SessionModel = null, string? SessionThinkingLevel = null);
 
 /// <summary>One consumer's question: which CLI, model and thinking level runs this work now.</summary>
 public sealed record SelectionRequest
 {
     public string Consumer { get; init; } = SelectionConsumers.Coding;
+    public string? WorkClass { get; init; }
     public string? Project { get; init; }
     public string? PipelineType { get; init; }
     public string? StepId { get; init; }
@@ -106,6 +107,9 @@ public sealed record SelectionRequest
     public SelectionPins Pins { get; init; } = new();
     public bool IsExplicitPin { get; init; }
     public string? TaskType { get; init; }
+    public string? TaskMode { get; init; }
+    public string? TaskTitle { get; init; }
+    public string? TaskPrompt { get; init; }
     /// <summary>The card's correctness floor; a fallback below it waits instead (rule 7).</summary>
     public ModelRoutingTier? CorrectnessFloor { get; init; }
     public SelectionRequirements Required { get; init; } = new();
@@ -136,6 +140,7 @@ public sealed record SelectionResult
     public required string Rule { get; init; }
     public required string Reason { get; init; }
     public SelectionEquivalence? Equivalence { get; init; }
+    public IReadOnlyList<SelectionRoute> EquivalentRoutes { get; init; } = [];
     public SelectionQuota? Quota { get; init; }
     public DateTime? RetryAt { get; init; }
     public DateTime? ReturnToPrimaryAt { get; init; }
@@ -166,6 +171,8 @@ public sealed record SelectionFacts
 {
     public required DateTime NowUtc { get; init; }
     public required IQuotaCapTable Caps { get; init; }
+    public int ShortStepReservePoints { get; init; }
+    public Func<string, string?> ProviderUnavailable { get; init; } = _ => null;
     /// <summary>Cached quota snapshot per CLI; null when none was probed.</summary>
     public Func<string?, QuotaSnapshot?> SnapshotFor { get; init; } = _ => null;
     /// <summary>Null when no routing map is configured: the planner then never switches.</summary>
@@ -238,6 +245,7 @@ public sealed record SelectionLedgerEntry(
     DateTime? ReturnToPrimaryAt)
 {
     public string? ClosesId { get; init; }
+    public bool NearbyResetWait { get; init; }
     public decimal? FromPricePerMTok { get; init; }
     public decimal? ToPricePerMTok { get; init; }
     /// <summary>The ledger event for a result, or null for a plain primary launch.</summary>
@@ -256,6 +264,6 @@ public sealed record SelectionLedgerEntry(
             id, at, kind, request.Consumer, request.Host?.HostId, request.Project, request.PipelineType,
             request.StepId, request.TaskKey, request.AttemptId, request.Round, executionPath,
             result.Primary, result.Route, result.Rule, result.Reason, result.Quota, result.Equivalence,
-            result.RetryAt, result.ReturnToPrimaryAt);
+            result.RetryAt, result.ReturnToPrimaryAt) { NearbyResetWait = result.NearbyResetWait };
     }
 }

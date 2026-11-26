@@ -70,6 +70,18 @@
 
   "overrides": [
     {
+      "comment": "RT-7 isolated tests use central colour and spacing tokens.",
+      "files": ["src/app/features/project-detail/components/isolated-tests/*.scss"],
+      "rules": {
+        "color-no-hex": true,
+        "color-named": "never",
+        "scale-unlimited/declaration-strict-value": [
+          ["padding", "padding-block", "padding-inline", "margin", "gap", "row-gap", "column-gap"],
+          { "ignoreValues": ["0", "auto"], "ignoreFunctions": false, "disableFix": true, "severity": "error" }
+        ]
+      }
+    },
+    {
       "files": [
         "src/styles/_tokens-primitives.scss",
         "src/styles/_tokens-semantic.scss",
@@ -197,6 +209,8 @@
         "src/app/components/error-dialog/error-dialog.component.scss",
         "src/app/features/backups/**/*.scss",
         "src/app/features/access/components/access-operator-agents/access-operator-agents.component.scss",
+        "src/app/features/access/components/access-elevated-sessions/access-elevated-sessions.component.scss",
+        "src/app/features/access/components/access-session-limits/access-session-limits.component.scss",
         "src/app/features/access/components/access-operator-activity/access-operator-activity.component.scss",
         "src/app/features/remote-hosts/components/execution-infrastructure/execution-infrastructure.scss",
         "src/app/components/status-indicator/status-indicator.component.scss",
@@ -354,6 +368,12 @@
         "src/app/features/test-evidence/components/test-evidence-status/test-evidence-status.component.scss",
         "src/app/features/deployments/components/card-environment-badges/card-environment-badges.scss",
         "src/app/features/structure/structure-view/structure-view.component.scss",
+        "src/app/features/structure/live/live-glyph/live-glyph.component.scss",
+        "src/app/features/structure/live/live-structure-details/live-structure-details.component.scss",
+        "src/app/features/structure/live/live-structure-jump/live-structure-jump.component.scss",
+        "src/app/features/structure/live/live-structure-layers/live-structure-layers.component.scss",
+        "src/app/features/structure/live/live-structure-outline/live-structure-outline.component.scss",
+        "src/app/features/structure/live/live-structure-view/live-structure-view.component.scss",
         "src/app/components/task-preview/task-preview.component.scss",
         "src/app/features/flow-health/components/flow-health-page/flow-health-page.scss",
         "src/app/features/project-detail/components/quality-studio-panel/quality-studio-panel.component.scss",
@@ -428,6 +448,45 @@
         "color-no-hex": true,
         "scale-unlimited/declaration-strict-value": [
           ["padding", "padding-block", "padding-inline", "margin", "gap", "row-gap", "column-gap"],
+          { "ignoreValues": ["0", "auto"], "ignoreFunctions": false, "disableFix": true, "severity": "error" }
+        ]
+      }
+    },
+    {
+      "comment": "AGT-4029 UI standard pilot: the shared page components and the reworked Access sections read colour and spacing only from tokens.",
+      "files": [
+        "src/app/components/chip/*.scss",
+        "src/app/components/data-grid/*.scss",
+        "src/app/components/detail-layout/*.scss",
+        "src/app/components/inline-confirm/*.scss",
+        "src/app/components/overflow-menu/*.scss",
+        "src/app/components/page-outline/*.scss",
+        "src/app/components/page-section/*.scss",
+        "src/app/components/secret-reveal/*.scss",
+        "src/app/features/access/components/access-account-detail/*.scss",
+        "src/app/features/access/components/access-account-form/*.scss",
+        "src/app/features/access/components/access-area/*.scss",
+        "src/app/features/access/components/access-binding-form/*.scss",
+        "src/app/features/access/components/access-binding-list/*.scss",
+        "src/app/features/access/components/access-bindings/*.scss",
+        "src/app/features/access/components/access-enrollment-form/*.scss",
+        "src/app/features/access/components/access-grant-form/*.scss",
+        "src/app/features/access/components/access-grants/*.scss",
+        "src/app/features/access/components/access-group-detail/*.scss",
+        "src/app/features/access/components/access-group-form/*.scss",
+        "src/app/features/access/components/access-groups/*.scss",
+        "src/app/features/access/components/access-invite-form/*.scss",
+        "src/app/features/access/components/access-people/*.scss",
+        "src/app/features/access/components/access-person-detail/*.scss",
+        "src/app/features/access/components/access-runner-detail/*.scss",
+        "src/app/features/access/components/access-runners/*.scss",
+        "src/app/features/access/components/access-service-accounts/*.scss"
+      ],
+      "rules": {
+        "color-no-hex": true,
+        "color-named": "never",
+        "scale-unlimited/declaration-strict-value": [
+          ["padding", "padding-block", "padding-inline", "padding-top", "padding-right", "padding-bottom", "padding-left", "margin", "margin-top", "margin-bottom", "gap", "row-gap", "column-gap"],
           { "ignoreValues": ["0", "auto"], "ignoreFunctions": false, "disableFix": true, "severity": "error" }
         ]
       }

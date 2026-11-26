@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Caching.Memory;
 using System.Text;
 using System.Text.Json;
 
@@ -25,7 +26,7 @@ namespace AgentStudio.Tasks;
 /// callers do not have today.
 /// </para>
 /// </summary>
-public sealed class TimelineLog
+public sealed class TimelineLog : IDisposable
 {
     private static readonly JsonSerializerOptions WriteOpts = new()
     {
@@ -38,6 +39,45 @@ public sealed class TimelineLog
     {
         PropertyNameCaseInsensitive = true,
     };
+
+    // Keep only the events used by weekly hold reporting, bounded across all cards.
+    private readonly MemoryCache _integrationWaitHistory = new(new MemoryCacheOptions { SizeLimit = 100_000 });
+    private sealed record WaitHistoryStamp(long Length, DateTime Written, DateTime Created);
+    private sealed record WaitHistorySnapshot(WaitHistoryStamp Stamp, IReadOnlyList<TimelineEvent> Events);
+
+    /// <summary>
+    /// Reuse wait receipts while the ledger is unchanged. File metadata also detects
+    /// writes from other readers or processes; a moved card has a different path.
+    /// A read racing an append is returned but never cached under the newer stamp.
+    /// </summary>
+    internal IReadOnlyList<TimelineEvent> ReadIntegrationWaitHistory(string jobFolderPath)
+    {
+        if (string.IsNullOrWhiteSpace(jobFolderPath)) return [];
+        var path = Path.GetFullPath(TaskPaths.TimelineLog(jobFolderPath));
+        var stamp = Stamp(path);
+        if (stamp is null)
+        {
+            _integrationWaitHistory.Remove(path);
+            return [];
+        }
+        if (_integrationWaitHistory.TryGetValue<WaitHistorySnapshot>(path, out var cached) && cached!.Stamp == stamp)
+            return cached.Events;
+        var events = Array.AsReadOnly(ReadAll(jobFolderPath).Where(e =>
+            e.Kind is TimelineEventKinds.IntegrationQuarantineWait or TimelineEventKinds.IntegrationSucceeded
+            || e.Kind == TimelineEventKinds.LaneChanged && e.Details?.GetValueOrDefault("to") == TaskStates.Archive).ToArray());
+        if (stamp == Stamp(path))
+            _integrationWaitHistory.Set(path, new WaitHistorySnapshot(stamp, events),
+                new MemoryCacheEntryOptions { Size = Math.Max(1, events.Count), SlidingExpiration = TimeSpan.FromMinutes(10) });
+        return events;
+    }
+
+    private static WaitHistoryStamp? Stamp(string path)
+    {
+        var file = new FileInfo(path);
+        return file.Exists ? new(file.Length, file.LastWriteTimeUtc, file.CreationTimeUtc) : null;
+    }
+
+    public void Dispose() => _integrationWaitHistory.Dispose();
 
     private readonly ILogger<TimelineLog> _logger;
 

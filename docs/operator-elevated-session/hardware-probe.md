@@ -1,0 +1,5 @@
+1. On Windows with TPM 2.0 or a Mac with Secure Enclave, use the agent OS user, Node 22+, and the [platform setup](../operations/setup/operator-agent.md#hardware-device-keys-es-5); hardware is not yet verified on real hardware.
+2. From the repository root run `node docs/operator-elevated-session/hardware-probe.mjs`; retain its PASS/FAIL output (failure exits nonzero).
+3. Opt in through `hardwareDeviceKeys` for `win32` or `darwin` in `studio-op.json`, run `studio-op login`, and confirm in Studio; record PASS only if confirmation and session show the expected hardware kind and the unverified label.
+4. Copy only the config directory to an independent machine, run the probe with that directory as its first argument and the original printed thumbprint as its second; record PASS only for refused wrapped-key use or a different device key, and confirm login never recognizes the original device.
+5. Retain output and light/dark screenshots; remove the opt-in setting afterward, and record FAIL for any missing step rather than claiming hardware verification.

@@ -126,6 +126,7 @@ public sealed record CliRouteDecision(
     string? CapabilityClass = null)
 {
     public bool TargetQuotaBlocked { get; init; }
+    public AgentStudio.TaskServer.Contracts.SelectionRoute? RejectedTarget { get; init; }
 }
 
 /// <summary>One route projected from Token Economy's routing and price catalogues.</summary>

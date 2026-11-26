@@ -18,6 +18,17 @@ namespace AgentStudio.Tests;
 public sealed class RoutePermissionInventoryTests : IDisposable
 {
     [Fact]
+    public void Overlap_window_uses_project_settings_write_without_an_owner_floor()
+    {
+        using var factory = Factory(SecurityProfiles.Local, null);
+        var endpoint = Assert.Single(Routes(factory.Services).Where(route => route.RoutePattern.RawText
+            == "/api/projects/{projectName}/dispatch/overlap-window" && RoutePermissionCatalog.Methods(route).Contains("PUT")));
+        Assert.Equal(IamPermissions.ProjectSettingsWrite, RoutePermissionCatalog.Resolve(endpoint, "PUT")?.Permission);
+        Assert.Null(endpoint.Metadata.GetMetadata<StudioRoleRequirement>());
+        Assert.Contains(IamRoles.All, role => role.Id == IamRoles.Admin && role.Permissions.Contains(IamPermissions.ProjectSettingsWrite));
+    }
+
+    [Fact]
     public void ModelSelectionIngestionIsRunnerScoped()
     {
         Assert.Equal(IamPermissions.RunnerService,
@@ -330,7 +341,9 @@ public sealed class RoutePermissionInventoryTests : IDisposable
         {
             var permission = RoutePermissionCatalog.Resolve(endpoint, method)?.Permission;
             Assert.NotNull(permission);
-            Assert.Equal([IamRoles.Owner], IamRoles.All.Where(role => role.Permissions.Contains(permission!)).Select(role => role.Id));
+            var holders = IamRoles.All.Where(role => role.Permissions.Contains(permission!)).Select(role => role.Id).ToArray();
+            Assert.True(holders.SequenceEqual([IamRoles.Owner]),
+                $"{method} {endpoint.RoutePattern.RawText} -> {permission} is granted to {string.Join(", ", holders)}.");
         }
     }
 

@@ -1,0 +1,137 @@
+<article class="details" data-testid="live-details" [attr.data-node-id]="link() ? null : subject().id" [attr.data-link-id]="link()?.id ?? null">
+  @if (link(); as link) {
+    <header class="details__head">
+      <p class="details__kind"><app-live-glyph [name]="link.layer === 'backup' ? 'backup' : 'network'" />{{ link.layer === 'backup' ? 'Backup route' : 'Connection' }}</p>
+      <h2 class="details__name" data-testid="live-details-name">{{ link.name }}</h2>
+      <p class="details__path">{{ link.a.name }} to {{ link.b.name }}</p>
+      <app-status-indicator [tone]="link.health.tone" [label]="link.health.word" [detail]="link.health.detail" testId="live-details-health" />
+      <button type="button" class="details__close" aria-label="Close details" data-testid="live-details-close" (click)="closed.emit()"><app-studio-icon name="close" [size]="14" /></button>
+    </header>
+    <div class="details__actions">
+      <button type="button" class="btn btn--primary" (click)="zoom.emit(link.a.id)">Go to {{ link.a.name }}</button>
+      <button type="button" class="btn" (click)="zoom.emit(link.b.id)">Go to {{ link.b.name }}</button>
+    </div>
+    <section class="details__section" [attr.data-layer]="link.layer" data-testid="live-details-section">
+      <h3 class="details__title"><app-live-glyph [name]="link.layer" />{{ link.layer === 'backup' ? 'Backup' : 'Network' }}</h3>
+      <dl class="details__facts">
+        <div><dt>Kind</dt><dd>{{ link.kind }}</dd></div>
+        <div><dt>Transport</dt><dd [class.details__muted]="!link.transport">{{ link.transport ?? 'not observed' }}</dd></div>
+        <div><dt>Round trip</dt><dd [class.details__muted]="link.latencyMs === null">{{ link.latencyMs !== null ? link.latencyMs.toFixed(1) + ' ms' : 'not observed' }}@if (link.latencyMs === null) { <small class="details__why">Round trips are measured for Task Server connections only.</small> }</dd></div>
+        <div><dt>Traffic</dt><dd class="details__muted">not observed<small class="details__why">Traffic is measured per host, not per connection.</small></dd></div>
+        <div><dt>Last probe</dt><dd [class.details__muted]="!link.probedAt">{{ probed(link) }}</dd></div>
+        @if (link.source) { <div><dt>Known from</dt><dd>{{ link.source.sourceRef }}</dd></div> }
+      </dl>
+    </section>
+  } @else {
+    <header class="details__head">
+      <p class="details__kind"><app-live-glyph [name]="subject().kind" />{{ kindLabel[subject().kind] }}</p>
+      <h2 class="details__name" data-testid="live-details-name">{{ subject().name }}</h2>
+      @if (!isRoot()) { <p class="details__path">{{ path() }} · {{ subject().role }}</p> }
+      <app-status-indicator [tone]="subject().health.tone" [label]="subject().health.word" [detail]="subject().health.detail" testId="live-details-health" />
+      @if (!isRoot()) { <button type="button" class="details__close" aria-label="Close details" data-testid="live-details-close" (click)="closed.emit()"><app-studio-icon name="close" [size]="14" /></button> }
+    </header>
+    @if (isRoot()) {
+      <div class="details__kpis" data-testid="live-details-kpis">
+        @for (kpi of kpis(); track kpi.label) {
+          <div class="details__kpi"><span class="details__kpi-label">{{ kpi.label }}</span>
+            <strong class="details__kpi-value">{{ kpi.value }} <small>{{ kpi.unit }}</small></strong></div>
+        }
+      </div>
+    } @else {
+      <div class="details__actions">
+        <button type="button" class="btn btn--primary" data-testid="live-details-zoom" (click)="zoom.emit(subject().id)">Go to</button>
+        @if (subject().parent; as parent) {
+          <button type="button" class="btn" (click)="zoom.emit(parent.id)">Up to {{ parent.kind === 'boundary' ? 'installation' : parent.name }}</button>
+        }
+      </div>
+    }
+    @for (section of sections(); track section.layer) {
+      <section class="details__section" [attr.data-layer]="section.layer" [attr.data-testid]="'live-details-' + section.layer">
+        <h3 class="details__title"><app-live-glyph [name]="section.layer" />{{ section.title }}
+          <small class="details__on">{{ section.on ? 'shown on the canvas' : 'layer is off' }}</small></h3>
+        @for (warning of section.warnings; track warning.id) {
+          <div class="details__warning" [attr.data-severity]="warning.tone">
+            <button type="button" class="details__warning-title" (click)="choose.emit(warning.node.id)">{{ warning.title }}</button>
+            @if (isRoot()) { <p class="details__warning-where">{{ warning.node.name }}</p> }
+            <p class="details__warning-text">{{ warning.detail }}</p>
+          </div>
+        }
+        @if (section.layer === 'warnings' && inside().length) {
+          <p class="details__note">{{ inside().length }} more inside:</p>
+          <ul class="details__rows">
+            @for (warning of inside(); track warning.id) {
+              <li><button type="button" class="details__row" (click)="choose.emit(warning.node.id)"><span class="details__row-name">{{ warning.title }}</span>
+                <span class="details__row-value">{{ warning.node.name }}</span></button></li>
+            }
+          </ul>
+        }
+        @if (section.rows.length) {
+          <dl class="details__facts">
+            @for (fact of section.rows; track fact.key) {
+              <div [attr.data-fact]="fact.key"><dt>{{ fact.label }}</dt>
+                <dd [class.details__muted]="!fact.observed" [attr.data-tone]="fact.tone ?? null">
+                  @if (fact.meter !== undefined) { <span class="details__meter" aria-hidden="true"><span [style.width.%]="fact.meter * 100"></span></span> }
+                  {{ fact.values[0] }}@if (fact.why) { <small class="details__why">{{ fact.why }}</small> }</dd></div>
+            }
+          </dl>
+        }
+        @if (section.links.length) {
+          <ul class="details__rows">
+            @for (link of section.links; track link.id) {
+              <li><button type="button" class="details__row" [attr.data-link]="link.id" (click)="chooseLink.emit(link.id)">
+                <span class="details__row-name">{{ link.name }}<small>{{ link.a === subject() ? 'to' : 'from' }} {{ peer(link).name }}</small></span>
+                <span class="details__row-value">{{ linkValue(link) }}</span>
+                <app-status-indicator [tone]="link.health.tone" [label]="link.health.word" [compact]="true" />
+              </button></li>
+            }
+          </ul>
+        }
+        @if (!section.rows.length && !section.links.length && !section.warnings.length && !(section.layer === 'warnings' && inside().length)) {
+          <p class="details__note" data-testid="live-details-empty">{{ section.empty }}</p>
+        }
+      </section>
+    }
+    @if (children().length) {
+      <section class="details__section" data-testid="live-details-runs">
+        <h3 class="details__title">Runs here</h3>
+        <ul class="details__rows">
+          @for (child of children(); track child.node.id) {
+            <li><button type="button" class="details__row" (click)="choose.emit(child.node.id)">
+              <span class="details__indent" aria-hidden="true" [style.width.px]="child.depth * 14"></span>
+              <app-live-glyph [name]="child.node.kind" /><span class="details__row-name">{{ child.node.name }}</span>
+              <app-status-indicator [tone]="child.node.health.tone" [label]="child.node.health.word" [compact]="true" />
+            </button></li>
+          }
+        </ul>
+      </section>
+    }
+    <section class="details__section" data-testid="live-details-facts">
+      <h3 class="details__title">Facts</h3>
+      <dl class="details__facts">
+        @for (fact of general(); track fact.key) {
+          <div [attr.data-fact]="fact.key"><dt>{{ fact.label }}</dt><dd [class.details__muted]="!fact.observed" [attr.data-tone]="fact.tone ?? null">{{ fact.values[0] }}@if (fact.why) { <small class="details__why">{{ fact.why }}</small> }</dd></div>
+        }
+      </dl>
+    </section>
+    @if (isRoot()) {
+      <section class="details__section" data-testid="live-details-legend">
+        <h3 class="details__title">Legend</h3>
+        <ul class="details__legend">
+          @for (item of legend; track item[0]) { <li><app-live-glyph [name]="item[0]" />{{ item[1] }}</li> }
+        </ul>
+        <ul class="details__legend details__legend--layers">
+          @for (layer of layerList; track layer.id) { <li><app-live-glyph [name]="layer.id" /><span><strong>{{ layer.label }}</strong> {{ layer.treatment }}</span></li> }
+        </ul>
+        <p class="details__note">Drag to move the plan, scroll or pinch to zoom towards the pointer. A double click, Enter, a row of the outline or the jump field brings a node to the container level; the same again goes to the closest level. Keys: arrows move, plus and minus zoom, 0 shows everything, slash opens the jump field, Escape goes back, 1 to 5 switch the layers.</p>
+      </section>
+    }
+    <section class="details__section" data-testid="live-details-levels">
+      <h3 class="details__title">Zoom levels @if (level()) { <small class="details__on">this node is at level {{ level() }}</small> }</h3>
+      <ol class="details__levels">
+        @for (item of levels; track item.level) {
+          <li [attr.aria-current]="level() === item.level ? 'true' : null"><strong>{{ item.level }} · {{ item.name }}</strong><span>{{ item.adds }}</span></li>
+        }
+      </ol>
+    </section>
+  }
+</article>

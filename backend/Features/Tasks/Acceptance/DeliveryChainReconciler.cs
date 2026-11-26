@@ -12,6 +12,7 @@ namespace AgentStudio.Tasks;
 public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffect
 {
     internal const int MaxCompletedReopensPerPass = 20;
+    private readonly GitService? _git;
     private readonly TaskScannerService _scanner;
     private readonly TaskIntegrationStatusService _statuses;
     private readonly TaskTransitionService _transitions;
@@ -35,8 +36,9 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
         TaskIntegrationRecoveryService? recovery = null,
         AgentStudio.Runner.AutoReviewStrandingWatchdog? stranding = null,
         TimelineLog? timeline = null,
-        AgentStudio.Runner.HumanReviewEscalation? escalation = null)
+        AgentStudio.Runner.HumanReviewEscalation? escalation = null, GitService? git = null)
     {
+        _git = git;
         _scanner = scanner;
         _statuses = statuses;
         _transitions = transitions;
@@ -248,7 +250,9 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
             await EscalateRecoveryFailureAsync(current,
                 "The delivery verdict became stale, but the current delivery could not be integrated and sent for review: "
                     + (integration?.Error ?? integration?.Outcome.ToString() ?? "integration unavailable"),
-                DeliveryChainReasons.VerdictStale, CancellationToken.None);
+                integration?.FailureCode == AcceptedIntegrationFailureCodes.GateCapacity
+                    ? AcceptedIntegrationFailureCodes.GateCapacity : DeliveryChainReasons.VerdictStale,
+                CancellationToken.None);
             return;
         }
         _timeline?.Append(current.FolderPath,
@@ -262,6 +266,9 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
     {
         if (decision.Effect == AiOperatorEffects.QueueMergeRound)
         {
+            if (ReviewSubjectStore.Read(card.FolderPath) is { } subject)
+                _git?.TryRecordDispatchRecovery(card, subject,
+                    status?.Failure?.ConflictReport, "merge-round", subject.ResultSha + ":" + subject.RunAttemptId + ":" + status?.Failure?.ConflictReport?.IntegrationTipSha);
             var round = _recovery is not null && status is not null
                 ? _recovery.Queue(card, status, DeliveryChainReasons.MergeRoundQueued,
                     TaskIntegrationRecoveryService.AcceptanceRailSource)

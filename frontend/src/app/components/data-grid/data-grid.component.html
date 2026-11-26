@@ -1,0 +1,49 @@
+@if (rows().length) {
+  <table class="grid" [class.grid--stack-actions]="stackActionsOnNarrow()" [attr.aria-label]="label()" [attr.data-testid]="testId()">
+    <colgroup>
+      @for (column of columns(); track column.key) { <col [style.width]="column.width ?? null" /> }
+    </colgroup>
+    <thead>
+      <tr>
+        @for (column of columns(); track column.key) {
+          <th scope="col" [attr.data-role]="column.role" [class.grid__numeric]="column.numeric">
+            @if (column.role === 'actions') { <span class="grid__sr">{{ column.header }}</span> } @else { {{ column.header }} }
+          </th>
+        }
+      </tr>
+    </thead>
+    <tbody>
+      @for (row of rows(); track rowId()(row)) {
+        <tr class="grid__row" [class.grid__row--selectable]="selectable()" [class.grid__row--muted]="rowMuted()(row)"
+            [attr.data-selected]="selectable() && rowId()(row) === selectedId() ? 'true' : null"
+            [attr.data-testid]="rowTestId()(row)">
+          @for (column of columns(); track column.key) {
+            <td [attr.data-role]="column.role" [attr.data-label]="column.header" [class.grid__numeric]="column.numeric">
+              @if (column.role === 'identity' && selectable()) {
+                <button type="button" class="grid__open" [attr.aria-label]="'Open details of ' + (rowLabel()(row) || text(row, column.key))"
+                        [attr.aria-current]="rowId()(row) === selectedId() ? 'true' : null" (click)="rowSelect.emit(row)">
+                  <ng-container [ngTemplateOutlet]="cell" [ngTemplateOutletContext]="{ row, column }" />
+                </button>
+              } @else {
+                <ng-container [ngTemplateOutlet]="cell" [ngTemplateOutletContext]="{ row, column }" />
+              }
+            </td>
+          }
+        </tr>
+      }
+    </tbody>
+  </table>
+} @else {
+  <div class="grid__empty" [attr.data-testid]="testId() ? testId() + '-empty' : null"><ng-content select="[gridEmpty]" /></div>
+}
+
+<ng-template #cell let-row="row" let-column="column">
+  @if (template(column.key); as custom) {
+    <ng-container [ngTemplateOutlet]="custom" [ngTemplateOutletContext]="{ $implicit: row }" />
+  } @else if (text(row, column.key); as value) {
+    <span class="grid__line">{{ value }}</span>
+    @if (text(row, column.subKey); as sub) { <span class="grid__sub">{{ sub }}</span> }
+  } @else {
+    <span class="grid__none">–</span>
+  }
+</ng-template>

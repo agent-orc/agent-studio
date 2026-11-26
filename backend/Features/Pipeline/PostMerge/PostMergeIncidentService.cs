@@ -9,13 +9,11 @@ using AgentStudio.Tasks;
 namespace AgentStudio.Pipeline;
 
 /// <summary>
-/// Turns a terminal T3 receipt into one durable repair card per fingerprint.
-/// RT-1 (AGT-3988, RT-D7 B): each incident keeps its own clock. At two hours
-/// the owner is asked once through Needs you; no code path here moves a card
-/// out of Progress, Auto Review, Human Review or Completed, supersedes a review
-/// attempt, reopens a suspect, or changes the project's test placement.
+/// Applies pure per-test triage decisions to the quarantine store and repair cards.
+/// Every incident keeps its own clock and owner questions. Legacy receipts retain
+/// the compatibility repair path; no timer moves a reviewed or settled card.
 /// </summary>
-public sealed class PostMergeIncidentService
+public sealed partial class PostMergeIncidentService
 {
     private readonly object _gate = new();
     private readonly PostMergeRunStore _store;
@@ -27,7 +25,11 @@ public sealed class PostMergeIncidentService
 
     public PostMergeIncidentService(PostMergeRunStore store, TaskMutationService mutations,
         TaskScannerService scanner, TaskStateMachine states, TimeProvider clock,
-        ILogger<PostMergeIncidentService> logger)
+        ILogger<PostMergeIncidentService> logger, TestQuarantineStore? quarantines = null,
+        AgentStudio.Git.GitService? git = null, ModelRoutingPolicyRegistry? routing = null,
+        IModelRoutingModeProvider? routingMode = null,
+        Func<ProjectRecord, string, string, bool>? containsRepair = null,
+        AgentStudio.Personas.LineGuardianStore? guardian = null, AgentStudio.Bus.AgentMessageBusBridge? bus = null)
     {
         _store = store;
         _mutations = mutations;
@@ -35,13 +37,26 @@ public sealed class PostMergeIncidentService
         _states = states;
         _clock = clock;
         _logger = logger;
+        _quarantines = quarantines ?? new TestQuarantineStore(Path.Combine(store.Root, "..", "test-quarantines"));
+        _git = git;
+        _routing = routing ?? new ModelRoutingPolicyRegistry();
+        _routingMode = routingMode;
+        _containsRepair = containsRepair;
+        _guardian = guardian ?? new AgentStudio.Personas.LineGuardianStore(Path.Combine(store.Root, "..", "line-guardian"));
+        _guardianBus = bus;
     }
 
-    public void Apply(ProjectRecord project, PostMergeRunRecord run)
+    private void ApplyLegacy(ProjectRecord project, PostMergeRunRecord run)
     {
         if (run.Status is not ("red" or "green")) return;
         lock (_gate)
         {
+            if (run.TestVerdicts is not null || run.Status == "green"
+                && (_store.Read(project.Id).Incidents ?? []).Any(item => item.TestId is not null && item.ResolvedAtUtc is null))
+            {
+                ApplyTests(project, run);
+                return;
+            }
             var state = _store.Read(project.Id);
             if (run.Status == "green")
             {
@@ -127,6 +142,20 @@ public sealed class PostMergeIncidentService
         lock (_gate)
         {
             var state = _store.Read(project.Id);
+            var typedIncidents = (state.Incidents ?? []).Where(item => item.TestId is not null && item.ResolvedAtUtc is null).ToArray();
+            if (typedIncidents.Length > 0)
+            {
+                var evidence = typedIncidents.Select(incident => state.Runs.LastOrDefault(run => run.TestVerdicts?.Any(test =>
+                    test.Test == incident.TestId && Fingerprint(run, test) == incident.Fingerprint) == true))
+                    .OfType<PostMergeRunRecord>().DistinctBy(run => run.Id).ToArray();
+                foreach (var receipt in evidence) ApplyTests(project, receipt, overdue: true);
+                return;
+            }
+            if (state.Runs.LastOrDefault(run => run.Status is "red" or "green") is { TestVerdicts: not null } typed)
+            {
+                ApplyTests(project, typed, overdue: true);
+                return;
+            }
             if (state.DevelopState == "red"
                 && state.Runs.LastOrDefault(run => run.Status is "red" or "green") is
                     { Status: "red" } red)

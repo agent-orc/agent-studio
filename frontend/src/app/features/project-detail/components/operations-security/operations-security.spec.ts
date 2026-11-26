@@ -111,4 +111,26 @@ describe('OperationsSecurityComponent', () => {
     expect(host.querySelector('[data-testid="operations-security-action-soon"]')).toBeNull();
     expect(text(host, '[data-testid="operations-security-clear"]')).toContain('No security entries');
   });
+  it('offers Keep and End for the 30-day review and sends no step-up request', async () => {
+    const data = posture();
+    data.findings = [{ id: 'credentials:elevated-session:agent:session', rank: 1, score: 10, severity: 'info',
+      area: 'credentials', title: 'Elevated session running 30 days', detail: 'ops console on workstation',
+      subject: 'agent:session', dueAt: null, actionSoon: false }];
+    const { fixture, host } = await render(http => http.expectOne(SECURITY_POSTURE_URL).flush(data));
+    fixture.componentInstance.auth.status.set({ profile: 'networked', authenticated: true, bootstrapRequired: false,
+      user: { id: 'owner', username: 'owner', displayName: 'Owner', role: 'owner', projects: ['*'], disabled: false, mustChangePassword: false } });
+    fixture.detectChanges();
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('button')];
+    expect(buttons.some(button => button.textContent?.trim() === 'End')).toBe(true);
+    buttons.find(button => button.textContent?.trim() === 'Keep')!.click();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectNone(request => request.url.includes('step-up'));
+    http.expectOne('/api/auth/iam/operator-agents/agent/sessions/session/actions/keep').flush(null);
+    await Promise.resolve();
+    http.expectOne(SECURITY_POSTURE_URL).flush({ ...data, findings: [] });
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(host.textContent).not.toContain('Elevated session running 30 days');
+  });
+
 });

@@ -20,6 +20,7 @@ Use this page as the first stop when you need the right document quickly.
 | [cli/](../system/cli/README.md) | Supported CLI contract, per-CLI skills, audits, and investigations. |
 | [operations/](../operations/README.md) | Setup, onboarding, security docs, runtime observability, git doctrine, and test workspaces. |
 | [reports/](../system/reports/README.md) | Report contracts, HTML visual reports, and screenshot-backed visual documentation. |
+| [ui-standard/](../system/ui-standard/README.md) | Pilot pages of the UI standard: the patterns each one establishes and the shared components behind them. |
 | [concepts/](../concepts/README.md) | Architecture concepts that have not become a domain or ADR yet, plus hand-maintained living concept/knowledge pages with running knowledge logs, dated deep dives, mockups, and proposals. |
 | [archive/](../archive/README.md) | Quiet historical pages retained by explicit inventory passes, with pointers from their former current locations. |
 | [common-problems/](../operations/common-problems/README.md) | Known recurring problems with root-cause analysis, occurrence logs, and workarounds. Search here first on a familiar symptom. |
@@ -50,6 +51,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 
 | Topic | Start here |
 |---|---|
+| Manual Windows TPM and macOS Secure Enclave probe | [operator-elevated-session/hardware-probe.md](../operator-elevated-session/hardware-probe.md) |
 | Library release commands and branches | [operations/setup/library-releases.md](../operations/setup/library-releases.md) |
 | Product installer for Windows and Linux (for published releases; none exists yet) | [operations/setup/install.md](../operations/setup/install.md) |
 | Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
@@ -62,12 +64,14 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Studio website scheduled encrypted backups, off-host copy (SFTP, S3, mounted directory), Operations page state, backup and secret store key escrow, restore onto a new host (AGT-3574), and the host-level timer (AGT-3365) | [operations/setup/studio-backup-restore.md](../operations/setup/studio-backup-restore.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
+| Access page pilot of the UI standard: section, outline, grid, row detail, action placement, chips, confirm in place, empty state, secret reveal, and the shared components (AGT-4029) | [system/ui-standard/access-page-pilot.md](../system/ui-standard/access-page-pilot.md) |
 | Runner | [domains/runner.md](../system/domains/runner.md) |
 | Pipeline | [domains/pipeline.md](../system/domains/pipeline.md) |
 | Integration conflict history, record version 1, rates and selection evidence (AGT-3969) | [contract](../system/contracts/integration-conflicts.md) |
 | Orchestrator | [domains/orchestrator.md](../system/domains/orchestrator.md) |
 | Orchestration decision library, action vocabulary and architecture guard | [contracts/orchestration-decisions.md](../system/contracts/orchestration-decisions.md) |
 | Monolith hosted services: decide / apply-recover inventory, the per-transition switch that selects who decides, AI Operator deciders and the monolith decision guard (AGT-3060) | [architecture/monolith-hosted-services.md](../system/architecture/monolith-hosted-services.md) |
+| Backend test host startup: hosted-service opt-in, repair sweeps, and timeline measurements | [operations/testing/test-host-startup.md](../operations/testing/test-host-startup.md) |
 | Review | [domains/review.md](../system/domains/review.md) |
 | Quality Studio pipeline analysis policy | [pipeline domain](../system/domains/pipeline.md#quality-studio-analysis-steps) · [JSON schema](../app/schemas/quality-analysis-policy.schema.json) |
 | Runtime prompt registry, review companions, call telemetry, and costs | [contracts/runtime-prompts.md](../system/contracts/runtime-prompts.md) |
@@ -97,8 +101,9 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Studio app and task header style guide | [frontend/style-guide/header.md](../quality/frontend/style-guide/header.md) |
 | Selectable Studio header prompt guide | [header-zones.md](../quality/header-zones.md) |
 | CLI | [domains/cli.md](../system/domains/cli.md) |
-| Model routing policy (model, thinking level, risk floors, benchmark evidence) | [domains/model-routing-policy.md](../system/domains/model-routing-policy.md) |
+| Model routing policy (Token Economy equivalence, step classes, quota reserve, switches, hard pins and dry-run drill) | [domains/model-routing-policy.md](../system/domains/model-routing-policy.md) |
 | Central model selection and fallback Dossier (MS-1 to MS-8, AGT-3473 to AGT-3480) | [decision Dossier](../model-selection-and-fallback/index.html) |
+| Portable skill library: required analysis, recommended decisions and thirteen complete sequential cards (AGT-4032, review repair AGT-4036) | [Dossier](../portable-skill-library/index.html) · [review map](../portable-skill-library/review-map.md) · [evidence](../portable-skill-library/evidence.md) |
 | Model selection ledger API (events, active fallbacks, effective routes, runner ingestion) | [contracts/model-selection-api.md](../system/contracts/model-selection-api.md) |
 | Model routing by assessed complexity: analysis and implementation plan as pipeline steps, Token Economy as the measuring authority for the (complexity class, model, level) pair table, reported-versus-achieved feedback (AGT-2815) | [decision dossier](../model-routing-by-complexity/index.html) |
 | Task switch performance: measured baseline, bounded core, progressive detail and Git snapshots (AGT-W64; source AGT-2910) | [decision Dossier](../task-switch-performance/index.html) |
@@ -239,6 +244,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | studio-op operator CLI: installation, Owner token file setup, commands and their routes, watcher lock and lease, accept check, stable exit codes (AGT-3462 OP-8) | [operations/setup/studio-op.md](../operations/setup/studio-op.md) |
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
 | Structure view: observed hosts without a manifest, placement file apart from connectivity, facts per node and link, live deltas (AGT-3954) | [operations/setup/structure-placement.md](../operations/setup/structure-placement.md) |
+| Live structure view: the prototype the owner chose on 24 November 2026, kept as a reference copy for the product view (AGT-4024) | [live-structure-canvas/reference/owner-choice-2026-11-24/README.md](../live-structure-canvas/reference/owner-choice-2026-11-24/README.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
 | Update Service operations: loopback bind, owner-only trigger token file, allowed Studio origins, forced triggers (AGT-3713) | [operations/setup/update-service.md](../operations/setup/update-service.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |

@@ -34,7 +34,8 @@ public sealed class RunnerDisplayedPickupOrderTests : IDisposable
         WriteJob(TaskStates.Progress, "progress-would-have-won-before", order: 1);
         WriteJob(TaskStates.Ready, "visible-ready-head", order: 10);
 
-        var (runner, _) = BuildRunner();
+        var (runner, settings) = BuildRunner();
+        settings.SetDispatchOverlapWindow(ProjectName, OverlapWindows.InFlight);
         runner.SetMode("auto-continuous");
 
         var picked = InvokeDisplayedPicker(runner, slotMax: 1);
@@ -53,6 +54,7 @@ public sealed class RunnerDisplayedPickupOrderTests : IDisposable
             prompt: "Edit frontend/src/app/features/task-list/task-list.component.ts.");
 
         var (runner, settings) = BuildRunner();
+        settings.SetDispatchOverlapWindow(ProjectName, OverlapWindows.InFlight);
         settings.SetMaxParallelism(ProjectName, 2);
         runner.SetMode("auto-continuous");
         runner.SetActiveJobForTest("already-running", "codex", ["backend/services"]);
@@ -75,11 +77,12 @@ public sealed class RunnerDisplayedPickupOrderTests : IDisposable
         WriteJob(TaskStates.AutoReview, "still-in-review", order: 1,
             prompt: "Edit backend/Services/Runner/ProjectRunner.cs.");
         WriteJob(TaskStates.Ready, "overlaps-review", order: 1,
-            prompt: "Edit backend/Services/Runner/ActiveRuns.cs.");
+            prompt: "Edit backend/Services/Runner/ProjectRunner.cs.");
         WriteJob(TaskStates.Ready, "disjoint-next", order: 2,
             prompt: "Edit frontend/src/app/features/task-list/task-list.component.ts.");
 
-        var (runner, _) = BuildRunner();
+        var (runner, settings) = BuildRunner();
+        settings.SetDispatchOverlapWindow(ProjectName, OverlapWindows.InFlight);
         runner.SetMode("auto-continuous");
 
         var picked = InvokeDisplayedPicker(runner, slotMax: 1);
@@ -90,11 +93,11 @@ public sealed class RunnerDisplayedPickupOrderTests : IDisposable
         Assert.Equal("overlaps-review", skip.JobId);
         Assert.Equal(RunnerPickupWaitCodes.ParallelConflict, skip.Code);
         Assert.Equal(
-            "scope conflict with 'still-in-review' on 'backend/services/runner' (window in-flight, 4-auto-review)",
+            "scope conflict with 'still-in-review' on 'backend/services/runner/projectrunner.cs' (window in-flight, 4-auto-review)",
             skip.Detail);
         Assert.Equal(
             "display-order: 2-ready disjoint-next; skipped earlier conflicting candidate(s): overlaps-review: "
-            + "scope conflict with 'still-in-review' on 'backend/services/runner' (window in-flight, 4-auto-review)",
+            + "scope conflict with 'still-in-review' on 'backend/services/runner/projectrunner.cs' (window in-flight, 4-auto-review)",
             runner.GetStatus().LastPickReason);
     }
 
@@ -104,7 +107,7 @@ public sealed class RunnerDisplayedPickupOrderTests : IDisposable
         WriteJob(TaskStates.AutoReview, "still-in-review", order: 1,
             prompt: "Edit backend/Services/Runner/ProjectRunner.cs.");
         WriteJob(TaskStates.Ready, "overlaps-review", order: 1,
-            prompt: "Edit backend/Services/Runner/ActiveRuns.cs.");
+            prompt: "Edit backend/Services/Runner/ProjectRunner.cs.");
 
         var (runner, settings) = BuildRunner();
         settings.SetDispatchOverlapWindow(ProjectName, OverlapWindows.Running);
@@ -125,9 +128,10 @@ public sealed class RunnerDisplayedPickupOrderTests : IDisposable
             prompt: "Edit backend/Services/Runner/ProjectRunner.cs.",
             extraJson: ",\"integrationRecords\":[{\"id\":\"rec-1\",\"classification\":\"integrated-verified\",\"recordedAtUtc\":\"2026-11-20T10:00:00Z\"}]");
         WriteJob(TaskStates.Ready, "overlaps-integrated", order: 1,
-            prompt: "Edit backend/Services/Runner/ActiveRuns.cs.");
+            prompt: "Edit backend/Services/Runner/ProjectRunner.cs.");
 
-        var (runner, _) = BuildRunner();
+        var (runner, settings) = BuildRunner();
+        settings.SetDispatchOverlapWindow(ProjectName, OverlapWindows.InFlight);
         runner.SetMode("auto-continuous");
 
         var picked = InvokeDisplayedPicker(runner, slotMax: 1);
@@ -216,8 +220,16 @@ public sealed class RunnerDisplayedPickupOrderTests : IDisposable
             summary, prompts, transitions, chatLog, mutations,
             orchestratorLog, orchestratorRunner, orchestratorSessions,
             settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess, bus: null,
-            localCodingAdmission: AllowLocalCodingForTests.Instance);
+            localCodingAdmission: AllowLocalCodingForTests.Instance,
+            overlapGuard: new AgentStudio.Runner.OverlapDispatchGuard(new OverlapClock(),
+                NullLogger<AgentStudio.Runner.OverlapDispatchGuard>.Instance,
+                new AgentStudio.Runner.OverlapPredictionLedger(Path.Combine(_workspaceRoot, "overlap-predictions"))));
 
         return (runner, settings);
     }
+    private sealed class OverlapClock : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch;
+    }
+
 }

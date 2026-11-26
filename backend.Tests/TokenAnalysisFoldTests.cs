@@ -89,6 +89,77 @@ public sealed class TokenAnalysisFoldTests
         Call(T1.AddMinutes(30), "orchestrator:P", "orchestrator-chat", "claude-sonnet-5", 100, 10));
 
     [Fact]
+    public void Remote_receipt_attempts_remain_separate_events_without_a_local_pipeline_log()
+    {
+        var first = Call(T0, "agent:remote-runner:run-a:usage:turn:00000000:00", null,
+            "claude-opus-5-5", 100, 10);
+        var next = first with { Ts = T1, ParticipantId = "agent:remote-runner:run-b:usage:turn:00000001:00" };
+        var events = TokenAnalysisFold.Events(TokenAnalysisFold.Items(Pricing,
+            new TokenAnalysisJobInput("job-1", null, null, [first, next])));
+        Assert.Equal(2, events.Count);
+        Assert.Equal(T0, events[0].At);
+        Assert.Equal(T1, events[1].At);
+        Assert.All(events, item => Assert.Equal(1, item.Attempt));
+        Assert.Equal(TokenUsageKinds.Coding, events[0].Kind);
+        Assert.Equal(TokenUsageKinds.FixRound, events[1].Kind);
+        Assert.Single(TokenAnalysisFold.DuplicateCodingEvents(events));
+    }
+
+    [Theory]
+    [InlineData(61_600_000)]
+    [InlineData(52_200_000)]
+    public void Legacy_Codex_without_cache_provenance_is_unpriced_without_guessing_a_split(int input)
+    {
+        var entry = Call(T0, "agent:codex", null, "gpt-6-sol", input, 111_000);
+        var item = Assert.Single(TokenAnalysisFold.Items(Pricing,
+            new TokenAnalysisJobInput("job-1", null, null, [entry])));
+        Assert.Equal(input, item.Input);
+        Assert.Equal(0, item.CacheRead);
+        Assert.False(item.Priced);
+        Assert.Equal(0m, item.CostUsd);
+        var cost = Assert.Single(Pricing.Price([entry])).Cost!;
+        Assert.False(cost.ModelKnown);
+        Assert.Equal(0m, cost.Total);
+
+        var known = entry with { TokenUsage = entry.TokenUsage! with { InputIncludesCached = true } };
+        Assert.True(Assert.Single(Pricing.Price([known])).Cost!.ModelKnown);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(false, true)]
+    public void Pipeline_only_analysis_withholds_cost_until_cache_evidence_is_recorded(
+        bool? inputIncludesCached, bool expectedPriced)
+    {
+        var log = Log();
+        var step = log.Steps[0] with { InputIncludesCached = inputIncludesCached };
+        log = log with { PreviousAttempts = [], Steps = [step] };
+        var item = Assert.Single(TokenAnalysisFold.Items(Pricing,
+            new TokenAnalysisJobInput("job-1", null, log, [])));
+
+        Assert.Equal(step.InputTokens, item.Input);
+        Assert.Equal(0, item.CacheRead);
+        Assert.Equal(expectedPriced, item.Priced);
+        Assert.Equal(expectedPriced
+            ? Pricing.Estimate(step.Model, step.InputTokens, step.OutputTokens, 0, 0, T1).Total
+            : 0m, item.CostUsd);
+    }
+
+    [Fact]
+    public void Identical_coding_event_counters_are_flagged_without_deleting_real_runs()
+    {
+        var job = Job(
+            Call(T0.AddMinutes(1), "agent:claude", null, "claude-opus-5-5", 23_140_000, 100),
+            Call(T1.AddMinutes(1), "agent:claude", null, "claude-opus-5-5", 23_140_000, 100));
+        var events = TokenAnalysisFold.Events(TokenAnalysisFold.Items(Pricing, job));
+        var warning = Assert.Single(TokenAnalysisFold.DuplicateCodingEvents(events));
+        Assert.Equal("identical-coding-token-counters", warning.Code);
+        Assert.Equal(2, warning.EventIndexes.Count);
+        Assert.All(warning.EventIndexes, index => Assert.Equal(23_140_000, events[index].Input));
+        Assert.Equal(2, events.Count(item => item.Kind is TokenUsageKinds.Coding or TokenUsageKinds.FixRound));
+    }
+
+    [Fact]
     public void Every_token_lands_in_one_kind_and_the_card_total_is_the_sum_of_its_slices()
     {
         var job = StandardJob();

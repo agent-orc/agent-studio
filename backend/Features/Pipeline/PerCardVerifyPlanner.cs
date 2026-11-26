@@ -22,6 +22,9 @@ public static class PerCardVerifyPlanner
         TestExecutionPolicy? policy,
         DotNetReferenceSelection? referenceSelection)
     {
+        var shared = ProjectAffectedVerifyPlanner.TryPlan(repositoryPath, verifyPlan,
+            changedFiles, Lane, TestExecutionLevels.WorkPackage);
+        if (shared is not null) return shared;
         var generated = policy?.FolderToTestProjects is { Count: > 0 }
             ? null
             : GeneratedTestProjectMap.Generate(repositoryPath, verifyPlan);

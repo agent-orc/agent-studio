@@ -12,7 +12,7 @@ namespace AgentStudio.TaskServer.Contracts;
 /// <para>Rules apply in the Dossier order and the first rule that decides is
 /// named in <see cref="SelectionResult.Rule"/>:</para>
 /// <list type="number">
-///   <item>hard pin and same-session continuation keep their route or wait;</item>
+///   <item>hard pins keep their route or wait; healthy sessions retain their route;</item>
 ///   <item>the opt-in nearby-reset wait for cheap cards (CAR 0.6);</item>
 ///   <item>the operator switch moves work off a provider until its reset;</item>
 ///   <item>a capped or projected-to-breach primary switches to the operator
@@ -45,14 +45,14 @@ public static class ModelSelectionPlanner
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(facts);
-        var continuation = request.Continuation is { SessionCli: { Length: > 0 } sessionCli } session
-            ? request.Pins with { CliType = sessionCli, Model = session.SessionModel ?? request.Pins.Model }
+        var continuation = request.Pins.Mode != SelectionPinMode.Hard && request.Continuation is { SessionCli: { Length: > 0 } sessionCli } session
+            ? request.Pins with { CliType = sessionCli, Model = session.SessionModel ?? request.Pins.Model, ThinkingLevel = session.SessionThinkingLevel ?? request.Pins.ThinkingLevel }
             : null;
         var pins = continuation ?? request.Pins;
+        if (continuation is not null)
+            facts = facts with { ShortStepReservePoints = 0, OperatorSwitch = null, ActiveSwitch = null };
         var result = ApplyCostGuard(facts, ApplyFloor(request, facts, PlanQuota(request, pins, facts)));
-        return continuation is not null || pins.Mode == SelectionPinMode.Hard
-            ? HoldPinnedRoute(result, continuation is not null ? "same-session continuation" : "hard pin")
-            : result;
+        return pins.Mode == SelectionPinMode.Hard ? HoldPinnedRoute(result, "hard pin") : result;
     }
 
     /// <summary>
@@ -104,23 +104,19 @@ public static class ModelSelectionPlanner
             || !equivalence.SameCapabilityClass(primaryModel, fallbackModel)))
             return new(cli, primaryModel, primaryThinking, false,
                 "review requires a fallback in the same Token Economy capability class", cap);
-        if (sameClassOnly && ThinkingRank(primaryThinking) is { } required)
-        {
-            var mapped = routing.ThinkingLevelsFor(fallbackCli, fallbackModel)
-                .Where(level => ThinkingRank(level) is { } rank && rank >= required)
-                .OrderBy(level => ThinkingRank(level))
-                .FirstOrDefault();
-            if (mapped is null)
-                return new(cli, primaryModel, primaryThinking, false,
-                    "review fallback has no supported thinking level at or above the configured route", cap);
-            fallbackThinking = mapped;
-        }
+        if (sameClassOnly && !string.IsNullOrWhiteSpace(profile?.FallbackModel)
+            && equivalence?.Routes.Any(pair => pair.FromCliType == cli && pair.FromModel == primaryModel
+                && pair.FromThinkingLevel == primaryThinking && pair.ToCliType == fallbackCli
+                && pair.ToModel == fallbackModel && pair.ToThinkingLevel == fallbackThinking) != true)
+            return new(cli, primaryModel, primaryThinking, false,
+                "review requires a published Token Economy model and reasoning pair", cap);
         if (fallbackProviderAllowed is not null && !fallbackProviderAllowed(fallbackCli))
             return new(cli, primaryModel, primaryThinking, false,
                 $"operator is conserving provider {fallbackCli} until its quota reset", cap);
         if (modelAccepted is not null && !modelAccepted(fallbackCli, fallbackModel))
             return new(cli, primaryModel, primaryThinking, false,
-                $"fallback {fallbackCli}/{fallbackModel} is not accepted by the claiming host", cap);
+                $"fallback {fallbackCli}/{fallbackModel} is not accepted by the claiming host", cap)
+                { RejectedTarget = new SelectionRoute(fallbackCli, fallbackModel, fallbackThinking) };
         var fallbackCap = evaluateModelQuota?.Invoke(fallbackCli, fallbackModel)
             ?? (string.Equals(fallbackCli, cli, StringComparison.OrdinalIgnoreCase)
                 ? CapEvaluation.NotBlocked : evaluateQuota(fallbackCli));
@@ -291,8 +287,11 @@ public static class ModelSelectionPlanner
     public static ClaimRouteSelection ClaimRoute(
         MechanicalFreshRunRoute? mechanicalRoute,
         ContinuationIntentProjection? continuationIntent,
-        ProviderModelFallback? providerFallback)
+        ProviderModelFallback? providerFallback, SelectionResult? modelSelection = null)
     {
+        if (modelSelection is { ShouldLaunch: true })
+            return new(modelSelection.Route.CliType, modelSelection.Route.Model, modelSelection.Route.ThinkingLevel,
+                CleanContext: modelSelection.IsFallback, HasRoute: true);
         if (mechanicalRoute is not null)
             return new(mechanicalRoute.CliType, mechanicalRoute.Model, mechanicalRoute.ThinkingLevel,
                 CleanContext: true, HasRoute: true);
@@ -317,7 +316,9 @@ public static class ModelSelectionPlanner
         var cli = string.IsNullOrWhiteSpace(pins.CliType)
             ? Claude
             : pins.CliType!.Trim().ToLowerInvariant();
-        var caps = facts.Caps;
+        var reserve = SelectionWorkClasses.UsesReserve(request.WorkClass ?? SelectionWorkClasses.ForConsumer(request.Consumer))
+            ? 0 : Math.Clamp(facts.ShortStepReservePoints, 0, 50);
+        IQuotaCapTable caps = reserve == 0 ? facts.Caps : new ReservedCaps(facts.Caps, reserve);
         var nowUtc = facts.NowUtc;
         QuotaSnapshot? SnapshotForModel(string? provider, string? model)
             => SelectionQuotaMath.ForModel(facts.SnapshotFor(provider), model);
@@ -340,6 +341,9 @@ public static class ModelSelectionPlanner
             var snapshot = SnapshotForModel(c, model);
             var strict = SelectionQuotaMath.EvaluateCap(snapshot, caps);
             if (strict.Blocked) return strict;
+            if (request.Continuation is not null
+                || SelectionWorkClasses.UsesReserve(request.WorkClass ?? SelectionWorkClasses.ForConsumer(request.Consumer)))
+                return CapEvaluation.NotBlocked;
             return SelectionQuotaMath.EvaluateProjectedBreach(snapshot, caps, nowUtc)
                    ?? CapEvaluation.NotBlocked;
         }
@@ -377,10 +381,19 @@ public static class ModelSelectionPlanner
         // (explicit high/xhigh/ultra/max reasoning) switches to an
         // equal-strength provider immediately instead of sitting in the queue
         // until the reset, even inside the configured wait threshold.
+        var hostUnavailable = facts.HostAccepts?.Invoke(cli, requestedModel) == false;
+        var unavailable = facts.ProviderUnavailable(cli) ?? primarySnapshot?.Error
+            ?? (hostUnavailable && !Strict(cli).Blocked ? "host authentication or model acceptance unavailable" : null);
+        bool ProviderAllowed(string provider) => facts.ProviderUnavailable(provider) is null
+            && facts.SnapshotFor(provider)?.Error is null
+            && facts.FallbackProviderAllowed?.Invoke(provider) != false;
         var strictPrimaryEarly = Strict(cli);
         var nearbyReset = SelectionQuotaMath.EarliestReset(primarySnapshot, nowUtc, caps, blockedOnly: true);
         if (waitPolicy?.Enabled == true
             && preference?.Active != true
+            && unavailable is null
+            && request.Continuation is null
+            && !SelectionWorkClasses.UsesReserve(request.WorkClass ?? SelectionWorkClasses.ForConsumer(request.Consumer))
             && strictPrimaryEarly.Blocked
             && !strictPrimaryEarly.Suspicious
             && IsCheap(requestedThinking)
@@ -398,7 +411,7 @@ public static class ModelSelectionPlanner
         }
 
         var holdSwitch = ShouldHoldSwitch(facts, primarySnapshot, cli);
-        var preferFallback = preference?.Active == true || holdSwitch;
+        var preferFallback = preference?.Active == true || holdSwitch || unavailable is not null;
         var route = facts.Routing is null ? null : ResolveConfiguredRoute();
         if (holdSwitch && preference?.Active != true && route?.IsFallback == true)
             route = route with
@@ -419,7 +432,7 @@ public static class ModelSelectionPlanner
                 : facts.ConfiguredFallbacks;
             if (configured is not { Count: > 0 })
                 return ResolveRoute(cli, requestedModel, requestedThinking, routing, Admission,
-                    preferFallback, accepted, request.Required.SameClassOnly, facts.FallbackProviderAllowed, ModelAdmission);
+                    preferFallback, accepted, request.Required.SameClassOnly, ProviderAllowed, ModelAdmission);
 
             // Keep the list in planner facts so every host applies the same
             // admission checks and the ledger records the route actually used.
@@ -448,7 +461,7 @@ public static class ModelSelectionPlanner
                 } };
                 var evaluated = ResolveRoute(cli, requestedModel, requestedThinking, candidateRouting,
                     Admission, preferFallback, accepted, request.Required.SameClassOnly,
-                    facts.FallbackProviderAllowed, ModelAdmission);
+                    ProviderAllowed, ModelAdmission);
                 if (!evaluated.IsFallback)
                 {
                     rejected = evaluated;
@@ -472,6 +485,22 @@ public static class ModelSelectionPlanner
                 "no configured fallback route is usable", Admission(cli));
         }
 
+        if (route?.RejectedTarget is { } rejectedTarget)
+            return Decided(SelectionOutcome.Refused, requestedModel, requestedThinking, SelectionRules.HostCapability,
+                $"Host capability missing on {request.Host?.HostId ?? "claiming host"}: "
+                + $"model-acceptance:{rejectedTarget.CliType}:{rejectedTarget.Model}.", null, Worst(primarySnapshot));
+        if (unavailable is not null && route?.IsFallback != true && hostUnavailable
+            && facts.ProviderUnavailable(cli) is null && primarySnapshot?.Error is null)
+        {
+            var key = string.IsNullOrWhiteSpace(requestedModel) ? $"provider-auth:{cli}"
+                : $"model-acceptance:{cli}:{requestedModel}";
+            return Decided(SelectionOutcome.Refused, requestedModel, requestedThinking, SelectionRules.HostCapability,
+                $"Host capability missing on {request.Host?.HostId ?? "claiming host"}: {key}. {route?.Reason}", null, Worst(primarySnapshot));
+        }
+        if (unavailable is not null && route?.IsFallback != true)
+            return Decided(SelectionOutcome.Wait, requestedModel, requestedThinking, SelectionRules.Capacity,
+                $"waiting: {cli} unavailable ({unavailable}); no usable equivalent ({route?.Reason ?? "catalogue route missing"})",
+                nowUtc.AddMinutes(2), Worst(primarySnapshot));
         if (preferFallback && route?.IsFallback != true)
             return Decided(SelectionOutcome.Wait,
                 route?.Model ?? requestedModel, route?.ThinkingLevel ?? requestedThinking, SelectionRules.OperatorSwitch,
@@ -483,7 +512,9 @@ public static class ModelSelectionPlanner
         if (route?.IsFallback == true)
         {
             var primaryReset = SelectionQuotaMath.EarliestReset(snapshotFor(cli), nowUtc, caps, blockedOnly: false);
-            var fallbackReason = route.FallbackReason ?? (preferFallback ? "operator-preference" : "quota-cap");
+            var fallbackReason = unavailable is not null ? "provider-unavailable"
+                : reserve > 0 && Strict(cli).Blocked && !SelectionQuotaMath.EvaluateCap(primarySnapshot, facts.Caps).Blocked
+                    ? "short-step-reserve" : route.FallbackReason ?? (preferFallback ? "operator-preference" : "quota-cap");
             var constrainedWindow = primarySnapshot?.Windows
                 .Where(window => window.UsedPct is not null)
                 .OrderByDescending(window => window.UsedPct!.Value
@@ -499,8 +530,11 @@ public static class ModelSelectionPlanner
                 Outcome = SelectionOutcome.Fallback,
                 Route = new SelectionRoute(route.CliType, route.Model, route.ThinkingLevel),
                 Primary = primary,
-                Rule = preference?.Active == true ? SelectionRules.OperatorSwitch : SelectionRules.QuotaCap,
-                Reason = AppendReset(BuildSwitchReason(cli, route), primaryReset),
+                Rule = unavailable is not null ? SelectionRules.Capacity
+                    : preference?.Active == true ? SelectionRules.OperatorSwitch : SelectionRules.QuotaCap,
+                Reason = unavailable is not null ? $"{cli} unavailable ({unavailable}); switching to {route.CliType}/{route.Model}"
+                    : AppendReset(BuildSwitchReason(cli, route), primaryReset)
+                      + (fallbackReason == "short-step-reserve" ? $"; preserving {reserve} percentage points for short steps" : ""),
                 ReturnToPrimaryAt = facts.ActiveSwitch?.ReturnToPrimaryAt ?? primaryReset?.ResetAt,
                 Quota = new SelectionQuota(usedWindow, usedPct, Worst(snapshotFor(cli)), projectionWarning),
                 Equivalence = new SelectionEquivalence(
@@ -548,6 +582,7 @@ public static class ModelSelectionPlanner
                 ?? SelectionQuotaMath.EarliestReset(snapshotFor(route?.CliType ?? cli), nowUtc, caps, blockedOnly: true)
                 ?? SelectionQuotaMath.EarliestReset(snapshotFor(cli), nowUtc, caps, blockedOnly: false);
             var detail = !string.IsNullOrWhiteSpace(route?.Reason) ? route!.Reason : strictPrimary.DescribeReason();
+            detail += "; no usable equivalent for the requested model and reasoning level";
             return Decided(SelectionOutcome.Wait, model, thinking, SelectionRules.QuotaCap,
                 AppendReset($"waiting: all quotas exhausted ({detail})", blockedReset),
                 blockedReset?.ResetAt, Worst(snapshotFor(cli)));
@@ -639,10 +674,11 @@ public static class ModelSelectionPlanner
                 .Any(w => w.UsedPct!.Value > facts.Caps.GetCap(cli, w.Label) - facts.ReturnBelowCapPoints);
     }
 
-    /// <summary>Rules 1 and 2: a hard pin or a same-session resume never switches; it waits.</summary>
+    /// <summary>A hard pin never switches; it waits.</summary>
     private static SelectionResult HoldPinnedRoute(SelectionResult result, string why)
     {
-        if (result.Outcome != SelectionOutcome.Fallback) return result;
+        if (result.Outcome != SelectionOutcome.Fallback)
+            return result.ShouldLaunch ? result : result with { Outcome = SelectionOutcome.Wait, Rule = SelectionRules.Pin, Reason = $"waiting: {why}; {result.Reason}" };
         return result with
         {
             Outcome = SelectionOutcome.Wait,
@@ -654,6 +690,11 @@ public static class ModelSelectionPlanner
             Equivalence = null,
             Fallback = null,
         };
+    }
+
+    private sealed class ReservedCaps(IQuotaCapTable caps, int reserve) : IQuotaCapTable
+    {
+        public int GetCap(string cliType, string windowLabel) => Math.Max(1, caps.GetCap(cliType, windowLabel) - reserve);
     }
 
     private static SelectionRoute PrimaryRoute(

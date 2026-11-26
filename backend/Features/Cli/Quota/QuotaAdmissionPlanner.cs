@@ -47,6 +47,7 @@ public sealed record QuotaAdmissionPlan(
 
     /// <summary>The durable planner receipt, reused by legacy admission emitters.</summary>
     public string? SelectionEventId { get; init; }
+    public SelectionResult? Selection { get; init; }
 
     /// <summary>The legacy admission view of a selection result; the outcome and receipt carry over unchanged.</summary>
     public static QuotaAdmissionPlan From(SelectionResult result)
@@ -73,6 +74,7 @@ public sealed record QuotaAdmissionPlan(
             result.NearbyResetWait)
         {
             ModelFallback = result.Fallback,
+            Selection = result,
             SelectionEventId = result.LedgerId,
         };
     }

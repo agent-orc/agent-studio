@@ -4056,6 +4056,11 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
             .WithWebHostBuilder(b =>
             {
                 b.UseEnvironment("Test");
+                // These end-to-end runs exercise the product workers and the
+                // startup sweeps (watcher, runner, review evidence projection,
+                // journaled continuations), so they keep the production startup.
+                b.UseSetting("Startup:HostedServices", "true");
+                b.UseSetting("Startup:RepairSweeps", "true");
                 if (claimingRunner is not null)
                     b.ConfigureServices(services => services.AddSingleton<IStartupFilter>(
                         new RunnerPrincipalInjection(claimingRunner, "/api/runner/claim")));

@@ -1,0 +1,6 @@
+<span class="identity-chip" data-testid="identity-chip"
+          [attr.data-kind]="view().kind" [attr.data-fallback]="view().fallback ? 'true' : null"
+          [cacTooltip]="tooltip()">
+      <span class="identity-chip__icon" aria-hidden="true">{{ view().icon }}</span>
+      <span class="identity-chip__name" data-testid="identity-chip-name">{{ view().label }}</span>
+    </span>

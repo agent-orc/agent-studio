@@ -29,15 +29,14 @@ public sealed class OperatorSignInEndpointTests : IClassFixture<NetworkedSecurit
         host.Reset();
     }
 
-    private static object PublicKey()
+    private static object PublicKey(ECDsa key)
     {
-        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var point = key.ExportParameters(false).Q;
         return new { kty = "EC", crv = "P-256", x = OperatorDevicePublicKey.Base64Url(point.X!), y = OperatorDevicePublicKey.Base64Url(point.Y!) };
     }
 
     private static async Task<HttpResponseMessage> SendAsync(HttpClient client, string path, object body,
-        string? session = null, string? csrf = null)
+        string? session = null, string? csrf = null, string? proof = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(body) };
         if (session is not null)
@@ -45,6 +44,7 @@ public sealed class OperatorSignInEndpointTests : IClassFixture<NetworkedSecurit
             request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={session}");
             request.Headers.Add("Origin", Studio);
         }
+        if (proof is not null) request.Headers.Add("DPoP", proof);
         if (csrf is not null) request.Headers.Add("X-CSRF-Token", csrf);
         return await client.SendAsync(request);
     }
@@ -66,8 +66,9 @@ public sealed class OperatorSignInEndpointTests : IClassFixture<NetworkedSecurit
         store.ConfirmTotpEnrollment(principal, SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
         var agent = store.CreateOperatorAgent(new CreateOperatorAgentRequest("ops console", null), owner.User.Id);
 
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         using var started = await SendAsync(client, OperatorSignInEndpoints.StartPath,
-            new { publicKey = PublicKey(), deviceLabel = "agent@workstation", operatorAgent = "ops console", classes = new[] { "project.testing" } });
+            new { publicKey = PublicKey(key), deviceLabel = "agent@workstation", operatorAgent = "ops console", classes = new[] { "project.testing" } });
         Assert.Equal(HttpStatusCode.OK, started.StatusCode);
         Assert.Contains("no-store", started.Headers.CacheControl!.ToString());
         var start = await Json(started);
@@ -75,12 +76,28 @@ public sealed class OperatorSignInEndpointTests : IClassFixture<NetworkedSecurit
         Assert.Matches("^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$", code);
         Assert.Equal($"{Studio}/#/terminal-sign-in?code={code.Replace("-", "")}", start.GetProperty("verificationUriComplete").GetString());
         Assert.Equal(5, start.GetProperty("interval").GetInt32());
+        using var hardware = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var issuedAt = clock.GetUtcNow().ToUnixTimeSeconds();
+        var statement = Encoding.UTF8.GetBytes(AccessSecurityStore.DeviceCertificationStatement(
+            start.GetProperty("keyThumbprint").GetString()!, start.GetProperty("signInId").GetString()!, issuedAt));
+        var certification = new { publicKey = PublicKey(hardware), bindingKind = "tpm", issuedAt,
+            signature = OperatorDevicePublicKey.Base64Url(hardware.SignData(statement, HashAlgorithmName.SHA256,
+                DSASignatureFormat.IeeeP1363FixedFieldConcatenation)) };
         var poll = new { pollHandle = start.GetProperty("pollHandle").GetString() };
 
-        using (var pending = await SendAsync(client, OperatorSignInEndpoints.PollPath, poll))
-            Assert.Equal("pending", (await Json(pending)).GetProperty("status").GetString());
+        Task<HttpResponseMessage> Poll() => SendAsync(client, OperatorSignInEndpoints.PollPath, poll,
+            proof: OperatorDpopTests.Proof(key, poll.pollHandle!, "POST", Studio + OperatorSignInEndpoints.PollPath, clock.GetUtcNow()));
 
-        var confirm = new { code, operatorAgentId = agent.Id, lifetimeHours = 1 };
+        using (var missingProof = await SendAsync(client, OperatorSignInEndpoints.PollPath, poll))
+            Assert.Equal("dpop-required", (await Json(missingProof)).GetProperty("error").GetString());
+        using (var certify = await SendAsync(client, OperatorSignInEndpoints.PollPath, new { poll.pollHandle, certification },
+                   proof: OperatorDpopTests.Proof(key, poll.pollHandle!, "POST", Studio + OperatorSignInEndpoints.PollPath, clock.GetUtcNow())))
+        {
+            Assert.Equal(HttpStatusCode.OK, certify.StatusCode);
+            Assert.Equal("tpm", (await Json(certify)).GetProperty("bindingKind").GetString());
+        }
+
+        var confirm = new { code, operatorAgentId = agent.Id, lifetimeHours = 8 };
         using (var anonymous = await SendAsync(client, "/api/auth/iam/operator-sign-ins/confirm", confirm))
             Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
         using (var noCsrf = await SendAsync(client, "/api/auth/iam/operator-sign-ins/confirm", confirm, owner.SessionToken))
@@ -92,6 +109,7 @@ public sealed class OperatorSignInEndpointTests : IClassFixture<NetworkedSecurit
             var found = await Json(lookup);
             Assert.Equal(("198.51.100.7", true), (found.GetProperty("requestedAddress").GetString(), found.GetProperty("addressMatches").GetBoolean()));
             Assert.Equal(agent.Id, found.GetProperty("requestedAgentId").GetString());
+            Assert.Equal("tpm", found.GetProperty("bindingKind").GetString());
         }
 
         using (var withoutStepUp = await SendAsync(client, "/api/auth/iam/operator-sign-ins/confirm", confirm, owner.SessionToken, owner.CsrfToken))
@@ -105,13 +123,15 @@ public sealed class OperatorSignInEndpointTests : IClassFixture<NetworkedSecurit
         using (var confirmed = await SendAsync(client, "/api/auth/iam/operator-sign-ins/confirm", confirm, owner.SessionToken, owner.CsrfToken))
             Assert.Equal(HttpStatusCode.OK, confirmed.StatusCode);
 
-        using var issued = await SendAsync(client, OperatorSignInEndpoints.PollPath, poll);
+        using var issued = await Poll();
         var session = await Json(issued);
         Assert.Equal("session", session.GetProperty("status").GetString());
+        Assert.Equal("tpm", session.GetProperty("bindingKind").GetString());
         var token = session.GetProperty("token").GetString()!;
         Assert.StartsWith("oas.", token);
         Assert.NotNull(store.AuthenticateServiceAccount(token));
         var row = store.ToOperatorAgentResponse(store.ListOperatorAgents().Single()).Sessions.Single();
+        Assert.Equal("tpm", row.Device!.BindingKind);
         Assert.Equal(("agent@workstation", "198.51.100.7"), (row.Device!.Label, row.Device.RequestedAddress));
     }
 

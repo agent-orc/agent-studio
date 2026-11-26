@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace AgentStudio.Pipeline;
+namespace AgentStudio.TaskServer.Contracts;
 
 /// <summary>
 /// One quarantined test as the project declares it in
@@ -67,6 +67,14 @@ public static class TestQuarantinePolicy
         return today <= entry.ExpiresOn ? TestQuarantineStatus.Active : TestQuarantineStatus.Expired;
     }
 
+    /// <summary>Declared quarantine evidence covers every original failure of a completed review test command.</summary>
+    public static bool CoversReviewFailure(ReviewCommandEvidenceDto command)
+        => command.Signal is null && command.ExitCode is > 0 and < 124
+            && command.InitialFailures is { Count: > 0 }
+            && command.QuarantinedFailures.Count > 0
+            && command.InitialFailures.All(test => command.QuarantinedFailures.Any(hit => hit.Test == test))
+            && command.NewFailures is not { Count: > 0 };
+
     /// <summary>
     /// Splits the failed names of one red step. A name matches an entry only by
     /// exact, ordinal equality, so a quarantine never widens to a neighbour.
@@ -93,13 +101,16 @@ public static class TestQuarantinePolicy
         }
         return new TestQuarantinePartition(ignored, blocking);
     }
-}
-
-/// <summary>Reads the per-project quarantine list from the exact gate workspace.</summary>
-public static class TestQuarantineFile
-{
-    /// <summary>Repository-relative location; versioned with the project, so a removal is visible in history.</summary>
-    public const string RelativePath = ".agent-studio/test-quarantine.json";
+    /// <summary>One union for gate, review and post-merge; store timestamps retain their exact expiry.</summary>
+    public static TestQuarantineReadResult ReadUnion(string repositoryPath,
+        IReadOnlyList<ProjectTestQuarantine> serverEntries, DateTimeOffset now)
+    {
+        var file = Read(repositoryPath);
+        var entries = serverEntries.Where(entry => entry.LiftedAtUtc is null && now < entry.ExpiresAtUtc)
+            .Select(entry => new TestQuarantineEntry(entry.Test, entry.Card, entry.ExpiresOn,
+                entry.ResolvedOn, entry.Reason));
+        return new(file.Entries.Concat(entries).Distinct().ToArray(), file.Issues);
+    }
 
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -114,7 +125,7 @@ public static class TestQuarantineFile
     /// </summary>
     public static TestQuarantineReadResult Read(string repositoryPath)
     {
-        var path = Path.Combine(repositoryPath, RelativePath);
+        var path = Path.Combine(repositoryPath, TestQuarantineFile.RelativePath);
         if (!File.Exists(path)) return new TestQuarantineReadResult([], []);
         try
         {
@@ -122,7 +133,7 @@ public static class TestQuarantineFile
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            return new TestQuarantineReadResult([], [$"{RelativePath} unreadable: {exception.Message}"]);
+            return new TestQuarantineReadResult([], [$"{TestQuarantineFile.RelativePath} unreadable: {exception.Message}"]);
         }
     }
 
@@ -135,7 +146,7 @@ public static class TestQuarantineFile
         }
         catch (JsonException exception)
         {
-            return new TestQuarantineReadResult([], [$"{RelativePath} is not valid JSON: {exception.Message}"]);
+            return new TestQuarantineReadResult([], [$"{TestQuarantineFile.RelativePath} is not valid JSON: {exception.Message}"]);
         }
 
         var entries = new List<TestQuarantineEntry>();
@@ -143,7 +154,7 @@ public static class TestQuarantineFile
         foreach (var (item, index) in (raw?.Tests ?? []).Select((item, index) => (item, index)))
         {
             var at = $"tests[{index}]";
-            if (string.IsNullOrWhiteSpace(item.Test)) { issues.Add($"{at}: test is required"); continue; }
+            if (item is null || string.IsNullOrWhiteSpace(item.Test)) { issues.Add($"{at}: test is required"); continue; }
             if (string.IsNullOrWhiteSpace(item.Card)) { issues.Add($"{at} {item.Test}: card is required"); continue; }
             if (!TryDate(item.ExpiresOn, out var expires))
             {
@@ -178,6 +189,15 @@ public static class TestQuarantineFile
         string? ExpiresOn,
         string? ResolvedOn,
         string? Reason);
+
+}
+
+/// <summary>Compatibility entry points for the single quarantine parser.</summary>
+public static class TestQuarantineFile
+{
+    public const string RelativePath = ".agent-studio/test-quarantine.json";
+    public static TestQuarantineReadResult Read(string repositoryPath) => TestQuarantinePolicy.Read(repositoryPath);
+    public static TestQuarantineReadResult Parse(string json) => TestQuarantinePolicy.Parse(json);
 }
 
 public sealed record TestQuarantineReadResult(

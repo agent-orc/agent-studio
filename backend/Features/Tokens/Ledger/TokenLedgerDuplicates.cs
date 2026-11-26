@@ -9,9 +9,9 @@ namespace AgentStudio.Tokens;
 /// available fingerprint; readers keep the first occurrence.
 /// </summary>
 /// <remarks>
-/// Collapsing preserves the order of the surviving rows and returns the input
-/// unchanged when it holds no duplicates, so fixtures without duplicates stay
-/// byte-comparable with <c>orchestrator.jsonl</c>.
+/// Bus collapse preserves input order and returns the input unchanged when
+/// there are no duplicates. Receipt calls preserve input order; within a duplicate group the
+/// earliest recorded attribution wins when a source identity was replayed.
 /// </remarks>
 internal static class TokenLedgerDuplicates
 {
@@ -37,15 +37,33 @@ internal static class TokenLedgerDuplicates
             : null, out collapsed);
 
     /// <summary>
-    /// Collapse identical receipt calls of one task. Remote receipts carry the
-    /// run attempt in <see cref="TaskTokenCall.ParticipantId"/>
-    /// (<c>agent:remote-runner:&lt;attempt&gt;</c>), so that id is the run
-    /// dimension here.
+    /// Collapse receipt calls of one task. Source-identified remote usage can
+    /// be replayed under a different attempt, inferred date or fallback model.
+    /// Legacy calls without a source identity retain the full run fingerprint.
     /// </summary>
     public static IReadOnlyList<TaskTokenCall> CollapseCalls(
         IReadOnlyList<TaskTokenCall> calls,
         out TokenLedgerCollapseCount collapsed)
-        => Collapse(calls, call => CallFingerprint(call, includeParticipant: true), out collapsed);
+    {
+        collapsed = TokenLedgerCollapseCount.None;
+        var winners = new Dictionary<Fingerprint, int>();
+        for (var index = 0; index < calls.Count; index++)
+        {
+            var call = calls[index];
+            var key = IsRemoteUsage(call)
+                ? CallIdentityFingerprint(call) : CallFingerprint(call, includeParticipant: true);
+            if (!winners.TryGetValue(key, out var previous))
+            {
+                winners.Add(key, index);
+                continue;
+            }
+            collapsed = collapsed.Add(key.TotalTokens);
+            if (call.Ts < calls[previous].Ts) winners[key] = index;
+        }
+        if (collapsed.Entries == 0) return calls;
+        var keptIndices = winners.Values.ToHashSet();
+        return calls.Where((_, index) => keptIndices.Contains(index)).ToList();
+    }
 
     /// <summary>
     /// Fingerprint of one receipt call. <paramref name="includeParticipant"/>
@@ -72,10 +90,25 @@ internal static class TokenLedgerDuplicates
         return index < 0 ? null : participant![(index + marker.Length)..];
     }
 
+    private static bool IsRemoteUsage(TaskTokenCall call)
+        => call.ParticipantId?.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix, StringComparison.Ordinal) == true
+           && UsageIdentity(call) is not null;
+
+    private static bool IsRemoteTurn(TaskTokenCall call)
+        => call.ParticipantId?.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix, StringComparison.Ordinal) == true
+           && UsageIdentity(call)?.StartsWith("turn:", StringComparison.Ordinal) == true;
+
     public static Fingerprint CallIdentityFingerprint(TaskTokenCall call)
         => CallFingerprint(call, includeParticipant: false) with
         {
             ParticipantId = UsageIdentity(call) ?? string.Empty,
+            // A source turn is the same log position even when a later import
+            // assigned the file's new date and the card's new fallback model.
+            // Retain time of day and all counters to avoid merging rotated logs
+            // merely because their line positions coincide.
+            TimestampTicks = IsRemoteTurn(call) ? call.Ts.TimeOfDay.Ticks
+                : IsRemoteUsage(call) ? 0 : call.Ts.ToUniversalTime().Ticks,
+            Model = IsRemoteTurn(call) ? string.Empty : CanonicalModel(call.Model),
         };
 
     public static long TotalTokens(TaskTokenCall call)

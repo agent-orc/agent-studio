@@ -62,6 +62,13 @@ Use the canonical recipes in [buttons.md](./buttons.md). Icon-only actions use
   [`frontend/.stylelintrc.json`](../../../../frontend/.stylelintrc.json), using
   `color-no-hex` and `scale-unlimited/declaration-strict-value`.
 
+## Direct actions in narrow grids
+
+Use the shared data grid's `stackActionsOnNarrow` option when a row offers
+several direct text actions. It puts the identity and the action group on
+separate full-width lines below the grid breakpoint, keeping both readable.
+The default compact row behavior is unchanged for a single overflow menu.
+
 ## Open cases
 
 - A typed `<app-button>` remains open; until it exists, use the documented
@@ -72,6 +79,12 @@ Use the canonical recipes in [buttons.md](./buttons.md). Icon-only actions use
   [status display inventory](../../design/status-display-inventory.md).
 - Deck-Panel mixin adoption is incremental. Do not add nested panels while
   migrating legacy shells.
+- The page-level components of the Access page pilot (section, outline, data
+  grid, master and detail, neutral chip, confirm in place, secret reveal, row
+  context menu) are proposals until the owner has reviewed that page. Their
+  rules are in the
+  [pilot document](../../../system/ui-standard/access-page-pilot.md). Do not
+  adopt them on another surface before that review.
 
 Every styling card must read this guide and the
 [compact styling context](../../frontend-styling.md). If the card exposes a

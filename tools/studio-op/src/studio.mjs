@@ -1,3 +1,4 @@
+import { signFromAgent, stopAgent } from './agent.mjs';
 import { CredentialError } from './credential.mjs';
 import { EXIT, httpExitCode } from './exit-codes.mjs';
 
@@ -26,7 +27,7 @@ function isLoopback(hostname) {
  * without a token file is refused before the first request.
  */
 export class StudioClient {
-  constructor({ url, credential, clientId, anonymous = false }) {
+  constructor({ url, credential, clientId, anonymous = false, configDir }) {
     let base;
     try { base = new URL(url); }
     catch { throw new OperationError('invalid-url', `The Studio URL "${url}" is not a URL.`, { exitCode: EXIT.USAGE }); }
@@ -44,6 +45,7 @@ export class StudioClient {
     this.base = base;
     this.credential = credential;
     this.clientId = clientId;
+    this.configDir = configDir;
   }
 
   headers(extra = {}) {
@@ -53,6 +55,12 @@ export class StudioClient {
       ...(this.credential ? { Authorization: `Bearer ${this.credential.token}` } : {}),
       ...extra,
     };
+  }
+
+  async signedHeaders(method, url, extra = {}) {
+    const proof = this.credential?.token.startsWith('oas.') && this.configDir
+      ? await signFromAgent(this.configDir, this.credential.token, method, url) : null;
+    return this.headers({ ...extra, ...(proof ? { DPoP: proof } : {}) });
   }
 
   url(path, query = {}) {
@@ -67,10 +75,12 @@ export class StudioClient {
   /** Sends one request and returns { status, body, headers } without judging the status. */
   async send(method, path, { query, body, headers, signal } = {}) {
     let response;
+    const target = this.url(path, query);
+    const requestHeaders = await this.signedHeaders(method, target, { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers });
     try {
-      response = await fetch(this.url(path, query), {
-        method,
-        headers: this.headers({ ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers }),
+      response = await fetch(target, {
+        method, redirect: 'manual',
+        headers: requestHeaders,
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
@@ -78,6 +88,7 @@ export class StudioClient {
       throw new OperationError('studio-unreachable',
         `Studio at ${this.base.origin} did not answer (${error.cause?.code ?? error.name}).`, { exitCode: EXIT.UNREACHABLE });
     }
+    if (response.status === 401 && requestHeaders.DPoP && this.configDir) await stopAgent(this.configDir);
     const text = await response.text();
     let parsed = null;
     if (text) {
@@ -96,9 +107,11 @@ export class StudioClient {
   /** Opens the decision stream; returns the fetch response with a readable body. */
   async stream(path, { query, signal }) {
     let response;
+    const target = this.url(path, query);
+    const requestHeaders = await this.signedHeaders('GET', target, { Accept: 'text/event-stream' });
     try {
-      response = await fetch(this.url(path, query), {
-        headers: this.headers({ Accept: 'text/event-stream' }),
+      response = await fetch(target, {
+        redirect: 'manual', headers: requestHeaders,
         signal,
       });
     } catch (error) {
@@ -106,6 +119,7 @@ export class StudioClient {
       throw new OperationError('studio-unreachable',
         `Studio at ${this.base.origin} did not answer (${error.cause?.code ?? error.name}).`, { exitCode: EXIT.UNREACHABLE });
     }
+    if (response.status === 401 && requestHeaders.DPoP && this.configDir) await stopAgent(this.configDir);
     if (!response.ok) {
       const text = await response.text();
       let body = null;
@@ -123,6 +137,8 @@ export function failure(method, path, { status, body }) {
   const code = slug(body?.error) ?? slug(body?.code) ?? prefixed ?? (status === 401 ? 'unauthenticated' : status === 403 ? 'forbidden'
       : status === 404 ? 'not-found' : `http-${status}`);
   const detail = body?.message ?? (typeof body?.error === 'string' && body.error !== code ? body.error : null);
-  return new OperationError(code, `${method} ${path} answered ${status} ${code}${detail ? `: ${detail}` : ''}`,
+  const login = ['session-ended', 'renewal-device-key-missing', 'limit-lowered', 'dpop-required', 'dpop-key-mismatch'].includes(code)
+    ? ' Run studio-op login.' : '';
+  return new OperationError(code, `${method} ${path} answered ${status} ${code}${detail ? `: ${detail}` : ''}${login}`,
     { exitCode: httpExitCode(status, code), status, body });
 }

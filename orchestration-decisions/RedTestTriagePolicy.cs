@@ -5,14 +5,14 @@ public static class RedTestTriagePolicy
 {
     public static RedTestClassification Classify(RedTestTriageFacts facts)
     {
+        if (facts.EnvelopeCanary == RedTestResult.Fail) return RedTestClassification.Environment;
         if (facts.EarlierSuspectRevertIntegrated && ConfirmedFailure(facts)
             || facts.LaterControlContradictsAttribution)
             return RedTestClassification.WrongAttribution;
-        if (facts.EnvelopeCanary == RedTestResult.Fail
-            || facts.FingerprintMatchesReference == false && facts.ReferenceEnvelopeRepeat == RedTestResult.Pass
+        if (facts.FingerprintMatchesReference == false && facts.ReferenceEnvelopeRepeat == RedTestResult.Pass
             || facts.LastGreenControlResults.Contains(RedTestResult.Fail))
             return RedTestClassification.Environment;
-        if (facts.FirstResult == RedTestResult.Fail && facts.SameShaRepeat == RedTestResult.Pass)
+        if (facts.FirstResult == RedTestResult.Fail && (facts.SameShaRepeat == RedTestResult.Pass || facts.ReferenceEnvelopeRepeat == RedTestResult.Pass))
             return RedTestClassification.Flaky;
         var bisect = BisectVerdictPolicy.Decide(facts.LastGreenControlResults, facts.BisectPoints);
         if (bisect.Classification == RedTestClassification.Flaky) return RedTestClassification.Flaky;
@@ -45,11 +45,13 @@ public static class RedTestTriagePolicy
     public static RedTestTriageDecision Decide(RedTestTriageFacts facts)
     {
         var classification = Classify(facts);
+        if (classification == RedTestClassification.Ambiguous && facts.AmbiguousClassificationAttempted
+            && facts.ModelClassification is { } modelClass) classification = modelClass;
         var attributed = classification == RedTestClassification.Regression
             ? BisectVerdictPolicy.Decide(facts.LastGreenControlResults, facts.BisectPoints).AttributedMerge : null;
         var actions = new List<RedTestDecision>();
         var lineStop = ConfirmedFailure(facts) && (facts.BuildOrPrepareFailure || facts.Category == RedTestCategory.Base)
-            && classification is not (RedTestClassification.Environment or RedTestClassification.Inconclusive);
+            && classification is not (RedTestClassification.Environment or RedTestClassification.Inconclusive or RedTestClassification.Flaky);
         if (lineStop)
         {
             actions.Add(new(RedTestAction.LineStop, "Build, prepare or a base test failed twice in the reference envelope."));
@@ -61,6 +63,8 @@ public static class RedTestTriagePolicy
                         ? RedTestOwnerOption.RevertAttributedMerge : RedTestOwnerOption.KeepFixingForward,
                     "The line stop has lasted 60 minutes; prefer a proven safe revert, otherwise keep fixing forward."));
         }
+        if (facts.LineStopActive && HasCoveringPasses(facts))
+            actions.Add(new(RedTestAction.ResolveLineStop, "Two covering passes contain the line-stop repair integration."));
         if (facts.T2Requested)
             actions.Add(Ask(RedTestOwnerReason.T2Request,
                 [RedTestOwnerOption.GrantWithExpiry, RedTestOwnerOption.Refuse],
@@ -109,10 +113,12 @@ public static class RedTestTriagePolicy
         if (lineStop || classification is RedTestClassification.Regression or RedTestClassification.Ambiguous
             or RedTestClassification.Environment || actions.Any(a => a.Action == RedTestAction.StartReportOnly))
         {
-            var rung = RepairRung(classification, facts.RepairAttempt,
+            var rung = RepairRung(classification, facts.IncidentAge >= RedTestTriageBounds.ReevaluateAge
+                && facts.RepairCardLane is not (TaskStates.AutoReview or TaskStates.HumanReview or TaskStates.Completed or TaskStates.Archive)
+                    ? Math.Max(2, facts.RepairAttempt) : facts.RepairAttempt,
                 facts.SinceLastLift is { } age && age >= TimeSpan.Zero && age <= RedTestTriageBounds.RelapseWindow);
             actions.Add(attributed is not null && CanProposeRevert(1, facts.RevertAppliesCleanly, facts.LaterMergeCoupled)
-                ? new(RedTestAction.ProposeRevert, "One confirmed suspect has a clean independent revert through the normal card flow.")
+                ? new(RedTestAction.ProposeRevert, "One confirmed suspect has a clean independent revert through the normal card flow.", ModelRung: rung)
                 : new(RedTestAction.FixForward, "Create or reuse the repair at the front of the queue; preserve its current review or settled lane.", ModelRung: rung));
         }
         return new(classification, attributed, actions);
@@ -135,8 +141,10 @@ public static class RedTestTriagePolicy
             || BisectVerdictPolicy.Verdict(p.ParentRuns) == RedTestPointVerdict.Mixed);
 
     private static bool HasLiftEvidence(RedTestTriageFacts facts)
-        => facts.ActiveQuarantine is not null && facts.LiftRuns.Count >= 2
-            && facts.LiftRuns.TakeLast(2).All(r => r.Result == RedTestResult.Pass
+        => facts.ActiveQuarantine is not null && HasCoveringPasses(facts);
+
+    private static bool HasCoveringPasses(RedTestTriageFacts facts)
+        => facts.LiftRuns.Count >= 2 && facts.LiftRuns.TakeLast(2).All(r => r.Result == RedTestResult.Pass
                 && r.StandardEnvelope && r.ContainsRepairIntegration);
 
     private static void Start(RedTestTriageFacts facts, RedTestQuarantineKind kind, List<RedTestDecision> actions)

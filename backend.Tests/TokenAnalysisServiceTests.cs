@@ -61,6 +61,8 @@ public sealed class TokenAnalysisServiceTests : IDisposable
         var detail = service.CardDetail(new TokenAnalysisProjectSource("PROJ-1", Project, _watchPath), "AGT-1");
         Assert.NotNull(detail);
         Assert.Equal(card.TotalTokens, detail!.Events.Sum(e => e.Total));
+        Assert.NotNull(detail.DuplicateCodingEvents);
+        Assert.Empty(detail.DuplicateCodingEvents);
         Assert.Contains(detail.Events, e => e.Kind == TokenUsageKinds.Coding && e.DurationMs == 600_000);
         Assert.Null(service.CardDetail(new TokenAnalysisProjectSource("PROJ-1", Project, _watchPath), "missing"));
 

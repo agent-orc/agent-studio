@@ -52,6 +52,7 @@ public sealed record CliOneShotRequest(
 {
     /// <summary>Consumer policy key when the step id is more specific than the selection class.</summary>
     public string? SelectionConsumer { get; init; }
+    public string? PipelineType { get; init; }
     /// <summary>Optional thinking/reasoning level for CLIs and models that
     /// support one. Unsupported combinations are normalized away by the
     /// concrete runner.</summary>
@@ -336,6 +337,7 @@ public sealed class CliOneShotRegistry
         try
         {
             var result = await implementation.RunAsync(effective, ct).ConfigureAwait(false);
+            _selection.RecordExecution(plan.SelectionEventId, effective.CliType, !result.Ok && result.ExitCode != 0);
             return result with
             {
                 QuotaAdmission = plan,
@@ -361,6 +363,14 @@ public sealed class CliOneShotRegistry
     /// </summary>
     internal static ModelSelectionCall SelectionCallFor(CliOneShotRequest request, string source)
     {
+        var pipelineType = request.PipelineType;
+        if (pipelineType is null && !string.IsNullOrWhiteSpace(request.JobFolderPath))
+        {
+            var logger = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+            TaskJsonFile.TryReadStringField(request.JobFolderPath, "mode", logger, out var mode);
+            TaskJsonFile.TryReadStringField(request.JobFolderPath, "taskType", logger, out var taskType);
+            pipelineType = PipelineTypes.Resolve(taskType, mode);
+        }
         var consumer = request.SelectionConsumer ?? (source.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
             ? SelectionConsumers.ReviewAspect
             : source.Contains("review-grade", StringComparison.OrdinalIgnoreCase)
@@ -371,6 +381,7 @@ public sealed class CliOneShotRegistry
             new SelectionRequest
             {
                 Consumer = consumer,
+                PipelineType = pipelineType,
                 Project = request.Project,
                 StepId = request.StepId,
                 TaskKey = request.JobId,

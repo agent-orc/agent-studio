@@ -244,6 +244,7 @@ function detail(card: Record<string, unknown>): Record<string, unknown> {
 
 async function installRoutes(page: Page, cards: readonly Record<string, unknown>[] = CARDS): Promise<void> {
   await page.route('**/api/**', route => json(route, []));
+  await page.route(/\/api\/cli\/quota(\?|$)/, route => json(route, { clis: [] }));
   await page.route('**/api/v1/projects', route => json(route, [{
     id: 'PROJ-001', displayName: PROJECT, shortCode: 'PH', workspaceId: 'ws-default', archived: false,
   }]));
@@ -289,7 +290,7 @@ async function installRoutes(page: Page, cards: readonly Record<string, unknown>
   // A registered project keeps FirstRunLaunchService from opening the first-run checklist over the board.
   const registered = {
     id: PROJECT, displayName: PROJECT, shortCode: 'DEM', workspaceId: 'ws-demo',
-    storageLocation: WATCH_PATH, sortOrder: 0, archived: false, createdAt: '2026-08-01T09:00:00Z',
+    storageLocation: WATCH_PATH, sortOrder: 0, archived: false, urls: [], createdAt: '2026-08-01T09:00:00Z',
   };
   await page.route(/\/api\/v1\/projects(\?|$)/, route => json(route, [registered]));
   await page.route('**/api/v1/workspaces**', route => json(route, [{
@@ -479,3 +480,23 @@ test.describe('pickup holds are visible where the card claims to be queued', () 
     await expect(card.getByTestId('task-live-current')).toContainText('position 1');
   });
 });
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`dispatch plan hold and position use the existing card presentation in ${theme}`, async ({ page }) => {
+    mkdirSync(RESULTS, { recursive: true });
+    const held = { ...REFUSED_DISPATCH_CARD, dispatchPlanPosition: 3, remoteDispatchRejection: null, executionLocation: undefined,
+      pickupHold: { classification: 'satisfiable-soon', mechanism: 'dispatch-plan',
+        reason: 'area-busy: waits for AGT-9001 until 2026-09-14 10:00:00Z.',
+        sinceUtc: NOW, expiresAtUtc: '2026-09-14T10:00:00Z', unsatisfiable: false, resolutions: [] } };
+    await openBoard(page, [held]);
+    await setTheme(page, theme);
+    const card = page.getByTestId('task-card').filter({ hasText: 'Installer:' });
+    await expect(card.getByTestId('dispatch-plan-position')).toHaveText('Dispatch #3');
+    await expect(card.getByTestId('pickup-hold-mechanism')).toHaveText('Dispatch hold');
+    await expect(card.getByTestId('pickup-hold-reason')).toContainText('waits for AGT-9001');
+    await card.screenshot({ path: join(RESULTS, `dispatch-hold-${theme}-desktop--mocked.png`) });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(card.getByTestId('dispatch-plan-position')).toBeVisible();
+    await card.screenshot({ path: join(RESULTS, `dispatch-hold-${theme}-phone--mocked.png`) });
+  });
+}

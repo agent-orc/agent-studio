@@ -197,6 +197,43 @@ public sealed class RemoteDeliveryIntegrationPolicyTests
 
 public sealed class RemoteDeliveryIntegrationCoordinatorTests
 {
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Held_delivery_waits_without_a_repair_round_while_unrelated_and_repair_deliveries_integrate()
+    {
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var repaired = false;
+        var rounds = 0;
+        var attempts = 0;
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(request =>
+        {
+            if (request.JobId == "repair") repaired = true;
+            if (request.JobId == "overlap" && !repaired)
+            {
+                attempts++;
+                held.TrySetResult();
+                return Task.FromResult(MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.BlockedFailingArea,
+                    error: "Quarantine quarantine-one: Product.Tests.Isolated holds backend/Features/Pipeline/PostMerge"));
+            }
+            return Task.FromResult(MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged, mergedSha: new string('a', 40)));
+        }, NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+        startAgentRound: (_, _) =>
+        {
+            rounds++;
+            return Task.FromResult(new IntegrationAgentRoundStartResult(false, "Unexpected repair round"));
+        }) { HoldRetryDelay = TimeSpan.FromMilliseconds(100) };
+        var pending = coordinator.EnqueueAsync(Request("overlap", 1));
+        await held.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(pending.IsCompleted);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged,
+            (await coordinator.EnqueueAsync(Request("frontend", 2)).WaitAsync(TimeSpan.FromSeconds(5))).Outcome);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged,
+            (await coordinator.EnqueueAsync(Request("repair", 3)).WaitAsync(TimeSpan.FromSeconds(5))).Outcome);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, (await pending.WaitAsync(TimeSpan.FromSeconds(5))).Outcome);
+        Assert.True(attempts >= 1);
+        Assert.Equal(0, rounds);
+    }
+
     [Theory]
     [InlineData(MergeIntoIntegrationOutcome.Merged, 0, RemoteIntegrationContinuationAction.None)]
     [InlineData(MergeIntoIntegrationOutcome.Conflict, 0, RemoteIntegrationContinuationAction.StartAgentRound)]
@@ -212,6 +249,43 @@ public sealed class RemoteDeliveryIntegrationCoordinatorTests
         Assert.Equal(
             expected,
             RemoteIntegrationContinuationPolicy.Decide(outcome, roundsUsed));
+    }
+
+    [Fact]
+    public async Task Recovery_round_waiting_for_claim_does_not_hold_the_serial_integration_lane()
+    {
+        var roundQueued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var headEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseHead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var roundClaimed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new List<string>();
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            async request =>
+            {
+                entered.Add(request.JobId);
+                if (request.JobId == "AGT-3988")
+                {
+                    headEntered.SetResult();
+                    await releaseHead.Task;
+                    return MergeIntoIntegrationResult.RequiresAgentRound([], "delivery-attribution-ambiguous");
+                }
+                return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged);
+            }, NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            startAgentRound: (_, _) =>
+            {
+                roundQueued.SetResult();
+                // Only enqueueing the steer belongs here. Its eventual claim is independent.
+                return Task.FromResult(new IntegrationAgentRoundStartResult(true, "Recovery queued in Ready; awaiting a free runner slot."));
+            });
+        var head = coordinator.EnqueueAsync(Request("AGT-3988", 1));
+        await headEntered.Task;
+        var next = coordinator.EnqueueAsync(Request("AGT-3989", 2));
+        releaseHead.SetResult();
+        Assert.Equal(MergeIntoIntegrationOutcome.AgentRoundRequired, (await head).Outcome);
+        await roundQueued.Task;
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, (await next).Outcome);
+        Assert.False(roundClaimed.Task.IsCompleted);
+        Assert.Equal(["AGT-3988", "AGT-3989"], entered);
     }
 
     [Fact]

@@ -2,6 +2,7 @@ using AgentStudio.Cli;
 using AgentStudio.Pipeline;
 using AgentStudio.Shared;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Tasks;
 
 namespace AgentStudio.Runner;
 
@@ -25,6 +26,9 @@ internal static class CodingSelectionCalls
             new SelectionRequest
             {
                 Consumer = SelectionConsumers.Coding,
+                WorkClass = TaskModes.IsConcept(info.Mode) ? SelectionWorkClasses.Concept : SelectionWorkClasses.Coding,
+                PipelineType = PipelineTypes.Resolve(info),
+                TaskMode = info.Mode,
                 Project = project,
                 TaskKey = CardKey(info),
                 Pins = new SelectionPins(
@@ -34,12 +38,30 @@ internal static class CodingSelectionCalls
                         ? info.PreferenceThinkingLevel ?? info.ThinkingLevel : info.ThinkingLevel,
                     info.PinMode == "hard" ? SelectionPinMode.Hard : SelectionPinMode.Preference),
                 IsExplicitPin = info.ModelExplicit,
+                Continuation = ContinuationFor(info),
                 TaskType = info.TaskType,
             },
             ExecutionPath,
             occupiedSlots,
             CorrectnessFloor: correctnessFloor,
             Preview: preview);
+    }
+
+    internal static SelectionContinuation? ContinuationFor(TaskInfo info)
+    {
+        if (info.PinMode == "hard" || info.PendingIntent?.ModelFallback is not null
+            || SessionContinuationLedgerStore.PeekFreshReason(info.FolderPath) is not null)
+            return null;
+        var session = SessionContinuationLedgerStore.Latest(info.FolderPath);
+        if (session is { CapturedSessionId.Length: > 0, Model.Length: > 0 })
+            return new(session.Provider, session.Model, session.ThinkingLevel);
+        if (string.IsNullOrWhiteSpace(info.SessionName)) return null;
+        var localSession = TaskSessionLog.ReadSessionEventsInFolder(info.FolderPath).LastOrDefault(entry =>
+            entry.CapturedSessionId == info.SessionName && !string.IsNullOrWhiteSpace(entry.Cli)
+            && !string.IsNullOrWhiteSpace(entry.Model));
+        return localSession is not null
+            ? new(localSession.Cli, localSession.Model, localSession.ThinkingLevel)
+            : new(info.CliType, info.Model, info.ThinkingLevel);
     }
 
     internal static string CardKey(TaskInfo info)

@@ -34,6 +34,7 @@ public static class AcceptedIntegrationFailureCodes
     /// <c>ConflictSkipped</c>/<c>Partial</c> (CAC-18).
     /// </summary>
     public const string GateEnvironmentFailure = "gate-environment-failure";
+    public const string GateCapacity = "gate-capacity";
 
     /// <summary>
     /// The build/test gate never reached a verdict at all: the process that owned
@@ -282,6 +283,10 @@ public static class AcceptedIntegrationFailurePolicy
                     verdictSummary,
                     "The delivery merged into the integration branch locally but the push to origin is blocked."),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.GateCapacity => new(
+                code, "Gate capacity", FirstNonBlank(reason, verdictSummary,
+                    "The integration check could not acquire capacity after 3 admission attempts."),
+                RebaseRecoveryAvailable: false),
             AcceptedIntegrationFailureCodes.GateEnvironmentFailure => new(
                 code,
                 "Gate environment failure",
@@ -488,6 +493,7 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.NoTaskBranch => AcceptedIntegrationFailureCodes.NoTaskBranch,
             AcceptedIntegrationFailureCodes.IntegrationError => AcceptedIntegrationFailureCodes.IntegrationError,
             AcceptedIntegrationFailureCodes.IntegrationPushBlocked => AcceptedIntegrationFailureCodes.IntegrationPushBlocked,
+            AcceptedIntegrationFailureCodes.GateCapacity => AcceptedIntegrationFailureCodes.GateCapacity,
             AcceptedIntegrationFailureCodes.GateEnvironmentFailure => AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
             AcceptedIntegrationFailureCodes.GateInterrupted => AcceptedIntegrationFailureCodes.GateInterrupted,
             AcceptedIntegrationFailureCodes.RepositoryRootUnavailable => AcceptedIntegrationFailureCodes.RepositoryRootUnavailable,

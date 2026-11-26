@@ -1,0 +1,31 @@
+@use '../../../../../styles/mixins' as m;
+
+:host { display: block; min-width: 0; }
+.jump { position: relative; display: flex; align-items: center; }
+.jump__icon { position: absolute; left: var(--studio-spacing-2); color: var(--studio-fg-muted); pointer-events: none; }
+.jump__field { @include m.form-control('sm'); width: 100%; padding-left: var(--studio-spacing-5); padding-right: var(--studio-spacing-5); }
+.jump__key { position: absolute; right: var(--studio-spacing-2); min-width: 16px; border: 1px solid var(--studio-border); border-radius: 3px;
+  color: var(--studio-fg-muted); font-family: var(--font-mono); font-size: var(--studio-font-size-sm); line-height: 16px; text-align: center; pointer-events: none; }
+.jump__field:focus ~ .jump__key { display: none; }
+.jump__list { @include m.thin-scroll; position: absolute; top: calc(100% + var(--studio-spacing-1)); right: 0; z-index: 3; width: max(100%, 340px); max-width: calc(100vw - 24px);
+  max-height: 320px; margin: 0; padding: var(--studio-spacing-1); border: 1px solid var(--studio-border-strong); border-radius: 6px;
+  background: var(--studio-bg-elevated); box-shadow: var(--elevation-popover); list-style: none; overflow-y: auto; }
+.jump__option { display: flex; align-items: center; gap: var(--studio-spacing-2); width: 100%; min-height: var(--studio-row-min-h-interactive);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2); border: 0; border-radius: 4px; background: transparent; color: var(--studio-fg);
+  font: inherit; text-align: left; cursor: pointer; }
+.jump__option:hover { background: var(--studio-bg-hover); }
+.jump__option[aria-selected='true'] { background: var(--studio-bg-selected); color: var(--studio-fg-strong); }
+.jump__text { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
+.jump__option > app-live-glyph, .jump__option > app-status-indicator { flex: none; }
+.jump__name { font-size: var(--studio-font-size-md); font-weight: 600; }
+.jump__where { color: var(--studio-fg-muted); font-size: var(--studio-font-size-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jump__none { padding: var(--studio-spacing-2); color: var(--studio-fg-muted); font-size: var(--studio-font-size-sm); }
+
+// Phone width: a sign of touch size until it is used; then the field takes the row.
+@container live-structure (max-width: 719px) {
+  .jump__field { height: var(--studio-target-coarse-min); }
+  .jump__key { display: none; }
+  .jump:not(:focus-within) .jump__field { padding-right: 0; color: transparent; cursor: pointer; }
+  .jump:not(:focus-within) .jump__field::placeholder { color: transparent; }
+  .jump:not(:focus-within) .jump__icon { left: 50%; transform: translateX(-50%); }
+}

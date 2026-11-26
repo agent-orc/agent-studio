@@ -529,6 +529,12 @@ public sealed partial class MergeIntoDevelopRunner
                     AcceptedIntegrationFailureCodes.ForBranchSync(synchronized.Error),
                     synchronized.Error);
             }
+            else if (!isPullRequest && QuarantineHoldReason(project, jobId, watchPath, repoRoot,
+                         lineage?.Mode == ImmediateIntegrationLineageMode.DevelopThenMain ? "develop" : branch,
+                         delivery.ExpectedResultSha ?? delivery.Ref) is { } holdReason)
+            {
+                result = MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.BlockedFailingArea, error: holdReason);
+            }
             else if (lineage?.Mode == ImmediateIntegrationLineageMode.Blocked)
             {
                 result = MergeIntoIntegrationResult.Failed(
@@ -1107,6 +1113,26 @@ public sealed partial class MergeIntoDevelopRunner
         }
     }
 
+    internal string? QuarantineHoldReason(string project, string jobId, string? watchPath,
+        string repository, string branch, string deliveryRef)
+    {
+        var state = _postMergeMode?.ReadState(project);
+        if (state is null) return null;
+        var holds = MonolithTransitionAdapter.ActiveQuarantineHolds(state.Quarantines, _gateTime.GetUtcNow());
+        var task = _taskScanner?.FindJob(jobId, watchPath);
+        var aliases = new[] { task?.Id, task?.Key, task?.TaskKey }
+            .Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id!).ToArray();
+        var paths = holds.Count == 0 ? Array.Empty<string>()
+            : _git.ChangedPathsAgainstMergeBase(repository, _git.IntegrationBaseRef(repository, branch), deliveryRef);
+        var reason = holds.Count == 0 ? null : paths is null
+            ? "Active quarantine hold: delivery merge-base paths are unavailable."
+            : MonolithTransitionAdapter.QuarantineIntegrationBlock(paths, holds, jobId, aliases);
+        if (task is not null && _timeline is not null)
+            GuardianIntegrationWaitJournal.Record(_timeline, task.FolderPath, reason is not null,
+                paths is not null, _gateTime.GetUtcNow(), deliveryRef);
+        return reason;
+    }
+
     private async Task MaybeRaiseInterventionAsync(
         string project,
         string jobId,
@@ -1120,6 +1146,7 @@ public sealed partial class MergeIntoDevelopRunner
         // A refused Git credential is a host fault the bounded ladder replays;
         // a follow-up card for it would only repeat what the ladder does.
         if (result.Outcome.IsSuccessfulIntegration()
+            || result.Outcome == MergeIntoIntegrationOutcome.BlockedFailingArea
             || result.FailureCode == AcceptedIntegrationFailureCodes.GitCredentialUnavailable
             || _failureInterventions is null
             || _taskScanner is null
@@ -1735,6 +1762,13 @@ public sealed partial class MergeIntoDevelopRunner
         // separately so the card is never marked
         // a conflict and no rebase-recovery steer round is spent chasing a gate
         // environment problem the delivery cannot fix.
+        if (reset.Success && MonolithTransitionAdapter.IsGateQueueOverrun(
+                gate.ViolatedBudget?.Name, gate.ViolatedBudget?.Phase))
+            return (MergeIntoIntegrationResult.Failed(AcceptedIntegrationFailureCodes.GateCapacity,
+                "Gate capacity: the integration merge check could not acquire its reserved slot after 3 admission attempts. "
+                + $"{integrationBranch} was rolled back and nothing was pushed. Retry integration when gate capacity is available.")
+                with { GateExecuted = false }, gate);
+
         var outcome = gate.FailureKind == BuildTestGateFailureKind.Environment
             ? MergeIntoIntegrationOutcome.GateEnvironmentFailure
             : MergeIntoIntegrationOutcome.GateFailed;
@@ -2801,6 +2835,8 @@ public sealed partial class MergeIntoDevelopRunner
                     "merged",
                     $"Merged into {integrationBranch}{sha}{fullSuite}{buildGate}.",
                     preMainResult?.Reason ?? preDevelopResult?.Reason);
+            case MergeIntoIntegrationOutcome.BlockedFailingArea:
+                return (PipelineStepStatus.Pending, "blocked-failing-area", result.Error, result.Error);
             case MergeIntoIntegrationOutcome.GateFailed:
                 return (
                     PipelineStepStatus.Failed,

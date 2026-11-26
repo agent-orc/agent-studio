@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en" data-document-pattern="concept">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Framework, budget and data | Deployment dashboard charts</title>
+<!--g:STYLE--><style data-article-template="v2">/* docs/app/templates/article-document-v2.html, minified by build.mjs */:root{color-scheme:light;--article-paper: #fcfcfb;--article-surface: #f2f1ee;--article-surface-strong: #e9e8e3;--article-ink: #151515;--article-muted: #5f5e59;--article-faint: #696762;--article-line: #d8d6cf;--article-link: #1f67b2;--article-link-soft: #eaf1fb;--article-good: #18753a;--article-good-soft: #eaf4ea;--article-warn: #8b6100;--article-warn-soft: #f8f0dd;--article-bad: #b72f2f;--article-bad-soft: #fbecec;--article-serif: Georgia, "Times New Roman", serif;--article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;--article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace}@media(prefers-color-scheme:dark){:root{color-scheme:dark;--article-paper: #1a1a19;--article-surface: #232322;--article-surface-strong: #2c2c2a;--article-ink: #f7f7f4;--article-muted: #c3c2b7;--article-faint: #9d9c94;--article-line: #3d3d3a;--article-link: #78aef0;--article-link-soft: #1e2a3a;--article-good: #67b867;--article-good-soft: #1f2f1f;--article-warn: #d9a63f;--article-warn-soft: #33301e;--article-bad: #e66767;--article-bad-soft: #382222}}*{box-sizing:border-box}html{background:var(--article-paper)}body{margin:0;background:var(--article-paper);color:var(--article-ink);font:17px/1.75 var(--article-serif);text-rendering:optimizeLegibility}main,.article{width:min(70ch,calc(100% - 48px));margin:0 auto;padding:0 0 80px}header.page{margin-bottom:12px;padding:48px 0 28px;border-bottom:1px solid var(--article-line)}h1,h2,h3,h4,.kicker,.meta,.number,nav,table,figcaption,.box,.callout,.evidence-figure,.variant-grid,.evidence-list{font-family:var(--article-sans)}h1{margin:0 0 14px;font-size:clamp(2.2rem,6vw,3.4rem);line-height:1.08;letter-spacing:-.025em}h2{margin:56px 0 10px;font-size:1.55rem;line-height:1.25}h3{margin:34px 0 8px;font-size:1.08rem;line-height:1.35}h4{margin:0 0 8px;font-size:.94rem}p{margin:0 0 18px}p:last-child{margin-bottom:0}.kicker,.number{margin:0 0 12px;color:var(--article-faint);font-size:.75rem;font-weight:700;letter-spacing:.12em;line-height:1;text-transform:uppercase}.lede{margin:0;color:var(--article-muted);font-size:1.18rem;line-height:1.6}.meta{display:flex;flex-wrap:wrap;gap:10px 18px;margin-top:20px;color:var(--article-faint);font-size:.78rem}.meta b{color:var(--article-muted);font-weight:650}a{color:var(--article-link);text-underline-offset:.16em}a:focus-visible{outline:2px solid var(--article-link);outline-offset:3px;border-radius:2px}code{padding:.08em .34em;border-radius:4px;background:var(--article-surface-strong);font:.84em/1.5 var(--article-mono);overflow-wrap:anywhere}pre{overflow-x:auto;margin:24px 0;padding:16px 18px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface)}pre code{padding:0;background:transparent}ul,ol{margin:0 0 18px;padding-left:24px}li+li{margin-top:6px}table{width:100%;margin:24px 0;border-collapse:collapse;font-size:.88rem;line-height:1.5}th,td{padding:10px 12px;border-bottom:1px solid var(--article-line);text-align:left;vertical-align:top}th{color:var(--article-faint);font-size:.74rem;letter-spacing:.06em;text-transform:uppercase}.box,.callout{margin:24px 0;padding:18px 22px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface);font-size:.92rem;line-height:1.65}.box.accent,.callout[data-tone=accent]{border-color:color-mix(in srgb,var(--article-link) 30%,var(--article-line));background:var(--article-link-soft)}.box.good,.callout[data-tone=good]{border-color:color-mix(in srgb,var(--article-good) 30%,var(--article-line));background:var(--article-good-soft)}.box.warn,.callout[data-tone=warn]{border-color:color-mix(in srgb,var(--article-warn) 35%,var(--article-line));background:var(--article-warn-soft)}.box.bad,.callout[data-tone=bad]{border-color:color-mix(in srgb,var(--article-bad) 30%,var(--article-line));background:var(--article-bad-soft)}figure{margin:30px 0}figure>img,figure>svg{display:block;width:100%;height:auto;border:1px solid var(--article-line);border-radius:10px;background:var(--article-paper)}figcaption{margin-top:10px;color:var(--article-muted);font-size:.8rem;line-height:1.5}.evidence-figure{margin-top:38px;margin-bottom:38px}.evidence-captures{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:12px}.evidence-capture{position:relative;min-width:0;overflow:hidden;border:1px solid var(--article-line);border-radius:10px;background:var(--article-paper)}.evidence-capture>img{display:block;width:100%;height:auto}.capture-theme,.figure-annotation{position:absolute;z-index:1;border:1px solid var(--article-line);border-radius:999px;background:var(--article-surface);color:var(--article-muted);font-size:.68rem;font-weight:750;letter-spacing:.04em;line-height:1.35}.capture-theme{top:10px;left:10px;padding:3px 8px;text-transform:uppercase}.figure-annotation{right:12px;bottom:12px;max-width:min(28ch,calc(100% - 24px));padding:5px 10px;border-color:color-mix(in srgb,var(--article-link) 45%,var(--article-line));background:var(--article-link-soft);color:var(--article-link);letter-spacing:0;text-transform:none}.figure-claim{display:block;color:var(--article-ink);font-size:.84rem}.figure-as-of{display:flex;flex-wrap:wrap;gap:2px 14px;margin-top:6px;color:var(--article-faint);font-size:.72rem}.breakout,.media-breakout{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%)}.variant-grid{display:grid;grid-template-columns:1fr;gap:14px;margin:24px 0}.variant{min-width:0;padding:16px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface)}.variant h3{margin:0 0 8px}.variant img,.variant svg{display:block;width:100%;height:auto;margin-top:12px}[data-document-pattern=ui] .variant-grid{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%);grid-template-columns:repeat(2,minmax(0,1fr))}[data-document-pattern=ui] .mockup{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%)}.evidence-list{display:grid;gap:10px;margin:24px 0}.evidence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px 14px;align-items:start;padding:14px;border:1px solid var(--article-line);border-radius:9px;background:var(--article-surface);color:var(--article-ink);text-decoration:none}.evidence:hover{border-color:var(--article-link);background:var(--article-link-soft)}.evidence-class{display:inline-flex;align-items:center;min-height:22px;padding:2px 8px;border-radius:999px;background:var(--article-surface-strong);color:var(--article-muted);font-size:.68rem;font-weight:750;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}[data-document-pattern=concept] .evidence-class[data-evidence-class=observed]{background:var(--article-good-soft);color:var(--article-good)}[data-document-pattern=concept] .evidence-class[data-evidence-class=inferred]{background:var(--article-warn-soft);color:var(--article-warn)}[data-document-pattern=concept] .evidence-class[data-evidence-class=proposed]{background:var(--article-link-soft);color:var(--article-link)}.evidence b{display:block;margin-bottom:2px;font-size:.88rem}.evidence small{display:block;color:var(--article-muted);font-size:.78rem;line-height:1.45}.dim{color:var(--article-muted)}@media(max-width:760px){main,.article{width:min(100% - 28px,70ch);padding-bottom:52px}header.page{padding-top:32px}.breakout,.media-breakout,[data-document-pattern=ui] .variant-grid,[data-document-pattern=ui] .mockup{width:calc(100vw - 20px)}[data-document-pattern=ui] .variant-grid,.evidence,.evidence-captures{grid-template-columns:1fr}table{display:block;overflow-x:auto}}@media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition-duration:0s!important;animation-duration:0s!important}}</style>
+<style data-dossier="deployment-dashboard-charts">nav.chapters{margin:20px 0 32px;font:.82rem/1.7 var(--article-sans)}nav.chapters ol{display:flex;flex-wrap:wrap;gap:4px 18px;margin:0;padding:0;list-style:none}nav.chapters [aria-current]{color:var(--article-ink);font-weight:650;text-decoration:none}.tablewrap{overflow-x:auto}table code{overflow-wrap:anywhere}table.bench td,table.bench th{white-space:nowrap}pre.spec,pre.api{max-height:420px;overflow:auto;padding:12px;border:1px solid var(--article-line);border-radius:8px;background:var(--article-surface);font:.72rem/1.5 var(--article-mono)}</style><!--/g-->
+</head>
+<body>
+<main class="article">
+<header class="page">
+  <p class="kicker">Concept Dossier · AGT-3950 · Deployment dashboard charts</p>
+  <h1>Framework, budget and data</h1>
+  <p class="lede">The measured comparison of three chart frameworks and three routes to 3D, the Angular wrapper, the performance budget with what the prototype measured, the aggregation each view needs, and the files of this Dossier.</p>
+</header>
+<!--g:NAV--><nav class="chapters" aria-label="Pages of this Dossier"><ol><li><a href="index.html">Decision page</a></li><li><a href="views.html">Views and filters</a></li><li><a href="stack.html" aria-current="page">Framework, budget and data</a></li><li><a href="assessments.html">Assessments, goals and warnings</a></li><li><a href="prototype.html">Live prototype</a></li></ol></nav><!--/g-->
+
+<section id="position">
+<h2>Position</h2>
+<p>The structure canvas Dossier (AGT-3955, <code>docs/live-structure-canvas/</code>) is on develop and accepted. Its D1 recommends an own Canvas 2D engine as the one canvas renderer of the Studio and its D2 uPlot as the one chart library of the hosting area; it measured uPlot, ECharts and Chart.js on time series and bars. Its decisions are recorded as open with those recommendations, so they are the working decisions. The product's structure view already draws with its own Canvas 2D code. The brief of this card names ECharts as the baseline and asks for numbers from the prototype; the addendum asks for one chart library and at most one canvas or WebGL renderer for the whole Studio. So the question measured here is narrow: do the deployment views, which need a heat map, a flow and a brushed timeline rather than time series alone, give a reason to choose differently?</p>
+</section>
+
+<section id="framework">
+<h2>Framework</h2>
+<p>Each candidate drew the same five charts (tile map, release flow, timeline, brush chart, four sparklines) from the same aggregate of the large synthetic set, behind the same adapter contract <code>mount(host, viewModel, context)</code> with <code>update(viewModel)</code>. Candidate A is the chart module of the prototype (<code>src/charts.js</code>); B and C are adapters in <code>bench/</code>. Animation off, tooltips on.</p>
+<!--g:BENCH_TABLE--><div class="tablewrap media-breakout"><table class="bench"><thead><tr><th>Candidate</th><th>Lazy chunk, gzip</th><th>Data to first chart</th><th>Data to all five views</th><th>Filter change, median</th><th>Filter change, p95</th><th>Script time per filter change</th><th>JS heap after mount, after 20 filters</th><th>DOM elements, canvases</th><th>Licence, last release</th></tr></thead><tbody>
+<tr><td>A · uPlot 1.6 plus own forms</td><td>29.9 kB <span class="dim">(68 raw, 26.8 brotli)</span></td><td>50 ms</td><td>83 ms</td><td>33 ms</td><td>53 ms</td><td>3.2 ms</td><td>1.5 MB, 1.9 MB</td><td>104, 7</td><td>MIT; release March 2025</td></tr>
+<tr><td>B · Apache ECharts 6.1</td><td>220.7 kB <span class="dim">(652 raw, 185.5 brotli)</span></td><td>132 ms</td><td>392 ms</td><td>83 ms</td><td>383 ms</td><td>57.2 ms</td><td>9.6 MB, 11.4 MB</td><td>22, 10</td><td>Apache-2.0; release May 2026</td></tr>
+<tr><td>C · Chart.js 4.6 with matrix, sankey and zoom plugins</td><td>82.1 kB <span class="dim">(232 raw, 71.3 brotli)</span></td><td>74 ms</td><td>141 ms</td><td>33 ms</td><td>67 ms</td><td>19.2 ms</td><td>3.6 MB, 4.6 MB</td><td>8, 8</td><td>MIT; release November 2026</td></tr>
+</tbody></table></div><!--/g-->
+<p class="dim"><!--g:BENCH_ENV-->Measured 26 November 2026 on the shared task runner: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz, 12 threads, headless Chromium 147.0.7727.15, 1440x900, charts 1400 px wide at device pixel ratio 1; 2D candidates with the GPU process off (CPU raster). 5 runs each, medians. Set: 40 projects, 4 environments, 6 tenants, 2,000 deploy runs, 5,000 cards (synth() of src/data.js). Versions: echarts 6.1.0, echarts-gl 2.1.0, uplot 1.6.32, chart.js 4.6.2, chartjs-chart-matrix 3.1.0, chartjs-chart-sankey 0.24.1, chartjs-plugin-zoom 3.0.2, three 0.187.0. Times to a painted frame are taken after two animation frames, so they step in units of 16.7 ms; the script time per filter change is the finer signal. The runner is shared and single runs of ECharts varied between 310 and 822 ms to all views. WebGL on the runner is ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver): software, so the WebGL times of the 3D table say nothing about a real GPU; their chunk sizes do.<!--/g--></p>
+<!--g:FIG_BENCH--><figure class="evidence-figure media-breakout"><div class="evidence-captures">
+    <div class="evidence-capture"><span class="capture-theme">ECharts</span><img src="assets/bench-echarts-light-1440.png" alt="Bench harness with the ECharts adapter: four sparklines, a heat map of 40 projects by four environments with drift numbers, a sankey with card counts, a scatter of run durations and stacked bars of runs a day." loading="lazy"></div>
+    <div class="evidence-capture"><span class="capture-theme">Chart.js</span><img src="assets/bench-chartjs-light-1440.png" alt="Bench harness with the Chart.js adapter and its matrix, sankey and zoom plugins drawing the same five charts." loading="lazy"></div>
+  </div><figcaption><span class="figure-claim"><b>Candidates B and C.</b> Both adapters draw the five charts from the same aggregate of the large synthetic set; their tiles are shaded by drift and mark a failed last run, and the ECharts tiles print the drift number.</span>
+  <span class="figure-as-of"><span>Captured 26 November 2026 by <code>bench/run.mjs</code> from its harness page after the filter script, headless Chromium, 1440 px, light. Data: the seeded synthetic set, not a product state.</span></span></figcaption></figure><!--/g-->
+<h3>Reading the numbers</h3>
+<ul>
+<li><b>Size.</b> ECharts needs five chart modules, six component modules and the canvas renderer for these views; tree-shaking leaves a chunk more than seven times that of A. Chart.js with its three plugins is in between.</li>
+<li><b>First frame.</b> All three paint the first chart inside 300 ms on this machine. ECharts needs longer than that for the whole page; A and C do not.</li>
+<li><b>Filter change.</b> A recomputes the aggregate and redraws all views in a few milliseconds of script; its painted-frame time is two animation frames. ECharts stays under 100 ms at the median but not at the 95th percentile. With <code>notMerge</code> its median was about 130 ms in a single trial.</li>
+<li><b>Fairness.</b> The adapters for B and C draw the same five charts but plainer than A: tiles shaded by drift with a mark for a failed last run (ECharts also prints the drift number), without release text, health dot, approval pill or corner flags, and one duration scatter instead of environment lanes. That favours them. ECharts brings brush, legend, dataZoom and an aria description that A has to build; A's own forms are about 25,000 characters of source and 6.6 kB gzip of its chunk.</li>
+<li><b>Accessibility.</b> None of the three makes canvas content reachable by itself. ECharts can generate a text description; the table alternative, keyboard focus on marks and the buttons of the flow are ours in every case and are part of the prototype.</li>
+<li><b>Theming.</b> All three take colours and fonts as values. The prototype reads the Studio tokens from the element (<code>src/theme.js</code>) and repaints on a theme change; canvas text needs resolved values in every candidate. One finding for the Studio: its status tokens are not a categorical palette. In the light theme failed and rolled back are ΔE 1.9 apart under protanopia (dataviz palette validator), so the views never separate outcomes by hue alone: a shape per outcome on the tiles, a ring for rolled back on the timeline, fixed stacking order in the day counts, and the words in tooltip and table.</li>
+<li><b>Licence and maintenance.</b> All permissive. ECharts and Chart.js are active; uPlot is small, stable and slow-moving, with its last release in March 2025. That is the risk of A, bounded by the size of what would have to be replaced: two charts behind one host.</li>
+</ul>
+<p><b>Result.</b> A is recommended (D1). It is the only candidate that also keeps the rule of the family, one chart library for the Studio, without reopening the structure canvas decision. C is a sound second: inside the budget at 2.7 times the bytes, with three plugins to keep in step. B is the choice if one framework for every future form is worth 220 kB and a slower update to the owner; nothing in these views needs it.</p>
+</section>
+
+<section id="wrapper">
+<h2>Wrapper</h2>
+<p>Recommended: a thin own chart host component (D2 A), used by every chart of the Studio.</p>
+<ul>
+<li>Standalone, OnPush. Signal inputs for data, options and theme; an output for selections (tile, state, range, outcome).</li>
+<li>The chart module is loaded with a dynamic <code>import()</code> inside the host, so no chart code reaches the initial bundle. A skeleton in the chart's shape shows after 200 ms.</li>
+<li>One chart instance per host, created after first render and reused: an effect calls <code>setData</code> or the form's <code>update</code>; it is rebuilt only when the shape of the chart changes.</li>
+<li><code>ResizeObserver</code> on the host element sets the size; nothing listens to window resize. Destroy disposes the instance and the observer.</li>
+<li>Work runs outside Angular's zone; only a selection re-enters it.</li>
+<li>Theme: the host reads the tokens once per theme change and passes resolved values.</li>
+</ul>
+<p>A wrapper library (ngx-echarts, ng2-charts) exists only for B and C, adds a dependency that must follow both Angular and the chart library, and still leaves the lazy import, the theme and the selection output to us. No wrapper at all repeats lifecycle code in every view.</p>
+</section>
+
+<section id="three-d">
+<h2>3D</h2>
+<p>The same landscape of 1,040 bars (26 weeks by 40 projects) in three renderers:</p>
+<!--g:BENCH3D_TABLE--><div class="tablewrap media-breakout"><table class="bench"><thead><tr><th>Candidate</th><th>Lazy chunk, gzip</th><th>First frame</th><th>Frame while turning</th><th>Browser CPU per turn step</th><th>Renderer on this runner</th></tr></thead><tbody>
+<tr><td>A · Canvas 2D, own (no library)</td><td>2.8 kB <span class="dim">(6 raw)</span></td><td>79 ms</td><td>16.4 ms</td><td>11.8 ms</td><td>CPU raster, no WebGL</td></tr>
+<tr><td>B · three.js 0.187</td><td>131.8 kB <span class="dim">(529 raw)</span></td><td>224 ms</td><td>140.0 ms</td><td>188.8 ms</td><td>WebGL in software (SwiftShader)</td></tr>
+<tr><td>C · echarts-gl 2.1 with ECharts 6.1</td><td>559.7 kB <span class="dim">(1761 raw)</span></td><td>689 ms</td><td>549.5 ms</td><td>718.3 ms</td><td>WebGL in software (SwiftShader)</td></tr>
+</tbody></table></div><!--/g-->
+<p><b>echarts-gl.</b> <!--g:GL_FINDING-->echarts-gl 2.1.0 declares the peer range <code>^5.1.2 || ^6.0.0</code> and its prebuilt bundle draws the scene with ECharts 6.1.0 without a page error. Its modular entry points do not build against ECharts 6: Build failed with 19 errors: <code>Could not resolve "zrender/lib/core/matrix"</code>, <code>Could not resolve "echarts/lib/util/layout"</code> and others, because the export maps of echarts 6 and zrender 6 do not list those paths. The prebuilt bundle requires the whole CommonJS ECharts, so nothing is tree-shaken: 559.7 kB gzip for the 3D view alone, 788.2 kB together with the tree-shaken 2D chunk, and a chart created from <code>echarts/core</code> next to it is a second copy that draws an empty canvas without a warning. Maintenance: one release (May 2026) since March 2022.<!--/g--></p>
+<p><b>three.js</b> works and would be the choice for scenes with real depth, lighting or tens of thousands of objects. For a thousand boxes it brings a second renderer and a chunk four times the whole 2D chart chunk. <b>Canvas 2D</b> draws the scene as sorted quads, which is exact for boxes on a grid under an orthographic camera, costs a few kilobytes and renders on the CPU path that every machine has. It is recommended (D4 A) and keeps the family rule of one canvas technique and no WebGL. Its limit is honest too: no perspective, no lighting beyond two shaded faces, and a scene of many thousand bars would need another approach.</p>
+</section>
+
+<section id="budget">
+<h2>Budget</h2>
+<!--g:BUDGET_TABLE--><div class="tablewrap"><table><thead><tr><th>Budget</th><th>Limit</th><th>Measured in the prototype</th></tr></thead><tbody>
+<tr><td>Studio initial bundle</td><td>No growth: chart code only in lazy chunks</td><td>Not measurable in a Dossier; the prototype shell imports no chart code statically, checked by the split build. DDC-1 compares build stats with develop.</td></tr>
+<tr><td>2D chart chunk</td><td>At most 35 kB gzip with uPlot and its styles</td><td>29.4 kB gzip (67.5 kB raw), of which uPlot 23.3 kB</td></tr>
+<tr><td>3D chunk</td><td>At most 4 kB gzip, requested only when the 3D view opens</td><td>2.4 kB gzip; requests for it before opening: 0, after opening: 1</td></tr>
+<tr><td>First chart</td><td>Within 300 ms after the data arrives, mid-range laptop</td><td>59 ms to the first chart and 95 ms to all views (median of 5 loads of the prototype, large set, 1440 px)</td></tr>
+<tr><td>Filter change</td><td>Within 100 ms on the large set</td><td>19 ms median, 42 ms p95 over 20 scripted changes, to the painted frame</td></tr>
+<tr><td>DOM</td><td>No element per card outside a virtualised list</td><td>297 elements in the whole view with 2,000 runs and 5,000 cards; 17 row elements in the list of 4,019 cards</td></tr>
+<tr><td>Requests</td><td>At most one a view; one aggregate for all</td><td>Prototype: one aggregate function feeds every view. Product: <code>GET /api/deploy/dashboard</code> plus the paged card list, instead of 1 + N requests today</td></tr>
+<tr><td>Animation</td><td>Off above a data threshold and with <code>prefers-reduced-motion</code></td><td>Motion is off on the large set (threshold 1,000 runs), on on the installation set, off with reduced motion; the 3D view drew 0 frames in 3 idle seconds</td></tr>
+<tr><td>Assessments</td><td>Within each persona's weekly allowance</td><td>About 6,200 tokens an assessment; see <a href="assessments.html#cost">Cost and freshness</a></td></tr>
+</tbody></table></div><!--/g-->
+<!--g:CHUNKS_TABLE--><div class="tablewrap"><table><thead><tr><th>Chunk of the prototype (split build)</th><th>Holds</th><th>Raw</th><th>gzip</th><th>brotli</th><th>Loaded</th></tr></thead><tbody>
+<tr><td>Shell</td><td>filters, URL state, figures tiles, card list, assessment panel, specification validator</td><td>28.0 kB</td><td>10.5 kB</td><td>9.3 kB</td><td>with the page (in the product: with the route, not the initial bundle)</td></tr>
+<tr><td>Shared</td><td>aggregate and theme reader used by shell and charts</td><td>9.7 kB</td><td>4.6 kB</td><td>4.1 kB</td><td>with the page</td></tr>
+<tr><td>2D charts</td><td>uPlot, tile map, release flow, timeline, sparklines</td><td>67.5 kB</td><td>29.4 kB</td><td>26.4 kB</td><td>dynamic import when the data arrives</td></tr>
+<tr><td>3D view</td><td>deploy landscape on Canvas 2D</td><td>4.7 kB</td><td>2.4 kB</td><td>2.1 kB</td><td>dynamic import when the 3D view is opened</td></tr>
+</tbody></table></div><!--/g-->
+<p class="dim">Budget rows are measured by <code>verify.mjs</code> on the built prototype on the shared task runner (Intel Core i7-8700, headless Chromium, CPU raster), which stands in for the mid-range laptop of the brief; DDC-1 and DDC-3 repeat the checks as tests in the product. The lazy-loading rows are measured on the split build of the same sources served over HTTP; the Dossier's <code>prototype.html</code> is the same code in one inline file, because the Studio's Dossier viewer runs inline scripts only.</p>
+</section>
+
+<section id="aggregation">
+<h2>Aggregation</h2>
+<p>Today the page asks once for the matrix and once per project for delivery lanes, the latter again every 15 seconds. The views need one consistent as-of, so one aggregate serves all of them (D10 A). It is computed in the deploy feature from the projections that exist, cached for 10 seconds like <code>/api/environment/flow</code>, and announced by one task hub event at most once a second.</p>
+<pre class="api">GET /api/deploy/dashboard?group=&amp;project=&amp;environment=&amp;tenant=&amp;from=&amp;to=&amp;outcome=
+{ "asOf": "...", "seq": 412,
+  "projects":     [{ "id", "group", "environmentsDeclared" }],
+  "environments": [{ "id", "name", "kind", "order" }],
+  "tiles":   [{ "projectId", "environmentId", "setUp", "liveVersion", "newestVersion", "releasesBehind",
+               "lastRun": { "state", "atUtc", "failedStep" }, "health", "approvalsWaiting",
+               "tenants": [{ "name", "releasesBehind", "health" }],
+               "backup": { "covered", "lastVerifiedAtUtc" }, "warnings": [{ "kind", "severity", "title", "blocks", "next", "source" }] }],
+  "flow":    { "nodes": [{ "id", "count" }], "links": [{ "from", "to", "count" }],
+               "waitingByProject": [{ "projectId", "integrated", "staging", "approval" }] },
+  "runs":    { "startedAtUtc": [], "durationSeconds": [], "project": [], "environment": [], "tenant": [],
+               "state": [], "failedStep": [], "version": [], "steps": ["..."],
+               "perDay": { "from": "...", "succeeded": [], "failed": [], "rolledBack": [], "cancelled": [] } },
+  "figures": [{ "id", "value", "before", "unit", "weekly": [] }],
+  "landscape": { "weeks": 26, "count": [], "failedShare": [] } }
+GET /api/deploy/dashboard/cards?stage=&amp;offset=&amp;limit=   (same filters; limit at most 200; "total")</pre>
+<div class="tablewrap"><table>
+<thead><tr><th>View</th><th>Part</th><th>Built from</th><th>Slice</th></tr></thead>
+<tbody>
+<tr><td>Overview</td><td><code>tiles</code></td><td><code>DeployMatrixResponse</code> with tenant statuses and <code>environmentsDeclared</code> (AGT-3949), newer release, pending approvals of the delivery columns; later backups and warnings</td><td>DDC-1, DDC-5</td></tr>
+<tr><td>Release flow</td><td><code>flow</code>, card list</td><td><code>CardDeploymentView</code> badges per card, delivery columns starting at <code>integrated</code>, instance "integrated, not live" (AGT-3879)</td><td>DDC-1, DDC-2</td></tr>
+<tr><td>Deploy timeline</td><td><code>runs</code></td><td><code>Deployment</code> records of all projects (start, finish, state, <code>FailedStep</code>, tenant, trigger for rolled back), instance runs overlaid; as columns with times as epoch seconds: 62 kB of JSON, 18.5 kB gzip for the 2,000 runs of the synthetic set</td><td>DDC-3</td></tr>
+<tr><td>Delivery figures</td><td><code>figures</code></td><td>The same records plus the integration time of each card</td><td>DDC-4</td></tr>
+<tr><td>Landscape</td><td><code>landscape</code></td><td>Counts of <code>runs</code> by week and project</td><td>DDC-7</td></tr>
+<tr><td>Assessment</td><td><code>GET /api/deploy/dashboard/assessments?persona=</code></td><td>The cached view specification of a persona occurrence</td><td>DDC-6</td></tr>
+</tbody></table></div>
+<p>Facts the endpoints do not carry today: a run's duration (computed from start and finish), the release version on a deployment (joined from the release), and a list of earlier instance runs (the instance view returns the latest only, the overlay into deployments has all).</p>
+<h3>Covered elsewhere</h3>
+<!--g:COVERED--><div class="tablewrap"><table><thead><tr><th>Part</th><th>Covered by</th></tr></thead><tbody>
+<tr><td>Instance deploy records, live release, cards integrated but not live</td><td>AGT-3879</td></tr>
+<tr><td>Dashboard data: the instance's Production in /api/deploy/matrix and /api/deploy/cards, projects without environments, delivery lanes for watched projects</td><td>AGT-3949 (on develop)</td></tr>
+<tr><td>Structure facts, data locations with backup coverage, facts for warnings, live deltas</td><td>AGT-3954 (on develop)</td></tr>
+<tr><td>Topology of hosts, containers and services as the live structure canvas; canvas renderer and chart library for the hosting area</td><td>AGT-3955 (docs/live-structure-canvas/, LSC-1 to LSC-10)</td></tr>
+<tr><td>Persona scheduling, admission, budget ledger, items and importance</td><td>PT-3, PT-4 (docs/persona-team/, delivered)</td></tr>
+<tr><td>Persona view specifications for the structure canvas, sharing the occurrence with DDC-6</td><td>LSC-8</td></tr>
+</tbody></table></div><!--/g-->
+</section>
+
+<section id="files">
+<h2>Dossier files</h2>
+<p>The Dossier is split into pages because a concept review reads a first delivery as a diff cut at 40,000 characters a file; <code>build.mjs</code> fails when a page would be cut (<code>review-input.mjs</code>, taken from the structure canvas Dossier). Other Dossiers are named by repository path and not hyperlinked, because one link would pull that Dossier into the reviewer's snapshot of this one; the links the brief asks for are slice DDC-8.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>File</th><th>Content</th></tr></thead>
+<tbody>
+<tr><td><code>index.html</code>, <code>views.html</code>, <code>stack.html</code>, <code>assessments.html</code></td><td>Decision page and chapters; their own source, regions between <code>g:</code> comments are generated.</td></tr>
+<tr><td><code>prototype.html</code></td><td>Generated: the prototype in one file with inline script, uPlot included.</td></tr>
+<tr><td><code>workbench.json</code></td><td>Status, family, decisions with options and recommendation, slices with dependencies.</td></tr>
+<tr><td><code>src/data.js</code>, <code>charts.js</code>, <code>view3d.js</code>, <code>app.js</code>, <code>theme.js</code>, <code>spec.js</code>, <code>assess.js</code>, <code>proto.css</code>, <code>prototype.body.html</code>, <code>dossier.css</code></td><td>Aggregate and data sets, 2D chart chunk, 3D chunk, shell, token reader, specification validator, example assessments, styles, markup.</td></tr>
+<tr><td><code>schema/</code></td><td>JSON Schema of the view specification and the warden's example.</td></tr>
+<tr><td><code>bench/</code></td><td>Adapters for ECharts and Chart.js, three.js and echarts-gl views, harness, runner, <code>results.json</code>, <code>chunks.json</code>.</td></tr>
+<tr><td><code>assets/</code></td><td>Captures, <code>capture-manifest.json</code>, <code>prototype-metrics.json</code>.</td></tr>
+<tr><td><code>build.mjs</code>, <code>tables.mjs</code>, <code>tokens.mjs</code>, <code>capture.mjs</code>, <code>verify.mjs</code>, <code>review-input.mjs</code>, <code>README.md</code></td><td>Generator, generated regions, Studio token resolver, capture run, checks and measurements, review budget, how to run them.</td></tr>
+</tbody></table></div>
+</section>
+</main>
+</body>
+</html>

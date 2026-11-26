@@ -61,6 +61,9 @@ public sealed class BoardConditionalReadTests : IClassFixture<BoardConditionalRe
     /// </summary>
     public sealed class Host() : BoardTestHost("atp-board-etag-tests-", ProjectName)
     {
+        protected override void ConfigureServices(IServiceCollection services)
+            => services.AddHostedService(provider => provider.GetRequiredService<GitStateIndexService>());
+
         protected override IEnumerable<KeyValuePair<string, string?>> Settings() => ClockSettings;
     }
 

@@ -7,6 +7,16 @@ namespace AgentStudio.Tests;
 public class CliOutputLogParserTests
 {
     [Fact]
+    public void Absolute_timestamp_does_not_move_with_the_log_write_date()
+    {
+        var parsed = CliOutputLogParser.ParseLines(
+            ["[2026-11-17T09:31:00.000Z] [stdout] receipt"],
+            new DateTime(2026, 11, 18, 0, 0, 0, DateTimeKind.Utc));
+        Assert.Equal(new DateTime(2026, 11, 17, 9, 31, 0, DateTimeKind.Utc), Assert.Single(parsed).Timestamp);
+        Assert.Equal("receipt", parsed[0].Text);
+    }
+
+    [Fact]
     public void ParseLines_RehydratesPersistedCliOutput()
     {
         var lines = new[]

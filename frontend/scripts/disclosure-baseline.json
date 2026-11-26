@@ -35,12 +35,21 @@
     "src/app/features/usage-cockpit/components/usage-slot-chip/usage-slot-chip.html",
     "src/app/features/server-readiness/components/server-readiness-panel/server-readiness-panel.component.html",
     "src/app/features/structure/structure-view/structure-view.component.html",
+    "src/app/features/structure/live/live-structure-view/live-structure-view.component.html",
     "src/app/features/usage-cockpit/components/usage-detail-panel/usage-detail-panel.html"
   ],
   "documented": {
+    "src/app/features/structure/live/live-structure-jump/live-structure-jump.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Jump field of the live structure view: a combobox whose list of matching nodes opens as an anchored overlay under the field; nothing expands in place."
+    },
     "src/app/features/access/components/session-manager/session-manager.component.html": {
       "kind": "popup-trigger",
       "reason": "The Sessions button opens an anchored session popover over the page."
+    },
+    "src/app/components/overflow-menu/overflow-menu.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Row context menu trigger. The more button opens the shared text-only overlay menu; nothing expands in the row."
     },
     "src/app/features/shell/components/account-control/account-control.html": {
       "kind": "popup-trigger",

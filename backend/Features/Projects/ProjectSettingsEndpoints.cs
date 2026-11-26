@@ -16,6 +16,8 @@ using ProjectDefinitionReader = AgentStudio.TaskServer.Contracts.ProjectDefiniti
 using ProjectPreparationManifest = AgentStudio.TaskServer.Contracts.ProjectPreparationManifest;
 using ProjectPreparationPaths = AgentStudio.TaskServer.Contracts.ProjectPreparationPaths;
 
+public sealed record RunAnywayOverlapRequest(string Fact);
+
 public sealed record SetProjectCodingEmergencyLimitRequest(int? Seconds);
 
 
@@ -1834,10 +1836,45 @@ public static class ProjectSettingsEndpoints
             var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
             if (req.Window is not null && !OverlapWindows.IsKnown(req.Window))
-                return Results.BadRequest(new { error = "window must be 'running' or 'in-flight'." });
-            settings.SetDispatchOverlapWindow(projectName, req.Window);
+                return Results.BadRequest(new { error = "window must be 'off', 'running' or 'in-flight'." });
+            if (req.StarvationMinutes is < 1 or > 1440)
+                return Results.BadRequest(new { error = "starvationMinutes must be between 1 and 1440." });
+            settings.SetDispatchOverlapWindow(projectName, req.Window, req.StarvationMinutes);
             return Results.Ok(OverlapWindowView(settings.Get(projectName)));
-        }).RequireStudioRole(StudioRoles.Owner);
+        }).RequirePermission(IamPermissions.ProjectSettingsWrite);
+
+        app.MapPost("/api/projects/{projectName}/dispatch/run-anyway", (string projectName,
+            RunAnywayOverlapRequest req, OverlapDispatchGuard guard, TaskScannerService scanner, ProjectSettingsService settings) =>
+        {
+            var cards = scanner.GetLiveSnapshotWithReferenceIndex().Live;
+            if (!guard.Facts(cards, settings.Get, DateTime.UtcNow).Any(fact => fact.Project == projectName && fact.Key == req.Fact)
+                || !guard.RunAnyway(projectName, req.Fact))
+                return Results.Conflict(new { error = "The overlap wait changed or is no longer starving ready work. Refresh Needs you." });
+            return Results.Ok(new { permitted = true, expiresInMinutes = 10 });
+        }).RequirePermission(IamPermissions.ProjectRunsOperate);
+
+        app.MapGet("/api/projects/{projectName}/dispatch/overlap-evidence", (string projectName,
+            OverlapPredictionLedger evidence, TaskScannerService scanner, TaskListGitProjectionCache projection,
+            AttemptAuthorityService authority) =>
+        {
+            var predictions = evidence.Read(projectName);
+            var cards = scanner.ScanAllAutomationJobsWithArchive().Where(card => card.ProjectName == projectName).ToArray();
+            var membership = projection.ReadDependencyIntegration(cards);
+            var score = OverlapPredictionLedger.Score(predictions, IntegrationConflictLedger.Default.Read(projectName), row =>
+            {
+                var card = cards.FirstOrDefault(card => card.Id == row.CandidateId);
+                var subject = card is null ? null : ReviewSubjectStore.Read(card.FolderPath);
+                var matchesCurrent = subject is not null && row.AttemptId is not null
+                    && subject.RunAttemptId == row.AttemptId && subject.IntegrationBranch == row.Target;
+                // A conflict can trigger a new round and supersede the subject.
+                // Its original immutable run still proves this prediction's SHA.
+                var run = row.AttemptId is null ? null : authority.GetRun(row.AttemptId);
+                var sha = run?.ResultSha ?? (matchesCurrent ? subject!.ResultSha : null);
+                return (sha, matchesCurrent && membership.TryGetValue(card!.TaskKey, out var status)
+                    && status.IntegrationBranch == row.Target && status.Status == IntegrationStatuses.Integrated);
+            });
+            return Results.Ok(new { score, predictions });
+        });
 
         // Per-project orchestrator intake toggle (ready-orchestrator-intake-lane).
         // When enabled, the coding runner waits for intake to mark a 2-ready
@@ -1902,6 +1939,7 @@ public static class ProjectSettingsEndpoints
         stored = projectSettings.DispatchOverlapWindow,
         @default = OverlapWindows.Default,
         windows = OverlapWindows.All,
+        starvationMinutes = projectSettings.DispatchOverlapStarvationMinutes,
     };
 
     /// <summary>

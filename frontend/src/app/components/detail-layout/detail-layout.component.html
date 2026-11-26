@@ -1,0 +1,14 @@
+<div class="detail-layout" [class.detail-layout--open]="open()" [attr.data-testid]="testId()"
+     [style.--detail-layout-viewport.px]="viewport()?.height ?? null" [style.--detail-layout-inset.px]="viewport()?.inset ?? null">
+  <div class="detail-layout__main"><ng-content /></div>
+  @if (open()) {
+    <button type="button" class="detail-layout__scrim" tabindex="-1" aria-label="Close details" (click)="closeRequest.emit()"></button>
+    <aside #panel class="detail-layout__panel" tabindex="-1" [attr.aria-label]="(eyebrow() ? eyebrow() + ': ' : '') + title()"
+           [attr.data-testid]="testId() + '-panel'">
+      <app-sidesheet [eyebrow]="eyebrow()" [title]="title()" [subtitle]="subtitle()" (closeRequest)="closeRequest.emit()">
+        <div body class="detail-layout__body"><ng-content select="[detail]" /></div>
+        @if (footer()) { <div footer class="detail-layout__footer"><ng-content select="[detailFooter]" /></div> }
+      </app-sidesheet>
+    </aside>
+  }
+</div>

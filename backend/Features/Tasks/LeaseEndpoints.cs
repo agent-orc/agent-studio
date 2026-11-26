@@ -470,6 +470,7 @@ public static class LeaseEndpoints
             PromptEnrichmentService promptEnrichment,
             DossierMaintenanceService dossierMaintenance,
             RemoteDispatchRejectionStore dispatchRejections,
+            OverlapDispatchGuard overlapGuard,
             CliQuotaWaitPolicyService quotaWaitPolicy,
             IModelSelectionService modelSelection,
             ModelSelectionLedger selectionLedger,
@@ -946,11 +947,13 @@ public static class LeaseEndpoints
                     .ToList();
                 // AGT-3587: claim in each project's displayed Ready order, the
                 // same order the local runner and the board use.
-                var eligible = LaneSortApplier.PickupOrder(routable, settings.Get);
+                var eligible = overlapGuard.Order(routable, settings.Get, path: "remote-claim");
                 var occupiedByProject = ProjectExecutionPolicy.ProjectOccupancy(liveSnapshot);
                 // DS-0: the scope comparison set per project, built once per
                 // claim and only for a project that has a candidate.
                 var overlapSets = new Dictionary<string, OverlapComparisonSet.ProjectSet>(StringComparer.OrdinalIgnoreCase);
+                var overlapBlocked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var overlapIntegration = dependencyGitProjection.ReadDependencyIntegration(liveSnapshot);
 
                 TaskInfo? candidate = null;
                 QuotaAdmissionPlan? candidateQuotaPlan = null;
@@ -977,38 +980,6 @@ public static class LeaseEndpoints
                     if (!projectSlot.HasSlot)
                     {
                         RecordRejection(task, "project-concurrency-full", projectSlot.Detail);
-                        continue;
-                    }
-                    // DS-0 (DS-D10 B): the remote claim applies the pick-gate
-                    // scope rule as the local pickup does, against the leased
-                    // running cards of the project and, under the in-flight
-                    // window, every card that started and has not integrated.
-                    // Slots stay with the host and project checks above.
-                    var overlapWindow = OverlapWindows.Resolve(taskProjectSettings);
-                    if (!overlapSets.TryGetValue(task.ProjectName, out var overlapSet))
-                    {
-                        overlapSet = OverlapComparisonSet.ForProject(
-                            liveSnapshot, task.ProjectName, overlapWindow, TaskScopePrediction.Predict);
-                        overlapSets[task.ProjectName] = overlapSet;
-                    }
-                    var overlap = ParallelSlotPolicy.DecideOverlap(
-                        task.Id,
-                        TaskScopePrediction.Predict(task),
-                        overlapSet.Running,
-                        OverlapComparisonSet.For(task, overlapSet.InFlight),
-                        overlapWindow);
-                    if (!overlap.Admitted)
-                    {
-                        RecordRejection(task, RunnerPickupWaitCodes.ParallelConflict, overlap.Reason);
-                        if (overlap.IsScopeConflict)
-                            logger.LogInformation(
-                                "[taskboard] overlap-serialize path=remote-claim window={Window} project={Project} candidate={Candidate} conflict={Conflict} lane={Lane} prefix={Prefix} runner={Runner}",
-                                overlap.Window, task.ProjectName, task.Id, overlap.ConflictTaskId,
-                                overlap.ConflictLane, overlap.SharedPrefix, req.RunnerName);
-                        else
-                            logger.LogInformation(
-                                "[taskboard] remote claim skipping {Candidate} on {Project} for {Runner}: {Reason}",
-                                task.Id, task.ProjectName, req.RunnerName, overlap.Reason);
                         continue;
                     }
                     var buildProfileGate = BuildProfileGate.Evaluate(taskProjectSettings.BuildProfile);
@@ -1068,6 +1039,11 @@ public static class LeaseEndpoints
                                 task.PinMode == "hard" ? AgentStudio.TaskServer.Contracts.SelectionPinMode.Hard
                                     : AgentStudio.TaskServer.Contracts.SelectionPinMode.Preference),
                             IsExplicitPin = task.ModelExplicit,
+                            Continuation = CodingSelectionCalls.ContinuationFor(task),
+                            PipelineType = PipelineTypes.Resolve(task),
+                            TaskMode = task.Mode,
+                            WorkClass = TaskModes.IsConcept(task.Mode) ? AgentStudio.TaskServer.Contracts.SelectionWorkClasses.Concept
+                                : AgentStudio.TaskServer.Contracts.SelectionWorkClasses.Coding,
                             TaskType = task.TaskType,
                             Host = new AgentStudio.TaskServer.Contracts.SelectionHost(req.RunnerName),
                         },
@@ -1258,6 +1234,30 @@ public static class LeaseEndpoints
                             repository = null;
                             continue;
                         }
+                        // DS-0 (DS-D10 B): the remote claim applies the pick-gate
+                        // scope rule as the local pickup does, against the leased
+                        // running cards of the project and, under the in-flight
+                        // window, every card that started and has not integrated.
+                        // Slots stay with the host and project checks above.
+                        var overlapWindow = OverlapWindows.Resolve(taskProjectSettings);
+                        if (!overlapSets.TryGetValue(task.ProjectName, out var overlapSet))
+                        {
+                            overlapSet = OverlapComparisonSet.ForProject(
+                                liveSnapshot, task.ProjectName, overlapWindow, overlapGuard.Predict,
+                                overlapIntegration, repository.DefaultBranch);
+                            overlapSets[task.ProjectName] = overlapSet;
+                        }
+                        var overlap = overlapGuard.Decide(
+                            task,
+                            overlapSet.Running,
+                            OverlapComparisonSet.For(task, overlapSet.InFlight),
+                            int.MaxValue, overlapWindow, "remote-claim", repository.DefaultBranch);
+                        if (!overlap.Admitted)
+                        {
+                            RecordRejection(task, RunnerPickupWaitCodes.ParallelConflict, overlap.Reason);
+                            if (overlap.IsScopeConflict) overlapBlocked.Add(task.Id);
+                            continue;
+                        }
                         candidate = task;
                         candidateQuotaPlan = quotaPlan;
                         candidateHostHealthFallback = hostHealthFallback;
@@ -1298,6 +1298,11 @@ public static class LeaseEndpoints
                         task.ProjectName,
                         task.Key ?? task.TaskKey ?? task.Id);
                 }
+
+                foreach (var group in eligible.GroupBy(task => task.ProjectName, StringComparer.OrdinalIgnoreCase))
+                    overlapGuard.FinishSweep(group.Key, req.AvailableSlots > (candidate is null ? 0 : 1)
+                        && !string.Equals(candidate?.ProjectName, group.Key, StringComparison.OrdinalIgnoreCase)
+                        && group.All(task => overlapBlocked.Contains(task.Id)));
 
                 if ((candidate is null || repository is null)
                     && failedPreflightCandidate is not null
@@ -1464,6 +1469,12 @@ public static class LeaseEndpoints
                     : req.IdempotencyKey.Trim();
                 var briefVersion = BriefVersionStore.ReadOrCreate(candidate.FolderPath);
                 runSpec = runSpec with { BriefVersion = briefVersion };
+                if (!overlapGuard.ValidateLive(candidate))
+                {
+                    RecordRejection(candidate, "dispatch-plan-refresh", "The live dispatch plan or lease changed; wait for the next claim.");
+                    return Results.Ok(WithCapacity(new RunnerClaimResponse(RunnerClaimStatus.Empty,
+                        Message: "The live dispatch plan or lease changed; retry the claim.")));
+                }
                 var acquire = leases.TryAcquire(new RunLeaseAcquireRequest(
                     taskKey, req.RunnerId.Trim(), req.RunnerName.Trim(), req.Hostname,
                     req.Pid, req.BackendName, req.RequestedTtlSeconds,
@@ -1486,6 +1497,7 @@ public static class LeaseEndpoints
                         RunnerClaimStatus.Empty, Message: acquire.Message ?? acquire.Outcome)));
                 }
 
+                overlapGuard.Claimed(candidate, acquire.Lease.AttemptId);
                 stops.RetireSuperseded(taskKey, acquire.Lease.AttemptId, acquire.Lease.FencingToken);
                 var stashedIntent = candidate.PendingIntent is null
                     ? null
@@ -1630,6 +1642,7 @@ public static class LeaseEndpoints
                     TriggerSource = remoteTrigger.TriggerSource,
                     Cli = "remote-runner",
                     RunAttemptId = acquire.Lease.AttemptId,
+                    DispatchDecisionId = overlapGuard.TakeDecisionId(candidate),
                     Model = runSpec.Model,
                     ThinkingLevel = runSpec.ThinkingLevel,
                     Cwd = candidate.FolderPath,

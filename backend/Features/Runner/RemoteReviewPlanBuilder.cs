@@ -201,6 +201,7 @@ public sealed partial class RemoteReviewPlanBuilder
         => WithVerifyDefinition(task, BuildPlan(task, repositoryPath, projectSettings, integrationRef,
                 expectedResultSha, changedFiles, immutableResultRef) with
             {
+                Quarantines = task is null ? [] : _postMergeMode?.ReadState(task.ProjectName)?.Quarantines ?? [],
                 PrivateRepository = task is not null && _visibility is not null
                     ? _visibility.IsPrivate(task, projectSettings)
                     : Contract.ReviewRepositoryAccessPolicy.IsPrivate(projectSettings?.RepositoryVisibility),
@@ -274,6 +275,7 @@ public sealed partial class RemoteReviewPlanBuilder
             RequireDifferentHostFailureDomain = projectSettings?.RequireDifferentReviewHost == true,
         };
         var ordinaryToolPlan = toolPlan;
+        var usesSharedSelection = toolPlan.SuiteSelection is not null;
         // AGT-3698: a concept delivery confined to one docs/<topic>/ Dossier is
         // judged by concept-fit alone. Installing and testing the repository
         // proves nothing about the Dossier and let unrelated tooling block it.
@@ -316,9 +318,12 @@ public sealed partial class RemoteReviewPlanBuilder
                     // AGT-3085: the deferred plan alone selects .NET test classes
                     // by reference to the changed types; the batch gate's Full
                     // run on the combined candidate covers what that misses.
-                    var selection = TestSelectionPlanner.Plan(selectionRepo,
-                        verify, changedPaths, projectSettings.TestExecution, "remote-review", level,
-                        ReferenceSelection(selectionRepo, resultSha!));
+                    var selection = ProjectAffectedVerifyPlanner.TryPlan(selectionRepo, verify, changedPaths,
+                        "remote-review", TestExecutionLevels.WorkPackage)
+                        ?? TestSelectionPlanner.Plan(selectionRepo,
+                            verify, changedPaths, projectSettings.TestExecution, "remote-review", level,
+                            ReferenceSelection(selectionRepo, resultSha!));
+                    if (usesSharedSelection) level = selection.Audit.Level;
                     LogReferenceSelection(task!, selection.Audit);
                     var selected = selection.Commands.Where(command =>
                         command.Kind != VerifyCommandKind.Test || command.BlocksWorkPackage).ToArray();
@@ -366,7 +371,7 @@ public sealed partial class RemoteReviewPlanBuilder
         if (!deferBuildTest && !noChange && conceptDossier is null
             && task is not null && !TaskModes.IsReportOnly(task.Mode)
             && projectSettings is not null
-            && PerCardTestModes.Resolve(projectSettings) == PerCardTestModes.Affected
+            && (usesSharedSelection || PerCardTestModes.Resolve(projectSettings) == PerCardTestModes.Affected)
             && changedPaths is { Count: > 0 } && !string.IsNullOrWhiteSpace(repositoryPath)
             && ReviewSubjectStore.IsValidResultSha(resultSha))
         {
@@ -379,17 +384,60 @@ public sealed partial class RemoteReviewPlanBuilder
                 string.IsNullOrWhiteSpace(task.TaskKey) ? task.Id : task.TaskKey, selection.Audit.Selector,
                 selection.Audit.FullSuiteRequired, selection.Audit.ProjectMapDigest, selection.Audit.Digest,
                 string.Join(" | ", selection.Audit.Reasons));
-            if (!selection.Audit.FullSuiteRequired)
+            if (!selection.Audit.FullSuiteRequired || usesSharedSelection)
             {
+                if (!usesSharedSelection && TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast)
+                {
+                    var fullCommands = verify.Commands.Where(command => command.Kind == VerifyCommandKind.Test)
+                        .Select(command => (command.Command, command.WorkingSubdir)).ToHashSet();
+                    var omitted = selection.Commands.Where(command => command.Kind == VerifyCommandKind.Test
+                        && fullCommands.Contains((command.Command, command.WorkingSubdir))).ToArray();
+                    if (omitted.Length > 0)
+                        selection = DeterministicTestScope.WithDigest(selection with
+                        {
+                            Commands = selection.Commands.Except(omitted).ToArray(),
+                            Audit = selection.Audit with
+                            {
+                                SelectedCommands = selection.Audit.SelectedCommands.Except(omitted.Select(TestSelectionPlanner.Describe)).ToArray(),
+                                OmittedTestCommands = selection.Audit.OmittedTestCommands.Concat(omitted.Select(TestSelectionPlanner.Describe)).Distinct().ToArray(),
+                                Reasons = [.. selection.Audit.Reasons, "fast: unchanged full test commands run after integration"],
+                            },
+                        });
+                }
                 toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath, projectSettings.BuildProfile,
                     integrationRef, changedPaths, verify with { Commands = selection.Commands }) with
                 {
                     RequireDifferentHostFailureDomain = projectSettings.RequireDifferentReviewHost == true,
                 };
-                testLevel = TestExecutionLevels.WorkPackage;
+                testLevel = selection.Audit.Level;
                 selectionDigest = selection.Audit.Digest;
                 perCardApplied = true;
             }
+        }
+        // Fast never turns an unmapped T1 selection into a full pre-merge suite.
+        // The merge window owns that coverage; keep build and lint here.
+        if (!deferBuildTest && !noChange && conceptDossier is null
+            && task is not null && !TaskModes.IsReportOnly(task.Mode)
+            && projectSettings is not null
+            && TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast
+            && !string.IsNullOrWhiteSpace(repositoryPath))
+        {
+            if (!perCardApplied)
+            {
+                var verify = VerifyCommandPlanner.Plan(repositoryPath, projectSettings.BuildProfile);
+                var selection = DeterministicTestScope.WithDigest(TestSelectionPlanner.Plan(
+                    repositoryPath, verify, changedPaths, projectSettings.TestExecution,
+                    TaskStates.AutoReview, TestExecutionLevels.BuildOnly));
+                toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath, projectSettings.BuildProfile,
+                    integrationRef, changedPaths, verify with { Commands = selection.Commands }) with
+                {
+                    RequireDifferentHostFailureDomain = projectSettings.RequireDifferentReviewHost == true,
+                };
+                testLevel = TestExecutionLevels.BuildOnly;
+                selectionDigest = selection.Audit.Digest;
+                perCardApplied = true;
+            }
+            ordinaryToolPlan = toolPlan;
         }
         if (task is null || TaskModes.IsReportOnly(task.Mode))
             return toolPlan;
@@ -1168,8 +1216,24 @@ public sealed partial class RemoteReviewPlanBuilder
                 return new(summary.Length == 0 ? AgentReportWithheld : summary.TrimEnd() + "\n\n" + AgentReportWithheld,
                     false, string.Empty);
             }
-            var report = RedactedTail(RemoteReviewPlanBuilder.Read(
-                reportPath, Characters, string.Empty).Trim());
+            var report = RemoteReviewPlanBuilder.Read(reportPath, Characters, string.Empty).Trim();
+            if (File.Exists(reportPath) && new FileInfo(reportPath).Length > Characters)
+            {
+                using var reader = new StreamReader(reportPath);
+                var head = new char[1_000];
+                var count = reader.Read(head, 0, head.Length);
+                const string omitted = "\n... (report middle omitted)\n";
+                var tailRoom = Characters - count - omitted.Length;
+                report = new string(head, 0, count) + omitted + report[^Math.Min(tailRoom, report.Length)..];
+            }
+            report = CredentialRedactor.Redact(report);
+            if (report.Length > Characters)
+            {
+                const string omitted = "\n... (report middle omitted)\n";
+                const int headCharacters = 1_000;
+                report = report[..headCharacters] + omitted
+                    + report[^(Characters - headCharacters - omitted.Length)..];
+            }
             if (report.Length == 0) return new(summary, false, string.Empty);
             if (!IsSummary(summary)) return new(report, true, string.Empty);
             return Compose(summary.Trim(), report);
@@ -1193,7 +1257,13 @@ public sealed partial class RemoteReviewPlanBuilder
             var note = summary.Contains("results/status.md", StringComparison.OrdinalIgnoreCase)
                 ? AgentReportNote : string.Empty;
             var reportRoom = Characters - AgentReportHeading.Length - 1;
-            if (report.Length > reportRoom) report = report[^reportRoom..];
+            if (report.Length > reportRoom)
+            {
+                const int headCharacters = 1_000;
+                const string marker = "\n... (report middle omitted)\n";
+                report = report[..headCharacters] + marker
+                    + report[^(reportRoom - headCharacters - marker.Length)..];
+            }
             var text = new StringBuilder();
             text.AppendLf(AgentReportHeading).Append(report);
             var summaryRoom = Characters - text.Length - SummaryHeading.Length - 3;

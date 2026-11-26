@@ -64,6 +64,47 @@ describe('AttentionControlComponent', () => {
     });
   }
 
+  it('updates policy recommendations without changing the owner-item identity', async () => {
+    const item: OperatorAttentionItem = { id: 'expired', type: 'post-merge.red-incident',
+      project: 'alpha', cardKey: 'AGT-1', cards: ['AGT-1'], reason: 'Quarantine expired.',
+      observedAt: '2026-11-09T09:00:00Z', suggestedOperations: ['card.inspect'],
+      ownerOptions: [{ id: 'report', label: 'report-only with a card', recommended: false }] };
+    const { fixture, http } = await setup('ok', 0, [item]);
+    fixture.componentInstance.toggle();
+    http.expectOne('/api/operator/attention').flush({ items: [{ ...item,
+      ownerOptions: [{ ...item.ownerOptions![0], recommended: true }] }], count: 1 });
+    await fixture.whenStable();
+    expect(document.querySelector('[data-testid="attention-owner-options"]')?.textContent)
+      .toContain('report-only with a card Recommended');
+    expect(rows()).toHaveLength(1);
+  });
+
+  it('keeps an overlap wait after refusal and removes it only after Run anyway succeeds', async () => {
+    const item: OperatorAttentionItem = { id: 'dispatch.overlap-starved|alpha/AGT-3988|state', type: 'dispatch.overlap-starved',
+      project: 'alpha', cardKey: 'AGT-3988', cards: ['AGT-3988', 'AGT-3481'], reason: 'AGT-3988 waits for AGT-3481.',
+      observedAt: '2026-11-24T03:26:04Z', suggestedOperations: ['dispatch.run-anyway'] };
+    const { fixture, http } = await setup('ok', 0, [item]);
+    fixture.componentInstance.toggle();
+    http.expectOne('/api/operator/attention').flush({ items: [item], count: 1 });
+    await fixture.whenStable();
+    const button = document.querySelector<HTMLButtonElement>('[data-testid="attention-run-anyway"]')!;
+    button.click();
+    const refused = http.expectOne('/api/projects/alpha/dispatch/run-anyway');
+    expect(refused.request.body).toEqual({ fact: item.id });
+    refused.flush({}, { status: 409, statusText: 'Conflict' });
+    await fixture.whenStable();
+    expect(rows()).toHaveLength(1);
+    expect(document.querySelector('[data-testid="attention-overlap-error"]')).not.toBeNull();
+    button.click();
+    http.expectOne('/api/projects/alpha/dispatch/run-anyway').flush({ permitted: true });
+    await fixture.whenStable();
+    http.expectOne('/api/operator/attention').flush({ items: [], count: 0 });
+    http.match('/api/operator/backups').forEach(request => request.flush({}));
+    await fixture.whenStable();
+    expect(rows()).toHaveLength(0);
+    http.verify();
+  });
+
   it('shows the open incident and links to its card and project Operations', async () => {
     const incident: OperatorAttentionItem = {
       id: 'environment.incident-open|alpha|production', type: 'environment.incident-open',

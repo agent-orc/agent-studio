@@ -20,6 +20,9 @@ public sealed record TaskParallelism(bool Exclusive, IReadOnlyList<string> Predi
     /// </summary>
     public bool ReadOnly { get; init; }
 
+    /// <summary>Pipeline recovery must drain the delivery window; slot and exclusive limits still apply.</summary>
+    public bool BypassScope { get; init; }
+
     /// <summary>Default: parallelisable, scope unknown.</summary>
     public static readonly TaskParallelism Default = new(false, Array.Empty<string>());
 
@@ -28,7 +31,11 @@ public sealed record TaskParallelism(bool Exclusive, IReadOnlyList<string> Predi
 }
 
 /// <summary>A task currently occupying a runner slot, with its parallelism facts.</summary>
-public sealed record RunningTask(string TaskId, TaskParallelism Parallelism);
+public sealed record RunningTask(string TaskId, TaskParallelism Parallelism)
+{
+    public string? CardKey { get; init; }
+    public string? Version { get; init; }
+}
 
 public enum SlotDecision
 {
@@ -46,11 +53,16 @@ public enum SlotDecision
 /// the <c>in-flight</c> overlap window, never of the slot count, and it never
 /// blocks as exclusive: an exclusive card blocks only while it runs.
 /// </summary>
-public sealed record InFlightTask(string TaskId, TaskParallelism Parallelism, string Lane);
+public sealed record InFlightTask(string TaskId, TaskParallelism Parallelism, string Lane)
+{
+    public string? CardKey { get; init; }
+    public string? Version { get; init; }
+}
 
 /// <summary>Result of one pick-gate evaluation, with a human-readable rationale for the timeline.</summary>
 public sealed record SlotAdmission(SlotDecision Decision, string Reason)
 {
+    public string? DispatchDecisionId { get; init; }
     public bool Admitted => Decision is SlotDecision.Admit or SlotDecision.RunExclusive;
 
     /// <summary>The overlap window the scope check used (<see cref="OverlapWindows"/>).</summary>
@@ -158,7 +170,7 @@ public static class ParallelSlotPolicy
         var max = ClampMax(maxParallelism);
         running ??= Array.Empty<RunningTask>();
         candidate ??= TaskParallelism.Default;
-        var exposed = window == OverlapWindows.InFlight && inFlight is not null
+        var exposed = window != OverlapWindows.Running && inFlight is not null
             ? inFlight.Where(item => item is not null
                     && !string.Equals(item.TaskId, candidateId, StringComparison.OrdinalIgnoreCase)
                     && !running.Any(r => string.Equals(r.TaskId, item.TaskId, StringComparison.OrdinalIgnoreCase)))
@@ -189,6 +201,9 @@ public static class ParallelSlotPolicy
                     $"exclusive: waits for {running.Count} running task(s) to drain");
         }
 
+        if (candidate.BypassScope)
+            return new SlotAdmission(SlotDecision.Admit, "parallel-ok: delivery recovery bypasses scope serialization");
+
         var usedOptimisticUnknownScope = !HasDeclaredScope(candidate.PredictedScope);
         foreach (var r in running)
         {
@@ -218,8 +233,8 @@ public static class ParallelSlotPolicy
     }
 
     private static SlotAdmission ScopeSerialize(string window, string taskId, string lane, string prefix)
-        => new(SlotDecision.Serialize,
-            $"scope conflict with '{taskId}' on '{prefix}' (window {window}, {lane})")
+        => new(window == OverlapWindows.Off ? SlotDecision.Admit : SlotDecision.Serialize,
+            $"{(window == OverlapWindows.Off ? "advisory overlap" : "scope conflict")} with '{taskId}' on '{prefix}' (window {window}, {lane})")
         {
             ConflictTaskId = taskId,
             SharedPrefix = prefix,

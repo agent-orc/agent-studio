@@ -226,6 +226,7 @@ public static class V1ReviewPlaneEndpoints
             AgentStudio.Clients.ClientIdentityStore clients,
             AgentStudio.Clients.HostTelemetryStore telemetryStore,
             CliQuotaFallbackService quotaRoutes,
+            IModelEquivalenceCatalog equivalenceCatalogue,
             AttemptAuthorityService authority,
             TaskScannerService scanner,
             IConfiguration configuration,
@@ -242,12 +243,15 @@ public static class V1ReviewPlaneEndpoints
             {
                 var snapshot = registry.AdvertiseCapabilities(runnerId, request) with
                 {
-                    ConfiguredModelRoutes = request.Capabilities.Any(capability =>
+                    ConfiguredModelRoutes = (request.Capabilities.Any(capability =>
                             capability.Key == Contract.ReviewCapabilities.ReviewExecutor)
                         ? ReviewConfiguredModelRoutes(authority.ListPendingReviewAttempts(), configuration,
                             quotaRoutes.GetAll().Values)
                         : CodingConfiguredModelRoutes(quotaRoutes.GetAll().Values,
-                            scanner.ScanAllAutomationJobs()),
+                            scanner.ScanAllAutomationJobs()))
+                        .Concat(equivalenceCatalogue.Routes.Select(pair =>
+                            new Contract.ConfiguredModelRouteDto(pair.ToCliType, pair.ToModel)))
+                        .Distinct().ToArray(),
                 };
                 // The monolith may already have a provider rejection or a
                 // health drain for this model. Mirror its accepted effective
@@ -602,7 +606,7 @@ public static class V1ReviewPlaneEndpoints
                 executor.Capabilities,
                 heldByCauseBreaker,
                 Admit,
-                repositoryFacts);
+                repositoryFacts, routeAgentProviders: true);
             if (claimed.Status == AttemptWriteStatus.NotFound)
             {
                 if (hostWaitReason is not null)
@@ -660,7 +664,7 @@ public static class V1ReviewPlaneEndpoints
                     Contract.ReviewClaimEmptyReasons.UnclaimablePlanRequirements,
                     Contract.ReviewRepositoryAccessPolicy.RefusalMessage(missingRepositoryAccess[0])));
             }
-            if (!Contract.ReviewLibraryStepPolicy.Supports(subject.Plan, executor.Capabilities))
+            if (!Contract.ReviewLibraryStepPolicy.Supports(subject.Plan, executor.Capabilities, routePending: true))
             {
                 if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId))
                     return Results.Conflict(new Contract.ApiError(
@@ -672,7 +676,7 @@ public static class V1ReviewPlaneEndpoints
                         review.AttemptId,
                         review.TaskKey,
                         review.CreatedAt,
-                        Contract.ReviewLibraryStepPolicy.MissingCapabilities(subject.Plan, executor.Capabilities)),
+                        Contract.ReviewLibraryStepPolicy.MissingCapabilities(subject.Plan, executor.Capabilities, routePending: true)),
                 ];
                 unclaimableLog.Record(runnerId, unclaimable);
                 return Results.Ok(Contract.ReviewClaimEmptyResponses.ForQueue(
@@ -1519,6 +1523,11 @@ public static class V1ReviewPlaneEndpoints
                     monolithAction: shadowDecision.Action.ToString(),
                     monolithReason: shadowDecision.Reason);
             }
+            var executionLedger = context.RequestServices.GetRequiredService<IModelSelectionService>();
+            foreach (var command in request.Commands)
+                if (command.ModelSelection?.LedgerId is { } selectionId) executionLedger.RecordExecution(
+                    selectionId, command.CliType ?? command.ModelSelection.Route.CliType, command.ExitCode is not null and not 0);
+
 
             // The authority verdict is durable here. Closing the exact probe
             // cannot depend on the later delivery lane transition succeeding.
@@ -2659,7 +2668,7 @@ public static class V1ReviewPlaneEndpoints
                 aspect is "completion" or "requirements" or "code-quality" or "documentation" or "evidence")
             && !capabilities.Contains(Contract.ReviewCapabilities.SemanticReview))
             return false;
-        return Contract.ReviewLibraryStepPolicy.Supports(plan, capabilities);
+        return Contract.ReviewLibraryStepPolicy.Supports(plan, capabilities, routePending: true);
     }
 
     private static Contract.ReviewSubjectDto ToSubject(
@@ -2754,9 +2763,6 @@ public static class V1ReviewPlaneEndpoints
         {
             if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)) return command;
             var operatorSwitch = quotaAdmission.IsOperatorSwitchActive(command.CliType);
-            if (immutablePlan && !operatorSwitch
-                && !string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
-                return command;
             string? deniedFallbackKey = null;
             Contract.ModelAcceptanceAdmission? deniedFallbackDecision = null;
             var plan = quotaAdmission.Plan(new QuotaAdmissionRequest(
@@ -2770,6 +2776,9 @@ public static class V1ReviewPlaneEndpoints
                     is Contract.ModelAcceptanceAdmission.Accepted or Contract.ModelAcceptanceAdmission.Legacy,
                 ClaimingHost: claimingHost,
                 SameClassOnly: true,
+                StepId: command.StepId,
+                TaskKey: task.Key ?? task.TaskKey ?? task.Id,
+                WorkClass: command.Aspect == "deep-review" ? Contract.SelectionWorkClasses.Analysis : Contract.SelectionWorkClasses.Review,
                 FallbackModelAccepted: (provider, model) =>
                 {
                     var decision = modelAdmission(provider, model);
@@ -2802,7 +2811,7 @@ public static class V1ReviewPlaneEndpoints
                 return command;
             }
             launchedPlan ??= plan;
-            if (!plan.IsFallback) return command;
+            if (!plan.IsFallback) return command with { ModelSelection = plan.Selection };
             if (!operatorSwitch
                 && string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
             {
@@ -2826,6 +2835,7 @@ public static class V1ReviewPlaneEndpoints
                 CliType = plan.CliType,
                 Model = plan.Model,
                 ThinkingLevel = plan.ThinkingLevel,
+                ModelSelection = plan.Selection,
             };
         }).ToList();
         deferredReason = deferred;
@@ -2980,9 +2990,13 @@ public static class V1ReviewPlaneEndpoints
         VerifyPlan? verifyOverride = null)
     {
         var declared = VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
-        var verify = VerifyCommandPlanner.WithCompiledBuild(repositoryPath ?? string.Empty,
-            verifyOverride ?? declared, changedFiles);
-        if (changedFiles?.Any(path => path.Replace('\\', '/').StartsWith("backend/", StringComparison.OrdinalIgnoreCase)) == true)
+        var shared = ProjectAffectedVerifyPlanner.TryPlan(repositoryPath ?? string.Empty,
+            declared, changedFiles, "remote-review", TestExecutionLevels.WorkPackage);
+        var verify = shared is null
+            ? VerifyCommandPlanner.WithCompiledBuild(repositoryPath ?? string.Empty,
+                verifyOverride ?? declared, changedFiles)
+            : declared with { Commands = shared.Commands };
+        if (shared is null && changedFiles?.Any(path => path.Replace('\\', '/').StartsWith("backend/", StringComparison.OrdinalIgnoreCase)) == true)
         {
             // Class selection can omit every inventory test, or all test commands.
             // Review always runs the declared .NET guards for a backend change.
@@ -3074,7 +3088,18 @@ public static class V1ReviewPlaneEndpoints
                 .ToArray(),
             PreserveGlobs: profile?.PreserveGlobs,
             BuildProfileFingerprint: BuildProfileValidationFingerprint.Create(profile),
-            LibraryVersion: Contract.ReviewLibraryStepPolicy.Version);
+            LibraryVersion: Contract.ReviewLibraryStepPolicy.Version) with
+        {
+            SuiteSelection = shared is null ? null : new Contract.ReviewSuiteSelectionDto(
+                shared.Audit.SelectedSuites, shared.Audit.OmittedSuites, shared.Audit.Reasons)
+                {
+                    SuiteCommands = shared.Audit.SuiteCommands,
+                    SuiteSteps = shared.Audit.SuiteCommands.Where(suite => commands.Any(command =>
+                        command.Arguments.Contains(suite.Value)))
+                        .ToDictionary(suite => suite.Key, suite => commands.First(command =>
+                            command.Arguments.Contains(suite.Value)).StepId, StringComparer.Ordinal),
+                },
+        };
     }
 
     /// <summary>
@@ -4955,9 +4980,34 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
         }
     }
 
+    public bool ProviderReadyForRouting(string runnerId, string? instanceId, string provider)
+    {
+        lock (_gate)
+        {
+            if (!_registrations.TryGetValue(runnerId, out var registration)
+                || registration.InstanceId != instanceId) return false;
+            if (!_capabilityStates.TryGetValue(runnerId, out var state) || !state.ModelAcceptanceAdvertised)
+                return true;
+            var now = _time.GetUtcNow().UtcDateTime;
+            var required = new[] { Contract.CapabilityProtocol.CliExecution(provider),
+                Contract.CapabilityProtocol.ProviderAuthentication(provider) };
+            foreach (var key in required)
+            {
+                var capability = state.Capabilities.FirstOrDefault(item => item.Key == key);
+                if (capability is null || capability.FreshUntil <= now || !Claimable(capability.AdvertisedStatus)
+                    || (capability.HealthOutcome ?? capability.Signal) is "credential_invalid" or "provider_incident" or "indeterminate")
+                    return false;
+            }
+            return !_capabilityFailures.TryGetValue(runnerId, out var failures)
+                || !failures.Values.Any(failure => failure.CooldownUntil > now
+                    && (failure.WholeHost || required.Contains(failure.Key, StringComparer.Ordinal)));
+        }
+    }
+
     public Contract.ModelAcceptanceAdmission ModelAdmission(
         string runnerId, string? instanceId, string cliType, string? model)
     {
+        if (!ProviderReadyForRouting(runnerId, instanceId, cliType)) return Contract.ModelAcceptanceAdmission.Unavailable;
         if (string.IsNullOrWhiteSpace(model)) return Contract.ModelAcceptanceAdmission.Accepted;
         var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
         lock (_gate)
