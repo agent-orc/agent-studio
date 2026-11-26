@@ -6730,6 +6730,19 @@ public class ProjectRunner
             // a clean finish is accepted and one with open work is driven to
             // completion via a bounded continuation loop. Claude stays
             // sentinel-based (the evidence is gated on IsCodex inside the policy).
+            if (activeInfo is not null && outcome.Kind == AgentOutcomeKind.Blocked
+                && outcome.MatchedSentinel && !LocalStopRequested(jobId))
+            {
+                var integrationWait = await _transitions.TryWaitForIntegrationAsync(jobId,
+                    activeInfo.WatchPath, HumanReviewEscalationCategories.AgentBlocked,
+                    outcome.Reason ?? "", CancellationToken.None, null, activeInfo.State);
+                if (integrationWait is not null)
+                {
+                    if (integrationWait.Status == MoveJobStatus.Success) TeardownWorktreeForJob(jobId);
+                    return;
+                }
+            }
+
             CodexCompletionEvidence.Inputs? codexEvidence = null;
             if (string.Equals(cliType, CliTypes.Codex, StringComparison.OrdinalIgnoreCase)
                 && (outcome.IssueKind == RunIssueKind.MissingTerminalSentinel

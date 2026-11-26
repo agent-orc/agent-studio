@@ -1982,7 +1982,25 @@ public class TaskMutationService
         return Updated(folderPath);
     }
 
-    public string? CreateJob(CreateTaskRequest req)
+    /// <summary>Creates a review follow-up with its scheduling edge in the first published snapshot.</summary>
+    internal string? CreateReviewFollowUp(CreateTaskRequest req, TaskInfo source)
+    {
+        var sourceKey = source.Key ?? source.Id;
+        var commits = source.Commits.Where(TaskCommitSupersession.IsEffectiveDelivery)
+            .Select(commit => !string.IsNullOrWhiteSpace(commit.ResultSha) ? commit.ResultSha : commit.Sha)
+            .Where(sha => !string.IsNullOrWhiteSpace(sha)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var delivery = commits.Length > 0 ? string.Join(", ", commits)
+            : "not yet recorded; wait for the source card's current delivery integration";
+        return CreateJob(req with
+        {
+            PromptMarkdown = $"{req.PromptMarkdown}\n\nParent delivery: {sourceKey}, commit(s): {delivery}. "
+                + "Build on this delivery after it is integrated into the target branch.",
+        }, new TaskReferences { DependsOn = [sourceKey], FollowUpOf = [sourceKey] });
+    }
+
+    public string? CreateJob(CreateTaskRequest req) => CreateJob(req, initialReferences: null);
+
+    private string? CreateJob(CreateTaskRequest req, TaskReferences? initialReferences)
     {
         var watchPaths = _scanner.GetWatchPaths();
         // D1: a caller addresses the target project by a path-free handle — a
@@ -2221,6 +2239,8 @@ public class TaskMutationService
             ["agent"] = effectiveAgent,
             ["ownerClientId"] = ownerClientId
         };
+        if (initialReferences is not null)
+            jobJson["references"] = initialReferences;
         if (acceptanceScope is not null)
             jobJson["acceptanceScope"] = acceptanceScope;
         if (!string.IsNullOrWhiteSpace(effectiveModel))

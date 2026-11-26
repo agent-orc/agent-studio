@@ -180,6 +180,40 @@ public sealed class RemoteRunDispositionEndpointTests : IDisposable
             BriefVersionStore.ReadOrCreate(Current(factory, "AGT-UNCHANGED-BRIEF").FolderPath));
     }
 
+    [Fact]
+    public async Task Integration_blocker_completion_returns_ready_with_a_machine_dependency()
+    {
+        await using var factory = BuildFactory();
+        using var client = Client(factory);
+        var parentFolder = Path.Combine(WatchPath, TaskStates.AutoReview, "parent");
+        Directory.CreateDirectory(parentFolder);
+        File.WriteAllText(Path.Combine(parentFolder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = "parent", key = "AGT-3973", title = "Pending parent implementation",
+            state = TaskStates.AutoReview, agent = "codex",
+        }));
+        var (taskKey, attempt) = Claim(factory, "AGT-INTEGRATION-WAIT");
+        var parent = Current(factory, "parent");
+        var response = await client.PostAsJsonAsync("/api/runner/completion", DeliveredCompletion(taskKey, attempt) with
+        {
+            Outcome = "blocked",
+            Reason = $"{parent.Key}-implementation-not-integrated",
+        });
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("blocked", body.RootElement.GetProperty("outcome").GetString());
+        Assert.Equal(TaskStates.Ready, body.RootElement.GetProperty("targetState").GetString());
+        var waiting = Current(factory, "AGT-INTEGRATION-WAIT");
+        Assert.Equal(TaskStates.Ready, waiting.State);
+        Assert.Equal(parent.Key, Assert.Single(waiting.References.DependsOn).Key);
+        var index = factory.Services.GetRequiredService<TaskScannerService>().GetReferenceIndex();
+        Assert.True(index.EvaluateWaitsOn(waiting).Blocked);
+        Assert.False(index.EvaluateWaitsOn(waiting, new Dictionary<string, TaskIntegrationStatus>
+        {
+            [parent.TaskKey] = new() { Status = IntegrationStatuses.Integrated },
+        }).Blocked);
+    }
+
     private (string TaskKey, RunAttemptDto Attempt) Claim(WebApplicationFactory<Program> factory, string id)
     {
         var folder = Path.Combine(WatchPath, TaskStates.Progress, id);

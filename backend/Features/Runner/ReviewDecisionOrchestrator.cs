@@ -3627,7 +3627,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 source.Id);
             return;
         }
-        var followUpId = _taskMutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+        var followUpId = _taskMutations.CreateReviewFollowUp(new AgentStudio.Shared.CreateTaskRequest
         {
             Title = $"Follow-up: review concerns in {source.Key ?? source.Id}",
             Agent = source.Agent,
@@ -3641,7 +3641,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             OwnerClientId = source.OwnerClientId,
             CreationSource = "review-concern-follow-up",
             CreatedBy = "pipeline",
-        });
+        }, source);
         var created = followUpId is null ? null : _scanner.FindJob(followUpId, source.WatchPath);
         if (created is null)
         {
@@ -3657,6 +3657,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _taskMutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
         {
             FollowUpOf = [sourceKey],
+            DependsOn = created.References.DependsOn.Append(new TaskDependencyReference(sourceKey)).ToList(),
         }, created.WatchPath);
         _taskMutations.SetTaskReferences(source.Id, (source.References ?? new TaskReferences()) with
         {
@@ -3703,7 +3704,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             .Select(verdict => $"## {verdict.Aspect}: {verdict.Summary}\n\n{verdict.Body}"));
         if (created is null)
         {
-            var id = _taskMutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+            var id = _taskMutations.CreateReviewFollowUp(new AgentStudio.Shared.CreateTaskRequest
             {
                 Title = title,
                 Agent = source.Agent,
@@ -3717,7 +3718,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 OwnerClientId = source.OwnerClientId,
                 CreationSource = "review-budget-follow-up",
                 CreatedBy = "pipeline",
-            });
+            }, source);
             created = id is null ? null : _scanner.FindJob(id, source.WatchPath);
         }
         else if (ReviewRoundBudgetStore.Read(source.FolderPath).Rounds
@@ -3732,6 +3733,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _taskMutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
         {
             FollowUpOf = [sourceKey],
+            DependsOn = created.References.DependsOn.Append(new TaskDependencyReference(sourceKey)).ToList(),
         }, created.WatchPath);
         var latestSource = _scanner.FindJob(source.Id, source.WatchPath) ?? source;
         _taskMutations.SetTaskReferences(source.Id, (latestSource.References ?? new TaskReferences()) with

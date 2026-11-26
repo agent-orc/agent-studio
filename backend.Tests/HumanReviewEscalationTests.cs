@@ -330,6 +330,38 @@ public sealed class HumanReviewEscalationTests : IDisposable
         Assert.Contains(reason, status);
     }
 
+    [Theory]
+    [InlineData("agt-3973-implementation-not-integrated")]
+    [InlineData("missing-AGT-3973-implementation")]
+    [InlineData("The implementation of card AGT-3973 is not integrated into develop.")]
+    public async Task Missing_parent_delivery_becomes_a_dependency_wait_and_releases_without_a_round(string reason)
+    {
+        WriteJob(TaskStates.Progress, "follow-up");
+        WriteJob(TaskStates.AutoReview, "parent");
+        TaskJsonFile.UpdateField(Path.Combine(_watchPath, TaskStates.AutoReview, "parent"),
+            "key", "AGT-3973", NullLogger.Instance);
+        _scanner.InvalidateCache();
+        var funnel = new HumanReviewEscalation(_states, _transitions, _workspaceRoot,
+            NullLogger<HumanReviewEscalation>.Instance, _scanner);
+        var moved = await funnel.EscalateAsync("follow-up", _watchPath, ProjectName,
+            HumanReviewEscalationCategories.AgentBlocked, reason);
+        Assert.Equal(MoveJobStatus.Success, moved.Status);
+        var waiting = Assert.IsType<TaskInfo>(_scanner.FindJob("follow-up", _watchPath));
+        Assert.Equal(TaskStates.Ready, waiting.State);
+        Assert.Equal("AGT-3973", Assert.Single(waiting.References.DependsOn).Key);
+        Assert.Empty(ReviewDecisionLog.ReadAll(_workspaceRoot, ProjectName));
+        var index = _scanner.GetReferenceIndex();
+        Assert.True(index.EvaluateWaitsOn(waiting).Blocked);
+        var parent = Assert.IsType<TaskInfo>(_scanner.FindJob("parent", _watchPath));
+        var integrated = new Dictionary<string, TaskIntegrationStatus>
+        {
+            [parent.TaskKey] = new() { Status = IntegrationStatuses.Integrated },
+        };
+        Assert.False(index.EvaluateWaitsOn(waiting, integrated).Blocked);
+        Assert.Null(waiting.PendingIntent);
+        Assert.False(File.Exists(Path.Combine(waiting.FolderPath, "prompt.md")));
+    }
+
     private void WriteJob(string state, string slug, string? creationSource = null)
     {
         var dir = Path.Combine(_watchPath, state, slug);
