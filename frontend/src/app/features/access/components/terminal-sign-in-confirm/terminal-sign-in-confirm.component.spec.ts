@@ -87,6 +87,7 @@ describe('TerminalSignInConfirmComponent', () => {
     expect(service.find).toHaveBeenCalledWith('WDJBMJHT');
     expect(byTestId('terminal-sign-in-code')?.textContent).toBe('WDJB-MJHT');
     expect(byTestId('terminal-sign-in-device')?.textContent).toBe('opsagent@workstation');
+    expect(byTestId('terminal-sign-in-binding')?.textContent).toBe('Memory key');
     expect(byTestId('terminal-sign-in-known')?.textContent).toContain('Unknown device');
     expect(byTestId('terminal-sign-in-address')?.textContent).toBe('198.51.100.7');
     expect(byTestId('terminal-sign-in-address-match')?.textContent).toContain('Other network than this browser');

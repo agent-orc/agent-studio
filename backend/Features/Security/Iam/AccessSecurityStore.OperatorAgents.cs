@@ -207,11 +207,11 @@ public sealed partial class AccessSecurityStore
                 .Select(session => ToOperatorSessionResponse(agent.Id, session, now)).ToList(),
             (agent.Devices ?? []).OrderByDescending(device => device.LastConfirmedAt).Select(device =>
             {
-                var own = sessions.Where(session => session.Device?.KeyThumbprint == device.KeyThumbprint).ToList();
+                var own = sessions.Where(session => session.Device?.DeviceId == device.Id).ToList();
                 return new OperatorDeviceResponse(device.Id, device.Label, device.KeyThumbprint, device.FirstConfirmedAt,
                     device.LastConfirmedAt, device.LastConfirmedBy, device.LastAddress,
                     own.Select(session => session.LastUsedAt).Where(at => at is not null).DefaultIfEmpty(null).Max(),
-                    own.Count(session => OperatorSessionState(session, now) is OperatorSessionStates.Active or OperatorSessionStates.Pending));
+                    own.Count(session => OperatorSessionState(session, now) is OperatorSessionStates.Active or OperatorSessionStates.Pending), device.BindingKind);
             }).ToList());
     }
 
@@ -226,7 +226,7 @@ public sealed partial class AccessSecurityStore
             OperatorSessionState(session, now),
             session.Device is { } device
                 ? new OperatorSessionDeviceResponse(device.DeviceId, device.Label, device.KeyThumbprint, device.RequestedAddress,
-                    device.ConfirmedAddress, device.SignInId)
+                    device.ConfirmedAddress, device.SignInId, device.BindingKind, device.DeviceKeyThumbprint)
                 : null,
             session.Classes);
     }

@@ -152,3 +152,34 @@ test('login refuses plain HTTP to another host and retires the ES-3 disk key', a
   assert.equal(unsafe.code, 13);
   assert.equal(fs.existsSync(keyFile), false);
 });
+
+test('login submits hardware certification before showing the code and records its binding kind', async () => {
+  const { login } = await import('../src/login.mjs');
+  const { MemoryKeyProvider } = await import('../src/device-key.mjs');
+  const configDir = path.join(makeHome(), '.config', 'agent-studio');
+  const provider = new MemoryKeyProvider(); provider.bindingKind = 'tpm';
+  const notes = [];
+  let certified = false;
+  const token = fakeToken('oas');
+  const pollHandle = fakeToken('osp');
+  const ctx = { configDir, config: {}, output: { note(text) { notes.push(text); }, protect() {} },
+    client: { base: new URL('https://studio.test/'), url: p => new URL(p, 'https://studio.test/'),
+      async request() { return { signInId: 'signin-test', pollHandle, userCode: 'WDJB-MJHT', interval: 5,
+        expiresAt: new Date(Date.now() + 600_000).toISOString(), verificationUriComplete: 'https://studio.test/#/terminal-sign-in' }; },
+      async send(method, url, { body, headers }) {
+        assert.ok(headers.DPoP);
+        if (body.certification) {
+          assert.equal(notes.some(note => note.includes('Code:')), false, 'Owner code is not shown before certification');
+          assert.deepEqual(body.certification.publicKey, provider.publicJwk);
+          certified = true;
+          return { status: 200, body: { status: 'pending', bindingKind: 'tpm' } };
+        }
+        assert.equal(certified, true);
+        return { status: 200, body: { status: 'session', token, bindingKind: 'tpm', expiresAt: new Date(Date.now() + 3600_000).toISOString() } };
+      } } };
+  try {
+    const result = await login(ctx, { noQr: true }, { wait: async () => {}, deviceKeyFactory: () => ({ provider, note: 'Device binding: tpm' }) });
+    assert.equal(result.data.bindingKind, 'tpm');
+    assert.ok(notes.some(note => note.includes('Code:')));
+  } finally { await stopAgent(configDir); }
+});

@@ -44,7 +44,7 @@ public static class OperatorSignInEndpoints
             return AccessSecurityEndpoints.Execute(() =>
             {
                 context.Response.Headers.CacheControl = "no-store";
-                return Results.Ok(store.PollOperatorSignIn(request!.PollHandle, context.Request));
+                return Results.Ok(store.PollOperatorSignIn(request!.PollHandle, context.Request, request.Certification));
             });
         });
     }

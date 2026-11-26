@@ -140,9 +140,53 @@ signed 401, or within five seconds of detecting revocation or a removed or
 replaced session file. After a restart or lost resident, run `studio-op login`
 again; the private key cannot be recovered from a file. A denied second login
 keeps the earlier session working. Each memory-key login shows as a new
-device. ES-5 adds persistent hardware identity and certification of this
-memory session key; no hardware key is required in ES-4. Elevated action
+device. Hardware hosts keep a persistent device identity and certify each fresh
+memory session key at login (ES-5). Elevated action
 classes stay recorded only until ES-7.
+
+### Hardware device keys (ES-5)
+
+Decisions ES-D3 B2 and ES-D4 A use a hardware device key where available and
+an explicit memory fallback otherwise. Login prints `Device binding: tpm`,
+`secure-enclave` or `memory`; the confirmation page and session row show
+**TPM key**, **Secure Enclave key** or **Memory key** in both themes. The
+hardware key signs only the login certification. Request proofs continue to
+use the resident's fresh memory key, so TPM latency does not affect commands.
+The device key is reused for the same device and OS user. A hardware device
+can be known across logins with different session keys. A failed certification
+is unknown and memory-bound, even when the supplied hardware public key is known.
+
+| Platform | Setup under the agent's OS user | Persistent state |
+|---|---|---|
+| Windows 10/11 | Enable TPM 2.0 in firmware. Windows PowerShell and .NET CNG must be available. Login uses the Microsoft Platform Crypto Provider, ECDSA P-256, signing-only and no export permission, with a current-user named key. It probes private export refusal before use. No administrator or machine-key flag is used. | CNG key `AgentStudio.OperatorDevice.P256.v1` in that user's platform key store. |
+| macOS | Requires an available Secure Enclave and CryptoKit. Install Xcode Command Line Tools (`xcode-select --install`) to build the helper. In `tools/studio-op/native`, run `swiftc -O device-key.swift -o device-key-macos`, then `codesign --force --sign '<your stable signing identity>' device-key-macos`. Install the source and helper together with the CLI. Keep the same signing identity on upgrades; use a Developer ID identity for distribution. On a development machine, `codesign --force --sign - device-key-macos` permits local testing. Login does not compile or download a helper. | `device-key.enclave` in the agent's config directory, mode 600. This is an opaque hardware-wrapped blob; CryptoKit exposes no private scalar export. The helper also refuses a blob that can be imported as a software private scalar. |
+| Linux | Install OpenSSL 3, `tpm2-openssl` and its `tpm2-tss` dependencies through the OS package manager (for example `apt install tpm2-openssl`). Give the agent user access to the TPM resource manager `/dev/tpmrm0`, typically through the `tss` group, then start a fresh user session. The OpenSSL `tpm2` provider must load and support P-256. A custom provider location uses OpenSSL's `OPENSSL_MODULES`; a managed TPM endpoint uses `TPM2OPENSSL_TCTI`. | `device-key.tss` in the config directory, mode 600. The provider generates a fixed-TPM, fixed-parent key under the TPM's storage hierarchy. The blob contains wrapped state, never a software private scalar. Login verifies that a conventional private-key export is refused. |
+
+If hardware, permissions, the helper, the provider or signing is unavailable,
+login prints a clear **Device binding: memory** note and continues with the
+resident session key. It never substitutes a persistent software private key.
+A missing or reset hardware key is a new device. Existing unusable wrapped
+state is preserved, so temporary permission failures do not replace identity.
+To intentionally replace it, first forget the device in Studio, end its
+sessions, and remove the wrapped blob (or the named CNG key) as that OS user.
+
+For a platform check, run
+`node tools/studio-op/test/hardware-key.manual.mjs` as the agent user. It fails
+if hardware is unavailable, checks signing and persistence, and reports only
+public evidence. Then run `studio-op login`, confirm, and check that the
+confirmation and session row have the same binding kind. For a copy check,
+copy just the configuration directory to a second machine with a different
+TPM or Secure Enclave and repeat the probe and login: the copied wrapped key
+must fail to sign, or Windows must create its own different user/device key;
+it must never recognize the original device. Keep output and screenshots for
+each platform. An isolated vTPM is suitable for Linux CI, but its state must
+not be copied with the configuration directory.
+
+These signatures prove possession of the confirmed device key, not a
+manufacturer attestation of the reported binding kind. Processes running as
+the same OS user or root can still ask the platform key to sign. Hourly
+recertification and longer lifetimes remain the ES-6 slice; existing 1 to 8
+hour confirmation limits stay in force.
 
 Terminal sessions require fresh DPoP proofs, including a method, public URL,
 token hash, timestamp within 60 seconds and single-use id. `studio-op` handles

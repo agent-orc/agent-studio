@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { usage } from './args.mjs';
 import { EXIT } from './exit-codes.mjs';
+import { openDeviceKey, certifySession } from './device-key.mjs';
 import { renderQr } from './qr.mjs';
 import { AGENT_FILE, agentCall, startAgent, stopAgent, digest } from './agent.mjs';
 import { OperationError, failure } from './studio.mjs';
@@ -61,7 +62,7 @@ const sleep = (ms, signal) => new Promise(resolve => {
  * the interval Studio names until the Owner confirms or denies or the code
  * expires, then write the session file.
  */
-export async function login(ctx, options, { wait = sleep, now = () => Date.now(), agentFactory = startAgent } = {}) {
+export async function login(ctx, options, { wait = sleep, now = () => Date.now(), agentFactory = startAgent, deviceKeyFactory = openDeviceKey } = {}) {
   const label = (options.label ?? defaultDeviceLabel()).trim();
   if (!label || label.length > MAX_LABEL_LENGTH || /\p{Cc}/u.test(label))
     throw usage('invalid-option', `--label must be 1 to ${MAX_LABEL_LENGTH} printable characters.`);
@@ -75,6 +76,21 @@ export async function login(ctx, options, { wait = sleep, now = () => Date.now()
     const started = await ctx.client.request('POST', START_PATH, { body: {
       publicKey: key.publicJwk, deviceLabel: label, operatorAgent: options.agent ?? null, classes: options.class ?? [],
     } });
+    const { provider, note } = deviceKeyFactory(ctx.configDir);
+    ctx.output.note(note);
+    let certification;
+    try { certification = certifySession(provider, key.thumbprint, started.signInId); }
+    catch {
+      ctx.output.note('Device binding: memory. Hardware signing failed; this sign-in uses the resident session key.');
+    }
+    if (certification) {
+      const { proof } = await agentCall(key.endpoint, { operation: 'poll', url: String(ctx.client.url(POLL_PATH)), pollHandle: started.pollHandle });
+      // Register certification before displaying the code to the Owner.
+      const certified = await ctx.client.send('POST', POLL_PATH, { body: { pollHandle: started.pollHandle, certification }, headers: { DPoP: proof } });
+      if (certified.status !== 200) throw failure('POST', POLL_PATH, certified);
+      if (certified.body?.bindingKind !== provider.bindingKind)
+        ctx.output.note('Device binding: memory. Studio could not verify the device certification; this device is unknown.');
+    }
     ctx.output.note([
       '',
       `Confirm this sign-in in Studio as the Owner, with your second factor.`,
@@ -136,7 +152,7 @@ export async function login(ctx, options, { wait = sleep, now = () => Date.now()
           const data = {
             operatorAgentId: body.operatorAgentId, sessionId: body.sessionId, actor: body.actor, delegatedBy: body.delegatedBy,
             expiresAt: body.expiresAt, classes: body.classes ?? [], keyThumbprint: body.keyThumbprint ?? key.thumbprint,
-            deviceLabel: label, file, mode: '600', configUpdated,
+            bindingKind: body.bindingKind ?? 'memory', deviceLabel: label, file, mode: '600', configUpdated,
           };
           return { data, text: [
             `Signed in as ${body.actor}, delegated by ${body.delegatedBy}, until ${body.expiresAt}.`,

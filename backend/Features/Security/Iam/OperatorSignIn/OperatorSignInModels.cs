@@ -23,6 +23,9 @@ public sealed record OperatorSignIn
     public required OperatorDevicePublicKey PublicKey { get; init; }
     /// <summary>RFC 7638 SHA-256 thumbprint of <see cref="PublicKey"/>, base64url.</summary>
     public required string KeyThumbprint { get; init; }
+    public string BindingKind { get; init; } = "memory";
+    public string? DeviceKeyThumbprint { get; init; }
+    public bool CertificationAttempted { get; init; }
     public required string DeviceLabel { get; init; }
     /// <summary>The operator agent the terminal asked for, by id or name, as it sent it.</summary>
     public string? RequestedAgent { get; init; }
@@ -89,6 +92,8 @@ public sealed record OperatorSessionDevice
     public string? ConfirmedAddress { get; init; }
     /// <summary>Revoking this browser session from a session list ends the operator session.</summary>
     public required string ConfirmingSessionId { get; init; }
+    public string BindingKind { get; init; } = "memory";
+    public string? DeviceKeyThumbprint { get; init; }
     public required string SignInId { get; init; }
 }
 
@@ -98,6 +103,7 @@ public sealed record OperatorDevice
     public required string Id { get; init; }
     public required string KeyThumbprint { get; init; }
     public required string Label { get; init; }
+    public string BindingKind { get; init; } = "memory";
     public DateTime FirstConfirmedAt { get; init; }
     public DateTime LastConfirmedAt { get; init; }
     public string? LastConfirmedBy { get; init; }
@@ -164,7 +170,10 @@ public sealed record StartOperatorSignInResponse(
     string SignInId, string UserCode, string VerificationUri, string VerificationUriComplete, string PollHandle,
     int Interval, DateTime ExpiresAt, string KeyThumbprint);
 
-public sealed record PollOperatorSignInRequest(string? PollHandle);
+/// <summary>ES256 signature in IEEE P1363 format over the domain-separated certification statement.</summary>
+public sealed record OperatorDeviceCertification(OperatorDevicePublicKey PublicKey, string BindingKind, long IssuedAt, string Signature);
+
+public sealed record PollOperatorSignInRequest(string? PollHandle, OperatorDeviceCertification? Certification = null);
 
 /// <summary>A poll answer. The session fields are set only with <see cref="OperatorSignInPollStatuses.Session"/>.</summary>
 public sealed record PollOperatorSignInResponse(
@@ -176,7 +185,7 @@ public sealed record PollOperatorSignInResponse(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DelegatedBy = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTime? ExpiresAt = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Classes = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? KeyThumbprint = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? KeyThumbprint = null, string BindingKind = "memory");
 
 public sealed record OperatorSignInCodeRequest(string? Code);
 
@@ -193,14 +202,14 @@ public sealed record OperatorSignInLookupResponse(
     IReadOnlyList<string> KnownForAgentIds, string? RequestedAgent, string? RequestedAgentId,
     IReadOnlyList<OperatorSignInClassResponse> RequestedClasses, string? RequestedAddress, string? BrowserAddress,
     bool AddressMatches, DateTime CreatedAt, DateTime ExpiresAt, IReadOnlyList<int> LifetimeHours, int DefaultLifetimeHours,
-    IReadOnlyList<OperatorSignInAgentOption> Agents);
+    IReadOnlyList<OperatorSignInAgentOption> Agents, string BindingKind = "memory", string? DeviceKeyThumbprint = null);
 
 public sealed record ConfirmOperatorSignInResponse(
     string SignInId, string OperatorAgentId, string SessionId, string Actor, DateTime ExpiresAt, IReadOnlyList<string> Classes);
 
 public sealed record OperatorSessionDeviceResponse(
-    string DeviceId, string Label, string KeyThumbprint, string? RequestedAddress, string? ConfirmedAddress, string SignInId);
+    string DeviceId, string Label, string KeyThumbprint, string? RequestedAddress, string? ConfirmedAddress, string SignInId, string BindingKind = "memory", string? DeviceKeyThumbprint = null);
 
 public sealed record OperatorDeviceResponse(
     string Id, string Label, string KeyThumbprint, DateTime FirstConfirmedAt, DateTime LastConfirmedAt, string? LastConfirmedBy,
-    string? LastAddress, DateTime? LastUsedAt, int ActiveSessions);
+    string? LastAddress, DateTime? LastUsedAt, int ActiveSessions, string BindingKind = "memory");

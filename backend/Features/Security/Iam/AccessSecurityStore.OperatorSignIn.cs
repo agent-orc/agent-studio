@@ -99,7 +99,8 @@ public sealed partial class AccessSecurityStore
     /// current interval answers slow-down and raises the interval by five
     /// seconds (RFC 8628).
     /// </summary>
-    public PollOperatorSignInResponse PollOperatorSignIn(string? pollHandle, HttpRequest? proofRequest = null)
+    public PollOperatorSignInResponse PollOperatorSignIn(string? pollHandle, HttpRequest? proofRequest = null,
+        OperatorDeviceCertification? certification = null)
     {
         if (!TryTokenParts(pollHandle, OperatorSignInPollHandlePrefix, out var id))
             throw new SecurityOperationException(404, "signin-not-found", "No terminal sign-in has this poll handle.");
@@ -116,6 +117,17 @@ public sealed partial class AccessSecurityStore
                 var refusal = DpopVerifier.Validate(proofRequest, pollHandle!, signIn.KeyThumbprint, new DateTimeOffset(Now, TimeSpan.Zero));
                 if (refusal is not null)
                     throw new SecurityOperationException(401, refusal, "The poll needs a fresh proof from the sign-in key.");
+            }
+            if (certification is not null)
+            {
+                if (signIn.State != OperatorSignInStates.Pending || signIn.CertificationAttempted)
+                    throw new SecurityOperationException(409, "device-certification-used", "Device certification is accepted once before confirmation.");
+                signIn = CertifyDevice(signIn, certification, now);
+                var updated = Copy(state);
+                updated.OperatorSignIns[updated.OperatorSignIns.FindIndex(candidate => candidate.Id == id)] = signIn;
+                SaveLocked(updated);
+                AppendIamAudit(null, "operator-signin.device-certify", "operator-signin", id,
+                    new { signIn.BindingKind, signIn.DeviceKeyThumbprint, valid = signIn.BindingKind != "memory" });
             }
             var interval = OperatorSignInPollIntervalSeconds;
             if (_signInPolls.TryGetValue(id, out var last))
@@ -138,7 +150,7 @@ public sealed partial class AccessSecurityStore
             return signIn.State switch
             {
                 OperatorSignInStates.Pending => new PollOperatorSignInResponse(OperatorSignInPollStatuses.Pending, interval,
-                    "Waiting for the Owner to confirm in Studio."),
+                    "Waiting for the Owner to confirm in Studio.", BindingKind: signIn.BindingKind),
                 OperatorSignInStates.Denied => new PollOperatorSignInResponse(OperatorSignInPollStatuses.Denied, interval,
                     "The Owner denied this sign-in."),
                 OperatorSignInStates.Confirmed => IssueOperatorSignInSessionLocked(signIn, interval, now),
@@ -181,7 +193,7 @@ public sealed partial class AccessSecurityStore
         });
         var actor = new AgentStudio.Shared.OperatorActor(agent.Id, session.Id, session.CreatedBy);
         return new PollOperatorSignInResponse(OperatorSignInPollStatuses.Session, interval, "Signed in.", secret, agent.Id,
-            session.Id, actor.Actor, actor.DelegatedBy, session.ExpiresAt, session.Classes ?? [], signIn.KeyThumbprint);
+            session.Id, actor.Actor, actor.DelegatedBy, session.ExpiresAt, session.Classes ?? [], signIn.KeyThumbprint, signIn.BindingKind);
     }
 
     /// <summary>What the confirmation page shows for an entered code. A wrong code counts toward the lock.</summary>
@@ -202,14 +214,16 @@ public sealed partial class AccessSecurityStore
             return new OperatorSignInLookupResponse(
                 signIn.Id, OperatorSignInCodes.Display(OperatorSignInCodes.Normalize(code)!), signIn.State, signIn.DeviceLabel,
                 signIn.KeyThumbprint,
-                agents.Where(account => account.Devices?.Any(device => device.KeyThumbprint == signIn.KeyThumbprint) == true)
+                agents.Where(account => account.Devices?.Any(device => device.KeyThumbprint == (signIn.DeviceKeyThumbprint ?? signIn.KeyThumbprint)
+                    && device.BindingKind == signIn.BindingKind && !FailedCertification(signIn)) == true)
                     .Select(account => account.Id).ToList(),
                 signIn.RequestedAgent, requested?.Id,
                 signIn.RequestedClasses.Select(ElevatedActionClasses.Find).OfType<ElevatedActionClasses.ActionClass>()
                     .Select(actionClass => new OperatorSignInClassResponse(actionClass.Id, actionClass.Title, actionClass.Mode)).ToList(),
                 signIn.RequestedAddress, browserAddress, SameNetworkAddress(signIn.RequestedAddress, browserAddress),
                 signIn.CreatedAt, signIn.ExpiresAt, [1, 2, 3, 4, 5, 6, 7, 8], (int)MaxOperatorSessionLifetime.TotalHours,
-                agents.Select(account => new OperatorSignInAgentOption(account.Id, account.Name)).ToList());
+                agents.Select(account => new OperatorSignInAgentOption(account.Id, account.Name)).ToList(),
+                signIn.BindingKind, signIn.DeviceKeyThumbprint);
         }
     }
 
@@ -238,11 +252,12 @@ public sealed partial class AccessSecurityStore
             ConsumeStepUpLocked(next, owner, "Verify a second factor before confirming a terminal sign-in.");
 
             var devices = agent.Devices ?? [];
-            var known = devices.FirstOrDefault(device => device.KeyThumbprint == signIn.KeyThumbprint);
+            var known = devices.FirstOrDefault(device => device.KeyThumbprint == (signIn.DeviceKeyThumbprint ?? signIn.KeyThumbprint)
+                    && device.BindingKind == signIn.BindingKind && !FailedCertification(signIn));
             var device = known is null
                 ? new OperatorDevice
                 {
-                    Id = "dev_" + Guid.NewGuid().ToString("N"), KeyThumbprint = signIn.KeyThumbprint, Label = signIn.DeviceLabel,
+                    Id = "dev_" + Guid.NewGuid().ToString("N"), KeyThumbprint = signIn.DeviceKeyThumbprint ?? signIn.KeyThumbprint, BindingKind = signIn.BindingKind, Label = signIn.DeviceLabel,
                     FirstConfirmedAt = now, LastConfirmedAt = now, LastConfirmedBy = owner.User.Id, LastAddress = signIn.RequestedAddress,
                 }
                 : known with
@@ -256,6 +271,7 @@ public sealed partial class AccessSecurityStore
                 Device = new OperatorSessionDevice
                 {
                     DeviceId = device.Id, Label = signIn.DeviceLabel, KeyThumbprint = signIn.KeyThumbprint,
+                    BindingKind = signIn.BindingKind, DeviceKeyThumbprint = signIn.DeviceKeyThumbprint,
                     RequestedAddress = signIn.RequestedAddress, ConfirmedAddress = browserAddress,
                     ConfirmingSessionId = owner.Session.Id, SignInId = signIn.Id,
                 },
@@ -273,7 +289,7 @@ public sealed partial class AccessSecurityStore
             SaveLocked(next);
             AppendIamAudit(owner.User.Id, "operator-signin.confirm", "operator-signin", signIn.Id, new
             {
-                operatorAgentId = agent.Id, sessionId = session.Id, signIn.DeviceLabel, signIn.KeyThumbprint, knownDevice = known is not null,
+                operatorAgentId = agent.Id, sessionId = session.Id, signIn.DeviceLabel, signIn.KeyThumbprint, signIn.BindingKind, signIn.DeviceKeyThumbprint, knownDevice = known is not null,
                 classes, session.ExpiresAt, signIn.RequestedAddress, confirmedAddress = browserAddress,
                 addressMatches = SameNetworkAddress(signIn.RequestedAddress, browserAddress),
             }, owner.Session.Id);
@@ -322,7 +338,7 @@ public sealed partial class AccessSecurityStore
                 Devices = agent.Devices!.Where(candidate => candidate.Id != deviceId).ToList(),
             };
             var ended = EndConfirmedOperatorSessionsLocked(next,
-                (candidate, session) => candidate.Id == agentId && session.Device!.KeyThumbprint == device.KeyThumbprint, now, ownerId);
+                (candidate, session) => candidate.Id == agentId && (session.Device!.DeviceKeyThumbprint ?? session.Device.KeyThumbprint) == device.KeyThumbprint, now, ownerId);
             var cancelled = CancelEndedSessionApprovalsLocked(next, ended, now, "operator device forgotten");
             SaveLocked(next);
             AppendIamAudit(ownerId, "operator-device.forget", "operator-agent", agentId, new

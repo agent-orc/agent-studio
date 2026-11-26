@@ -183,8 +183,11 @@ private key only in resident memory. Commands and streams sign through a
 mode-600 socket or, on Windows, a named pipe with a user-only ACL (Windows
 PowerShell provides the transport). `operator-session-agent.json` stores only
 public connection metadata. `studio-op agent` runs a foreground signer for
-diagnostics; login starts and manages its own resident automatically. Hardware
-certification of the memory session key arrives in ES-5.
+diagnostics; login starts and manages its own resident automatically. ES-5
+certifies that session key with a persistent hardware device key before showing
+the code, when a platform provider is available. Login reports `tpm`,
+`secure-enclave` or a clear `memory` fallback, and `--json` reports the session's
+`bindingKind`. See [platform setup](operator-agent.md#hardware-device-keys-es-5).
 
 A copied session file gets 401 `dpop-required`. After the resident ends, sign
 in again. It stops on failed login, expiry, a signed 401, or within five seconds

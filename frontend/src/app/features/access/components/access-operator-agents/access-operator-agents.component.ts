@@ -14,7 +14,7 @@ import {
   type OperatorDevice,
   type OperatorSession,
 } from '../../models/operator-agent.model';
-import { shortThumbprint } from '../../models/terminal-sign-in.model';
+import { shortThumbprint, deviceBindingLabel } from '../../models/terminal-sign-in.model';
 import { AccessService } from '../../services/access.service';
 import { OperatorAgentsService } from '../../services/operator-agents.service';
 
@@ -50,6 +50,7 @@ export class AccessOperatorAgentsComponent {
   readonly time = formatAccessTime;
   readonly stateLabel = sessionStateLabel;
   readonly thumb = shortThumbprint;
+  readonly binding = deviceBindingLabel;
 
   constructor() {
     effect(() => {
