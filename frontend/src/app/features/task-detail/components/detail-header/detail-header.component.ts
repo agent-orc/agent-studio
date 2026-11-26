@@ -1,3 +1,4 @@
+import { CardWaitingLineComponent } from '../../../../components/card-waiting-line/card-waiting-line';
 import { ChangeDetectionStrategy, Component, ElementRef, ViewChild, computed, effect, inject, input, output, signal } from '@angular/core';
 import { ReviewerSession } from '../../../../services/reviewer-session.service';
 import { DecisionFocusDirective } from '../../../../components/decision-focus/decision-focus.directive';
@@ -47,7 +48,7 @@ import { injectAcceptanceRefusalTooltip } from '../../state/acceptance-refusal.m
   selector: 'app-detail-header',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ProjectHygieneBadgeComponent, TooltipDirective, MenuComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, PendingButtonDirective, ExecutionLocationBadgeComponent, CopyableTaskKeyComponent, RemoteDispatchRejectionComponent, StatusIndicatorComponent, DecisionFocusDirective],
+  imports: [CardWaitingLineComponent, ProjectHygieneBadgeComponent, TooltipDirective, MenuComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, PendingButtonDirective, ExecutionLocationBadgeComponent, CopyableTaskKeyComponent, RemoteDispatchRejectionComponent, StatusIndicatorComponent, DecisionFocusDirective],
   templateUrl: './detail-header.component.html',
   styleUrl: './detail-header.component.scss'
 })
@@ -124,7 +125,6 @@ export class DetailHeaderComponent {
   readonly commitMessageDraft = input<string>('');
   readonly generatingCommitMessage = input(false);
   readonly committing = input(false);
-
   readonly back = output<void>();
   readonly startTitleEdit = output<void>();
   readonly cancelTitleEdit = output<void>();
@@ -149,7 +149,6 @@ export class DetailHeaderComponent {
   readonly triageAction = output<TriageActionPayload>();
   readonly generateCommitMessage = output<void>();
   readonly addCommit = output<void>();
-
   /**
    * Tooltip text explaining the snapshot iteration, surfaced through the
    * app's canonical `[cacTooltip]` directive (single visual standard,

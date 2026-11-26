@@ -1,4 +1,4 @@
-import { TaskState, integrationRecordTooltip, latestIntegratedRecord } from '../../../../models/task.model';
+import { isTerminalTaskState, TaskState, integrationRecordTooltip, latestIntegratedRecord } from '../../../../models/task.model';
 import type { TaskInfo, ClientSummary, CliType, TagRegistryEntry, AutoLoopSnapshot, PendingIntent, TaskMode } from '../../../../models/task.model';
 import type { TaskCommitInfo } from '../../../../features/git';
 import type { StructuredTooltip } from 'coding-agent-chat/shared';
@@ -1470,11 +1470,12 @@ export interface HumanReviewBadge { label: string; tone: 'attention'; tooltip: s
 /** Decision-backlog impact is independent of the orchestrator review verdict. */
 export function buildDecisionDamBadge(job: TaskInfo): HumanReviewBadge | null {
   const impact = job.transitiveWaiters;
-  if (job.state !== TaskState.HumanReview || !impact || impact.count <= 0) return null;
+  if ((![TaskState.HumanReview, TaskState.Escalated, TaskState.CodeNotComplete].some(state => state === job.state)
+    && !job.parkedBlocker) || isTerminalTaskState(job.state) || !impact || impact.count <= 0) return null;
   return {
-    label: `Dams ${impact.count} ${impact.count === 1 ? 'card' : 'cards'}`,
+    label: `holds ${impact.count} ${impact.count === 1 ? 'card' : 'cards'}`,
     tone: 'attention',
-    tooltip: `Transitive decision backlog (${impact.count}): ${impact.keys.join(', ')}. These cards wait directly or indirectly on this decision.`,
+    tooltip: `Holds ${impact.count} cards: ${impact.keys.join(', ')}. These cards depend directly or indirectly on this card.`,
   };
 }
 

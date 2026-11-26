@@ -1833,7 +1833,7 @@ describe('buildDecisionDamBadge', () => {
       state: '5-human-review',
       transitiveWaiters: { count: 3, keys: ['AGT-2201', 'AGT-2202', 'AGT-2203'] },
     }));
-    expect(badge?.label).toBe('Dams 3 cards');
+    expect(badge?.label).toBe('holds 3 cards');
     expect(badge?.tooltip).toContain('AGT-2201, AGT-2202, AGT-2203');
   });
 
@@ -1843,7 +1843,7 @@ describe('buildDecisionDamBadge', () => {
       orchestratorVerdict: 'escalate',
       transitiveWaiters: { count: 1, keys: ['AGT-2201'] },
     });
-    expect(buildDecisionDamBadge(job)?.label).toBe('Dams 1 card');
+    expect(buildDecisionDamBadge(job)?.label).toBe('holds 1 card');
     expect(buildHumanReviewBadge(job)).toBeNull();
   });
 });

@@ -1,3 +1,4 @@
+import { CardWaitingLineComponent } from '../../../../../../components/card-waiting-line/card-waiting-line';
 import {
   ChangeDetectionStrategy, Component, DestroyRef, ElementRef, ViewChild, computed, effect, inject, input, output, signal,
 } from '@angular/core';
@@ -48,6 +49,7 @@ function makeAttachmentId(): string {
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    CardWaitingLineComponent,
     TooltipDirective,
     ConceptDossierNoticeComponent,
     ConceptPromotionComponent,

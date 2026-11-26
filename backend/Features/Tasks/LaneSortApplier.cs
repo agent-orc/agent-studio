@@ -36,7 +36,9 @@ public static class LaneSortApplier
             }
             result.AddRange(sorted);
         }
-        return result;
+        return lane is TaskStates.HumanReview or TaskStates.Escalated
+            ? result.OrderByDescending(job => job.TransitiveWaiters?.Count ?? 0)
+            : result;
     }
 
     /// <summary>

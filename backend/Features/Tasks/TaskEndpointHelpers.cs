@@ -465,8 +465,9 @@ internal static class TaskEndpointHelpers
     {
         var snapshot = jobs as IReadOnlyCollection<TaskInfo> ?? jobs.ToList();
         var withDeps = snapshot.Where(j => j.References?.DependsOn.Count > 0).ToList();
-        var humanReview = snapshot.Where(j => j.State == TaskStates.HumanReview).ToList();
-        if (withDeps.Count == 0 && humanReview.Count == 0) return new();
+        var holdingCards = snapshot.Where(j => j.State is TaskStates.HumanReview or TaskStates.Escalated or TaskStates.CodeNotComplete
+            || j.ParkedBlocker is not null && !WaitsOnEvaluator.IsFulfilledState(j.State)).ToList();
+        if (withDeps.Count == 0 && holdingCards.Count == 0) return new();
 
         // Dependency targets come from the read-after-write core graph. A
         // target publish must be visible even while the board scan is pending.
@@ -500,7 +501,7 @@ internal static class TaskEndpointHelpers
             waitsOn[job.TaskKey] = status;
         }
         var transitiveWaiters = new Dictionary<string, TransitiveWaitersStatus>(StringComparer.Ordinal);
-        foreach (var job in humanReview)
+        foreach (var job in holdingCards)
         {
             var impact = index.FindTransitiveWaiters(job.Key, eligibleKeys);
             if (impact.Count > 0) transitiveWaiters[job.TaskKey] = impact;

@@ -49,6 +49,22 @@ afterEach(() => {
 });
 
 describe('OverviewTitleBlockComponent', () => {
+  it('keeps the server waiting reason visible in the loaded Overview title', async () => {
+    const fixture = await build(baseJob({ waitingReason: 'waits for a free slot' }));
+    expect(fixture.nativeElement.querySelector('[data-testid="card-waiting-reason"]')?.textContent)
+      .toContain('waits for a free slot');
+  });
+
+  it('shows transitive held-card links in the loaded Overview title', async () => {
+    const fixture = await build(baseJob({
+      state: '5e-escalated', transitiveWaiters: { count: 2, keys: ['AGT-1', 'AGT-2'] },
+    }));
+    const held = fixture.nativeElement.querySelector('[data-testid="detail-held-cards"]');
+    expect(held?.textContent).toContain('holds 2 cards:');
+    expect([...held.querySelectorAll('a')].map((link: unknown) => (link as HTMLAnchorElement).textContent?.trim()))
+      .toEqual(['AGT-1', 'AGT-2']);
+  });
+
   it('compiles + instantiates without throwing', async () => {
     const fixture = await build(baseJob());
     expect(fixture.componentInstance).toBeTruthy();

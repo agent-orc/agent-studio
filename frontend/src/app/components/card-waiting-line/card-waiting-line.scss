@@ -1,0 +1,22 @@
+:host {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--studio-fg-muted);
+  font-size: 12px;
+}
+
+.waiting-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.waiting-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-1);
+  font-variant-numeric: tabular-nums;
+
+  a { color: var(--studio-accent); }
+}

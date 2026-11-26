@@ -23,7 +23,8 @@ public static class TaskDetailResources
             HttpContext context, ProjectRegistry projects, TaskIndexCache index,
             ITaskCoreRuntime runtime, TaskScannerService scanner, TaskListGitProjectionCache snapshots,
             ProjectSettingsService projectSettings, AgentStudio.Dispatch.DispatchStore forecasts,
-            AgentStudio.Runner.AttemptAuthorityService attemptAuthority, CliRouter router, TaskRunnerService runners) =>
+            AgentStudio.Runner.AttemptAuthorityService attemptAuthority, CliRouter router, TaskRunnerService runners,
+            ITokenPricing pricing, TaskLiveStatusProjection liveStatus) =>
         {
             var lookup = Resolve(jobId, project, generation, context, projects, index);
             if (lookup.Error is not null) return lookup.Error;
@@ -31,20 +32,28 @@ public static class TaskDetailResources
             var facts = index.GetDetailFacts(core.Id, core.WatchPath);
             var task = facts.Info;
             if (task is null || task.TaskKey != core.TaskKey) return Results.NotFound();
+            var dependencies = TaskEndpointHelpers.BuildDependencyGraphLookups([task], scanner,
+                ProjectAccessAuthorization.FilterTasks(context, index.GetResidentTasks(), projects)
+                    .Where(job => !job.Fixture), attemptAuthority, snapshots, projectSettings);
+            var presentation = TaskEndpointHelpers.WithRuntime(pricing, task, router, runners,
+                null, null, dependencies.WaitsOn, dependencies.TransitiveWaiters);
+            presentation = CardWaitingReason.Attach(presentation with
+            { LiveStatus = liveStatus.BuildLookup([task], publishedRunnerStatus: true).GetValueOrDefault(task.TaskKey) });
             var data = new TaskOverviewResource(task.Decision,
                 TaskEndpointHelpers.BuildPlanningSpawnSummary(task),
                 TaskEndpointHelpers.BuildConceptDossierSummary(task),
                 task.OlderBriefDelivery, task.RelatedWikiPages, task.CreationSource,
                 task.CompletionClaim, task.ParkedBlocker, task.NeedsInput,
-                task.References, task.References.DependsOn.Count > 0
-                    ? facts.References.EvaluateWaitsOn(task,
-                        snapshots.ReadDependencyIntegration(facts.References.DependencyTargets([task])),
-                        projectSettings.Get(task.ProjectName).IntegrationBranch) : null,
+                task.References, presentation.WaitsOn,
                 // AGT-3096: the core-first detail needs the same acceptance
                 // lineage gap the legacy full-detail read projects.
                 AcceptanceAttemptLineagePolicy.ReadGap(task, attemptAuthority),
                 ExecutionLocation(task, router, runners), task.PendingIntent)
-            { TouchForecast = forecasts.Read(task.ProjectName, task.TaskKey) };
+            {
+                TouchForecast = forecasts.Read(task.ProjectName, task.TaskKey),
+                WaitingReason = presentation.WaitingReason,
+                TransitiveWaiters = presentation.TransitiveWaiters,
+            };
             return Reply(context, core, lookup.ProjectId!, runtime, "overview", "ready", data,
                 null, Modified(Path.Combine(core.FolderPath, "task.json")));
         });
@@ -334,4 +343,6 @@ public sealed record TaskOverviewResource(DecisionContent? Decision,
     TaskExecutionLocation? ExecutionLocation, PendingIntent? PendingIntent)
 {
     public AgentStudio.Dispatch.TouchForecastV1? TouchForecast { get; init; }
+    public string? WaitingReason { get; init; }
+    public TransitiveWaitersStatus? TransitiveWaiters { get; init; }
 }

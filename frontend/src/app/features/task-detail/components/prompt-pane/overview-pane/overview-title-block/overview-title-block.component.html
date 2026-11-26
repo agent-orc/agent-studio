@@ -58,6 +58,8 @@
     }
   </div>
 
+  <app-card-waiting-line [task]="job()" [detail]="true" />
+
   @if (canPromote() && !job().planningSpawn) {
     <div class="ov-promote" data-testid="overview-promote">
       <button type="button" class="ov-promote__btn"

@@ -243,10 +243,13 @@ export function sortLaneLikeBoard(
     if (group) group.push(job);
     else byProject.set(project, [job]);
   }
-  return [...byProject.keys()].sort(compareIgnoreCase).flatMap((project) => {
+  const sorted = [...byProject.keys()].sort(compareIgnoreCase).flatMap((project) => {
     const group = byProject.get(project)!;
     const strategy = strategies[group[0].projectName]?.[laneKey];
     const comparer = COMPARERS[strategy ?? ''] ?? COMPARERS['lane-entry'];
     return [...group].sort(comparer);
   });
+  return laneKey === TaskState.HumanReview || laneKey === TaskState.Escalated
+    ? sorted.sort((a, b) => (b.transitiveWaiters?.count ?? 0) - (a.transitiveWaiters?.count ?? 0))
+    : sorted;
 }

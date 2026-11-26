@@ -316,6 +316,20 @@ public sealed class LaneSortStrategyTests : IDisposable
 
     private static DateTime T(int seconds) => new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(seconds);
 
+    [Theory]
+    [InlineData(TaskStates.HumanReview)]
+    [InlineData(TaskStates.Escalated)]
+    public void DecisionLanes_PutHoldersFirstAcrossProjects_AndPreserveOtherOrder(string lane)
+    {
+        var free = J("free", project: "A", order: 1) with { State = lane };
+        var held = J("held", project: "Z", order: 2) with
+        { State = lane, TransitiveWaiters = new() { Keys = ["ATP-1", "ATP-2"] } };
+        var smaller = J("smaller", project: "A", order: 3) with
+        { State = lane, TransitiveWaiters = new() { Keys = ["ATP-3"] } };
+        Assert.Equal(new[] { "held", "smaller", "free" },
+            LaneSortApplier.Sort([free, smaller, held], lane, _ => new ProjectSettings()).Select(job => job.Id));
+    }
+
     private static TaskInfo J(
         string id,
         string? key = null,
