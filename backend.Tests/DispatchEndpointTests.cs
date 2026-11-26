@@ -40,6 +40,104 @@ public sealed class DispatchEndpointTests : IDisposable
         });
     }
 
+    [Fact]
+    public async Task Batch_creation_assigns_a_wave_and_retains_cause_paths_in_backlog()
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var response = await client.PostAsJsonAsync("/api/tasks/batch", new
+        {
+            cards = Enumerable.Range(0, 6).Select(i => new
+            {
+                title = "Source finding " + i, watchPath = Watch, creationSource = "playthrough",
+                citedPaths = new[] { "backend/Features/Tasks/A.cs" }, targetState = TaskStates.Ready,
+                cliType = "codex", model = "gpt-6.2", modelExplicit = true, thinkingLevelExplicit = true,
+            }).ToArray(),
+        });
+        response.EnsureSuccessStatusCode();
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var created = json.GetProperty("created").EnumerateArray().ToArray();
+        Assert.Equal(6, created.Length);
+        var wave = created[0].GetProperty("waveId").GetString();
+        Assert.StartsWith("wave-", wave);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        foreach (var item in created)
+        {
+            Assert.Equal(wave, item.GetProperty("waveId").GetString());
+            var card = scanner.FindJob(item.GetProperty("card").GetProperty("id").GetString()!, Watch)!;
+            Assert.Equal(TaskStates.Backlog, card.State);
+            Assert.Equal(wave, card.WaveId);
+            Assert.Equal(new[] { "backend/Features/Tasks/A.cs" }, card.CitedPaths);
+        }
+        var invalid = await client.PostAsJsonAsync("/api/tasks", new
+            { title = "Invalid citation", project = "Forecast Project", citedPaths = new[] { "../secret" } });
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, invalid.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("live", false, 2)]
+    [InlineData("live", true, 1)]
+    [InlineData("shadow", false, 0)]
+    public async Task Wave_planning_records_every_member_before_release_and_stops_on_lease_loss(string mode, bool loseLease, int moves)
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        var services = factory.Services;
+        var scanner = services.GetRequiredService<TaskScannerService>();
+        var settings = services.GetRequiredService<ProjectSettingsService>();
+        settings.SetDispatchMode("Forecast Project", mode);
+        var mutations = services.GetRequiredService<TaskMutationService>();
+        var ids = Enumerable.Range(0, 2).Select(i => mutations.CreateJob(new()
+        {
+            Title = "Wave member " + i, WatchPath = Watch, CreationSource = "playthrough",
+            WaveId = "complete-wave", Agent = "codex", TargetState = TaskStates.Ready,
+        })).ToArray();
+        Assert.All(ids, id => Assert.NotNull(id));
+        var cards = ids.Select(id => scanner.FindJob(id!, Watch)!).ToArray();
+        Assert.All(cards, c => Assert.Equal(TaskStates.Backlog, c.State));
+        var index = services.GetRequiredService<TaskIndexCache>();
+        index.GetSnapshot();
+        var projects = services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
+        var project = projects.FindByIdOrDisplayName("Forecast Project")!;
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 11, 1, 12, 0, 0, TimeSpan.Zero));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["Security:Profile"] = "networked", ["TaskRepository"] = Path.Combine(_root, "wave-security"), ["Secrets:KeyFile"] = Path.Combine(_root, "wave.kek") }).Build();
+        var security = new AgentStudio.Security.AccessSecurityStore(config,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentStudio.Security.AccessSecurityStore>.Instance, clock);
+        var bootstrap = security.Bootstrap(new("wave.owner", "correct horse battery staple!", null));
+        var owner = security.AuthenticateSession(bootstrap.SessionToken)!;
+        var secret = security.BeginTotpEnrollment(owner);
+        security.ConfirmTotpEnrollment(owner, AgentStudio.Security.SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
+        clock.Advance(TimeSpan.FromSeconds(30));
+        security.VerifyStepUp(owner, AgentStudio.Security.SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
+        var activations = new AgentStudio.Personas.PersonaActivationStore(null, new(), security, _ => project.WorkspaceId, clock);
+        var activation = activations.Activate(project.WorkspaceId, "area-warden", new(), owner);
+        clock.SetUtcNow(new DateTimeOffset(activation.ShadowUntil, TimeSpan.Zero).AddMinutes(1));
+        var store = services.GetRequiredService<DispatchStore>();
+        var lease = store.AcquireLease(project.DisplayName, "area-warden", 0, clock.GetUtcNow(), TimeSpan.FromHours(1), true, true, true)!;
+        foreach (var card in cards)
+            store.Write(card.ProjectName, card.TaskKey, new(["a.cs"], ["a.cs"], ["area"], [], "high", "v1"));
+        var dispatchers = new DispatcherShadowService(store, activations, projects, index, settings, clock,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<DispatcherShadowService>.Instance);
+        var api = new DispatchRecutTests.MemoryApi(cards.Select(c => new DispatchRecutOriginal(c, "Finding", [c.Key!])));
+        api.AfterMove = () =>
+        {
+            var release = store.ReadWaveRelease(project.DisplayName, "complete-wave")!;
+            Assert.False(release.Complete);
+            Assert.All(cards, c => Assert.Contains(c.Key!, release.Cards));
+            var justReleased = api.Cards.Values.First(c => c.Info.State == TaskStates.Ready).Info;
+            Assert.Equal("source-wave-releasing", dispatchers.Pickup(justReleased, store.ReadLive(project.DisplayName)!.Record).Reason);
+            if (loseLease) store.ReleaseLease(project.DisplayName, lease.Persona, lease.Fence, clock.GetUtcNow());
+        };
+        var service = new DispatchWaveService(scanner, settings, store, dispatchers, null!, projects, clock);
+        var result = await service.PlanAsync(project.Id, "complete-wave", api, default);
+        Assert.Equal(moves, result.Released.Count);
+        if (mode == "live") Assert.Equal(!loseLease, store.ReadWaveRelease(project.DisplayName, "complete-wave")!.Complete);
+        Assert.Equal(mode == "shadow" ? "shadow" : loseLease ? "interrupted" : "planned", result.State);
+        Assert.All(cards, c => Assert.Equal(999, c.Order));
+    }
+
     [Theory]
     [InlineData("local")]
     [InlineData("remote-claim")]

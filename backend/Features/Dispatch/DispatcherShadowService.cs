@@ -15,7 +15,7 @@ public sealed class DispatcherShadowService(DispatchStore store, PersonaActivati
     ILogger<DispatcherShadowService> logger, AgentStudio.Tasks.TaskListGitProjectionCache? gitProjection = null)
 {
     public DispatchShadowRecordV1? RecordPick(TaskInfo candidate, IReadOnlyList<RunningTask> running,
-        IReadOnlyList<InFlightTask> inFlight, string path, IReadOnlyList<string>? pickupCandidates = null)
+        IReadOnlyList<InFlightTask> inFlight, string path, IReadOnlyList<string>? pickupCandidates = null, string? planningWave = null)
     {
         try
         {
@@ -31,18 +31,40 @@ public sealed class DispatcherShadowService(DispatchStore store, PersonaActivati
             var cards = tasks.GetAllResidentTasks().Where(c => !c.Fixture).ToArray();
             var referenceIndex = tasks.GetCoreReferenceIndex();
             var config = settings.Get(candidate.ProjectName);
+            var now = time.GetUtcNow();
+            var priors = new Dictionary<string, int>(StringComparer.Ordinal);
+            var positions = cards.Where(c => c.ProjectName == candidate.ProjectName && c.WaveId is not null)
+                .GroupBy(c => c.WaveId).SelectMany(g => g.OrderBy(c => c.CreatedAt).ThenBy(c => c.Key, StringComparer.Ordinal)
+                    .Select((c, position) => (c.TaskKey, Position: position))).ToDictionary(c => c.TaskKey, c => c.Position);
             var integration = gitProjection?.ReadDependencyIntegration(cards);
             var ready = cards.Where(c => c.ProjectName.Equals(candidate.ProjectName, StringComparison.OrdinalIgnoreCase)
-                && (c.State == TaskStates.Ready || c.Id == candidate.Id && c.State == TaskStates.Progress) && AgentTypes.IsAutoPickupEligible(c.Agent)
-                && !c.WaitingForEngineDecision).Select(c =>
+                && (c.State == TaskStates.Ready || c.Id == candidate.Id && c.State == TaskStates.Progress
+                    || planningWave is not null && c.State == TaskStates.Backlog && c.WaveId == planningWave) && AgentTypes.IsAutoPickupEligible(c.Agent)
+                && !c.WaitingForEngineDecision
+                && (c.WaveId is null || c.WaveId == planningWave
+                    || store.ReadWaveRelease(c.ProjectName, c.WaveId)?.Complete == true)).Select(c =>
                 {
                     var scope = Predict(c);
                     return new DispatchReadyCard(c.Key ?? c.TaskKey, c.Order, c.EnteredLaneAt,
                         c.References?.DependsOn.Select(e => e.Key).ToArray() ?? [],
                         !referenceIndex.EvaluateWaitsOn(c, integration, config.IntegrationBranch).Blocked, Forecast(c.Key ?? c.TaskKey),
                         scope.PredictedScope, scope.Exclusive, scope.ReadOnly,
-                        Urgent: c.Tags.Contains("urgent", StringComparer.OrdinalIgnoreCase));
+                        Urgent: c.Tags.Contains("urgent", StringComparer.OrdinalIgnoreCase),
+                        Source: c.WaveId is null ? null : new(c.WaveId,
+                            MonolithTransitionAdapter.DispatchSourceKind(c.CreationSource),
+                            positions.GetValueOrDefault(c.TaskKey),
+                            SourcePrior(c)));
                 }).OrderBy(c => c.Key, StringComparer.Ordinal).ToArray();
+            int SourcePrior(TaskInfo card)
+            {
+                var kind = MonolithTransitionAdapter.DispatchSourceKind(card.CreationSource);
+                if (priors.TryGetValue(kind, out var cached)) return cached;
+                var delivered = cards.Where(c => c.ProjectName == card.ProjectName && c.State is TaskStates.Completed or TaskStates.Archive
+                    && MonolithTransitionAdapter.DispatchSourceKind(c.CreationSource) == kind)
+                    .Select(c => store.Read(c.ProjectName, c.TaskKey)?.Deliveries.Where(d => d.RecordedAt < now).OrderBy(d => d.RecordedAt).LastOrDefault()).Where(d => d is not null).Select(d => d!);
+                return priors[kind] = (int)Math.Ceiling(MonolithTransitionAdapter.DispatchSizePrior(delivered
+                    .Select(d => d.RealFiles.Distinct(StringComparer.Ordinal).Count(TouchForecast.IsCode)).ToArray()) ?? 0);
+            }
             var exposed = cards.Select(c => integration?.TryGetValue(c.TaskKey, out var status) == true
                 && TaskIntegrationBranch.Name(status.IntegrationBranch) == TaskIntegrationBranch.Name(config.IntegrationBranch)
                     ? c with { Integration = status } : c).ToArray();
@@ -51,7 +73,7 @@ public sealed class DispatcherShadowService(DispatchStore store, PersonaActivati
                 .Concat(inFlight).GroupBy(r => r.TaskId, StringComparer.OrdinalIgnoreCase).Select(g => g.Last()).ToArray();
             var residentRunning = OverlapComparisonSet.ForProject(exposed, candidate.ProjectName, OverlapWindows.InFlight,
                 Predict).Running;
-            running = (path == "remote-claim" ? residentRunning : Array.Empty<RunningTask>()).Concat(running).GroupBy(r => r.TaskId, StringComparer.OrdinalIgnoreCase)
+            running = (path is "remote-claim" or "source-wave" ? residentRunning : Array.Empty<RunningTask>()).Concat(running).GroupBy(r => r.TaskId, StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.Last()).ToArray();
             allInFlight = OverlapComparisonSet.For(candidate, allInFlight.Where(r => !running.Any(run => run.TaskId == r.TaskId)).ToArray()).ToArray();
             var flight = running.Select(r => Flight(r.CardKey ?? r.TaskId, true, r.Parallelism))
@@ -62,7 +84,6 @@ public sealed class DispatcherShadowService(DispatchStore store, PersonaActivati
                 var scope = config.DispatchMode == "live" ? PredictScope(key, previous, candidate.ProjectName) : previous;
                 return new(key, holdsSlot, Forecast(key), scope.PredictedScope, holdsSlot && scope.Exclusive, scope.ReadOnly);
             }
-            var now = time.GetUtcNow();
             var conflicts = store.ReadConflicts(candidate.ProjectName, to: now);
             var ledger = new DispatchLedgerSummary(conflicts.SelectMany(c => c.ConflictedFiles
                     .Select(file => new DispatchHotModule(TouchForecast.Module(file), c.At))).ToArray(),
@@ -147,9 +168,11 @@ public sealed class DispatcherShadowService(DispatchStore store, PersonaActivati
         var satisfied = tasks.GetAllResidentTasks().Where(c => c.State is TaskStates.Completed or TaskStates.Archive
             || !OverlapComparisonSet.IsInFlight(c) && c.Integration?.Status == IntegrationStatuses.Integrated)
             .Select(c => c.Key ?? c.TaskKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return MonolithTransitionAdapter.DispatchPickup(record?.Plan, card.Key ?? card.TaskKey, time.GetUtcNow(),
+        var decision = MonolithTransitionAdapter.DispatchPickup(record?.Plan, card.Key ?? card.TaskKey, time.GetUtcNow(),
             record is not null && owner is not null && live?.Record.DecisionId == record.DecisionId && lease?.Fence == live.Fence
                 && lease?.ExpiresAt > time.GetUtcNow(), satisfied);
+        return MonolithTransitionAdapter.DispatchWavePickup(decision, card.WaveId,
+            card.WaveId is null || store.ReadWaveRelease(card.ProjectName, card.WaveId)?.Complete == true);
     }
 
     public bool Validate(TaskInfo card, string? decisionId)

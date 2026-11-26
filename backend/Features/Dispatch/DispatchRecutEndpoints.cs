@@ -49,7 +49,7 @@ public static class DispatchRecutEndpoints
         }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.ProjectCardsWrite);
     }
 
-    private static HttpClient Client(HttpContext context)
+    internal static HttpClient Client(HttpContext context)
     {
         // Pin the connection to this listener. Retain the original host for TLS
         // certificate validation and the browser origin checks; never resolve it.

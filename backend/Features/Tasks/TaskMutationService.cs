@@ -51,9 +51,11 @@ public class TaskMutationService
     /// </summary>
     private readonly IAtomicJsonFileWriter? _keyFileWriter;
     private readonly bool _guardedDelivery;
+    private readonly AgentStudio.Projects.ProjectSettingsService? _dispatchSettings;
 
-    public TaskMutationService(TaskScannerService scanner, ClientIdentityStore clients, ProjectRegistry projectRegistry, TaskChangeNotifier notifier, ILogger<TaskMutationService> logger, TimelineLog? timeline = null, LaneMutexRegistry? laneMutex = null, GitService? git = null, IAtomicJsonFileWriter? fileWriter = null, OrchestratorLog? activityFeed = null, IConfiguration? configuration = null)
+    public TaskMutationService(TaskScannerService scanner, ClientIdentityStore clients, ProjectRegistry projectRegistry, TaskChangeNotifier notifier, ILogger<TaskMutationService> logger, TimelineLog? timeline = null, LaneMutexRegistry? laneMutex = null, GitService? git = null, IAtomicJsonFileWriter? fileWriter = null, OrchestratorLog? activityFeed = null, IConfiguration? configuration = null, AgentStudio.Projects.ProjectSettingsService? dispatchSettings = null)
     {
+        _dispatchSettings = dispatchSettings;
         _scanner = scanner;
         _clients = clients;
         _projectRegistry = projectRegistry;
@@ -2004,6 +2006,7 @@ public class TaskMutationService
             : watchPaths.FirstOrDefault(w => WatchPathComparison.PathsEqual(w.Path, requestedPath));
 
         if (entry == null) return null;
+        if (!AgentStudio.Dispatch.DispatchSourceMetadata.Valid(req)) return null;
 
         var acceptanceScope = TaskAcceptanceScopes.Normalize(req.AcceptanceScope);
         if (req.AcceptanceScope is not null && acceptanceScope is null) return null;
@@ -2055,6 +2058,8 @@ public class TaskMutationService
                 ? req.TargetState
                 : null;
         if (targetState == null) return null;
+        targetState = AgentStudio.Runner.MonolithTransitionAdapter.DispatchWaveLanding(targetState, req.WaveId,
+            _dispatchSettings?.Get(entry.Name).DispatchMode ?? "off", isDecision);
         if (isDecision && targetState != TaskStates.Preparation) return null;
         // A new card has no review verdict, accepted epoch, or integration
         // proof. Protected lanes can only be entered through a guarded move.
@@ -2152,7 +2157,7 @@ public class TaskMutationService
                         && job.State == targetState)
                     .Select(job => (int?)job.Order).Max() ?? 0;
                 var nextOrder = Math.Max(residentMax, _lastCreateOrder.GetValueOrDefault(orderKey)) + 10;
-                resolvedOrder = req.Order != 999 ? req.Order : nextOrder;
+                resolvedOrder = AgentStudio.Runner.MonolithTransitionAdapter.DispatchWaveOrder(req.Order, nextOrder, req.WaveId);
                 _lastCreateOrder[orderKey] = Math.Max(residentMax, resolvedOrder);
             }
         }
@@ -2205,6 +2210,8 @@ public class TaskMutationService
             ["title"] = req.Title,
             ["createdAt"] = DateTime.UtcNow.ToString("o"),
             ["creationSource"] = string.IsNullOrWhiteSpace(req.CreationSource) ? "human" : req.CreationSource.Trim(),
+            ["waveId"] = req.WaveId?.Trim(),
+            ["citedPaths"] = req.CitedPaths.Select(p => p.Trim()).Distinct(StringComparer.Ordinal).ToArray(),
             ["createdBy"] = string.IsNullOrWhiteSpace(req.CreatedBy) ? ownerClientId : req.CreatedBy.Trim(),
             // Lane-entry sort anchor: a freshly created task has just entered
             // its initial lane, so stamp it now. Re-stamped on every move.

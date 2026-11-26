@@ -455,7 +455,7 @@ public static class RoutePermissionCatalog
         AddProjectChecked("POST", IamPermissions.ProjectRead, "/api/tasks/acceptance-readiness");
         // Creation, reorder, and batch-move check every affected project in
         // the handler; title and prompt helpers touch no project.
-        AddProjectChecked("POST", IamPermissions.ProjectCardsWrite, "/api/tasks", "/api/tasks/reorder", "/api/tasks/batch-move",
+        AddProjectChecked("POST", IamPermissions.ProjectCardsWrite, "/api/tasks", "/api/tasks/batch", "/api/tasks/reorder", "/api/tasks/batch-move",
             "/api/title/generate", "/api/prompt/enhance");
         Add("DELETE", IamPermissions.ProjectCardsWrite, "/api/tasks/{}");
         Under("W", IamPermissions.ProjectCardsWrite, "/api/tasks/{}",

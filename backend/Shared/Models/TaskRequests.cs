@@ -302,6 +302,8 @@ public record CreateTaskRequest
     public int Order { get; init; } = 999;
     public string Agent { get; init; } = "claude";
     public string? CreationSource { get; init; }
+    public string? WaveId { get; init; }
+    public IReadOnlyList<string> CitedPaths { get; init; } = [];
     public string? CreatedBy { get; init; }
 
     /// <summary>
@@ -905,3 +907,5 @@ public record SetCliModelRouteRequest
     public string? FallbackModel { get; init; }
     public string? FallbackThinkingLevel { get; init; }
 }
+
+public sealed record CreateTaskBatchRequest(IReadOnlyList<CreateTaskRequest> Cards);

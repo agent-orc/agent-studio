@@ -248,6 +248,7 @@ public sealed class DispatchRecutService(DispatchStore store, TaskScannerService
                             ? scope.Criteria.Select(c => Key(o.Info) + ": " + c)
                             : [Key(o.Info) + ": Complete the original work reproduced in this prompt."]).ToArray()) : null,
                 OwnerClientId = original.Info.OwnerClientId, Dossier = original.Info.Dossier,
+                WaveId = receipt.Wave, CitedPaths = members.SelectMany(o => o.Info.CitedPaths).Distinct(StringComparer.Ordinal).ToArray(),
                 CreationSource = original.Info.CreationSource + ":dispatch:packer:" + receipt.Id, CreatedBy = "persona:packer",
             }, ct);
             replacements[package.Id] = Key(created);

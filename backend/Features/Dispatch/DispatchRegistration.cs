@@ -8,6 +8,7 @@ public static class DispatchRegistration
     public static IServiceCollection AddDispatch(this IServiceCollection services)
     {
         services.AddSingleton<DispatchStore>();
+        services.AddSingleton<DispatchWaveService>();
         services.AddSingleton<IDispatchRecutDrafting, DispatchRecutDrafting>();
         services.AddSingleton<DispatchRecutService>();
         services.AddSingleton<DispatchReviewService>();
@@ -20,6 +21,7 @@ public static class DispatchRegistration
     public static void MapDispatchEndpoints(this WebApplication app)
     {
         app.MapDispatchRecutEndpoints();
+        app.MapDispatchWaveEndpoints();
         app.MapDispatchReviewEndpoints();
         app.MapGet("/api/projects/{project}/dispatch/mode", (string project,
             TaskScannerService scanner, ProjectSettingsService settings, HttpContext context, ProjectRegistry projects) =>
