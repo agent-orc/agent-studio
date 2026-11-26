@@ -17,9 +17,10 @@ public sealed class DispatchRecutService(DispatchStore store, TaskScannerService
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.Ordinal);
     private static string Key(TaskInfo c) => c.Key ?? c.TaskKey;
+    private static bool HasStarted(TaskInfo c) => c.ExecutionLocation?.StartedAt is not null
+        || c.SessionName is not null || c.SessionChain.Count > 0 || c.Commits.Count > 0 || c.LastUsage is not null;
     private static bool Unstarted(TaskInfo c) => c.State is TaskStates.Backlog or TaskStates.Ready
-        && c.ExecutionLocation?.StartedAt is null && c.SessionName is null && c.SessionChain.Count == 0
-        && c.Commits.Count == 0 && c.LastUsage is null;
+        && !HasStarted(c);
     private static bool SameReferences(TaskReferences a, TaskReferences b)
         => JsonSerializer.Serialize(a) == JsonSerializer.Serialize(b);
     public static string ReceiptId(string project, string wave, bool apply)
@@ -213,8 +214,7 @@ public sealed class DispatchRecutService(DispatchStore store, TaskScannerService
                 || current.CreationSource != original.Info.CreationSource || current.Order != original.Info.Order
                 || JsonSerializer.Serialize(current.AcceptanceScope) != JsonSerializer.Serialize(original.Info.AcceptanceScope)
                 || !current.Tags.SequenceEqual(original.Info.Tags)
-                || !Compatible(current, original.Info) || current.ExecutionLocation?.StartedAt is not null || current.SessionChain.Count > 0
-                || current.SessionName is not null || current.Commits.Count > 0 || current.LastUsage is not null)
+                || !Compatible(current, original.Info) || HasStarted(current))
                 throw new InvalidOperationException("Recut member changed after the plan was frozen.");
             if (current.State == TaskStates.Ready)
                 await api.MoveAsync(Key(current), TaskStates.Ready, TaskStates.Backlog, ct);
@@ -331,6 +331,9 @@ public sealed class DispatchRecutService(DispatchStore store, TaskScannerService
             r = r with { Replacements = replacements };
             var expected = r.Plan.Actions.Where(a => a.Apply && a.Kind == "package").All(a => replacements.ContainsKey(a.Id))
                 ? ExpectedReferences(r) : Affected(r).ToDictionary(o => Key(o.Info), o => o.Info.References);
+            // Partial application can leave replacements outside the expected-reference map.
+            // Fence writes with the actual snapshot validated for every original and replacement.
+            var validatedReferences = new Dictionary<string, TaskReferences>();
             foreach (var key in expected.Keys.Concat(replacements.Values).Distinct())
             {
                 var detail = await api.ReadAsync(key, ct) ?? throw new InvalidOperationException("Undo card disappeared.");
@@ -343,12 +346,12 @@ public sealed class DispatchRecutService(DispatchStore store, TaskScannerService
                 if (original is not null && ((detail.PromptMarkdown ?? "") != original.Prompt || card.Title != original.Info.Title)
                     || package is not null && (detail.PromptMarkdown != r.Texts[package.Id].Prompt || card.Title != r.Texts[package.Id].Title))
                     throw new InvalidOperationException("Undo would discard a later title or prompt edit.");
-                if (card.ExecutionLocation?.StartedAt is not null || card.SessionChain.Count > 0 || card.LastUsage is not null
-                    || card.SessionName is not null || card.Commits.Count > 0
+                if (HasStarted(card)
                     || card.State is not (TaskStates.Backlog or TaskStates.Ready or TaskStates.Archive)
                     || !SameReferences(card.References, expected.GetValueOrDefault(key) ?? new())
                         && !SameReferences(card.References, original?.Info.References ?? new()))
                     throw new InvalidOperationException("Undo would overwrite a started card or a later reference edit.");
+                validatedReferences[key] = card.References;
             }
             r = r with { State = "undoing" };
             store.WriteRecut(r);
@@ -367,14 +370,14 @@ public sealed class DispatchRecutService(DispatchStore store, TaskScannerService
                 }
                 if (c.State != TaskStates.Archive) await api.MoveAsync(key, c.State, TaskStates.Archive, ct);
                 c = await RequireAsync(api, key, ct);
-                if (!c.References.IsEmpty) await api.ReferencesAsync(key, new(), ct, expected[key]);
+                if (!c.References.IsEmpty) await api.ReferencesAsync(key, new(), ct, validatedReferences[key]);
             }
             foreach (var o in Affected(r))
             {
                 var key = Key(o.Info);
                 var before = await RequireAsync(api, key, ct);
                 if (!SameReferences(before.References, o.Info.References))
-                    await api.ReferencesAsync(key, o.Info.References, ct, expected[key]);
+                    await api.ReferencesAsync(key, o.Info.References, ct, validatedReferences[key]);
                 var c = await RequireAsync(api, key, ct);
                 if (c.State != o.Info.State) await api.MoveAsync(key, c.State, o.Info.State, ct);
             }

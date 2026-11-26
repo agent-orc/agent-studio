@@ -19,9 +19,9 @@ public sealed class DispatchRecutTests : IDisposable
     private DispatchRecutService Service(DispatchStore store, PersonaItemStore? items = null)
         => new(store, null!, null!, null!, items ?? new PersonaItemStore((string?)null), null!, _clock);
 
-    private DispatchRecutReceipt Receipt(bool live = true)
+    private DispatchRecutReceipt Receipt(bool live = true, int count = 4)
     {
-        var originals = Enumerable.Range(0, 4).Select(i => new DispatchRecutOriginal(new TaskInfo
+        var originals = Enumerable.Range(0, count).Select(i => new DispatchRecutOriginal(new TaskInfo
         {
             Id = "slug-" + i, Key = "P-" + i, Title = "Finding " + i, Agent = "codex", CliType = "codex",
             ProjectName = "p", State = TaskStates.Ready, CreationSource = "playthrough",
@@ -89,6 +89,45 @@ public sealed class DispatchRecutTests : IDisposable
         Assert.Equal(1, api.Creates);
         Assert.Equal("applied", recovered.State);
         Assert.Equal("undone", (await Service(Store()).UndoAsync("p", r.Id, api, default)).State);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Partial_package_creation_undo_preserves_concurrent_reference_edits(bool ownerEdit)
+    {
+        var r = Receipt(count: 7);
+        Assert.Equal(2, r.Plan.Actions.Count(a => a.Apply && a.Kind == "package"));
+        string? replacement = null;
+        var api = new MemoryApi(r.Originals) { FailCreateOnceAt = 2 };
+        api.AfterMove = () =>
+        {
+            if (ownerEdit && replacement is not null && api.Cards[replacement].Info.State == TaskStates.Archive)
+            {
+                var card = api.Cards[replacement];
+                api.Cards[replacement] = card with
+                { Info = card.Info with { References = new() { RelatedTo = ["OWNER-EDIT"] } } };
+            }
+        };
+        Store().WriteRecut(r);
+        await Assert.ThrowsAsync<HttpRequestException>(() => Service(Store()).ApplyAsync(r, api, default));
+        replacement = Assert.Single(Store().ReadRecut("p", r.Id)!.Replacements).Value;
+        if (ownerEdit)
+        {
+            await Assert.ThrowsAsync<HttpRequestException>(() => Service(Store()).UndoAsync("p", r.Id, api, default));
+            Assert.Equal(new[] { "OWNER-EDIT" }, api.Cards[replacement].Info.References.RelatedTo);
+            Assert.Equal("undoing", Store().ReadRecut("p", r.Id)!.State);
+            return;
+        }
+        Assert.Equal("undone", (await Service(Store()).UndoAsync("p", r.Id, api, default)).State);
+        Assert.Equal(1, api.Creates);
+        Assert.Equal(TaskStates.Archive, api.Cards[replacement].Info.State);
+        Assert.True(api.Cards[replacement].Info.References.IsEmpty);
+        Assert.All(r.Originals, o =>
+        {
+            Assert.Equal(o.Info.State, api.Cards[o.Info.Key!].Info.State);
+            Assert.Equal(JsonSerializer.Serialize(o.Info.References), JsonSerializer.Serialize(api.Cards[o.Info.Key!].Info.References));
+        });
     }
 
     [Fact]
@@ -213,13 +252,19 @@ public sealed class DispatchRecutTests : IDisposable
         public int Creates { get; private set; }
         public int Writes { get; private set; }
         public bool FailReferencesOnce { get; set; }
-        public Action? AfterMove { get; init; }
+        public int? FailCreateOnceAt { get; set; }
+        public Action? AfterMove { get; set; }
         public Action<string>? BeforeReferences { get; set; }
         public Task<TaskDetail?> ReadAsync(string key, CancellationToken ct)
             => Task.FromResult(Cards.GetValueOrDefault(key) ?? Cards.Values.FirstOrDefault(c => c.Info.Id == key));
         public async Task<TaskInfo> CreateAsync(CreateTaskRequest request, CancellationToken ct)
         {
             if (await ReadAsync(request.Id, ct) is { } exists) return exists.Info;
+            if (FailCreateOnceAt == Creates + 1)
+            {
+                FailCreateOnceAt = null;
+                throw new HttpRequestException("injected create failure");
+            }
             Creates++;
             var card = new TaskInfo { Id = request.Id, Key = "MERGED-" + Creates, Title = request.Title,
                 ProjectName = "p", State = request.TargetState!, Agent = request.Agent, CreationSource = request.CreationSource! };
