@@ -80,6 +80,21 @@ public sealed class ProjectTestSelectionTests : IDisposable
         Assert.Empty(result.Audit.OmittedSuites);
     }
 
+    [Theory]
+    [InlineData("backend/Build.Common.props")]
+    [InlineData("frontend/Build.Common.targets")]
+    [InlineData("backend/build.proj")]
+    [InlineData("frontend/affected.slnf")]
+    public void ImportedBuildConfigurationSelectsAllSuitesEvenInsideAnAffectedArea(string path)
+    {
+        var result = Plan(path);
+        Assert.True(result.Audit.FullSuiteRequired);
+        Assert.Empty(result.Audit.OmittedSuites);
+        Assert.Equal(VerifyCommandPlanner.Plan(Root, null).Commands.Select(command => command.Command),
+            result.Commands.Select(command => command.Command));
+        Assert.Contains(result.Audit.Reasons, reason => reason.Contains("Global build or project input changed"));
+    }
+
     [Fact]
     public void MixedBatchIsTheUnionOfMemberRequirements()
     {
