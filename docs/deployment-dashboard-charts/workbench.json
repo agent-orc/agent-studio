@@ -1,0 +1,377 @@
+{
+  "schemaVersion": 1,
+  "id": "deployment-dashboard-charts",
+  "title": "Deployment dashboard charts",
+  "summary": "Workspace / Deployments as charts on one aggregate: delivery figures, a tile map of projects by environments (drift, last run, health, waiting approvals, not set up, missing backup), a release flow with a virtualised card list, a deploy timeline with a time brush, and an opt-in 3D deploy landscape; filters in the link, cross-filter, keyboard and table alternatives. Measured on 40 projects, 4 environments, 6 tenants, 2,000 runs and 5,000 cards: uPlot plus small own forms (29.9 kB gzip) recommended over Apache ECharts (220.7 kB) and Chart.js with plugins (82.1 kB), in line with the live structure canvas Dossier; 3D on Canvas 2D (2.8 kB) instead of three.js (131.8 kB) or echarts-gl. Persona assessments as validated view specifications on top of facts. Ten decisions, eight slices, first the overview and the release flow on real data with the aggregation API and budget tests.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-11-26T21:30:00Z",
+  "sourceTaskKeys": [
+    "AGT-3950"
+  ],
+  "relatedTo": [
+    "AGT-3879",
+    "AGT-3949",
+    "AGT-3950",
+    "AGT-3954",
+    "AGT-3955",
+    "AGT-3200",
+    "AGT-3277",
+    "AGT-3315",
+    "AGT-3349",
+    "AGT-3389",
+    "AGT-3261",
+    "AGT-3177",
+    "AGT-3574",
+    "AGT-3365"
+  ],
+  "relatedTaskKeys": [
+    "AGT-3879",
+    "AGT-3949",
+    "AGT-3954",
+    "AGT-3955",
+    "AGT-3200",
+    "AGT-3277",
+    "AGT-3315",
+    "AGT-3349",
+    "AGT-3389"
+  ],
+  "buildsOn": [
+    "docs/live-structure-canvas/",
+    "docs/deployment-structure-view/",
+    "docs/operations/bereitstellung/",
+    "docs/operations/deployment-story/",
+    "docs/operations/integrierte-plattform/",
+    "docs/persona-team/",
+    "docs/operations/nordstern/"
+  ],
+  "coveredElsewhere": [
+    {
+      "slice": "Instance deploy records, live release, cards integrated but not live",
+      "card": "AGT-3879"
+    },
+    {
+      "slice": "Dashboard data: the instance\u0027s Production in /api/deploy/matrix and /api/deploy/cards, projects without environments, delivery lanes for watched projects",
+      "card": "AGT-3949 (on develop)"
+    },
+    {
+      "slice": "Structure facts, data locations with backup coverage, facts for warnings, live deltas",
+      "card": "AGT-3954 (on develop)"
+    },
+    {
+      "slice": "Topology of hosts, containers and services as the live structure canvas; canvas renderer and chart library for the hosting area",
+      "card": "AGT-3955 (docs/live-structure-canvas/, LSC-1 to LSC-10)"
+    },
+    {
+      "slice": "Persona scheduling, admission, budget ledger, items and importance",
+      "card": "PT-3, PT-4 (docs/persona-team/, delivered)"
+    },
+    {
+      "slice": "Persona view specifications for the structure canvas, sharing the occurrence with DDC-6",
+      "card": "LSC-8"
+    }
+  ],
+  "visualStack": {
+    "chartLibrary": "uPlot (D1 A, same as D2 A of docs/live-structure-canvas/)",
+    "ownForms": "tile map and sparklines on Canvas 2D, release flow as SVG",
+    "threeD": "Canvas 2D, opt-in (D4 A)",
+    "webgl": "none",
+    "lazy": true
+  },
+  "pages": [
+    "index.html",
+    "views.html",
+    "stack.html",
+    "assessments.html",
+    "prototype.html"
+  ],
+  "openDecisions": [
+    {
+      "id": "D1",
+      "decisionId": "ddc-framework",
+      "title": "Chart framework",
+      "question": "Which chart framework draws the deployment dashboard and, with it, every chart of the hosting area?",
+      "options": {
+        "A": "uPlot for time charts plus small own forms on Canvas 2D and SVG (the D2 recommendation of the live structure canvas Dossier)",
+        "B": "Apache ECharts 6, tree-shaken",
+        "C": "Chart.js 4 with the matrix, sankey and zoom plugins"
+      },
+      "recommended": "A",
+      "rationale": "Smallest lazy chunk and fastest filter change in the prototype, one library for the Studio as the structure canvas Dossier already recommends; ECharts stays the measured fallback when a form is needed that is not worth building.",
+      "status": "open"
+    },
+    {
+      "id": "D2",
+      "decisionId": "ddc-wrapper",
+      "title": "Angular wrapper",
+      "question": "How do Angular components host a chart?",
+      "options": {
+        "A": "A thin own chart host: signal inputs, one instance reused, ResizeObserver, dispose on destroy, loaded with a dynamic import",
+        "B": "A wrapper library of the chosen framework",
+        "C": "No wrapper, each view talks to the library"
+      },
+      "recommended": "A",
+      "rationale": "A small component, no second dependency to keep in step with Angular and the library, and the same host serves uPlot and the own forms.",
+      "status": "open"
+    },
+    {
+      "id": "D3",
+      "decisionId": "ddc-order",
+      "title": "Views first",
+      "question": "Which views are built first?",
+      "options": {
+        "A": "Overview and release flow, then the timeline, then the delivery figures",
+        "B": "Delivery figures and timeline first",
+        "C": "All views in one card"
+      },
+      "recommended": "A",
+      "rationale": "Overview and flow replace the table and the long card column the owner criticised; they need no library, so the first slice proves data, filters and budget.",
+      "status": "open"
+    },
+    {
+      "id": "D4",
+      "decisionId": "ddc-3d",
+      "title": "3D",
+      "question": "Is there a 3D view, and with which renderer?",
+      "options": {
+        "A": "Yes, opt-in: the deploy landscape drawn with Canvas 2D, loaded when opened; default views stay 2D",
+        "B": "Yes, opt-in, with three.js (WebGL)",
+        "C": "No 3D"
+      },
+      "recommended": "A",
+      "rationale": "The third axis carries the run count and the view flattens into its 2D heat map; 2.4 kB gzip instead of a second renderer of more than 100 kB, in line with one canvas renderer for the Studio.",
+      "status": "open"
+    },
+    {
+      "id": "D5",
+      "decisionId": "ddc-landing",
+      "title": "Landing view",
+      "question": "What does Workspace / Deployments open with?",
+      "options": {
+        "A": "Delivery figures and the overview tile map, release flow and timeline below on the same page",
+        "B": "The release flow first",
+        "C": "Today\u0027s table, charts on a second tab"
+      },
+      "recommended": "A",
+      "rationale": "Answers what is live where and what is behind before any scrolling; a persona may reorder the views for its reader (D9).",
+      "status": "open"
+    },
+    {
+      "id": "D6",
+      "decisionId": "ddc-topology",
+      "title": "Topology",
+      "question": "Where does the topology of hosts, containers and services live?",
+      "options": {
+        "A": "In Operations, as the live structure canvas; the deployment page links to it with the project and environment as filter",
+        "B": "As a tab of the deployment page",
+        "C": "In both places"
+      },
+      "recommended": "A",
+      "rationale": "One drawing of the machines; the canvas has its own concept (AGT-3955) and renderer, and two copies would drift apart.",
+      "status": "open"
+    },
+    {
+      "id": "D7",
+      "decisionId": "ddc-roles",
+      "title": "Roles that assess",
+      "question": "Which personas assess the deployment views?",
+      "options": {
+        "A": "Operations warden and reliability engineer, both already in the catalogue",
+        "B": "Reliability engineer only",
+        "C": "Every aspect persona"
+      },
+      "recommended": "A",
+      "rationale": "Backups, credentials and goals belong to the warden, failure clusters and flow to the reliability engineer; same choice as the structure canvas, so one occurrence can serve both views.",
+      "status": "open"
+    },
+    {
+      "id": "D8",
+      "decisionId": "ddc-cadence",
+      "title": "Refresh cadence",
+      "question": "When do the personas reassess the deployment views?",
+      "options": {
+        "A": "On relevant fact changes, coalesced, plus a check every 12 hours that calls the model only when the facts digest changed",
+        "B": "Every hour",
+        "C": "Only on demand"
+      },
+      "recommended": "A",
+      "rationale": "Fresh after a deploy or a failure, no model call when nothing changed, and inside the weekly allowance of each persona.",
+      "status": "open"
+    },
+    {
+      "id": "D9",
+      "decisionId": "ddc-composition",
+      "title": "How much the model composes",
+      "question": "How much of the deployment page may be LLM-composed?",
+      "options": {
+        "A": "Facts only",
+        "B": "Assessment on top of facts: order of views, emphasised figures and tiles, callouts, goals and a judgement, as a validated view specification",
+        "C": "The model also chooses chart types, grouping and scales"
+      },
+      "recommended": "B",
+      "rationale": "Facts, scales and colours stay deterministic and comparable from day to day; the persona says what matters and what to do next, and an invalid answer falls back to the facts.",
+      "status": "open"
+    },
+    {
+      "id": "D10",
+      "decisionId": "ddc-aggregate",
+      "title": "Aggregation API",
+      "question": "How do the views get their data?",
+      "options": {
+        "A": "One aggregate, GET /api/deploy/dashboard, for all views, plus a paged card list",
+        "B": "One endpoint per view",
+        "C": "Keep joining per-project endpoints in the browser"
+      },
+      "recommended": "A",
+      "rationale": "One request and one consistent as-of for every view instead of 1 \u002B N requests; filters change the query, not the number of calls.",
+      "status": "open"
+    }
+  ],
+  "implementationTasks": [
+    {
+      "id": "DDC-1",
+      "title": "Deployment overview and release flow on the dashboard aggregate",
+      "delivers": "Aggregate endpoint, chart host, overview tile map and release flow on real data, filters in the URL with cross-filter, budget checks as tests.",
+      "dependsOn": [],
+      "promptMarkdown": "# Deployment overview and release flow on the dashboard aggregate\n\nSource: \u0060docs/deployment-dashboard-charts/index.html\u0060 (AGT-3950). Read AGENTS.md, frontend/AGENTS.md and docs/start/README.md first. Use the recommendation of each decision named below unless the Dossier records another choice, and state which option you implemented. Git ownership stays with the platform. This is one bounded slice.\n\n## Deliver\n1. Backend: \u0060GET /api/deploy/dashboard?group=\u0026project=\u0026environment=\u0026tenant=\u0026from=\u0026to=\u0026outcome=\u0060 as specified in \u0060docs/deployment-dashboard-charts/stack.html\u0060, section Aggregation, built in the deploy feature from the existing projections (\u0060DeployMatrixResponse\u0060, \u0060CardDeploymentView\u0060, delivery columns, \u0060Deployment\u0060, instance deploy records of AGT-3879 and AGT-3949). Parts for this slice: \u0060projects\u0060, \u0060environments\u0060, \u0060tiles\u0060 (set up or not, live and newest release, \u0060releasesBehind\u0060, last run with state and failed step, health, approvals waiting, per tenant), \u0060flow\u0060 (nodes, links, \u0060waitingByProject\u0060). 10-second cache like \u0060/api/environment/flow\u0060; a task hub event \u0060deployDashboardChanged\u0060, at most one a second.\n2. Frontend, in \u0060frontend/src/app/features/deployments/\u0060: a lazy \u0060deployment-dashboard-charts\u0060 chunk loaded with a dynamic import from the existing dashboard component; a chart host component (D2 A: signal inputs, one instance reused, \u0060ResizeObserver\u0060, dispose on destroy); the overview tile map (port \u0060docs/deployment-dashboard-charts/src/charts.js\u0060, \u0060tileMap\u0060) and the release flow (\u0060flowView\u0060) on Studio tokens in both themes; text alternative as a table; keyboard as in the prototype.\n3. Filters project group, project, environment and tenant as state of the route (\u0060#/workspace/deployments?...\u0060), restored from a pasted link; clicking a tile or a flow state filters the other view; active filters as removable chips.\n4. The landing view follows D5; the plain table stays reachable as the text alternative. Projects without environments stay visible as not set up.\n5. No per-project request on this page any more: the per-project \u0060delivery-lanes\u0060 polling of the dashboard is removed.\n\n## Acceptance\n- Backend tests: the aggregate for a fixture of 40 projects, 4 environments, 6 tenants and 5,000 cards equals the per-project projections; projects without environments are in \u0060tiles\u0060 as not set up; the instance\u0027s Production is present.\n- Playwright with the dev backend fixture: the page issues exactly one dashboard request on load and one per filter change; screenshots of overview and flow in light and dark at 1440 and 390 px in the results folder.\n- Budget tests: build stats show the initial bundle unchanged against develop and the new lazy chunk at most 12 kB gzip; on the 40-project fixture the first chart is painted within 300 ms after the response and a filter change within 100 ms (performance marks read by Playwright, median of 5).\n- A pasted link restores the filters; every tile is reachable by keyboard and the table alternative lists the same values.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DDC-1",
+        "criteria": [
+          "Backend tests: the aggregate for a fixture of 40 projects, 4 environments, 6 tenants and 5,000 cards equals the per-project projections; projects without environments are in \u0060tiles\u0060 as not set up; the instance\u0027s Production is present.",
+          "Playwright with the dev backend fixture: the page issues exactly one dashboard request on load and one per filter change; screenshots of overview and flow in light and dark at 1440 and 390 px in the results folder.",
+          "Budget tests: build stats show the initial bundle unchanged against develop and the new lazy chunk at most 12 kB gzip; on the 40-project fixture the first chart is painted within 300 ms after the response and a filter change within 100 ms (performance marks read by Playwright, median of 5).",
+          "A pasted link restores the filters; every tile is reachable by keyboard and the table alternative lists the same values."
+        ]
+      }
+    },
+    {
+      "id": "DDC-2",
+      "title": "Card drill-down as a virtualised list",
+      "delivers": "Paged card list of a flow state, windowed rendering, no DOM element per card outside the window.",
+      "dependsOn": [
+        "DDC-1"
+      ],
+      "promptMarkdown": "# Card drill-down as a virtualised list\n\nSource: \u0060docs/deployment-dashboard-charts/index.html\u0060 (AGT-3950). Read AGENTS.md, frontend/AGENTS.md and docs/start/README.md first. Use the recommendation of each decision named below unless the Dossier records another choice, and state which option you implemented. Git ownership stays with the platform. This is one bounded slice.\n\n## Deliver\n1. Backend: \u0060GET /api/deploy/dashboard/cards?stage=\u0026offset=\u0026limit=\u0060 with the dashboard filters, newest first, limit at most 200, total count in the response.\n2. Frontend: clicking a state of the release flow opens the card list under it; fixed row height, only the visible window plus a small buffer in the DOM (own windowing as in \u0060docs/deployment-dashboard-charts/src/app.js\u0060, \u0060drawCards\u0060, or \u0060@angular/cdk/scrolling\u0060 if it does not grow the initial bundle); rows link to the card; key, project, state, integrated date, waiting time or lead time.\n\n## Acceptance\n- With 5,000 cards in a state the list holds fewer than 60 row elements while scrolling (asserted in a Playwright test).\n- Pages are requested as the window moves, at most one request in flight; the count line states rows shown and total.\n- Keyboard: the list is reachable by Tab, scrolls with the arrow keys and each visible row link can be focused.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DDC-2",
+        "criteria": [
+          "With 5,000 cards in a state the list holds fewer than 60 row elements while scrolling (asserted in a Playwright test).",
+          "Pages are requested as the window moves, at most one request in flight; the count line states rows shown and total.",
+          "Keyboard: the list is reachable by Tab, scrolls with the arrow keys and each visible row link can be focused."
+        ]
+      }
+    },
+    {
+      "id": "DDC-3",
+      "title": "Deploy timeline with time brush on uPlot",
+      "delivers": "uPlot as the Studio\u0027s chart library in its own lazy chunk; runs per environment over time with duration, outcome and failing step; brush sets the time range for every view.",
+      "dependsOn": [
+        "DDC-1"
+      ],
+      "promptMarkdown": "# Deploy timeline with time brush on uPlot\n\nSource: \u0060docs/deployment-dashboard-charts/index.html\u0060 (AGT-3950). Read AGENTS.md, frontend/AGENTS.md and docs/start/README.md first. Use the recommendation of each decision named below unless the Dossier records another choice, and state which option you implemented. Git ownership stays with the platform. This is one bounded slice.\n\n## Deliver\n1. Add \u0060uplot\u0060 (MIT, pinned) to the frontend; it may be imported only from the lazy chart chunk. Theme it once from the Studio tokens.\n2. Aggregate part \u0060runs\u0060: columns \u0060startedAtUtc\u0060, \u0060durationSeconds\u0060, project, environment, tenant, \u0060state\u0060, \u0060failedStep\u0060, release version, plus \u0060perDay\u0060 counts by outcome for the whole period.\n3. Timeline as in \u0060docs/deployment-dashboard-charts/src/charts.js\u0060, \u0060timeline\u0060: one lane per environment, a dot per run, height in the lane = duration, colour and size by outcome; tooltip with project, release, duration and failing step; the lower chart counts runs a day and carries the brush. Dragging sets \u0060from\u0060 and \u0060to\u0060 in the route; presets 30, 90 and 180 days; outcome as a filter.\n4. Table alternative: runs a week by outcome.\n\n## Acceptance\n- Build stats: uPlot appears in no initial chunk; the chart chunk is at most 35 kB gzip including uPlot and its styles.\n- On a fixture of 2,000 runs a brush change repaints every view within 100 ms (median of 20 changes, Playwright).\n- With \u0060prefers-reduced-motion\u0060 and above 1,000 runs no transition runs.\n- Screenshots of the timeline in light and dark at 1440 and 390 px.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DDC-3",
+        "criteria": [
+          "Build stats: uPlot appears in no initial chunk; the chart chunk is at most 35 kB gzip including uPlot and its styles.",
+          "On a fixture of 2,000 runs a brush change repaints every view within 100 ms (median of 20 changes, Playwright).",
+          "With \u0060prefers-reduced-motion\u0060 and above 1,000 runs no transition runs.",
+          "Screenshots of the timeline in light and dark at 1440 and 390 px."
+        ]
+      }
+    },
+    {
+      "id": "DDC-4",
+      "title": "Delivery figures with sparklines",
+      "delivers": "Deploy frequency, lead time from integration to Production, change failure rate and time to restore as stat tiles with weekly trend.",
+      "dependsOn": [
+        "DDC-1"
+      ],
+      "promptMarkdown": "# Delivery figures with sparklines\n\nSource: \u0060docs/deployment-dashboard-charts/index.html\u0060 (AGT-3950). Read AGENTS.md, frontend/AGENTS.md and docs/start/README.md first. Use the recommendation of each decision named below unless the Dossier records another choice, and state which option you implemented. Git ownership stays with the platform. This is one bounded slice.\n\n## Deliver\n1. Aggregate part \u0060figures\u0060: value for the selected range, value of the same number of days before it, weekly series; definitions as in \u0060docs/deployment-dashboard-charts/views.html\u0060, section Delivery figures (lead time from the integration commit of a card to the finish of the Production deployment that contains it; change failure rate = failed or rolled-back share of finished Production deployments; time to restore = from a failed Production deployment to the next succeeded one of the same project and tenant).\n2. Four stat tiles above the overview: label, value with unit, comparison in words and sign, sparkline (\u0060spark\u0060 in the prototype). A figure without data says so instead of showing zero.\n\n## Acceptance\n- Backend tests fix each definition on a hand-computed fixture, including a range without Production deployments.\n- The four values on the page equal the aggregate; the comparison names the period it compares with.\n- Screenshots in light and dark at 1440 and 390 px.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DDC-4",
+        "criteria": [
+          "Backend tests fix each definition on a hand-computed fixture, including a range without Production deployments.",
+          "The four values on the page equal the aggregate; the comparison names the period it compares with.",
+          "Screenshots in light and dark at 1440 and 390 px."
+        ]
+      }
+    },
+    {
+      "id": "DDC-5",
+      "title": "Backup and construction-site marks on the deployment tiles",
+      "delivers": "Every Production tile whose data has no verified off-host copy is marked; open warnings of the host or container an environment runs on are pinned to its tile.",
+      "dependsOn": [
+        "DDC-1"
+      ],
+      "promptMarkdown": "# Backup and construction-site marks on the deployment tiles\n\nSource: \u0060docs/deployment-dashboard-charts/index.html\u0060 (AGT-3950). Read AGENTS.md, frontend/AGENTS.md and docs/start/README.md first. Use the recommendation of each decision named below unless the Dossier records another choice, and state which option you implemented. Git ownership stays with the platform. This is one bounded slice.\n\n## Deliver\n1. Aggregate: per tile \u0060backup { covered, lastVerifiedAtUtc }\u0060 from \u0060/api/operator/backups\u0060 and the data locations of the structure facts (AGT-3954), and \u0060warnings[]\u0060 (\u0060kind\u0060, \u0060severity\u0060, \u0060title\u0060, \u0060blocks\u0060, \u0060next\u0060, \u0060source\u0060) for the node the environment is placed on. No new rule set: the facts and their severity come from those sources.\n2. Tile marks as in the prototype (corner flags with legend), the facts in tooltip and table; a tile links to the node on the structure canvas (D6).\n3. With the backup feature \u0060not-configured\u0060 every tile with must-keep data is marked.\n\n## Acceptance\n- Fixture with \u0060not-configured\u0060 backups marks every Production tile; a fixture with a verified off-host copy clears them.\n- A warning fixture per kind shows what is wrong, what it blocks and the next step.\n- Screenshots in both themes at 1440 and 390 px.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DDC-5",
+        "criteria": [
+          "Fixture with \u0060not-configured\u0060 backups marks every Production tile; a fixture with a verified off-host copy clears them.",
+          "A warning fixture per kind shows what is wrong, what it blocks and the next step.",
+          "Screenshots in both themes at 1440 and 390 px."
+        ]
+      }
+    },
+    {
+      "id": "DDC-6",
+      "title": "Persona view specifications for the deployment dashboard",
+      "delivers": "Validated, cached view specifications by the operations warden and the reliability engineer on top of the facts; picker, provenance, goals, fallback to facts.",
+      "dependsOn": [
+        "DDC-1",
+        "DDC-5"
+      ],
+      "promptMarkdown": "# Persona view specifications for the deployment dashboard\n\nSource: \u0060docs/deployment-dashboard-charts/index.html\u0060 (AGT-3950). Read AGENTS.md, frontend/AGENTS.md and docs/start/README.md first. Use the recommendation of each decision named below unless the Dossier records another choice, and state which option you implemented. Git ownership stays with the platform. This is one bounded slice.\n\n## Deliver\n1. Schema \u0060deploy-view-spec/v1\u0060 and validator from \u0060docs/deployment-dashboard-charts/src/spec.js\u0060 and \u0060docs/deployment-dashboard-charts/schema/\u0060, server-side and in the client; anything invalid is not drawn and the reasons are shown.\n2. An assessment is an item of a persona occurrence (persona team, PT-3 and PT-4, used as they are); it shares the occurrence with the structure assessment of LSC-8 where both are due. Triggers and cadence as in D8; usage in the token ledger as \u0060persona:\u003Cid\u003E\u0060.\n3. \u0060GET /api/deploy/dashboard/assessments?persona=\u0060 returns the latest valid specification with revision and facts digest; the page shows it at once and marks it stale when the digest differs.\n4. Page: picker Facts only or a persona; headline, judgement, author, time, model, confidence, facts used, raw specification; numbered callouts pinned to tile, flow state, time range or figure; goals with progress and next step; the persona\u0027s view order.\n\n## Acceptance\n- A response with markup, an unknown key or an unknown project is rejected and the page shows facts only with the reasons (unit and Playwright tests).\n- Cost per assessment and calls a day are in the token ledger and stay within the weekly allowance in a one-week soak.\n- Screenshots of an assessment and of a rejection in both themes at 1440 px.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DDC-6",
+        "criteria": [
+          "A response with markup, an unknown key or an unknown project is rejected and the page shows facts only with the reasons (unit and Playwright tests).",
+          "Cost per assessment and calls a day are in the token ledger and stay within the weekly allowance in a one-week soak.",
+          "Screenshots of an assessment and of a rejection in both themes at 1440 px."
+        ]
+      }
+    },
+    {
+      "id": "DDC-7",
+      "title": "Deploy landscape, the opt-in 3D view",
+      "delivers": "Weeks by projects with height = runs and colour = failed share, drawn with Canvas 2D in its own chunk, loaded when opened.",
+      "dependsOn": [
+        "DDC-3"
+      ],
+      "promptMarkdown": "# Deploy landscape, the opt-in 3D view\n\nSource: \u0060docs/deployment-dashboard-charts/index.html\u0060 (AGT-3950). Read AGENTS.md, frontend/AGENTS.md and docs/start/README.md first. Use the recommendation of each decision named below unless the Dossier records another choice, and state which option you implemented. Git ownership stays with the platform. This is one bounded slice.\n\n## Deliver\nOnly if D4 is A. Port \u0060docs/deployment-dashboard-charts/src/view3d.js\u0060: orthographic projection, drag and arrow keys to turn, hover readout, Flatten to 2D, month and group labels, height scale. Aggregate part \u0060landscape\u0060 (26 weeks by projects: count and failed share). The chunk is requested only when the view is opened; nothing draws while it is closed or the tab is hidden.\n\n## Acceptance\n- Network log in a Playwright test: the 3D chunk is requested only after the view is opened; it is at most 4 kB gzip.\n- With reduced motion Flatten switches without animation; with nothing changing no frame is drawn for 5 seconds.\n- Screenshots raised and flattened, both themes, 1440 and 390 px.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DDC-7",
+        "criteria": [
+          "Network log in a Playwright test: the 3D chunk is requested only after the view is opened; it is at most 4 kB gzip.",
+          "With reduced motion Flatten switches without animation; with nothing changing no frame is drawn for 5 seconds.",
+          "Screenshots raised and flattened, both themes, 1440 and 390 px."
+        ]
+      }
+    },
+    {
+      "id": "DDC-8",
+      "title": "Register the deployment dashboard charts Dossier in the Nordstern map and add forward links",
+      "delivers": "One map entry and one forward link each in the Dossiers this concept continues; no recorded decision changes.",
+      "dependsOn": [],
+      "promptMarkdown": "# Register the deployment dashboard charts Dossier in the Nordstern map and add forward links\n\nSource: \u0060docs/deployment-dashboard-charts/index.html\u0060 (AGT-3950). Read AGENTS.md, frontend/AGENTS.md and docs/start/README.md first. Use the recommendation of each decision named below unless the Dossier records another choice, and state which option you implemented. Git ownership stays with the platform. This is one bounded slice.\n\nDocumentation only. Why a card: the owner asked AGT-3950 to leave these links, but a concept delivery may change only its own directory.\n\n## Deliver\n1. \u0060docs/operations/nordstern/index.html\u0060, map: one card \u0060\u003Ca class=\u0022card\u0022 href=\u0022../../deployment-dashboard-charts/index.html\u0022\u003E\u003Ch4\u003EDeployment dashboard charts\u003C/h4\u003E\u003Cdiv class=\u0022path\u0022\u003Edeployment-dashboard-charts/ \u0026middot; Source AGT-3950\u003C/div\u003E\u003Cp\u003EWorkspace / Deployments as charts: overview tile map, release flow, deploy timeline, delivery figures and an opt-in 3D landscape on uPlot and small own forms, with persona assessments on top of facts. D1 to D10 pending.\u003C/p\u003E\u003C/a\u003E\u0060.\n2. \u0060docs/deployment-structure-view/src/index.template.html\u0060 (then its \u0060build.mjs\u0060): one callout \u0027Continued by\u0027 naming this Dossier for the deployment charts and \u0060docs/live-structure-canvas/\u0060 for the topology.\n3. \u0060docs/operations/bereitstellung/index.html\u0060: one box \u0027Continued by\u0027 before the first decision: this Dossier replaces the table of BD-4 and the long card column with charts on one aggregate.\n4. \u0060docs/live-structure-canvas/\u0060: one line at its D2 that AGT-3950 measured the same choice on the deployment views.\n5. One row in \u0060docs/start/README.md\u0060.\n\n## Acceptance\n- Each of the four Dossiers carries exactly the added link; no decision, option or recommendation in them changes.\n- Every added link resolves; the build and verify scripts of \u0060docs/deployment-structure-view/\u0060 pass.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "DDC-8",
+        "criteria": [
+          "Each of the four Dossiers carries exactly the added link; no decision, option or recommendation in them changes.",
+          "Every added link resolves; the build and verify scripts of \u0060docs/deployment-structure-view/\u0060 pass."
+        ]
+      }
+    }
+  ],
+  "key": "AGT-W3471"
+}

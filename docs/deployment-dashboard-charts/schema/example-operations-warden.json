@@ -1,0 +1,153 @@
+{
+ "schemaVersion": "deploy-view-spec/v1",
+ "id": "operations-warden-deploy",
+ "revision": 4,
+ "persona": {
+  "id": "operations-warden",
+  "role": "operations",
+  "title": "Operations warden"
+ },
+ "createdAt": "2026-11-17T19:40:00.000Z",
+ "model": {
+  "capabilityClass": "balanced",
+  "id": "claude-sonnet-5-5"
+ },
+ "confidence": 0.86,
+ "tokens": {
+  "input": 5600,
+  "output": 720
+ },
+ "trigger": "backup.missed, coalesced with the 06:30 occurrence",
+ "factsUsed": [
+  "GET /api/operator/backups: state not-configured, no backup key, off-host target not-configured",
+  "GET /api/v1/operations/structure, dataLocations: 1 of 6 must-keep locations has an off-host copy (workspace repository, git remote)",
+  "Application state directory: one manual local snapshot of 2026-11-09 on the same disk",
+  "GET /api/deploy/dashboard: 25 of 33 Production tiles keep data without a verified off-host copy",
+  "GET /api/v1/management/credential-inventory: one deploy credential expires in 9 days",
+  "GET /api/deploy/dashboard, flow: 22 cards wait for a Production approval"
+ ],
+ "headline": "Production runs without a restorable backup: 25 of 33 Production tiles have no verified off-host copy.",
+ "judgement": "Deploys are flowing, so the risk is not delivery but loss. The backup feature exists and reports not-configured: there is no backup key and no off-host target. The only copy of the application state is a manual snapshot of 9 November on the same disk, which a disk failure takes with it; the workspace repository is safe on its git remote. Two owner decisions unblock everything else: the off-host target and the custody of the two keys. Until then every Production deploy adds state that cannot be restored. One deploy credential expires in 9 days and will stop Staging deploys of the project it belongs to.",
+ "order": {
+  "views": [
+   "overview",
+   "flow",
+   "figures",
+   "timeline"
+  ]
+ },
+ "figures": [
+  "frequency"
+ ],
+ "emphasis": [
+  {
+   "target": {
+    "view": "overview",
+    "project": "gateway",
+    "env": "Production"
+   },
+   "weight": "strong"
+  },
+  {
+   "target": {
+    "view": "overview",
+    "project": "pricing",
+    "env": "Production"
+   },
+   "weight": "strong"
+  },
+  {
+   "target": {
+    "view": "overview",
+    "project": "ledger",
+    "env": "Canary"
+   },
+   "weight": "normal"
+  }
+ ],
+ "annotations": [
+  {
+   "id": "no-backup",
+   "target": {
+    "view": "overview",
+    "project": "gateway",
+    "env": "Production"
+   },
+   "tone": "bad",
+   "title": "No backup here",
+   "text": "State of this Production environment has no verified off-host copy; the same holds for every tile with the backup mark.",
+   "blocks": "A restore after a disk loss",
+   "next": "Decide the off-host target, then configure the backup and verify one restore.",
+   "factRefs": [
+    0,
+    1,
+    3
+   ]
+  },
+  {
+   "id": "no-backup-drift",
+   "target": {
+    "view": "overview",
+    "project": "pricing",
+    "env": "Production"
+   },
+   "tone": "warn",
+   "title": "Behind and unprotected",
+   "text": "10 releases behind and no off-host copy: the next deploy here migrates data that cannot be rolled back from a backup.",
+   "next": "Take a verified backup before the next Production deploy of this project.",
+   "factRefs": [
+    3
+   ]
+  },
+  {
+   "id": "credential",
+   "target": {
+    "view": "overview",
+    "project": "ledger",
+    "env": "Canary"
+   },
+   "tone": "warn",
+   "title": "Deploy credential expires in 9 days",
+   "text": "The credential this environment deploys with expires on 26 November.",
+   "blocks": "Deploys of ledger to Canary",
+   "next": "Rotate the credential in the credential inventory; the warden reminds 3 days before.",
+   "factRefs": [
+    4
+   ]
+  }
+ ],
+ "goals": [
+  {
+   "id": "backup",
+   "title": "Every must-keep location has a verified off-host copy",
+   "done": 1,
+   "total": 6,
+   "steps": [
+    {
+     "kind": "owner-decision",
+     "title": "Choose the off-host backup target",
+     "detail": "Decision D7 of docs/live-structure-canvas: a second site the owner controls is recommended.",
+     "state": "open"
+    },
+    {
+     "kind": "owner-decision",
+     "title": "Decide the custody of the backup key and the secret store key",
+     "detail": "Decision D8 of docs/live-structure-canvas: two separate entries, attested by fingerprint.",
+     "state": "open"
+    },
+    {
+     "kind": "card",
+     "title": "Configure the backup and verify one restore",
+     "detail": "Create the backup key, set the target, run a backup, restore it on a scratch host and record the receipt.",
+     "state": "proposed"
+    },
+    {
+     "kind": "operation",
+     "title": "Attest the escrow of both keys",
+     "detail": "Shown as \"attested on\" next to each key once the owner confirms the fingerprint.",
+     "state": "open"
+    }
+   ]
+  }
+ ]
+}

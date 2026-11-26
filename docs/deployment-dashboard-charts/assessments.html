@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en" data-document-pattern="concept">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assessments, goals and warnings | Deployment dashboard charts</title>
+<!--g:STYLE--><style data-article-template="v2">/* docs/app/templates/article-document-v2.html, minified by build.mjs */:root{color-scheme:light;--article-paper: #fcfcfb;--article-surface: #f2f1ee;--article-surface-strong: #e9e8e3;--article-ink: #151515;--article-muted: #5f5e59;--article-faint: #696762;--article-line: #d8d6cf;--article-link: #1f67b2;--article-link-soft: #eaf1fb;--article-good: #18753a;--article-good-soft: #eaf4ea;--article-warn: #8b6100;--article-warn-soft: #f8f0dd;--article-bad: #b72f2f;--article-bad-soft: #fbecec;--article-serif: Georgia, "Times New Roman", serif;--article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;--article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace}@media(prefers-color-scheme:dark){:root{color-scheme:dark;--article-paper: #1a1a19;--article-surface: #232322;--article-surface-strong: #2c2c2a;--article-ink: #f7f7f4;--article-muted: #c3c2b7;--article-faint: #9d9c94;--article-line: #3d3d3a;--article-link: #78aef0;--article-link-soft: #1e2a3a;--article-good: #67b867;--article-good-soft: #1f2f1f;--article-warn: #d9a63f;--article-warn-soft: #33301e;--article-bad: #e66767;--article-bad-soft: #382222}}*{box-sizing:border-box}html{background:var(--article-paper)}body{margin:0;background:var(--article-paper);color:var(--article-ink);font:17px/1.75 var(--article-serif);text-rendering:optimizeLegibility}main,.article{width:min(70ch,calc(100% - 48px));margin:0 auto;padding:0 0 80px}header.page{margin-bottom:12px;padding:48px 0 28px;border-bottom:1px solid var(--article-line)}h1,h2,h3,h4,.kicker,.meta,.number,nav,table,figcaption,.box,.callout,.evidence-figure,.variant-grid,.evidence-list{font-family:var(--article-sans)}h1{margin:0 0 14px;font-size:clamp(2.2rem,6vw,3.4rem);line-height:1.08;letter-spacing:-.025em}h2{margin:56px 0 10px;font-size:1.55rem;line-height:1.25}h3{margin:34px 0 8px;font-size:1.08rem;line-height:1.35}h4{margin:0 0 8px;font-size:.94rem}p{margin:0 0 18px}p:last-child{margin-bottom:0}.kicker,.number{margin:0 0 12px;color:var(--article-faint);font-size:.75rem;font-weight:700;letter-spacing:.12em;line-height:1;text-transform:uppercase}.lede{margin:0;color:var(--article-muted);font-size:1.18rem;line-height:1.6}.meta{display:flex;flex-wrap:wrap;gap:10px 18px;margin-top:20px;color:var(--article-faint);font-size:.78rem}.meta b{color:var(--article-muted);font-weight:650}a{color:var(--article-link);text-underline-offset:.16em}a:focus-visible{outline:2px solid var(--article-link);outline-offset:3px;border-radius:2px}code{padding:.08em .34em;border-radius:4px;background:var(--article-surface-strong);font:.84em/1.5 var(--article-mono);overflow-wrap:anywhere}pre{overflow-x:auto;margin:24px 0;padding:16px 18px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface)}pre code{padding:0;background:transparent}ul,ol{margin:0 0 18px;padding-left:24px}li+li{margin-top:6px}table{width:100%;margin:24px 0;border-collapse:collapse;font-size:.88rem;line-height:1.5}th,td{padding:10px 12px;border-bottom:1px solid var(--article-line);text-align:left;vertical-align:top}th{color:var(--article-faint);font-size:.74rem;letter-spacing:.06em;text-transform:uppercase}.box,.callout{margin:24px 0;padding:18px 22px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface);font-size:.92rem;line-height:1.65}.box.accent,.callout[data-tone=accent]{border-color:color-mix(in srgb,var(--article-link) 30%,var(--article-line));background:var(--article-link-soft)}.box.good,.callout[data-tone=good]{border-color:color-mix(in srgb,var(--article-good) 30%,var(--article-line));background:var(--article-good-soft)}.box.warn,.callout[data-tone=warn]{border-color:color-mix(in srgb,var(--article-warn) 35%,var(--article-line));background:var(--article-warn-soft)}.box.bad,.callout[data-tone=bad]{border-color:color-mix(in srgb,var(--article-bad) 30%,var(--article-line));background:var(--article-bad-soft)}figure{margin:30px 0}figure>img,figure>svg{display:block;width:100%;height:auto;border:1px solid var(--article-line);border-radius:10px;background:var(--article-paper)}figcaption{margin-top:10px;color:var(--article-muted);font-size:.8rem;line-height:1.5}.evidence-figure{margin-top:38px;margin-bottom:38px}.evidence-captures{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:12px}.evidence-capture{position:relative;min-width:0;overflow:hidden;border:1px solid var(--article-line);border-radius:10px;background:var(--article-paper)}.evidence-capture>img{display:block;width:100%;height:auto}.capture-theme,.figure-annotation{position:absolute;z-index:1;border:1px solid var(--article-line);border-radius:999px;background:var(--article-surface);color:var(--article-muted);font-size:.68rem;font-weight:750;letter-spacing:.04em;line-height:1.35}.capture-theme{top:10px;left:10px;padding:3px 8px;text-transform:uppercase}.figure-annotation{right:12px;bottom:12px;max-width:min(28ch,calc(100% - 24px));padding:5px 10px;border-color:color-mix(in srgb,var(--article-link) 45%,var(--article-line));background:var(--article-link-soft);color:var(--article-link);letter-spacing:0;text-transform:none}.figure-claim{display:block;color:var(--article-ink);font-size:.84rem}.figure-as-of{display:flex;flex-wrap:wrap;gap:2px 14px;margin-top:6px;color:var(--article-faint);font-size:.72rem}.breakout,.media-breakout{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%)}.variant-grid{display:grid;grid-template-columns:1fr;gap:14px;margin:24px 0}.variant{min-width:0;padding:16px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface)}.variant h3{margin:0 0 8px}.variant img,.variant svg{display:block;width:100%;height:auto;margin-top:12px}[data-document-pattern=ui] .variant-grid{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%);grid-template-columns:repeat(2,minmax(0,1fr))}[data-document-pattern=ui] .mockup{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%)}.evidence-list{display:grid;gap:10px;margin:24px 0}.evidence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px 14px;align-items:start;padding:14px;border:1px solid var(--article-line);border-radius:9px;background:var(--article-surface);color:var(--article-ink);text-decoration:none}.evidence:hover{border-color:var(--article-link);background:var(--article-link-soft)}.evidence-class{display:inline-flex;align-items:center;min-height:22px;padding:2px 8px;border-radius:999px;background:var(--article-surface-strong);color:var(--article-muted);font-size:.68rem;font-weight:750;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}[data-document-pattern=concept] .evidence-class[data-evidence-class=observed]{background:var(--article-good-soft);color:var(--article-good)}[data-document-pattern=concept] .evidence-class[data-evidence-class=inferred]{background:var(--article-warn-soft);color:var(--article-warn)}[data-document-pattern=concept] .evidence-class[data-evidence-class=proposed]{background:var(--article-link-soft);color:var(--article-link)}.evidence b{display:block;margin-bottom:2px;font-size:.88rem}.evidence small{display:block;color:var(--article-muted);font-size:.78rem;line-height:1.45}.dim{color:var(--article-muted)}@media(max-width:760px){main,.article{width:min(100% - 28px,70ch);padding-bottom:52px}header.page{padding-top:32px}.breakout,.media-breakout,[data-document-pattern=ui] .variant-grid,[data-document-pattern=ui] .mockup{width:calc(100vw - 20px)}[data-document-pattern=ui] .variant-grid,.evidence,.evidence-captures{grid-template-columns:1fr}table{display:block;overflow-x:auto}}@media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition-duration:0s!important;animation-duration:0s!important}}</style>
+<style data-dossier="deployment-dashboard-charts">nav.chapters{margin:20px 0 32px;font:.82rem/1.7 var(--article-sans)}nav.chapters ol{display:flex;flex-wrap:wrap;gap:4px 18px;margin:0;padding:0;list-style:none}nav.chapters [aria-current]{color:var(--article-ink);font-weight:650;text-decoration:none}.tablewrap{overflow-x:auto}table code{overflow-wrap:anywhere}pre.spec,pre.api{max-height:420px;overflow:auto;padding:12px;border:1px solid var(--article-line);border-radius:8px;background:var(--article-surface);font:.72rem/1.5 var(--article-mono)}</style><!--/g-->
+</head>
+<body>
+<main class="article">
+<header class="page">
+  <p class="kicker">Concept Dossier · AGT-3950 · Deployment dashboard charts</p>
+  <h1>Assessments, goals and warnings</h1>
+  <p class="lede">The charts draw facts. What matters in them today, what is missing and what to do next is a judgement, and a persona writes it as a validated view specification that a generic renderer draws on top of the same facts.</p>
+</header>
+<!--g:NAV--><nav class="chapters" aria-label="Pages of this Dossier"><ol><li><a href="index.html">Decision page</a></li><li><a href="views.html">Views and filters</a></li><li><a href="stack.html">Framework, budget and data</a></li><li><a href="assessments.html" aria-current="page">Assessments, goals and warnings</a></li><li><a href="prototype.html">Live prototype</a></li></ol></nav><!--/g-->
+
+<section id="facts">
+<h2>Facts and assessments</h2>
+<p>The owner's principle of 17 November 2026: data and presentation of a view may be produced by LLM calls, case by case, without a hand-coded rule set, with regular updates and considered judgements. The design keeps two things apart so that this stays safe and checkable. A fact has a source and is the same for every viewer. An assessment has an author and can be switched off; the view is complete without it.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Fact, drawn by the charts</th><th>Source</th><th>Assessment a persona adds</th></tr></thead>
+<tbody>
+<tr><td>Release, drift, last run, health and waiting approvals per project and environment</td><td><code>/api/deploy/matrix</code>, folded into the aggregation <code>GET /api/deploy/dashboard</code> of <a href="stack.html">Framework, budget and data</a></td><td>Which tiles to stress, and a callout on a tile: why this drift matters, what it blocks, the next step</td></tr>
+<tr><td>Where the cards are: integrated, on Staging, waiting for approval, live</td><td><code>/api/deploy/cards</code>, the delivery lanes, instance deploy records (AGT-3879)</td><td>Whether cards wait on an approval, on a missing environment or on a broken deploy, and which project to look at first</td></tr>
+<tr><td>Deploy runs with start, duration, outcome and failing step</td><td><code>/api/projects/{p}/deploy/deployments/page</code>, instance runs overlaid there</td><td>A cluster: "these failures share one step and two projects", pinned to a time range</td></tr>
+<tr><td>Deploy frequency, lead time, change failure rate, time to restore</td><td>Computed by the aggregation from the two rows above</td><td>Which figure to stress, and a goal with its progress, for example a band for the change failure rate</td></tr>
+<tr><td>Backup state and copies of each data location</td><td><code>/api/operator/backups</code>, data locations of <code>/api/v1/operations/structure</code> (AGT-3954)</td><td>Classification of a location (must keep, reproducible, cache), risk, the next step toward the backup goal</td></tr>
+<tr><td>Open problems of hosts, containers and links</td><td>The warning facts of the structure endpoint and the management APIs listed under <a href="#warnings">Construction sites and warnings</a></td><td>Grouping, ranking, and which of them stands in the way of a deploy</td></tr>
+</tbody></table></div>
+<p>Two marks are facts and never depend on a persona: the mark on every Production tile whose data has no verified off-host copy, and the pin of an open problem on the tile it concerns. They are visible with Facts only. A persona explains and ranks them; it cannot remove them.</p>
+<p>No rule set is written where a judgement serves. There is no table that says "drift above five is amber": the tile shows the number, and the persona says whether five releases behind is a problem for this project this week. Hand-coded logic stays where a wrong answer would be unsafe or where the answer is arithmetic: validation of the specification, the figures, the marks above.</p>
+</section>
+
+<section id="authors">
+<h2>Authors</h2>
+<p>Assessments are authored by personas of the existing persona team. The role and persona model is defined in <code>docs/persona-team/index.html</code> (sections <code>#definition</code>, <code>#scheduling</code>, <code>#budgets</code>, <code>#importance</code>) and delivered by PT-1 to PT-12; this Dossier uses it and redefines nothing. The catalogue in <code>backend/Policies/personas/</code> already holds both roles the card asks for, so no role is added.</p>
+<div class="variant-grid">
+<div class="variant"><h3>Operations warden</h3><p><code>operations-warden</code>, aspect operations, starts active, balanced class, 140,000 tokens a week. Watches whether the installation could survive a loss: backups, restore tests, credentials, escrow. Catalogue triggers include <code>backup.missed</code>, <code>backup.failed</code>, <code>credential.expiring</code>, <code>deploy.completed</code>, <code>deploy.rolled-back</code>. On the deployment dashboard: the backup goal, Production without a restorable copy, credentials a deploy depends on.</p></div>
+<div class="variant"><h3>Reliability engineer</h3><p><code>reliability-engineer</code>, aspect reliability, balanced class, 140,000 tokens a week. Watches the flow of work. Catalogue triggers include <code>deploy.completed</code>, <code>deploy.rolled-back</code>, <code>batch.red</code>, <code>backend.stalled</code>. On the deployment dashboard: failure clusters, change failure rate and time to restore, where cards wait, drift, hosts that hold deploys back.</p></div>
+</div>
+<p>An assessment is a persona occurrence. The scheduler of the persona team admits it against the persona's allowance, a runner host executes it, and its item is a view specification. The same item goes to the persona's feed and to the magazine's operations watch, so the judgement on the dashboard and the weekly report cannot disagree. Usage is written to the token ledger as <code>persona:&lt;id&gt;</code>.</p>
+<p>The viewer picks whose assessment the view shows: Facts only, or one persona. The choice is part of the URL like every filter. Each assessment shows, in one line above the charts and in full on request:</p>
+<ul>
+<li>the author persona and its role;</li>
+<li>the time it was written and its revision, for example "Assessed 19:40 UTC, 20 minutes ago, revision 4";</li>
+<li>the model the capability class resolved to at that time;</li>
+<li>how sure the persona is, as the confidence it stated (0 to 1), shown as a word and the number;</li>
+<li>the facts it used, each with its API, and for every callout which of them it rests on;</li>
+<li>the raw specification, one click away.</li>
+</ul>
+<p>The persona descriptor names a capability class (<code>balanced</code> or <code>frontier</code>), resolved by the model selection service and never pinned. The specification therefore records the class and the resolved model id. The structure canvas schema also lists a class <code>fast</code>; persona descriptors do not have it, so this schema allows only the two classes of the catalogue.</p>
+<!--g:ASSESS_FIGURES--><figure class="evidence-figure media-breakout">
+  <div class="evidence-captures">
+    <div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/assessment-warden-light-1440.png" alt="The page with the assessment of the operations warden: backup goal 1 of 6 with four next steps, three numbered callouts on tiles of the overview." loading="lazy"></div>
+    <div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/assessment-warden-dark-1440.png" alt="The same view in the dark theme of the Studio tokens." loading="lazy"></div>
+  </div>
+  <figcaption><span class="figure-claim"><b>Operations warden.</b> The backup goal stands at 1 of 6 with the next steps (two owner decisions, a card, an operation); the callouts are pinned to the tiles they concern.</span>
+  <span class="figure-as-of"><span>Captured <time datetime="2026-11-26">26 November 2026</time> from this Dossier's prototype (<code>prototype.html</code>, commit base ca26ce2ef) by <code>capture.mjs</code>, headless Chromium, 1440 px, light and dark. Data: the seeded synthetic set of <code>src/data.js</code>, not a product state.</span></span></figcaption>
+</figure>
+<figure class="evidence-figure media-breakout">
+  <div class="evidence-captures">
+    <div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/assessment-rejected-light-1440.png" alt="The page with a rejected specification: a tinted panel titled Assessment rejected, showing facts only, with three reasons." loading="lazy"></div>
+    <div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/assessment-rejected-dark-1440.png" alt="The same view in the dark theme of the Studio tokens." loading="lazy"></div>
+  </div>
+  <figcaption><span class="figure-claim"><b>Fallback.</b> A specification with markup, an unknown key and an unknown project is not drawn; the page shows the facts and lists the three reasons.</span>
+  <span class="figure-as-of"><span>Captured <time datetime="2026-11-26">26 November 2026</time> from this Dossier's prototype (<code>prototype.html</code>, commit base ca26ce2ef) by <code>capture.mjs</code>, headless Chromium, 1440 px, light and dark. Data: the seeded synthetic set of <code>src/data.js</code>, not a product state.</span></span></figcaption>
+</figure><!--/g-->
+</section>
+
+<section id="specification">
+<h2>View specification</h2>
+<p>The model returns one JSON document, <code>deploy-view-spec/v1</code>. It is the sibling of <code>structure-view-spec/v1</code> in <code>docs/live-structure-canvas/live.html</code> and shares its envelope (persona, time, model, confidence, facts used, headline, judgement, goals), so one validator core and one cache serve both. What differs is the target of a callout: a node or link there, a mark of a chart here.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Part</th><th>Content</th><th>Limits</th></tr></thead>
+<tbody>
+<tr><td>Envelope</td><td><code>schemaVersion</code>, <code>id</code>, <code>revision</code>, <code>persona{id, role, title}</code>, <code>createdAt</code>, <code>model{capabilityClass, id}</code>, <code>confidence</code>, <code>tokens</code>, <code>trigger</code></td><td>Required except tokens and trigger</td></tr>
+<tr><td><code>factsUsed</code></td><td>The facts the judgement rests on, each one line with its API</td><td>1 to 16 lines of 160 characters</td></tr>
+<tr><td><code>headline</code>, <code>judgement</code></td><td>One sentence above the charts and a short written judgement</td><td>160 and 700 characters</td></tr>
+<tr><td><code>order.views</code></td><td>The order of the four views for this persona: <code>overview</code>, <code>flow</code>, <code>timeline</code>, <code>figures</code></td><td>Each view at most once; a view that is left out keeps its place at the end</td></tr>
+<tr><td><code>figures</code></td><td>Delivery figures to stress: <code>frequency</code>, <code>lead</code>, <code>cfr</code>, <code>mttr</code></td><td>At most 4</td></tr>
+<tr><td><code>emphasis</code></td><td>Marks to stress, each a target with weight <code>strong</code> or <code>normal</code></td><td>At most 12</td></tr>
+<tr><td><code>annotations</code></td><td>Callouts: <code>target</code>, <code>tone</code> (bad, warn, info, good), <code>title</code>, <code>text</code>, optional <code>blocks</code> and <code>next</code>, <code>factRefs</code> into <code>factsUsed</code></td><td>At most 6; 48, 160, 120 and 160 characters</td></tr>
+<tr><td><code>goals</code></td><td><code>title</code>, <code>done</code>, <code>total</code> and steps of kind owner-decision, card or operation with a state</td><td>At most 3 goals of 6 steps</td></tr>
+</tbody></table></div>
+<p>A target names a mark that exists in the facts, in the vocabulary of the view:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>View</th><th>Target</th><th>Drawn as</th></tr></thead>
+<tbody>
+<tr><td>Overview</td><td><code>{ "view": "overview", "project": "gateway", "env": "Production" }</code></td><td>A ring on the tile and a numbered callout beside the map</td></tr>
+<tr><td>Release flow</td><td><code>{ "view": "flow", "node": "held" }</code></td><td>A numbered callout at the node; the band into it is stressed</td></tr>
+<tr><td>Deploy timeline</td><td><code>{ "view": "timeline", "from": "2026-09-29", "to": "2026-10-08" }</code>, optional <code>env</code></td><td>A shaded range with a numbered callout above it</td></tr>
+<tr><td>Delivery figures</td><td><code>{ "view": "figures", "figure": "cfr" }</code></td><td>The tile is stressed and carries the callout's title</td></tr>
+</tbody></table></div>
+<h3>What it cannot carry</h3>
+<p>The specification has no field for code, markup, styles, colours, scales, sizes or positions, and every object refuses unknown keys. Text is plain: the schema forbids angle brackets in every string, and the renderer writes text with <code>textContent</code>, never as markup. A callout's tone is one of four words that the renderer maps to the Studio's status tokens. The model never returns executable code, HTML or styles.</p>
+<h3>Validation and fallback</h3>
+<p>The validator in <code>src/spec.js</code> is driven by the schema in <code>schema/deploy-view-spec.v1.schema.json</code> and then checks references against the current facts. It rejects a specification when:</p>
+<ul>
+<li>a required key is missing, a key is unknown, a type, enumeration, length or count is off;</li>
+<li>any text contains markup;</li>
+<li>a target names a project, environment, flow node or figure that is not in the facts, or a time range that ends before it starts;</li>
+<li>a callout cites a fact that is not listed, two callouts share an id, a goal reports more done than total, or a view is listed twice.</li>
+</ul>
+<p>A rejected or missing specification is never repaired or drawn in part. The view shows the plain facts and one line that says so with the reasons, for example "Assessment rejected, 3 reasons: markup is not allowed in text; unknown key style; project payments-legacy is not in the facts". The prototype carries such a specification; choose "Rejected example" in the persona picker of the <a href="prototype.html">prototype</a>.</p>
+<h3>Caching and versions</h3>
+<p>Specifications are stored by persona and by the version of the facts they were written against, with a revision that counts up. The view loads the last valid one with the aggregation, so it draws at once and makes no model call on open. The freshness line says when it was assessed. Three cases keep it honest:</p>
+<ul>
+<li><b>Facts moved on.</b> A callout whose target no longer exists (the project was filtered out or removed, the range is outside the data) is not drawn. A callout whose cited facts changed is dropped until the next assessment, and the line says "2 callouts withdrawn, facts changed".</li>
+<li><b>Allowance spent.</b> The last valid specification stays and is marked stale with its age; the persona team rule for an exhausted allowance applies (a model-free stub in the feed).</li>
+<li><b>Filter narrower than the assessment.</b> The assessment was written for the whole installation. Under a filter the view keeps the callouts whose targets are visible and says "assessed for all projects".</li>
+</ul>
+<!--g:SPEC_EXAMPLE--><pre class="spec">{
+ "schemaVersion": "deploy-view-spec/v1",
+ "id": "operations-warden-deploy",
+ "revision": 4,
+ "persona": {
+  "id": "operations-warden",
+  "role": "operations",
+  "title": "Operations warden"
+ },
+ "createdAt": "2026-11-17T19:40:00.000Z",
+ "model": {
+  "capabilityClass": "balanced",
+  "id": "claude-sonnet-5-5"
+ },
+ "confidence": 0.86,
+ "tokens": {
+  "input": 5600,
+  "output": 720
+ },
+ "trigger": "backup.missed, coalesced with the 06:30 occurrence",
+ "factsUsed": [
+  "GET /api/operator/backups: state not-configured, no backup key, off-host target not-configured",
+  "GET /api/v1/operations/structure, dataLocations: 1 of 6 must-keep locations has an off-host copy (workspace repository, git remote)",
+  "Application state directory: one manual local snapshot of 2026-11-09 on the same disk",
+  "GET /api/deploy/dashboard: 25 of 33 Production tiles keep data without a verified off-host copy",
+  "
+…</pre><!--/g-->
+</section>
+
+<section id="composition">
+<h2>What a persona may change</h2>
+<p>The presentation is dynamic inside a fixed frame. Two viewers who pick different personas see the same charts in a different order with different stress and different words; two viewers who pick Facts only see exactly the same page.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>A persona may</th><th>A persona may never</th></tr></thead>
+<tbody>
+<tr><td>Order the four views, so the reliability engineer opens on the timeline and the warden on the overview</td><td>Add, remove or replace a view, or change which chart form a view uses</td></tr>
+<tr><td>Stress delivery figures and tiles, a flow node, a time range</td><td>Change a value, a count, a scale, an axis or a colour; hide a mark</td></tr>
+<tr><td>Pin up to six callouts with what is wrong, what it blocks and the next step</td><td>Place anything by coordinates; callouts are laid out by the renderer</td></tr>
+<tr><td>Write the headline and a judgement of at most 700 characters</td><td>Return markup, styles or code, or text the renderer would interpret</td></tr>
+<tr><td>State goals with progress and propose the next step as a card, an owner decision or an operation</td><td>Create the card, take the decision or run the operation; a proposal goes through the persona team's item flow and the owner's gate</td></tr>
+</tbody></table></div>
+<p>This is the middle of three levels. Below it, Facts only: deterministic and free, with no judgement. Above it, a view composed by the model, where the model would also pick chart forms and groupings: most adaptive, least comparable from day to day, and not needed for what the owner asked. The level is decision D9 of the <a href="index.html">decision page</a>, and it is the same level the structure canvas recommends in its D11, so both views of the hosting area behave alike.</p>
+</section>
+
+<section id="goals">
+<h2>Goals</h2>
+<p>The system works toward goals, and the view shows how far it is. A goal is part of the specification: a title, a count of done and total, and the next steps. The persona keeps proposing the next concrete step at every assessment until the goal is met; a step is a card, an owner decision or an operation, and it carries its state.</p>
+<h3>Backup</h3>
+<p>The goal, in the words of <code>docs/live-structure-canvas/layers.html</code>: every must-keep location has a verified off-host copy. State on 17 November 2026: 1 of 6. The backup feature (AGT-3574, AGT-3365, BR-1 to BR-9) exists and reports <code>not-configured</code>: no backup key, no off-host target.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Must-keep location</th><th>Copy today</th><th>State</th></tr></thead>
+<tbody>
+<tr><td>Workspace repository, committed part</td><td>Mirrored to its git remote, recovery point minutes</td><td>Covered</td></tr>
+<tr><td>Workspace local state</td><td>None</td><td>Missing</td></tr>
+<tr><td>Application state directory</td><td>One manual local snapshot of 9 November on the same disk</td><td>Missing: not off-host, not verified</td></tr>
+<tr><td>Secret store key (must escrow)</td><td>None</td><td>Missing</td></tr>
+<tr><td>Backup key (must escrow)</td><td>Not created</td><td>Missing</td></tr>
+<tr><td>CLI logins and SSH keys</td><td>None</td><td>Missing</td></tr>
+</tbody></table></div>
+<p>How the deployment dashboard shows it:</p>
+<ul>
+<li><b>On every tile, as a fact.</b> A Production tile (and any tile of an environment that keeps data) whose data locations have no verified off-host copy carries the backup mark in every view state: with any filter, any persona and Facts only. The tile's detail says which location is missing. The mapping from environment to data locations is the placement of the environment on a host or container, from the structure endpoint.</li>
+<li><b>As progress.</b> A goal strip under the headline: "Backup: 1 of 6 must-keep locations have a verified off-host copy", a six-part bar, and the next step with its kind. The count is recomputed from the facts at load, so the strip moves the moment a verified off-host archive exists, before the persona reassesses.</li>
+<li><b>As next steps, from the warden.</b> Today: the owner decision on the off-host target and the owner decision on key custody (D7 and D8 of <code>docs/live-structure-canvas</code>), then a card to configure the backup and verify one restore, then the escrow attestations. When a step is done the persona proposes the following one; when all six are covered the goal shows as met and the warden turns to the age of the last verified restore.</li>
+</ul>
+<p>A second goal in the prototype shows that the mechanism is not special to backup: the reliability engineer holds "change failure rate at or below 5 % for four weeks in a row" and proposes a card for the step where the failures cluster.</p>
+</section>
+
+<section id="warnings">
+<h2>Construction sites and warnings</h2>
+<p>The owner, the same evening: a dependency had to be deployed into containers before work could go on, and such construction sites belong in the system view. The node-level picture, with every open problem pinned to its host, container or link, is the Construction sites and warnings layer of the structure canvas (<code>docs/live-structure-canvas/layers.html</code>). The deployment dashboard shows the same facts where they touch a deploy: pinned to the tile of the project and environment that runs on the node, through the placement of the environment.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Kind</th><th>Fact source</th><th>Pinned to</th><th>What it blocks, typically</th></tr></thead>
+<tbody>
+<tr><td>Dependency, toolchain or CLI missing or behind in a host or container</td><td><code>/api/v1/management/remote-hosts</code> (installed CLI below target, held capability, remote dispatch rejection by capability)</td><td>Tiles of the environments placed on that host or container</td><td>Cards that need the capability; deploys built there</td></tr>
+<tr><td>Host release behind stable, pending host install</td><td><code>/api/v1/management/host-releases</code></td><td>Tiles of the environments on that host</td><td>Deploys to the host until the install ran</td></tr>
+<tr><td>Link down</td><td><code>/api/v1/management/links</code>, bus tag <code>runner-link</code></td><td>Tiles of the environments reached over the link</td><td>Deploys and health checks over the link</td></tr>
+<tr><td>Cards parked or refused dispatch because of a host</td><td><code>/api/v1/management/runner-infrastructure-failures</code>, <code>gate-environment-exhausted</code>, <code>remote-dispatch-rejected</code></td><td>The flow node "Not deployed yet" and the tile of the project</td><td>The cards named, and the release they belong to</td></tr>
+<tr><td>Disk pressure</td><td>Host telemetry, <code>disk-pressure</code> (warning below 20 GiB or 15 %, critical below 8 GiB or 5 %)</td><td>Tiles of the environments on that host</td><td>Image builds, migrations, backups</td></tr>
+<tr><td>Expiring credentials</td><td><code>/api/v1/management/credential-inventory</code>, <code>credentials-expiring</code>, <code>environment-certificate-expiring</code></td><td>The tile of the environment that deploys or serves with it</td><td>Deploys after the expiry date; the address of the environment</td></tr>
+<tr><td>Missing backups</td><td><code>/api/operator/backups</code> warnings, data locations of the structure endpoint</td><td>Every tile whose data has no verified off-host copy</td><td>A restore; a safe rollback of a data migration</td></tr>
+</tbody></table></div>
+<p>Each pin shows three things in the tile's detail and in the list beside the map: what is wrong, what it blocks (cards, gates, deploys) and the next step. The pin and the first of the three are facts. What it blocks and the next step are facts where the API states them (a parked card names its host) and the persona's words where it does not. The persona groups and ranks the open problems; with Facts only they are listed by severity and age. A tile with open problems links to the node in the structure canvas, where the layer shows the same problem on the machine.</p>
+<p>The aggregation delivers them as <code>warnings[]</code> with <code>project</code>, <code>env</code>, <code>kind</code>, <code>severity</code>, <code>title</code>, <code>blocks</code>, <code>next</code> and <code>source</code>, already joined to tiles on the server, so the page needs no second request and no knowledge of hosts.</p>
+</section>
+
+<section id="cost">
+<h2>Cost and freshness</h2>
+<p>The rendering budget is on <a href="stack.html">Framework, budget and data</a>. This is the budget of the judgement.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Item</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>Model</td><td>The persona's capability class, balanced for both personas, resolved by the model selection service; the resolved model is shown with each assessment</td></tr>
+<tr><td>Input per assessment</td><td>About 5,500 tokens: a cached prefix of about 4,000 (persona charter, schema, vocabulary of marks, the stable part of the facts) and about 1,500 that change (figures, the worst tiles, flow counts, run clusters as a digest, open warnings, backup state)</td></tr>
+<tr><td>Output per assessment</td><td>About 700 tokens: one specification</td></tr>
+<tr><td>Calls a day</td><td>2 scheduled (every 12 hours, as the structure canvas recommends in its D10) plus 1 to 4 triggered, for each persona: 3 to 6</td></tr>
+<tr><td>Tokens a week for each persona</td><td>130,000 to 260,000 when every token counts in full (6,200 x 3 to 6 x 7); 46,000 to 92,000 when the cached prefix is not charged</td></tr>
+<tr><td>As priced</td><td>With the price line of <code>docs/live-structure-canvas/live.html</code> (balanced class today: $2 input, $10 output and $0.20 cached input per million tokens): about $0.011 an assessment, $0.07 to $0.13 a day for two personas. Shown "as priced" or "price unknown", never as an assumed zero</td></tr>
+</tbody></table></div>
+<div class="callout" data-tone="warn"><p><b>The allowance is the limit, not the dollars.</b> Each persona has 140,000 tokens a week for all of its work. Counted in full, six assessments a day would use more than that on the deployment dashboard alone. Whether cached input counts in full is the ledger's rule in <code>docs/persona-team/index.html#budgets</code>, not this Dossier's. The design therefore does not depend on the generous reading; it holds the cost down in three ways, and D8 recommends the cadence that fits either reading.</p></div>
+<ul>
+<li><b>One occurrence, two specifications.</b> Where the deploy assessment and the structure assessment of a persona are due in the same window, they share the occurrence: the installation is read once and the model returns both specifications. The deployment dashboard then adds its digest and its output, about 2,200 tokens, to a call that happens anyway.</li>
+<li><b>Coalescing as in the persona team.</b> Triggers bring the next due occurrence forward and are coalesced in its windows: 6 hours by default, 1 hour for an item with a floor of 90 or more. A burst of deploys is one assessment.</li>
+<li><b>No call without a change.</b> A scheduled occurrence whose facts digest equals the one of the last valid specification makes no model call; the specification keeps its revision and the line says "checked, unchanged".</li>
+</ul>
+<h3>Refresh triggers</h3>
+<ul>
+<li>a deploy completed or rolled back (catalogue triggers <code>deploy.completed</code>, <code>deploy.rolled-back</code>);</li>
+<li>the change failure rate crosses a band, in either direction;</li>
+<li>an approval waits longer than a day;</li>
+<li>the drift of a Production tile rises above a threshold the owner sets, five releases by default;</li>
+<li>the backup state or the copies of a data location change;</li>
+<li>a new warning of severity bad, or one that closes;</li>
+<li>"Reassess now" by the viewer, which passes the same admission and the same allowance as every other occurrence.</li>
+</ul>
+<p>When the allowance is spent or the workspace quota pauses the personas, nothing breaks: the facts keep updating, the last valid specification is marked stale with its age, and withdrawn callouts stay withdrawn.</p>
+</section>
+
+<section id="decisions">
+<h2>Decisions this chapter feeds</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>Decision</th><th>Question</th><th>Recommended here</th></tr></thead>
+<tbody>
+<tr><td>D7 · Roles</td><td>Which personas assess the deployment dashboard?</td><td>Operations warden and reliability engineer, the two the structure canvas recommends in its D9; both exist in the catalogue, the viewer picks one or Facts only</td></tr>
+<tr><td>D8 · Cadence</td><td>When do they reassess?</td><td>On the triggers above, coalesced, plus a scheduled check every 12 hours that calls the model only when the facts digest changed; sharing the occurrence with the structure assessment</td></tr>
+<tr><td>D9 · Composition</td><td>How much of the view may be LLM-composed?</td><td>Assessment on top of facts: order of views, stress, callouts, judgement and goals; never data, scales, colours or code</td></tr>
+</tbody></table></div>
+<p>The options and the owner's choice are on the <a href="index.html">decision page</a> and in <code>workbench.json</code>.</p>
+</section>
+</main>
+</body>
+</html>

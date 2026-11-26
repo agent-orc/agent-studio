@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en" data-document-pattern="concept">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Views and filters | Deployment dashboard charts</title>
+<!--g:STYLE--><style data-article-template="v2">/* docs/app/templates/article-document-v2.html, minified by build.mjs */:root{color-scheme:light;--article-paper: #fcfcfb;--article-surface: #f2f1ee;--article-surface-strong: #e9e8e3;--article-ink: #151515;--article-muted: #5f5e59;--article-faint: #696762;--article-line: #d8d6cf;--article-link: #1f67b2;--article-link-soft: #eaf1fb;--article-good: #18753a;--article-good-soft: #eaf4ea;--article-warn: #8b6100;--article-warn-soft: #f8f0dd;--article-bad: #b72f2f;--article-bad-soft: #fbecec;--article-serif: Georgia, "Times New Roman", serif;--article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;--article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace}@media(prefers-color-scheme:dark){:root{color-scheme:dark;--article-paper: #1a1a19;--article-surface: #232322;--article-surface-strong: #2c2c2a;--article-ink: #f7f7f4;--article-muted: #c3c2b7;--article-faint: #9d9c94;--article-line: #3d3d3a;--article-link: #78aef0;--article-link-soft: #1e2a3a;--article-good: #67b867;--article-good-soft: #1f2f1f;--article-warn: #d9a63f;--article-warn-soft: #33301e;--article-bad: #e66767;--article-bad-soft: #382222}}*{box-sizing:border-box}html{background:var(--article-paper)}body{margin:0;background:var(--article-paper);color:var(--article-ink);font:17px/1.75 var(--article-serif);text-rendering:optimizeLegibility}main,.article{width:min(70ch,calc(100% - 48px));margin:0 auto;padding:0 0 80px}header.page{margin-bottom:12px;padding:48px 0 28px;border-bottom:1px solid var(--article-line)}h1,h2,h3,h4,.kicker,.meta,.number,nav,table,figcaption,.box,.callout,.evidence-figure,.variant-grid,.evidence-list{font-family:var(--article-sans)}h1{margin:0 0 14px;font-size:clamp(2.2rem,6vw,3.4rem);line-height:1.08;letter-spacing:-.025em}h2{margin:56px 0 10px;font-size:1.55rem;line-height:1.25}h3{margin:34px 0 8px;font-size:1.08rem;line-height:1.35}h4{margin:0 0 8px;font-size:.94rem}p{margin:0 0 18px}p:last-child{margin-bottom:0}.kicker,.number{margin:0 0 12px;color:var(--article-faint);font-size:.75rem;font-weight:700;letter-spacing:.12em;line-height:1;text-transform:uppercase}.lede{margin:0;color:var(--article-muted);font-size:1.18rem;line-height:1.6}.meta{display:flex;flex-wrap:wrap;gap:10px 18px;margin-top:20px;color:var(--article-faint);font-size:.78rem}.meta b{color:var(--article-muted);font-weight:650}a{color:var(--article-link);text-underline-offset:.16em}a:focus-visible{outline:2px solid var(--article-link);outline-offset:3px;border-radius:2px}code{padding:.08em .34em;border-radius:4px;background:var(--article-surface-strong);font:.84em/1.5 var(--article-mono);overflow-wrap:anywhere}pre{overflow-x:auto;margin:24px 0;padding:16px 18px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface)}pre code{padding:0;background:transparent}ul,ol{margin:0 0 18px;padding-left:24px}li+li{margin-top:6px}table{width:100%;margin:24px 0;border-collapse:collapse;font-size:.88rem;line-height:1.5}th,td{padding:10px 12px;border-bottom:1px solid var(--article-line);text-align:left;vertical-align:top}th{color:var(--article-faint);font-size:.74rem;letter-spacing:.06em;text-transform:uppercase}.box,.callout{margin:24px 0;padding:18px 22px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface);font-size:.92rem;line-height:1.65}.box.accent,.callout[data-tone=accent]{border-color:color-mix(in srgb,var(--article-link) 30%,var(--article-line));background:var(--article-link-soft)}.box.good,.callout[data-tone=good]{border-color:color-mix(in srgb,var(--article-good) 30%,var(--article-line));background:var(--article-good-soft)}.box.warn,.callout[data-tone=warn]{border-color:color-mix(in srgb,var(--article-warn) 35%,var(--article-line));background:var(--article-warn-soft)}.box.bad,.callout[data-tone=bad]{border-color:color-mix(in srgb,var(--article-bad) 30%,var(--article-line));background:var(--article-bad-soft)}figure{margin:30px 0}figure>img,figure>svg{display:block;width:100%;height:auto;border:1px solid var(--article-line);border-radius:10px;background:var(--article-paper)}figcaption{margin-top:10px;color:var(--article-muted);font-size:.8rem;line-height:1.5}.evidence-figure{margin-top:38px;margin-bottom:38px}.evidence-captures{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:12px}.evidence-capture{position:relative;min-width:0;overflow:hidden;border:1px solid var(--article-line);border-radius:10px;background:var(--article-paper)}.evidence-capture>img{display:block;width:100%;height:auto}.capture-theme,.figure-annotation{position:absolute;z-index:1;border:1px solid var(--article-line);border-radius:999px;background:var(--article-surface);color:var(--article-muted);font-size:.68rem;font-weight:750;letter-spacing:.04em;line-height:1.35}.capture-theme{top:10px;left:10px;padding:3px 8px;text-transform:uppercase}.figure-annotation{right:12px;bottom:12px;max-width:min(28ch,calc(100% - 24px));padding:5px 10px;border-color:color-mix(in srgb,var(--article-link) 45%,var(--article-line));background:var(--article-link-soft);color:var(--article-link);letter-spacing:0;text-transform:none}.figure-claim{display:block;color:var(--article-ink);font-size:.84rem}.figure-as-of{display:flex;flex-wrap:wrap;gap:2px 14px;margin-top:6px;color:var(--article-faint);font-size:.72rem}.breakout,.media-breakout{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%)}.variant-grid{display:grid;grid-template-columns:1fr;gap:14px;margin:24px 0}.variant{min-width:0;padding:16px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface)}.variant h3{margin:0 0 8px}.variant img,.variant svg{display:block;width:100%;height:auto;margin-top:12px}[data-document-pattern=ui] .variant-grid{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%);grid-template-columns:repeat(2,minmax(0,1fr))}[data-document-pattern=ui] .mockup{width:min(1120px,calc(100vw - 48px));margin-left:50%;transform:translate(-50%)}.evidence-list{display:grid;gap:10px;margin:24px 0}.evidence{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px 14px;align-items:start;padding:14px;border:1px solid var(--article-line);border-radius:9px;background:var(--article-surface);color:var(--article-ink);text-decoration:none}.evidence:hover{border-color:var(--article-link);background:var(--article-link-soft)}.evidence-class{display:inline-flex;align-items:center;min-height:22px;padding:2px 8px;border-radius:999px;background:var(--article-surface-strong);color:var(--article-muted);font-size:.68rem;font-weight:750;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}[data-document-pattern=concept] .evidence-class[data-evidence-class=observed]{background:var(--article-good-soft);color:var(--article-good)}[data-document-pattern=concept] .evidence-class[data-evidence-class=inferred]{background:var(--article-warn-soft);color:var(--article-warn)}[data-document-pattern=concept] .evidence-class[data-evidence-class=proposed]{background:var(--article-link-soft);color:var(--article-link)}.evidence b{display:block;margin-bottom:2px;font-size:.88rem}.evidence small{display:block;color:var(--article-muted);font-size:.78rem;line-height:1.45}.dim{color:var(--article-muted)}@media(max-width:760px){main,.article{width:min(100% - 28px,70ch);padding-bottom:52px}header.page{padding-top:32px}.breakout,.media-breakout,[data-document-pattern=ui] .variant-grid,[data-document-pattern=ui] .mockup{width:calc(100vw - 20px)}[data-document-pattern=ui] .variant-grid,.evidence,.evidence-captures{grid-template-columns:1fr}table{display:block;overflow-x:auto}}@media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition-duration:0s!important;animation-duration:0s!important}}</style>
+<style data-dossier="deployment-dashboard-charts">nav.chapters{margin:20px 0 32px;font:.82rem/1.7 var(--article-sans)}nav.chapters ol{display:flex;flex-wrap:wrap;gap:4px 18px;margin:0;padding:0;list-style:none}nav.chapters [aria-current]{color:var(--article-ink);font-weight:650;text-decoration:none}.tablewrap{overflow-x:auto}table code{overflow-wrap:anywhere}.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;margin:24px 0}.gallery figure{margin:0}.gallery img{width:100%;max-height:420px;object-fit:cover;object-position:top;border:1px solid var(--article-line);border-radius:6px}.gallery figcaption{font:.72rem/1.4 var(--article-sans);color:var(--article-faint)}</style><!--/g-->
+</head>
+<body>
+<main class="article">
+<header class="page">
+  <p class="kicker">Concept Dossier · AGT-3950 · Deployment dashboard charts</p>
+  <h1>Views and filters</h1>
+  <p class="lede">What each view of Workspace / Deployments shows, how it encodes it, which aggregation it reads, and how filters, cross-filter, link state and keyboard work. Every capture is taken from the prototype of this Dossier.</p>
+</header>
+<!--g:NAV--><nav class="chapters" aria-label="Pages of this Dossier"><ol><li><a href="index.html">Decision page</a></li><li><a href="views.html" aria-current="page">Views and filters</a></li><li><a href="stack.html">Framework, budget and data</a></li><li><a href="assessments.html">Assessments, goals and warnings</a></li><li><a href="prototype.html">Live prototype</a></li></ol></nav><!--/g-->
+
+<section id="today">
+<h2>Today and the questions</h2>
+<p>Today's page (AGT-3200, AGT-3277, AGT-3315) is a table of projects by Staging and Production with release, age, state and health, followed by one delivery-lane block per project with a box for each card. It answers "what is the state of this cell" one cell at a time. The questions an operator brings are wider, and each view below answers one of them:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Question</th><th>View</th><th>Form and why</th></tr></thead>
+<tbody>
+<tr><td>How is delivery going, and is it getting better?</td><td>Delivery figures</td><td>Four numbers are not a chart: stat tiles with the comparison in words and a sparkline.</td></tr>
+<tr><td>What is live where, what is behind, what is broken, what is missing?</td><td>Overview</td><td>A grid of projects by environments with magnitude on one hue: a tile map. Status marks by shape, not by colour alone.</td></tr>
+<tr><td>Where do the integrated cards sit, and which project holds them?</td><td>Release flow</td><td>Counts that split between stages: a flow with proportional bands, plus ranked bars for the projects.</td></tr>
+<tr><td>When did deploys run, how long, with which outcome, failing where?</td><td>Deploy timeline</td><td>Events over time by environment: a dot per run in a lane, with a brush.</td></tr>
+<tr><td>Is there a pattern across projects and weeks?</td><td>Deploy landscape, 3D, opt-in</td><td>Two measures on one grid: height and colour.</td></tr>
+</tbody></table></div>
+<p>The design follows the house direction: calm base, colour only where it carries a state, all of it from the Studio tokens in both themes. The one playful element is the landscape that lays itself flat into its heat map. Sections are separated by headings and hairlines, not boxed into cards.</p>
+</section>
+
+<section id="figures">
+<h2>Delivery figures</h2>
+<p>For Production, in the selected range, each against the same number of days before it and with a weekly trend. Definitions, fixed by tests in slice DDC-4:</p>
+<ul>
+<li><b>Deploy frequency</b>: succeeded Production deployments a week.</li>
+<li><b>Lead time</b>: median time from the integration of a card to the finish of the Production deployment that contains it.</li>
+<li><b>Change failure rate</b>: share of finished Production deployments that failed or were rolled back.</li>
+<li><b>Time to restore</b>: median time from a failed Production deployment to the next succeeded one of the same project and tenant.</li>
+</ul>
+<p>A figure without data says so and never shows zero. The comparison is written out ("0.7 vs the 90 days before, better") so that the direction does not depend on colour. Aggregation: <code>figures[]</code> of the dashboard aggregate, with <code>value</code>, <code>before</code> and <code>weekly[]</code>.</p>
+<!--g:FIG_FIGURES--><figure class="evidence-figure media-breakout">
+  <div class="evidence-captures">
+    <div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/view-figures-light-1440.png" alt="Four stat tiles: deploy frequency 12.5 deploys a week, lead time 54 hours median, change failure rate 6.9 percent, time to restore 38 minutes, each with a comparison line and a sparkline by week." loading="lazy"></div>
+    <div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/view-figures-dark-1440.png" alt="The same view in the dark theme of the Studio tokens." loading="lazy"></div>
+  </div>
+  <figcaption><span class="figure-claim"><b>Delivery figures.</b> Each figure states its value with unit, the comparison with the 90 days before in words, and the weekly trend.</span>
+  <span class="figure-as-of"><span>Captured <time datetime="2026-11-26">26 November 2026</time> from this Dossier's prototype (<code>prototype.html</code>, commit base ca26ce2ef) by <code>capture.mjs</code>, headless Chromium, 1440 px, light and dark. Data: the seeded synthetic set of <code>src/data.js</code>, not a product state.</span></span></figcaption>
+</figure><!--/g-->
+</section>
+
+<section id="overview">
+<h2>Overview</h2>
+<p>One row a project, grouped by project group, one tile an environment. A tile carries, readable on the tile itself at 1440 px: the live release and the number of releases behind the newest one (fill on one hue, five steps, and the words), the last run as a shape (check, disc, triangle, ring, dash), health as a dot, a clock pill with the number of cards waiting for approval, a red corner when the data of that environment has no verified off-host backup, and an amber corner for an open construction site or warning. At 390 px the tile keeps the marks and shortens the words. An environment that a project does not have is an empty outlined tile; a project without any environment is one outlined row that says "Not set up: no environment declared", so nothing disappears from the page.</p>
+<p>With "Split by tenant" a tile of a multi-tenant environment divides into one strip a tenant. Filters dim tiles that do not match instead of removing them, so the context stays. The tooltip repeats every value in words, the same text appears for the keyboard focus, and "Table" swaps in a plain table of the same values. Aggregation: <code>tiles[]</code>.</p>
+<!--g:FIG_OVERVIEW--><figure class="evidence-figure media-breakout">
+  <div class="evidence-captures">
+    <div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/view-overview-light-1440.png" alt="Tile map: one row per project in six groups, one tile per environment; tiles are shaded violet by releases behind, carry the live release, a mark for the last run, a health dot, a pill for waiting approvals and corner flags; three rows read Not set up." loading="lazy"></div>
+    <div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/view-overview-dark-1440.png" alt="The same view in the dark theme of the Studio tokens." loading="lazy"></div>
+  </div>
+  <figcaption><span class="figure-claim"><b>Overview.</b> Each tile names the live release and how many releases it is behind; the three projects without environments and every missing environment are visible as not set up; a red corner marks data without a verified off-host backup.</span>
+  <span class="figure-as-of"><span>Captured <time datetime="2026-11-26">26 November 2026</time> from this Dossier's prototype (<code>prototype.html</code>, commit base ca26ce2ef) by <code>capture.mjs</code>, headless Chromium, 1440 px, light and dark. Data: the seeded synthetic set of <code>src/data.js</code>, not a product state.</span></span></figcaption>
+</figure><!--/g-->
+<!--g:FIG_TENANTS--><figure class="evidence-figure media-breakout"><img src="assets/tenants-light-1440.png" alt="The overview with Split by tenant on and the environment Production selected: multi-tenant tiles are divided into six strips shaded by each tenant's drift." loading="lazy"><figcaption><span class="figure-claim"><b>Tenants.</b> With the split on, a tile of a multi-tenant environment shows one strip per tenant, shaded by that tenant's drift, with a health line under it.</span>
+  <span class="figure-as-of"><span>Captured <time datetime="2026-11-26">26 November 2026</time> from this Dossier's prototype (<code>prototype.html</code>, commit base ca26ce2ef) by <code>capture.mjs</code>, headless Chromium, 1440 px, light. Data: the seeded synthetic set of <code>src/data.js</code>, not a product state.</span></span></figcaption></figure><!--/g-->
+</section>
+
+<section id="flow">
+<h2>Release flow</h2>
+<p>Replaces the long card column. All cards integrated in the range enter on the left. They split into "Not deployed yet" and "Reached Staging", and the latter into "On Staging only", "Waiting for approval" and "Live in Production". Band widths are proportional to the counts (a band never gets thinner than 2 px, so a small state stays visible); states where cards wait are amber, live is green, the rest neutral. Each state prints its count and share. Beside the flow, ranked bars name the projects that hold the cards not yet live and where they hold them.</p>
+<p>A click or Enter on an end state lists its cards under the flow. The list is windowed: with thousands of cards a few dozen rows exist in the DOM. Aggregation: <code>flow.nodes[]</code>, <code>flow.links[]</code>, <code>flow.waitingByProject[]</code>; the list reads <code>GET /api/deploy/dashboard/cards</code> page by page.</p>
+<!--g:FIG_FLOW--><figure class="evidence-figure media-breakout">
+  <div class="evidence-captures">
+    <div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/view-flow-light-1440.png" alt="Release flow from Integrated over Reached Staging to three end states with card counts and shares, a ranked list of projects with cards not live, and below it the list of the cards waiting for approval." loading="lazy"></div>
+    <div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/view-flow-dark-1440.png" alt="The same view in the dark theme of the Studio tokens." loading="lazy"></div>
+  </div>
+  <figcaption><span class="figure-claim"><b>Release flow.</b> The cards of the range end in three states with their counts; the state Waiting for approval is selected and its cards are listed in a windowed list.</span>
+  <span class="figure-as-of"><span>Captured <time datetime="2026-11-26">26 November 2026</time> from this Dossier's prototype (<code>prototype.html</code>, commit base ca26ce2ef) by <code>capture.mjs</code>, headless Chromium, 1440 px, light and dark. Data: the seeded synthetic set of <code>src/data.js</code>, not a product state.</span></span></figcaption>
+</figure><!--/g-->
+</section>
+
+<section id="timeline">
+<h2>Deploy timeline</h2>
+<p>One lane an environment, one dot a deploy run at its start time. Within a lane a dot sits higher the longer the run took (the lane's top is 15 minutes or more), so slow runs lift off the baseline without a second axis. Succeeded runs are small and translucent, failed and rolled-back runs larger and opaque, running ones a ring. The tooltip names project, environment, tenant, release, duration and, for a failed run, the failing step. The lower chart counts runs a day by outcome over the whole period and carries the brush; dragging across either chart sets the range for every view, and double-click releases it. The legend entries are buttons that filter by outcome. Aggregation: <code>runs</code> as columns and <code>runs.perDay</code>.</p>
+<!--g:FIG_TIMELINE--><figure class="evidence-figure media-breakout">
+  <div class="evidence-captures">
+    <div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/view-timeline-light-1440.png" alt="Deploy timeline: four environment lanes with one dot per deploy run, failed and rolled-back runs larger and coloured, and a lower chart of runs a day over 180 days with the selected 90 days shaded." loading="lazy"></div>
+    <div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/view-timeline-dark-1440.png" alt="The same view in the dark theme of the Studio tokens." loading="lazy"></div>
+  </div>
+  <figcaption><span class="figure-claim"><b>Deploy timeline.</b> Every run of the range is one dot in its environment lane, higher for longer runs; failed and rolled-back runs stand out; the lower chart carries the brush over the whole period.</span>
+  <span class="figure-as-of"><span>Captured <time datetime="2026-11-26">26 November 2026</time> from this Dossier's prototype (<code>prototype.html</code>, commit base ca26ce2ef) by <code>capture.mjs</code>, headless Chromium, 1440 px, light and dark. Data: the seeded synthetic set of <code>src/data.js</code>, not a product state.</span></span></figcaption>
+</figure><!--/g-->
+</section>
+
+<section id="landscape">
+<h2>Deploy landscape, 3D</h2>
+<p>The one 3D view, opened on request. Weeks run along one ground axis and projects, in their groups, along the other; a bar's height is the number of deploy runs of that project in that week and its colour the share of them that failed or were rolled back. In 2D a heat map can show only one of the two at a time. The projection is orthographic, so equal heights look equal wherever a bar stands. Drag or arrow keys turn and tilt it, hover reads a bar out in words, and "Flatten to 2D" lays the scene down into the heat map it is made of.</p>
+<p>What 3D costs here, plainly: bars hide the bars behind them from any one angle, heights are judged less exactly than positions on a common axis, only group and month labels fit, and a pointer is needed to read a single value. That is why it is opt-in, why the 2D views stay the default and why the same data is one button away as a flat map. Bytes are in <a href="stack.html#three-d">Framework, budget and data</a>.</p>
+<!--g:FIG_3D--><figure class="evidence-figure media-breakout" id="fig-3d">
+  <div class="evidence-captures">
+    <div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/view-3d-light-1440.png" alt="Deploy landscape: a field of bars, weeks by projects in six groups, bar height for the number of deploy runs in a week and red for the share that failed; month and group labels and a height scale." loading="lazy"></div>
+    <div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/view-3d-dark-1440.png" alt="The same view in the dark theme of the Studio tokens." loading="lazy"></div>
+  </div>
+  <figcaption><span class="figure-claim"><b>3D, opt-in.</b> Height carries the run count and colour the failed share at once; the two projects with the failure cluster stand out as red bars. Bars in front hide bars behind them, which is why the view is not the default.</span>
+  <span class="figure-as-of"><span>Captured <time datetime="2026-11-26">26 November 2026</time> from this Dossier's prototype (<code>prototype.html</code>, commit base ca26ce2ef) by <code>capture.mjs</code>, headless Chromium, 1440 px, light and dark. Data: the seeded synthetic set of <code>src/data.js</code>, not a product state.</span></span></figcaption>
+</figure><!--/g-->
+</section>
+
+<section id="filters">
+<h2>Filters</h2>
+<p>One row above everything it scopes: time range (30, 90, 180 days and two date fields), project group, project, environment, tenant, outcome. Every view reads the same slice, so the numbers agree: the count line states how many projects, runs and cards are inside the filter. Marks are filters too: a tile sets project and environment, a flow state lists its cards, a ranked bar sets the project, a legend entry sets the outcome, a brushed range sets the time. Clicking the mark again releases it. Each active filter is a removable chip and one control clears all.</p>
+<p>The state lives in the link: the prototype writes it to the fragment (for example <code>#g=2&amp;o=1&amp;d=180&amp;s=1</code>) and restores it on load; the product carries the same keys as query of <code>#/workspace/deployments</code>. Keyboard: every control is a native element in tab order; the tile map is one tab stop with arrow keys, Enter and Escape; flow states and ranked rows are buttons; the card list scrolls with the arrow keys; the landscape turns with the arrow keys. Focus is always visible.</p>
+<!--g:FIG_CROSSFILTER--><figure class="evidence-figure media-breakout"><img src="assets/crossfilter-light-1440.png" alt="The page filtered to the group Services and the outcome Failed over 180 days: chips for each filter, tiles of other outcomes dimmed, the flow recounted, only failed runs on the timeline." loading="lazy"><figcaption><span class="figure-claim"><b>Cross-filter.</b> Group Services, outcome Failed and the state On Staging are active as removable chips; tiles that do not match are dimmed, not removed, and flow, list and timeline show the same slice.</span>
+  <span class="figure-as-of"><span>Captured <time datetime="2026-11-26">26 November 2026</time> from this Dossier's prototype (<code>prototype.html</code>, commit base ca26ce2ef) by <code>capture.mjs</code>, headless Chromium, 1440 px, light. Data: the seeded synthetic set of <code>src/data.js</code>, not a product state.</span></span></figcaption></figure><!--/g-->
+</section>
+
+<section id="data">
+<h2>Data sets</h2>
+<p><b>Large synthetic set</b>, for the budget: 40 projects in six groups, 4 environments, 6 tenants, 2,000 deploy runs and 5,000 cards over 180 days, seeded and therefore identical on every load (<code>src/data.js</code>). It contains what the views must show: three projects without environments, missing environments, a cluster of failures at one step in two projects, laggards of up to 10 releases, and cards that wait.</p>
+<p><b>Installation by role</b>: the Studio itself with Production only (its instance deploy records), a website and a documentation site with Staging and Production, a runner image with Staging, and three projects without environments. Its structure follows the card and the Dossiers named there; its counts are of the installation's order of magnitude. This run had no credentials for the live API, so the set was not read from it; that is stated on the capture and is the first acceptance check of DDC-1.</p>
+<!--g:FIG_INSTALLATION--><figure class="evidence-figure media-breakout"><img src="assets/installation-light-1440.png" alt="The page on the installation-shaped set: seven projects by role, the Studio with Production only, three projects not set up, the warden's assessment or the note that none applies." loading="lazy"><figcaption><span class="figure-claim"><b>Installation by role.</b> The same views on seven projects: the Studio itself with Production only, the website with Staging and Production, three projects not set up; every Production tile carries the no-backup corner.</span>
+  <span class="figure-as-of"><span>Captured <time datetime="2026-11-26">26 November 2026</time> from this Dossier's prototype (<code>prototype.html</code>, commit base ca26ce2ef) by <code>capture.mjs</code>, headless Chromium, 1440 px, light; counts are of the installation's order of magnitude and are not read from its API. Data: the seeded synthetic set of <code>src/data.js</code>, not a product state.</span></span></figcaption></figure><!--/g-->
+</section>
+
+<section id="captures">
+<h2>Captures</h2>
+<p>Phone width, 390 px, each view in both themes:</p>
+<!--g:MOBILE_GALLERY--><div class="gallery"><figure><img src="assets/view-figures-light-390.png" alt="Delivery figures at 390 px, light theme." loading="lazy"><figcaption>Delivery figures, light, 390 px</figcaption></figure>
+<figure><img src="assets/view-figures-dark-390.png" alt="Delivery figures at 390 px, dark theme." loading="lazy"><figcaption>Delivery figures, dark, 390 px</figcaption></figure>
+<figure><img src="assets/view-overview-light-390.png" alt="Overview at 390 px, light theme." loading="lazy"><figcaption>Overview, light, 390 px</figcaption></figure>
+<figure><img src="assets/view-overview-dark-390.png" alt="Overview at 390 px, dark theme." loading="lazy"><figcaption>Overview, dark, 390 px</figcaption></figure>
+<figure><img src="assets/view-flow-light-390.png" alt="Release flow at 390 px, light theme." loading="lazy"><figcaption>Release flow, light, 390 px</figcaption></figure>
+<figure><img src="assets/view-flow-dark-390.png" alt="Release flow at 390 px, dark theme." loading="lazy"><figcaption>Release flow, dark, 390 px</figcaption></figure>
+<figure><img src="assets/view-timeline-light-390.png" alt="Deploy timeline at 390 px, light theme." loading="lazy"><figcaption>Deploy timeline, light, 390 px</figcaption></figure>
+<figure><img src="assets/view-timeline-dark-390.png" alt="Deploy timeline at 390 px, dark theme." loading="lazy"><figcaption>Deploy timeline, dark, 390 px</figcaption></figure>
+<figure><img src="assets/view-3d-light-390.png" alt="Deploy landscape, 3D at 390 px, light theme." loading="lazy"><figcaption>Deploy landscape, 3D, light, 390 px</figcaption></figure>
+<figure><img src="assets/view-3d-dark-390.png" alt="Deploy landscape, 3D at 390 px, dark theme." loading="lazy"><figcaption>Deploy landscape, 3D, dark, 390 px</figcaption></figure>
+<figure><img src="assets/dashboard-light-390.png" alt="Whole page at 390 px, light theme." loading="lazy"><figcaption>Whole page, light, 390 px</figcaption></figure>
+<figure><img src="assets/dashboard-dark-390.png" alt="Whole page at 390 px, dark theme." loading="lazy"><figcaption>Whole page, dark, 390 px</figcaption></figure></div><!--/g-->
+<!--g:CAPTURES--><p>Five views in light and dark at 1440 px and 390 px: 20 of 20 captures present, plus the whole page and the states below. 35 files in <code>assets/</code>.</p><div class="tablewrap"><table><thead><tr><th>File</th><th>Theme</th><th>Viewport, px</th><th>Pixels</th></tr></thead><tbody>
+<tr><td><code>assessment-rejected-dark-1440.png</code></td><td>dark</td><td>1440</td><td>1360 × 620</td></tr>
+<tr><td><code>assessment-rejected-light-1440.png</code></td><td>light</td><td>1440</td><td>1360 × 620</td></tr>
+<tr><td><code>assessment-reliability-dark-1440.png</code></td><td>dark</td><td>1440</td><td>1360 × 1500</td></tr>
+<tr><td><code>assessment-reliability-light-1440.png</code></td><td>light</td><td>1440</td><td>1360 × 1500</td></tr>
+<tr><td><code>assessment-warden-dark-1440.png</code></td><td>dark</td><td>1440</td><td>1360 × 1500</td></tr>
+<tr><td><code>assessment-warden-light-1440.png</code></td><td>light</td><td>1440</td><td>1360 × 1500</td></tr>
+<tr><td><code>bench-chartjs-light-1440.png</code></td><td>light</td><td>1440</td><td>1440 × 1604</td></tr>
+<tr><td><code>bench-echarts-light-1440.png</code></td><td>light</td><td>1440</td><td>1440 × 1607</td></tr>
+<tr><td><code>crossfilter-light-1440.png</code></td><td>light</td><td>1440</td><td>1360 × 1700</td></tr>
+<tr><td><code>dashboard-dark-1440.png</code></td><td>dark</td><td>1440</td><td>1360 × 2197</td></tr>
+<tr><td><code>dashboard-dark-390.png</code></td><td>dark</td><td>390</td><td>780 × 7722</td></tr>
+<tr><td><code>dashboard-light-1440.png</code></td><td>light</td><td>1440</td><td>1360 × 2197</td></tr>
+<tr><td><code>dashboard-light-390.png</code></td><td>light</td><td>390</td><td>780 × 7722</td></tr>
+<tr><td><code>installation-light-1440.png</code></td><td>light</td><td>1440</td><td>1360 × 1500</td></tr>
+<tr><td><code>tenants-light-1440.png</code></td><td>light</td><td>1440</td><td>1326 × 732</td></tr>
+<tr><td><code>view-3d-dark-1440.png</code></td><td>dark</td><td>1440</td><td>1326 × 602</td></tr>
+<tr><td><code>view-3d-dark-390.png</code></td><td>dark</td><td>390</td><td>732 × 902</td></tr>
+<tr><td><code>view-3d-light-1440.png</code></td><td>light</td><td>1440</td><td>1326 × 602</td></tr>
+<tr><td><code>view-3d-light-390.png</code></td><td>light</td><td>390</td><td>732 × 902</td></tr>
+<tr><td><code>view-figures-dark-1440.png</code></td><td>dark</td><td>1440</td><td>1326 × 164</td></tr>
+<tr><td><code>view-figures-dark-390.png</code></td><td>dark</td><td>390</td><td>732 × 744</td></tr>
+<tr><td><code>view-figures-light-1440.png</code></td><td>light</td><td>1440</td><td>1326 × 164</td></tr>
+<tr><td><code>view-figures-light-390.png</code></td><td>light</td><td>390</td><td>732 × 744</td></tr>
+<tr><td><code>view-flow-dark-1440.png</code></td><td>dark</td><td>1440</td><td>1326 × 603</td></tr>
+<tr><td><code>view-flow-dark-390.png</code></td><td>dark</td><td>390</td><td>732 × 1640</td></tr>
+<tr><td><code>view-flow-light-1440.png</code></td><td>light</td><td>1440</td><td>1326 × 603</td></tr>
+<tr><td><code>view-flow-light-390.png</code></td><td>light</td><td>390</td><td>732 × 1640</td></tr>
+<tr><td><code>view-overview-dark-1440.png</code></td><td>dark</td><td>1440</td><td>1326 × 732</td></tr>
+<tr><td><code>view-overview-dark-390.png</code></td><td>dark</td><td>390</td><td>732 × 2834</td></tr>
+<tr><td><code>view-overview-light-1440.png</code></td><td>light</td><td>1440</td><td>1326 × 732</td></tr>
+<tr><td><code>view-overview-light-390.png</code></td><td>light</td><td>390</td><td>732 × 2834</td></tr>
+<tr><td><code>view-timeline-dark-1440.png</code></td><td>dark</td><td>1440</td><td>1326 × 458</td></tr>
+<tr><td><code>view-timeline-dark-390.png</code></td><td>dark</td><td>390</td><td>732 × 1032</td></tr>
+<tr><td><code>view-timeline-light-1440.png</code></td><td>light</td><td>1440</td><td>1326 × 458</td></tr>
+<tr><td><code>view-timeline-light-390.png</code></td><td>light</td><td>390</td><td>732 × 1032</td></tr>
+</tbody></table></div><!--/g-->
+</section>
+</main>
+</body>
+</html>
