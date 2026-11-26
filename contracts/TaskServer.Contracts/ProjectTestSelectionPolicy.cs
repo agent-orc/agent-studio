@@ -45,10 +45,13 @@ public static class ProjectTestSelectionPolicy
         var name = normalized[(normalized.LastIndexOf('/') + 1)..];
         return normalized.StartsWith(".agent-studio/", StringComparison.OrdinalIgnoreCase)
             || name.StartsWith("Directory.Build.", StringComparison.OrdinalIgnoreCase)
-            || name.Equals("Directory.Packages.props", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".props", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".targets", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".proj", StringComparison.OrdinalIgnoreCase)
             || name.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
             || name.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
             || name.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".slnf", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("global.json", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("NuGet.config", StringComparison.OrdinalIgnoreCase);
     }

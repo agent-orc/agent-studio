@@ -170,7 +170,11 @@ its requirements. A `suites: ['*']` row selects the full declared inventory.
 - `backend/` selects backend build checks and backend tests. Runner and Task
   Server rows include the other declared test projects that depend on them.
 - Shared contracts, repository build configuration, project definition and
-  project graph changes select everything. Unmapped paths, missing diffs
+  project graph changes select everything. MSBuild `.props`, `.targets`,
+  `.proj` and `.csproj` inputs and `.sln`, `.slnx` and `.slnf` solution inputs
+  are global even inside a mapped source folder: an imported build file or
+  solution filter can affect projects outside that folder. Every gate uses
+  this check before matching the area's rows. Unmapped paths, missing diffs
   and unassigned command inventory fall back to everything. A malformed map
   blocks the gate as an invalid project definition. Sources without their own
   declared routine suite remain explicitly shared.
