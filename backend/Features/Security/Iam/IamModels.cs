@@ -105,8 +105,8 @@ public static class ServiceAccountOrigins
     /// <summary>
     /// The operator agent (security model SM-1): a service account the Owner
     /// creates in the Access area whose only credentials are child sessions,
-    /// each with its own <c>oas.*</c> bearer of at most eight hours that only
-    /// the Owner starts and renews. It holds no <c>sat.*</c> token.
+    /// each with its own <c>oas.*</c> bearer. Bound sessions have a chosen
+    /// lifetime and device-signed key renewal; unbound sessions keep the eight-hour limit. It holds no <c>sat.*</c> token.
     /// </summary>
     public const string OperatorAgent = "operator-agent";
     public const string Persona = "persona";
@@ -131,6 +131,7 @@ public sealed record ServiceAccount
     /// <c>null</c> until the first one. Forgetting a device removes it here.
     /// </summary>
     public List<OperatorDevice>? Devices { get; init; }
+    public int? OperatorLifetimeLimitHours { get; init; }
     /// <summary><see cref="ServiceAccountPurposes.KillSwitchDrill"/> for a drill's test principal; <c>null</c> otherwise.</summary>
     public string? Purpose { get; init; }
     /// <summary>The workspace and persona activation represented by a persona principal.</summary>
@@ -148,8 +149,8 @@ public static class ServiceAccountPurposes
 
 /// <summary>
 /// One interactive operator agent session: its own bearer (hash only), the
-/// Owner who started it, and an expiry of at most eight hours that only the
-/// Owner extends.
+/// Owner who confirmed it, its chosen end and idle clock, and a separately
+/// certified session key. The unbound Settings path retains its eight-hour cap.
 /// </summary>
 public sealed record OperatorAgentSession
 {
@@ -176,6 +177,17 @@ public sealed record OperatorAgentSession
     public OperatorSessionDevice? Device { get; init; }
     /// <summary>The elevated action classes the Owner kept at confirmation; ES-7 admits their operations.</summary>
     public List<string>? Classes { get; init; }
+    public int? ChosenLifetimeHours { get; init; }
+    public DateTime? ChosenEnd { get; init; }
+    public DateTime? KeyExpiresAt { get; init; }
+    public OperatorSessionLimits? LimitsAtConfirmation { get; init; }
+    public int? EffectiveLimitHoursAtConfirmation { get; init; }
+    public int? AgentLifetimeLimitHoursAtConfirmation { get; init; }
+    public string? ConfirmingRole { get; init; }
+    public string? LastAddress { get; init; }
+    public List<string> UsedAddresses { get; init; } = [];
+    public DateTime? NewAddressAt { get; init; }
+    public DateTime? ReviewedAt { get; init; }
 }
 
 public sealed record ServiceAccountToken
@@ -255,9 +267,12 @@ public static class OperatorSessionStates
 public sealed record OperatorSessionResponse(
     string Id, string OperatorAgentId, string? Name, string Actor, string DelegatedBy, DateTime CreatedAt, string CreatedBy,
     DateTime ExpiresAt, DateTime? RenewedAt, DateTime? LastUsedAt, DateTime? RevokedAt, string State,
-    OperatorSessionDeviceResponse? Device = null, IReadOnlyList<string>? Classes = null);
+    OperatorSessionDeviceResponse? Device = null, IReadOnlyList<string>? Classes = null,
+    int? ChosenLifetimeHours = null, DateTime? ChosenEnd = null, DateTime? IdleEnd = null,
+    DateTime? KeyExpiresAt = null, string? LastAddress = null, DateTime? NewAddressAt = null,
+    DateTime? ReviewedAt = null, bool ReviewDue = false);
 public sealed record OperatorAgentResponse(
     string Id, string Name, string? Description, DateTime CreatedAt, string? CreatedBy, DateTime? DisabledAt,
-    IReadOnlyList<OperatorSessionResponse> Sessions, IReadOnlyList<OperatorDeviceResponse>? Devices = null);
+    IReadOnlyList<OperatorSessionResponse> Sessions, IReadOnlyList<OperatorDeviceResponse>? Devices = null, int? LifetimeLimitHours = null);
 public sealed record OneTimeOperatorSessionResponse(
     string OperatorAgentId, string SessionId, string Token, string Actor, string DelegatedBy, DateTime ExpiresAt);

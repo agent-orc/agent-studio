@@ -163,9 +163,14 @@ export async function stubPilotOwner(page: Page, options: { empty?: boolean } = 
     availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
   }));
   await page.routeWebSocket('**/hubs/v1/studio*', socket => {
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
     socket.onMessage(message => {
-      if (typeof message === 'string' && message.includes('"protocol":"json"')) socket.send('{}\u001e');
+      if (typeof message === 'string' && message.includes('"protocol":"json"')) {
+        socket.send('{}\u001e');
+        heartbeat ??= setInterval(() => socket.send('{"type":6}\u001e'), 10_000);
+      }
     });
+    socket.onClose(() => { if (heartbeat) clearInterval(heartbeat); });
   });
   await page.route('**/api/auth/status', route => json(route, status));
   await page.route('**/api/v1/studio/auth/status', route => json(route, status));

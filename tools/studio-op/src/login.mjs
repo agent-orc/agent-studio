@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { usage } from './args.mjs';
 import { EXIT } from './exit-codes.mjs';
-import { openDeviceKey, certifySession } from './device-key.mjs';
+import { certifySession } from './device-key.mjs';
 import { renderQr } from './qr.mjs';
 import { AGENT_FILE, agentCall, startAgent, stopAgent, digest } from './agent.mjs';
 import { OperationError, failure } from './studio.mjs';
@@ -62,33 +62,40 @@ const sleep = (ms, signal) => new Promise(resolve => {
  * the interval Studio names until the Owner confirms or denies or the code
  * expires, then write the session file.
  */
-export async function login(ctx, options, { wait = sleep, now = () => Date.now(), agentFactory = startAgent, deviceKeyFactory = openDeviceKey } = {}) {
+export async function login(ctx, options, { wait = sleep, now = () => Date.now(), agentFactory = startAgent, deviceKeyFactory = null } = {}) {
   const label = (options.label ?? defaultDeviceLabel()).trim();
   if (!label || label.length > MAX_LABEL_LENGTH || /\p{Cc}/u.test(label))
     throw usage('invalid-option', `--label must be 1 to ${MAX_LABEL_LENGTH} printable characters.`);
+  const lifetimeHours = options.lifetime === undefined ? null : ({ '8h': 8, '24h': 24, '7d': 168, '30d': 720 })[options.lifetime];
+  if (lifetimeHours === undefined) throw usage('invalid-option', '--lifetime must be 8h, 24h, 7d or 30d.');
   const key = await agentFactory(ctx.configDir);
   let attached = false;
   try {
+    fs.rmSync(path.join(ctx.configDir, 'operator-session-ended'), { force: true });
     // Retire the ES-3 disk key without reading it. Every sign-in gets a fresh memory key.
     fs.rmSync(path.join(ctx.configDir, 'operator-device-key.json'), { force: true });
     ctx.output.note('Created a session key in the resident studio-op agent memory.');
 
     const started = await ctx.client.request('POST', START_PATH, { body: {
-      publicKey: key.publicJwk, deviceLabel: label, operatorAgent: options.agent ?? null, classes: options.class ?? [],
+      publicKey: key.publicJwk, deviceLabel: label, operatorAgent: options.agent ?? null, classes: options.class ?? [], lifetimeHours,
     } });
-    const { provider, note } = deviceKeyFactory(ctx.configDir, { hardwareDeviceKeys: ctx.config.hardwareDeviceKeys });
-    let certification;
-    let bindingNote = note;
-    try { certification = certifySession(provider, key.thumbprint, started.signInId); }
-    catch {
-      bindingNote = 'Device binding: memory. Hardware signing failed; this sign-in uses the resident session key.';
+    let certification, bindingNote, expectedBinding;
+    if (deviceKeyFactory) {
+      const { provider, note } = deviceKeyFactory(ctx.configDir, { hardwareDeviceKeys: ctx.config.hardwareDeviceKeys });
+      bindingNote = note; expectedBinding = provider.bindingKind;
+      try { certification = certifySession(provider, key.thumbprint, started.signInId); }
+      catch { bindingNote = 'Device binding: memory. Hardware signing failed; using the resident session key.'; }
+    } else {
+      const prepared = await agentCall(key.endpoint, { operation: 'certify', signInId: started.signInId });
+      certification = prepared.certification; bindingNote = prepared.note;
+      expectedBinding = certification?.bindingKind;
     }
     if (certification) {
       const { proof } = await agentCall(key.endpoint, { operation: 'poll', url: String(ctx.client.url(POLL_PATH)), pollHandle: started.pollHandle });
       // Register certification before displaying the code to the Owner.
       const certified = await ctx.client.send('POST', POLL_PATH, { body: { pollHandle: started.pollHandle, certification }, headers: { DPoP: proof } });
       if (certified.status !== 200) throw failure('POST', POLL_PATH, certified);
-      if (certified.body?.bindingKind !== provider.bindingKind)
+      if (certified.body?.bindingKind !== expectedBinding)
         bindingNote = 'Device binding: memory. Studio could not verify the device certification; this device is unknown.';
     }
     ctx.output.note(bindingNote);
@@ -145,18 +152,18 @@ export async function login(ctx, options, { wait = sleep, now = () => Date.now()
           ctx.output.protect(body.token);
           const file = path.join(ctx.configDir, SESSION_FILE);
           writePrivateFile(file, `${body.token}\n`);
-          await agentCall(key.endpoint, { operation: 'attach', token: body.token, expiresAt: body.expiresAt, baseUrl: ctx.client.base.href });
+          await agentCall(key.endpoint, { operation: 'attach', token: body.token, expiresAt: body.expiresAt, sessionId: body.sessionId, keyExpiresAt: body.keyExpiresAt, baseUrl: ctx.client.base.href });
           await stopAgent(ctx.configDir);
           writePrivateFile(path.join(ctx.configDir, AGENT_FILE), JSON.stringify({ endpoint: key.endpoint, tokenHash: digest(body.token), thumbprint: key.thumbprint }));
           attached = true;
           const configUpdated = selectSessionCredential(ctx.configDir, ctx.config);
           const data = {
             operatorAgentId: body.operatorAgentId, sessionId: body.sessionId, actor: body.actor, delegatedBy: body.delegatedBy,
-            expiresAt: body.expiresAt, classes: body.classes ?? [], keyThumbprint: body.keyThumbprint ?? key.thumbprint,
+            expiresAt: body.expiresAt, chosenEnd: body.chosenEnd, idleEnd: body.idleEnd, classes: body.classes ?? [], keyThumbprint: body.keyThumbprint ?? key.thumbprint,
             bindingKind: body.bindingKind ?? 'memory', deviceLabel: label, file, mode: '600', configUpdated,
           };
           return { data, text: [
-            `Signed in as ${body.actor}, delegated by ${body.delegatedBy}, until ${body.expiresAt}.`,
+            `Signed in as ${body.actor}, delegated by ${body.delegatedBy}, ${body.chosenEnd === null ? 'until revoked' : `until ${body.chosenEnd ?? body.expiresAt}`}.`,
             `Session written to ${file} (mode 600); the token is not shown.`,
             configUpdated ? 'studio-op.json now selects the operator-session file.' : null,
             (body.classes ?? []).length ? `Action classes recorded: ${body.classes.join(', ')}.` : null,

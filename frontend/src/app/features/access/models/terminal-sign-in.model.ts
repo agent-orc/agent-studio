@@ -19,6 +19,8 @@ export interface TerminalSignInClass {
 export interface TerminalSignInAgent {
   id: string;
   name: string;
+  lifetimeHours?: readonly number[];
+  defaultLifetimeHours?: number;
 }
 
 export interface TerminalSignInLookup {
@@ -49,6 +51,8 @@ export interface TerminalSignInConfirmation {
   operatorAgentId: string;
   sessionId: string;
   actor: string;
+  chosenEnd?: string | null;
+  chosenLifetimeHours?: number | null;
   expiresAt: string;
   classes: readonly string[];
 }

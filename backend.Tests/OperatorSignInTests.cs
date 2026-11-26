@@ -15,7 +15,7 @@ namespace AgentStudio.Tests;
 /// ten minutes, and five wrong entries per Owner within 15 minutes lock code
 /// entry for 15 minutes.
 /// </summary>
-public sealed class OperatorSignInTests : IDisposable
+public sealed partial class OperatorSignInTests : IDisposable
 {
     private const string Password = "correct horse battery staple!";
     private const string Terminal = "198.51.100.7";
@@ -211,16 +211,16 @@ public sealed class OperatorSignInTests : IDisposable
         Assert.Equal(("agent@workstation", agent.Id, Terminal, false), (lookup.DeviceLabel, lookup.RequestedAgentId, lookup.RequestedAddress, lookup.AddressMatches));
         Assert.Empty(lookup.KnownForAgentIds);
         Assert.Equal(["cards.accept-override", "project.testing"], lookup.RequestedClasses.Select(entry => entry.Id));
-        Assert.Equal(Enumerable.Range(1, 8), lookup.LifetimeHours);
+        Assert.Equal([8, 24], lookup.LifetimeHours);
 
         // Without a fresh step-up the confirmation answers step-up-required and changes nothing.
         var refused = Assert.Throws<SecurityOperationException>(() => _store.ConfirmOperatorSignIn(
-            new ConfirmOperatorSignInRequest(started.Code, agent.Id, null, 2), Owner(), "203.0.113.20"));
+            new ConfirmOperatorSignInRequest(started.Code, agent.Id, null, 8), Owner(), "203.0.113.20"));
         Assert.Equal((403, "step-up-required"), (refused.Status, refused.Code));
         Assert.Equal(OperatorSignInPollStatuses.Pending, Poll(started.Poll).Status);
         Assert.Empty(_store.ListOperatorAgents().Single().Sessions!);
 
-        var confirmed = Confirm(started.Code, agent.Id, ["project.testing"], 2);
+        var confirmed = Confirm(started.Code, agent.Id, ["project.testing"], 8);
         var pending = _store.ListOperatorAgents().Single().Sessions!.Single();
         Assert.Equal(OperatorSessionStates.Pending, AccessSecurityStore.OperatorSessionState(pending, _clock.GetUtcNow().UtcDateTime));
 
@@ -235,7 +235,7 @@ public sealed class OperatorSignInTests : IDisposable
 
         var session = _store.ListOperatorAgents().Single().Sessions!.Single();
         Assert.Equal(confirmed.ExpiresAt, session.ExpiresAt);
-        Assert.Equal(_clock.GetUtcNow().UtcDateTime.AddHours(2).AddSeconds(-5), session.ExpiresAt);
+        Assert.Equal(_clock.GetUtcNow().UtcDateTime.AddHours(8).AddSeconds(-5), session.ExpiresAt);
         Assert.Equal(("agent@workstation", key.Thumbprint(), Terminal, "203.0.113.20", Owner().Session.Id),
             (session.Device!.Label, session.Device.KeyThumbprint, session.Device.RequestedAddress, session.Device.ConfirmedAddress,
                 session.Device.ConfirmingSessionId));

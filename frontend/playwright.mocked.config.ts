@@ -30,6 +30,7 @@ export default defineConfig({
       '**/project/main-scroll-keys.spec.ts',
       '**/project/operations-security.spec.ts',
       '**/project/testing-strategy.spec.ts',
+      '**/settings/elevated-sessions.spec.ts',
       '**/workspace/deployment-dashboard.spec.ts',
       '**/workspace/structure-view.spec.ts',
       '**/workspace/structure-live.spec.ts',

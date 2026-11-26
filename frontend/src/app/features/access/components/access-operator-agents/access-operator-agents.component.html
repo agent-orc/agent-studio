@@ -17,6 +17,7 @@
       <header class="operators__head">
         <div>
           <h4>{{ agent.name }} @if (agent.disabledAt) { <app-status-indicator tone="neutral" label="Disabled" [compact]="true" /> }</h4>
+          <p class="access-hint">Lifetime limit: {{ agent.lifetimeLimitHours ? lifetimeLabel(agent.lifetimeLimitHours) : 'No additional limit' }}</p>
           @if (agent.description) { <p class="access-hint">{{ agent.description }}</p> }
           <p class="access-hint access-numeric">Created {{ time(agent.createdAt) }}@if (agent.createdBy) { by {{ person(agent.createdBy) }}}</p>
         </div>
@@ -64,12 +65,12 @@
                   <td><code class="operators__actor">{{ session.actor }}</code></td>
                   <td>{{ person(session.delegatedBy) }}</td>
                   <td class="access-numeric">{{ time(session.createdAt) }}</td>
-                  <td class="access-numeric" [attr.title]="session.renewedAt ? 'Renewed ' + time(session.renewedAt) : null">{{ time(session.expiresAt) }}</td>
+                  <td class="access-numeric" [attr.title]="session.renewedAt ? 'Renewed ' + time(session.renewedAt) : null">{{ session.device && session.chosenLifetimeHours === 0 ? 'Until revoked' : time(session.chosenEnd ?? session.expiresAt) }}</td>
                   <td class="access-numeric">{{ time(session.lastUsedAt) || 'Never' }}</td>
                   <td class="access-actions">
                     <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-session-activity-' + session.id" (click)="showActivity(session)">Activity</button>
                     @if (session.state === 'active' && !agent.disabledAt) {
-                      <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-session-renew-' + session.id" [disabled]="operators.busy()" (click)="renew(agent, session)">Renew</button>
+                      @if (!session.device) { <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-session-renew-' + session.id" [disabled]="operators.busy()" (click)="renew(agent, session)">Renew</button> }
                     }
                     @if ((session.state === 'active' || session.state === 'pending') && !agent.disabledAt) {
                       <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-session-kill-' + session.id" [disabled]="operators.busy() || operators.killing()" (click)="end(agent, session)">End session</button>

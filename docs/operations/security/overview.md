@@ -694,8 +694,9 @@ D1, D4, and D11).
   Access → Operator agents (`/api/auth/iam/operator-agents`), or confirms a
   terminal sign-in that `studio-op login` started (ES-3, below).
 - Each session receives its own `oas.*` bearer, returned once and stored only
-  as a hash. A session lasts 1 to 8 hours (default 8). Only an active Owner
-  starts, renews (again at most 8 hours from the renewal), or revokes it;
+  as a hash. The unbound Settings path lasts 1 to 8 hours (default 8), and
+  only an active Owner starts or renews it. Bound terminal sessions use the
+  chosen lifetime and device-signed hourly key renewal of ES-6;
   disabling the agent revokes every session. A session also stops working when
   the Owner who started it is no longer an active Owner.
 - Every request made with a session token, every control plane audit entry it
@@ -816,7 +817,7 @@ audit entries record binding kind and device thumbprint; poll collection returns
 the session binding kind. These are device-key possession checks, not remote
 manufacturer attestation: the platform provider reports its kind. Same-user
 and root access remain outside this boundary. Memory fallback remains allowed;
-ES-6 owns hourly recertification and lifetime limits, which are not changed here.
+ES-6 adds hourly recertification and lifetime limits; see the chosen lifetime section below.
 
 Platform references: [Microsoft CNG creation parameters](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.cngkeycreationparameters),
 [Apple Secure Enclave](https://developer.apple.com/documentation/security/protecting-keys-with-the-secure-enclave),
@@ -826,8 +827,7 @@ and [tpm2-openssl key operations](https://github.com/tpm2-software/tpm2-openssl/
 
 An operator session can reach the agent's terminal without the Owner copying a
 bearer ([elevated session Dossier](../../operator-elevated-session/index.html),
-decision ES-D2 option S2, and ES-D5 option A for the session part: the
-lifetime stays the existing 1 to 8 hours until ES-6). It follows the device
+decision ES-D2 option S2, extended by ES-D5 L2 for the chosen lifetime in ES-6). It follows the device
 authorization pattern (RFC 8628) with a Studio step-up as the confirmation.
 
 - **Start.** `POST /api/auth/operator-sign-in` is anonymous. It takes the
@@ -859,8 +859,8 @@ authorization pattern (RFC 8628) with a Studio step-up as the confirmation.
   the chosen agent; the requesting address and whether it is on the browser's
   network (same address, or the same /64); the requested classes, which the
   Owner can remove but never add (`action-class-not-requested`); the operator
-  agent (preselected from the request); and the lifetime of 1 to 8 hours
-  (default 8). Unknown device and another network together raise a warning to
+  agent (preselected from the request); and the allowed lifetimes of ES-6
+  (7 days by default, clamped to role, agent and binding limits). Unknown device and another network together raise a warning to
   deny a sign-in the Owner did not start. Lookup, confirm and deny
   (`/api/auth/iam/operator-sign-ins/{lookup,confirm,deny}`) need an active
   Owner (`owner-required`) with the browser's CSRF token. Confirm consumes a
@@ -1859,3 +1859,68 @@ mutation lock, so concurrent writers cannot change the values used by another
 request's audit entry. Operator attribution includes the session and delegating
 Owner. Build profile, review package, security file, checkout and gate
 capacity routes retain their existing authorization.
+
+## Chosen operator session lifetime and renewal (ES-6)
+
+ES-D5 L2, ES-D14 A, ES-D15 A and ES-D17 A are implemented working decisions.
+Only an active Owner confirms a terminal sign-in today. Settings > Access >
+Session limits stores the installation default (7 days), Owner limit (until
+revoked), future Admin limit (7 days), and idle limit (24 hours, adjustable
+from 1 hour to 7 days). Each agent has an optional additional limit. Saving
+installation or agent limits consumes a fresh Owner step-up and writes an IAM
+audit entry. All session limit routes are under the hard refusal for access
+administration: no API token, service account, runner or operator token may
+manage them, including during break-glass.
+
+Confirmation offers 8 hours, 24 hours, 7 days, 30 days and Until revoked,
+limited by the minimum of the confirming role, agent and binding limits.
+Hardware devices add no limit. Memory keys allow at most 24 hours; the
+unbound Settings path keeps its existing 1 to 8 hours. Until revoked is thus
+available only to an Owner on a hardware device. Hardware provider support
+remains opt-in and not yet verified on real hardware, as in ES-5. Studio
+preselects the default clamped to the allowed choices, or a shorter lifetime
+requested by `studio-op login --lifetime`. A terminal request cannot raise the
+preselection above the installation default. The Owner's choice and the
+limits at confirmation are saved. `chosenEnd` is null for Until revoked;
+`expiresAt` retains its compatibility ceiling for existing clients.
+
+The chosen end, idle end and session key certification are separate clocks.
+A bound key is certified for 60 minutes. Ten minutes before that end the
+resident signer generates a new key, signs the session id, new thumbprint and
+time with its device key, and sends the statement with a DPoP proof from the
+current key. Successful renewal replaces the thumbprint immediately and
+writes `operator-session.renew` with binding kind and address. The old key
+stops admitting requests. Renewal requires no second factor and never moves
+`LastUsedAt`. The signer's status checks also do not count as activity.
+Ordinary authenticated requests move the idle end; after the idle limit a
+session with only renewals stops. Renewal refusal asks for `studio-op login`
+and names `session-ended`, `renewal-device-key-missing` or `limit-lowered`
+(or the specific DPoP refusal).
+
+Renewal checks the chosen end, idle end, certificate, live device, enabled
+agent, active confirming Owner with a second factor and kill switch. A lowered
+limit that has overtaken the session's age ends it on renewal; raising a limit
+never extends its confirmed end. Password changes or resets, disabling the
+confirming person, removal of their last second factor, forgetting the device,
+and explicit revocation of the confirming browser session end delegation.
+Browser expiry and sign-out do not end the terminal session.
+
+Settings > Access > Elevated sessions shows every live session with classes
+or a chosen duration longer than eight hours. It names the agent, device,
+binding, confirming person and time, chosen lifetime and end, last use,
+address, idle end and renewal. End session, End elevation, Forget device and
+End all elevated sessions take authority away without step-up or a confirmation
+dialog. End elevation keeps T0 and T1. New-address renewal marks the row and
+shows a quiet notice. The address history retains the latest 256 distinct
+addresses. Live operator streams recheck at most every 15 seconds. Class
+admission, rate limits and direct-action re-arming remain ES-7 work.
+
+After 30 days the installation security view shows “Elevated session running
+30 days” with Keep and End. Keep postpones the next review notice by 30 days
+without extending any lifetime or idle deadline. These are quiet notices,
+not Needs you items.
+
+Existing bound sessions without a recorded key certification end no later
+than 60 minutes after confirmation and require a new terminal sign-in.
+The kill switch also denies pending and confirmed sign-ins that have not yet
+been collected, so a code from before the switch cannot issue later.

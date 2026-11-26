@@ -103,13 +103,13 @@ test('studio-op login yields a session only after the Owner confirms with a fres
   mkdirSync(resultDir, { recursive: true });
 
   // The Owner: bootstrap, enroll an authenticator, create the operator agent.
-  const anonymous = await playwrightRequest.newContext({ baseURL, ignoreHTTPSErrors: true });
+  const anonymous = await playwrightRequest.newContext({ baseURL, ignoreHTTPSErrors: true, timeout: 30_000 });
   const bootstrap = await anonymous.post('/api/auth/bootstrap', { headers: { 'Sec-Fetch-Site': 'same-origin' },
     data: { username: 'studio-owner', displayName: 'Owner', password, bootstrapCode: `${basename(workspace)}-owner-code` } });
   expect(bootstrap.ok(), `${bootstrap.status()}: ${await bootstrap.text()}`).toBeTruthy();
   const session = bootstrap.headers()['set-cookie']?.match(/__Host-agentstudio-session=([^;,\s]+)/)?.[1];
   const csrf = (await bootstrap.json()).csrfToken as string;
-  const owner = await playwrightRequest.newContext({ baseURL, ignoreHTTPSErrors: true, extraHTTPHeaders: {
+  const owner = await playwrightRequest.newContext({ baseURL, ignoreHTTPSErrors: true, timeout: 30_000, extraHTTPHeaders: {
     Cookie: `__Host-agentstudio-session=${session}`, 'X-CSRF-Token': csrf, 'Sec-Fetch-Site': 'same-origin' } });
   const factor = await owner.post('/api/auth/totp/start');
   expect(factor.ok(), await factor.text()).toBeTruthy();
@@ -155,7 +155,8 @@ test('studio-op login yields a session only after the Owner confirms with a fres
   await expect(panel.getByTestId('terminal-sign-in-binding')).toHaveText(bindingLabel);
   await expect(panel.getByTestId('terminal-sign-in-address-match')).toContainText('Same network as this browser');
   await expect(panel.getByTestId('terminal-sign-in-agent')).toHaveValue(agentId);
-  await expect(panel.getByTestId('terminal-sign-in-lifetime')).toHaveValue('8');
+  await expect(panel.getByTestId('terminal-sign-in-lifetime')).toHaveValue('24');
+  await expect(panel.getByTestId('terminal-sign-in-lifetime').locator('option')).toHaveText(['8 hours', '24 hours']);
   await expect(panel.getByTestId('terminal-sign-in-class-project.testing')).toBeChecked();
   await expect(panel.getByTestId('terminal-sign-in-confirm')).toBeDisabled();
   await capture(page, 'confirm-terminal-sign-in');
@@ -165,7 +166,7 @@ test('studio-op login yields a session only after the Owner confirms with a fres
   // Without the tick nothing can be confirmed; without a fresh factor the server refuses.
   await panel.getByTestId('terminal-sign-in-code-match').check();
   await panel.getByTestId('terminal-sign-in-class-project.testing').uncheck();
-  await panel.getByTestId('terminal-sign-in-lifetime').selectOption('2');
+  await panel.getByTestId('terminal-sign-in-lifetime').selectOption('8');
   await page.route('**/api/auth/step-up', route => route.fulfill({ status: 204 }), { times: 1 });
   await panel.getByTestId('terminal-sign-in-factor').fill('000000');
   await panel.getByTestId('terminal-sign-in-confirm').click();

@@ -64,6 +64,7 @@ public sealed class SecurityPostureService(
                 .Where(account => account.Origin is null && account.Purpose is null)
                 .Select(account => ServiceAccountFact(account, iam.Bindings))
                 .ToArray(),
+            OperatorIdleHours = store.GetOperatorSessionLimits().IdleHours,
             OperatorAgents = store.ListOperatorAgents()
                 .Select(agent => new OperatorAgentFact(agent.Id, agent.Name, agent.DisabledAt is not null, agent.Sessions ?? []))
                 .ToArray(),

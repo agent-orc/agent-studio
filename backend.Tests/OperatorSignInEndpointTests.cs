@@ -97,7 +97,7 @@ public sealed class OperatorSignInEndpointTests : IClassFixture<NetworkedSecurit
             Assert.Equal("tpm", (await Json(certify)).GetProperty("bindingKind").GetString());
         }
 
-        var confirm = new { code, operatorAgentId = agent.Id, lifetimeHours = 1 };
+        var confirm = new { code, operatorAgentId = agent.Id, lifetimeHours = 8 };
         using (var anonymous = await SendAsync(client, "/api/auth/iam/operator-sign-ins/confirm", confirm))
             Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
         using (var noCsrf = await SendAsync(client, "/api/auth/iam/operator-sign-ins/confirm", confirm, owner.SessionToken))

@@ -56,8 +56,14 @@
           </app-page-section>
 
           @if (operators.available()) {
+            <app-page-section anchor="access-session-limits" title="Session limits" purpose="Choose defaults and limits with a fresh second factor. Changes are audited.">
+              @defer (on immediate) { <app-access-session-limits /> }
+            </app-page-section>
+            <app-page-section anchor="access-elevated-sessions" title="Elevated sessions" purpose="End authority in one tap. Ending needs no second factor.">
+              @defer (on immediate) { <app-access-elevated-sessions /> }
+            </app-page-section>
             <app-page-section anchor="access-operators" title="Operator agents"
-                              purpose="Automations that act for the Owner through sessions of at most 8 hours. Each call is audited with the agent, the session, and the Owner who delegated it.">
+                              purpose="Automations that act for the Owner through device-bound sessions with a chosen lifetime. Each call is audited with the agent, the session, and the Owner who delegated it.">
               @defer (on immediate) { <app-access-operator-agents /> }
             </app-page-section>
 

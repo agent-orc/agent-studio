@@ -53,6 +53,14 @@ export interface OperatorSession {
   /** Null for a session started in Settings > Access. */
   device?: OperatorSessionDevice | null;
   classes?: readonly string[] | null;
+  chosenLifetimeHours?: number | null;
+  chosenEnd?: string | null;
+  idleEnd?: string | null;
+  keyExpiresAt?: string | null;
+  lastAddress?: string | null;
+  newAddressAt?: string | null;
+  reviewedAt?: string | null;
+  reviewDue?: boolean;
 }
 
 export interface OperatorAgent {
@@ -62,6 +70,7 @@ export interface OperatorAgent {
   createdAt: string;
   createdBy: string | null;
   disabledAt: string | null;
+  lifetimeLimitHours?: number | null;
   sessions: readonly OperatorSession[];
   devices?: readonly OperatorDevice[] | null;
 }

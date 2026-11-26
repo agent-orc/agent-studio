@@ -56,7 +56,7 @@ describe('AccessAreaComponent', () => {
     expect(access.load).toHaveBeenCalledTimes(1);
     expect(outline(element)).toEqual([
       'People 2', 'Groups 1', 'Service accounts 0', 'API tokens 0', 'Runners 0', 'Role bindings 3',
-      'Operator agents', 'Approval requests', 'Standing grants', 'Kill switch', 'Break-glass windows', 'Operator activity',
+      'Session limits', 'Elevated sessions', 'Operator agents', 'Approval requests', 'Standing grants', 'Kill switch', 'Break-glass windows', 'Operator activity',
       'Factor activity 0', 'Backup activity',
     ]);
     const developer = element.querySelector('[data-testid="access-user-dev.user"]')!;

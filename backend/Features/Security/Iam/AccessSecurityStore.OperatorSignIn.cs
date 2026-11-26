@@ -54,6 +54,11 @@ public sealed partial class AccessSecurityStore
     public (OperatorSignIn SignIn, string UserCode, string PollHandle) StartOperatorSignIn(
         StartOperatorSignInRequest request, string? address, string throttleKey)
     {
+        if (request.LifetimeHours is { } requestedHours)
+        {
+            ValidateLifetimeChoice(requestedHours);
+            if (requestedHours == 0) throw new SecurityOperationException(400, "invalid-lifetime", "The terminal may request only a finite lifetime.");
+        }
         var key = ValidateDevicePublicKey(request.PublicKey);
         var label = ValidateDeviceLabel(request.DeviceLabel);
         var requestedAgent = ValidateRequestedAgent(request.OperatorAgent);
@@ -80,7 +85,7 @@ public sealed partial class AccessSecurityStore
             {
                 Id = id, UserCodeHash = codeHash, PollHandleHash = PasswordSecretHasher.HashSecret(pollHandle),
                 PublicKey = key, KeyThumbprint = key.Thumbprint(), DeviceLabel = label, RequestedAgent = requestedAgent,
-                RequestedClasses = classes, RequestedAddress = address, CreatedAt = now, ExpiresAt = now + OperatorSignInLifetime,
+                RequestedLifetimeHours = request.LifetimeHours, RequestedClasses = classes, RequestedAddress = address, CreatedAt = now, ExpiresAt = now + OperatorSignInLifetime,
             };
             next.OperatorSignIns.Add(signIn);
             SaveLocked(next);
@@ -193,7 +198,7 @@ public sealed partial class AccessSecurityStore
         });
         var actor = new AgentStudio.Shared.OperatorActor(agent.Id, session.Id, session.CreatedBy);
         return new PollOperatorSignInResponse(OperatorSignInPollStatuses.Session, interval, "Signed in.", secret, agent.Id,
-            session.Id, actor.Actor, actor.DelegatedBy, session.ExpiresAt, session.Classes ?? [], signIn.KeyThumbprint, signIn.BindingKind);
+            session.Id, actor.Actor, actor.DelegatedBy, session.ExpiresAt, session.Classes ?? [], signIn.KeyThumbprint, signIn.BindingKind, session.ChosenEnd, session.KeyExpiresAt, OperatorIdleEnd(next, session));
     }
 
     /// <summary>What the confirmation page shows for an entered code. A wrong code counts toward the lock.</summary>
@@ -221,8 +226,9 @@ public sealed partial class AccessSecurityStore
                 signIn.RequestedClasses.Select(ElevatedActionClasses.Find).OfType<ElevatedActionClasses.ActionClass>()
                     .Select(actionClass => new OperatorSignInClassResponse(actionClass.Id, actionClass.Title, actionClass.Mode)).ToList(),
                 signIn.RequestedAddress, browserAddress, SameNetworkAddress(signIn.RequestedAddress, browserAddress),
-                signIn.CreatedAt, signIn.ExpiresAt, [1, 2, 3, 4, 5, 6, 7, 8], (int)MaxOperatorSessionLifetime.TotalHours,
-                agents.Select(account => new OperatorSignInAgentOption(account.Id, account.Name)).ToList(),
+                signIn.CreatedAt, signIn.ExpiresAt, agents.Count == 0 ? [8] : AllowedSessionLifetimes(state, requested ?? agents[0], signIn.BindingKind),
+                agents.Count == 0 ? 8 : DefaultSessionLifetime(state, requested ?? agents[0], signIn),
+                agents.Select(account => new OperatorSignInAgentOption(account.Id, account.Name, AllowedSessionLifetimes(state, account, signIn.BindingKind), DefaultSessionLifetime(state, account, signIn))).ToList(),
                 signIn.BindingKind, signIn.DeviceKeyThumbprint);
         }
     }
@@ -234,7 +240,6 @@ public sealed partial class AccessSecurityStore
     /// </summary>
     public ConfirmOperatorSignInResponse ConfirmOperatorSignIn(ConfirmOperatorSignInRequest request, HumanPrincipal owner, string? browserAddress)
     {
-        var lifetime = OperatorSessionLifetime(request.LifetimeHours);
         RequireNoOperatorKillRequest();
         lock (_gate)
         {
@@ -249,6 +254,10 @@ public sealed partial class AccessSecurityStore
             var agent = ActiveOperatorAgentLocked(next, request.OperatorAgentId);
             if (IsDrillPrincipal(agent))
                 throw new SecurityOperationException(404, "operator-agent-not-found", "Operator agent not found or disabled.");
+            var hours = request.LifetimeHours ?? DefaultSessionLifetime(next, agent, signIn);
+            if (!AllowedSessionLifetimes(next, agent, signIn.BindingKind).Contains(hours))
+                throw new SecurityOperationException(400, "invalid-lifetime", "The lifetime exceeds the current session limits.");
+            DateTime? chosenEnd = hours == 0 ? null : now.AddHours(hours);
             ConsumeStepUpLocked(next, owner, "Verify a second factor before confirming a terminal sign-in.");
 
             var devices = agent.Devices ?? [];
@@ -267,11 +276,15 @@ public sealed partial class AccessSecurityStore
             var session = new OperatorAgentSession
             {
                 Id = Guid.NewGuid().ToString("N"), Name = signIn.DeviceLabel, SecretHash = string.Empty, CreatedAt = now,
-                CreatedBy = owner.User.Id, ExpiresAt = now + lifetime, Classes = classes,
+                CreatedBy = owner.User.Id, ExpiresAt = chosenEnd ?? DateTime.MaxValue, Classes = classes,
+                ChosenEnd = chosenEnd, ChosenLifetimeHours = hours, KeyExpiresAt = now.AddMinutes(60),
+                LimitsAtConfirmation = next.OperatorSessionLimits, ConfirmingRole = IamRoles.Owner, AgentLifetimeLimitHoursAtConfirmation = agent.OperatorLifetimeLimitHours, EffectiveLimitHoursAtConfirmation = EffectiveSessionLimit(next, agent, signIn.BindingKind),
+                LastAddress = signIn.RequestedAddress, UsedAddresses = signIn.RequestedAddress is { } address ? [address] : [],
                 Device = new OperatorSessionDevice
                 {
                     DeviceId = device.Id, Label = signIn.DeviceLabel, KeyThumbprint = signIn.KeyThumbprint,
                     BindingKind = signIn.BindingKind, DeviceKeyThumbprint = signIn.DeviceKeyThumbprint,
+                    DevicePublicKey = signIn.DeviceKeyThumbprint is null ? signIn.PublicKey : signIn.DevicePublicKey,
                     RequestedAddress = signIn.RequestedAddress, ConfirmedAddress = browserAddress,
                     ConfirmingSessionId = owner.Session.Id, SignInId = signIn.Id,
                 },
@@ -290,11 +303,11 @@ public sealed partial class AccessSecurityStore
             AppendIamAudit(owner.User.Id, "operator-signin.confirm", "operator-signin", signIn.Id, new
             {
                 operatorAgentId = agent.Id, sessionId = session.Id, signIn.DeviceLabel, signIn.KeyThumbprint, signIn.BindingKind, signIn.DeviceKeyThumbprint, knownDevice = known is not null,
-                classes, session.ExpiresAt, signIn.RequestedAddress, confirmedAddress = browserAddress,
+                classes, session.ChosenLifetimeHours, session.ChosenEnd, session.LimitsAtConfirmation, session.EffectiveLimitHoursAtConfirmation, session.ExpiresAt, signIn.RequestedAddress, confirmedAddress = browserAddress,
                 addressMatches = SameNetworkAddress(signIn.RequestedAddress, browserAddress),
             }, owner.Session.Id);
             var actor = new AgentStudio.Shared.OperatorActor(agent.Id, session.Id, session.CreatedBy);
-            return new ConfirmOperatorSignInResponse(signIn.Id, agent.Id, session.Id, actor.Actor, session.ExpiresAt, classes);
+            return new ConfirmOperatorSignInResponse(signIn.Id, agent.Id, session.Id, actor.Actor, session.ExpiresAt, classes, session.ChosenEnd, session.ChosenLifetimeHours);
         }
     }
 
@@ -338,7 +351,7 @@ public sealed partial class AccessSecurityStore
                 Devices = agent.Devices!.Where(candidate => candidate.Id != deviceId).ToList(),
             };
             var ended = EndConfirmedOperatorSessionsLocked(next,
-                (candidate, session) => candidate.Id == agentId && (session.Device!.DeviceKeyThumbprint ?? session.Device.KeyThumbprint) == device.KeyThumbprint, now, ownerId);
+                (candidate, session) => candidate.Id == agentId && (session.Device!.DevicePublicKey?.Thumbprint() ?? session.Device.DeviceKeyThumbprint ?? session.Device.KeyThumbprint) == device.KeyThumbprint, now, ownerId);
             var cancelled = CancelEndedSessionApprovalsLocked(next, ended, now, "operator device forgotten");
             SaveLocked(next);
             AppendIamAudit(ownerId, "operator-device.forget", "operator-agent", agentId, new

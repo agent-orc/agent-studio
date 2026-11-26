@@ -65,7 +65,8 @@ public sealed class OperatorKillSwitchIntegrationTests(ITestOutputHelper output)
     [Fact]
     public async Task After_the_kill_switch_every_operator_request_is_refused_on_studio_and_operations_server_within_60_seconds()
     {
-        using var factory = BuildFactory();
+        // This request exercises the synchronous coordinator; no worker is needed.
+        using var factory = BuildFactory(startWorker: false);
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         using var owner = await OwnerClientAsync(factory);
         var agentId = (await SendAsync(owner, HttpMethod.Post, "/api/auth/iam/operator-agents", new
@@ -348,7 +349,7 @@ public sealed class OperatorKillSwitchIntegrationTests(ITestOutputHelper output)
         ["Security:OperatorKillSwitch:OperationsServer:CredentialFile"] = RevokerCredentialFile,
     }).Build();
 
-    private WebApplicationFactory<Program> BuildFactory(bool bootstrap = true)
+    private WebApplicationFactory<Program> BuildFactory(bool bootstrap = true, bool startWorker = true)
     {
         foreach (var state in TaskStates.All)
             Directory.CreateDirectory(Path.Combine(ProjectPath("alpha"), state));
@@ -384,7 +385,8 @@ public sealed class OperatorKillSwitchIntegrationTests(ITestOutputHelper output)
                 // The kill switch worker applies the out-of-band latch, retries the
                 // host revocation, notifies, and schedules drills; test hosts start
                 // product workers only on request.
-                services.AddHostedService(provider => provider.GetRequiredService<OperatorKillSwitchService>());
+                if (startWorker)
+                    services.AddHostedService(provider => provider.GetRequiredService<OperatorKillSwitchService>());
             });
         });
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
