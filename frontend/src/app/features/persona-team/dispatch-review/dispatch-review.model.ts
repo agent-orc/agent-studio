@@ -17,7 +17,11 @@ export interface DispatchRaw { persona: string; strategy: string; mode: string; 
   tokensEstimated: boolean; warnings: string[] }
 export interface DispatchRow { raw: DispatchRaw; scores: Measures; plainValue: number | null;
   value: number | null; gateMultiplier: number | null; status: string }
+export interface DispatchLease { persona: string; fence: number; window: string | null; expiresAt: string;
+  rollout: { champion: string; challenger: string | null; stopped: boolean; pinned: string | null;
+    guard: { id: string; persona: string; at: string } | null } | null }
 export interface DispatchReview { project: string; from: string; to: string; weights: WeightRevision;
+  lease?: DispatchLease | null;
   personas: DispatchRow[]; weightRevisions: WeightRevision[]; observedPersonas: DispatchRaw[];
   competition: { champion: string; challenger: string;
     facts: { shadowIntegratedCards: number; shadowWaves: number; alternatingLiveWaves: number; guardCards: number };

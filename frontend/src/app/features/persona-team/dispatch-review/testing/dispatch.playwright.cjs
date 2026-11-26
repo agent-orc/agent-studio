@@ -49,6 +49,40 @@ test('viewer cannot edit weights', async ({ page }) => {
     await setup(page, false);
     await expect(page.getByTestId('dispatch-weight-conflicts')).toBeDisabled();
     await expect(page.getByRole('button', { name: 'Save as new revision' })).toBeDisabled();
+    await expect(page.getByTestId('dispatch-pin')).toBeDisabled();
+    await expect(page.getByTestId('dispatch-stop')).toBeDisabled();
+});
+test('owner controls carry the fence, retain failures and undo the named guard', async ({ page }) => {
+    const fixture = await setup(page);
+    const controls = page.getByTestId('dispatch-lease-controls');
+    await expect(controls).toContainText('wave:playthrough-17');
+    fixture.failControl(true);
+    await page.getByTestId('dispatch-pin').click();
+    await expect(page.getByRole('alert')).toContainText('Reload the review');
+    await expect(controls).toContainText('fence 1');
+    fixture.failControl(false);
+    await page.getByTestId('dispatch-stop').click();
+    await expect(controls).toContainText('Alternation stopped');
+    await expect(page.getByTestId('dispatch-stop')).toBeDisabled();
+    expect(fixture.controls.at(-1)).toMatchObject({ action: 'stop', fence: 1 });
+    await page.getByTestId('dispatch-pin').click();
+    await expect(controls).toContainText('fence 3');
+    expect(fixture.controls.at(-1)).toMatchObject({ action: 'pin', persona: 'queue-keeper', fence: 2 });
+    fixture.guard();
+    await page.getByRole('combobox', { name: 'Window', exact: true }).selectOption({ label: '17 November 2026' });
+    await expect(controls).toContainText('Guard fallback active');
+    mkdirSync(results, { recursive: true });
+    for (const width of [1440, 390]) for (const theme of ['light', 'dark']) {
+        await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+        await setTheme(page, theme);
+        await controls.evaluate(el => el.scrollIntoView({ block: 'center' }));
+        await page.screenshot({ path: join(results, `lease-controls-${width}-${theme}.png`), animations: 'disabled' });
+        expect(await controls.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    }
+    await page.getByTestId('dispatch-undo-guard').click();
+    await expect(controls).not.toContainText('Guard fallback active');
+    await expect(controls).toContainText('pinned to Area warden');
+    expect(fixture.controls.at(-1)).toMatchObject({ action: 'undo-guard', guardId: 'guard-1', fence: 3 });
 });
 test('review and dispatcher sheet in both themes and widths', async ({ page }) => {
     const errors = [];

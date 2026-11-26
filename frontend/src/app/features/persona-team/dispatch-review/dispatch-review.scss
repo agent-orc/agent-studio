@@ -14,6 +14,7 @@ a { color: var(--studio-accent); overflow-wrap: anywhere; }
 .context { font-variant-numeric: tabular-nums; }
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: var(--studio-spacing-4); align-items: start; }
 .main, aside { display: grid; min-width: 0; gap: var(--studio-spacing-4); }
+.lease-controls { display: grid; min-width: 0; gap: var(--studio-spacing-3); }
 .section { @include m.deck-panel(0); border: 0; border-radius: 0; background: transparent; color: var(--studio-fg); display: grid; gap: var(--studio-spacing-3); min-width: 0; }
 .controls .source-select { display: none; }
 .controls label, fieldset > label { display: grid; gap: var(--studio-spacing-1); }

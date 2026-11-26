@@ -9,7 +9,7 @@ import { AuthService } from '../../../services/auth.service';
 import { RegistryWorkspaceListItem } from '../../../models/task.model';
 import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';
 import { PersonaEntry } from '../persona-team-view/persona-team.model';
-import { Criterion, DispatchConflict, DispatchReview, DispatchRow, defaultWeights, dispatchCriteria, dispatchRoute, validWeights, WeightRevision } from './dispatch-review.model';
+import { Criterion, DispatchConflict, DispatchLease, DispatchReview, DispatchRow, defaultWeights, dispatchCriteria, dispatchRoute, validWeights, WeightRevision } from './dispatch-review.model';
 
 @Component({ selector: 'app-dispatch-review', standalone: true,
   imports: [DatePipe, LoadingSurfaceComponent, PendingButtonDirective, SegmentedControlComponent, StatusIndicatorComponent],
@@ -38,6 +38,11 @@ export class DispatchReviewComponent {
   readonly saving = signal(false);
   readonly error = signal('');
   readonly notice = signal('');
+  readonly controlling = signal(false);
+  readonly pinnedPersona = signal('queue-keeper');
+  readonly liveCandidates = computed(() => this.review()?.personas.filter(row => row.raw.strategy !== 'package-then-chain-v1' && (row.raw.persona === 'queue-keeper'
+    || row.raw.persona === this.review()?.lease?.rollout?.champion
+    || this.review()?.competition.some(c => c.challenger === row.raw.persona && c.evaluation.eligibleForAlternatingLive))) ?? []);
   readonly isOwner = computed(() => this.auth.status()?.user?.role === 'owner');
   readonly remainder = computed(() => 100 - Object.values(this.weights()).reduce((sum, weight) => sum + weight, 0));
   readonly canSave = computed(() => this.isOwner() && !!this.review() && !this.loading() && !this.saving() && validWeights(this.weights(), this.gate()));
@@ -48,7 +53,7 @@ export class DispatchReviewComponent {
   readonly baseline = computed(() => this.review()?.personas.find(r => r.raw.persona === 'queue-keeper') ?? null);
   readonly attributed = computed(() => this.conflicts().filter(c => c.personaMode === this.source()
     && (!this.persona() || c.personaId === this.persona()?.id)));
-  readonly champion = computed(() => this.review()?.competition[0]?.champion ?? null);
+  readonly champion = computed(() => this.review()?.lease?.rollout?.champion ?? this.review()?.competition[0]?.champion ?? null);
   private request = 0;
   private selectedWorkspace = '';
   constructor() {
@@ -103,6 +108,28 @@ export class DispatchReviewComponent {
     const end = new Date(); end.setUTCHours(0, 0, 0, 0); end.setUTCDate(end.getUTCDate() + 1);
     const start = new Date(end); start.setUTCDate(start.getUTCDate() - 30);
     return new URLSearchParams({ from: start.toISOString(), to: end.toISOString() }).toString();
+  }
+  controlLease(action: 'pin' | 'stop' | 'undo-guard'): void {
+    const lease = this.review()?.lease;
+    if (!this.isOwner() || !lease || this.controlling()) return;
+    const project = this.project(); const request = this.request;
+    const name = this.projects().find(p => p.id === project)?.displayName ?? project;
+    this.controlling.set(true); this.error.set(''); this.notice.set('');
+    this.http.put<DispatchLease>(`/api/projects/${encodeURIComponent(name)}/dispatch/review/lease`, {
+      action, fence: lease.fence, persona: action === 'pin' ? this.pinnedPersona() : null,
+      guardId: action === 'undo-guard' ? lease.rollout?.guard?.id : null,
+    }).subscribe({ next: updated => {
+      this.controlling.set(false);
+      if (this.project() !== project || this.request !== request) return;
+      this.review.update(r => r ? { ...r, lease: updated } : r);
+      this.notice.set(action === 'undo-guard' ? 'Guard fallback undone. The previous live persona and controls are restored; guard monitoring continues.'
+        : action === 'stop' ? 'Alternation stopped. The current live persona is pinned.' : 'Live persona pinned. Guard monitoring continues.');
+    }, error: (error: HttpErrorResponse) => {
+      this.controlling.set(false);
+      if (this.project() !== project || this.request !== request) return;
+      this.error.set(error.status === 403 ? 'Only a human Owner can control the live lease.'
+        : 'The lease control could not be applied. Reload the review and retry.');
+    } });
   }
   editWeight(key: Criterion, value: number): void { this.weights.update(w => ({ ...w, [key]: value })); this.notice.set(''); }
   reset(): void { this.weights.set(defaultWeights()); this.gate.set(.8); this.notice.set('Defaults restored in the editor. Save to create a revision.'); }

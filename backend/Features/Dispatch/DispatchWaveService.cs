@@ -38,6 +38,7 @@ public sealed class DispatchWaveService(TaskScannerService scanner, ProjectSetti
         // Do not plan with empty stand-ins while the shared forecast worker catches up.
         if (cards.Any(c => store.Read(project, c.TaskKey) is null))
             return new(wave, "awaiting-forecasts", null, []);
+        dispatcher.RefreshLease(project, wave);
         var lease = store.ReadLease(project);
         if (mode == "live" && (lease is null || lease.ExpiresAt <= time.GetUtcNow()))
             return new(wave, "awaiting-live-dispatcher", null, []);

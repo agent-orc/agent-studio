@@ -7,9 +7,18 @@ using AgentStudio.Runner;
 
 namespace AgentStudio.Dispatch;
 
-public sealed record DispatchLeaseV1(string Project, string Persona, long Fence, DateTimeOffset ExpiresAt);
+public sealed record DispatchLeaseV1(string Project, string Persona, long Fence, DateTimeOffset ExpiresAt)
+{
+    public DispatchLeaseState? Rollout { get; init; }
+    public string? Actor { get; init; }
+    public string? Reason { get; init; }
+    public string? Window { get; init; }
+}
 public sealed record DispatchShadowRecordV1(string EvaluationId, string DecisionId, string FactsDigest,
-    DateTimeOffset At, string Path, DispatchPlan Plan, bool Shadow = true);
+    DateTimeOffset At, string Path, DispatchPlan Plan, bool Shadow = true)
+{
+    public string? Window { get; init; }
+}
 
 /// <summary>Dispatcher-specific PersonaLogEntryV1 fields for later PT-18 ingestion. No item bodies or secrets.</summary>
 public sealed record DispatcherLogEntryV1(string Id, string Project, string PersonaId, string Kind,
@@ -40,6 +49,7 @@ public sealed partial class DispatchStore
         lock (PersonaGate(project))
         {
             var old = ReadLease(project);
+            if (old?.Rollout is not null) return null;
             if (!MonolithTransitionAdapter.DispatcherLease(persona, active, liveGrants, shadowGatePassed,
                 old is null || old.ExpiresAt <= now, expectedFence, old?.Fence ?? 0)) return null;
             var lease = new DispatchLeaseV1(project, persona, (old?.Fence ?? 0) + 1, now + duration);

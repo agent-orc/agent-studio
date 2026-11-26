@@ -1066,3 +1066,59 @@ instruction: group a shared cause file, state must-land-first relationships,
 and emit cited paths from the cause. The runtime report prompts that emit
 follow-up suggestions carry the same instruction and additive cause, citation
 and ordering fields. Existing report suggestions remain drafts for promotion.
+
+## Alternating dispatch lease (AGT-4001, DS-11)
+
+DS-D1 through DS-D10 retain option B as working decisions. The Dossier's
+recommendation, evidence and pending decision records remain unchanged.
+`DispatchLeasePolicy` owns the pure per-project competition rule. Live mode
+opens one window per source wave, or UTC day without a wave id. Revisited
+windows retain their assigned persona. Claimed admission ids remain bound to
+the original attempt through later lease changes. Conflict attribution uses
+the later named admission, including when the earlier card integrates last;
+missing admission evidence remains unknown.
+
+`AddDispatch` registers `DispatchLeaseScheduler` and its AI Operator effect.
+Automatic changes use the existing `OperatorDecision` switch through
+`AiOperatorDecisionGateway` with decider `dispatch-lease`. Monolith is the
+default; Engine mode waits for its receipt. The effect compares the frozen
+lease fence before applying, so a later Owner control supersedes pending
+receipts. Both pickup paths refresh the scheduler before recording a live
+plan. A minute sweep also checks settled cards when there is no new pickup.
+The application-owned `.dispatch` lease file atomically stores the lease,
+fence, window, actor, reason and rollout state. Legacy acquisition cannot
+overwrite a scheduler-owned lease. The baseline has platform authority even
+without an active persona instance; other personas still need active scoped
+plan grants. Shadow mode remains the project default.
+
+Challenger entry needs at least 100 integrated cards with shadow plans recorded
+before their first observed start, at least two distinct source waves, value
+at least five above the champion and a fully passed parallelism gate under the
+current Owner weight revision. Only one challenger competes. Area warden on
+forecast modules is the first challenger; Packer remains in shadow with
+proposals. Promotion needs four completed windows of each competitor, paired
+in dispatch order, with the challenger ahead in every pair. Open windows and
+unmeasured scores cannot promote. DS-7 retains its forty-card scoring floor.
+Settled raw live-window measures are stored separately and rescored together
+under the current workspace weight revision, so different revisions are not
+compared to each other.
+
+The guard reads the live persona's last twenty integrated admissions and the
+Queue keeper's shadow plans on exactly those cards. Its baseline conflict
+rate is the DS-7 common real-file replay on that same cohort. Missing baseline
+plans, incomplete integration evidence or fewer than twenty cards cannot fire
+the guard. A difference of at least ten conflicts per hundred hands the lease
+to Queue keeper as a T1 platform action. Its persisted guard id recovers an
+importance-70 persona feed finding after restart, and emits a typed operator
+Activity event. The finding carries the guard id and Owner undo instruction.
+Undo suppresses that exact sample; a changed sample can trip the guard again.
+
+`GET /api/projects/{project}/dispatch/review` includes the current lease and
+rollout state independently of the selected historical review window.
+`PUT /api/projects/{project}/dispatch/review/lease` requires a human Owner,
+project settings write access and the current `fence`. Actions are `pin`
+(with `persona`), `stop`, and `undo-guard` (with the exact `guardId`). A stale
+fence or guard returns 409. Pin and stop affect future admissions and retain
+guard monitoring. Undo restores the displaced persona and preserves the
+previous pin and alternation controls. These controls live only on the existing
+DS-8 project review page. They grant no T2 bypass or additional capacity.

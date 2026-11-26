@@ -33,8 +33,11 @@ const row = (persona, mode) => {
         value: example.value, plainValue: example.plain, gateMultiplier: example.gate, status: 'scored' };
 };
 async function setup(page, owner = true) {
-    let failLoad = false, failSave = false, small = false;
+    let failLoad = false, failSave = false, small = false, failControl = false;
     const writes = [];
+    const controls = [];
+    let lease = { persona: 'queue-keeper', fence: 1, window: 'wave:playthrough-17', expiresAt: '2026-12-01T00:00:00Z',
+        rollout: { champion: 'queue-keeper', challenger: 'area-warden', pinned: null, stopped: false, guard: null } };
     const revisions = [{ id: 'w1', author: 'platform', at: '2026-11-17T00:00:00Z', reason: 'Optimistic defaults', weights: defaultWeights(), gate: .8 }];
     await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill({ json: {
             negotiateVersion: 1, connectionId: 'dispatch-mock', connectionToken: 'dispatch-mock',
@@ -66,6 +69,15 @@ async function setup(page, owner = true) {
             revisions.push(revision);
             return json(revision);
         }
+        if (path.endsWith('/dispatch/review/lease')) {
+            const body = route.request().postDataJSON(); controls.push(body);
+            if (failControl) return route.fulfill({ status: 409, json: { error: 'Stale fence' } });
+            lease = { ...lease, fence: lease.fence + 1, rollout: { ...lease.rollout, stopped: true } };
+            if (body.action === 'pin') { lease.persona = body.persona; lease.rollout.pinned = body.persona; }
+            if (body.action === 'stop') lease.rollout.pinned = lease.persona;
+            if (body.action === 'undo-guard') { lease.persona = lease.rollout.guard.persona; lease.rollout.pinned = lease.persona; lease.rollout.guard = null; }
+            return json(lease);
+        }
         if (path.endsWith('/dispatch/review')) {
             if (failLoad)
                 return route.fulfill({ status: 500, json: { error: 'Load failed' } });
@@ -76,7 +88,7 @@ async function setup(page, owner = true) {
                     Object.assign(r, { value: null, plainValue: null, status: 'too few cards', raw: { ...r.raw, integratedCards: 12, acceptedCards: 12, cards: r.raw.cards.slice(0, 12) } });
             return json({ project: 'Demo Project', from: '2026-11-01T00:00:00Z', to: '2026-12-01T00:00:00Z',
                 weights: revisions.find(r => r.id === url.searchParams.get('weights')) ?? revisions.at(-1), weightRevisions: revisions,
-                personas, observedPersonas: [raw('queue-keeper', 'live')], competition: [{ champion: 'queue-keeper', challenger: 'area-warden',
+                lease, personas, observedPersonas: [raw('queue-keeper', 'live')], competition: [{ champion: 'queue-keeper', challenger: 'area-warden',
                         facts: { shadowIntegratedCards: 57, shadowWaves: 1, alternatingLiveWaves: 0, guardCards: 0 },
                         evaluation: { eligibleForAlternatingLive: false, championEligible: false, guardExceeded: false } }] });
         }
@@ -112,7 +124,10 @@ async function setup(page, owner = true) {
     });
     await page.goto('/#/workspace/team/dispatch%3APROJ-002');
     await expect(page.getByTestId('dispatch-ranking')).toBeVisible();
-    return { writes, failLoad: (value) => failLoad = value, failSave: (value) => failSave = value, small: () => small = true };
+    return { writes, controls, failControl: value => failControl = value,
+        guard: () => { lease = { ...lease, persona: 'queue-keeper', rollout: { ...lease.rollout,
+            guard: { id: 'guard-1', persona: 'area-warden', at: '2026-11-26T00:00:00Z' } } }; },
+        failLoad: (value) => failLoad = value, failSave: (value) => failSave = value, small: () => small = true };
 }
 
 module.exports = { setup };
