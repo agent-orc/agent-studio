@@ -239,6 +239,8 @@ public sealed class PostMergeRunCommand
             changed = changed.Distinct(StringComparer.Ordinal).ToList();
         }
         var commands = PostMergeRunPlan.Build(definition, _options.Mode, changed, state.WindowSuites);
+        var selection = ProjectTestSelectionPolicy.Select(definition, changed,
+            _options.Mode == "nightly" || state.WindowSuites == PostMergeWindowSuiteModes.Routine);
         var opened = merges.Count == 0 ? (DateTimeOffset?)null : merges.Min(merge => merge.At);
         bool MayShard(ProjectTestSuite? suite, string command) => _options.Mode == "nightly" && suite is not null
             && freeSlots > 1 && command.Contains("dotnet test ", StringComparison.Ordinal)
@@ -251,6 +253,7 @@ public sealed class PostMergeRunCommand
             from, opened, now, merges.Count, commands, [], "running", now, null,
             StartLoadPerCore: host.LoadPerCore, StartOccupiedSlots: host.ActiveSlots)
         {
+            SuiteSelection = new(selection.Suites, selection.OmittedSuites, selection.Reasons),
             Envelope = await EnvelopeAsync(definition, commands, PostMergeEnvelopeProbe.ShardPlan(planned),
                 host.LoadPerCore, null, ct),
         };
@@ -330,6 +333,12 @@ public sealed class PostMergeRunCommand
         var envelope = await EnvelopeAsync(definition, commands, PostMergeEnvelopeProbe.ShardPlan(shardPlan),
             host.LoadPerCore, sampler.Peak, ct);
         await Post(started with { Status = status, Verdicts = verdicts, Failure = failure,
+            SuiteSelection = new(selection.Suites, selection.OmittedSuites, selection.Reasons)
+            {
+                AttemptedSuites = definition.TestSuites.Where(suite => verdicts.Any(verdict =>
+                    verdict.Command == suite.Command || verdict.Command.StartsWith(suite.Command + " ", StringComparison.Ordinal)))
+                    .Select(suite => suite.Id).ToArray(),
+            },
             Reason = quarantinedFailures > 0
                 ? $"{quarantinedFailures} failing command(s) passed a same-SHA rerun or had only quarantined tests."
                 : null,

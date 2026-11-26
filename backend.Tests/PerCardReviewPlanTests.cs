@@ -75,6 +75,72 @@ public sealed class PerCardReviewPlanTests : IDisposable
             Assert.NotEqual(today, Json(Build(new ProjectSettings(), resultSha, changed)));
     }
 
+    [Theory]
+    [InlineData("fast", "frontend/src/app.ts", "frontend", "work-package")]
+    [InlineData("balanced", "frontend/src/app.ts", "frontend", "work-package")]
+    [InlineData("strict", "frontend/src/app.ts", "frontend", "work-package")]
+    [InlineData("fast", "docs/notes.md", "docs", "work-package")]
+    [InlineData("balanced", "docs/notes.md", "docs", "work-package")]
+    [InlineData("strict", "docs/notes.md", "docs", "work-package")]
+    [InlineData("fast", "global.json", "all", "full")]
+    [InlineData("balanced", "global.json", "all", "full")]
+    [InlineData("strict", "global.json", "all", "full")]
+    public void DeclaredImpactMapControlsCoverageAndLevelInEveryStrategy(
+        string strategy, string changed, string expectedSuite, string expectedLevel)
+    {
+        Write(".agent-studio/project.yml", """
+            schemaVersion: 1
+            stack: [custom]
+            commands:
+              prepare: .agent-studio/prepare
+              build: [echo backend-build, echo frontend-build]
+              test: [echo backend-test, echo frontend-test, echo docs-test]
+              lint: [echo frontend-lint]
+            testSuites:
+              - id: backend
+                category: routine
+                expectedDurationSeconds: 1
+                command: echo backend-test
+              - id: frontend
+                category: routine
+                expectedDurationSeconds: 1
+                command: echo frontend-test
+              - id: docs
+                category: routine
+                expectedDurationSeconds: 1
+                command: echo docs-test
+            testSelection:
+              - paths: [backend/]
+                suites: [backend]
+                build: [0]
+              - paths: [frontend/]
+                suites: [frontend]
+                build: [1]
+                lint: [0]
+              - paths: [docs/]
+                suites: [docs]
+            """);
+        Write("docs/notes.md", "Notes.\n");
+        Git("add", ".");
+        Git("commit", "-qm", "impact map baseline");
+        var sha = Commit(changed);
+
+        var plan = Build(Settings(strategy), sha, changed);
+
+        Assert.Equal(expectedLevel, plan.TestLevel);
+        Assert.NotNull(plan.SuiteSelection);
+        Assert.Equal(expectedSuite == "all" ? ["backend", "frontend", "docs"] : new[] { expectedSuite },
+            plan.SuiteSelection.SelectedSuites);
+        foreach (var suite in plan.SuiteSelection.SelectedSuites)
+            Assert.Contains(plan.Commands, command => command.Arguments.Contains($"echo {suite}-test"));
+        foreach (var suite in plan.SuiteSelection.OmittedSuites)
+            Assert.DoesNotContain(plan.Commands, command => command.Arguments.Contains($"echo {suite}-test"));
+        if (expectedSuite == "docs")
+            Assert.DoesNotContain(plan.Commands, command => command.Arguments.Any(argument =>
+                argument.Contains("backend-build", StringComparison.Ordinal)
+                || argument.Contains("frontend-build", StringComparison.Ordinal)));
+    }
+
     [Fact]
     public void Fast_defers_a_mapped_whole_test_project_command_to_after_integration()
     {

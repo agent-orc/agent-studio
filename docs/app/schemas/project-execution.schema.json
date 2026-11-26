@@ -114,6 +114,59 @@
         }
       }
     },
+    "testSelection": {
+      "description": "Optional impact map shared by review, batch, integration and affected post-merge gates. Missing maps, unknown paths and unassigned commands select the full inventory.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "paths",
+          "suites"
+        ],
+        "properties": {
+          "paths": {
+            "description": "Exact repository-relative files or directory prefixes ending in /.",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+            }
+          },
+          "suites": {
+            "description": "Declared routine suite IDs, or * for the full inventory.",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "build": {
+            "description": "Zero-based indices into commands.build.",
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "lint": {
+            "description": "Zero-based indices into commands.lint.",
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "prepare": {
+            "description": "Preparation commands for only the selected ecosystems.",
+            "$ref": "#/$defs/commands"
+          }
+        }
+      }
+    },
     "cachePaths": {
       "description": "Repository-relative generated paths that preparation may populate.",
       "type": "array",

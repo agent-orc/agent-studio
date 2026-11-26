@@ -18,6 +18,8 @@ internal static class FallbackGateEvidence
             result.ExitCode,
             result.DurationMs,
             result.Reason,
+            result.TestSelection,
+            result.TestSelectionAuditDigest,
             result.RanBackendBuild,
             result.RanFrontendBuild,
             result.TestedSha,
