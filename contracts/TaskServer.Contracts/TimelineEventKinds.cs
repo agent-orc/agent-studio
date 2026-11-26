@@ -159,6 +159,9 @@ public static class TimelineEventKinds
     public const string CardRoundBudgetDisposition = "card_round_budget_disposition";
     /// <summary>A human review verdict was recorded.</summary>
     public const string HumanReviewDecided = "human_review_decided";
+    /// <summary>A scoped integration quarantine wait began or ended.</summary>
+    public const string IntegrationQuarantineWait = "integration_quarantine_wait";
+
     /// <summary>
     /// Human acceptance started the transactional delivery integration while
     /// the task remained in Human Review.

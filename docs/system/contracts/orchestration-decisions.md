@@ -883,6 +883,12 @@ for DS-6. The shared contracts `TestQuarantinePolicy` owns file parsing and
 exact-name partitioning, rather than an orchestration transition rule.
 
 
+RT-9 (AGT-4010) adds the pure `LineGuardianPolicy.ShadowWeekComplete` authority
+fact. The host uses the adapter result to refuse an initial live switch until
+seven elapsed days after shadow began; reporting uses the same result. Only a
+human Owner can request the switch. Weekly criteria and min-max reporting are
+read projections and have no authority to apply triage or change test placement.
+
 AGT-3995 (DS-5): `DispatcherAuthorityPolicy` owns the narrow dispatcher
 operation authority and fenced lease admission. Shadow activations hold only `observe` and `dispatch.shadow.record`, with no
 generic IAM write grant. The standalone operation data
