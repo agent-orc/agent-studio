@@ -1,7 +1,8 @@
 export interface PersonaEntry {
   id: string; title: string; aspect: string; kind: string; revision: string;
   adoptableRevision: string | null;
-  descriptor: { charter: string; cadence: { report: string }; budget: { tokensPerWeek: number }; attributes: PersonaAttributes };
+  descriptor: { charter: string; cadence: { report: string }; budget: { tokensPerWeek: number }; attributes: PersonaAttributes;
+    dispatch?: { strategy: { id: string; revision: string }; mode: string; parameters: Record<string, unknown> } };
   activation: null | { personaId: string; roleId?: string; state: string; descriptorRevision: string;
     activationRevision: number; attributes: PersonaAttributes; allowance: { tokensPerWeek: number };
     history: { at: string; action: string; state: string; descriptorRevision: string }[] };

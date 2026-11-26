@@ -1,0 +1,144 @@
+<section class="dispatch" data-testid="dispatch-review">
+  @if (persona()) {
+  <header>
+    <h2>Dispatcher record</h2>
+    @if (persona()?.descriptor?.dispatch; as dispatch) {
+      <p>Descriptor strategy <strong>{{ dispatch.strategy.id }}</strong> · revision {{ dispatch.strategy.revision }} · activation {{ persona()?.activation?.activationRevision ?? 'inactive' }} <app-status-indicator tone="info" [label]="dispatch.mode" /></p>
+    }
+  </header>
+  }
+  <div class="controls">
+    <label class="project-control">Project <select data-testid="dispatch-project" [value]="project()" [disabled]="saving()" (change)="selectProject($any($event.target).value)">
+      <option value="" disabled [selected]="!project()">Select project</option>
+      @for (p of projects(); track p.id) { <option [value]="p.id" [selected]="p.id === project()">{{ p.displayName }}</option> }
+    </select></label>
+    <label>Window <select [value]="window()" [disabled]="saving()" (change)="window.set($any($event.target).value)">
+      <option value="30d">Last 30 days</option><option value="2026-11-17T00:00:00Z/2026-11-18T00:00:00Z">17 November 2026</option>
+    </select></label>
+    <label>Weights revision <select [value]="review()?.weights?.id ?? revision()" [disabled]="loading() || saving()" (change)="revision.set($any($event.target).value)">
+      @for (r of review()?.weightRevisions ?? []; track r.id) { <option [value]="r.id" [selected]="r.id === review()?.weights?.id">{{ r.id }} · {{ r.author }}</option> }
+    </select></label>
+    <app-segmented-control class="source-control" [options]="sourceOptions" [value]="source()" ariaLabel="Dispatch data source" (valueChange)="source.set($event)" />
+    <label class="source-select">Data source <select [value]="source()" (change)="source.set($any($event.target).value)">
+      @for (option of sourceOptions; track option.value) { <option [value]="option.value" [selected]="option.value === source()">{{ option.label }}</option> }
+    </select></label>
+    @if (persona() && project()) { <a [href]="route(project())">Open project review</a> }
+  </div>
+  @if (!project()) { <p>The requested project is not available. Choose an accessible project.</p> }
+  @if (loading()) { <app-loading-surface kind="list" label="Loading dispatch review" /> }
+  @if (error()) { <p role="alert">{{ error() }} <button type="button" [disabled]="loading() || saving()" (click)="load()">Retry load</button></p> }
+  @if (notice()) { <p role="status">{{ notice() }}</p> }
+  @if (review(); as review) {
+    <p class="context">{{ review.from | date:'mediumDate':'UTC' }} to {{ review.to | date:'mediumDate':'UTC' }} (end exclusive, UTC) · weights {{ review.weights.id }} · gate {{ review.weights.gate }}
+      <br />{{ review.weights.author }} · {{ review.weights.at | date:'medium':'UTC' }} · {{ review.weights.reason || 'No revision reason' }}</p>
+    <div class="layout">
+      <div class="main">
+        @if (persona()) {
+          <section class="section"><h3>Attributes set by the owner</h3>
+            <dl class="attributes">
+              <dt>Forecast</dt><dd>Model-free cited files, co-change expansion and module map, with confidence. Shared hubs are excluded; real changed files calibrate the forecast.</dd>
+              <dt>Caution</dt><dd>The named strategy controls separation. Area warden separates shared modules; cards spanning more than 3 modules run alone.</dd>
+              <dt>Hold limit</dt><dd>At most 24 hours, renewed once, then release or ask the owner. At most 25% of Ready held.</dd>
+              <dt>Authority</dt><dd>{{ persona()?.activation?.attributes?.autonomy ?? 'Inactive' }} · {{ persona()?.descriptor?.dispatch?.mode ?? 'Unknown mode' }}. Shadow records plans. Live needs a fenced lease and grants; every bypass needs T2.</dd>
+            </dl>
+            <p class="muted">Strategy bounds are read-only here. Review weights change evaluation, never grants, capacity, pins, urgent cards or owner dependencies.</p>
+          </section>
+          @if (selected(); as row) {
+            <section class="section" data-testid="dispatch-record"><h3>Current window · {{ row.raw.mode }}</h3>
+              <div class="metrics">
+                <div><strong>{{ row.raw.cards.length }}</strong><span>Cards in comparison set</span></div>
+                <div><strong>{{ row.raw.integratedCards }}</strong><span>Integrated cards</span></div>
+                <div><strong class="missing">–</strong><span>Cards planned · not available in this report</span></div>
+                <div><strong class="missing">–</strong><span>Pairs run in parallel · not available in this report</span></div>
+                <div><strong>{{ syncCount(row) }}</strong><span>Sync/conflict cards inferred from rate · baseline {{ syncCount(baseline()) }}</span></div>
+                <div><strong>{{ format(row.raw.criteria.conflicts) }}</strong><span>Conflicts per 100 · baseline {{ format(baseline()?.raw?.criteria?.conflicts) }}</span></div>
+                <div><strong class="missing">–</strong><span>Rounds per card · not available in this report</span></div>
+                <div><strong>{{ format(row.raw.criteria.parallelism) }}</strong><span>Parallelism against bound</span></div>
+                <div><strong>{{ format(row.raw.criteria.forecast) }}</strong><span>Forecast pair F1 · mean file F1 {{ format(row.raw.fileF1) }}</span></div>
+                <div><strong [class.missing]="row.raw.criteria.ownCost === null">{{ format(row.raw.criteria.ownCost) }}</strong><span>Own tokens per 100 dispatched cards</span></div>
+              </div>
+            </section>
+          } @else { <p>No {{ source() }} record for this persona. Choose another data source or window.</p> }
+        } @else {
+          <section class="section"><h3>Ranking · common-card comparison</h3>
+            <p class="muted">Scores 0 to 100; higher is better. Baseline stays visible. Missing criteria are excluded across the entire comparison set. The source switch filters stored modes without rescoring.</p>
+            <table data-testid="dispatch-ranking"><thead><tr><th>Persona / mode</th><th>Cards</th>
+              @for (c of criteria; track c.key) { <th [title]="c.label + ' · ' + c.unit">{{ c.short }}</th> }<th>Value</th></tr></thead>
+              <tbody>@for (row of rows(); track row.raw.persona) {
+                <tr><th scope="row"><a [href]="'#/workspace/team/' + row.raw.persona">{{ label(row.raw.persona) }}</a><small>{{ row.raw.strategy }}</small><app-status-indicator tone="neutral" [label]="row.raw.mode" /></th>
+                  <td data-label="Integrated cards">{{ row.raw.integratedCards }}</td>
+                  @for (c of criteria; track c.key) { <td [attr.data-label]="c.label">{{ score(row, c.key) }}</td> }
+                  <td data-label="Value"><strong>{{ row.value === null ? row.status : format(row.value) }}</strong>
+                    @if (row.gateMultiplier !== null && row.gateMultiplier < 1) { <small>Gated ×{{ format(row.gateMultiplier) }} · plain {{ format(row.plainValue) }}</small> }
+                  </td>
+                </tr>
+              }</tbody>
+            </table>
+            @if (rows().length === 0 || (rows().length === 1 && rows()[0].raw.mode !== source())) { <p>No {{ source() }} comparison records in this window. The baseline is retained when available.</p> }
+            <p class="muted">Values require at least 40 integrated cards. Shadow tokens are estimates. Replay cannot measure own token cost or owner explanation ratings.</p>
+          </section>
+        }
+        @for (row of persona() ? (selected() ? [selected()!] : []) : rows(); track row.raw.persona) {
+          <details class="section"><summary>{{ label(row.raw.persona) }} · raw evidence and limits</summary>
+            <dl>@for (c of criteria; track c.key) { <dt>{{ c.label }}</dt><dd>{{ format(row.raw.criteria[c.key]) }} · {{ c.unit }}</dd> }</dl>
+            <p>File F1 {{ format(row.raw.fileF1) }} · {{ row.raw.acceptedCards }} accepted cards · tokens {{ row.raw.tokensEstimated ? 'estimated' : 'observed' }}</p>
+            <ul>@for (warning of row.raw.warnings; track warning) { <li>{{ warning }}</li> }</ul>
+          </details>
+        }
+        @if (!persona() && source() === 'live') {
+          <section class="section"><h3>Observed live cohorts · separate from ranking</h3>
+            <p class="muted">These cohorts can differ from the common-card set and have no comparable weighted value.</p>
+            @for (row of review.observedPersonas; track row.persona) {
+              <details><summary>{{ label(row.persona) }} · {{ row.integratedCards }} integrated cards</summary>
+                <dl>@for (c of criteria; track c.key) { <dt>{{ c.label }}</dt><dd>{{ format(row.criteria[c.key]) }} · {{ c.unit }}</dd> }</dl>
+                <ul>@for (warning of row.warnings; track warning) { <li>{{ warning }}</li> }</ul>
+              </details>
+            } @empty { <p>No attributed live cohorts in this window.</p> }
+          </section>
+        }
+        <section class="section"><h3>Attributed conflicts · {{ source() }}</h3>
+          @for (conflict of attributed(); track conflict.id) {
+            <details><summary>{{ conflict.card }} and {{ conflict.partnerCards.join(', ') || 'unknown partner' }} · {{ conflict.kind }}</summary>
+              <p>{{ conflict.personaId || 'Unknown persona' }} · {{ conflict.at | date:'medium':'UTC' }}{{ conflict.backfilled ? ' · backfilled' : '' }}</p>
+              <ul>@for (file of conflict.conflictedFiles; track file) { <li>{{ file }}</li> }</ul>
+              <h4>Admitting decisions</h4><dl>@for (card of conflict.partnerCards.concat(conflict.card); track card) { <dt>{{ card }}</dt><dd>{{ conflict.dispatchDecisionIds[card] || 'Unknown decision' }}</dd> }</dl>
+            </details>
+          } @empty { <p>No attributed {{ source() }} conflicts recorded in this window.</p> }
+          @if (source() === 'replay') { <p class="muted">Replay overlap estimates are not observed conflict ledger entries.</p> }
+          <p class="muted">{{ conflicts().length }} ledger entries in the window; {{ attributed().length }} match this view. Entries with unknown attribution remain in the ledger.</p>
+        </section>
+      </div>
+      <aside>
+        @if (persona() ? selected() : null; as row) {
+          <section class="section" data-testid="dispatch-value"><h3>Value · {{ review.weights.id }}</h3><dl>
+            @for (c of criteria; track c.key) { <dt>{{ c.label }} · weight {{ review.weights.weights[c.key] }}</dt><dd>{{ score(row, c.key) }}</dd> }
+            </dl><p class="value">{{ row.value === null ? row.status : format(row.value) }}</p><p>Plain {{ format(row.plainValue) }} · gate multiplier {{ format(row.gateMultiplier) }}</p>
+          </section>
+        } @else if (!persona()) {
+          <section class="section" data-testid="dispatch-weights"><h3>Weights · {{ review.weights.id }}</h3><p>Owner only. Saving creates a workspace revision and recomputes this window on the server.</p>
+            <fieldset [disabled]="!isOwner() || saving() || loading()"><legend>Eight criteria · total 100</legend>
+              @for (c of criteria; track c.key) { <label class="weight">{{ c.label }}<input type="number" min="0" max="100" step="1" [attr.data-testid]="'dispatch-weight-' + c.key" [value]="weights()[c.key]" (input)="editWeight(c.key, $any($event.target).valueAsNumber)" /></label> }
+              <p aria-live="polite" data-testid="dispatch-remainder">Remainder: {{ format(remainder()) }} / 100</p>
+              <label class="weight">Parallelism gate<input aria-label="Parallelism gate" type="number" min="0.5" max="1" step="0.01" [value]="gate()" (input)="gate.set($any($event.target).valueAsNumber)" /></label>
+              <label>Reason (optional)<textarea rows="2" [value]="reason()" (input)="reason.set($any($event.target).value)"></textarea></label>
+              <div class="actions"><button type="button" class="primary" [appPendingButton]="saving()" [disabled]="!canSave()" (click)="save()">Save as new revision</button><button type="button" (click)="reset()">Reset to defaults</button></div>
+            </fieldset>
+            @if (!isOwner()) { <p class="muted">Sign in as a human Owner to edit weights. Personas and managers can read them.</p> }
+            <p class="muted">Optimistic defaults put 65 points on efficiency. Review estimated evidence before changing weights.</p>
+          </section>
+        }
+        <section class="section"><h3>Champion</h3><p>{{ champion() ? label(champion()!) : 'No champion evaluation available' }}</p>
+          <p>Replay, then shadow, then alternating live by wave window. Ranking never switches a lease.</p>
+          <p class="muted">Challenger: +5 value, 100 shadow cards and 2 waves. Guard: +10 conflicts per 100 over the same 20 cards, returning to Queue keeper.</p>
+          <details><summary>Rollout policy</summary><p>Area warden uses forecast modules after its shadow gate. Packer remains in shadow with proposals. Every in-flight project card stays in the overlap window through integration.</p></details>
+          @for (entry of review.competition; track entry.challenger) {
+            <details><summary>{{ label(entry.challenger) }} · {{ entry.evaluation.championEligible ? 'champion eligible' : entry.evaluation.eligibleForAlternatingLive ? 'alternating live eligible' : 'not eligible' }}</summary>
+              <p>{{ entry.facts.shadowIntegratedCards }} shadow cards · {{ entry.facts.shadowWaves }} shadow waves · {{ entry.facts.alternatingLiveWaves }} alternating live waves · {{ entry.facts.guardCards }} guard cards</p>
+              <p>Guard {{ entry.evaluation.guardExceeded ? 'exceeded' : 'no exceedance recorded' }}. Eligibility is the server verdict; absent wave or guard evidence grants no promotion.</p>
+            </details>
+          }
+        </section>
+      </aside>
+    </div>
+  }
+</section>
