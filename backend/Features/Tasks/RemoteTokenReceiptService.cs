@@ -48,10 +48,6 @@ public sealed class RemoteTokenReceiptService
             continuation = null;
         if (continuation is not null)
             _sessions.BackfillSessionContinuation(task.Id, continuation, task.WatchPath);
-        var parser = _parsers.Get(task.CliType ?? task.Agent);
-        if (parser is null)
-            return new RemoteTokenReceiptResult(false, 0, "No usage parser is registered for the task CLI.");
-
         var path = TaskPaths.CliOutputLog(task.FolderPath);
         // Keep each frame's original log position through attempt filtering;
         // a re-attach can select a wider window without renumbering a turn.
@@ -63,6 +59,12 @@ public sealed class RemoteTokenReceiptService
                 entry.RunAttemptId,
                 runAttemptId,
                 StringComparison.OrdinalIgnoreCase));
+        var runModel = FirstNonBlank(run?.Model, effectiveModel, task.Model);
+        var runCli = FirstNonBlank(run?.Cli, ModelIdentity.Resolve(runModel)?.Cli, task.CliType, task.Agent);
+        if (!CliTypes.IsValid(runCli)) runCli = ModelIdentity.Resolve(runModel)?.Cli;
+        var parser = _parsers.Get(runCli);
+        if (parser is null)
+            return new RemoteTokenReceiptResult(false, 0, "No usage parser is registered for the run CLI.");
         if (run is not null)
         {
             // One task log can contain several continuation attempts. Restrict
@@ -75,7 +77,7 @@ public sealed class RemoteTokenReceiptService
                 .ToList();
         }
         // The fenced session is the durable source of execution dimensions.
-        var cliType = NormalizeCli(run?.Cli ?? task.CliType ?? task.Agent);
+        var cliType = NormalizeCli(runCli);
         var thinkingLevel = FirstNonBlank(run?.ThinkingLevel, task.ThinkingLevel);
         var host = FirstNonBlank(runnerId, run?.ExecutionLocation?.RunnerId) ?? TokenUsageHost.UnrecordedRemote;
         var observed = new List<ObservedUsage>();
@@ -86,10 +88,16 @@ public sealed class RemoteTokenReceiptService
             try
             {
                 using var document = JsonDocument.Parse(line.Text);
+                // Claude's legacy fallback accepts any top-level usage object,
+                // including Codex turn.completed frames. Never parse another
+                // provider's turn with the current card's parser.
+                if (parser.CliType == "claude"
+                    && document.RootElement.TryGetProperty("type", out var frameType)
+                    && frameType.GetString() == "turn.completed") continue;
                 var modelIndex = 0;
                 foreach (var usage in parser.ParseAll(
                              document.RootElement,
-                             effectiveModel ?? task.Model,
+                             runModel,
                              _models))
                 {
                     if (usage.Input + usage.Output + usage.CacheRead + usage.CacheWrite <= 0) continue;
@@ -100,7 +108,10 @@ public sealed class RemoteTokenReceiptService
                     observed.Add(new ObservedUsage(
                         line.Timestamp == default ? DateTime.UtcNow : line.Timestamp,
                         usage,
-                        identity));
+                        identity,
+                        parser.CliType != "codex" || (document.RootElement.TryGetProperty("usage", out var counters)
+                            && counters.TryGetProperty("cached_input_tokens", out var cached)
+                            && cached.ValueKind == JsonValueKind.Number)));
                     modelIndex++;
                 }
             }
@@ -134,7 +145,10 @@ public sealed class RemoteTokenReceiptService
                     OutputTokens = SafeInt(item.Usage.Output),
                     CacheReadTokens = SafeInt(item.Usage.CacheRead),
                     CacheCreationTokens = SafeInt(item.Usage.CacheWrite),
-                    InputIncludesCached = item.Usage.InputIncludesCached,
+                    InputIncludesCached = item.CacheSplitKnown ? item.Usage.InputIncludesCached : null,
+                    UsageNormalization = parser.CliType == "codex" && item.CacheSplitKnown
+                        ? AgentStudio.TaskServer.Contracts.ProviderUsageNormalization.OpenAiInputIncludesCachedV1 : null,
+                    ReasoningTokens = item.Usage.ReasoningOutput is { } reasoning ? SafeInt(reasoning) : null,
                     ThinkingLevel = thinkingLevel,
                     SessionMode = continuation?.SessionMode,
                     CliType = cliType,
@@ -191,7 +205,7 @@ public sealed class RemoteTokenReceiptService
             .ToList();
     }
 
-    internal sealed record ObservedUsage(DateTime Ts, ParsedTurnUsage Usage, string Identity);
+    internal sealed record ObservedUsage(DateTime Ts, ParsedTurnUsage Usage, string Identity, bool CacheSplitKnown = true);
 
     private static string? FirstNonBlank(params string?[] values)
         => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();

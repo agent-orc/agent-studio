@@ -216,6 +216,8 @@ public sealed record SecurityState
     public List<StandingGrant> StandingGrants { get; init; } = [];
     /// <summary>Owner approvals of T2 operator requests (security model SM-5).</summary>
     public List<OperatorApproval> OperatorApprovals { get; init; } = [];
+    /// <summary>Terminal sign-ins (ES-3): pending ones and the outcome of recent ones.</summary>
+    public List<OperatorSignIn> OperatorSignIns { get; init; } = [];
     /// <summary>Hash of the Owner's once-shown offline break-glass credential.</summary>
     public string? BreakGlassCredentialHash { get; set; }
     public List<BreakGlassWindow> BreakGlassWindows { get; init; } = [];

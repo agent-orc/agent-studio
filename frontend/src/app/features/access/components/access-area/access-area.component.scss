@@ -1,34 +1,44 @@
 @use '../../access-controls' as access;
+@use '../../../../../styles/mixins' as m;
 
 :host { display: block; min-width: 0; }
-@include access.controls;
-@include access.table;
-.access { display: flex; flex-direction: column; gap: var(--studio-spacing-4); color: var(--studio-fg); }
-.access__head { display: flex; align-items: center; justify-content: space-between; gap: var(--studio-spacing-3); padding-bottom: var(--studio-spacing-3); border-bottom: 1px solid var(--studio-border-strong); }
-.access__head h2 { margin: 0; color: var(--studio-fg-strong); font-size: 1.05rem; }
-.access__head p { max-width: 80ch; margin: var(--studio-spacing-1) 0 0; color: var(--studio-fg-dim); font-size: 0.78rem; }
-.access__summary { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-3); align-items: center; min-height: var(--studio-row-min-h-interactive); padding: var(--studio-row-pad-block) var(--studio-row-pad-inline); background: var(--studio-surface-muted); font-size: 0.78rem; }
-.access__summary strong { color: var(--studio-fg-strong); }
-.access__section { display: flex; flex-direction: column; gap: var(--studio-spacing-2); min-width: 0; }
-.access__section + .access__section { padding-top: var(--studio-spacing-3); border-top: 1px solid var(--studio-border); }
-.access__grants { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-1); }
-.access__table-scroll { max-width: 100%; overflow-x: auto; }
-.access__table-scroll table { min-width: 680px; }
-.access__issued { display: flex; flex-direction: column; gap: var(--studio-spacing-1); padding: var(--studio-spacing-2); border-radius: 4px; background: var(--studio-card-attention-bg); color: var(--studio-fg); font-size: 0.78rem; }
-.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-@media (max-width: 760px) { .access__head { align-items: stretch; flex-direction: column; } }
+@include access.standard;
 
-@media (max-width: 600px) {
-  .access__table-scroll .access__users { min-width: 0; }
-  .access__users,
-  .access__users tbody,
-  .access__users tr,
-  .access__users td { display: block; width: 100%; box-sizing: border-box; }
-  .access__users thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .access__users tr { padding: var(--studio-spacing-2) 0; border-bottom: 1px solid var(--studio-border); }
-  .access__users td { padding: var(--studio-spacing-1) var(--studio-spacing-2); border: 0; overflow-wrap: anywhere; }
-  .access__users td::before { display: block; content: attr(data-label); color: var(--studio-fg-dim); font-size: 0.72rem; }
-  .access__users td:first-child { color: var(--studio-fg-strong); font-weight: 600; }
-  .access__users td.access-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-spacing-1); text-align: left; white-space: normal; }
-  .access__users td.access-actions::before { flex-basis: 100%; }
+.access { min-width: 0; color: var(--studio-fg); }
+.access__head { @include m.deck-section-head; align-items: center; margin-bottom: var(--studio-spacing-3); }
+.access__head h2 { @include m.deck-section-title; }
+.access__head p { @include m.deck-section-desc; max-width: 80ch; }
+.access__notice { margin-bottom: var(--studio-spacing-3); }
+
+.access__layout { display: flex; flex-direction: column; min-width: 0; }
+.access__sections {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: var(--studio-spacing-5);
+  min-width: 0;
+  // Sections land below the sticky outline strip when the outline jumps to them.
+  --page-section-scroll-offset: calc(var(--studio-spacing-7) + var(--studio-spacing-2));
+}
+
+// Narrow: the outline is one sticky line above the sections.
+.access__outline {
+  position: sticky;
+  // Flush with the top edge of the page: a sticky box otherwise stops at the page padding.
+  top: calc(-1 * var(--detail-layout-inset, 0px));
+  z-index: 2;
+  padding: var(--studio-spacing-1) 0;
+  border-bottom: 1px solid var(--studio-border);
+  background: var(--studio-bg-editor);
+}
+
+// Wide: the outline is a column next to the sections.
+.access__layout--wide { flex-direction: row; align-items: flex-start; gap: var(--studio-spacing-5); }
+.access__layout--wide .access__outline { top: 0; flex: 0 0 12.5rem; padding: var(--studio-spacing-3) 0 0; border-bottom: 0; }
+.access__layout--wide .access__sections { --page-section-scroll-offset: var(--studio-spacing-3); }
+
+.access__own { display: inline-flex; align-items: center; gap: var(--studio-spacing-2); }
+
+@media (max-width: 760px) {
+  .access__head { align-items: flex-start; flex-direction: column; }
 }

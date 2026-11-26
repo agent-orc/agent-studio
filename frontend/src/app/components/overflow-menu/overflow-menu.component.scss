@@ -1,0 +1,9 @@
+@use '../../../styles/mixins' as m;
+
+:host { display: inline-flex; }
+.overflow-menu__trigger { @include m.icon-button(28px); }
+
+// Touch: the trigger grows to a comfortable target on narrow screens.
+@media (max-width: 640px) {
+  .overflow-menu__trigger { width: var(--studio-row-min-h-interactive-cozy); height: var(--studio-row-min-h-interactive-cozy); }
+}

@@ -1,140 +1,135 @@
 <section class="access" data-testid="access-area">
-  <header class="access__head">
-    <div>
-      <h2>Access</h2>
-      <p>Users, groups, and service accounts hold roles in a scope: the workspace, one project, or one environment. Effective access is the union of those role bindings; Owner is the break-glass role.</p>
-    </div>
-    <button type="button" class="access-secondary" data-testid="access-reload" [disabled]="access.state() === 'loading' || access.busy()" (click)="reload()">Reload</button>
-  </header>
-
-  @if (access.error(); as message) { <p class="access-error" role="alert" data-testid="access-error">{{ message }}</p> }
-  @if (access.state() === 'denied' && localOwner.missing()) { <app-local-owner-sign-in data-testid="access-owner-sign-in" (signedIn)="reload()" /> }
-  @if (access.projectsError(); as message) { <p class="access-error" role="alert" data-testid="access-projects-error">{{ message }}</p> }
-
-  @if (overview(); as data) {
-    <p class="access__summary access-numeric" data-testid="access-summary">
-      @for (item of summary(); track item) { <span>{{ item }}</span> }
-    </p>
-    @if (singleUser()) {
-      <p class="access-hint" data-testid="access-single-user">You are the only user and hold Owner on the workspace. Nothing needs to be set up; invite people, create groups, or add service accounts when you need them.</p>
-    }
-
-    <section class="access__section" aria-labelledby="access-users-title">
-      <header><h3 id="access-users-title">Users</h3><p class="access-hint">People with their own sign-in. Invitations reuse the one-time sign-in link.</p></header>
-      @if (temporaryPassword(); as reset) {
-        <div class="access__issued" data-testid="access-temporary-password" role="status">
-          <p>Temporary password for {{ reset.username }}. Copy it now; it is not shown again.</p>
-          <p class="access-secret">{{ reset.value }}</p>
-          <div class="access-row"><button type="button" class="access-secondary" (click)="temporaryPassword.set(null)">Done</button></div>
-        </div>
-      }
-      <div class="access__table-scroll">
-      <table class="access__users" data-testid="access-users">
-        <thead><tr><th scope="col">Name</th><th scope="col">Username</th><th scope="col">Roles</th><th scope="col">Status</th><th scope="col">Factor</th><th scope="col">Last changed</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
-        <tbody>
-          @for (user of data.users; track user.id) {
-            <tr [attr.data-testid]="'access-user-' + user.username">
-              <td data-label="Name">{{ user.displayName }}</td>
-              <td data-label="Username">{{ user.username }}</td>
-              <td data-label="Roles">
-                <span class="access__grants">
-                  @for (grant of grants(user); track grant) { <span class="access-badge">{{ grant }}</span> } @empty { <span class="access-hint">No role</span> }
-                </span>
-              </td>
-              <td data-label="Status"><app-status-indicator [tone]="statusTone(user)" [label]="status(user)" [testId]="'access-user-status-' + user.username" /></td>
-              <td data-label="Factor">{{ user.hasFactor ? 'Registered' : 'None' }}</td>
-              <td data-label="Last changed">{{ user.factorChangedAt ? (user.factorChangedAt | date:'medium') : user.hasFactor ? 'Unknown' : 'Never' }}</td>
-              <td class="access-actions" data-label="Actions">
-                <app-session-manager [userId]="user.id" />
-                <button type="button" class="access-quiet" [disabled]="access.busy()" (click)="resetPassword(user)">Reset password</button>
-                <button type="button" class="access-quiet" [attr.data-testid]="'access-user-toggle-' + user.username" [disabled]="access.busy()" (click)="toggleDisabled(user)">{{ user.disabled ? 'Enable' : 'Disable' }}</button>
-              </td>
-            </tr>
-          }
-        </tbody>
-      </table>
+  <app-detail-layout testId="access-detail" [open]="!!detail()" [eyebrow]="detail()?.eyebrow ?? null" [title]="detail()?.title ?? ''"
+                     [subtitle]="detail()?.subtitle ?? null" [contextKey]="detail()?.key" (closeRequest)="selection.close()">
+    <header class="access__head">
+      <div>
+        <h2>Access</h2>
+        <p>Users, groups, and service accounts hold roles in a scope: the workspace, one project, or one environment. Effective access is the union of those role bindings; Owner is the break-glass role.</p>
       </div>
-      <app-session-manager />
-      <section aria-label="Factor activity" data-testid="factor-activity">
-        <h4>Factor activity</h4>
-        <div class="access__table-scroll">
-        <table>
-          <thead><tr><th scope="col">Time</th><th scope="col">Actor</th><th scope="col">Event</th><th scope="col">User</th><th scope="col">Session</th></tr></thead>
-          <tbody>
-            @for (entry of factorEvents(); track entry.sequence) {
-              <tr><td>{{ entry.at | date:'medium' }}</td><td>{{ entry.actor }}</td><td>{{ entry.operation }}</td><td>{{ entry.target }}</td><td>{{ entry.session || 'Unknown' }}</td></tr>
-            } @empty { <tr><td colspan="5">No factor activity recorded.</td></tr> }
-          </tbody>
-        </table>
+      <button type="button" class="btn" data-testid="access-reload" [disabled]="access.state() === 'loading' || access.busy()" (click)="reload()">Reload</button>
+    </header>
+
+    @if (access.error(); as message) { <p class="access-error access__notice" role="alert" data-testid="access-error">{{ message }}</p> }
+    @if (access.state() === 'denied' && localOwner.missing()) { <app-local-owner-sign-in data-testid="access-owner-sign-in" (signedIn)="reload()" /> }
+    @if (access.projectsError(); as message) { <p class="access-error access__notice" role="alert" data-testid="access-projects-error">{{ message }}</p> }
+
+    @if (overview(); as data) {
+      @if (singleUser()) {
+        <p class="access-hint access__notice" data-testid="access-single-user">You are the only user and hold Owner on the workspace. Nothing needs to be set up; invite people, create groups, or add service accounts when you need them.</p>
+      }
+      <div class="access__layout" [class.access__layout--wide]="wide()">
+        <app-page-outline class="access__outline" testId="access-outline" [items]="outline()" [orientation]="wide() ? 'vertical' : 'horizontal'" />
+        <div class="access__sections">
+          <app-page-section anchor="access-people" title="People" [count]="counts().users" [divider]="false"
+                            purpose="People with their own sign-in, and the roles each one holds directly or through a group.">
+            <span sectionTools class="access__own"><span class="access-hint">Your sign-in</span> <app-session-manager /></span>
+            <button sectionAction type="button" class="btn btn--primary" data-testid="access-invite-open" (click)="selection.create('invite')">Invite person</button>
+            <app-access-people />
+          </app-page-section>
+
+          <app-page-section anchor="access-groups" title="Groups" [count]="counts().groups" purpose="A role bound once to a group applies to every member.">
+            <button sectionAction type="button" class="btn btn--primary" data-testid="access-group-open" (click)="selection.create('group')">New group</button>
+            <app-access-groups />
+          </app-page-section>
+
+          <app-page-section anchor="access-accounts" title="Service accounts" [count]="counts().serviceAccounts"
+                            purpose="Scripts and jobs sign in as a service account, with its own roles and tokens.">
+            <button sectionAction type="button" class="btn btn--primary" data-testid="access-service-account-open" (click)="selection.create('service-account')">New service account</button>
+            <app-access-service-accounts kind="service-account" />
+          </app-page-section>
+
+          <app-page-section anchor="access-api-tokens" title="API tokens" [count]="counts().apiTokens"
+                            purpose="A token a person created for a tool: one token, one role, bound to its creator. It is created where the tool is set up, not here.">
+            <app-access-service-accounts kind="api-token" />
+          </app-page-section>
+
+          <app-page-section anchor="access-runners" title="Runners"
+                            purpose="Runners and the engine enroll with a one-time code and keep their own credentials and Runner scopes.">
+            <button sectionAction type="button" class="btn btn--primary" data-testid="access-enrollment-open" (click)="selection.create('enrollment')">New enrollment code</button>
+            <app-access-runners />
+          </app-page-section>
+
+          <app-page-section anchor="access-bindings" title="Role bindings by scope" [count]="counts().bindings"
+                            purpose="The same bindings, read from the scope: who holds a role in the workspace, in each project, and in each environment.">
+            <button sectionAction type="button" class="btn btn--primary" data-testid="access-binding-open" (click)="selection.create('binding')">Add role binding</button>
+            <app-access-bindings />
+          </app-page-section>
+
+          @if (operators.available()) {
+            <app-page-section anchor="access-operators" title="Operator agents"
+                              purpose="Automations that act for the Owner through sessions of at most 8 hours. Each call is audited with the agent, the session, and the Owner who delegated it.">
+              @defer (on immediate) { <app-access-operator-agents /> }
+            </app-page-section>
+
+            @if (approvals.state() !== 'denied') {
+              <app-page-section anchor="access-approvals" title="Approval requests"
+                                purpose="High-risk (T2) requests of operator sessions wait here for you. An approval covers one exact request, is used once, and lapses after 15 minutes.">
+                @defer (on immediate) { <app-access-operator-approvals /> }
+              </app-page-section>
+            }
+
+            @if (standingGrants.state() !== 'denied') {
+              <app-page-section anchor="access-grants" title="Standing grants"
+                                purpose="The operation catalogue and the routine authority you grant an operator agent, by operation, scope, hourly rate, and time window. A grant lasts 7 days by default and at most 30.">
+                @defer (on immediate) { <app-access-standing-grants /> }
+              </app-page-section>
+            }
+
+            <app-page-section anchor="access-kill-switch" title="Kill switch"
+                              purpose="End all operator access in one step, end one runaway session from its row above, and see the drills that prove the switch works.">
+              @defer (on immediate) { <app-access-operator-kill-switch /> }
+            </app-page-section>
+
+            <app-page-section anchor="access-break-glass" title="Break-glass windows"
+                              purpose="Emergency authority for named sessions, capped at two hours and reviewed after closure.">
+              @defer (on immediate) { <app-access-break-glass /> }
+            </app-page-section>
+
+            <app-page-section anchor="access-operator-activity" title="Operator activity"
+                              purpose="Audit entries of operator sessions in a hash chain, with its verification and off-host forwarding.">
+              @defer (on immediate) { <app-access-operator-activity /> }
+            </app-page-section>
+          }
+
+          <app-page-section anchor="access-factor-activity" testId="factor-activity" title="Factor activity" [count]="factorRows().length"
+                            purpose="Each time a second factor was registered, replaced or removed, with the actor and the session.">
+            <app-data-grid label="Factor activity" testId="access-factor-events" [columns]="factorColumns" [rows]="factorRows()" [rowId]="factorId">
+              <app-empty-state gridEmpty [compact]="true" title="No factor activity recorded" body="A registered, replaced or removed second factor is listed here." />
+            </app-data-grid>
+          </app-page-section>
+
+          @if (showBackupActivity()) {
+            <app-page-section anchor="access-backup-activity" title="Backup activity"
+                              purpose="Backup inventory and content-list reads, create, off-host copy, verification, retention, decrypt, and restore, each with its actor and outcome from the audit chain.">
+              <app-access-backup-activity />
+            </app-page-section>
+          }
         </div>
-      </section>
-      <h4>Invite a person</h4>
-      <app-access-invite-form />
-    </section>
-
-    <section class="access__section" aria-labelledby="access-bindings-title">
-      <header><h3 id="access-bindings-title">Role bindings per scope</h3><p class="access-hint">Deeper scopes add to the workspace. An environment binding grants its deploy and secret permissions there and read access to the project.</p></header>
-      <app-access-bindings />
-    </section>
-
-    <section class="access__section" aria-labelledby="access-groups-title">
-      <header><h3 id="access-groups-title">Groups</h3><p class="access-hint">Bind a role once to a group instead of to each person.</p></header>
-      <app-access-groups />
-    </section>
-
-    <section class="access__section" aria-labelledby="access-accounts-title">
-      <header><h3 id="access-accounts-title">Service accounts and API tokens</h3><p class="access-hint">Scripts and jobs use a service account with its own tokens, expiry, and revocation. API tokens are service accounts with one token.</p></header>
-      <app-access-service-accounts />
-    </section>
-
-    @if (operators.available()) {
-      <section class="access__section" aria-labelledby="access-operators-title">
-        <header><h3 id="access-operators-title">Operator agents</h3><p class="access-hint">Automations that act for the Owner through sessions of at most 8 hours. Each call is audited with the agent, the session, and the Owner who delegated it.</p></header>
-        @defer (on immediate) { <app-access-operator-agents /> }
-      </section>
-
-      @if (approvals.state() !== 'denied') {
-        <section class="access__section" aria-labelledby="access-approvals-title">
-          <header><h3 id="access-approvals-title">Approval requests</h3><p class="access-hint">High-risk (T2) requests of operator sessions wait here for you. An approval covers one exact request, is used once, and lapses after 15 minutes.</p></header>
-          @defer (on immediate) { <app-access-operator-approvals /> }
-        </section>
-      }
-
-      @if (standingGrants.state() !== 'denied') {
-        <section class="access__section" aria-labelledby="access-grants-title">
-          <header><h3 id="access-grants-title">Standing grants</h3><p class="access-hint">The operation catalogue and the routine authority you grant an operator agent, by operation, scope, hourly rate, and time window. A grant lasts 7 days by default and at most 30.</p></header>
-          @defer (on immediate) { <app-access-standing-grants /> }
-        </section>
-      }
-
-      <section class="access__section" aria-labelledby="access-kill-switch-title">
-        <header><h3 id="access-kill-switch-title">Kill switch</h3><p class="access-hint">End all operator access in one step, end one runaway session from its row above, and see the drills that prove the switch works.</p></header>
-        @defer (on immediate) { <app-access-operator-kill-switch /> }
-      </section>
-
-      <section class="access__section" aria-labelledby="access-break-glass-title">
-        <header><h3 id="access-break-glass-title">Break-glass windows</h3><p class="access-hint">Emergency authority for named sessions, capped at two hours and reviewed after closure.</p></header>
-        @defer (on immediate) { <app-access-break-glass /> }
-      </section>
-
-      <section class="access__section" aria-labelledby="access-operator-activity-title">
-        <header><h3 id="access-operator-activity-title">Operator activity</h3><p class="access-hint">Audit entries of operator sessions in a hash chain, with its verification and off-host forwarding.</p></header>
-        @defer (on immediate) { <app-access-operator-activity /> }
-      </section>
+      </div>
+    } @else if (access.state() === 'loading') {
+      <p class="access-hint">Loading access settings…</p>
     }
 
-    @if (showBackupActivity()) {
-      <section class="access__section" aria-labelledby="access-backup-activity-title">
-        <header><h3 id="access-backup-activity-title">Backup activity</h3><p class="access-hint">Backup inventory and content-list reads, create, off-host copy, verification, retention, decrypt, and restore, each with its actor and outcome from the audit chain.</p></header>
-        <app-access-backup-activity />
-      </section>
-    }
-
-    <section class="access__section" aria-labelledby="access-runners-title">
-      <header><h3 id="access-runners-title">Runner enrollments and runners</h3><p class="access-hint">Runners and the engine enroll with a one-time code and keep their own credentials and Runner scopes.</p></header>
-      <app-access-runners />
-    </section>
-  } @else if (access.state() === 'loading') {
-    <p class="access-hint">Loading access settings…</p>
-  }
+    <div detail>
+      @if (selection.selection(); as selected) {
+        @if (selected.mode === 'create') {
+          @switch (selected.kind) {
+            @case ('invite') { <app-access-invite-form /> }
+            @case ('group') { <app-access-group-form /> }
+            @case ('service-account') { <app-access-account-form /> }
+            @case ('enrollment') { <app-access-enrollment-form /> }
+            @case ('binding') { <app-access-binding-form /> }
+          }
+        } @else {
+          @switch (selected.kind) {
+            @case ('user') { <app-access-person-detail [userId]="selected.id" /> }
+            @case ('group') { <app-access-group-detail [groupId]="selected.id" /> }
+            @case ('runner') { <app-access-runner-detail kind="runner" [itemId]="selected.id" /> }
+            @case ('enrollment') { <app-access-runner-detail kind="enrollment" [itemId]="selected.id" /> }
+            @default { <app-access-account-detail [accountId]="selected.id" /> }
+          }
+        }
+      }
+    </div>
+  </app-detail-layout>
 </section>

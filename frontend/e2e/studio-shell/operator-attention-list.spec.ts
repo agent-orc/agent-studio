@@ -92,6 +92,45 @@ test.describe('Operator attention list', () => {
     await expect(page).toHaveURL(/\/projects\/[^/]+\/operations/);
   });
 
+  test('overlap starvation names both cards and permits Run anyway from Needs you', async ({ page }) => {
+    const item = { id: 'dispatch.overlap-starved|Agent Studio/AGT-3988|comparison', type: 'dispatch.overlap-starved',
+      project: 'Agent Studio', cardKey: 'AGT-3988', cards: ['AGT-3988', 'AGT-3481'],
+      reason: 'AGT-3988 waits for AGT-3481 on backend/Features/Runner/ProjectRunner.cs. Only scope overlap prevents dispatch while slots are free.',
+      observedAt: '2026-11-24T03:26:04Z', suggestedOperations: ['dispatch.run-anyway', 'card.inspect'], evidence: [] };
+    let permitted = false;
+    let fail = true;
+    await page.route('**/api/operator/attention', route => route.fulfill({ json: { items: permitted ? [] : [item], count: permitted ? 0 : 1 } }));
+    await page.route('**/api/projects/Agent%20Studio/dispatch/run-anyway', route => {
+      expect(route.request().method()).toBe('POST');
+      expect(route.request().postDataJSON()).toEqual({ fact: item.id });
+      if (fail) return route.fulfill({ status: 409, json: { error: 'Comparison changed.' } });
+      permitted = true;
+      return route.fulfill({ json: { permitted: true, expiresInMinutes: 10 } });
+    });
+    await page.route('**/api/workbenches', route => route.fulfill({ json: { items: [] } }));
+    await gotoStudio(page);
+    for (const { name, width, height } of VIEWPORTS) {
+      await page.setViewportSize({ width, height });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await openAndReconcile(page);
+        const row = page.getByTestId('attention-group-overlap').getByTestId('attention-row');
+        await expect(row).toContainText('AGT-3988 waits for AGT-3481');
+        await expect(row.getByTestId('attention-run-anyway')).toBeEnabled();
+        await row.scrollIntoViewIfNeeded();
+        await screenshot(page, `overlap-${name}-${theme}--mocked`);
+        await page.getByTestId('studio-attention-list').getByRole('button', { name: 'Close' }).click();
+      }
+    }
+    await openAndReconcile(page);
+    await page.getByTestId('attention-run-anyway').click();
+    await expect(page.getByTestId('attention-overlap-error')).toBeVisible();
+    await expect(page.getByTestId('attention-run-anyway')).toBeEnabled();
+    fail = false;
+    await page.getByTestId('attention-run-anyway').click();
+    await expect(page.getByTestId('attention-group-overlap')).toHaveCount(0);
+  });
+
   test('disk pressure appears in Needs you with a host action', async ({ page }) => {
     await page.route('**/api/host/filesystems', route => route.fulfill({ json: {
       host: 'studio-api', observedAt: new Date().toISOString(), level: 'healthy', reason: 'Healthy', filesystems: [],

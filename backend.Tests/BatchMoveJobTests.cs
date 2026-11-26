@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -55,6 +56,10 @@ public sealed class BatchMoveJobTests : IDisposable
                     services.RemoveAll<IBatchMoveItemExecutor>();
                     services.AddSingleton<IBatchMoveItemExecutor>(executor);
                 });
+                // The coordinator drains the batch-move queue in the background;
+                // test hosts start product workers only on request.
+                builder.ConfigureTestServices(services =>
+                    services.AddHostedService(provider => provider.GetRequiredService<BatchMoveJobCoordinator>()));
             });
 
         using var client = factory.CreateClient();

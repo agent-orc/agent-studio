@@ -29,16 +29,8 @@
                               [compact]="true" testId="task-card-grade-status" />
       }
       @if (ownerChip(); as oc) {
-        <span class="task-card__owner-chip"
-              data-testid="task-card-owner"
-              [attr.data-owner-id]="oc.id"
-              [style.background]="oc.background"
-              [style.borderColor]="oc.border"
-              [style.color]="oc.foreground"
-              [cacTooltip]="oc.tooltip">
-          <span class="task-card__owner-icon" aria-hidden="true">👤</span>
-          <span class="task-card__owner-name">{{ oc.label }}</span>
-        </span>
+        <app-identity-chip class="task-card__owner-chip" data-testid="task-card-owner"
+                           [attr.data-owner-id]="oc.id" [id]="oc.id" [name]="oc.name" [kind]="oc.kind" tooltipPrefix="Owner" />
       }
       @if (isPickupNext()) {
         <span class="task-card__pickup-next" data-testid="task-card-pickup-next"
@@ -237,7 +229,7 @@
         [jobId]="job().id" [project]="job().projectName"
         [watchPath]="job().watchPath"
         testId="task-card-model-migration" />
-      <app-run-disposition-badges [execution]="displayedExecutionLocation()" [state]="job().state" [olderBriefPending]="job().olderBriefDelivery?.status === 'pending'" />
+      <app-run-disposition-badges [execution]="displayedExecutionLocation()" [hostNamedElsewhere]="statusNamesHost()" [state]="job().state" [olderBriefPending]="job().olderBriefDelivery?.status === 'pending'" />
       @if (integrationStatus(); as integ) {
         <app-integration-status-badge
           [integration]="integ"

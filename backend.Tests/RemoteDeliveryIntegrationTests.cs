@@ -215,6 +215,43 @@ public sealed class RemoteDeliveryIntegrationCoordinatorTests
     }
 
     [Fact]
+    public async Task Recovery_round_waiting_for_claim_does_not_hold_the_serial_integration_lane()
+    {
+        var roundQueued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var headEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseHead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var roundClaimed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new List<string>();
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            async request =>
+            {
+                entered.Add(request.JobId);
+                if (request.JobId == "AGT-3988")
+                {
+                    headEntered.SetResult();
+                    await releaseHead.Task;
+                    return MergeIntoIntegrationResult.RequiresAgentRound([], "delivery-attribution-ambiguous");
+                }
+                return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged);
+            }, NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            startAgentRound: (_, _) =>
+            {
+                roundQueued.SetResult();
+                // Only enqueueing the steer belongs here. Its eventual claim is independent.
+                return Task.FromResult(new IntegrationAgentRoundStartResult(true, "Recovery queued in Ready; awaiting a free runner slot."));
+            });
+        var head = coordinator.EnqueueAsync(Request("AGT-3988", 1));
+        await headEntered.Task;
+        var next = coordinator.EnqueueAsync(Request("AGT-3989", 2));
+        releaseHead.SetResult();
+        Assert.Equal(MergeIntoIntegrationOutcome.AgentRoundRequired, (await head).Outcome);
+        await roundQueued.Task;
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, (await next).Outcome);
+        Assert.False(roundClaimed.Task.IsCompleted);
+        Assert.Equal(["AGT-3988", "AGT-3989"], entered);
+    }
+
+    [Fact]
     public async Task EnqueueAsync_AttributionAmbiguity_StartsAgentRound()
     {
         RemoteDeliveryIntegrationRequest? startedFor = null;

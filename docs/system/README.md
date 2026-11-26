@@ -24,3 +24,4 @@ Maschinen-Verträge in Datei-Form (JSON-Schemas, Config, In-App-Hilfe) liegen un
 | [reports/](reports/README.md) | Report contracts and screenshot-backed visual documentation. |
 | [cli/](cli/README.md) | Supported CLI contract, per-CLI skills, audits, and investigations. |
 | [common-problems/](common-problems/) | Recurring system-level problems with root-cause analysis and occurrence logs. |
+| [ui-standard/](ui-standard/README.md) | Pilot pages of the UI standard: patterns with screenshot and rule, and the shared components behind them. |

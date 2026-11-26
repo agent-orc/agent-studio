@@ -6,17 +6,19 @@ follow every change with their eyes.
 
 ## Semantic zoom
 
-Zoom changes what is shown, not only how large it is. Define the levels before
-you build, for example:
+Zoom changes what is shown, not only how large it is. Each level adds detail;
+none strips names or figures. Define the levels before you build, for example:
 
-| Level | Shows | Hides |
-|---|---|---|
-| Overview | Clusters or groups as single shapes with a count, main flows as bundled edges | Node labels, properties |
-| Working | Nodes with short labels and status dots, individual edges | Properties, secondary edges |
-| Detail | Full labels, key properties, ports, edge labels | Nothing important |
+| Level | Shows |
+|---|---|
+| Overview | Every node named, its kind, the headline figure with unit, status, warnings, main flows with rates |
+| Working | Plus labelled meters with units, slots or items, ports, edge labels |
+| Detail | Plus individual items (task ids, elapsed time, progress), short history, facts |
 
-- Switch levels at fixed zoom thresholds, with a short cross-fade
-  (150 to 200 ms), never a pop.
+- Fixed thresholds or per-node layout for the room a node has are both fine;
+  cross-fade (150 to 200 ms), never a pop.
+- Hide a figure only when it truly does not fit, and then show it in the
+  outline or on hover.
 - Text never renders below about 11 CSS px. Below that, replace it with a
   shape or hide it.
 - Keep the level of detail that the user selected or searched for: a search
@@ -42,8 +44,9 @@ you build, for example:
   the selection.
 - Selection shows a clear outline, the inspector shows details, and `Esc`
   clears it.
-- Optional minimap for large graphs, placed where it never covers content
-  at phone width.
+- An outline of the whole structure, visible by default, that selects and
+  frames a node; a breadcrumb that follows the camera; a minimap for anything
+  larger than one screen, placed where it never covers content at phone width.
 - At phone width: one-finger pan, pinch zoom, tap to select, and the
   inspector as a bottom sheet.
 

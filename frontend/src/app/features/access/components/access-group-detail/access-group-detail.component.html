@@ -1,0 +1,34 @@
+@if (group(); as item) {
+  <div class="access-stack" data-testid="access-group-detail">
+    <app-page-section level="sub" anchor="access-group-members" title="Members" [count]="members().length" purpose="Every member holds the roles of this group.">
+      <ul class="access-list" aria-label="Members">
+        @for (member of members(); track member.id) {
+          <li class="access-list__item">
+            <span><strong>{{ member.displayName }}</strong> <span class="access-hint">{{ member.username }}</span></span>
+            <button type="button" class="btn btn--ghost" [disabled]="access.busy()" [attr.aria-label]="'Remove ' + member.displayName" (click)="removeMember(member.id)">Remove</button>
+          </li>
+        } @empty {
+          <li class="access-hint">No members yet: the roles of this group reach nobody.</li>
+        }
+      </ul>
+      @if (candidates().length) {
+        <label class="access-field">Add member
+          <select [attr.data-testid]="'access-group-add-' + item.id" [disabled]="access.busy()" (change)="addMember($any($event.target).value)">
+            <option value="">Choose a person</option>
+            @for (user of candidates(); track user.id) { <option [value]="user.id">{{ user.displayName }} ({{ user.username }})</option> }
+          </select>
+        </label>
+      }
+    </app-page-section>
+
+    <app-page-section level="sub" anchor="access-group-roles" title="Roles" purpose="Bind a role once to the group instead of to each person.">
+      <app-access-binding-list principalKind="group" [principalId]="item.id" emptyText="No role: membership in this group grants nothing." />
+    </app-page-section>
+
+    <div class="access-danger">
+      <app-inline-confirm label="Delete group" [testId]="'access-group-delete-' + item.id"
+        [message]="'Members of ' + item.name + ' lose the roles they hold through it.'" [disabled]="access.busy()"
+        [armed]="selection.armed() === 'delete'" (armedChange)="selection.setArmed('delete', $event)" (confirmed)="remove()" />
+    </div>
+  </div>
+}

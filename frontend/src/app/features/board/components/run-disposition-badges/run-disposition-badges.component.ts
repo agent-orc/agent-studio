@@ -13,6 +13,7 @@ import { StatusIndicatorComponent } from '../../../../components/status-indicato
 })
 export class RunDispositionBadgesComponent {
   readonly execution = input<TaskExecutionLocation | null>(null);
+  readonly hostNamedElsewhere = input(false);
   readonly state = input.required<string>();
   readonly olderBriefPending = input(false);
 }

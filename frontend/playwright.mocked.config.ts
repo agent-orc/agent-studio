@@ -15,6 +15,7 @@ export default defineConfig({
     name: 'mocked-api',
     testMatch: [
       '**/board/card-state-pill-matches-lane.spec.ts',
+      '**/board/identity-chip-card.spec.ts',
       '**/board/remote-pickup-mode.spec.ts',
       '**/board/large-board-window.spec.ts',
       '**/board/failed-pickup-lane.spec.ts',
@@ -26,6 +27,7 @@ export default defineConfig({
       '**/task-detail/escalation-summary.spec.ts',
       '**/system/semantic-contrast.spec.ts',
       '**/project/project-deploy-area.spec.ts',
+      '**/project/main-scroll-keys.spec.ts',
       '**/project/operations-security.spec.ts',
       '**/project/testing-strategy.spec.ts',
       '**/workspace/deployment-dashboard.spec.ts',

@@ -11,6 +11,17 @@ public sealed record PostMergeRunRecord(
     double? StartLoadPerCore = null,
     int? StartOccupiedSlots = null)
 {
+    /// <summary>
+    /// RT-3 (AGT-3988): one verdict per test that failed in this run, with every
+    /// attempt (initial, same-SHA repeat, last-green control, bisect points).
+    /// Null on receipts of older runners.
+    /// </summary>
+    public IReadOnlyList<PostMergeTestVerdict>? TestVerdicts { get; init; }
+    /// <summary>RT-3: every focused run (repeat, control, bisect) and test-project build with its duration.</summary>
+    public IReadOnlyList<PostMergeFocusedRun>? FocusedRuns { get; init; }
+    /// <summary>RT-3 (RT-D10 B, fingerprint part): the test envelope the run's commands saw.</summary>
+    public PostMergeEnvelopeFingerprint? Envelope { get; init; }
+    public ReviewSuiteSelectionDto? SuiteSelection { get; init; }
     public IReadOnlyList<string> FlakyTests => Verdicts.SelectMany(verdict => verdict.FlakyTests ?? [])
         .Distinct(StringComparer.Ordinal).ToArray();
     public int FlakyCount => FlakyTests.Count;
@@ -19,7 +30,100 @@ public sealed record PostMergeRunRecord(
 public sealed record PostMergeCommandVerdict(string Command, int ExitCode, bool TimedOut,
     string? OutputTail = null, IReadOnlyList<string>? FailedTests = null,
     IReadOnlyList<string>? FlakyTests = null,
-    bool Retried = false);
+    bool Retried = false)
+{
+    /// <summary>Wall-clock duration of the command's first run; null on older receipts.</summary>
+    public long? DurationMs { get; init; }
+}
+
+/// <summary>Values of <see cref="PostMergeTestAttempt.Phase"/> and <see cref="PostMergeFocusedRun.Phase"/>.</summary>
+public static class PostMergeRunPhases
+{
+    public const string Initial = "initial";
+    public const string Repeat = "repeat";
+    public const string Control = "control";
+    public const string Bisect = "bisect";
+    public const string ControlBuild = "control-build";
+    public const string BisectBuild = "bisect-build";
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
+        { Initial, Repeat, Control, Bisect, ControlBuild, BisectBuild };
+}
+
+/// <summary>Values of a test attempt result and of an attribution control or point run.</summary>
+public static class PostMergeTestResults
+{
+    public const string Pass = "pass";
+    public const string Fail = "fail";
+    public const string Unknown = "unknown";
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal) { Pass, Fail, Unknown };
+}
+
+/// <summary>
+/// The RT-2 classification names (<c>RedTestClassification</c>) as they appear on
+/// a receipt. The runner's value is a hint: the server applies the triage policy.
+/// </summary>
+public static class PostMergeClassificationHints
+{
+    public const string Flaky = "flaky";
+    public const string Environment = "environment";
+    public const string Regression = "regression";
+    public const string WrongAttribution = "wrong-attribution";
+    public const string Ambiguous = "ambiguous";
+    public const string Inconclusive = "inconclusive";
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
+        { Flaky, Environment, Regression, WrongAttribution, Ambiguous, Inconclusive };
+}
+
+/// <summary>
+/// RT-3: one failed test of a post-merge run. <see cref="CoveringFolders"/> are
+/// the repository folders whose type names the test source file mentions (a
+/// static name match, not runtime coverage); <see cref="CoveringFallback"/> is
+/// true when the hold must fall back to the test project's area.
+/// </summary>
+public sealed record PostMergeTestVerdict(string Test, string SuiteId, string SuiteCategory,
+    IReadOnlyList<PostMergeTestAttempt> Attempts, string ClassificationHint)
+{
+    public bool Quarantined { get; init; }
+    public string? TestFile { get; init; }
+    public IReadOnlyList<string>? CoveringFolders { get; init; }
+    public bool? CoveringFallback { get; init; }
+}
+
+/// <summary>
+/// One attempt of a test. <see cref="DurationMs"/> is the duration of the run
+/// that produced it: a focused run for repeat, control and bisect attempts; null
+/// for the initial attempt inside a whole suite (the suite's duration is on its verdict).
+/// </summary>
+public sealed record PostMergeTestAttempt(string Phase, string Result, long? DurationMs, string? Sha);
+
+/// <summary>RT-3: one focused test run or test-project build, recorded so the protocol's cost is measured.</summary>
+public sealed record PostMergeFocusedRun(string Phase, string Sha, int Tests, int ExitCode, bool TimedOut,
+    long DurationMs);
+
+/// <summary>
+/// RT-3 (RT-D10 B, fingerprint part only). Digests are SHA-256 hex prefixes and
+/// carry no values. <see cref="CgroupKind"/> is <c>worker</c>, <c>daemon</c>,
+/// <c>process</c> or <c>none</c>. <see cref="PeakLoadPerCore"/> is the highest of
+/// the 15-second load samples taken while the commands ran.
+/// </summary>
+public sealed record PostMergeEnvelopeFingerprint(string AllowlistDigest, string DeclaredEnvironmentDigest,
+    string CgroupKind, string? CpuMax, int ProcessorCount, string? SdkVersion, string ShardPlan,
+    double? StartLoadPerCore, double? PeakLoadPerCore);
+
+/// <summary>
+/// RT-3 (RT-D9 B): the attribution protocol's evidence. Results are
+/// <see cref="PostMergeTestResults"/> values of the focused runs of the failing
+/// tests; <see cref="Classification"/> is the bisect verdict of the RT-2 policy.
+/// </summary>
+public sealed record PostMergeAttributionEvidence(string? LastGreenSha, IReadOnlyList<string> ControlResults,
+    IReadOnlyList<PostMergeBisectPointEvidence> Points, string Classification, string? StopReason = null)
+{
+    /// <summary>The partial build used at the control and every point, for example <c>dotnet build x.csproj --no-restore</c>.</summary>
+    public string? BuildCommand { get; init; }
+}
+
+/// <summary>One tested bisect point, in candidate order, with the verdict of its two runs.</summary>
+public sealed record PostMergeBisectPointEvidence(string Sha, IReadOnlyList<string> Results, string Verdict);
 
 /// <summary>Runner-collected facts from the exact fetched tip; no host chooses the repair action.</summary>
 public sealed record PostMergeFailureEvidence(
@@ -33,7 +137,11 @@ public sealed record PostMergeFailureEvidence(
     bool LaterMergeDependsOnSuspect,
     bool AllFailuresQuarantined = false,
     string? AttributedTaskId = null,
-    bool NoRelevantMerges = false);
+    bool NoRelevantMerges = false)
+{
+    /// <summary>RT-3: control and bisect evidence; null when no protocol ran or on older receipts.</summary>
+    public PostMergeAttributionEvidence? Attribution { get; init; }
+}
 
 public sealed record PostMergeProjectState(
     string Project, string DevelopState, string? LastGreenSha, string? LastWindowTipSha,

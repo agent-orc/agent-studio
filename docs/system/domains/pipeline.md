@@ -142,6 +142,80 @@ This holds when fingerprint history is unavailable. The card finding names the
 failed tests. A red baseline, an incomplete run, or a missing parsed report does
 not establish that card finding.
 
+### Shared affected-suite selection (AGT-4031)
+
+Activation is staged across deployments. This card ships the parser, schema
+and gate behavior while keeping this repository's `.agent-studio/project.yml`
+unchanged, so the deployed gate host can validate its own upgrade. A missing
+`testSelection` keeps the legacy gate planners; the shared selector and
+post-merge window fail closed to the full inventory. Unknown fields remain
+errors. After deploying the new readers to gate hosts, an operator follow-up
+adds the map and documentation command. The tested activation candidate is
+[`testdata/project-test-selection.project.yml`](../../../testdata/project-test-selection.project.yml);
+its map is guarded against the tracked source inventory even before activation.
+The rules below describe behavior once a project opts in.
+
+The repository-owned `testSelection` rows in `.agent-studio/project.yml` are
+shared by review build/tests, batch gates, integration gates and affected
+post-merge windows. `ProjectTestSelectionPolicy` in TaskServer.Contracts owns
+the rule. Each row lists exact files or directory prefixes ending in `/`,
+routine suite IDs, zero-based indices into `commands.build` and `commands.lint`,
+and optional ecosystem-specific `prepare` commands. Every matching row adds
+its requirements. A `suites: ['*']` row selects the full declared inventory.
+
+- `frontend/` selects the frontend build, lint and unit suite.
+- `docs/` and the listed root documentation files select `docs-check`, the
+  existing public-documentation check. They start no .NET build or test and
+  do not run the broad repository preparation script.
+- `backend/` selects backend build checks and backend tests. Runner and Task
+  Server rows include the other declared test projects that depend on them.
+- Shared contracts, repository build configuration, project definition and
+  project graph changes select everything. MSBuild `.props`, `.targets`,
+  `.proj` and `.csproj` inputs and `.sln`, `.slnx` and `.slnf` solution inputs
+  are global even inside a mapped source folder: an imported build file or
+  solution filter can affect projects outside that folder. Every gate uses
+  this check before matching the area's rows. Unmapped paths, missing diffs
+  and unassigned command inventory fall back to everything. A malformed map
+  blocks the gate as an invalid project definition. Sources without their own
+  declared routine suite remain explicitly shared.
+
+A batch selects the union of each member's paths against the pinned base and
+of the assembled candidate's paths. This retains requirements even if a later
+member reverts an earlier change. Selection runs on the exact candidate's
+project definition. Generic projects without a map keep their conservative
+full-inventory behavior. The generated per-card project map remains available
+for those projects. `ProjectTestSelectionGuardTests` checks every tracked
+top-level source folder and every declared routine/build/lint assignment.
+
+Compile-only integration under fast, balanced or exact-review reuse still
+runs the selected builds; its receipt explicitly omits tests and lint. Docs-only
+integration runs its documentation check even at that level. Strict pre-merge
+batch gates use affected suites with this map. Full verification remains in
+the nightly routine run, before Production through `delivery.fullSuite` and
+`PreMainTestGate`, and in strategy-requested full routine post-merge windows
+(balanced). Those points ignore path narrowing. The base suites remain in
+full routine windows; affected windows no longer add unrelated base suites.
+Preparation follows the selected ecosystems instead of installing both stacks.
+Batch admission prechecks apply the same map before selecting their bounded
+build, guard and frontend lint checks; docs-only admission runs `docs-check`.
+
+Integration receipts, batch evidence, released card integration evidence and
+Remote Review reports state suites started, selected but not started, omitted,
+and the path-selection reasons. The card's existing build-test reason and
+Evidence report expose the same coverage. A selected suite is never described
+as having run just because the gate was green. Historical receipts without
+coverage remain unknown. Restart recovery retains the recorded coverage. A green
+affected batch cannot become a reusable full-suite base verdict for a later
+batch that needs other suites.
+
+`dailySummary.selectionEfficiency` exposes `before` (legacy selector) and
+`after` (`project-test-selection`) cohorts with runs, distinct cards, total gate
+minutes and minutes per card. Batch retries add minutes without adding a card
+again; cache hits add no host execution. Compare dated daily summaries across
+deployment. An empty cohort has null minutes per card. These are observed
+cohorts, not a controlled estimate; no historical runtime data is reconstructed
+or timing improvement claimed without measured ledger rows.
+
 ### Gate run ledger (AGT-3500)
 
 The instance-local gate run ledger lives under `gate-run-ledger` beside the
@@ -202,9 +276,31 @@ the full suite, so every such project changes behaviour with this release.
 
 | Strategy | Per card, before integration | Integration | After integration |
 |---|---|---|---|
-| `fast` (default) | Build and affected tests (`testing.perCard` = `affected`) | Right after the review passed, through the post-merge integration gate below (`testing.mode` = `post-merge`) | Merge window: the base suite and the affected routine suites. Nightly: the full routine suite. Production release: the release full suite (`delivery.fullSuite`) |
-| `balanced` | As fast | As fast | Merge window: the base suite and every routine suite. Nightly and release as fast |
-| `strict` | Build in review; full suite in the batch gate (`affected` off, `pre-merge`) | After a green batch | None (the behaviour before AGT-3965) |
+| `fast` (default) | Build and affected tests (`testing.perCard` = `affected`) | Right after the review passed, through the post-merge integration gate below (`testing.mode` = `post-merge`): a conflict check and a compile of the merged tree, no test command; waiting cards compile together ([before and after the merge](#before-and-after-the-merge-agt-4020)) | Merge window: the shared affected selection (including base suites only on a full fallback). Nightly: the full routine suite. Production release: the release full suite (`delivery.fullSuite`) |
+| `balanced` | As fast | As fast, plus a work-package run when develop moved over the card's paths or the merge is uncertain | Merge window: the base suite and every routine suite. Nightly and release as fast |
+| `strict` | Affected build and tests in review and batch gate when the repository declares `testSelection` (`pre-merge`); conservative full suite otherwise | After a green batch | None (the behaviour before AGT-3965) |
+
+AGT-4038: a testing-strategy write is serialized with batch formation. Its
+`transition` response names the previous and new strategies and one `cards`
+receipt per affected review generation (`taskKey`, `work`, `action`). The same
+receipt is appended once to each card as `testing-strategy-changed`. Pending
+batch members in a post-merge strategy go directly to integration. Running
+batches retire through their existing route and publication fences, return
+members to pending, and hand them to the new strategy on the next pilot tick;
+the switch is not a red gate. Running per-task fallbacks are cancelled and
+resume through that same handoff. No new formed batch starts after batching
+has been disabled by the strategy.
+
+The integration check has one reserved cross-process machine slot, separate
+from regular suite and shard slots. It retries a machine-slot queue timeout
+at most three times in total, with 15 seconds between attempts on the same
+exact merge subject. The card stays in its lane and publication stays fenced
+while admission waits. Exhaustion rolls back the local merge and reports
+`gate-capacity`; a running test timeout does not use this admission retry.
+Fast also pins contained-delivery integration checks to compile-only. An
+unmapped fast Remote Review selection runs build and lint, without promoting
+itself to the full suite. A mapped command that repeats an unchanged full test
+command is also deferred; narrowed class, guard and affected commands remain. Strict and balanced keep their existing T1 fallback.
 
 The Owner chooses the strategy on the project settings page or with
 `PUT /api/projects/{name}/testing` (`{"strategy":"balanced"}`). The route
@@ -232,15 +328,81 @@ from the `origin/<branch>` ref file and the age from one `git rev-list -n 1
 on this warning, and since RT-1 (AGT-3988) there is no automatic fallback to
 pre-merge at all.
 
+### Before and after the merge (AGT-4020)
+
+What runs in front of the merge into develop and what runs after it, per
+strategy. The model review aspects and the per-card Remote Review run before
+integration in every strategy.
+
+| Strategy | In front of the merge (integration gate) | After the merge |
+|---|---|---|
+| `fast` | Conflict check (the merge itself) and a compile of the merged tree: the build commands only, no lint, no test command. Waiting cards compile together in a post-merge train, below. | Merge-window run: the shared affected selection. Nightly routine suite, release full suite. |
+| `balanced` | Conflict check and compile. A work-package run of the affected tests is added when develop moved over a path the card changed, the merge was replayed or resolved, or the review evidence cannot prove a disjoint merge (`PostMergeIntegrationPolicy.Level`). | Merge-window run: base suite and every routine suite. Nightly and release as fast. |
+| `strict` | The pre-merge integration gate and batch gate use the shared affected selection when declared, with full-suite fallback. | None. |
+
+Balanced keeps the work-package run on purpose: it is the strategy for a
+project that wants develop to stay green between window runs, and the run
+covers exactly the case the review's own test verdict does not, a merge whose
+content the review never tested. Without develop movement over the card's
+paths it costs nothing extra.
+
+**Post-merge train (fast).** `RemoteDeliveryIntegrationCoordinator` drains a
+project's reviewed deliveries one at a time in delivery order. Before the head
+merges, it hands the head and every delivery waiting behind it on the same
+branch to `MergeIntoDevelopRunner.PlanPostMergeTrainAsync`. Under the merge
+lock the train merges each delivery in queue order onto the integration tip
+with its own merge commit (`git merge-tree` and `commit-tree`, objects only,
+pinned at `refs/agent-studio/post-merge-train/<branch>`) and compiles the
+combined tip once at the `compile-only` level. When that compile is red, the
+cards are added one at a time, each compile on the last green tip; the card
+that turns the compile red is left out and the search continues with the rest
+(`PostMergeTrainSearch`). No test command runs for any of it. A delivery that
+conflicts leaves the train and keeps the normal conflict path; a delivery the
+train cannot resolve ends the train there.
+
+Each member's decision is stored beside the card in `post-merge-train.json`
+(train id, position, members, base, planned merged tree, the compiled tip,
+reason). Every card still integrates through its own merge, merge commit,
+receipts and push. Its gate reuses the train compile (`gate-finished`
+level `post-merge-train`, verdict source `CacheHit`) only when its merge
+commit has exactly the planned tree and merges the planned delivery. Otherwise,
+for example after develop moved or a card in front was ejected, the card runs
+its own compile-only gate. A card that turned the train red also runs its own
+compile, so its evidence is its own build log. Only the combined tip is
+compiled; an intermediate merge commit of a green train is not compiled on its
+own, and the merge-window run is what tests develop.
+
+After a green integration gate in `fast` or `balanced` the card records
+`post-merge-window-coverage.json` and a `post-merge-window` lane event: the
+pre-merge level, the window suites, and the window it falls into, the first
+merge-window run after the last completed window tip
+(`PostMergeWindowCoverage.WindowFromSha`). `PostMergeWindowCoverage.CoveringRun`
+resolves the run once one exists: the earliest window run whose tip contains
+the card's merge commit.
+
+**Queue reason.** The coordinator publishes its queue per project to
+`DeliveryIntegrationQueueBoard`. A card in it reads, for example,
+`integration queue position 3 of 6; in front: AGT-3993 (compiling the combined
+tree of 6 cards since 15:41:00Z), AGT-4002`, and after a failed attempt adds
+`previous attempt failed: <the integration error>`.
+
+**Guard step reasons.** The gate prefixes a failed guard step with
+`guard violation, full suite not run` only when a guard test failed. A guard
+step that timed out, ran out of budget, crashed or exited before a test failed
+reads `guard step failed without a failing guard test (<cause>), full suite not
+run`, and `GuardViolation` stays false.
+
 ### Per-project integration test placement (AGT-3314)
 
 `testing.mode` is derived from `testing.strategy` (AGT-3965): `strict` is
 `pre-merge`, `fast` and `balanced` are `post-merge`. The pre-merge path retains
 the existing per-card integration gate and optional pre-merge batch gate. In
 `post-merge` the Remote Review runs the affected T1 plan, the batch route is
-disabled, and the integration gate compiles the exact merged tree. It repeats the affected
-selection when develop moved over a path changed by the reviewed delivery,
-or when review and merge evidence cannot prove a disjoint merge. Merge and
+disabled, and the integration gate compiles the exact merged tree. In `balanced` it
+repeats the affected selection when develop moved over a path changed by the
+reviewed delivery, or when review and merge evidence cannot prove a disjoint
+merge; in `fast` it never runs a test command
+([before and after the merge](#before-and-after-the-merge-agt-4020)). Merge and
 publication locks are keyed by project and integration branch; the aggregate
 merge-busy flag still drains stable deployment.
 The threshold batch planner selects a per-task gate when one eligible card
@@ -287,11 +449,10 @@ time and gate minutes per card for comparison after a project switches.
 runner unit. The window timer polls each minute; the pure close rule runs after
 six first-parent integration commits or 30 minutes from the oldest pending
 commit, whichever comes first. The worker fetches develop once and pins
-`FETCH_HEAD` before selecting the union of changed-path test projects. Every
-window runs the project's [base suite](#base-suite-agt-3966) first; a path
-outside every area selects the base suite alone. A project without a base suite
-keeps the earlier fallback: a path outside every area runs every routine
-suite. The nightly timer runs at 02:15 and 04:15 in
+`FETCH_HEAD` before selecting the union of changed paths. Affected windows use
+the shared `testSelection` map above. Unknown paths and projects without a map
+select every routine suite. A full fallback or strategy-requested full routine window also runs the base suite.
+The nightly timer runs at 02:15 and 04:15 in
 the existing coverage slot window. It runs the routine full suite on the same
 exact-tip rule, using AGT-3232 class partitions across free local host slots.
 T3 treats a suite without `shards` as `auto`; a declared shard count still
@@ -356,33 +517,16 @@ D1 T-B and retains D3 A as the before-delivery policy for its later card.
 
 `testSuites[].category: base` in `.agent-studio/project.yml` marks a small
 fixed set that answers one question: does the product still start, and do its
-main paths work. Every merge-window run executes it after `commands.build`.
-Strategy `fast` adds the routine suites of the touched areas. Strategy
-`balanced` adds every routine suite. The nightly run keeps the full routine
-suite without the base suite, and a Production release still needs the
-release full suite on the candidate (`delivery.fullSuite`, AGT-3313).
+main paths work. Full routine merge windows execute it after the selected
+builds. Strategy `fast` uses the shared affected selection above without
+unrelated base suites; strategy `balanced` runs every base and routine suite.
+The nightly run keeps every routine suite without the base suite, and
+Production still needs the release full suite on the candidate
+(`delivery.fullSuite`, AGT-3313).
 
-`PostMergeRunPlan.SelectAffected` maps paths to areas. `backend/` and
-`backend.Tests/` select `backend-routine`, `runner/` and `runner.Tests/` select
-`runner-routine`, `task-server/` and `task-server.Tests/` select
-`task-server-routine`, and `frontend/` selects `frontend-unit`. A shared .NET
-library (`contracts/`, `orchestration-decisions/`, `cli-hosting/`,
-`retention/`, `testsupport/`) selects the three .NET routine suites. Any other
-path, for example `docs/`, `scripts/` or `CHANGELOG.md`, selects no routine
-suite when a base suite exists.
-
-Three cases still select every routine suite, so a base suite never hides a
-code change from the window:
-
-- A repository-wide build input (`PostMergeRunPlan.IsGlobalInput`): any
-  `Directory.Build.*`, `Directory.Packages.props`, a root `global.json`,
-  `NuGet.config` or solution file, and anything under `.agent-studio/`. These
-  match the per-card global inputs (`GeneratedTestProjectMap.GlobalInput`).
-- A path in an area whose suite the project does not configure, for example
-  `task-server/` in a project without `task-server-routine`.
-- A project whose routine suites carry none of the ids above. The area map
-  describes Agent Studio's layout only, so such a project has no areas, and
-  every window runs its base suite plus every routine suite.
+`PostMergeRunPlan` delegates affected selection to
+`ProjectTestSelectionPolicy`; it carries no second area map. Shared inputs,
+unmapped paths and projects without a selection map select all routine suites.
 
 How to choose base tests:
 
@@ -452,6 +596,68 @@ repair card says no merge explains the failure and identifies an environmental
 or flaky suspect. Attribution errors remain unresolved rather than claiming a
 proof of independence.
 
+### Attribution protocol (RT-3)
+
+RT-3 (AGT-4004) implements RT-D9 B, RT-D6 B (covering folders) and RT-D10 B
+(fingerprint part only) in `PostMergeRunCommand`. When a suite stays red after
+its same-SHA repeat, the runner attributes it as follows:
+
+- Control. It checks out the last green SHA, builds only the failing test
+  project and runs the focused tests twice. A .NET suite builds
+  `dotnet build <test project> --no-restore` (a wrapper before `dotnet` is
+  kept); a Vitest suite uses the build command that shares its launcher, which
+  is the frontend build for Agent Studio, and is focused with `--include` on
+  the failing spec files. Prepare, the solution build, the release build check
+  and the other build commands never run at a control or a bisect point. A
+  failing control attributes no merge (`environment`). Without a last green
+  SHA, or without a partial build or focused command, no point is tested.
+- Bisect. The candidates keep the reference-graph filter and the docs
+  exclusion. Each point gets the same partial build and two focused runs, and
+  `BisectVerdictPolicy` gives the point verdict. A mixed point stops the search
+  (`flaky`), a build failure stops it without attribution, and a regression
+  needs a point that fails twice after a tested point (or the control) that
+  passed twice. The checkout returns to the tip afterwards.
+- Revert independence. A later first-parent merge is coupled to the attributed
+  merge only when it changes one of its files (`HoldScopePolicy.LaterMergeIsCoupled`).
+  An independent suspect gets the clean-revert check even when it is not the
+  newest merge.
+
+The receipt records the protocol and its facts. All new fields are optional,
+so receipts of older runners stay valid, and the run route bounds them:
+
+- `failure.attribution`: last green SHA, control results, tested points in
+  candidate order with their two results and verdict, the bisect
+  classification, the stop reason and the partial build command.
+- `testVerdicts[]`: one entry per failed test with suite id and category,
+  every attempt (`initial`, `repeat`, `control`, `bisect`) with result, SHA and
+  the duration of the run that produced it, `quarantined`, and the RT-2
+  `classificationHint` from `RedTestTriagePolicy.ClassificationHint`. The hint
+  treats envelope facts the runner does not measure (canary, reference
+  fingerprint) as not contradicting; the server's triage decides.
+- `testFile`, `coveringFolders` and `coveringFallback` per test that did not
+  recover. The test source file is found by class name in the test project.
+  Identifiers of at least eight characters that name a tracked `.cs` type file
+  outside test projects reach that file's folder; types defined in more than
+  two folders and the hub types of the Dossier's evidence script are ignored.
+  No folder, or more than 12, sets the fallback (`HoldScopePolicy.UsesSuiteAreaFallback`).
+  Vitest tests always fall back to their area. This is a static name match, not
+  runtime coverage.
+- `focusedRuns[]`: every repeat, control and bisect run and every partial build
+  with phase, SHA, test count, exit code and duration, and `durationMs` on each
+  command verdict. These replace the Dossier's unmeasured estimate of a focused
+  run's cost. A short measurement note follows here one week after the slice
+  is deployed.
+- `envelope` on the running and terminal receipt of every window and nightly
+  run: digest of the allowlisted variable names passed from the host, digest of
+  the declared environment, cgroup kind (`worker`, `daemon`, `process`,
+  `none`) and `cpu.max` when readable, processor count, SDK version, shard
+  plan, load per core at start and the peak of a 15-second load sample during
+  the run. Skip receipts run nothing and carry no envelope. Comparing
+  fingerprints with a reference envelope is RT-6.
+
+The receipt still feeds the compatibility repair flow in the next section. Quarantine starts,
+covering-folder holds and the triage ladder belong to RT-4 and RT-5.
+
 ### Red develop repair (AGT-3312)
 
 RT-2 (AGT-4003) adds the pure `RedTestTriagePolicy`, `BisectVerdictPolicy` and
@@ -487,8 +693,9 @@ first-parent suspects since the last green SHA, changed paths, and the result
 of a clean revert check. The runner excludes active test quarantines and
 re-runs a focused failure at the same SHA before attribution. It intersects
 suspect paths with the failing test project's tracked reference graph and
-tests merge points, bisecting when several candidates remain. Unknown graph
-edges retain the suspect. `RedDevelopRepairPolicy` in the pure decision
+tests merge points with the [attribution protocol](#attribution-protocol-rt-3),
+bisecting when several candidates remain. Unknown graph edges retain the
+suspect. `RedDevelopRepairPolicy` in the pure decision
 library decides with the vocabulary `Revert`, `FixForward`, `Hold` and
 `AskOwner` (RT-1, AGT-3988): revert for one clean independent suspect, fix
 forward otherwise, hold while the repair is in Auto Review, Human Review,
@@ -2418,7 +2625,8 @@ comparison before Quality Studio's verdict contract can decide a review.
   rules, and Test Hub history for legacy direct callers.
 - `backend/Features/Pipeline/DeterministicTestScope.cs`: the build/test gate's
   folder-to-test-project selector. Configure `testExecution.folderToTestProjects`
-  in project settings beside `pipelineSteps`; each row names a repository
+  in project settings beside `pipelineSteps` for projects without a repository
+  `testSelection` map; each row names a repository
   `folder`, a shared `module` id for related source and test folders, and one
   or more `testProjects` (`.csproj` paths or package folders). When `module` is
   omitted, the folder itself is the module id.
@@ -2441,9 +2649,10 @@ comparison before Quality Studio's verdict contract can decide a review.
   `GeneratedTestProjectMap.cs` and `FastCheckPlanner.cs`: tier T1 of the
   [pipeline Dossier](../../operations/pipeline-delivery-target/index.html) (decision D1,
   option T-B; AGT-3310). The project setting `testing.perCard` is derived from
-  `testing.strategy` (AGT-3965): `strict` is `full`, which keeps the Remote
-  Review plan byte-identical, and `fast` (the default) and `balanced` are
-  `affected`. With `affected`,
+  `testing.strategy` (AGT-3965): without a repository `testSelection` map,
+  `strict` is `full`, while `fast` (the default) and `balanced` are
+  `affected`. A repository map takes precedence for suite selection in every
+  strategy. Without that map, with `affected`,
   the plan builds `folderToTestProjects` at plan time from the `.csproj`
   `ProjectReference` graph (every project directory maps to the test projects
   whose transitive closure contains it, process-level references included) and

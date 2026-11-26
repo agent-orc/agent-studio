@@ -664,8 +664,9 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
         BuildFactory().WithWebHostBuilder(builder => builder.ConfigureServices(services =>
         {
             // The host's own token refresh would write a process-wide Git credential store.
-            services.Remove(services.Single(descriptor =>
-                descriptor.ImplementationType == typeof(AgentStudio.GitHubApp.GitHubAppHostCredentialService)));
+            var credentialWorker = services.FirstOrDefault(descriptor =>
+                descriptor.ImplementationType == typeof(AgentStudio.GitHubApp.GitHubAppHostCredentialService));
+            if (credentialWorker is not null) services.Remove(credentialWorker);
             var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 9, 0, 0, TimeSpan.Zero));
             services.AddSingleton(new Contract.GitHubApp.GitHubAppBroker(
                 new Contract.GitHubApp.GitHubAppClient(new HttpClient(github), clock),

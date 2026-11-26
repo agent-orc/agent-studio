@@ -1,107 +1,95 @@
+import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { provideRouter } from '@angular/router';
+import type { ServiceAccount } from '../../models/access.model';
 import { ACCESS_CLOCK } from '../../services/access-clock';
+import { AccessSelectionService } from '../../services/access-selection.service';
 import { AccessService } from '../../services/access.service';
-import { SERVICE_ACCOUNT_TOKEN, accessOverview, fakeAccessService } from '../../testing/access-fixtures';
+import { accessOverview, fakeAccessService } from '../../testing/access-fixtures';
 import { AccessServiceAccountsComponent } from './access-service-accounts.component';
 
-describe('AccessServiceAccountsComponent', () => {
-  let access: ReturnType<typeof fakeAccessService>;
+const created = '2026-10-20T09:00:00Z';
+const token = (id: string, expiresAt: string, revokedAt: string | null = null) =>
+  ({ id, name: `${id} token`, createdAt: created, expiresAt, lastUsedAt: null, revokedAt });
+export const ACCOUNTS: ServiceAccount[] = [
+  { id: 'sa_ci', name: 'ci-bot', description: 'Deploys stage', createdAt: created, tokens: [
+    token('tok_1', '2027-01-18T09:00:00Z'), token('tok_2', '2026-12-01T09:00:00Z'), token('tok_gone', '2026-11-01T09:00:00Z', created),
+  ] },
+  { id: 'sa_old', name: 'old-bot', description: null, createdAt: created, disabledAt: created, tokens: [] },
+  { id: 'sa_tok_build', name: 'build bot', description: 'Migrated API token.', createdAt: created, origin: 'api-token', createdBy: 'usr_owner',
+    tokens: [token('tok_build', '2026-11-19T09:00:00Z')] },
+  { id: 'sa_operator', name: 'release-operator', description: null, createdAt: created, origin: 'operator-agent', tokens: [] },
+];
+export const ACCOUNT_BINDINGS = [
+  { id: 'rb_sa', principalKind: 'service-account' as const, principalId: 'sa_ci', role: 'developer',
+    scope: { kind: 'environment' as const, project: 'PROJ-001', environment: 'stage' }, source: 'manual', createdAt: created },
+  { id: 'rb_build', principalKind: 'service-account' as const, principalId: 'sa_tok_build', role: 'operator-agent',
+    scope: { kind: 'workspace' as const }, source: 'migration', createdAt: created },
+];
 
-  beforeEach(async () => {
-    access = fakeAccessService(accessOverview({
-      serviceAccounts: [
-        { id: 'sa_ci', name: 'ci-bot', description: 'Pipelines', createdAt: '2026-10-20T09:00:00Z', tokens: [
-          { id: 'tok_old', name: 'old', createdAt: '2026-10-20T09:00:00Z', expiresAt: '2027-01-18T09:00:00Z', lastUsedAt: null, revokedAt: null },
-          { id: 'tok_gone', name: 'gone', createdAt: '2026-10-20T09:00:00Z', expiresAt: '2027-01-18T09:00:00Z', revokedAt: '2026-10-20T10:00:00Z' },
-        ] },
-        { id: 'sa_off', name: 'retired-bot', createdAt: '2026-10-20T09:00:00Z', disabledAt: '2026-10-20T11:00:00Z', tokens: [] },
-        { id: 'sa_opa', name: 'studio-operator', createdAt: '2026-10-20T09:00:00Z', origin: 'operator-agent', createdBy: 'usr_owner', tokens: [] },
-        { id: 'sa_api', name: 'build bot', createdAt: '2026-10-20T09:00:00Z', origin: 'api-token', createdBy: 'usr_owner', tokens: [
-          { id: 'tok_api', name: 'build bot', createdAt: '2026-10-20T09:00:00Z', expiresAt: '2026-11-19T09:00:00Z', lastUsedAt: null, revokedAt: null },
-        ] },
-      ],
-      bindings: [...accessOverview().bindings,
-        { id: 'rb_sa', principalKind: 'service-account', principalId: 'sa_ci', role: 'viewer', scope: { kind: 'workspace' }, source: 'manual', createdAt: '2026-10-20T09:00:00Z' },
-        { id: 'rb_api', principalKind: 'service-account', principalId: 'sa_api', role: 'operator-agent', scope: { kind: 'workspace' }, source: 'migration', createdAt: '2026-10-20T09:00:00Z' }],
-    }));
+describe('AccessServiceAccountsComponent', () => {
+  async function render(kind: 'service-account' | 'api-token', overview = accessOverview({ serviceAccounts: ACCOUNTS, bindings: ACCOUNT_BINDINGS })) {
+    const access = fakeAccessService(overview);
     await TestBed.configureTestingModule({
       imports: [AccessServiceAccountsComponent],
-      providers: [
-        provideZonelessChangeDetection(),
-        { provide: AccessService, useValue: access },
-        { provide: ACCESS_CLOCK, useValue: () => Date.parse('2026-10-20T09:00:00Z') },
-      ],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([]),
+        AccessSelectionService, { provide: AccessService, useValue: access },
+        { provide: ACCESS_CLOCK, useValue: () => Date.parse('2026-10-20T09:00:00Z') }],
     }).compileComponents();
-  });
-
-  it('lists bindings and live tokens and marks disabled accounts', () => {
     const fixture = TestBed.createComponent(AccessServiceAccountsComponent);
+    fixture.componentRef.setInput('kind', kind);
     fixture.detectChanges();
-    const element = fixture.nativeElement as HTMLElement;
-    const ci = element.querySelector('[data-testid="access-service-account-sa_ci"]')?.textContent ?? '';
-    expect(ci).toContain('Viewer · Workspace');
-    expect(ci).toContain('old');
-    expect(ci).toContain('Never');
-    expect(ci).not.toContain('gone');
-    expect(element.querySelector('[data-testid="access-service-account-sa_off"]')?.textContent).toContain('Disabled');
-  });
-
-  it('names the role an API token is bound to', () => {
-    const fixture = TestBed.createComponent(AccessServiceAccountsComponent);
-    fixture.detectChanges();
-    const element = fixture.nativeElement as HTMLElement;
-    const api = element.querySelector('[data-testid="access-service-account-sa_api"]')?.textContent ?? '';
-    expect(element.querySelector('[data-testid="access-api-token-role-sa_api"]')?.textContent).toContain('Role: Operator agent');
-    expect(api).toContain('Operator agent · Workspace');
-    expect(element.querySelector('[data-testid="access-api-token-role-sa_ci"]')).toBeNull();
-  });
-
-  it('issues a token with the chosen lifetime and shows it once', async () => {
-    const fixture = TestBed.createComponent(AccessServiceAccountsComponent);
-    fixture.detectChanges();
-    const element = fixture.nativeElement as HTMLElement;
-    (element.querySelector('[data-testid="access-token-create-sa_ci"]') as HTMLButtonElement).click();
     await fixture.whenStable();
-    fixture.detectChanges();
-    expect(access.createToken).toHaveBeenCalledWith('sa_ci', 'ci-bot token', '2027-01-18T09:00:00.000Z');
-    expect(element.querySelector('[data-testid="access-token-issued"]')?.textContent).toContain(SERVICE_ACCOUNT_TOKEN);
+    return { access, fixture, element: fixture.nativeElement as HTMLElement, selection: TestBed.inject(AccessSelectionService) };
+  }
+  const meta = (element: HTMLElement, id: string) =>
+    element.querySelector(`[data-testid="access-service-account-${id}"] td[data-role="meta"]`)!.textContent!.trim();
+
+  it('lists service accounts with role, state and a token summary, without API tokens or operator agents', async () => {
+    const { element } = await render('service-account');
+
+    expect(element.querySelectorAll('tbody tr')).toHaveLength(2);
+    const bot = element.querySelector('[data-testid="access-service-account-sa_ci"]')!;
+    expect(bot.textContent).toContain('ci-bot');
+    expect(bot.textContent).toContain('Deploys stage');
+    expect(bot.querySelector('.chip')!.getAttribute('title')).toBe('Developer · Website · stage');
+    expect(meta(element, 'sa_ci')).toBe('2 tokens, next expires 1 Dec 2026');
+    expect(element.querySelector('[data-testid="access-service-account-status-sa_old"]')!.textContent!.trim()).toBe('Disabled');
+    expect(meta(element, 'sa_old')).toBe('–');
+    expect(element.querySelector('[data-testid="access-service-account-sa_tok_build"]')).toBeNull();
+    expect(element.querySelector('[data-testid="access-service-account-sa_operator"]')).toBeNull();
   });
 
-  it('lists API tokens as service accounts with their creator and no reissue', () => {
-    const fixture = TestBed.createComponent(AccessServiceAccountsComponent);
-    fixture.detectChanges();
-    const element = fixture.nativeElement as HTMLElement;
-    const api = element.querySelector('[data-testid="access-service-account-sa_api"]')?.textContent ?? '';
-    expect(api).toContain('API token');
-    expect(api).toContain('Created by First Owner');
-    expect(api).toContain('Revoke');
-    expect(element.querySelector('[data-testid="access-token-create-sa_api"]')).toBeNull();
+  it('lists API tokens in their own grid with the creator, the role and the expiry', async () => {
+    const { element } = await render('api-token');
+    const row = element.querySelector('[data-testid="access-service-account-sa_tok_build"]')!;
+
+    expect(element.querySelector('[data-testid="access-api-tokens"]')).toBeTruthy();
+    expect(element.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(row.textContent).toContain('Created by First Owner');
+    expect(row.querySelector('.chip')!.getAttribute('title')).toBe('Operator agent · Workspace');
+    expect(meta(element, 'sa_tok_build')).toBe('1 token, expires 19 Nov 2026');
   });
 
-  it('leaves operator agents to the operator panel', () => {
-    const fixture = TestBed.createComponent(AccessServiceAccountsComponent);
-    fixture.detectChanges();
-    const element = fixture.nativeElement as HTMLElement;
-    expect(element.querySelector('[data-testid="access-service-account-sa_opa"]')).toBeNull();
-    expect(element.textContent).not.toContain('studio-operator');
-    expect(element.querySelector('[data-testid="access-service-account-sa_ci"]')).not.toBeNull();
+  it('opens the detail from the row, and leads Disable to the confirmation there', async () => {
+    const { access, element, fixture, selection } = await render('service-account');
+    element.querySelector<HTMLButtonElement>('[data-testid="access-service-account-sa_ci"] .grid__open')!.click();
+    expect(selection.selection()).toEqual({ mode: 'detail', kind: 'service-account', id: 'sa_ci' });
+
+    const rows = fixture.componentInstance.rows();
+    fixture.componentInstance.act('disable', rows[0]);
+    expect(selection.armed()).toBe('disable');
+    expect(access.disableServiceAccount).not.toHaveBeenCalled();
+    expect(rows[1].menu).toEqual([{ kind: 'row', id: 'open', label: 'Open details' }]);
   });
 
-  it('creates an account with its initial binding', async () => {
-    const fixture = TestBed.createComponent(AccessServiceAccountsComponent);
-    fixture.detectChanges();
-    const element = fixture.nativeElement as HTMLElement;
-    const name = element.querySelector('[data-testid="access-service-account-name"]') as HTMLInputElement;
-    name.value = 'deploy-bot';
-    name.dispatchEvent(new Event('input'));
-    const project = element.querySelector('[data-testid="access-grant-project"]') as HTMLSelectElement;
-    project.value = 'PROJ-001';
-    project.dispatchEvent(new Event('change'));
-    fixture.detectChanges();
-    (element.querySelector('[data-testid="access-service-account-create"]') as HTMLButtonElement).click();
-    await fixture.whenStable();
-    expect(access.createServiceAccount).toHaveBeenCalledWith('deploy-bot', '', [{ role: 'admin', scope: { kind: 'project', project: 'PROJ-001' } }]);
+  it('says what belongs in each empty grid', async () => {
+    const accounts = await render('service-account', accessOverview());
+    expect(accounts.element.querySelector('[data-testid="access-service-accounts-empty"]')!.textContent).toContain('Scripts and deploy jobs');
+    TestBed.resetTestingModule();
+    const tokens = await render('api-token', accessOverview());
+    expect(tokens.element.querySelector('[data-testid="access-api-tokens-empty"]')!.textContent).toContain('operator CLI');
   });
 });

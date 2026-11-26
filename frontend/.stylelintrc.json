@@ -438,6 +438,45 @@
       }
     },
     {
+      "comment": "AGT-4029 UI standard pilot: the shared page components and the reworked Access sections read colour and spacing only from tokens.",
+      "files": [
+        "src/app/components/chip/*.scss",
+        "src/app/components/data-grid/*.scss",
+        "src/app/components/detail-layout/*.scss",
+        "src/app/components/inline-confirm/*.scss",
+        "src/app/components/overflow-menu/*.scss",
+        "src/app/components/page-outline/*.scss",
+        "src/app/components/page-section/*.scss",
+        "src/app/components/secret-reveal/*.scss",
+        "src/app/features/access/components/access-account-detail/*.scss",
+        "src/app/features/access/components/access-account-form/*.scss",
+        "src/app/features/access/components/access-area/*.scss",
+        "src/app/features/access/components/access-binding-form/*.scss",
+        "src/app/features/access/components/access-binding-list/*.scss",
+        "src/app/features/access/components/access-bindings/*.scss",
+        "src/app/features/access/components/access-enrollment-form/*.scss",
+        "src/app/features/access/components/access-grant-form/*.scss",
+        "src/app/features/access/components/access-grants/*.scss",
+        "src/app/features/access/components/access-group-detail/*.scss",
+        "src/app/features/access/components/access-group-form/*.scss",
+        "src/app/features/access/components/access-groups/*.scss",
+        "src/app/features/access/components/access-invite-form/*.scss",
+        "src/app/features/access/components/access-people/*.scss",
+        "src/app/features/access/components/access-person-detail/*.scss",
+        "src/app/features/access/components/access-runner-detail/*.scss",
+        "src/app/features/access/components/access-runners/*.scss",
+        "src/app/features/access/components/access-service-accounts/*.scss"
+      ],
+      "rules": {
+        "color-no-hex": true,
+        "color-named": "never",
+        "scale-unlimited/declaration-strict-value": [
+          ["padding", "padding-block", "padding-inline", "padding-top", "padding-right", "padding-bottom", "padding-left", "margin", "margin-top", "margin-bottom", "gap", "row-gap", "column-gap"],
+          { "ignoreValues": ["0", "auto"], "ignoreFunctions": false, "disableFix": true, "severity": "error" }
+        ]
+      }
+    },
+    {
       "comment": "Task move refusal uses semantic theme and spacing tokens.",
       "files": ["src/app/_move-refusal.scss"],
       "rules": {

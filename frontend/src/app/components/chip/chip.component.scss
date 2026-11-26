@@ -1,0 +1,59 @@
+// Shared neutral chip. Sentence case, one height, two optional segments.
+:host { display: inline-flex; min-width: 0; max-width: 100%; }
+
+.chip {
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  height: var(--studio-card-pill-height);
+  overflow: hidden;
+  border: 1px solid var(--studio-border-strong);
+  border-radius: var(--studio-card-pill-radius);
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg);
+  font-size: var(--studio-font-size-sm);
+  white-space: nowrap;
+}
+
+// Segments are blocks, so a segment that is cut off ends in an ellipsis; the
+// line height (pill height minus the border) centres the text.
+.chip__label,
+.chip__detail,
+.chip__note {
+  display: block;
+  min-width: 0;
+  padding: 0 var(--studio-spacing-2);
+  overflow: hidden;
+  line-height: calc(var(--studio-card-pill-height) - 2px);
+  text-overflow: ellipsis;
+}
+
+.chip__label {
+  flex: 0 1 auto;
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg-strong);
+  font-weight: 600;
+}
+
+.chip__detail { flex: 0 1 auto; border-left: 1px solid var(--studio-border); }
+.chip__note { flex: 0 1 auto; padding-left: 0; color: var(--studio-fg-dim); }
+
+.chip[data-emphasis='strong'] {
+  border-color: color-mix(in srgb, var(--studio-accent) 55%, var(--studio-border-strong));
+}
+.chip[data-emphasis='strong'] .chip__label {
+  background: color-mix(in srgb, var(--studio-accent) 22%, var(--studio-bg-surface));
+}
+
+.chip[data-emphasis='quiet'] {
+  border-color: var(--studio-border);
+  background: transparent;
+  color: var(--studio-fg-dim);
+}
+.chip[data-emphasis='quiet'] .chip__label {
+  background: transparent;
+  color: var(--studio-fg-dim);
+  font-weight: 500;
+}

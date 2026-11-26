@@ -1,3 +1,4 @@
+import { HostNamePipe } from '../../../../components/identity-chip/host-name.pipe';
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
@@ -14,7 +15,7 @@ import {
  */
 @Component({
   selector: 'app-operations-security-facts', standalone: true,
-  imports: [DatePipe, StatusIndicatorComponent],
+  imports: [HostNamePipe, DatePipe, StatusIndicatorComponent],
   templateUrl: './operations-security-facts.html', styleUrl: './operations-security-facts.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

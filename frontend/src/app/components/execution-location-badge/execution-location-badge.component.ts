@@ -1,4 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { inject } from '@angular/core';
+import { isRawRunnerId } from '../identity-chip/identity-display';
+import { HostAliasService } from '../identity-chip/host-alias.service';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import type { TaskExecutionLocation } from '../../models/task.model';
 import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
@@ -33,6 +36,17 @@ export function executionLocationTone(value: TaskExecutionLocation | null | unde
 export class ExecutionLocationBadgeComponent {
   readonly execution = input<TaskExecutionLocation | null | undefined>(null);
   readonly compact = input(true);
+  /** AGT-4034: the status line above already names the host, so the badge does not repeat it. */
+  readonly hostNamedElsewhere = input(false);
+  private readonly aliases = inject(HostAliasService);
+  private hostName(value: TaskExecutionLocation, id: string) {
+    return this.aliases.display(id, isRawRunnerId(id) ? value.hostDisplayName : null).label;
+  }
+  /** The name, plus the id in parentheses when the name replaced a raw id (tooltip only). */
+  private hostWithId(value: TaskExecutionLocation, id: string): string {
+    const name = this.hostName(value, id);
+    return name === id ? id : `${name} (${id})`;
+  }
   readonly visible = computed(() => this.execution()?.state !== 'no-active-execution');
   readonly acute = computed(() => {
     const state = this.execution()?.state;
@@ -44,8 +58,9 @@ export class ExecutionLocationBadgeComponent {
     if (!value) return '';
     if (value.state === 'recovering') return 'Recovering';
     if (value.executionKind === 'local') return 'Local';
+    if (this.hostNamedElsewhere() && value.state === 'remote-running') return 'Host';
     const id = value.runnerId || value.hostDisplayName || value.configuredRunnerId || 'remote';
-    return `Host · ${id}`;
+    return `Host · ${this.hostName(value, id)}`;
   });
   readonly stateLabel = computed(() => ({
     'local-running': 'Local running',
@@ -61,8 +76,8 @@ export class ExecutionLocationBadgeComponent {
     if (!value) return '';
     const actual = value.executionKind === 'none'
       ? 'No active host'
-      : `${value.executionKind === 'local' ? 'Local' : 'Host'}${value.runnerId ? ` · ${value.runnerId}` : ''}${value.hostDisplayName ? ` (${value.hostDisplayName})` : ''}`;
-    const configured = value.configuredRunnerId ? `Host · ${value.configuredRunnerId}` : 'Local';
+      : `${value.executionKind === 'local' ? 'Local' : 'Host'}${value.runnerId ? ` · ${this.hostWithId(value, value.runnerId)}` : ''}`;
+    const configured = value.configuredRunnerId ? `Host · ${this.hostWithId(value, value.configuredRunnerId)}` : 'Local';
     const lines = [
       this.stateLabel(),
       `Actual host: ${actual}`,

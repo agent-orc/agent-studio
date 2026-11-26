@@ -248,6 +248,16 @@ public sealed class RemoteReviewExecutor
             shutdown);
     }
 
+    internal static ReviewSuiteSelectionDto? SuiteCoverage(ReviewSuiteSelectionDto? selection,
+        IReadOnlyList<ReviewCommandEvidenceDto> commands)
+        => selection is null ? null : selection with
+        {
+            AttemptedSuites = selection.SuiteSteps.Where(suite => commands.Any(command =>
+                command.WorkspaceRole == "candidate" && command.StepId == suite.Value
+                && (command.ExitCode is not null || command.Signal is not null)))
+                .Select(suite => suite.Key).ToArray(),
+        };
+
     private async Task<int> RunPersistedAsync(
         PersistedReviewSlot slot,
         RemoteReviewWorkspace workspace,
@@ -666,7 +676,8 @@ public sealed class RemoteReviewExecutor
                     evidence.Verdicts,
                     AuthorityEpoch: lease.AuthorityEpoch,
                     BriefSha256: slot.Claim.Subject?.Plan.BriefSha256,
-                    SkippedAspects: slot.Claim.Subject?.Plan.SkippedAspects));
+                    SkippedAspects: slot.Claim.Subject?.Plan.SkippedAspects,
+                    SuiteSelection: SuiteCoverage(slot.Claim.Subject?.Plan.SuiteSelection, evidence.Commands)));
                 if (slot.ReducedReportSubmitted)
                     request = ReviewReportArtifactBudget.Reduce(request);
                 var submittedAt = DateTime.UtcNow;

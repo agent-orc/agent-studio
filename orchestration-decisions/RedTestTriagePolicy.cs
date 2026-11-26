@@ -26,6 +26,22 @@ public static class RedTestTriagePolicy
             ? RedTestClassification.Regression : RedTestClassification.Ambiguous;
     }
 
+    /// <summary>
+    /// RT-3: the classification the post-merge runner's own facts support. The
+    /// runner measures the same-SHA repeat, the last-green control and the bisect
+    /// points; it does not compare its envelope with a reference envelope, which
+    /// is the server's step once RT-6 provides the canary and the reference
+    /// fingerprint. An envelope fact the runner did not measure therefore does not
+    /// contradict the hint, while a measured one still decides. The hint is
+    /// evidence on the receipt, never an action.
+    /// </summary>
+    public static RedTestClassification ClassificationHint(RedTestTriageFacts facts)
+        => Classify(facts with
+        {
+            EnvelopeCanary = facts.EnvelopeCanary == RedTestResult.Unknown ? RedTestResult.Pass : facts.EnvelopeCanary,
+            FingerprintMatchesReference = facts.FingerprintMatchesReference ?? true,
+        });
+
     public static RedTestTriageDecision Decide(RedTestTriageFacts facts)
     {
         var classification = Classify(facts);

@@ -1,0 +1,13 @@
+{
+  "schema": "dispatch-calibration.v1",
+  "source": "Original results/cards.json from AGT-3885, AGT-3886, AGT-3888; problem, cause and acceptanceCriteria copied verbatim. DP-18 combines D18-D20; RV-20 D20-D26, RV-21 D27-D33, RV-22 D34-D39. The source findings were authored against this integration tip, before the wave.",
+  "integrationTip": "a4c7a149ca7c9ac17e69da59d56573d642eac7a8",
+  "findingFiles": [
+    "source-findings-DP.json",
+    "source-findings-IN.json",
+    "source-findings-RV-1.json",
+    "source-findings-RV-2.json"
+  ],
+  "trackedFiles": "integration-files.txt.gz",
+  "inventoryMethod": "git ls-tree -r --name-only a4c7a149ca7c9ac17e69da59d56573d642eac7a8; gzip with mtime 0. Full inventory retained for ambiguity resolution and warm-index timing."
+}

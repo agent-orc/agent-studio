@@ -18,159 +18,63 @@ public sealed class PostMergeRunTests
     }
 
     [Fact]
-    public void ChangedModulesSelectUnionAndUnknownFallsBackToFullRoutineSuite()
+    public void AffectedWindowUsesSharedSelectionAndDocsRunsNoBuildOrBackendTest()
     {
-        var definition = new ProjectExecutionDefinition(1, [],
-            new Dictionary<string, string>(), new("prepare", ["build"], [], []),
-            [new("backend-routine", "routine", 10, "backend tests"),
-             new("runner-routine", "routine", 10, "runner tests"),
-             new("frontend-unit", "routine", 10, "frontend tests")],
-            [], [], new Dictionary<string, string>(), null, null, null, null, null);
-        Assert.Equal(["prepare", "build", "backend tests", "frontend tests"],
-            PostMergeRunPlan.Build(definition, "window", ["backend/Foo.cs", "frontend/src/bar.ts"]));
-        Assert.Equal(["backend tests", "runner tests", "frontend tests"],
-            PostMergeRunPlan.SelectAffected(definition, ["global.json"]));
-        Assert.Equal(["prepare", "build", "backend tests", "runner tests", "frontend tests"],
-            PostMergeRunPlan.Build(definition, "nightly", []));
+        var definition = EnabledDefinition();
+        Assert.Equal(["node scripts/check-public-docs.mjs"],
+            PostMergeRunPlan.Build(definition, "window", ["docs/start/README.md"]));
+        Assert.Equal(["bash scripts/npm-frontend.sh ci --prefer-offline", "bash scripts/npm-frontend.sh run build", "bash scripts/npm-frontend.sh run lint",
+                "bash scripts/npm-frontend.sh run test:ci"],
+            PostMergeRunPlan.Build(definition, "window", ["frontend/src/app/app.ts"]));
+        var mixed = PostMergeRunPlan.SelectAffected(definition, ["backend/X.cs", "frontend/src/app/app.ts"]);
+        Assert.Contains(definition.TestSuites.Single(suite => suite.Id == "backend-routine").Command, mixed);
+        Assert.Contains(definition.TestSuites.Single(suite => suite.Id == "frontend-unit").Command, mixed);
+        Assert.DoesNotContain(mixed, command => command.Contains("runner.Tests"));
     }
 
     [Fact]
-    public void WindowSuitesFollowTheProjectTestingStrategy()
+    public void AnUnassignedDeclaredTestCommandCannotDisappearFromFullFallback()
     {
-        // AGT-3965: fast keeps the affected union, balanced runs every routine suite.
-        var definition = new ProjectExecutionDefinition(1, [],
-            new Dictionary<string, string>(), new("prepare", ["build"], [], []),
-            [new("backend-routine", "routine", 10, "backend tests"),
-             new("runner-routine", "routine", 10, "runner tests"),
-             new("backend-coverage", "release", 10, "backend coverage")],
-            [], [], new Dictionary<string, string>(), null, null, null, null, null);
-        string[] changed = ["backend/Foo.cs"];
-
-        Assert.Equal(["prepare", "build", "backend tests"],
-            PostMergeRunPlan.Build(definition, "window", changed, PostMergeWindowSuiteModes.Affected));
-        Assert.Equal(["prepare", "build", "backend tests"],
-            PostMergeRunPlan.Build(definition, "window", changed, null));
-        Assert.Equal(["prepare", "build", "backend tests", "runner tests"],
-            PostMergeRunPlan.Build(definition, "window", changed, PostMergeWindowSuiteModes.Routine));
-    }
-
-    private static ProjectExecutionDefinition WithBase() => new(1, [],
-        new Dictionary<string, string>(), new("prepare", ["build"], [], []),
-        [new("backend-base", "base", 60, "backend smoke"),
-         new("product-start", "base", 120, "product start"),
-         new("backend-routine", "routine", 10, "backend tests"),
-         new("runner-routine", "routine", 10, "runner tests"),
-         new("task-server-routine", "routine", 10, "task-server tests"),
-         new("frontend-unit", "routine", 10, "frontend tests"),
-         new("backend-coverage", "release", 10, "backend coverage")],
-        [], [], new Dictionary<string, string>(), null, null, null, null, null);
-
-    [Fact]
-    public void DocsOnlyWindowRunsTheBaseSuiteOnly()
-    {
-        // AGT-3966: a path that maps to no area selects the base suite, not every routine suite.
-        Assert.Equal(["prepare", "build", "backend smoke", "product start"],
-            PostMergeRunPlan.Build(WithBase(), "window", ["docs/start/README.md", "CHANGELOG.md"],
-                PostMergeWindowSuiteModes.Affected));
-    }
-
-    [Fact]
-    public void BackendWindowRunsTheBaseSuiteAndTheBackendRoutineSuite()
-    {
-        string[] expected = ["prepare", "build", "backend smoke", "product start", "backend tests"];
-        Assert.Equal(expected, PostMergeRunPlan.Build(WithBase(), "window",
-            ["backend/Foo.cs", "docs/system/domains/pipeline.md"], PostMergeWindowSuiteModes.Affected));
-        // A test project selects its own area's suite instead of every routine suite.
-        Assert.Equal(expected, PostMergeRunPlan.Build(WithBase(), "window",
-            ["backend.Tests/FooTests.cs"], null));
-    }
-
-    [Fact]
-    public void SharedLibrarySelectsEveryDotnetRoutineSuite()
-    {
-        Assert.Equal(["backend tests", "runner tests", "task-server tests"],
-            PostMergeRunPlan.SelectAffected(WithBase(), ["contracts/TaskServer.Contracts/PostMergeRun.cs"]));
-        Assert.Equal(["runner tests", "frontend tests"],
-            PostMergeRunPlan.SelectAffected(WithBase(), ["runner.Tests/A.cs", "frontend/src/a.ts", "scripts/x.sh"]));
+        var definition = EnabledDefinition();
+        definition = definition with { Commands = definition.Commands with
+            { Test = [.. definition.Commands.Test, "new unassigned test command"] } };
+        Assert.Contains("new unassigned test command", PostMergeRunPlan.Build(definition, "window", ["docs/a.md"]));
     }
 
     [Theory]
+    [InlineData("nightly", null)]
+    [InlineData("window", PostMergeWindowSuiteModes.Routine)]
+    public void FullSuitePointsKeepAllRoutineSuites(string kind, string? mode)
+    {
+        var definition = EnabledDefinition();
+        Assert.InRange(definition.TestSuites.Where(suite => suite.Category == "base")
+            .Sum(suite => suite.ExpectedDurationSeconds), 1, 600);
+        var commands = PostMergeRunPlan.Build(definition, kind, ["docs/a.md"], mode);
+        Assert.All(definition.TestSuites.Where(suite => suite.Category == "routine"),
+            suite => Assert.Contains(suite.Command, commands));
+        Assert.All(definition.Commands.Build, command => Assert.Contains(command, commands));
+        Assert.Contains(definition.Commands.Prepare, commands);
+    }
+
+    [Theory]
+    [InlineData("contracts/TaskServer.Contracts/A.cs")]
+    [InlineData(".agent-studio/project.yml")]
     [InlineData("global.json")]
     [InlineData("Directory.Build.props")]
     [InlineData("backend/Directory.Build.targets")]
+    [InlineData("backend/Build.Common.props")]
+    [InlineData("frontend/Build.Common.targets")]
+    [InlineData("backend/build.proj")]
+    [InlineData("frontend/affected.slnf")]
     [InlineData("Directory.Packages.props")]
     [InlineData("NuGet.config")]
     [InlineData("agent-taskboard.sln")]
-    [InlineData(".agent-studio/project.yml")]
-    public void GlobalBuildInputSelectsEveryRoutineSuiteDespiteTheBaseSuite(string path)
+    [InlineData("unknown/A.cs")]
+    public void SharedOrUnmappedInputSelectsAllRoutineSuites(string path)
     {
-        // A repository-wide build input changes every area, so it is not a docs-only path.
-        Assert.Equal(["backend tests", "runner tests", "task-server tests", "frontend tests"],
-            PostMergeRunPlan.SelectAffected(WithBase(), ["docs/a.md", path]));
-    }
-
-    [Fact]
-    public void AreaWhoseSuiteTheProjectDoesNotConfigureSelectsEveryRoutineSuite()
-    {
-        var definition = new ProjectExecutionDefinition(1, [],
-            new Dictionary<string, string>(), new("prepare", ["build"], [], []),
-            [new("backend-base", "base", 60, "backend smoke"),
-             new("backend-routine", "routine", 10, "backend tests"),
-             new("frontend-unit", "routine", 10, "frontend tests")],
-            [], [], new Dictionary<string, string>(), null, null, null, null, null);
-
-        Assert.Equal(["backend tests", "frontend tests"],
-            PostMergeRunPlan.SelectAffected(definition, ["task-server/Program.cs"]));
-        Assert.Empty(PostMergeRunPlan.SelectAffected(definition, ["docs/a.md"]));
-    }
-
-    [Fact]
-    public void ProjectTheAreaMapDoesNotDescribeKeepsEveryRoutineSuiteBesideItsBaseSuite()
-    {
-        // The area map names Agent Studio's suites. A project with other suite ids has no
-        // areas, so a base suite must not silently drop its routine suites from every window.
-        var definition = new ProjectExecutionDefinition(1, [],
-            new Dictionary<string, string>(), new("prepare", ["build"], [], []),
-            [new("smoke", "base", 60, "smoke"),
-             new("app-routine", "routine", 10, "app tests"),
-             new("web-routine", "routine", 10, "web tests")],
-            [], [], new Dictionary<string, string>(), null, null, null, null, null);
-
-        Assert.Equal(["prepare", "build", "smoke", "app tests", "web tests"],
-            PostMergeRunPlan.Build(definition, "window", ["src/App/Program.cs"], PostMergeWindowSuiteModes.Affected));
-        Assert.Equal(["prepare", "build", "smoke", "app tests", "web tests"],
-            PostMergeRunPlan.Build(definition, "window", ["docs/a.md"], PostMergeWindowSuiteModes.Affected));
-    }
-
-    [Fact]
-    public void NightlyKeepsTheFullRoutineSuiteAndBalancedAddsTheBaseSuite()
-    {
-        Assert.Equal(["prepare", "build", "backend tests", "runner tests", "task-server tests", "frontend tests"],
-            PostMergeRunPlan.Build(WithBase(), "nightly", ["docs/a.md"]));
-        Assert.Equal(["prepare", "build", "backend smoke", "product start",
-                "backend tests", "runner tests", "task-server tests", "frontend tests"],
-            PostMergeRunPlan.Build(WithBase(), "window", ["docs/a.md"], PostMergeWindowSuiteModes.Routine));
-    }
-
-    [Fact]
-    public void RepositoryBaseSuiteFitsTheTenMinuteBudgetAndRunsAloneForDocs()
-    {
-        var read = ProjectDefinitionReader.ReadWorkspace(RepositoryRoot.Find());
-        Assert.True(read.IsValid, string.Join("; ", read.Issues.Select(issue => $"{issue.Path}: {issue.Message}")));
-        var definition = read.Definition!;
-        var baseSuites = definition.TestSuites.Where(suite => suite.Category == ProjectTestSuiteCategories.Base).ToArray();
-        Assert.NotEmpty(baseSuites);
-        Assert.True(baseSuites.Sum(suite => suite.ExpectedDurationSeconds) <= 600,
-            "The base suite must finish within about ten minutes on the run host.");
-        var docsOnly = PostMergeRunPlan.Build(definition, "window", ["docs/start/README.md"],
-            PostMergeWindowSuiteModes.Affected);
-        Assert.Equal(baseSuites.Select(suite => suite.Command),
-            docsOnly.Skip(1 + definition.Commands.Build.Count));
-        var backend = PostMergeRunPlan.Build(definition, "window", ["backend/Host/Program.cs"],
-            PostMergeWindowSuiteModes.Affected);
-        Assert.Equal([.. baseSuites.Select(suite => suite.Command),
-                definition.TestSuites.Single(suite => suite.Id == "backend-routine").Command],
-            backend.Skip(1 + definition.Commands.Build.Count));
+        var definition = EnabledDefinition();
+        Assert.Equal(definition.TestSuites.Where(suite => suite.Category == "routine").Select(suite => suite.Command),
+            PostMergeRunPlan.SelectAffected(definition, [path]));
     }
 
     [Theory]
@@ -273,6 +177,24 @@ public sealed class PostMergeRunTests
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    private static ProjectExecutionDefinition EnabledDefinition()
+        => ProjectDefinitionReader.Parse(File.ReadAllText(Path.Combine(RepositoryRoot.Find(),
+            "testdata/project-test-selection.project.yml"))).Definition!;
+
+    [Fact]
+    public void MissingMapKeepsTheFullPostMergeInventory()
+    {
+        var definition = EnabledDefinition() with { TestSelection = [] };
+        Assert.Empty(definition.TestSelection);
+        var selection = ProjectTestSelectionPolicy.Select(definition, ["docs/a.md"]);
+        Assert.True(selection.Full);
+        Assert.Contains("The project has no valid test selection map.", selection.Reasons);
+        var commands = PostMergeRunPlan.Build(definition, "window", ["docs/a.md"]);
+        Assert.Contains(definition.Commands.Prepare, commands);
+        Assert.All(definition.Commands.Build.Concat(definition.Commands.Test),
+            command => Assert.Contains(command, commands));
     }
 
     private sealed class FixedClock : TimeProvider

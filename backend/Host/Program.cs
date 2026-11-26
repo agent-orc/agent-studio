@@ -1,3 +1,4 @@
+using AgentStudio.Dispatch;
 
 
 using Microsoft.AspNetCore.SignalR;
@@ -5,6 +6,7 @@ using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.HttpOverrides;
 using AgentStudio.Telemetry;
 using AgentStudio.Host;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Serilog;
 using Serilog.Events;
 
@@ -82,6 +84,7 @@ Log.Logger = new LoggerConfiguration()
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddDispatch();
 // WebApplicationFactory can use the default environment, so also detect its
 // in-process xunit host before loading any machine-specific settings.
 var underTestHost = Array.Exists(
@@ -1133,6 +1136,7 @@ builder.Services.AddSingleton<AgentStudio.Git.IntegrationWorktreeStartupLockSwee
 builder.Services.AddSingleton<AgentStudio.Git.GitRefLockJanitor>();
 builder.Services.AddHostedService(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
+builder.Services.AddSingleton<AgentStudio.Pipeline.DeliveryIntegrationQueueBoard>();
 builder.Services.AddSingleton<AgentStudio.Tasks.TaskLiveStatusProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IModelEconomyAdvisor,
     AgentStudio.Pipeline.CatalogueModelEconomyAdvisor>();
@@ -1527,6 +1531,11 @@ builder.Services.AddSingleton(sp => new WatcherLeaseService(
     sp.GetRequiredService<OperatorDecisionOptions>(), sp.GetRequiredService<OperatorDecisionLog>(),
     sp.GetRequiredService<ControlPlaneAuditLog>(), sp.GetRequiredService<TimeProvider>(),
     sp.GetService<ILogger<WatcherLeaseService>>()));
+builder.Services.AddSingleton<OverlapPredictionLedger>();
+builder.Services.AddSingleton<OverlapDispatchGuard>();
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorOverlapFactSource(
+    sp.GetRequiredService<OverlapDispatchGuard>(), sp.GetRequiredService<TaskScannerService>(),
+    sp.GetRequiredService<ProjectSettingsService>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorTaskFactSource(
     () => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live,
     task => sp.GetRequiredService<TaskRunnerService>().GetQuotaFallbackForJob(task.Id, task.ProjectName)
@@ -1834,6 +1843,13 @@ if (SecurityProfiles.IsLocal(builder.Configuration))
 if (connectorProfile)
     builder.ConfigureConnectorProfile();
 
+// WebApplicationFactory runs this entry point inside xUnit. Product workers
+// are opt-in there: a test can add the hosted service it covers through
+// ConfigureTestServices, or request the complete startup path explicitly.
+// Outside xUnit the production registration set is untouched.
+if (underTestHost && !builder.Configuration.GetValue("Startup:HostedServices", false))
+    builder.Services.RemoveAll<IHostedService>();
+
 hostTimeline.Checkpoint("entryToBuild");
 // Short-lived test hosts must not leave HttpClientFactory handler-expiry timers
 // behind after their service providers have been disposed.
@@ -2061,13 +2077,12 @@ catch (Exception ex)
 // AGT-3567: the one-time repair, backfill and report sweeps below are
 // idempotent and change nothing on a workspace they already ran on, but the
 // first of them builds the task index that TaskAccess boot then rebuilds. A
-// Test host can boot without them with Startup:RepairSweeps=false; the Git
-// facts census boots 26 hosts over its 3,000-card board. Recovery (crash
-// recovery, the stale-progress archiver, run adoption unless
-// Runner:RunLiveness:Enabled is false) still runs. Outside the Test
-// environments the setting is ignored.
-var runRepairSweeps = !(app.Environment.IsEnvironment("Test") || app.Environment.IsEnvironment("Testing"))
-    || app.Configuration.GetValue("Startup:RepairSweeps", true);
+// Test hosts skip them by default and can request the production sweep path
+// with Startup:RepairSweeps=true. Recovery (crash recovery, the stale-progress
+// archiver, run adoption unless Runner:RunLiveness:Enabled is false) still
+// runs. Outside test hosts and Test environments the setting is ignored.
+var runRepairSweeps = !(underTestHost || app.Environment.IsEnvironment("Test") || app.Environment.IsEnvironment("Testing"))
+    || app.Configuration.GetValue("Startup:RepairSweeps", !underTestHost);
 
 // Backfill jobs that carry agent:"human" + cliType:null + model:null with owner
 // client defaults. Idempotent; no-op once all jobs are already migrated.

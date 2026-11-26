@@ -148,6 +148,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | ProjectRepositoryVisibilitySync | always | infra | Authority host. Copies project visibility settings to registered Task Server repositories. |
 | ServerReadinessMonitor | always | report | Authority host. Computes the server readiness report (AGT-3412) after start, every five minutes and on recheck; no lane move. |
 | QualityStudioRegistrationReconciler | always | infra | Authority host. Retries Quality Studio repository registration and archives mappings for archived projects. |
+| DispatchForecastService | always | infra | Authority host; model-free forecasts, dated co-change indexes and delivery accuracy, registered by AddDispatch |
 | GitStateIndexService | !PD | infra | Authority host |
 | GitBranchRetentionHostedService | !PD | infra | Authority host |
 | CompletedPushWorker | !PD | infra | Authority host |

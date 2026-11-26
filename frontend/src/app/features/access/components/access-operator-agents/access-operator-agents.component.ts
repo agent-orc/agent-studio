@@ -11,8 +11,10 @@ import {
   sessionStateLabel,
   type OneTimeOperatorSession,
   type OperatorAgent,
+  type OperatorDevice,
   type OperatorSession,
 } from '../../models/operator-agent.model';
+import { shortThumbprint } from '../../models/terminal-sign-in.model';
 import { AccessService } from '../../services/access.service';
 import { OperatorAgentsService } from '../../services/operator-agents.service';
 
@@ -47,6 +49,7 @@ export class AccessOperatorAgentsComponent {
   readonly agents = computed(() => this.operators.agents());
   readonly time = formatAccessTime;
   readonly stateLabel = sessionStateLabel;
+  readonly thumb = shortThumbprint;
 
   constructor() {
     effect(() => {
@@ -115,6 +118,23 @@ export class AccessOperatorAgentsComponent {
       kind: 'danger',
     });
     if (confirmed) await this.operators.killSession(agent.id, session.id);
+  }
+
+  devices(agent: OperatorAgent): readonly OperatorDevice[] {
+    return agent.devices ?? [];
+  }
+
+  /** Forgetting a device ends its sessions and makes its key unknown at the next sign-in; it needs no step-up. */
+  async forget(agent: OperatorAgent, device: OperatorDevice): Promise<void> {
+    if (this.operators.busy()) return;
+    const confirmed = await this.confirmDialog.confirm({
+      title: 'Forget this device?',
+      message: 'Every session of this device ends at once. A later sign-in with its key shows as an unknown device.',
+      detail: `${agent.name}: ${device.label}`,
+      confirmLabel: 'Forget device',
+      kind: 'danger',
+    });
+    if (confirmed) await this.operators.forgetDevice(agent.id, device.id);
   }
 
   async disable(agent: OperatorAgent): Promise<void> {

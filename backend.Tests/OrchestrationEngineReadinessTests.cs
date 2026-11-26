@@ -3,6 +3,7 @@ using AgentStudio.Diagnostics;
 using AgentStudio.Runner;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -95,6 +96,8 @@ public sealed class OrchestrationEngineReadinessTests : IDisposable
                     ["WatchPaths:0:RepositoryPath"] = projectPath,
                     [EngineSwitch] = "Engine",
                 }));
+            builder.ConfigureTestServices(services =>
+                services.AddHostedService<OrchestrationEngineReadinessService>());
         });
         using var client = factory.CreateClient();
         var readiness = factory.Services.GetRequiredService<OrchestrationEngineReadiness>();

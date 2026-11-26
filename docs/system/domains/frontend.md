@@ -1259,6 +1259,17 @@ occur. It is not a claim about tunnel transfer time.
   before each decision; a `?approval=<id>` query, the target of the push link,
   puts that request in focus. The rights model is described in
   [docs/operations/security/overview.md](../../operations/security/overview.md).
+  Since AGT-4029 the page is the pilot of the UI standard: an outline with
+  counts, one section per kind of principal (People, Groups, Service accounts,
+  API tokens, Runners, Role bindings by scope), each a `<app-data-grid>` with
+  the same column roles, and one detail panel (`<app-detail-layout>`) for the
+  selected row or the form that creates an entry. `AccessSelectionService`,
+  provided by the page, holds that one selection and the destructive action
+  whose in-place confirmation is open. Bindings and tokens are shown in the
+  detail, a new secret in `<app-secret-reveal>`, and every destructive action
+  through `<app-inline-confirm>`. The patterns and the shared components are
+  recorded in
+  [docs/system/ui-standard/access-page-pilot.md](../ui-standard/access-page-pilot.md).
 - The Retention destination at `#/workspace/settings/retention` owns the
   versioned workspace rule table, dry-run and explicit apply reports, run
   history, and a pointer to the Task Server backup controls. Project Settings mounts the same rule

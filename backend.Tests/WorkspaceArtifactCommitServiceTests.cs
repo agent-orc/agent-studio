@@ -449,6 +449,69 @@ public sealed class WorkspaceArtifactCommitServiceTests : IDisposable
     }
 
     [Fact]
+    public void RunBoundaryCommit_IgnoredFolderWithTrackedChange_FailsAndUnstagesIt()
+    {
+        File.WriteAllText(Path.Combine(_root, ".gitignore"), "ASS-TRACKED-IGNORED/\n");
+        var job = JobFolder("ASS-TRACKED-IGNORED");
+        var results = Path.Combine(job, "results");
+        Directory.CreateDirectory(results);
+        var tracked = Path.Combine(results, "status.md");
+        File.WriteAllText(tracked, "before\n");
+        RunGit(_root, "add", "-f", Relative(tracked));
+        RunGit(_root, "commit", "-m", "seed tracked report");
+        File.WriteAllText(tracked, "after\n");
+        File.WriteAllText(Path.Combine(results, "ignored.txt"), "ignored\n");
+
+        var result = _service.TryCommitRunBoundary(_root, "ASS-TRACKED-IGNORED", null, job,
+            ReviewDecisionKind.Reissue);
+
+        Assert.False(result.DidCommit);
+        Assert.NotNull(result.Error);
+        Assert.Contains("tracked changes", result.Error);
+        Assert.Empty(RunGitCapture(_root, "diff", "--cached", "--name-only"));
+        Assert.Contains(Relative(tracked), RunGitCapture(_root, "diff", "--name-only"));
+    }
+
+    [Fact]
+    public void Ignored_path_notice_is_once_per_set_across_flushes()
+    {
+        var logger = new RefusalLogger();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root })
+            .Build();
+        var service = new WorkspaceArtifactCommitService(config, logger);
+        File.WriteAllText(Path.Combine(_root, ".gitignore"), "logs/\nresults/\n");
+        var job = JobFolder("ASS-NOTICES");
+        Directory.CreateDirectory(Path.Combine(job, "logs"));
+        Directory.CreateDirectory(Path.Combine(job, "results"));
+        File.WriteAllText(Path.Combine(job, "logs", "first.log"), "first\n");
+        File.WriteAllText(Path.Combine(job, "results", "second.txt"), "second\n");
+
+        service.TryCommitArtifactUpload(_root, "ASS-NOTICES", job, ["logs/first.log"]);
+        service.TryCommitArtifactUpload(_root, "ASS-NOTICES", job, ["logs/first.log"]);
+        Assert.Single(logger.Messages, message => message.Contains("workspace-artifact-ignored-paths-dropped"));
+        var secondJob = JobFolder("ASS-NOTICES-B");
+        Directory.CreateDirectory(Path.Combine(secondJob, "logs"));
+        File.WriteAllText(Path.Combine(secondJob, "logs", "second.log"), "second\n");
+        service.TryCommitArtifactUpload(_root, "ASS-NOTICES-B", secondJob, ["logs/second.log"]);
+        service.TryCommitArtifactUpload(_root, "ASS-NOTICES", job, ["logs/first.log"]);
+        service.TryCommitArtifactUpload(_root, "ASS-NOTICES-B", secondJob, ["logs/second.log"]);
+        Assert.Equal(2, logger.Messages.Count(message => message.Contains("workspace-artifact-ignored-paths-dropped")));
+
+        File.AppendAllText(Path.Combine(_root, ".gitignore"), "ASS-FALLBACK/\n");
+        var ignoredJob = JobFolder("ASS-FALLBACK");
+        Directory.CreateDirectory(ignoredJob);
+        var tracked = Path.Combine(ignoredJob, "status.md");
+        File.WriteAllText(tracked, "before\n");
+        RunGit(_root, "add", "-f", Relative(tracked));
+        RunGit(_root, "commit", "-m", "seed fallback report");
+        File.WriteAllText(tracked, "after\n");
+        service.TryCommitRunBoundary(_root, "ASS-FALLBACK", null, ignoredJob, ReviewDecisionKind.Reissue);
+        service.TryCommitRunBoundary(_root, "ASS-FALLBACK", null, ignoredJob, ReviewDecisionKind.Reissue);
+        Assert.Single(logger.Messages, message => message.Contains("reason=git-add-refused"));
+    }
+
+    [Fact]
     public void EvidenceCommit_TrackedOversizedFileBelowNewlyIgnoredFolder_NeverWritesBlob()
     {
         var config = new ConfigurationBuilder()

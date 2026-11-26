@@ -26,6 +26,7 @@ async function enroll(page: Page, workspace: string, role: 'coding' | 'review'):
   await page.goto('/#/workspace/settings/access');
   const access = page.getByTestId('access-area');
   await expect(access.getByTestId('access-runners')).toBeVisible();
+  await access.getByTestId('access-enrollment-open').click();
   await access.getByTestId('access-enrollment-name').fill(`networked-${role}`);
   await access.getByTestId('access-enrollment-projects').getByLabel('All projects').check();
   const created = page.waitForResponse(response => response.url().endsWith('/api/auth/runner-enrollments')
