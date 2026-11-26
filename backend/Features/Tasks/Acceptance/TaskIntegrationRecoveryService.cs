@@ -31,6 +31,7 @@ public sealed class TaskIntegrationRecoveryService
     public const string AcceptanceRailSource = "acceptance-rail";
     public const string OperatorSource = "operator";
 
+    private readonly GitService? _git;
     private readonly TaskScannerService _scanner;
     private readonly TaskMutationService _mutations;
     private readonly TaskStateMachine _states;
@@ -43,8 +44,10 @@ public sealed class TaskIntegrationRecoveryService
         TaskMutationService mutations,
         TaskStateMachine states,
         TimelineLog timeline,
-        ILogger<TaskIntegrationRecoveryService> logger)
+        ILogger<TaskIntegrationRecoveryService> logger,
+        GitService? git = null)
     {
+        _git = git;
         _scanner = scanner;
         _mutations = mutations;
         _states = states;
@@ -267,6 +270,8 @@ public sealed class TaskIntegrationRecoveryService
             position,
             queued?.State);
 
+        _git?.TryRecordDispatchRecovery(job, subject, conflict, "develop-sync",
+            subject.ResultSha + ":" + subject.RunAttemptId + ":" + failureCode + ":" + retryNumber);
         AgentStudio.Git.IntegrationConflictLedger.Default.Resolve(job.ProjectName, subject.TaskKey,
             subject.ResultSha, integrationBranch, "agent-round", integrationTip: conflict?.IntegrationTipSha);
         return new TaskIntegrationRecoveryResult(

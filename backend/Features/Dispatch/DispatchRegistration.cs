@@ -15,6 +15,28 @@ public static class DispatchRegistration
 
     public static void MapDispatchEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/projects/{project}/dispatch/conflicts", (string project, DateTimeOffset? from,
+            DateTimeOffset? to, HttpContext context, TaskScannerService scanner, ProjectRegistry projects, DispatchStore store) =>
+        {
+            var entry = scanner.GetWatchPaths().FirstOrDefault(entry => entry.Name.Equals(project, StringComparison.OrdinalIgnoreCase));
+            if (entry is null) return Results.NotFound();
+            if (!ProjectAccessAuthorization.AllowsTasks(context, [entry.Name], IamPermissions.ProjectRead, projects))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (from is not null && to is not null && from >= to)
+                return Results.BadRequest(new { error = "Use a start time before the end time." });
+            return Results.Ok(store.ReadConflicts(entry.Name, from, to));
+        }).RequirePermission(IamPermissions.ProjectRead);
+
+        app.MapPost("/api/projects/{project}/dispatch/conflicts/backfill", (string project,
+            TaskScannerService scanner, AgentStudio.Git.GitService git) =>
+        {
+            var entry = scanner.GetWatchPaths().FirstOrDefault(entry => entry.Name.Equals(project, StringComparison.OrdinalIgnoreCase));
+            if (entry is null) return Results.NotFound();
+            var repo = git.ResolveRepositoryRoot(entry);
+            if (repo is null) return Results.Conflict(new { error = "The project repository is unavailable." });
+            return Results.Ok(new { added = git.BackfillDispatchConflicts(repo, entry.Name, DateTimeOffset.UtcNow) });
+        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.ProjectSettingsWrite);
+
         app.MapGet("/api/projects/{project}/dispatch/forecasts", async (string project, string? cards,
             HttpContext context, TaskScannerService scanner, TaskIndexCache tasks, ProjectRegistry projects, DispatchStore store) =>
         {

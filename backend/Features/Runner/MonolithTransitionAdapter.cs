@@ -9,6 +9,11 @@ namespace AgentStudio.Runner;
 /// <summary>Host boundary for the shared decision library. No transition rules belong here.</summary>
 public static class MonolithTransitionAdapter
 {
+    public static bool DispatchSemanticPair(bool deterministicRed, bool sameWindow, int members,
+        bool namedByIsolation, IReadOnlyList<string> forecastOverlap)
+        => DispatchConflictPolicy.IsSemanticPair(deterministicRed, sameWindow, members,
+            namedByIsolation, forecastOverlap);
+
     public static AutoReviewStrandingAction AutoReviewStranding(AutoReviewStrandingFacts facts)
         => AutoReviewStrandingPolicy.Decide(facts);
     public static AutoReviewStrandingAction AutoReviewBatchRoute(AutoReviewStrandingAction decided,

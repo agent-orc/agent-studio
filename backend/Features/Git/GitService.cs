@@ -745,11 +745,12 @@ public partial class GitService
         IEnumerable<ICommitCandidateScanner>? commitCandidateScanners = null,
         ProjectSettingsService? projectSettings = null,
         GitRefLockJanitor? lockJanitor = null,
-        CliOneShotRegistry? oneShotRegistry = null)
+        CliOneShotRegistry? oneShotRegistry = null, AgentStudio.Dispatch.DispatchStore? dispatchStore = null)
     {
         _logger = logger;
         _scanner = scanner;
         _config = config;
+        _dispatchConflicts = dispatchStore ?? new AgentStudio.Dispatch.DispatchStore(config);
         _prompts = prompts ?? new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         _usage = usage;
         _oneShotRegistry = oneShotRegistry;
@@ -6750,7 +6751,7 @@ public partial class GitService
             if (recovery.FailureKind == MechanicalRebaseFailureKind.Conflict)
             {
                 var report = BuildIntegrationConflictReport(
-                    integrationBranch,
+                    repoRoot, integrationBranch,
                     integrationTip,
                     deliveryTip,
                     directConflicts,
@@ -6800,7 +6801,7 @@ public partial class GitService
                     Outcome = "final merge conflicted",
                 };
                 var report = BuildIntegrationConflictReport(
-                    integrationBranch,
+                    repoRoot, integrationBranch,
                     integrationTip,
                     deliveryTip,
                     directConflicts,
@@ -7434,8 +7435,8 @@ public partial class GitService
             originals.Length) with { Outcome = "net-change" };
     }
 
-    private static IntegrationConflictReport BuildIntegrationConflictReport(
-        string integrationBranch,
+    private IntegrationConflictReport BuildIntegrationConflictReport(
+        string repoRoot, string integrationBranch,
         string integrationTip,
         string deliveryTip,
         IReadOnlyList<string> directConflicts,
@@ -7450,6 +7451,19 @@ public partial class GitService
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Distinct(StringComparer.Ordinal)
             .ToList();
+        try
+        {
+            if (IntegrationConflictCapture.Active is { } context)
+            {
+                var (baseValue, baseError, baseCode) = RunGitArgs(repoRoot, "merge-base", deliveryTip, integrationTip);
+                if (baseCode != 0) throw new IOException($"Dispatch conflict base unavailable: {baseError}");
+                RecordDispatchConflict(repoRoot, context.Project, context.CardKey, "integration-conflict",
+                    context.BaseSha ?? baseValue.Trim(), integrationTip, allConflicts,
+                    deliveryTip + ":" + integrationTip, DateTimeOffset.UtcNow);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        { _logger.LogWarning(ex, "Dispatch integration conflict evidence failed for {Delivery}", deliveryTip); }
         var reported = allConflicts
             .Take(IntegrationConflictReport.MaxReportedFiles)
             .ToList();

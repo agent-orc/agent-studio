@@ -4515,3 +4515,51 @@ project time-range API, rate denominator and attribution limitations are specifi
 in [Integration conflict evidence](../contracts/integration-conflicts.md). The
 project Pipeline panel shows seven days of daily rates, top files and card pairs.
 This evidence supports later selection work; it changes no transition policy.
+
+## Dispatch conflict evidence (DS-2)
+
+`DispatchStore` keeps immutable `DispatchConflictRecordV1` records under the
+application-owned `.dispatch/<project-hash>/conflicts/` directory. This is
+separate from the latest per-card `IntegrationConflictReport`, which retains
+its existing 20-file display cap. The dispatch ledger records all conflict
+paths, the delivery base and integration tip, and partner cards from attributed
+commits and provenance, with the primary owning card in a commit subject as
+historical fallback. Other card references in a subject are not owners.
+Ownership lookup is shared per task-index publication, including archived cards,
+and refreshed when card metadata publishes a new generation. Backfill captures
+one ownership lookup for the run and checks existing evidence by its record id.
+Recovery reads the matching collision directly, without scanning unrelated ledger
+records. Delivery-time conflict collection logs evidence failures and lets forecast
+delivery facts persist; the owner backfill command still reports failures to its caller.
+Semantic evidence failures are logged without interrupting isolation findings, and
+failed collection remains eligible for retry after storage recovers.
+
+Integration reports, delivery-chain merge decisions, queued agent sync rounds,
+and sync commits observed at delivery produce separate evidence kinds.
+Deterministic red-batch isolation records a semantic pair when isolation names two members with overlapping forecasts within the same immutable parent batch admission window. A failing two-card
+isolation child names a pair; for a two-card parent, both members must pass
+separately before the parent is treated as an interaction. Transport failures and failing singletons do not count.
+Decision ids and persona identity remain null until DS-6 supplies admission
+receipts. No persona selection or pickup behavior changes in DS-2.
+
+`GET /api/projects/{project}/dispatch/conflicts?from=&to=` requires project read
+access and returns a UTC half-open interval. Reads skip malformed, null or
+unreadable records individually, logging read failures and leaving the original
+files unchanged so valid evidence remains available. The owner can run the one-shot
+30-day Git backfill with:
+
+```sh
+bash scripts/dispatch-conflicts-backfill.sh http://localhost:5030 'Project name'
+```
+
+The command calls the owner-only application endpoint
+`POST /api/projects/{project}/dispatch/conflicts/backfill`; it does not start a
+backend. Set `DISPATCH_API_TOKEN` when authentication requires it. Repeating it
+preserves existing records, including their original timestamps and live status.
+Backfilled records carry `backfilled: true`. The Dossier wave method searches
+all refs for card-owned develop sync and conflict-resolution commits, including
+rewritten copies. Historical sync paths come from the complete first-parent
+change, not a reconstructed textual-conflict list. A surviving sync merge
+provides its incoming integration tip and merge base; linear history without
+those anchors has no recoverable partner evidence. These historical limits do
+not turn a clean shared-file change into proof of a textual conflict.
