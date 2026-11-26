@@ -12,11 +12,11 @@ decision D11 option A; see the
 | Who | What it holds | Lifetime |
 |---|---|---|
 | Operator agent principal (`opa_*`) | Role bindings you choose, no token of its own | Until you disable it |
-| Operator session | One `oas.*` bearer in the agent user's protected file | 1 to 8 hours, renewed only by you |
+| Operator session | One `oas.*` bearer in the agent user's protected file, bound to its resident key | Chosen at confirmation, limited by role, agent and binding; hourly key renewal by the device. Unbound Settings sessions remain 1 to 8 hours |
 | Known device | The key thumbprint of a terminal whose sign-in you confirmed | Until you forget the device |
 | Standing grant | The routine (T1) operations the agent may run, by scope, rate, and window | 7 days by default, at most 30, renewed only by you |
 | Approval | One exact high-risk (T2) request you approved after a second factor | Used once, within 15 minutes of your decision |
-| You, the Owner | Creating the agent, confirming terminal sign-ins with your second factor, starting, renewing, and revoking sessions and grants; the kill switch | |
+| You, the Owner | Creating the agent, confirming terminal sign-ins with your second factor, starting and ending sessions, managing grants and session limits; the kill switch | |
 
 Every request the session makes, every audit entry, and every card timeline
 event it causes names `operator-agent:<id>/session:<sid>` as actor and
@@ -113,8 +113,9 @@ ES-3, decision ES-D2 option S2).
    **This code is on my terminal now** when you came through the link.
 3. Check what the page shows: the device label, **Known device** or **Unknown
    device**, the requesting address and whether it is on your browser's
-   network, the operator agent, the action classes, and the lifetime (1 to 8
-   hours, 8 by default). If you did not just run `studio-op login` yourself,
+   network, the operator agent, the action classes, and the lifetime. The
+   default is 7 days, clamped to the allowed choices; memory keys allow at most
+   24 hours. A shorter `--lifetime` request lowers the preselection. If you did not just run `studio-op login` yourself,
    choose **Deny**.
 4. Enter your authenticator code, or leave the field empty to use a passkey,
    and choose **Confirm sign-in**.
@@ -184,9 +185,9 @@ the configuration directory to an independent machine, never its TPM state.
 
 These signatures prove possession of the confirmed device key, not a
 manufacturer attestation of the reported binding kind. Processes running as
-the same OS user or root can still ask the platform key to sign. Hourly
-recertification and longer lifetimes remain the ES-6 slice; existing 1 to 8
-hour confirmation limits stay in force.
+the same OS user or root can still ask the platform key to sign. ES-6 now
+adds hourly recertification and a chosen lifetime, described below. The
+unbound Settings path retains its 1 to 8 hour limit.
 
 Terminal sessions require fresh DPoP proofs, including a method, public URL,
 token hash, timestamp within 60 seconds and single-use id. `studio-op` handles
@@ -344,8 +345,9 @@ refusal codes are listed in the
 
 ## 6. Renew, end, and review
 
-- **Renew** extends an active session to at most 8 hours from now. Only you
-  can renew; the agent cannot.
+- **Renew** applies to an unbound Settings session and extends it to at most
+  8 hours from now. Bound sessions automatically rotate their certified key
+  without extending the chosen end; changing that end requires a new sign-in.
 - **End session** ends one session at once and leaves the agent and its other
   sessions working; **Disable** ends the agent and every session. A session
   also ends when your Owner role ends.
@@ -596,3 +598,54 @@ mutation lock, so concurrent writers cannot change the values used by another
 request's audit entry. Operator attribution includes the session and delegating
 Owner. Build profile, review package, security file, checkout and gate
 capacity routes retain their existing authorization.
+
+## Choose a lifetime and renew the device binding (ES-6)
+
+Run `studio-op login --agent '<name>' --lifetime 24h` to ask for a shorter
+preselection. Accepted values are `8h`, `24h`, `7d` and `30d`. The browser
+preselects the installation default or your shorter request, clamped to the
+agent and device limits; a longer terminal request cannot increase the default.
+The Owner may choose any offered lifetime with a fresh second factor.
+The default is 7 days, but a memory-key host can receive only 8 or 24 hours.
+Until revoked requires a hardware-bound device and an Owner limit that allows
+it. ES-5 hardware keys remain opt-in and not yet verified on real hardware.
+
+The resident `studio-op agent` keeps both the device signing capability and
+current session key available. It rotates the session key ten minutes before
+its 60-minute certification ends, using a device-signed renewal and a current
+DPoP proof. No authenticator code or passkey prompt appears during renewal.
+The previous session key stops working immediately after rotation. Do not
+copy the configuration to another host: it has neither the session key nor
+the device key needed to renew. A missing or forgotten key, stopped resident,
+expired chosen or idle end, disabled confirming person, missing second factor,
+kill switch or lowered limit requires `studio-op login` again. The CLI reports
+that instruction after renewal refusal; the resident writes the same quiet
+instruction to `operator-session-ended` beside the session file.
+
+`studio-op auth status` shows chosen end, idle end and binding kind for an
+operator session. The resident's health checks and renewal do not count as
+use. Other authenticated requests reset the idle clock. A session left unused
+ends after 24 hours by default even if the resident keeps renewing it.
+Signing out of the confirming browser, or letting that browser session expire,
+does not end the terminal session. Revoking that browser session explicitly,
+changing or resetting the confirming person's password, disabling them or
+removing their last second factor does end it.
+
+Use Settings > Access > Session limits to change the default, role limits,
+idle limit or an agent's additional limit with a fresh Owner step-up. Every
+change is audited. A lower limit ends an older session on its next renewal;
+a higher limit does not extend an already confirmed session. The Settings
+bearer path remains limited to 1 to 8 hours. To change a bound session's chosen
+end, sign in again and confirm a new session.
+
+Settings > Access > Elevated sessions lists long sessions and sessions with
+classes. End session, End elevation, Forget device and End all elevated
+sessions are one-tap actions without step-up. End elevation removes classes
+and keeps ordinary T0 and T1 access. A new address at renewal marks the row
+quietly. The security view's 30-day notice offers Keep or End; Keep schedules
+another review in 30 days and does not extend the session. Ending applies on
+the next request and live operator connections recheck within 15 seconds.
+
+After upgrading from a bound session without hourly certification, run a new
+`studio-op login`: Studio accepts that old key for at most 60 minutes from
+its confirmation. The kill switch also invalidates uncollected sign-in codes.

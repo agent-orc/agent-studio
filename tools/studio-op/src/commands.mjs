@@ -20,7 +20,7 @@ const ACCEPTED_LANES = ['6-completed', '7-archive', '5-completed', 'completed', 
 
 /** Routes an operator credential never calls; Studio refuses them (security overview). */
 const REFUSED_ROUTES = [
-  '/api/auth/* (access, tokens, sessions)',
+  '/api/auth/* (access, tokens, sessions; own bound-session status and device renewal are exceptions)',
   '/api/v1/* (Task Server plane)',
   'Runner service routes',
   'SignalR hubs (/hubs/*)',
@@ -129,7 +129,7 @@ export const COMMANDS = {
   },
   login: {
     summary: 'Sign in from this terminal; the Owner confirms the code in Studio with a second factor.',
-    spec: { agent: 'string', label: 'string', class: 'list', noQr: 'boolean' },
+    spec: { agent: 'string', label: 'string', class: 'list', noQr: 'boolean', lifetime: 'string' },
     anonymous: true,
     async run(ctx, positionals, options) {
       if (positionals.length) throw usage('unexpected-argument', 'login takes no arguments. Use --agent <name>.');
@@ -165,12 +165,18 @@ export const COMMANDS = {
           server.error = probe.body?.error ?? `http-${probe.status}`;
         }
       }
-      const data = { credential, server, refusedRoutes: REFUSED_ROUTES, ownerKeeps: OWNER_KEEPS,
+      let session = null;
+      if (credential.prefix === 'oas' && ctx.client) {
+        const response = await ctx.client.send('GET', '/api/auth/operator-session/status');
+        if (response.status === 200) session = response.body;
+      }
+      const data = { credential, server, session, refusedRoutes: REFUSED_ROUTES, ownerKeeps: OWNER_KEEPS,
         securityModel: 'docs/security-model/index.html' };
       return { exitCode, ok: exitCode === EXIT.OK, data, text: lines(
         `Studio:      ${ctx.url}`,
         `Credential:  ${credential.file} (${credential.exists ? `mode ${credential.mode}${credential.ownerOnly ? ', owner-only' : ', NOT owner-only'}` : 'missing'})`,
         credential.prefix ? `Token:       ${credential.kind}, prefix ${credential.prefix}${credential.id ? `, id ${credential.id}` : ''}` : null,
+        session ? `Chosen end:  ${session.chosenEnd ?? 'until revoked'}\nIdle end:    ${session.idleEnd ?? 'none'}\nBinding:     ${session.device?.bindingKind ?? 'unbound'}` : null,
         `Server:      ${server.authenticated ? 'authenticated' : `not authenticated (${server.error ?? server.status})`}`,
         server.projects.length ? `Projects:    ${server.projects.join(', ')}` : null,
         'Refused to operator credentials:', REFUSED_ROUTES.map(item => `  - ${item}`),

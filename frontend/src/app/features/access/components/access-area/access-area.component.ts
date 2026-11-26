@@ -29,6 +29,8 @@ import { AccessGroupFormComponent } from '../access-group-form/access-group-form
 import { AccessGroupsComponent } from '../access-groups/access-groups.component';
 import { AccessInviteFormComponent } from '../access-invite-form/access-invite-form.component';
 import { AccessOperatorActivityComponent } from '../access-operator-activity/access-operator-activity.component';
+import { AccessElevatedSessionsComponent } from '../access-elevated-sessions/access-elevated-sessions.component';
+import { AccessSessionLimitsComponent } from '../access-session-limits/access-session-limits.component';
 import { AccessOperatorAgentsComponent } from '../access-operator-agents/access-operator-agents.component';
 import { AccessOperatorApprovalsComponent } from '../access-operator-approvals/access-operator-approvals.component';
 import { AccessOperatorKillSwitchComponent } from '../access-operator-kill-switch/access-operator-kill-switch.component';
@@ -55,9 +57,7 @@ const CREATE: Record<AccessCreateKind, Omit<DetailHead, 'key'>> = {
 const WIDE_PX = 1180;
 
 /**
- * The one Access area (AGT-4029 pilot of the UI standard): an outline, one
- * section per kind of principal, each a grid with the same column logic, and
- * one detail area for the selected row or the form that creates an entry.
+ * Access principals, session limits and elevated sessions share one outline and grid grammar.
  * A single-user installation sees the same sections with its one Owner. The
  * Owner also sees operator agents, their approval requests, standing grants,
  * kill switch, audit trail, and the backup records of that trail; the server
@@ -67,7 +67,7 @@ const WIDE_PX = 1180;
   selector: 'app-access-area',
   standalone: true,
   imports: [
-    AccessAccountDetailComponent, AccessAccountFormComponent, AccessBackupActivityComponent, AccessBindingFormComponent, AccessBindingsComponent,
+    AccessElevatedSessionsComponent, AccessSessionLimitsComponent, AccessAccountDetailComponent, AccessAccountFormComponent, AccessBackupActivityComponent, AccessBindingFormComponent, AccessBindingsComponent,
     AccessBreakGlassComponent, AccessEnrollmentFormComponent, AccessGroupDetailComponent, AccessGroupFormComponent, AccessGroupsComponent,
     AccessInviteFormComponent, AccessOperatorActivityComponent, AccessOperatorAgentsComponent, AccessOperatorApprovalsComponent,
     AccessOperatorKillSwitchComponent, AccessPeopleComponent, AccessPersonDetailComponent, AccessRunnerDetailComponent, AccessRunnersComponent,
@@ -126,7 +126,9 @@ export class AccessAreaComponent implements OnInit {
   readonly outline = computed<OutlineItem[]>(() => {
     const counts = this.counts();
     const operator: OutlineItem[] = this.operators.available() ? [
-      { id: 'access-operators', label: 'Operator agents', group: 'Operator agents' },
+      { id: 'access-session-limits', label: 'Session limits', group: 'Operator agents' },
+      { id: 'access-elevated-sessions', label: 'Elevated sessions' },
+      { id: 'access-operators', label: 'Operator agents' },
       ...(this.approvals.state() !== 'denied' ? [{ id: 'access-approvals', label: 'Approval requests' }] : []),
       ...(this.standingGrants.state() !== 'denied' ? [{ id: 'access-grants', label: 'Standing grants' }] : []),
       { id: 'access-kill-switch', label: 'Kill switch' },

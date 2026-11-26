@@ -4,8 +4,8 @@ namespace AgentStudio.Security;
 /// Operator agents (security model SM-1, decisions D1 and D11): a service
 /// account of origin <see cref="ServiceAccountOrigins.OperatorAgent"/> whose
 /// only credentials are child sessions. The Owner creates the agent, starts
-/// each session, and alone renews it; a session token lives at most eight
-/// hours. Every request made with it is attributed to
+/// each unbound session. Bound sessions choose a lifetime and renew their
+/// certified key with the device key. Every request made with it is attributed to
 /// <c>operator-agent:&lt;id&gt;/session:&lt;sid&gt;</c> and delegated by the
 /// Owner who started the session.
 /// </summary>
@@ -93,9 +93,11 @@ public sealed partial class AccessSecurityStore
             var session = agent.Sessions?.FirstOrDefault(candidate => candidate.Id == sessionId)
                 ?? throw new SecurityOperationException(404, "operator-session-not-found", "Operator session not found.");
             var now = Now;
-            if (session.RevokedAt is not null || session.ExpiresAt <= now)
+            if (SessionEnded(next, session, now))
                 throw new SecurityOperationException(409, "operator-session-ended",
                     "This session has ended. Start a new session instead.");
+            if (session.Device is not null)
+                throw new SecurityOperationException(409, "bound-session-renewal-required", "Bound sessions rotate their key through studio-op agent. Sign in again to change the lifetime.");
             var renewed = session with { ExpiresAt = now + lifetime, RenewedAt = now, RenewedBy = ownerId };
             next.ServiceAccounts[next.ServiceAccounts.IndexOf(agent)] = agent with
             {
@@ -172,7 +174,7 @@ public sealed partial class AccessSecurityStore
             var session = agent?.Sessions!.First(candidate => candidate.Id == sessionId);
             // A sign-in session has no bearer until the terminal collected it (ES-3).
             if (agent is null || session is null || agent.DisabledAt is not null || session.RevokedAt is not null
-                || session.ExpiresAt <= now || string.IsNullOrEmpty(session.SecretHash)
+                || (IsOperatorAgent(agent) ? SessionEnded(state, session, now) : session.ExpiresAt <= now) || !ConfirmingPersonHasFactor(state, session) || string.IsNullOrEmpty(session.SecretHash)
                 || !PasswordSecretHasher.VerifySecret(bearer!, session.SecretHash))
                 return null;
             if (agent.Origin == ServiceAccountOrigins.Persona && session.OccurrenceId is null) return null;
@@ -211,24 +213,27 @@ public sealed partial class AccessSecurityStore
                 return new OperatorDeviceResponse(device.Id, device.Label, device.KeyThumbprint, device.FirstConfirmedAt,
                     device.LastConfirmedAt, device.LastConfirmedBy, device.LastAddress,
                     own.Select(session => session.LastUsedAt).Where(at => at is not null).DefaultIfEmpty(null).Max(),
-                    own.Count(session => OperatorSessionState(session, now) is OperatorSessionStates.Active or OperatorSessionStates.Pending), device.BindingKind);
-            }).ToList());
+                    own.Count(session => !SessionEnded(StateLocked(), session, now)), device.BindingKind);
+            }).ToList(), agent.OperatorLifetimeLimitHours);
     }
 
     public OperatorSessionResponse ToOperatorSessionResponse(string agentId, OperatorAgentSession session)
         => ToOperatorSessionResponse(agentId, session, Now);
 
-    private static OperatorSessionResponse ToOperatorSessionResponse(string agentId, OperatorAgentSession session, DateTime now)
+    private OperatorSessionResponse ToOperatorSessionResponse(string agentId, OperatorAgentSession session, DateTime now)
     {
         var actor = new AgentStudio.Shared.OperatorActor(agentId, session.Id, session.CreatedBy);
         return new OperatorSessionResponse(session.Id, agentId, session.Name, actor.Actor, actor.DelegatedBy, session.CreatedAt,
             session.CreatedBy, session.ExpiresAt, session.RenewedAt, session.LastUsedAt, session.RevokedAt,
-            OperatorSessionState(session, now),
+            SessionEnded(StateLocked(), session, now) && session.RevokedAt is null ? OperatorSessionStates.Expired : OperatorSessionState(session, now),
             session.Device is { } device
                 ? new OperatorSessionDeviceResponse(device.DeviceId, device.Label, device.KeyThumbprint, device.RequestedAddress,
                     device.ConfirmedAddress, device.SignInId, device.BindingKind, device.DeviceKeyThumbprint)
                 : null,
-            session.Classes);
+            session.Classes, session.ChosenLifetimeHours, session.Device is null ? session.ExpiresAt : session.ChosenEnd,
+            OperatorIdleEnd(StateLocked(), session), session.KeyExpiresAt,
+            session.LastAddress, session.NewAddressAt, session.ReviewedAt,
+            IsElevatedSession(session) && now >= (session.ReviewedAt ?? session.CreatedAt).AddDays(30));
     }
 
     private static bool IsOperatorAgent(ServiceAccount account) => account.Origin == ServiceAccountOrigins.OperatorAgent;

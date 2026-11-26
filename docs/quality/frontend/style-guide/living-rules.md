@@ -62,6 +62,13 @@ Use the canonical recipes in [buttons.md](./buttons.md). Icon-only actions use
   [`frontend/.stylelintrc.json`](../../../../frontend/.stylelintrc.json), using
   `color-no-hex` and `scale-unlimited/declaration-strict-value`.
 
+## Direct actions in narrow grids
+
+Use the shared data grid's `stackActionsOnNarrow` option when a row offers
+several direct text actions. It puts the identity and the action group on
+separate full-width lines below the grid breakpoint, keeping both readable.
+The default compact row behavior is unchanged for a single overflow menu.
+
 ## Open cases
 
 - A typed `<app-button>` remains open; until it exists, use the documented

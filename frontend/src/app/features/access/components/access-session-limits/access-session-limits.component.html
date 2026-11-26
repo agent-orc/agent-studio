@@ -1,0 +1,45 @@
+<div class="limits" data-testid="access-session-limits">
+  @if (service.error()) { <p role="alert">{{ service.error() }}</p> }
+  <div class="access-form__row">
+    <label class="access-field">Installation default
+      <select [value]="draft().defaultLifetimeHours" (change)="change('defaultLifetimeHours', $any($event.target).value)">
+        @for (hours of choices; track hours) { <option [value]="hours" [selected]="hours === draft().defaultLifetimeHours">{{ label(hours) }}</option> }
+      </select>
+    </label>
+    <label class="access-field">Owner limit
+      <select [value]="draft().ownerLifetimeHours ?? 0" (change)="change('ownerLifetimeHours', $any($event.target).value)">
+        @for (hours of choices; track hours) { <option [value]="hours" [selected]="hours === (draft().ownerLifetimeHours ?? 0)">{{ label(hours) }}</option> }
+      </select>
+    </label>
+    <label class="access-field">Admin limit
+      <select [value]="draft().adminLifetimeHours ?? 0" (change)="change('adminLifetimeHours', $any($event.target).value)">
+        @for (hours of choices; track hours) { <option [value]="hours" [selected]="hours === (draft().adminLifetimeHours ?? 0)">{{ label(hours) }}</option> }
+      </select>
+    </label>
+    <label class="access-field">Idle limit (hours)
+      <input type="number" min="1" max="168" [value]="draft().idleHours" (input)="change('idleHours', $any($event.target).value)" />
+    </label>
+  </div>
+  <p class="access-hint">Only Owners confirm sessions today. Memory keys allow up to 24 hours; unbound sessions allow up to 8 hours. Renewal does not count as use.</p>
+  <div class="access-form__row">
+    <label class="access-field">Authenticator or recovery code
+      <input type="password" autocomplete="one-time-code" placeholder="Leave empty to use a passkey" [value]="factor()" (input)="factor.set($any($event.target).value)" />
+    </label>
+    <button type="button" class="btn btn--primary" [appPendingButton]="service.busy()" pendingLabel="Saving limits…" (click)="save()">Save session limits</button>
+  </div>
+  <div class="access-form__row">
+    <label class="access-field">Operator agent
+      <select [value]="agentId()" (change)="chooseAgent($any($event.target).value)">
+        <option value="">Choose an agent</option>
+        @for (agent of operators.agents(); track agent.id) { <option [value]="agent.id">{{ agent.name }}</option> }
+      </select>
+    </label>
+    <label class="access-field">Agent lifetime limit
+      <select [value]="agentLimit() ?? 0" (change)="agentLimit.set(+$any($event.target).value || null)">
+        @for (hours of choices; track hours) { <option [value]="hours" [selected]="hours === (agentLimit() ?? 0)">{{ hours === 0 ? 'No additional limit' : label(hours) }}</option> }
+      </select>
+    </label>
+    <button type="button" class="btn btn--secondary" [disabled]="!agentId()" [appPendingButton]="service.busy()" pendingLabel="Saving limit…" (click)="save(true)">Save agent limit</button>
+  </div>
+  @if (saved()) { <p role="status" class="access-hint">Session limits saved and audited.</p> }
+</div>
