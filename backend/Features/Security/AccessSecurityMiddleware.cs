@@ -132,6 +132,7 @@ public sealed class AccessSecurityMiddleware
                 _store.AppendServiceAccountAudit(bound, context.Request.Method, path, 401, path, null, reason: refusal);
                 return;
             }
+            context.Items["OperatorSession.ProofThumbprint"] = thumbprint;
         }
         if (IsHealth(path)) { await _next(context); return; }
         if (!context.Request.IsHttps)
@@ -197,6 +198,12 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
+        // These endpoints enforce the bearer and proof themselves. Neither is activity.
+        if (path is OperatorSessionEndpoints.RenewPath or OperatorSessionEndpoints.StatusPath)
+        {
+            await _next(context);
+            return;
+        }
         context.Items[AttributionClientIdItem] = context.Request.Headers["X-Client-Id"].FirstOrDefault();
         if (path.StartsWith("/api/auth", StringComparison.OrdinalIgnoreCase))
             context.Response.Headers.CacheControl = "no-store";
@@ -207,7 +214,7 @@ public sealed class AccessSecurityMiddleware
         var human = _store.AuthenticateSession(sessionToken);
         var bearer = presentedBearer;
         var runner = _store.AuthenticateRunner(bearer);
-        var serviceAccount = human is null && runner is null ? _store.AuthenticateServiceAccount(bearer) : null;
+        var serviceAccount = human is null && runner is null ? _store.AuthenticateServiceAccount(bearer, recordOperatorUse: false) : null;
         if (HttpMethods.IsGet(context.Request.Method)
             && path.StartsWith("/api/quota/admission/", StringComparison.OrdinalIgnoreCase))
         {
@@ -250,6 +257,8 @@ public sealed class AccessSecurityMiddleware
         // makes is audited, refused calls included. An operator session runs
         // inside its actor scope, so every timeline event and audit entry the
         // request writes names the session (security model SM-1).
+        if (serviceAccount.Operator is not null && bearer is not null)
+            _store.RecordOperatorSessionUse(bearer, context.Connection.RemoteIpAddress?.ToString());
         context.Items[ServiceAccountPrincipalItem] = serviceAccount;
         context.Items["ClientId"] = serviceAccount.ActorId;
         var parameterDigest = await ParameterDigestAsync(context.Request, path);
@@ -257,6 +266,10 @@ public sealed class AccessSecurityMiddleware
         var breakGlass = serviceAccount.Operator is { } emergencyActor
             ? _store.ActiveBreakGlassWindow(emergencyActor.SessionId) : null;
         using var operatorScope = serviceAccount.Operator is { } operatorActor ? OperatorActorScope.Enter(operatorActor) : null;
+        using var streamMonitor = serviceAccount.Operator is not null
+            && (context.WebSockets.IsWebSocketRequest || BrowserOriginPolicy.IsEventStream(path, context.Request.Headers))
+            ? new CancellationTokenSource() : null;
+        var monitor = streamMonitor is null ? Task.CompletedTask : MonitorOperatorConnection(context, bearer!, streamMonitor.Token);
         var faulted = false;
         try
         {
@@ -269,6 +282,7 @@ public sealed class AccessSecurityMiddleware
         }
         finally
         {
+            if (streamMonitor is not null) { await streamMonitor.CancelAsync(); await monitor; }
             var status = faulted ? StatusCodes.Status500InternalServerError : context.Response.StatusCode;
             _store.AppendServiceAccountAudit(serviceAccount, context.Request.Method, path, status,
                 AuditTarget(context, path), parameterDigest.Value, context.Items[OperatorPolicyItem] as OperatorPolicyDecision,
@@ -280,6 +294,17 @@ public sealed class AccessSecurityMiddleware
             // SM-5: the result of a request an approval admitted is recorded against that approval.
             if (context.Items[OperatorApprovalItem] is string approvalId) _store.RecordOperatorApprovalResult(approvalId, status);
         }
+    }
+
+    private async Task MonitorOperatorConnection(HttpContext context, string bearer, CancellationToken stop)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15), _clock);
+            while (await timer.WaitForNextTickAsync(stop))
+                if (_store.AuthenticateOperatorSession(bearer, recordUse: false) is null) { context.Abort(); return; }
+        }
+        catch (OperationCanceledException error) when (stop.IsCancellationRequested) { AgentStudio.Diagnostics.SilentCatch.Note(error, "Operator stream completed"); }
     }
 
     private async Task AuthorizeAsync(

@@ -44,6 +44,10 @@
                 <span class="operations-security__rank" aria-label="Rank">#{{ finding.rank }}</span>
                 <app-status-indicator [tone]="severity(finding.severity).tone" [label]="severity(finding.severity).label + ' · ' + finding.score" [compact]="true" />
                 <span class="operations-security__title"><strong>{{ finding.title }}</strong><small>{{ finding.detail }}</small></span>
+                @if (finding.id.startsWith('credentials:elevated-session:') && auth.status()?.user?.role === 'owner') {
+                  <span><button type="button" class="btn btn--secondary" [appPendingButton]="sessionBusy()" pendingLabel="Keeping…" (click)="reviewSession(finding.subject, 'keep')">Keep</button>
+                  <button type="button" class="btn btn--danger" [disabled]="sessionBusy()" (click)="reviewSession(finding.subject, 'end')">End</button></span>
+                }
                 <span class="operations-security__meta">{{ areaLabel(finding.area) }}@if (finding.actionSoon) { · needs action soon }</span>
               </li>
             }

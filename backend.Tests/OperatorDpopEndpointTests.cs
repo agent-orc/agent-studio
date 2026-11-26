@@ -14,7 +14,7 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 [TestCaseOrderer(SharedHostTestOrder.TypeName, SharedHostTestOrder.AssemblyName)]
-public sealed class OperatorDpopEndpointTests : IClassFixture<NetworkedSecurityEndpointTests.PrivateEdgeHost>
+public sealed partial class OperatorDpopEndpointTests : IClassFixture<NetworkedSecurityEndpointTests.PrivateEdgeHost>
 {
     private readonly NetworkedSecurityEndpointTests.PrivateEdgeHost _host;
     public OperatorDpopEndpointTests(NetworkedSecurityEndpointTests.PrivateEdgeHost host) { _host = host; host.Reset(); }
@@ -104,7 +104,7 @@ public sealed class OperatorDpopEndpointTests : IClassFixture<NetworkedSecurityE
             OperatorDevicePublicKey.Base64Url(point.X!), OperatorDevicePublicKey.Base64Url(point.Y!)), "agent@test", agent.Id, []), "198.51.100.7", "test");
         clock.Advance(TimeSpan.FromSeconds(30));
         store.VerifyStepUp(human, SecondFactorCodes.CurrentTotp(totp, clock.GetUtcNow().UtcDateTime));
-        store.ConfirmOperatorSignIn(new ConfirmOperatorSignInRequest(start.UserCode, agent.Id, [], 1), human, "198.51.100.7");
+        store.ConfirmOperatorSignIn(new ConfirmOperatorSignInRequest(start.UserCode, agent.Id, [], 8), human, "198.51.100.7");
         var token = store.PollOperatorSignIn(start.PollHandle).Token!;
 
         return (factory, store, owner.SessionToken, agent.Id, token, key, clock);

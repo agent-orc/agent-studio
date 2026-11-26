@@ -1405,6 +1405,8 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
 
     private void SaveLocked(SecurityState state)
     {
+        var factorEnded = EndConfirmedOperatorSessionsLocked(state, (_, session) => !ConfirmingPersonHasFactor(state, session), Now, null);
+        var factorCancelled = CancelEndedSessionApprovalsLocked(state, factorEnded, Now, "confirming person has no second factor");
         Directory.CreateDirectory(SecurityFolder);
         RestrictDirectoryPermissions(SecurityFolder);
         var temp = StatePath + ".tmp";
@@ -1415,6 +1417,7 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
         File.Move(temp, StatePath, true);
         RestrictPermissions(StatePath);
         _state = state;
+        AuditEndedSignInSessions(null, factorEnded, "confirming person has no second factor", factorCancelled);
     }
 
     private const string TotpPrefix = "sealed:v1:";

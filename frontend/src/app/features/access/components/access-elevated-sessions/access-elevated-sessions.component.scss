@@ -1,0 +1,7 @@
+@use '../../access-controls' as access;
+:host { display: block; min-width: 0; }
+@include access.standard;
+.elevated { display: grid; gap: var(--studio-spacing-3); }
+.elevated__facts { display: flex; flex-direction: column; gap: var(--studio-spacing-1); overflow-wrap: anywhere; white-space: normal; }
+.elevated__numeric { font-variant-numeric: tabular-nums; }
+.elevated__notice { color: var(--studio-fg-dim); margin-block: var(--studio-spacing-2); }

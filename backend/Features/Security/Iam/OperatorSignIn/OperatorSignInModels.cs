@@ -25,7 +25,9 @@ public sealed record OperatorSignIn
     public required string KeyThumbprint { get; init; }
     public string BindingKind { get; init; } = "memory";
     public string? DeviceKeyThumbprint { get; init; }
+    public OperatorDevicePublicKey? DevicePublicKey { get; init; }
     public bool CertificationAttempted { get; init; }
+    public int? RequestedLifetimeHours { get; init; }
     public required string DeviceLabel { get; init; }
     /// <summary>The operator agent the terminal asked for, by id or name, as it sent it.</summary>
     public string? RequestedAgent { get; init; }
@@ -94,6 +96,7 @@ public sealed record OperatorSessionDevice
     public required string ConfirmingSessionId { get; init; }
     public string BindingKind { get; init; } = "memory";
     public string? DeviceKeyThumbprint { get; init; }
+    public OperatorDevicePublicKey? DevicePublicKey { get; init; }
     public required string SignInId { get; init; }
 }
 
@@ -164,7 +167,7 @@ public static class OperatorSignInCodes
 }
 
 public sealed record StartOperatorSignInRequest(
-    OperatorDevicePublicKey? PublicKey, string? DeviceLabel, string? OperatorAgent, IReadOnlyList<string>? Classes);
+    OperatorDevicePublicKey? PublicKey, string? DeviceLabel, string? OperatorAgent, IReadOnlyList<string>? Classes, int? LifetimeHours = null);
 
 public sealed record StartOperatorSignInResponse(
     string SignInId, string UserCode, string VerificationUri, string VerificationUriComplete, string PollHandle,
@@ -185,14 +188,14 @@ public sealed record PollOperatorSignInResponse(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DelegatedBy = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTime? ExpiresAt = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Classes = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? KeyThumbprint = null, string BindingKind = "memory");
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? KeyThumbprint = null, string BindingKind = "memory", DateTime? ChosenEnd = null, DateTime? KeyExpiresAt = null, DateTime? IdleEnd = null);
 
 public sealed record OperatorSignInCodeRequest(string? Code);
 
 public sealed record ConfirmOperatorSignInRequest(
     string? Code, string? OperatorAgentId, IReadOnlyList<string>? Classes, int? LifetimeHours);
 
-public sealed record OperatorSignInAgentOption(string Id, string Name);
+public sealed record OperatorSignInAgentOption(string Id, string Name, IReadOnlyList<int>? LifetimeHours = null, int DefaultLifetimeHours = 8);
 
 public sealed record OperatorSignInClassResponse(string Id, string Title, string Mode);
 
@@ -205,7 +208,7 @@ public sealed record OperatorSignInLookupResponse(
     IReadOnlyList<OperatorSignInAgentOption> Agents, string BindingKind = "memory", string? DeviceKeyThumbprint = null);
 
 public sealed record ConfirmOperatorSignInResponse(
-    string SignInId, string OperatorAgentId, string SessionId, string Actor, DateTime ExpiresAt, IReadOnlyList<string> Classes);
+    string SignInId, string OperatorAgentId, string SessionId, string Actor, DateTime ExpiresAt, IReadOnlyList<string> Classes, DateTime? ChosenEnd = null, int? ChosenLifetimeHours = null);
 
 public sealed record OperatorSessionDeviceResponse(
     string DeviceId, string Label, string KeyThumbprint, string? RequestedAddress, string? ConfirmedAddress, string SignInId, string BindingKind = "memory", string? DeviceKeyThumbprint = null);

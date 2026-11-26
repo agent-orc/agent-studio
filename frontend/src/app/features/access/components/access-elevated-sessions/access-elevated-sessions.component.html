@@ -1,0 +1,29 @@
+<div class="elevated" data-testid="access-elevated-sessions">
+  <div class="access-form__actions">
+    <button type="button" class="btn btn--danger" [disabled]="!rows().length" [appPendingButton]="pendingAction() === 'end-all'" pendingLabel="Ending sessions…" (click)="act(null, 'end-all')">End all elevated sessions</button>
+  </div>
+  @if (error()) { <p role="alert">{{ error() }}</p> }
+  <app-data-grid label="Elevated sessions" [columns]="columns" [rows]="rows()" [rowId]="rowId" [stackActionsOnNarrow]="true">
+    <ng-template appGridCell="identity" [appGridCellOf]="rows()" let-row>
+      <div class="elevated__facts"><strong>{{ row.agent }}</strong><span>{{ row.session.device?.label ?? row.session.name }}</span><span class="access-hint">{{ row.session.device ? binding(row.session.device.bindingKind) : 'Unbound' }}</span>
+        @if (row.session.newAddressAt) { <app-status-indicator tone="neutral" label="New renewal address" [compact]="true" /> }
+      </div>
+    </ng-template>
+    <ng-template appGridCell="lifetime" [appGridCellOf]="rows()" let-row>
+      <div class="elevated__facts"><strong>{{ lifetime(row.session.chosenLifetimeHours) }}</strong><span>End: {{ row.session.chosenEnd ? time(row.session.chosenEnd) : 'Until revoked' }}</span><span class="access-hint">{{ person(row.session.createdBy) }} · {{ time(row.session.createdAt) }}</span></div>
+      @if (row.session.reviewDue) { <p class="elevated__notice">Elevated session running 30 days</p><button type="button" class="btn btn--secondary" [disabled]="busy()" [appPendingButton]="pendingAction() === row.id + ':keep'" pendingLabel="Keeping…" (click)="act(row, 'keep')">Keep</button> }
+    </ng-template>
+    <ng-template appGridCell="activity" [appGridCellOf]="rows()" let-row>
+      <div class="elevated__facts elevated__numeric"><span>Last use: {{ row.session.lastUsedAt ? time(row.session.lastUsedAt) : 'No requests yet' }}</span><span>Address: {{ row.session.lastAddress ?? 'Unknown' }}</span><span>Idle end: {{ row.session.idleEnd ? time(row.session.idleEnd) : 'None' }}</span><span>Renewal: {{ row.session.renewedAt ? time(row.session.renewedAt) : 'Not renewed' }}</span></div>
+      @if (row.session.newAddressAt) { <p class="access-hint">{{ row.session.device?.label }} renewed from an address this session had not used before.</p> }
+    </ng-template>
+    <ng-template appGridCell="actions" [appGridCellOf]="rows()" let-row>
+      <div class="access-form__actions">
+        <button type="button" class="btn btn--danger" [disabled]="busy()" [appPendingButton]="pendingAction() === row.id + ':end'" pendingLabel="Ending…" (click)="act(row, 'end')">End session</button>
+        <button type="button" class="btn btn--secondary" [disabled]="busy() || !row.session.classes?.length" [appPendingButton]="pendingAction() === row.id + ':end-elevation'" pendingLabel="Ending elevation…" (click)="act(row, 'end-elevation')">End elevation</button>
+        @if (row.session.device) { <button type="button" class="btn btn--danger" [disabled]="busy()" [appPendingButton]="pendingAction() === row.id + ':forget'" pendingLabel="Forgetting…" (click)="act(row, 'forget')">Forget device</button> }
+      </div>
+    </ng-template>
+    <p gridEmpty class="access-hint">No live sessions with classes or a lifetime longer than 8 hours.</p>
+  </app-data-grid>
+</div>

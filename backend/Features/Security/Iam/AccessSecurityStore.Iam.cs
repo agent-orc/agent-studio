@@ -137,10 +137,10 @@ public sealed partial class AccessSecurityStore
     /// API token. An API token stays valid only while its creator is an active
     /// user, as before its migration.
     /// </summary>
-    public ServiceAccountPrincipal? AuthenticateServiceAccount(string? bearer)
+    public ServiceAccountPrincipal? AuthenticateServiceAccount(string? bearer, bool recordOperatorUse = true)
     {
         if (bearer?.StartsWith(OperatorSessionTokenPrefix + ".", StringComparison.Ordinal) == true)
-            return AuthenticateOperatorSession(bearer);
+            return AuthenticateOperatorSession(bearer, recordOperatorUse);
         var prefix = bearer?.StartsWith("api.", StringComparison.Ordinal) == true ? "api" : "sat";
         if (!TryTokenParts(bearer, prefix, out var tokenId)) return null;
         lock (_gate)

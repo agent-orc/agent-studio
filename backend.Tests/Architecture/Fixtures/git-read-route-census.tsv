@@ -25,7 +25,6 @@
 /api/auth/audit/factors	free	-	-	-
 /api/auth/audit/operator-activity	free	-	-	-
 /api/auth/directory	free	-	-	-
-/api/auth/invite/preview	free	-	-	-
 /api/auth/iam/	free	-	-	-
 /api/auth/iam/break-glass/windows	free	-	-	-
 /api/auth/iam/check	free	-	-	-
@@ -33,7 +32,10 @@
 /api/auth/iam/operator-approvals/	free	-	-	-
 /api/auth/iam/operator-catalogue	free	-	-	-
 /api/auth/iam/operator-kill-switch/	free	-	-	-
+/api/auth/iam/session-limits	free	-	-	-
 /api/auth/iam/standing-grants/	free	-	-	-
+/api/auth/invite/preview	free	-	-	-
+/api/auth/operator-session/status	free	-	-	-
 /api/auth/runner	free	-	-	-
 /api/auth/runner-enrollments	free	-	-	-
 /api/auth/runners	free	-	-	-
@@ -101,15 +103,6 @@
 /api/filesystem-layer/snapshot	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
 /api/first-run/git-setups/{id}	free	-	-	-
 /api/first-run/projects/{projectId}/repository	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
-/api/magazine	free	-	-	-
-/api/magazine/{scope}/{slug}	free	-	-	-
-/api/magazine/{scope}/{slug}/history	free	-	-	-
-/api/model-selection/active	free	-	-	-
-/api/model-selection/effective	free	-	-	-
-/api/model-selection/drill	free	-	-	-
-/api/model-selection/active	free	-	-	-
-/api/model-selection/policy	free	-	-	-
-/api/model-selection/events	free	-	-	-
 /api/gate-artifacts/{runId}	free	-	-	-
 /api/gate-artifacts/{runId}/{name}	free	-	-	-
 /api/gate-economics	free	-	-	-
@@ -131,6 +124,15 @@
 /api/integrations/quality-studio/connection	free	-	-	-
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-
+/api/magazine	free	-	-	-
+/api/magazine/{scope}/{slug}	free	-	-	-
+/api/magazine/{scope}/{slug}/history	free	-	-	-
+/api/model-selection/active	free	-	-	-
+/api/model-selection/active	free	-	-	-
+/api/model-selection/drill	free	-	-	-
+/api/model-selection/effective	free	-	-	-
+/api/model-selection/events	free	-	-	-
+/api/model-selection/policy	free	-	-	-
 /api/operator/attention	free	-	-	-
 /api/operator/backups	free	-	-	-
 /api/operator/batch-triage	free	-	-	-
@@ -238,8 +240,6 @@
 /api/projects/{projectName}/design/references/{fileName}	free	-	-	-
 /api/projects/{projectName}/dispatch/overlap-evidence	free	-	-	-
 /api/projects/{projectName}/dispatch/overlap-window	free	-	-	-
-/api/projects/{project}/dispatch/forecasts	free	-	-	-
-/api/projects/{project}/dispatch/hub-files	free	-	-	-
 /api/projects/{projectName}/environments	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/health	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/databases/	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
@@ -257,10 +257,10 @@
 /api/projects/{projectName}/incident-webhook	free	-	-	-
 /api/projects/{projectName}/lane-sort-strategies	free	-	-	-
 /api/projects/{projectName}/operator-sweeps	free	-	-	-
-/api/projects/{projectName}/post-work/shadow	free	-	-	-
 /api/projects/{projectName}/pipeline-definition	reachable	gap	Pipeline	Pipeline reads from the Git fact store
 /api/projects/{projectName}/pipeline-definition/migration	reachable	gap	Pipeline	Pipeline reads from the Git fact store
 /api/projects/{projectName}/pipeline-health	free	-	-	-
+/api/projects/{projectName}/post-work/shadow	free	-	-	-
 /api/projects/{projectName}/previews/{cardKey}/screenshot	free	-	-	-
 /api/projects/{projectName}/proposals	free	-	-	-
 /api/projects/{projectName}/proposals/evidence/{**relPath}	free	-	-	-
@@ -325,6 +325,8 @@
 /api/projects/{project}/chat/search	free	-	-	-
 /api/projects/{project}/chat/stats	free	-	-	-
 /api/projects/{project}/chat/turn/{turnId}	free	-	-	-
+/api/projects/{project}/dispatch/forecasts	free	-	-	-
+/api/projects/{project}/dispatch/hub-files	free	-	-	-
 /api/projects/{project}/environments/{environment}/secrets/	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{project}/environments/{environment}/secrets/{name}	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{project}/interventions	free	-	-	-
@@ -348,11 +350,11 @@
 /api/runner/orchestrator-feed	reachable	measured-zero	-	-
 /api/runner/post-merge/projects	free	-	-	-
 /api/runner/post-merge/projects/{project}	free	-	-	-
-/api/runner/release-candidates/{project}/{commit}	reachable	gap	Deploy and environments	Release candidate plan from Task Server source facts
 /api/runner/project-chat/status	free	-	-	-
 /api/runner/project-chat/usage	free	-	-	-
 /api/runner/project:{projectId}/orchestrator-chat	reachable	frozen	Orchestrator chat	Context from published Git facts
 /api/runner/queue-starvation	free	-	-	-
+/api/runner/release-candidates/{project}/{commit}	reachable	gap	Deploy and environments	Release candidate plan from Task Server source facts
 /api/runner/status	free	-	-	-
 /api/runner/task:{projectId}/{taskKey}/orchestrator-chat	reachable	frozen	Orchestrator chat	Context from published Git facts
 /api/runner/token-summary-aggregate	free	-	-	-
@@ -511,14 +513,14 @@
 /api/workspaces/{id}/personas/decks	free	-	-	-
 /api/workspaces/{id}/personas/decks/{deckId}	free	-	-	-
 /api/workspaces/{id}/personas/decks/{deckId}/export	free	-	-	-
+/api/workspaces/{id}/personas/issues	free	-	-	-
+/api/workspaces/{id}/personas/issues/{issueId}	free	-	-	-
+/api/workspaces/{id}/personas/issues/{issueId}/export	free	-	-	-
 /api/workspaces/{id}/personas/items	free	-	-	-
 /api/workspaces/{id}/personas/items/{itemId}	free	-	-	-
 /api/workspaces/{id}/personas/manager-actions	free	-	-	-
 /api/workspaces/{id}/personas/reports	free	-	-	-
 /api/workspaces/{id}/personas/reports/ratings	free	-	-	-
-/api/workspaces/{id}/personas/issues	free	-	-	-
-/api/workspaces/{id}/personas/issues/{issueId}	free	-	-	-
-/api/workspaces/{id}/personas/issues/{issueId}/export	free	-	-	-
 /api/workspaces/{id}/personas/{personaId}/sheet	free	-	-	-
 /api/workspaces/{id}/settings	free	-	-	-
 /api/workspaces/{workspaceId}/decision-rules/	free	-	-	-

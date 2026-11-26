@@ -33,6 +33,10 @@ public sealed partial class AccessSecurityStore
             var next = Copy(StateLocked());
             if (actor.OwnerId is not null) RequireActiveOwnerLocked(next, actor.OwnerId);
             var now = Now;
+            if (agentIds is null)
+                for (var index = 0; index < next.OperatorSignIns.Count; index++)
+                    if (IsOpenSignIn(next.OperatorSignIns[index]))
+                        next.OperatorSignIns[index] = next.OperatorSignIns[index] with { State = OperatorSignInStates.Denied, DecidedAt = now };
             var targets = next.ServiceAccounts.Where(account => IsOperatorPrincipal(account)
                 && (agentIds is null || agentIds.Contains(account.Id, StringComparer.Ordinal))).ToList();
             if (agentIds is not null && targets.Count != agentIds.Distinct(StringComparer.Ordinal).Count())

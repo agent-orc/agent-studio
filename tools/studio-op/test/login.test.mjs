@@ -88,7 +88,7 @@ test('login writes the confirmed session to operator-session with mode 600 and n
   const home = makeHome();
   const hardwareDeviceKeys = { win32: false, darwin: false, linux: false };
   fs.writeFileSync(path.join(home, '.config', 'agent-studio', 'studio-op.json'), JSON.stringify({ hardwareDeviceKeys }));
-  const result = await run(['login', '--agent', 'ops console', '--label', 'agent@workstation', '--class', 'project.testing', '--json'],
+  const result = await run(['login', '--agent', 'ops console', '--label', 'agent@workstation', '--class', 'project.testing', '--lifetime', '24h', '--json'],
     home, studio.url);
   assert.equal(result.code, 0, result.stderr);
   assert.equal(result.json.ok, true);
@@ -110,6 +110,7 @@ test('login writes the confirmed session to operator-session with mode 600 and n
 
   const [start] = studio.requests;
   assert.equal(start.authorization, null);
+  assert.equal(start.body.lifetimeHours, 24);
   assert.deepEqual(Object.keys(start.body.publicKey).sort(), ['crv', 'kty', 'x', 'y']);
   assert.equal(start.body.publicKey.crv, 'P-256');
   assert.deepEqual([start.body.deviceLabel, start.body.operatorAgent, start.body.classes], ['agent@workstation', 'ops console', ['project.testing']]);

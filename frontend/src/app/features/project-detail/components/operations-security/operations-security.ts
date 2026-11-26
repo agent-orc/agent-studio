@@ -1,7 +1,9 @@
 import { DatePipe } from '@angular/common';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, output, signal } from '@angular/core';
-import { Subscription, take } from 'rxjs';
+import { firstValueFrom, Subscription, take } from 'rxjs';
+import { AuthService } from '../../../../services/auth.service';
+import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { OperationsCardLookupService, type OperationsCardTarget } from '../../state/operations-card-lookup.service';
@@ -20,7 +22,7 @@ export const SECURITY_POSTURE_URL = '/api/security/posture';
  */
 @Component({
   selector: 'app-operations-security', standalone: true,
-  imports: [DatePipe, LoadingSurfaceComponent, StatusIndicatorComponent, OperationsSecurityFactsComponent],
+  imports: [PendingButtonDirective, DatePipe, LoadingSurfaceComponent, StatusIndicatorComponent, OperationsSecurityFactsComponent],
   templateUrl: './operations-security.html', styleUrl: './operations-security.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -30,6 +32,8 @@ export class OperationsSecurityComponent {
   private generation = 0;
   private cardRead = new Subscription();
   readonly openTask = output<OperationsCardTarget>();
+  readonly auth = inject(AuthService);
+  readonly sessionBusy = signal(false);
   readonly posture = signal<SecurityPosture | null>(null);
   readonly error = signal<string | null>(null);
   /** No permission or no route (public demo): the section renders nothing. */
@@ -58,6 +62,17 @@ export class OperationsSecurityComponent {
         this.error.set('The security view could not be loaded.');
       },
     });
+  }
+
+  async reviewSession(subject: string | null | undefined, action: 'keep' | 'end'): Promise<void> {
+    if (!subject || this.sessionBusy()) return;
+    const [agentId, sessionId] = subject.split(':');
+    this.sessionBusy.set(true);
+    try {
+      await firstValueFrom(this.http.post(`/api/auth/iam/operator-agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/actions/${action}`, {}));
+      this.load();
+    } catch { this.error.set('The session action failed. Try again.'); }
+    finally { this.sessionBusy.set(false); }
   }
 
   /** A later card click replaces a lookup that has not answered yet. */

@@ -12,7 +12,7 @@ namespace AgentStudio.Tests;
 /// by score, and the action-soon highlight. Pure projection over
 /// <see cref="SecurityPostureFacts"/>.
 /// </summary>
-public sealed class SecurityPostureProjectionTests
+public sealed partial class SecurityPostureProjectionTests
 {
     private static readonly DateTime Now = new(2026, 11, 9, 12, 0, 0, DateTimeKind.Utc);
 
