@@ -44,7 +44,10 @@ public static class DispatchPlanPolicy
         var marked = marks.Select(mark => mark.CardKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var subjects = ordered.ToDictionary(card => card.Key,
             card => Subject.Of(card, marked.Contains(card.Key), rules), StringComparer.OrdinalIgnoreCase);
-        var edges = Chains(ordered, subjects, rules, persona);
+        var satisfied = (facts.SatisfiedDependencies ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var retained = (facts.ActiveDependencies ?? []).Where(edge => subjects.ContainsKey(edge.CardKey)
+            && !satisfied.Contains(edge.DependsOn)).ToArray();
+        var edges = Chains(ordered, subjects, rules, persona, retained);
         var chained = edges.Select(edge => edge.CardKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var order = ordered.Select((card, index) => new DispatchOrderEntry(index + 1, card.Key, card.PriorityClass,
@@ -55,6 +58,8 @@ public static class DispatchPlanPolicy
             .ToArray();
         var eligible = order.Where(entry => entry.State == DispatchCandidateState.Eligible)
             .Select(entry => subjects[entry.CardKey]).ToList();
+        var pickupEligible = eligible.Where(card => facts.PickupCandidates is null
+            || facts.PickupCandidates.Contains(card.Key, StringComparer.OrdinalIgnoreCase)).ToList();
 
         var comparison = facts.InFlight
             .Where(card => facts.OverlapWindow == DispatchOverlapWindow.InFlight || card.HoldsSlot)
@@ -62,7 +67,7 @@ public static class DispatchPlanPolicy
         var admitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var slots = new List<DispatchSlotDecision>();
         for (var slot = 1; slot <= Math.Max(0, facts.FreeSlots); slot++)
-            slots.Add(DecideSlot(slot, eligible, admitted, comparison, rules));
+            slots.Add(DecideSlot(slot, pickupEligible, admitted, comparison, rules));
 
         var (holds, releases) = Holds(facts, eligible, admitted, comparison, rules);
         return new DispatchPlan(facts.Project, definition.Id, strategy.Revision, persona,
@@ -164,6 +169,7 @@ public static class DispatchPlanPolicy
     /// </summary>
     private static Verdict Check(Subject candidate, IReadOnlyList<Subject> others, Rules rules)
     {
+        others = others.Where(other => !other.Key.Equals(candidate.Key, StringComparison.OrdinalIgnoreCase)).ToArray();
         var exclusive = others.FirstOrDefault(other => other.Exclusive);
         if (exclusive is not null)
             return new Verdict(false, DispatchReasonCodes.ExclusiveRunning, exclusive.Key);
@@ -215,12 +221,13 @@ public static class DispatchPlanPolicy
     /// edge; an existing edge or a cycle with existing edges skips the edge.
     /// </summary>
     private static IReadOnlyList<DispatchDependencyEdge> Chains(IReadOnlyList<DispatchReadyCard> ordered,
-        IReadOnlyDictionary<string, Subject> subjects, Rules rules, string persona)
+        IReadOnlyDictionary<string, Subject> subjects, Rules rules, string persona, IReadOnlyList<DispatchDependencyEdge> retained)
     {
-        var edges = new List<DispatchDependencyEdge>();
+        var edges = retained.ToList();
         var graph = ordered.ToDictionary(card => card.Key,
             card => new HashSet<string>(card.DependsOn ?? [], StringComparer.OrdinalIgnoreCase),
             StringComparer.OrdinalIgnoreCase);
+        foreach (var edge in retained) graph[edge.CardKey].Add(edge.DependsOn);
         var waves = ordered.Where(card => card.Source is not null && !string.IsNullOrWhiteSpace(card.Source.WaveId))
             .GroupBy(card => card.Source!.WaveId.Trim(), StringComparer.OrdinalIgnoreCase)
             .OrderBy(wave => wave.Key, StringComparer.Ordinal);

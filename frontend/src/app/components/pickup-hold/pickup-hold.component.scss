@@ -116,3 +116,11 @@
   border-radius: 8px;
   background: color-mix(in srgb, var(--studio-fg-dim) 3%, var(--studio-bg-elevated));
 }
+
+.pickup-hold__position {
+  display: inline-block;
+  color: var(--studio-fg-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  margin-block-end: var(--studio-spacing-1);
+}

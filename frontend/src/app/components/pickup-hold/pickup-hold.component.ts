@@ -58,7 +58,7 @@ export class PickupHoldComponent {
   readonly variant = input<PickupHoldVariant>('card');
 
   readonly hold = computed<PickupHoldStatus | null>(() =>
-    effectivePickupHold(this.task(), this.remoteHosts?.hosts() ?? []));
+    effectivePickupHold(this.task(), this.remoteHosts?.hosts() ?? [], this.now()));
 
   /** `open` for an honest wait, `blocked` for a gate that can never open. */
   readonly tone = computed<PickupHoldTone>(() => ((this.hold()?.classification === 'unsatisfiable' || this.hold()?.unsatisfiable) ? 'blocked'

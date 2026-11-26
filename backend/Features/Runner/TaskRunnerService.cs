@@ -18,6 +18,9 @@ public class TaskRunnerService : BackgroundService
     private readonly ILogger<TaskRunnerService> _logger;
     private readonly TaskScannerService _scanner;
     private readonly TaskIntegrationStatusService? _dependencyIntegration;
+    public AgentStudio.OrchestrationDecisions.DispatchPickupDecision? DispatchPresentation(TaskInfo card)
+        => _overlapGuard?.Presentation(card);
+
     private readonly OverlapDispatchGuard? _overlapGuard;
     private readonly TaskListGitProjectionCache? _dependencyGitProjection;
     private readonly TaskStateMachine _states;

@@ -20,6 +20,7 @@ namespace AgentStudio.Runner;
 /// </summary>
 public sealed record RunRecord
 {
+    public string? DispatchDecisionId { get; init; }
     /// <summary>1-based chronological index in the session.</summary>
     public int Index { get; init; }
     /// <summary><c>start</c> | <c>continue</c> | <c>recovery</c> | <c>restart</c>.</summary>
@@ -718,6 +719,7 @@ public static class RunTimelineBuilder
                 Trigger = evt.Trigger,
                 TriggeredBy = evt.TriggeredBy,
                 TriggerReason = evt.TriggerReason,
+                DispatchDecisionId = evt.DispatchDecisionId,
                 TriggerSource = evt.TriggerSource,
                 StartedAt = evt.Ts,
                 EndedAt = endedAt,

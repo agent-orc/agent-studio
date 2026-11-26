@@ -96,7 +96,7 @@ public sealed partial class DispatchStore
             var entry = new DispatcherLogEntryV1(record.DecisionId, plan.Project, plan.Persona, "action-admitted",
                 record.EvaluationId, record.At, record.DecisionId, plan.StrategyId, plan.StrategyRevision,
                 rule, record.FactsDigest, passed, passed.Select(p => p.Detail).OfType<string>().Distinct().ToArray(),
-                reason, true, null, previous, "");
+                reason, record.Shadow, null, previous, "");
             entry = entry with { Digest = LogDigest(entry) };
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             Write(recordPath, record);

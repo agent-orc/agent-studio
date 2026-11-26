@@ -39,6 +39,92 @@ public sealed class DispatchEndpointTests : IDisposable
         });
     }
 
+    [Theory]
+    [InlineData("local")]
+    [InlineData("remote-claim")]
+    public async Task Live_pickup_uses_stored_forecasts_for_candidate_and_delivery_exposure(string path)
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        index.GetSnapshot();
+        var card = factory.Services.GetRequiredService<TaskScannerService>().FindJob("sample", Watch)!;
+        var projects = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
+        var project = projects.FindByIdOrDisplayName(card.ProjectName)!;
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 11, 1, 12, 0, 0, TimeSpan.Zero));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["Security:Profile"] = "networked", ["TaskRepository"] = Path.Combine(_root, "isolated-security"), ["Secrets:KeyFile"] = Path.Combine(_root, "test.kek") }).Build();
+        var security = new AgentStudio.Security.AccessSecurityStore(config,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentStudio.Security.AccessSecurityStore>.Instance, clock);
+        var bootstrap = security.Bootstrap(new("dispatch.owner", "correct horse battery staple!", null));
+        var owner = security.AuthenticateSession(bootstrap.SessionToken)!;
+        var secret = security.BeginTotpEnrollment(owner);
+        security.ConfirmTotpEnrollment(owner, AgentStudio.Security.SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
+        clock.Advance(TimeSpan.FromSeconds(30));
+        security.VerifyStepUp(owner, AgentStudio.Security.SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
+        var activations = new AgentStudio.Personas.PersonaActivationStore(null, new(), security, _ => project.WorkspaceId, clock);
+        var activation = activations.Activate(project.WorkspaceId, "area-warden", new(), owner);
+        clock.SetUtcNow(new DateTimeOffset(activation.ShadowUntil, TimeSpan.Zero).AddMinutes(1));
+        var settings = factory.Services.GetRequiredService<ProjectSettingsService>();
+        settings.SetDispatchMode(card.ProjectName, "live");
+        var store = factory.Services.GetRequiredService<DispatchStore>();
+        Assert.NotNull(store.AcquireLease(card.ProjectName, "area-warden", 0, clock.GetUtcNow(), TimeSpan.FromHours(1), true, true, true));
+        const string file = "backend/Features/Tasks/Shared.cs";
+        store.Write(card.ProjectName, card.TaskKey, new([file], [file, "backend/Host/Program.cs"], ["backend/Features/Tasks"], [], "high", "v1"));
+        store.Write(card.ProjectName, "C", new([file], [file], ["backend/Features/Tasks"], [], "high", "v1"));
+        var dispatchers = new DispatcherShadowService(store, activations, projects, index, settings, clock,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<DispatcherShadowService>.Instance);
+        var guard = new AgentStudio.Runner.OverlapDispatchGuard(clock,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentStudio.Runner.OverlapDispatchGuard>.Instance,
+            new AgentStudio.Runner.OverlapPredictionLedger(Path.Combine(_root, "predictions")), dispatchers);
+        Assert.Equal(new[] { file }, guard.Predict(card).PredictedScope);
+        var exposed = new AgentStudio.Runner.InFlightTask("C", new(false, ["unrelated-prompt.cs"]), TaskStates.AutoReview) { CardKey = "C" };
+        var held = guard.Decide(card, [], [exposed], 1, "off", path, "develop");
+        Assert.False(held.Admitted);
+        Assert.Contains("C", held.Reason);
+        Assert.NotNull(held.DispatchDecisionId);
+        var liveEvaluation = store.ReadLive(card.ProjectName)!.Record;
+        var shadowEvaluation = store.ReadShadow(card.ProjectName).Last(r => r.Shadow);
+        Assert.Equal(shadowEvaluation.EvaluationId, liveEvaluation.EvaluationId);
+        Assert.Equal(shadowEvaluation.FactsDigest, liveEvaluation.FactsDigest);
+        Assert.Equal(held.DispatchDecisionId, Assert.Single(store.ReadRunDecisions(card.ProjectName)).DecisionId);
+        var admitted = guard.Decide(card, [], [], 1, "off", path, "develop");
+        Assert.True(admitted.Admitted);
+        guard.Claimed(card, "attempt");
+        Assert.Equal(admitted.DispatchDecisionId, store.AdmittingDecision(card.ProjectName, card.Key ?? card.TaskKey));
+        Assert.True(guard.ValidateLive(card));
+        var live = store.ReadLive(card.ProjectName)!;
+        Assert.True(store.WriteLive(live with { Record = live.Record with { Plan = live.Record.Plan with {
+            ExclusiveMarks = [new(card.Key ?? card.TaskKey, "over-module-limit", "four modules")] } } }, clock.GetUtcNow()));
+        Assert.True(guard.Predict(card).Exclusive);
+        var lease = store.ReadLease(card.ProjectName)!;
+        store.ReleaseLease(card.ProjectName, lease.Persona, lease.Fence, clock.GetUtcNow());
+        Assert.False(guard.ValidateLive(card));
+        settings.SetDispatchMode(card.ProjectName, "shadow");
+        Assert.True(guard.Decide(card, [], [exposed], 1, "off", path, "develop").Admitted);
+        settings.SetDispatchMode(card.ProjectName, "off");
+        var records = store.ReadShadow(card.ProjectName).Count;
+        Assert.True(guard.Decide(card, [], [exposed], 1, "off", path, "develop").Admitted);
+        Assert.Equal(records, store.ReadShadow(card.ProjectName).Count);
+    }
+
+    [Fact]
+    public async Task Dispatch_mode_defaults_to_shadow_and_persists_only_known_modes()
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        const string route = "/api/projects/Forecast%20Project/dispatch/mode";
+        Assert.Equal("shadow", (await client.GetFromJsonAsync<JsonElement>(route)).GetProperty("mode").GetString());
+        foreach (var mode in new[] { "off", "live", "shadow" })
+        {
+            (await client.PutAsJsonAsync(route, new DispatchModeRequest(mode))).EnsureSuccessStatusCode();
+            Assert.Equal(mode, factory.Services.GetRequiredService<ProjectSettingsService>().Get("Forecast Project").DispatchMode);
+        }
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync(route, new DispatchModeRequest("automatic"))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/projects/missing/dispatch/mode")).StatusCode);
+    }
+
     [Fact]
     public async Task ForecastReadAndCardDetailExposeTheSameStoredForecast()
     {

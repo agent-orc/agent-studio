@@ -556,6 +556,7 @@ public record TaskInfo
     /// every lane that is not a pickup lane. Never persisted to <c>task.json</c>.
     /// </summary>
     public PickupHoldStatus? PickupHold { get; init; }
+    public int? DispatchPlanPosition { get; init; }
 
     /// <summary>
     /// AGT-2069 — read-time spawn-visibility + spawn-contract projection for a

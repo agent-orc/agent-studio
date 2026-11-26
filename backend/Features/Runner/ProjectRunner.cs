@@ -1653,7 +1653,7 @@ public class ProjectRunner
             }
 
             inFlight ??= CollectInFlight(window);
-            if (_activeRuns.Count > 0 || inFlight.Count > 0)
+            if (_activeRuns.Count > 0 || inFlight.Count > 0 || _overlapGuard.IsLive(ProjectName))
             {
                 var adm = DecideAdmission(candidate.Info, slotMax, inFlight, window);
                 if (!adm.Admitted)
@@ -1753,7 +1753,7 @@ public class ProjectRunner
     /// disjoint from running and in-flight tasks. Shared with the remote claim
     /// through <see cref="TaskScopePrediction"/> (DS-0).
     /// </summary>
-    private static TaskParallelism PredictParallelism(TaskInfo info) => TaskScopePrediction.Predict(info);
+    private TaskParallelism PredictParallelism(TaskInfo info) => _overlapGuard.Predict(info);
 
     /// <summary>
     /// DS-0: the in-flight cards of this project that hold no local slot,
@@ -1798,7 +1798,8 @@ public class ProjectRunner
     {
         var running = _activeRuns.RunningTasks().Select(row =>
             _scanner.FindJob(row.TaskId, Entry.Path) is { } live
-                ? row with { CardKey = live.Key ?? live.TaskKey, Version = OverlapComparisonSet.DeliveryVersion(live) }
+                ? row with { CardKey = live.Key ?? live.TaskKey, Version = OverlapComparisonSet.DeliveryVersion(live),
+                    Parallelism = _overlapGuard.IsLive(ProjectName) ? PredictParallelism(live) : row.Parallelism }
                 : row).ToArray();
         return _overlapGuard.Decide(candidate, running,
             OverlapComparisonSet.For(candidate, inFlight), slotMax, window, "local",
@@ -2933,6 +2934,13 @@ public class ProjectRunner
                 continueMode: mode,
                 triggerMetadata: triggerMetadata);
 
+            if (intent == RunIntent.AutoPickup && _overlapGuard.IsLive(ProjectName))
+            {
+                var dispatchAdmission = DecideAdmission(info, SlotMax(), CollectInFlight(OverlapWindows.InFlight), OverlapWindows.InFlight);
+                if (!dispatchAdmission.Admitted)
+                    return RunOutcome.Reject(new RunRejection(RunRejectReason.ProjectBusy, dispatchAdmission.Reason));
+            }
+
             // Pick<->Start atomicity (ASS-1655): remember whether THIS call is the
             // one that moved the task into 3-progress. Every early return between
             // here and a confirmed CLI start must roll that move back to 2-ready,
@@ -3663,6 +3671,7 @@ public class ProjectRunner
             {
                 Ts = execution.StartedAt,
                 Kind = plan.EventKind,
+                DispatchDecisionId = _overlapGuard.TakeDecisionId(info),
                 Trigger = plan.TriggerMetadata.Trigger,
                 TriggeredBy = plan.TriggerMetadata.TriggeredBy,
                 TriggerReason = plan.TriggerMetadata.TriggerReason,
@@ -9114,12 +9123,11 @@ public class ProjectRunner
         // the gate index is built from the archive-inclusive snapshot. Built
         // once per candidate-list computation, not per card.
         var waitsOnIndex = TaskReferenceIndex.Build(_scanner.ScanAllAutomationJobsWithArchive());
-        return LaneSortApplier.Sort(
+        return _overlapGuard.Order(
                 all.Where(j => j.ProjectName == ProjectName
                                 && j.State == TaskStates.Ready
                                 && IsReadyPickupCandidate(j, intakeEnabled, waitsOnIndex)),
-                TaskStates.Ready,
-                _ => settings)
+                _ => settings, _activeRuns.RunningTasks(), CollectInFlight(OverlapWindows.InFlight))
             .ToList();
     }
 

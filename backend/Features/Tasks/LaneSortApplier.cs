@@ -14,7 +14,8 @@ public static class LaneSortApplier
     public static IEnumerable<TaskInfo> Sort(
         IEnumerable<TaskInfo> jobs,
         string lane,
-        Func<string, ProjectSettings> settingsResolver)
+        Func<string, ProjectSettings> settingsResolver,
+        Func<string, AgentStudio.OrchestrationDecisions.DispatchPlan?>? planResolver = null)
     {
         var byProject = jobs.GroupBy(j => j.ProjectName, StringComparer.OrdinalIgnoreCase)
             .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase);
@@ -27,6 +28,12 @@ public static class LaneSortApplier
             var comparer = LaneSortStrategies.GetComparer(strategy);
             var sorted = group.ToList();
             sorted.Sort(comparer);
+            var plan = lane == TaskStates.Ready && settings.DispatchMode == "live" ? planResolver?.Invoke(group.Key) : null;
+            if (plan is not null)
+            {
+                var positions = plan.Order.ToDictionary(e => e.CardKey, e => e.Position, StringComparer.OrdinalIgnoreCase);
+                sorted = sorted.OrderBy(c => positions.GetValueOrDefault(c.Key ?? c.TaskKey, int.MaxValue)).ToList();
+            }
             result.AddRange(sorted);
         }
         return result;
@@ -42,10 +49,11 @@ public static class LaneSortApplier
     /// </summary>
     public static IReadOnlyList<TaskInfo> PickupOrder(
         IEnumerable<TaskInfo> jobs,
-        Func<string, ProjectSettings> settingsResolver)
+        Func<string, ProjectSettings> settingsResolver,
+        Func<string, AgentStudio.OrchestrationDecisions.DispatchPlan?>? planResolver = null)
     {
         return jobs.GroupBy(j => j.ProjectName, StringComparer.OrdinalIgnoreCase)
-            .SelectMany(group => Sort(group, TaskStates.Ready, settingsResolver)
+            .SelectMany(group => Sort(group, TaskStates.Ready, settingsResolver, planResolver)
                 .Select((job, rank) => (Job: job, Rank: rank)))
             .OrderBy(item => item.Rank)
             .ThenBy(item => item.Job.Order)
