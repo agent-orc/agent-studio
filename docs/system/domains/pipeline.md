@@ -644,9 +644,8 @@ so receipts of older runners stay valid, and the run route bounds them:
   runtime coverage.
 - `focusedRuns[]`: every repeat, control and bisect run and every partial build
   with phase, SHA, test count, exit code and duration, and `durationMs` on each
-  command verdict. These replace the Dossier's unmeasured estimate of a focused
-  run's cost. A short measurement note follows here one week after the slice
-  is deployed.
+  command verdict. The [measurement note](#focused-run-cost-measurement)
+  records a local baseline and defines the first-week receipt cohort.
 - `envelope` on the running and terminal receipt of every window and nightly
   run: digest of the allowlisted variable names passed from the host, digest of
   the declared environment, cgroup kind (`worker`, `daemon`, `process`,
@@ -657,6 +656,48 @@ so receipts of older runners stay valid, and the run route bounds them:
 
 The receipt still feeds the compatibility repair flow in the next section. Quarantine starts,
 covering-folder holds and the triage ladder belong to RT-4 and RT-5.
+
+#### Focused-run cost measurement
+
+The 26 November 2026 delivery check measured the Dossier's previously unmeasured
+test-host startup and discovery cost with one backend method. The reproducible
+recipe is four sequential pairs of the focused command below, each preceded
+by `dotnet build backend.Tests/OrchestratorApi.Tests.csproj --no-restore`:
+
+```sh
+dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter '(Category!=MachineBound)&(FullyQualifiedName=AgentStudio.Tests.PostMergeRunStoreTests.GreenAdvancesLastGreenRedKeepsItAndSkippedRunIsRecorded)'
+```
+
+On the shared Linux runner with SDK 10.0.301 and 12 logical processors, all
+samples passed. The one-minute host load was 12.14 at start and 10.45 at end.
+The measured recipe took 66.09 seconds in total:
+
+| Command | Samples | Median | p95 (nearest rank) | Total |
+|---|---:|---:|---:|---:|
+| Focused test run | 8 | 5.78 s | 6.89 s | 47.72 s |
+| Test-project build | 4 | 4.63 s | 4.85 s | 18.37 s |
+
+This is a warm-cache local baseline at one SHA, outside the post-merge worker
+envelope. It excludes the initial same-tip repeat, tip preparation and full
+build, checkout time, and failure-dependent test work. It measures elapsed
+time, not CPU time or core-minutes. The raw samples, environment, exact commands
+and reproduction script are in AGT-4004's collected results (`focused-cost.json`,
+`cost-sample-*.log`, `measure-focused-cost.py`).
+
+For the first seven days after deployment, use terminal window and nightly
+receipts returned by `GET /api/runner/post-merge/projects/{project}`; retain
+daily exports because the store keeps only 512 receipts. Deduplicate by `id`
+and include only receipts carrying `focusedRuns`; report missing fields from
+older runners separately. Group by run kind, phase and stable envelope fields
+(digests, cgroup, processor count, SDK and shard plan), keeping start and peak
+load alongside the figures. Report counts, median, p95 and total `durationMs` for
+`repeat`, `control`, `bisect`, `control-build` and `bisect-build`, plus summed
+focused-run and partial-build time per incident (`failure.fingerprint`). Sum
+`focusedRuns` once per command execution, rather than `testVerdicts[].attempts`
+where one shared run's duration appears for each test.
+Record the date range, receipt and incident counts, and exclusions alongside
+the figures. A first-week production cohort is not available in this checkout;
+the local baseline cannot establish a production incident budget.
 
 ### Red develop repair (AGT-3312)
 
