@@ -134,7 +134,7 @@ public sealed class DispatchForecastService(TaskScannerService scanner, TaskInde
                                 {
                                     var promptPath = Path.Combine(card.FolderPath, "prompt.md");
                                     var prompt = File.Exists(promptPath) ? File.ReadAllText(promptPath) : "";
-                                    var text = card.Title + "\n" + prompt;
+                                    var text = card.Title + "\n" + prompt + "\n" + string.Join("\n", card.CitedPaths);
                                     var revision = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
                                     if (previous is null || enteredReady || previous.PromptRevision != revision || !previous.HubFiles.SequenceEqual(hubs)
                                         || (card.State == TaskStates.Ready && previous.ReadyEntryAt != card.EnteredLaneAt))

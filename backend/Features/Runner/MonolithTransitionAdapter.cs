@@ -9,6 +9,16 @@ namespace AgentStudio.Runner;
 /// <summary>Host boundary for the shared decision library. No transition rules belong here.</summary>
 public static class MonolithTransitionAdapter
 {
+    public static int DispatchWaveOrder(int requested, int allocated, string? wave)
+        => DispatchWavePolicy.InitialOrder(requested, allocated, wave);
+    public static bool DispatchNeedsWave(int count) => DispatchWavePolicy.NeedsWave(count);
+    public static string DispatchWaveLanding(string requested, string? wave, string mode, bool decision)
+        => DispatchWavePolicy.Landing(requested, wave, mode, decision);
+    public static DispatchPickupDecision DispatchWavePickup(DispatchPickupDecision planned, string? wave, bool complete)
+        => DispatchWavePolicy.Pickup(planned, wave, complete);
+    public static bool DispatchWaveRelease(string mode, bool lease, bool planned, bool packerSettled)
+        => DispatchWavePolicy.MayRelease(mode, lease, planned, packerSettled);
+
     public static DispatchRecutPlan DispatchRecut(DispatchRecutFacts facts) => DispatchRecutPolicy.Plan(facts);
     public static bool DispatchRecutArchive(DispatchRecutArchiveFacts facts) => DispatchRecutPolicy.MayArchive(facts);
     public static string DispatchSourceKind(string source) => DispatchRecutPolicy.SourceKind(source);

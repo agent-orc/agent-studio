@@ -1600,7 +1600,7 @@ public sealed class AccessSecurityMiddleware
             // on every affected task via ProjectAccessAuthorization.AllowsTasks /
             // FilterTasks, so the middleware defers instead of inferring a single
             // project from the literal path segment.
-            if (taskId is "reorder" or "batch-move" or "reference-status" or "acceptance-readiness" or "archive")
+            if (taskId is "batch" or "reorder" or "batch-move" or "reference-status" or "acceptance-readiness" or "archive")
                 return ProjectRouteAddress.DeferredToHandler;
             // A literal route under /api/tasks/ names no task: the board and
             // other collection reads (grouped, code-review/defaults,

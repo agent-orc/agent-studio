@@ -951,6 +951,9 @@ public class TaskScannerService : ITaskScanner
                 Order = raw.TryGetProperty("order", out var ord) && ord.TryGetInt32(out var orderVal) ? orderVal : 999,
                 Agent = raw.TryGetProperty("agent", out var agent) ? agent.GetString() ?? "" : "",
                 CreatedAt = raw.TryGetProperty("createdAt", out var created) && created.TryGetDateTime(out var dt) ? dt : File.GetCreationTime(jobJsonPath),
+                WaveId = raw.TryGetProperty("waveId", out var waveId) ? waveId.GetString() : null,
+                CitedPaths = raw.TryGetProperty("citedPaths", out var citedPaths) && citedPaths.ValueKind == JsonValueKind.Array
+                    ? citedPaths.EnumerateArray().Where(p => p.ValueKind == JsonValueKind.String).Select(p => p.GetString()!).ToArray() : [],
                 CreationSource = raw.TryGetProperty("creationSource", out var creationSource) ? creationSource.GetString() ?? "human" : "human",
                 CreatedBy = raw.TryGetProperty("createdBy", out var createdBy) ? createdBy.GetString() ?? ownerClientId : ownerClientId,
                 WatchPath = entry.Path,

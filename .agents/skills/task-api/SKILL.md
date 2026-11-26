@@ -36,6 +36,29 @@ batch gate triage, preflight and deploy plans), use the
 [operator skill](../operator/SKILL.md) and its `studio-op` CLI instead of
 hand-written scripts.
 
+## Source waves from playthroughs and review findings
+
+Group findings that share a cause file into one card, state which finding must land before which, and emit repository-relative `citedPaths` from the `cause` field (strip line numbers). This instruction applies to playthrough and review-finding card lists.
+
+Submit one source's complete card list with `POST /api/tasks/batch` and
+`{ "cards": [...] }`. Each card accepts `creationSource`, `waveId` and
+`citedPaths`. More than five cards for one source receive a shared
+wave id automatically; an explicit per-card wave id is retained. Use
+`creationSource: "playthrough"` or `"review-findings"` for those sources.
+Retain the response's wave ids and created-card ids. A partial failure reports
+completed cards and the failed index; do not blindly resubmit completed cards.
+
+With `dispatch.mode` set to shadow or live, wave cards land in Backlog.
+After the complete wave has been submitted, call
+`POST /api/projects/{project}/dispatch/waves/{wave}/plan`. Retry an
+`awaiting-forecasts` result once shared forecasts are available. Shadow keeps
+cards in Backlog. Live requires a current dispatcher lease, plans the whole
+wave, applies DS-9 for Packer, and releases the surviving cards to Ready through the task API. A persisted
+release marker keeps local and remote pickup closed until the whole wave is Ready. Retrying planning recovers pending lane moves.
+Use dependency references after keys are known for the stated must-land-first
+relationships; never replace another actor's edges. Do not move wave cards to
+Ready manually to bypass planning.
+
 ## Server contract
 
 ### Sync a developer checkout after integration

@@ -1023,7 +1023,7 @@ public static class TaskCrudEndpoints
             return success ? Results.Ok() : Results.NotFound();
         });
 
-        group.MapPost("/", async (
+        async Task<IResult> CreateTask(
             CreateTaskRequest req,
             HttpContext ctx,
             TaskMutationService mutations,
@@ -1035,7 +1035,7 @@ public static class TaskCrudEndpoints
             QuotaAdmissionService quotaAdmission,
             AgentStudio.Tags.AutoTagCreationWorker autoTag,
             IConfiguration configuration,
-            CancellationToken ct) =>
+            CancellationToken ct)
         {
             if (req.CompatibilityFields?.Keys.Any(key =>
                 string.Equals(key, "epicId", StringComparison.OrdinalIgnoreCase)) == true)
@@ -1058,6 +1058,8 @@ public static class TaskCrudEndpoints
                     return Results.StatusCode(StatusCodes.Status403Forbidden);
                 req = ContributorAccessPolicy.ForProductCreate(req, productUser.Id);
             }
+            if (!AgentStudio.Dispatch.DispatchSourceMetadata.Valid(req))
+                return Results.BadRequest(new { error = "Use a nonempty wave id of at most 200 characters and at most 200 repository-relative cited paths." });
             if (string.IsNullOrWhiteSpace(req.Title))
                 return Results.BadRequest("Title is required");
             if (req.Kind is not null && !TaskKinds.All.Contains(req.Kind.Trim(), StringComparer.OrdinalIgnoreCase))
@@ -1202,7 +1204,40 @@ public static class TaskCrudEndpoints
             return jobId is null
                 ? Results.Conflict("Job already exists or invalid input")
                 : Results.Ok(new { id = jobId, routing = resolvedRouting });
+        }
+
+        group.MapPost("/", CreateTask);
+
+        group.MapPost("/batch", async (CreateTaskBatchRequest request,
+            HttpContext ctx,
+            TaskMutationService mutations,
+            AgentStudio.Registry.ProjectRegistry projects,
+            AgentStudio.Registry.ComponentRoutingService routing,
+            ModelRoutingPolicyRegistry modelRouting,
+            IModelRoutingModeProvider routingMode,
+            CliRouter cliRouter,
+            QuotaAdmissionService quotaAdmission,
+            AgentStudio.Tags.AutoTagCreationWorker autoTag,
+            IConfiguration configuration,
+            CancellationToken ct) =>
+        {
+            IReadOnlyList<CreateTaskRequest> cards;
+            try { cards = AgentStudio.Dispatch.DispatchSourceMetadata.Prepare(request.Cards); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            var created = new List<object>();
+            foreach (var card in cards)
+            {
+                var result = await CreateTask(card, ctx, mutations, projects, routing, modelRouting,
+                    routingMode, cliRouter, quotaAdmission, autoTag, configuration, ct);
+                if (result is not IStatusCodeHttpResult { StatusCode: StatusCodes.Status200OK })
+                    return Results.Json(new { error = "Batch creation stopped; completed cards remain in their landing lane.",
+                        created, failedIndex = created.Count, failure = (result as IValueHttpResult)?.Value, status = (result as IStatusCodeHttpResult)?.StatusCode },
+                        statusCode: (result as IStatusCodeHttpResult)?.StatusCode ?? 409);
+                created.Add(new { card = (result as IValueHttpResult)?.Value, card.WaveId });
+            }
+            return Results.Ok(new { created });
         });
+
 
         group.MapPost("/reorder", (ReorderRequest req, HttpContext ctx, TaskStateMachine states,
             TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects) =>

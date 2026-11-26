@@ -1016,3 +1016,53 @@ the atomic write, returning `references-changed` on a concurrent edit. Recut
 apply and undo always use this fence; legacy callers may omit it. Replacement
 creation keeps the automated source family and appends the Packer receipt id,
 so subsequent real deliveries continue to inform the source's size prior.
+
+## Source wave emission (AGT-4000, DS-10)
+
+DS-D1 through DS-D10 option B remain the working decisions. `CreateTaskRequest`
+accepts `waveId` (at most 200 characters) and `citedPaths` (at most 200
+repository-relative file paths, without line suffixes). Both persist in task
+metadata and detail facts. New wave cards retain the unpinned order sentinel
+999 by default; explicit owner positions remain intact. Cited paths join the source prompt as inputs to the
+shared model-free forecast, including Backlog cards. Packer packages retain
+the wave and the union of their originals' citations.
+
+`POST /api/tasks/batch` accepts `{ "cards": [...] }` with 1 to 200 ordinary
+creation requests. It uses the single-card handler, including project access,
+routing, model qualification and delivery guards. More than five cards sharing
+one creation source receive one generated wave id before
+any creation; explicit wave ids remain intact. The response lists each created
+card and wave id. A partial failure returns completed entries, the failed index
+and refusal status, so clients must resume only the uncreated suffix with the
+saved wave id. The operation does not roll back completed cards.
+
+`DispatchWavePolicy` owns the pure wave threshold, landing and release rules.
+With dispatch off, explicit lanes keep their existing behavior. In shadow or
+live, ordinary wave cards land in Backlog even when Ready was requested.
+Decision cards retain their preparation-lane contract. Sources submit their
+complete list before calling
+`POST /api/projects/{project}/dispatch/waves/{wave}/plan` (Owner with card-write
+permission). This explicit completion call prevents planning an unfinished
+list. `awaiting-forecasts` and `awaiting-live-dispatcher` leave the wave in
+Backlog and can be retried. Shadow records plans and releases no cards.
+
+Live planning requires the active dispatcher's fenced lease and forecasts for
+every member. Only Packer calls the existing DS-9 recut API, retaining its
+proposals, bounds and undo contract. Other personas order the wave. The
+separate plan includes all surviving wave cards before any moves to Ready;
+A fenced, persisted wave-release marker closes local and remote admission
+until all surviving members are Ready. HTTP task API moves run in reverse
+plan order so newest-first lane entry preserves the plan, without rewriting
+owner order fields. Mode and lease fences are checked between moves; opening
+pickup also requires the current lease. An interrupted marker survives restart
+and a retry completes the pending moves before opening pickup. A changed or
+started card refuses further application. Ready pickup
+continues to enforce the existing pins, urgent status, holds, dependencies,
+exclusive marks and project-wide in-flight overlap. This slice grants no
+bypass and performs no live promotion.
+
+The task API skill supplies the playthrough and review-finding source
+instruction: group a shared cause file, state must-land-first relationships,
+and emit cited paths from the cause. The runtime report prompts that emit
+follow-up suggestions carry the same instruction and additive cause, citation
+and ordering fields. Existing report suggestions remain drafts for promotion.
