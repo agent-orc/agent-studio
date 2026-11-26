@@ -79,6 +79,26 @@ describe('AcceptanceNextStepsComponent (AGT-3867)', () => {
     expect(testId(host, 'brief-difference-link')).toBeNull();
   });
 
+  it('shows the conflicting accept decision and current review source in the detail', async () => {
+    const item = readinessItem('DEMO-19', 'review-concerns', {
+      reviewAttemptId: 'review-current', reviewedAtUtc: '2026-11-26T10:00:00Z',
+    });
+    const { fixture, host } = await mount(item);
+    fixture.componentRef.setInput('job', reviewCard('DEMO-19', { orchestratorVerdict: 'accept' }));
+    fixture.detectChanges();
+    expect(testId(host, 'acceptance-verdict-conflict')?.textContent)
+      .toContain('Review decision: accept; requirement-fit: concerns');
+    expect(testId(host, 'acceptance-review-source')?.textContent).toContain('review-current');
+    expect(testId(host, 'acceptance-review-source')?.textContent).toContain('2026-11-26');
+  });
+
+  it('keeps claim concern provenance visible before readiness answers', async () => {
+    const { host } = await mount(null, { ...currentBriefConcerns,
+      reviewAttemptId: 'review-from-claim', reviewedAtUtc: '2026-11-26T10:00:00Z' });
+    expect(testId(host, 'acceptance-review-source')?.textContent).toContain('review-from-claim');
+    expect(testId(host, 'content-verdict-acceptance')?.textContent).toContain('The lane hides the reason.');
+  });
+
   it('marks the gap addressed once the content review is requested, so a recorded refusal drops (F2)', async () => {
     const { fixture, host, store, tasks } = await mount(readinessItem('DEMO-19', 'review-concerns'));
     testId(host, 'review-current-brief')!.click();

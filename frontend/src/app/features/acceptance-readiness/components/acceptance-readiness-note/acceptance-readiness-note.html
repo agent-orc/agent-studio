@@ -2,6 +2,12 @@
   <div class="readiness-note" data-testid="acceptance-readiness-note" [attr.data-readiness]="item.readiness"
        [attr.data-tone]="tone()">
     <app-status-indicator [tone]="tone()" [label]="item.headline" [compact]="true" testId="acceptance-readiness-status" />
+    @if (conflict()) {
+      <p class="readiness-note__reason" data-testid="acceptance-verdict-conflict">Review decision: accept; {{ item.aspect }}: {{ item.contentStatus }}. Acceptance needs a round or a written reason.</p>
+    }
+    @if (item.reviewAttemptId || item.reviewedAtUtc || item.reportRef) {
+      <p class="readiness-note__reason" data-testid="acceptance-review-source">Review {{ item.reviewAttemptId || 'local' }} · <time [attr.datetime]="item.reviewedAtUtc">{{ item.reviewedAtUtc || 'date not recorded' }}</time></p>
+    }
     <p class="readiness-note__reason" data-testid="acceptance-readiness-reason">{{ item.reason }}</p>
     @if (nextStep(); as step) {
       <p class="readiness-note__next" data-testid="acceptance-readiness-next-step">Next step: {{ step }}</p>
@@ -12,6 +18,10 @@
     <div class="readiness-note__actions">
       <a class="readiness-note__link" data-testid="acceptance-review-report" [href]="reportHref()"
          (click)="stop($event)" (keydown.enter)="stop($event)">Review report</a>
+      @if (item.overrideAllowed && item.readiness === 'review-concerns') {
+        <a class="readiness-note__link" data-testid="acceptance-with-reason-link" [href]="acceptanceHref()"
+           (click)="stop($event)" (keydown.enter)="stop($event)">Accept with a reason</a>
+      }
       @if (item.round) {
         <button type="button" class="readiness-note__round" data-testid="acceptance-send-round"
                 (click)="openRound($event)" (keydown.enter)="stop($event)">Send a round to close the gap</button>

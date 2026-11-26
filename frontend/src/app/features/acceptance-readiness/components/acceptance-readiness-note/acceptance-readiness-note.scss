@@ -35,12 +35,12 @@
 }
 
 .readiness-note__link {
-  color: var(--studio-accent);
+  color: var(--studio-fg-strong);
   text-decoration: underline;
   text-underline-offset: 2px;
 
   &:focus-visible {
-    outline: 2px solid var(--studio-accent);
+    outline: 2px solid var(--studio-fg-strong);
     outline-offset: 1px;
   }
 }

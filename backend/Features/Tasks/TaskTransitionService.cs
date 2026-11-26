@@ -1769,7 +1769,8 @@ public sealed class TaskTransitionService
                             ["reviewBriefVersion"] = contentEvidence.ReviewBriefVersion ?? "unknown",
                         });
                 return Refuse(CompletionAdmissionStages.Content,
-                    new MoveJobOutcome(MoveJobStatus.IntegrationFailed, contentDecision.Message, info.FolderPath));
+                    new MoveJobOutcome(MoveJobStatus.IntegrationFailed, contentDecision.Message, info.FolderPath)
+                    { ContentReview = contentEvidence });
             }
         }
         var recordedContainment = false;
