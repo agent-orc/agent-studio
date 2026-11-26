@@ -124,6 +124,26 @@ public static partial class PostMergeAttributor
                 || command.Contains("dotnet test ", StringComparison.Ordinal)
                 && failedCommand.Contains(command.Split(" --filter", StringSplitOptions.None)[0], StringComparison.Ordinal));
 
+    /// <summary>Static RT test reach narrows suspects only when every failing test has a known scope.</summary>
+    public static bool TouchesFailure(IReadOnlyList<string> paths,
+        IReadOnlyList<PostMergeCoveringFolders.Result> scopes)
+    {
+        if (scopes.Count == 0 || scopes.Any(scope => scope.Fallback || scope.TestFile is null)) return true;
+        return paths.Any(path => path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".slnf", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".proj", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".props", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".targets", StringComparison.OrdinalIgnoreCase)
+            || path is "global.json" or "package.json" or "package-lock.json"
+            || string.Equals(Path.GetFileName(path), "NuGet.config", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith(".agent-studio/", StringComparison.Ordinal)
+            || path.StartsWith("scripts/", StringComparison.Ordinal)
+            || scopes.Any(scope => path == scope.TestFile || scope.Folders.Any(folder =>
+                string.Equals(Path.GetDirectoryName(path)?.Replace('\\', '/') ?? "", folder.TrimEnd('/'), StringComparison.Ordinal))));
+    }
+
     public static string Excerpt(string text) => text.Length <= 2000 ? text : text[^2000..];
 }
 

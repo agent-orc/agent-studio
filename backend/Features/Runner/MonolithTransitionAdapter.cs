@@ -80,6 +80,16 @@ public static class MonolithTransitionAdapter
         => EngineDeliveryIntegrationPolicy.IsPublishedOutcome(integrationOutcome);
 
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
+    public static string RedRepairCreationLane => RedDevelopRepairPolicy.CreationLane;
+    public static RedTestModelRung SharedRedRepairRung(RedTestModelRung requested, IEnumerable<RedTestModelRung> active)
+        => RedDevelopRepairPolicy.SharedRepairRung(requested, active);
+    public static bool QueuedRedRepair(string lane) => RedDevelopRepairPolicy.QueuedRepair(lane);
+    public static bool SameRedRepair(IReadOnlyCollection<string> previous, IReadOnlyCollection<string> current)
+        => RedDevelopRepairPolicy.SameRedState(previous, current);
+    public static bool CloseUnusedRedRepair(string lane, bool hasRun)
+        => RedDevelopRepairPolicy.CloseUnusedOnGreen(lane, hasRun);
+    public static bool RedRepairPickupOverdue(TimeSpan age, string? lane)
+        => RedDevelopRepairPolicy.PickupOverdue(age, lane);
     public static RedDevelopRepairDecision RedDevelopRepair(RedDevelopRepairFacts facts)
         => RedDevelopRepairPolicy.Decide(facts);
     public static RecurringRepairCardAction RecurringRepairCard(string? lane)

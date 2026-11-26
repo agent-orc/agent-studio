@@ -21,6 +21,7 @@ public sealed partial class PostMergeIncidentService
     private readonly TaskScannerService _scanner;
     private readonly TaskStateMachine _states;
     private readonly TimeProvider _clock;
+    private readonly AttemptAuthorityService? _attempts;
     private readonly ILogger<PostMergeIncidentService> _logger;
 
     public PostMergeIncidentService(PostMergeRunStore store, TaskMutationService mutations,
@@ -29,9 +30,11 @@ public sealed partial class PostMergeIncidentService
         AgentStudio.Git.GitService? git = null, ModelRoutingPolicyRegistry? routing = null,
         IModelRoutingModeProvider? routingMode = null,
         Func<ProjectRecord, string, string, bool>? containsRepair = null,
-        AgentStudio.Personas.LineGuardianStore? guardian = null, AgentStudio.Bus.AgentMessageBusBridge? bus = null)
+        AgentStudio.Personas.LineGuardianStore? guardian = null, AgentStudio.Bus.AgentMessageBusBridge? bus = null,
+        AttemptAuthorityService? attempts = null)
     {
         _store = store;
+        _attempts = attempts;
         _mutations = mutations;
         _scanner = scanner;
         _states = states;
@@ -66,8 +69,9 @@ public sealed partial class PostMergeIncidentService
             var failure = run.Failure;
             if (failure?.AllFailuresQuarantined == true) return;
             var fingerprint = failure?.Fingerprint ?? FallbackFingerprint(run);
-            var existing = (state.Incidents ?? []).FirstOrDefault(item => item.Fingerprint == fingerprint
-                && item.ResolvedAtUtc is null);
+            var existing = (state.Incidents ?? []).FirstOrDefault(item => item.TestId is null
+                && item.ResolvedAtUtc is null && (item.Fingerprint == fingerprint
+                    || MonolithTransitionAdapter.SameRedRepair(item.FailingTests, failure?.FailingTests ?? [])));
             // The clock belongs to this incident, not to the project's red develop.
             var firstRed = existing?.FirstRedAtUtc ?? run.FinishedAtUtc ?? _clock.GetUtcNow();
             var facts = new RedDevelopRepairFacts(
@@ -79,6 +83,17 @@ public sealed partial class PostMergeIncidentService
             var decision = MonolithTransitionAdapter.RedDevelopRepair(facts);
             if (existing is not null)
             {
+                if (existing.LatestEvidenceRunId != run.Id)
+                {
+                    ReadyQueuedRepair(project, existing.RepairCardId);
+                    if (!_mutations.AppendContinuationNote(existing.RepairCardId,
+                            Prompt(project, run, state.LastGreenSha, failure, decision.Repair, fingerprint), project.StorageLocation))
+                        throw new InvalidOperationException("The open repair card could not receive updated evidence.");
+                    _store.UpdateIncidents(project.Id, items => items.Select(item => item.TestId is null && item.ResolvedAtUtc is null
+                        && item.Fingerprint == existing.Fingerprint && item.RepairCardId == existing.RepairCardId
+                        ? item with { FailingTests = failure?.FailingTests ?? [], FailingPaths = failure?.FailingPaths ?? [],
+                            AttributedMerge = failure?.AttributedMerge, LatestEvidenceRunId = run.Id } : item).ToArray());
+                }
                 if (decision.Action == RedDevelopRepairAction.AskOwner)
                     AskOwner(project, existing, decision, run);
                 return;
@@ -101,7 +116,11 @@ public sealed partial class PostMergeIncidentService
                     Project = project.Id,
                     Title = title,
                     PromptMarkdown = prompt,
-                    TargetState = TaskStates.Preparation,
+                    TargetState = MonolithTransitionAdapter.RedRepairCreationLane,
+                    CliType = project.CliDefault ?? CliTypes.Codex,
+                    Agent = project.CliDefault ?? CliTypes.Codex,
+                    Model = project.ModelDefault ?? ModelMetadataRegistry.DefaultForCli(project.CliDefault ?? CliTypes.Codex),
+                    ThinkingLevel = "medium", ModelExplicit = true, ThinkingLevelExplicit = true,
                     TaskType = TaskTypes.Bug,
                     Order = 0,
                     CreationSource = HumanReviewEscalationCategories.PostMergeRepairCreationSource,
@@ -115,7 +134,7 @@ public sealed partial class PostMergeIncidentService
                 {
                     if (!_mutations.AppendContinuationNote(priorCard.Id, prompt, project.StorageLocation))
                         throw new InvalidOperationException("The recurring repair card could not receive new evidence.");
-                    var moved = _states.MoveJob(priorCard.Id, TaskStates.Preparation, project.StorageLocation,
+                    var moved = _states.MoveJob(priorCard.Id, MonolithTransitionAdapter.RedRepairCreationLane, project.StorageLocation,
                         expectedSourceState: priorCard.State, reason: "Recurring red-develop fingerprint.");
                     if (moved.Status != MoveJobStatus.Success)
                         throw new InvalidOperationException("The recurring repair card could not reopen: " + moved.Message);
@@ -125,9 +144,11 @@ public sealed partial class PostMergeIncidentService
                         "Post-merge incident {Fingerprint} for {Project} attaches to repair card {Card} in {Lane}; its lane and attempt stay",
                         fingerprint, project.Id, priorCard.Id, priorCard.State);
             }
+            if (priorCard is null || recurring != RecurringRepairCardAction.Attach)
+                _states.SetOrderInLane(cardId, project.StorageLocation, 0);
             var incident = new PostMergeIncident(fingerprint, cardId, action.ToString(), firstRed,
                 null, failure?.AttributedMerge, failure?.FailingTests ?? [], failure?.FailingPaths ?? [],
-                false, OriginalTaskId: failure?.AttributedTaskId);
+                false, OriginalTaskId: failure?.AttributedTaskId) { LatestEvidenceRunId = run.Id };
             _store.UpdateIncidents(project.Id, items => [.. items, incident]);
             if (decision.Action == RedDevelopRepairAction.AskOwner) AskOwner(project, incident, decision, run);
         }
@@ -146,7 +167,7 @@ public sealed partial class PostMergeIncidentService
             if (typedIncidents.Length > 0)
             {
                 var evidence = typedIncidents.Select(incident => state.Runs.LastOrDefault(run => run.TestVerdicts?.Any(test =>
-                    test.Test == incident.TestId && Fingerprint(run, test) == incident.Fingerprint) == true))
+                    test.Test == incident.TestId) == true))
                     .OfType<PostMergeRunRecord>().DistinctBy(run => run.Id).ToArray();
                 foreach (var receipt in evidence) ApplyTests(project, receipt, overdue: true);
                 return;
@@ -169,7 +190,8 @@ public sealed partial class PostMergeIncidentService
             foreach (var incident in state.Incidents ?? [])
             {
                 if (incident.ResolvedAtUtc is not null || incident.OwnerAskedAtUtc is not null) continue;
-                var latest = LatestRed(state, incident.Fingerprint);
+                var latest = state.Runs.LastOrDefault(run => run.Id == incident.LatestEvidenceRunId)
+                    ?? LatestRed(state, incident.Fingerprint);
                 var failure = latest?.Failure;
                 var facts = failure is not null
                     ? new RedDevelopRepairFacts(failure.AttributedMerge is null ? 0 : 1,
@@ -218,17 +240,67 @@ public sealed partial class PostMergeIncidentService
 
     private void CloseOnGreen(ProjectRecord project, PostMergeProjectState state, PostMergeRunRecord run)
     {
-        var open = (state.Incidents ?? []).Where(item => item.ResolvedAtUtc is null).ToArray();
+        var open = (state.Incidents ?? []).Where(item => item.TestId is null && item.ResolvedAtUtc is null).ToArray();
         if (open.Length == 0) return;
         var at = run.FinishedAtUtc ?? _clock.GetUtcNow();
+        foreach (var incident in open) CloseUnusedRepair(project, incident.RepairCardId);
         // Attribution and a recommended repair action do not prove that any
         // published commit reverted the original card. Resolving an incident
         // must not mutate completed suspects, including historical incidents.
-        _store.UpdateIncidents(project.Id, items => items.Select(item => item.ResolvedAtUtc is null
+        _store.UpdateIncidents(project.Id, items => items.Select(item => item.TestId is null && item.ResolvedAtUtc is null
             ? item with { ResolvedAtUtc = at }
             : item).ToArray());
         _logger.LogInformation("Post-merge green resolved {Count} incidents for {Project}; original cards retain their lanes",
             open.Length, project.Id);
+    }
+
+    private void ReadyQueuedRepair(ProjectRecord project, string cardId)
+    {
+        var card = _scanner.FindJob(cardId, project.StorageLocation);
+        if (card is null || !MonolithTransitionAdapter.QueuedRedRepair(card.State)) return;
+        if (card.State != MonolithTransitionAdapter.RedRepairCreationLane)
+        {
+            var moved = _states.MoveJob(cardId, MonolithTransitionAdapter.RedRepairCreationLane, project.StorageLocation,
+                cause: TimelineActors.Orchestrator, expectedSourceState: card.State,
+                reason: "Post-merge repair is ready to run with refreshed red-branch evidence.");
+            if (moved.Status != MoveJobStatus.Success)
+                throw new InvalidOperationException("The queued repair could not become ready: " + moved.Message);
+        }
+        _states.SetOrderInLane(cardId, project.StorageLocation, 0);
+    }
+
+    private void CloseUnusedRepair(ProjectRecord project, string cardId)
+    {
+        var card = _scanner.FindJob(cardId, project.StorageLocation);
+        if (card is null) return;
+        if ((_store.Read(project.Id).Incidents ?? []).Any(item => item.RepairCardId == cardId
+                && item.TestId is not null && item.ResolvedAtUtc is null)) return;
+        using var timeline = new TimelineLog(Microsoft.Extensions.Logging.Abstractions.NullLogger<TimelineLog>.Instance);
+        var hasRun = card.SessionName is not null || card.LastUsage is not null || card.Commits.Count > 0
+            || new[] { card.Key, card.TaskKey, card.Id }.Where(key => !string.IsNullOrWhiteSpace(key))
+                .Any(key => _attempts?.GetTaskProjection(key!).CurrentRunAttempt is not null)
+            || timeline.ReadAll(card.FolderPath).Any(item => item.Kind == TimelineEventKinds.AgentRunStarted
+                || item.Kind == TimelineEventKinds.LaneChanged && item.Details?.GetValueOrDefault("to") == TaskStates.Progress);
+        if (!MonolithTransitionAdapter.CloseUnusedRedRepair(card.State, hasRun)) return;
+        var outcome = _states.MoveJob(card.Id, TaskStates.Archive, project.StorageLocation,
+            cause: TimelineActors.Orchestrator, expectedSourceState: card.State,
+            reason: "Target branch is green again; this repair never ran.");
+        if (outcome.Status != MoveJobStatus.Success)
+            throw new InvalidOperationException("The unused repair could not close: " + outcome.Message);
+    }
+
+    private static string FailureDetails(PostMergeRunRecord run, PostMergeFailureEvidence? failure)
+    {
+        var tests = (failure?.FailingTests ?? []).Concat(run.Verdicts.SelectMany(verdict => verdict.FailedTests ?? []))
+            .Concat(run.TestVerdicts?.Select(test => test.Test) ?? []).Distinct(StringComparer.Ordinal);
+        return string.Join("\n", tests.Select(test =>
+        {
+            var message = run.Verdicts.Select(verdict => verdict.FailureMessages?.GetValueOrDefault(test))
+                .FirstOrDefault(value => value is not null);
+            var log = run.Verdicts.Select(verdict => verdict.OutputTail)
+                .FirstOrDefault(output => output?.Contains(test, StringComparison.Ordinal) == true) ?? failure?.LogExcerpt ?? "";
+            return "- " + test + ": " + (message ?? TestFailureMessages.FirstError(log, test));
+        }));
     }
 
     private static string Prompt(ProjectRecord project, PostMergeRunRecord run, string? lastGreen,
@@ -247,7 +319,7 @@ public sealed partial class PostMergeIncidentService
             + $"Start conditions: {run.StartOccupiedSlots?.ToString() ?? "unknown"} occupied slots, "
             + $"load per core {run.StartLoadPerCore?.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"}\n"
             + $"Suspects: {string.Join(", ", failure?.SuspectMerges ?? [])}\n"
-            + $"Failing tests: {string.Join(", ", failure?.FailingTests ?? [])}\n"
+            + $"Failing tests:\n{FailureDetails(run, failure)}\n"
             + $"Failing paths: {string.Join(", ", failure?.FailingPaths ?? [])}\n\n"
             + instruction + "\n\n## Log excerpt\n```text\n"
             + (failure?.LogExcerpt ?? string.Join("\n", run.Verdicts.Where(item => item.ExitCode != 0)

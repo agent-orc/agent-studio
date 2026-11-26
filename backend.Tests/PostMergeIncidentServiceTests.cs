@@ -39,7 +39,7 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
 
         var opened = Assert.Single(store.Read(project.Id).Incidents!);
         Assert.Single(scanner.ScanAllJobs(), card => card.Id == opened.RepairCardId);
-        Assert.Equal(TaskStates.Preparation, scanner.FindJob(opened.RepairCardId, projectPath)!.State);
+        Assert.Equal(TaskStates.Ready, scanner.FindJob(opened.RepairCardId, projectPath)!.State);
         Assert.Null(opened.RedMinutes);
         if (noRelevantMerges)
         {
@@ -60,7 +60,7 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         Assert.Equal(Now.AddHours(2), asked.OwnerAskedAtUtc);
         Assert.Equal(nameof(RedDevelopOwnerOption.KeepFixingForward), asked.OwnerQuestion!.Recommended);
         Assert.Equal("red", asked.OwnerQuestion.RedRunId);
-        Assert.Equal(TaskStates.Preparation, scanner.FindJob(opened.RepairCardId, projectPath)!.State);
+        Assert.Equal(TaskStates.Ready, scanner.FindJob(opened.RepairCardId, projectPath)!.State);
         Assert.Null(store.Read(project.Id).AttributionEscalatedTaskId);
         Assert.DoesNotContain(ReviewDecisionLog.ReadAll(_root, project.DisplayName),
             record => record.JobId == opened.RepairCardId);
@@ -149,7 +149,7 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         var second = first with
         {
             Id = "red-2", StartedAtUtc = clock.GetUtcNow(), FinishedAtUtc = clock.GetUtcNow(),
-            Failure = first.Failure! with { Fingerprint = "other" },
+            Failure = first.Failure! with { Fingerprint = "other", FailingTests = ["Other.Tests.Fails"] },
         };
         store.Record(project.Id, second with { Status = "running", FinishedAtUtc = null });
         store.Record(project.Id, second);
@@ -188,7 +188,7 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         else
         {
             Assert.NotEqual(prior, incident.RepairCardId);
-            Assert.Equal(TaskStates.Preparation, scanner.FindJob(incident.RepairCardId, project.StorageLocation)!.State);
+            Assert.Equal(TaskStates.Ready, scanner.FindJob(incident.RepairCardId, project.StorageLocation)!.State);
         }
     }
 
@@ -289,8 +289,8 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         Assert.Null(store.Read(project.Id).LineStop);
         var repair = scanner.FindJob(entry.Card, project.StorageLocation)!;
         Assert.Equal("Repair red test: Demo.Tests.Fails", repair.Title);
-        Assert.Equal(TaskStates.Preparation, repair.State);
-        Assert.Equal(repair.Id, scanner.ScanAllJobs().Where(card => card.State == TaskStates.Preparation).MinBy(card => card.Order)!.Id);
+        Assert.Equal(TaskStates.Ready, repair.State);
+        Assert.Equal(repair.Id, scanner.ScanAllJobs().Where(card => card.State == TaskStates.Ready).MinBy(card => card.Order)!.Id);
         var quarantine = Quarantines(store).Read(project.Id);
         Assert.Single(quarantine.IncidentLog);
         Assert.True(quarantine.IncidentLog[0].Reason.Length <= 280);
@@ -298,16 +298,17 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
     }
 
     [Fact]
-    public void Repair_rung_uses_the_project_provider_override_from_the_configured_tiers()
+    public void Repair_creation_uses_the_project_provider_and_default_model()
     {
         var (project, clock, scanner, mutations, states, store, service) = Setup();
-        project = project with { CliDefault = CliTypes.Claude };
+        project = project with { CliDefault = CliTypes.Claude,
+            ModelDefault = new ModelRoutingPolicyRegistry().Policy.Tiers.Single(tier => tier.Rank == 2).VendorOverrides["anthropic"].Model };
         Record(store, service, project, TypedRed());
         var repair = scanner.FindJob(Assert.Single(service.ActiveQuarantines(project)).Card, project.StorageLocation)!;
         Assert.Equal(CliTypes.Claude, repair.CliType);
         var expected = new ModelRoutingPolicyRegistry().Policy.Tiers.Single(tier => tier.Rank == 2).VendorOverrides["anthropic"];
         Assert.Equal(expected.Model, repair.Model);
-        Assert.Equal(expected.ThinkingLevel, repair.ThinkingLevel);
+        Assert.Equal("medium", repair.ThinkingLevel);
     }
 
     [Fact]
@@ -441,6 +442,133 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         Assert.Equal("ReportOnlyWithCard", question.Recommended);
     }
 
+    [Fact]
+    public void Brief_keeps_structured_first_errors_when_the_console_tail_has_lost_them()
+    {
+        var (project, _, scanner, _, _, store, service) = Setup();
+        var red = Red() with { Verdicts = [new("dotnet test", 1, false, new string('x', 2000), ["Demo.Tests.Fails"])
+            { FailureMessages = new Dictionary<string, string> { ["Demo.Tests.Fails"] = "Expected healthy, actual unavailable" } }] };
+        Record(store, service, project, red);
+        var card = Assert.Single(scanner.ScanAllJobs());
+        Assert.Contains("Demo.Tests.Fails: Expected healthy, actual unavailable",
+            File.ReadAllText(Path.Combine(card.FolderPath, "prompt.md")));
+    }
+
+    [Fact]
+    public void Typed_overlapping_red_sets_share_a_repair_but_keep_per_test_incidents()
+    {
+        var (project, _, scanner, _, _, store, service) = Setup();
+        var red = TypedRed();
+        var firstTest = red.TestVerdicts!.Single();
+        red = red with { Failure = red.Failure! with { FailingTests = [firstTest.Test, "Demo.Tests.Second"] },
+            TestVerdicts = [firstTest, firstTest with { Test = "Demo.Tests.Second" }] };
+        Record(store, service, project, red);
+        Assert.Equal(2, store.Read(project.Id).Incidents!.Count);
+        var card = Assert.Single(scanner.ScanAllJobs());
+        var next = red with { Id = "next", Failure = red.Failure! with { Fingerprint = "changed",
+                FailingTests = [firstTest.Test, "Demo.Tests.Second", "Demo.Tests.Third"] },
+            TestVerdicts = [.. red.TestVerdicts!, firstTest with { Test = "Demo.Tests.Third" }] };
+        Record(store, service, project, next);
+        Assert.Equal(card.Id, Assert.Single(scanner.ScanAllJobs()).Id);
+        Assert.Equal(3, store.Read(project.Id).Incidents!.Count);
+        Assert.All(store.Read(project.Id).Incidents!, item => Assert.Equal(card.Id, item.RepairCardId));
+    }
+
+    [Fact]
+    public void Refreshing_an_old_queued_repair_recovers_it_from_preparation()
+    {
+        var (project, _, scanner, mutations, _, store, service) = Setup();
+        var id = mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+        { Project = project.Id, Title = "Old repair", TargetState = TaskStates.Preparation })!;
+        store.UpdateIncidents(project.Id, _ => [new("fingerprint", id, "FixForward", Now, null, null,
+            ["Demo.Tests.Fails"], [])]);
+        Record(store, service, project, Red());
+        Assert.Equal(TaskStates.Ready, scanner.FindJob(id, project.StorageLocation)!.State);
+        Assert.Equal(id, Assert.Single(scanner.ScanAllJobs()).Id);
+    }
+
+    [Theory]
+    [InlineData("gpt-6.1-sol")]
+    [InlineData("gpt-5.4-mini")]
+    public void Repair_creation_uses_ready_first_and_the_current_project_coding_default(string model)
+    {
+        var (project, _, scanner, mutations, _, store, service) = Setup();
+        project = project with { CliDefault = "codex", ModelDefault = model };
+        mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+        { Project = project.Id, Title = "Existing ready card", TargetState = TaskStates.Ready, Order = 0 });
+        Record(store, service, project, Red());
+        var incident = Assert.Single(store.Read(project.Id).Incidents!);
+        var card = scanner.FindJob(incident.RepairCardId, project.StorageLocation)!;
+        Assert.Equal(TaskStates.Ready, card.State);
+        Assert.Equal(card.Id, scanner.ScanAllJobs().Where(c => c.State == TaskStates.Ready).MinBy(c => c.Order)!.Id);
+        Assert.Equal(project.ModelDefault, card.Model);
+        Assert.Equal("medium", card.ThinkingLevel);
+        Assert.True(card.ModelExplicit);
+        Assert.True(card.ThinkingLevelExplicit);
+    }
+
+    [Fact]
+    public void Overlapping_red_fingerprints_refresh_one_card_and_keep_the_first_red_clock()
+    {
+        var (project, clock, scanner, _, _, store, service) = Setup();
+        Record(store, service, project, Red());
+        var first = Assert.Single(store.Read(project.Id).Incidents!);
+        clock.Advance(TimeSpan.FromMinutes(5));
+        var next = Red() with { Id = "next", TipSha = new string('b', 40), FinishedAtUtc = clock.GetUtcNow(),
+            Failure = Red().Failure! with { Fingerprint = "changed", FailingTests = ["Demo.Tests.Fails", "Demo.Tests.NewFailure"],
+                LogExcerpt = "Failed Demo.Tests.NewFailure\nError Message:\nExpected 2, actual 3", SuspectMerges = [new string('c', 40)] } };
+        Record(store, service, project, next);
+        service.Apply(project, next);
+        var updated = Assert.Single(store.Read(project.Id).Incidents!);
+        Assert.Equal(first.RepairCardId, updated.RepairCardId);
+        Assert.Equal(first.FirstRedAtUtc, updated.FirstRedAtUtc);
+        Assert.Equal(next.Failure!.FailingTests, updated.FailingTests);
+        var card = Assert.Single(scanner.ScanAllJobs());
+        var prompt = File.ReadAllText(Path.Combine(card.FolderPath, "prompt.md"));
+        Assert.Contains(next.TipSha, prompt);
+        Assert.Contains("Demo.Tests.NewFailure: Expected 2, actual 3", prompt);
+        Assert.Contains(new string('c', 40), prompt);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Green_closes_only_repairs_that_never_started(bool started)
+    {
+        var (project, _, scanner, _, states, store, service) = Setup();
+        Record(store, service, project, Red());
+        var id = store.Read(project.Id).Incidents!.Single().RepairCardId;
+        var card = scanner.FindJob(id, project.StorageLocation)!;
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        if (started)
+            timeline.Append(card.FolderPath, TimelineEventKinds.AgentRunStarted, TimelineActors.System, "Started coding");
+        Record(store, service, project, Green("green", Now.AddMinutes(1)) with { SuiteSelection = null });
+        card = scanner.FindJob(id, project.StorageLocation)!;
+        Assert.Equal(started ? TaskStates.Ready : TaskStates.Archive, card.State);
+        if (!started) Assert.Contains(timeline.ReadAll(card.FolderPath), item => item.Kind == TimelineEventKinds.LaneChanged
+            && item.Details!.Values.Any(value => value.Contains("green", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [Fact]
+    public void Pickup_attention_appears_at_ten_minutes_and_clears_when_running_or_green()
+    {
+        var (project, _, scanner, _, states, store, service) = Setup();
+        Record(store, service, project, Red());
+        var id = store.Read(project.Id).Incidents!.Single().RepairCardId;
+        var source = new AgentStudio.Operator.OperatorPostMergeRedIncidentFactSource(
+            () => [(project.DisplayName, store.Read(project.Id))],
+            cardState: (_, card) => scanner.FindJob(card, project.StorageLocation)?.State);
+        Assert.Empty(source.Collect(Now.AddMinutes(9).UtcDateTime));
+        var item = Assert.Single(source.Collect(Now.AddMinutes(10).UtcDateTime));
+        Assert.Contains("develop is red since", item.Title);
+        Assert.Contains("repair card", item.Title);
+        Assert.Contains(TaskStates.Ready, item.Title);
+        states.MoveJob(id, TaskStates.Progress, project.StorageLocation);
+        Assert.Empty(source.Collect(Now.AddMinutes(11).UtcDateTime));
+        Record(store, service, project, Green("green", Now.AddMinutes(12)) with { SuiteSelection = null });
+        Assert.Empty(source.Collect(Now.AddMinutes(13).UtcDateTime));
+    }
+
     private static TestQuarantineStore Quarantines(PostMergeRunStore store)
         => new(Path.Combine(store.Root, "..", "test-quarantines"));
     private static void Record(PostMergeRunStore store, PostMergeIncidentService service, ProjectRecord project, PostMergeRunRecord run)
@@ -485,7 +613,7 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
             NullLogger<TaskMutationService>.Instance,
             new TimelineLog(NullLogger<TimelineLog>.Instance));
-        var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
+        var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance, timeline: new TimelineLog(NullLogger<TimelineLog>.Instance));
         var store = new PostMergeRunStore(Path.Combine(_root, "post-merge"));
         var service = new PostMergeIncidentService(store, mutations, scanner, states, clock,
             NullLogger<PostMergeIncidentService>.Instance, containsRepair: (_, _, _) => containsRepair);

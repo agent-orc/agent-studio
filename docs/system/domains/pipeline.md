@@ -735,6 +735,28 @@ the local baseline cannot establish a production incident budget.
 
 ### Red develop repair (AGT-3312)
 
+AGT-4051: automatic repair creation lands first in Ready, resolving the
+project's coding model at creation with medium reasoning. The RT model ladder
+can still raise a later repair rung. Compatibility receipts reuse an open repair
+when the failing-test sets overlap by a majority of the smaller set, including
+supersets; they refresh the tests, tip and suspects without resetting the first
+red clock. RT receipts retain their per-test incident and quarantine identity
+across changing log fingerprints; overlapping red sets share one coding repair. A green compatibility receipt archives repair
+cards that have never run, with a lane-change timeline reason. Cards with run
+evidence and cards owned by delivery retain their lanes. RT quarantines still
+require their existing covering-pass lift evidence.
+
+Needs-you projects a separate pickup warning after ten minutes while develop
+is red and the repair has not reached Progress or Auto Review. It includes the
+first red time, repair key and current lane, and disappears when the repair
+starts or the incident resolves. The RT owner-decision ladder remains in place.
+Repair briefs list each failing test's first diagnostic; new runners preserve
+these before compacting console output. Older receipts explicitly say when a
+diagnostic was not recorded. Suspect lists use the RT static test-file and
+covering-folder map, retaining build inputs and project-graph fallback when
+reach is unknown. Measured control and bisect attribution remains authoritative.
+
+
 RT-2 (AGT-4003) adds the pure `RedTestTriagePolicy`, `BisectVerdictPolicy` and
 `HoldScopePolicy` for the recommended RT-D1, RT-D2, RT-D4, RT-D5, RT-D6,
 RT-D7 and RT-D9 option B in the [Red test isolation Dossier](../../red-test-isolation/index.html).

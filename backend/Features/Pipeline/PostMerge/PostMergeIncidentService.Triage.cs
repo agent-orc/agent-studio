@@ -144,6 +144,7 @@ public sealed partial class PostMergeIncidentService
     private void ApplyTests(ProjectRecord project, PostMergeRunRecord run, bool overdue = false)
     {
         var state = _store.Read(project.Id);
+        if (run.Status == "green" && !overdue) CloseOnGreen(project, state, run);
         var tests = (run.TestVerdicts ?? []).ToList();
         // Green receipts carry only previously failed tests. Include unresolved entries
         // so selected-suite passes can prove a lift without inventing coverage.
@@ -157,7 +158,9 @@ public sealed partial class PostMergeIncidentService
         {
             var fingerprint = Fingerprint(run, test);
             var incident = (state.Incidents ?? []).LastOrDefault(item => item.TestId == test.Test
-                && item.Fingerprint == fingerprint && item.ResolvedAtUtc is null);
+                && item.ResolvedAtUtc is null);
+            // RT incidents are per test, not per changing log hash. Keep quarantine identity and clock.
+            if (incident is not null) fingerprint = incident.Fingerprint;
             if (test.Attempts.Count == 0)
             {
                 incident = (state.Incidents ?? []).LastOrDefault(item => item.TestId == test.Test && item.ResolvedAtUtc is null);
@@ -181,18 +184,30 @@ public sealed partial class PostMergeIncidentService
                 or RedTestAction.StartHeld or RedTestAction.StartReportOnly or RedTestAction.LineStop or RedTestAction.AskOwner);
             if (needsCard && incident is null)
             {
-                var rung = actions.FirstOrDefault(action => action.ModelRung is not null)?.ModelRung ?? RedTestModelRung.Medium;
-                var card = RepairCard(project, run, test, fingerprint, rung, facts.SinceLastLift is not null,
+                var card = RepairCard(project, run, test, fingerprint, facts.SinceLastLift is not null,
                     actions.Any(action => action.Action == RedTestAction.ProposeRevert), principal);
                 incident = new(fingerprint, card, actions.Any(action => action.Action == RedTestAction.ProposeRevert)
                     ? "Revert" : "FixForward", run.FinishedAtUtc ?? _clock.GetUtcNow(), null,
                     decision.AttributedMerge, [test.Test], test.CoveringFolders ?? [])
-                { TestId = test.Test, SuiteId = test.SuiteId, SuiteCategory = test.SuiteCategory, ModelRung = rung.ToString() };
+                { TestId = test.Test, SuiteId = test.SuiteId, SuiteCategory = test.SuiteCategory, ModelRung = nameof(RedTestModelRung.Medium), LatestEvidenceRunId = run.Id };
                 _store.UpdateIncidents(project.Id, items => [.. items, incident]);
+            }
+            if (incident is not null && incident.LatestEvidenceRunId != run.Id && test.Attempts.Count > 0)
+            {
+                if (!_mutations.AppendContinuationNote(incident.RepairCardId,
+                        Prompt(project, run, state.LastGreenSha, run.Failure,
+                            incident.Action == "Revert" ? RedDevelopRepairAction.Revert : RedDevelopRepairAction.FixForward,
+                            fingerprint), project.StorageLocation))
+                    throw new InvalidOperationException("The red-test repair could not receive updated evidence.");
+                _store.UpdateIncidents(project.Id, items => items.Select(item => item.TestId == incident.TestId
+                    && item.Fingerprint == fingerprint && item.ResolvedAtUtc is null
+                        ? item with { LatestEvidenceRunId = run.Id } : item).ToArray());
             }
             foreach (var action in actions)
                 ApplyAction(project, run, test, fingerprint, incident, facts, action, principal);
-            if (incident is not null && actions.FirstOrDefault(action => action.ModelRung is not null)?.ModelRung is { } modelRung)
+            if (incident is not null && facts.RepairCardLane is not null
+                && actions.FirstOrDefault(action => action.ModelRung is not null)?.ModelRung is { } modelRung
+                && incident.ModelRung != modelRung.ToString())
                 SetRepairRung(project, incident.RepairCardId, modelRung);
             var reason = string.Join(" ", actions.Select(action => action.Reason));
             _quarantines.Log(project.Id, new(key, nameof(RedTestTriagePolicy), "rt-4.v1",
@@ -202,7 +217,10 @@ public sealed partial class PostMergeIncidentService
                 fingerprint, principal, _clock.GetUtcNow()));
             state = _store.Read(project.Id);
             foreach (var closed in (state.Incidents ?? []).Where(i => i.TestId == test.Test && i.ResolvedAtUtc is not null))
+            {
+                CloseUnusedRepair(project, closed.RepairCardId);
                 GuardianClosed(project, GuardianIncidentKey(closed.TestId!, closed.Fingerprint, closed.FirstRedAtUtc));
+            }
         }
         if (overdue) return;
         // A failed prepare/build has no per-test ledger. Keep the compatibility
@@ -337,22 +355,39 @@ public sealed partial class PostMergeIncidentService
     }
 
     private string RepairCard(ProjectRecord project, PostMergeRunRecord run, PostMergeTestVerdict test,
-        string fingerprint, RedTestModelRung rung, bool relapse, bool proposeRevert, string principal)
+        string fingerprint, bool relapse, bool proposeRevert, string principal)
     {
+        // Quarantines and incident clocks remain per test; overlapping red sets share the coding repair.
+        var related = relapse ? null : (_store.Read(project.Id).Incidents ?? [])
+            .Where(item => item.ResolvedAtUtc is null && (item.LatestEvidenceRunId == run.Id
+                || MonolithTransitionAdapter.SameRedRepair(item.FailingTests,
+                    run.Failure?.FailingTests ?? [test.Test])))
+            .Select(item => _scanner.FindJob(item.RepairCardId, project.StorageLocation))
+            .FirstOrDefault(card => card is not null
+                && MonolithTransitionAdapter.RecurringRepairCard(card.State) != RecurringRepairCardAction.CreateNew);
+        if (related is not null)
+        {
+            ReadyQueuedRepair(project, related.Id);
+            return related.Id;
+        }
         var title = "Repair red test: " + test.Test;
         var prior = relapse ? null : _scanner.ScanAllJobsWithArchive().FirstOrDefault(card => card.ProjectName == project.DisplayName
             && card.Title == title && card.CreationSource == HumanReviewEscalationCategories.PostMergeRepairCreationSource
             && MonolithTransitionAdapter.RecurringRepairCard(card.State) != RecurringRepairCardAction.CreateNew);
-        if (prior is not null) return prior.Id;
-        var route = RepairRoute(project, rung);
+        if (prior is not null)
+        {
+            ReadyQueuedRepair(project, prior.Id);
+            return prior.Id;
+        }
+        var route = RepairRoute(project, RedTestModelRung.Medium);
         var cardId = _mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
         {
-            Project = project.Id, Title = title, TargetState = TaskStates.Preparation, TaskType = TaskTypes.Bug,
+            Project = project.Id, Title = title, TargetState = MonolithTransitionAdapter.RedRepairCreationLane, TaskType = TaskTypes.Bug,
             Order = 0, CreationSource = HumanReviewEscalationCategories.PostMergeRepairCreationSource, CreatedBy = principal,
             CliType = route.Cli, Agent = route.Cli, Model = route.Model, ThinkingLevel = route.Thinking,
             ModelExplicit = true, ThinkingLevelExplicit = true,
             PromptMarkdown = Prompt(project, run, _store.Read(project.Id).LastGreenSha, run.Failure,
-                proposeRevert ? RedDevelopRepairAction.Revert : RedDevelopRepairAction.FixForward, fingerprint) + $"\nTest: {test.Test}\nModel rung: {rung}\n",
+                proposeRevert ? RedDevelopRepairAction.Revert : RedDevelopRepairAction.FixForward, fingerprint) + $"\nTest: {test.Test}\nInitial reasoning: medium\n",
         }) ?? throw new InvalidOperationException("The red-test repair card could not be created.");
         _states.SetOrderInLane(cardId, project.StorageLocation, 0);
         return cardId;
@@ -370,6 +405,8 @@ public sealed partial class PostMergeIncidentService
     {
         var tier = RepairTier(rung);
         var cli = existingCli ?? project.CliDefault ?? CliTypes.Codex;
+        if (rung == RedTestModelRung.Medium)
+            return (cli, project.ModelDefault ?? ModelMetadataRegistry.DefaultForCli(cli) ?? tier.Model, "medium");
         if (cli == CliTypes.Claude && tier.VendorOverrides.TryGetValue("anthropic", out var vendor))
             return (cli, vendor.Model, vendor.ThinkingLevel);
         return (CliTypes.Codex, tier.Model, tier.ThinkingLevel);
@@ -379,6 +416,9 @@ public sealed partial class PostMergeIncidentService
     {
         var card = _scanner.FindJob(cardId, project.StorageLocation);
         if (card?.State is not (TaskStates.Preparation or TaskStates.Ready)) return;
+        rung = MonolithTransitionAdapter.SharedRedRepairRung(rung,
+            (_store.Read(project.Id).Incidents ?? []).Where(item => item.RepairCardId == cardId && item.ResolvedAtUtc is null)
+                .Select(item => Enum.TryParse<RedTestModelRung>(item.ModelRung, out var active) ? active : RedTestModelRung.Medium));
         var route = RepairRoute(project, rung, card.CliType);
         _store.UpdateIncidents(project.Id, items => items.Select(item => item.RepairCardId == cardId
             && item.ResolvedAtUtc is null ? item with { ModelRung = rung.ToString() } : item).ToArray());

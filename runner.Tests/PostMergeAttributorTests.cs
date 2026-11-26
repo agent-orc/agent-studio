@@ -19,6 +19,23 @@ public sealed class PostMergeAttributorTests
     }
 
     [Fact]
+    public void Known_test_reach_excludes_unrelated_changes_in_the_same_project()
+    {
+        var scope = new PostMergeCoveringFolders.Result("backend.Tests/RepairTests.cs",
+            ["backend/Features/Pipeline/PostMerge"], false);
+        Assert.True(PostMergeAttributor.TouchesFailure(["backend.Tests/RepairTests.cs"], [scope]));
+        Assert.True(PostMergeAttributor.TouchesFailure(["backend/Features/Pipeline/PostMerge/Service.cs"], [scope]));
+        Assert.True(PostMergeAttributor.TouchesFailure(["Directory.Build.props"], [scope]));
+        Assert.True(PostMergeAttributor.TouchesFailure(["agent-taskboard.sln", "NuGet.config"], [scope]));
+        Assert.False(PostMergeAttributor.TouchesFailure(["backend/Features/Tasks/Other.cs"], [scope]));
+        Assert.False(PostMergeAttributor.TouchesFailure(["backend/Features/Pipeline/PostMergeOther/Service.cs"], [scope]));
+        Assert.False(PostMergeAttributor.TouchesFailure(["backend/Features/Pipeline/PostMerge/Unrelated/Service.cs"], [scope]));
+        Assert.True(PostMergeAttributor.TouchesFailure(["RootService.cs"], [scope with { Folders = [""] }]));
+        Assert.True(PostMergeAttributor.TouchesFailure(["backend/Features/Tasks/Other.cs"],
+            [scope with { Fallback = true }]));
+    }
+
+    [Fact]
     public void ActiveQuarantineRemovesOnlyItsExactTest()
     {
         var root = Path.Combine(Path.GetTempPath(), "post-merge-quarantine-" + Guid.NewGuid().ToString("N"));
