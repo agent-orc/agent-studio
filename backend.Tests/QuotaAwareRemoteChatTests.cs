@@ -231,7 +231,7 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
             new SendOrchestratorChatRequest(
                 "Inspect quota routing.",
                 Attachments: null,
-                Model: ModelIds.Gpt56Sol,
+                Model: ModelIds.Gpt6Sol,
                 ThinkingLevel: "medium"),
             timeout.Token);
         RemoteChatWorkClaimResponse claim;
@@ -248,7 +248,7 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
         Assert.Equal(ModelIds.ClaudeSonnet5, claim.Work.Model);
         Assert.Equal("high", claim.Work.ThinkingLevel);
         Assert.Equal(CliTypes.Codex, claim.Work.ConfiguredCliType);
-        Assert.Equal(ModelIds.Gpt56Sol, claim.Work.ConfiguredModel);
+        Assert.Equal(ModelIds.Gpt6Sol, claim.Work.ConfiguredModel);
         Assert.Contains("codex", claim.Work.QuotaFallbackReason);
 
         Assert.True(broker.Complete(new RemoteChatWorkCompletionRequest(
@@ -267,7 +267,7 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
         Assert.Equal("resolved reply", reply.Text);
         Assert.Equal(CliTypes.Claude, reply.CliType);
         Assert.Equal(ModelIds.ClaudeSonnet5, reply.Model);
-        Assert.Equal(ModelIds.Gpt56Sol, reply.ConfiguredModel);
+        Assert.Equal(ModelIds.Gpt6Sol, reply.ConfiguredModel);
         Assert.Equal(claim.Work.QuotaFallbackReason, reply.QuotaFallbackReason);
         Assert.False(runner.WasCalled);
     }

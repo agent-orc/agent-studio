@@ -45,8 +45,10 @@ public sealed class CliModelRoutesEndpointTests : IDisposable
         Assert.Equal(JsonValueKind.Object, root.GetProperty("profiles").ValueKind);
         Assert.Contains("TokenEconomy", root.GetProperty("catalogueVersion").GetString());
         Assert.Contains(root.GetProperty("routes").EnumerateArray(), route =>
-            route.GetProperty("fromModel").GetString() == ModelIds.ClaudeOpus5
-            && route.GetProperty("toModel").GetString() == ModelIds.Gpt56Sol
+            route.GetProperty("fromModel").GetString() == ModelIds.ClaudeSonnet5
+            && route.GetProperty("fromThinkingLevel").GetString() == "high"
+            && route.GetProperty("toModel").GetString() == ModelIds.Gpt6Sol
+            && route.GetProperty("toThinkingLevel").GetString() == "medium"
             && route.GetProperty("source").GetString() == "catalogue");
         var claudeState = root.GetProperty("states").GetProperty(CliTypes.Claude);
         Assert.Equal("fallback-active", claudeState.GetProperty("state").GetString());

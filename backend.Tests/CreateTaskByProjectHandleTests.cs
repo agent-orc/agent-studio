@@ -66,16 +66,18 @@ public class CreateTaskByProjectHandleTests : IDisposable
 
         (await client.PutAsJsonAsync("/api/cli/quota/fallback-preference",
             new { cliType = CliTypes.Claude, preferFallback = true })).EnsureSuccessStatusCode();
+        // The published pair maps Sonnet/high to Sol/medium.
         (await client.PostAsJsonAsync("/api/tasks", new
         {
             title = "New while conserving", watchPath = _watchPath,
-            cliType = CliTypes.Claude, taskType = "task",
+            cliType = CliTypes.Claude, taskType = TaskTypes.Feature, thinkingLevel = "high",
         })).EnsureSuccessStatusCode();
 
         var created = scanner.FindJob("new-while-conserving", _watchPath);
         Assert.NotNull(created);
         Assert.Equal(CliTypes.Codex, created.CliType);
-        Assert.False(string.IsNullOrWhiteSpace(created.Model));
+        Assert.Equal(ModelIds.Gpt6Sol, created.Model);
+        Assert.Equal("medium", created.ThinkingLevel);
         Assert.Equal(pinBefore, File.ReadAllText(pinFile));
     }
     private readonly string _workspace;

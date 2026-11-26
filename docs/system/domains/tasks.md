@@ -2925,8 +2925,9 @@ Without `cards`, it returns resident active cards. Card detail includes
 `touchForecast`. Reads use stored facts and never start Git.
 `GET` and `PUT /api/projects/{project}/dispatch/hub-files` expose the project
 setting. PUT takes `{ "files": ["path/to/file.cs"] }`; null restores defaults,
-an empty array excludes no hubs. The write requires the Owner role and project
-settings permission. Defaults are Program.cs, RoutePermissionCatalog.cs and
+an empty array excludes no hubs. Dispatcher administration writes (mode, hub
+files, lease control, wave planning, recut and undo) require the Owner role and
+`workspace.administer` permission. Defaults are Program.cs, RoutePermissionCatalog.cs and
 task.model.ts at the paths listed in the Dossier.
 
 Storage lives under `<TaskRepository>/.dispatch/`, with hashed project and card
@@ -2938,7 +2939,10 @@ integration tip for older subjects, to avoid recording an empty delivery. Real c
 recall are retained with the exact forecast that was measured, even after a
 later prompt edit. An empty precision or recall denominator is null. Failed
 Git collection logs a warning and retries without recording an empty diff as
-success. No task workspace files are written by the dispatch collector.
+success. No task workspace files are written by the dispatch collector. At
+startup, the collector awaits the first task-index publication asynchronously
+before reconciliation, retaining queued change events while a restored board
+can answer reads without a blocking refresh wait.
 
 ### Line guardian role (RT-8)
 
