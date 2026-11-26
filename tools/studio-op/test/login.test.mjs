@@ -159,7 +159,9 @@ test('login refuses plain HTTP to another host and retires the ES-3 disk key', a
   assert.equal(fs.existsSync(keyFile), false);
 });
 
-for (const signingFails of [false, true]) test(`login completes with ${signingFails ? 'memory fallback after hardware signing fails' : 'hardware certification before showing the code'}`, async () => {
+for (const outcome of ['hardware', 'signing-fails', 'http-error', 'transport-error', 'unverified']) test(`login completes with certification outcome: ${outcome}`, async () => {
+  const signingFails = outcome === 'signing-fails';
+  const memoryBinding = outcome !== 'hardware';
   const { login } = await import('../src/login.mjs');
   const { MemoryKeyProvider } = await import('../src/device-key.mjs');
   const configDir = path.join(makeHome(), '.config', 'agent-studio');
@@ -167,6 +169,7 @@ for (const signingFails of [false, true]) test(`login completes with ${signingFa
   if (signingFails) provider.sign = () => { throw new Error('Hardware lost after opening'); };
   const notes = [];
   let certified = false;
+  let certificationAttempts = 0;
   const token = fakeToken('oas');
   const pollHandle = fakeToken('osp');
   const ctx = { configDir, config: { hardwareDeviceKeys: { linux: true } }, output: { note(text) { notes.push(text); }, protect() {} },
@@ -176,13 +179,16 @@ for (const signingFails of [false, true]) test(`login completes with ${signingFa
       async send(method, url, { body, headers }) {
         assert.ok(headers.DPoP);
         if (body.certification) {
+          certificationAttempts++;
           assert.equal(notes.some(note => note.includes('Code:')), false, 'Owner code is not shown before certification');
           assert.deepEqual(body.certification.publicKey, provider.publicJwk);
           certified = true;
-          return { status: 200, body: { status: 'pending', bindingKind: 'tpm' } };
+          if (outcome === 'http-error') return { status: 503, body: { error: 'unavailable' } };
+          if (outcome === 'transport-error') throw Object.assign(new Error('Connection lost'), { code: 'studio-unreachable' });
+          return { status: 200, body: { status: 'pending', bindingKind: memoryBinding ? 'memory' : 'tpm' } };
         }
         assert.equal(certified, !signingFails);
-        return { status: 200, body: { status: 'session', token, bindingKind: signingFails ? 'memory' : 'tpm', expiresAt: new Date(Date.now() + 3600_000).toISOString() } };
+        return { status: 200, body: { status: 'session', token, bindingKind: memoryBinding ? 'memory' : 'tpm', expiresAt: new Date(Date.now() + 3600_000).toISOString() } };
       } } };
   try {
     const result = await login(ctx, { noQr: true }, { wait: async () => {}, deviceKeyFactory: (directory, settings) => {
@@ -190,9 +196,12 @@ for (const signingFails of [false, true]) test(`login completes with ${signingFa
       assert.deepEqual(settings.hardwareDeviceKeys, { linux: true });
       return { provider, note: 'Device binding: tpm' };
     } });
-    assert.equal(result.data.bindingKind, signingFails ? 'memory' : 'tpm');
+    assert.equal(result.data.bindingKind, memoryBinding ? 'memory' : 'tpm');
+    assert.equal(certificationAttempts, signingFails ? 0 : 1, 'certification is not retried');
     assert.equal(notes.filter(note => note.startsWith('Device binding:')).length, 1);
     if (signingFails) assert.ok(notes.some(note => note.includes('Hardware signing failed')));
+    else if (memoryBinding) assert.ok(notes.some(note => note.startsWith('Device binding: memory.')));
+    assert.equal(fs.readFileSync(path.join(configDir, 'operator-session'), 'utf8').trim(), token);
     assert.ok(notes.some(note => note.includes('Code:')));
   } finally { await stopAgent(configDir); }
 });
