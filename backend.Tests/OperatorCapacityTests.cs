@@ -110,11 +110,12 @@ public sealed class OperatorCapacityTests
                 new QuotaSnapshot { CliType = CliTypes.Codex, FetchedAt = now,
                     Windows = [new QuotaWindow { Label = "Weekly", UsedPct = 10, ResetAt = now.AddDays(3) }] },
             ]);
-            var fallback = new CliQuotaFallbackService(config, NullLogger<CliQuotaFallbackService>.Instance);
+            var fallback = new CliQuotaFallbackService(config, NullLogger<CliQuotaFallbackService>.Instance,
+                new ModelEquivalenceCatalog(TokenTestServices.Pricing()));
             fallback.Set(new CliModelRouteProfile
             {
-                CliType = CliTypes.Claude, PrimaryModel = ModelIds.ClaudeOpus5,
-                FallbackCliType = CliTypes.Codex, FallbackModel = ModelIds.Gpt56Sol, FallbackThinkingLevel = "high",
+                CliType = CliTypes.Claude, PrimaryModel = "claude-sonnet-5",
+                FallbackCliType = CliTypes.Codex, FallbackModel = "gpt-6-sol", FallbackThinkingLevel = "medium",
             });
             var ledger = new CountingLedger();
             var selection = new ModelSelectionService(
@@ -126,15 +127,15 @@ public sealed class OperatorCapacityTests
             var card = new TaskInfo
             {
                 Id = "ready-1", Key = "SAMPLE-7", ProjectName = "sample", State = TaskStates.Ready,
-                FolderPath = root, CliType = CliTypes.Claude, Model = ModelIds.ClaudeOpus5,
+                FolderPath = root, CliType = CliTypes.Claude, Model = "claude-sonnet-5",
                 ThinkingLevel = "high", ModelExplicit = true,
             };
 
             var forecast = OperatorCapacityEndpoints.Forecast(selection, null, card, [card], now);
 
             Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, forecast.Plan.Outcome);
-            Assert.Equal((CliTypes.Codex, ModelIds.Gpt56Sol), (forecast.Plan.CliType, forecast.Plan.Model));
-            Assert.Equal(ModelIds.ClaudeOpus5, forecast.Configured.Model);
+            Assert.Equal((CliTypes.Codex, "gpt-6-sol"), (forecast.Plan.CliType, forecast.Plan.Model));
+            Assert.Equal("claude-sonnet-5", forecast.Configured.Model);
             Assert.Equal(0, ledger.Records);
             // The same question as a real launch writes the switch receipt, so the zero above is the preview.
             selection.Select(CodingSelectionCalls.For(card, "sample", 0, now, null));

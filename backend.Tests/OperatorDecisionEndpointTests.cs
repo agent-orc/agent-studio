@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AgentStudio.Cli;
 using AgentStudio.Operator;
 using AgentStudio.Runner;
 using AgentStudio.Security;
@@ -22,6 +23,15 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class OperatorDecisionEndpointTests : IDisposable
 {
+    private static void RecordClassWait(WebApplicationFactory<Program> factory)
+        => factory.Services.GetRequiredService<ModelSelectionLedger>().Append(new ModelSelectionEvent
+        {
+            Kind = "waiting", Consumer = "review-aspect", Rule = "quota-cap",
+            At = Now(factory), Reason = "No provider can accept the review class.",
+            From = new("claude", "claude-sonnet-5", "high"),
+            To = new("claude", "claude-sonnet-5", "high"),
+        });
+
     private const string Password = "correct horse battery staple!";
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "operator-decisions-" + Guid.NewGuid().ToString("N"));
 
@@ -33,6 +43,7 @@ public sealed class OperatorDecisionEndpointTests : IDisposable
         var betaToken = Token(factory, "beta reader", StudioRoles.Viewer, "beta");
         factory.Services.GetRequiredService<ProviderLimitRegistry>().Record(new ProviderLimitStatus(
             "claude", Now(factory), Now(factory).AddHours(1), "rate limited", true));
+        RecordClassWait(factory);
         using var alpha = BearerClient(factory, alphaToken);
         using var beta = BearerClient(factory, betaToken);
         using var owner = Client(factory, Login(factory));
@@ -64,6 +75,7 @@ public sealed class OperatorDecisionEndpointTests : IDisposable
         using var factory = BuildFactory();
         factory.Services.GetRequiredService<ProviderLimitRegistry>().Record(new ProviderLimitStatus(
             "claude", Now(factory), Now(factory).AddHours(1), "rate limited", true));
+        RecordClassWait(factory);
         using var alpha = BearerClient(factory, Token(factory, "alpha reader", StudioRoles.Viewer, "alpha"));
         using var owner = Client(factory, Login(factory));
         // The hosted loop's startup read can predate the provider limit and
