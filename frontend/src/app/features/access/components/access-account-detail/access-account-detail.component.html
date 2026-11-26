@@ -1,0 +1,65 @@
+@if (account(); as item) {
+  <div class="access-stack" data-testid="access-account-detail">
+    <div class="access-facts">
+      <app-row variant="default"><span appRowLabel>State</span><span appRowValue><app-status-indicator [tone]="item.disabledAt ? 'neutral' : 'success'" [label]="item.disabledAt ? 'Disabled' : 'Active'" [compact]="true" testId="access-service-account-status" /></span></app-row>
+      <app-row variant="default"><span appRowLabel>Created</span><span appRowValue class="access-numeric">{{ time(item.createdAt) }}</span></app-row>
+      @if (item.disabledAt) { <app-row variant="default"><span appRowLabel>Disabled</span><span appRowValue class="access-numeric">{{ time(item.disabledAt) }}</span></app-row> }
+      @if (api() && creator()) { <app-row variant="default"><span appRowLabel>Created by</span><span appRowValue>{{ creator() }}</span></app-row> }
+    </div>
+    @if (api()) {
+      <div class="access-notes" data-testid="access-api-token-badge">
+        @for (role of tokenRoles(); track role.id) {
+          <p class="access-hint" [attr.data-testid]="'access-api-token-role-' + item.id">Role: <strong>{{ role.name }}</strong>@if (role.description) {. {{ role.description }}}</p>
+        }
+        @if (creator()) { <p class="access-hint">This API token stops working if {{ creator() }} is disabled.</p> }
+      </div>
+    }
+
+    <app-page-section level="sub" anchor="access-account-tokens" [title]="api() ? 'Token' : 'Tokens'" [count]="tokens().length"
+      [purpose]="api() ? 'One token. It is replaced rather than reissued.' : 'Each token has its own expiry and can be revoked on its own.'">
+      @if (canIssue()) {
+        <label sectionTools class="access-field access-field--inline">Lifetime
+          <select data-testid="access-token-lifetime" (change)="setLifetime($any($event.target).value)">
+            @for (days of lifetimes; track days) { <option [value]="'' + days" [selected]="days === tokenDays()">{{ days }} days</option> }
+          </select>
+        </label>
+      }
+      @if (canIssue()) {
+        <button sectionAction type="button" class="btn btn--primary" [attr.data-testid]="'access-token-create-' + item.id" [disabled]="access.busy()" (click)="issue()">New token</button>
+      }
+      @if (issued(); as secret) {
+        <app-secret-reveal testId="access-token-issued" [title]="'New token for ' + item.name" [value]="secret.token" copyLabel="Copy token"
+          [note]="'Copy it now. It is not shown again' + (secret.expiresAt ? ' and expires ' + time(secret.expiresAt) + '.' : '.')" (dismissed)="issued.set(null)" />
+      }
+      <ul class="access-list" data-testid="access-token-list">
+        @for (token of tokens(); track token.id) {
+          <li class="access-list__item" [attr.data-testid]="'access-token-' + token.id">
+            <span class="access-list__fact">
+              <strong>{{ token.name || token.id }}</strong>
+              <span class="access-hint access-numeric">Expires {{ time(token.expiresAt) || 'never' }}</span>
+              <span class="access-hint access-numeric">Created {{ time(token.createdAt) }}, last used {{ time(token.lastUsedAt) || 'never' }}</span>
+            </span>
+            <app-inline-confirm label="Revoke" confirmLabel="Revoke token" [testId]="'access-token-revoke-' + token.id"
+              [message]="'Anything that uses ' + (token.name || token.id) + ' stops working at once. This cannot be undone.'" [disabled]="access.busy()"
+              [armed]="selection.armed() === armKey(token)" (armedChange)="selection.setArmed(armKey(token), $event)" (confirmed)="revoke(token)" />
+          </li>
+        } @empty {
+          <li class="access-hint" data-testid="access-token-list-empty">{{ item.disabledAt ? 'No token: the account is disabled.' : api() ? 'No active token.' : 'No token yet. Create one for the script or job that uses this account.' }}</li>
+        }
+      </ul>
+    </app-page-section>
+
+    <app-page-section level="sub" anchor="access-account-roles" title="Roles" purpose="What this account may reach. Without a role it can authenticate but reach nothing.">
+      <app-access-binding-list principalKind="service-account" [principalId]="item.id" [canAdd]="!item.disabledAt"
+        emptyText="No role bindings: the account can authenticate but reach nothing." />
+    </app-page-section>
+
+    @if (!item.disabledAt) {
+      <div class="access-danger">
+        <app-inline-confirm [label]="api() ? 'Disable API token' : 'Disable account'" [testId]="'access-service-account-disable-' + item.id"
+          [message]="item.name + ' and all its tokens stop working at once. This page cannot enable it again.'" [disabled]="access.busy()"
+          [armed]="selection.armed() === 'disable'" (armedChange)="selection.setArmed('disable', $event)" (confirmed)="disable()" />
+      </div>
+    }
+  </div>
+}

@@ -226,6 +226,8 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
                     ["Orchestration:Transitions:CodingCompletion"] = "Engine",
                     ["Orchestration:Transitions:ReviewReport"] = "Engine",
                 }));
+            builder.ConfigureTestServices(services =>
+                services.AddHostedService<MonolithOrchestrationRecoveryService>());
         });
         using var http = factory.CreateClient();
         using var coding = new RClient(http, runnerId);

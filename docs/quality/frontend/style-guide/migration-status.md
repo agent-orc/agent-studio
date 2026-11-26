@@ -91,7 +91,7 @@ Tracker for the design-system convergence work. Each row is a **queueable task**
 | Slice                                                             | Status | Notes                                                                                       |
 | ----------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------- |
 | Shape-and-token contract documented                                | 🟢     | [forms.md](./forms.md)                                                                         |
-| **F-Forms: ship `form-control` mixin**                             | ⚪     | Mixin signature in [forms.md](./forms.md); first slice toward convergence                      |
+| **F-Forms: ship `form-control` mixin**                             | 🟡     | Mixin shipped with `form-field` in AGT-4029; first consumer is Settings > Access. See [forms.md](./forms.md) |
 | **F-Forms: Decide canonical** — `<app-input>` / `<app-select>` / `<app-textarea>` Angular components or stay on mixins | ⚪ | Bigger commitment than the others (ControlValueAccessor + error / helper-text slots) |
 | Migrate `.commandbar__field`, `.chat-compose__input`, `.cli-config__input`, ... to the mixin | ⚪ | Per-file slices after the mixin lands |
 | `<app-toggle>` for visual toggle switches                          | ⚫     | Deferred — only two consumers today; not worth a separate component yet                      |

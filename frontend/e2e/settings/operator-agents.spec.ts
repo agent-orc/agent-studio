@@ -235,7 +235,7 @@ async function openAccess(page: Page) {
   await page.goto('/#/workspace/settings/access', { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await expect(page.getByTestId('workspace-settings-rail-access')).toBeVisible({ timeout: 30_000 });
   const access = page.getByTestId('access-area');
-  await expect(access.getByRole('heading', { name: 'Users' })).toBeVisible();
+  await expect(access.getByRole('heading', { name: /^People/ })).toBeVisible();
   return access;
 }
 
@@ -335,7 +335,7 @@ test('backup activity stays hidden when the server refuses the read', async ({ p
   await stubNetworkedOwner(page);
   await page.route(url => url.pathname === '/api/auth/audit/backups', route => json(route, { error: 'forbidden' }, 403));
   const access = await openAccess(page);
-  await expect(access.getByRole('heading', { name: 'Runner enrollments and runners' })).toBeVisible();
+  await expect(access.getByRole('heading', { name: /^Runners/ })).toBeVisible();
   await expect(access.getByTestId('access-backup-activity')).toHaveCount(0);
 });
 

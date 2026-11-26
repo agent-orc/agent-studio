@@ -117,6 +117,7 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
             _usernameClientDelays.Clear();
             _pendingTotpSecrets.Clear();
             _passkeyChallenges.Clear();
+            ResetOperatorSignInLimitsLocked();
             _nextLoginPruneAt = DateTime.MinValue;
         }
     }
@@ -608,7 +609,10 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
                 throw new SecurityOperationException(404, "session-not-found", "Session not found.");
             if (userId is not null) ConsumeStepUpLocked(state, principal);
             state.Sessions.RemoveAll(x => x.UserId == target && x.Id == sessionId);
+            // ES-3: revoking a browser session ends the terminal sessions it confirmed.
+            var ended = EndSessionsConfirmedByBrowserLocked(state, [sessionId], principal.User.Id);
             SaveLocked(state);
+            AuditEndedSignInSessions(principal.User.Id, ended, "confirming browser session revoked");
         }
     }
 
@@ -621,8 +625,11 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
                 throw new SecurityOperationException(403, "owner-required", "Owner role is required.");
             var state = StateLocked();
             if (userId is not null) ConsumeStepUpLocked(state, principal);
+            var revoked = state.Sessions.Where(x => x.UserId == target && x.Id != principal.Session.Id).Select(x => x.Id).ToList();
             state.Sessions.RemoveAll(x => x.UserId == target && x.Id != principal.Session.Id);
+            var ended = EndSessionsConfirmedByBrowserLocked(state, revoked, principal.User.Id);
             SaveLocked(state);
+            AuditEndedSignInSessions(principal.User.Id, ended, "confirming browser session revoked");
         }
     }
 
@@ -734,7 +741,10 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
                 };
                 state.Users[state.Users.IndexOf(user)] = updated;
                 state.Sessions.RemoveAll(x => x.UserId == user.Id && x.Id != principal.Session.Id);
+                // ES-3: a new password ends every terminal session this person confirmed.
+                var ended = EndSessionsConfirmedByUserLocked(state, user.Id, user.Id, "confirming person changed the password");
                 SaveLocked(state);
+                AuditEndedSignInSessions(user.Id, ended, "confirming person changed the password");
                 return updated;
             }
         }
@@ -897,7 +907,11 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
             var previous = next.RoleBindings.Where(binding => binding.PrincipalKind == IamPrincipalKind.User && binding.PrincipalId == id).ToList();
             CommitIamLocked(next, users, bindings ?? next.RoleBindings.ToList(), next.Groups.ToList(), actingUserId);
             if (disabled) next.Sessions.RemoveAll(x => x.UserId == id);
+            var ended = disabled && !user.Disabled
+                ? EndSessionsConfirmedByUserLocked(next, id, actingUserId, "confirming person disabled")
+                : ([], []);
             SaveLocked(next);
+            AuditEndedSignInSessions(actingUserId, ended, "confirming person disabled");
             if (request.Role is not null || request.Projects is not null || request.ProductionApprovalProjects is not null)
                 AppendIamAudit(actingUserId, "user.legacy-role", "user", id, new
                 {
@@ -916,7 +930,7 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
         }
     }
 
-    public (StudioUser User, string TemporaryPassword) ResetPassword(string id, PasswordResetRequest request)
+    public (StudioUser User, string TemporaryPassword) ResetPassword(string id, PasswordResetRequest request, string? actingUserId = null)
     {
         var temporary = string.IsNullOrWhiteSpace(request.TemporaryPassword) ? GenerateTemporaryPassword() : request.TemporaryPassword;
         lock (_gate)
@@ -928,7 +942,9 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
             var updated = user with { PasswordHash = _hashPassword(temporary), PasswordChangedAt = Now, MustChangePassword = true };
             state.Users[state.Users.IndexOf(user)] = updated;
             state.Sessions.RemoveAll(x => x.UserId == id);
+            var ended = EndSessionsConfirmedByUserLocked(state, id, actingUserId, "confirming person's password reset");
             SaveLocked(state);
+            AuditEndedSignInSessions(actingUserId, ended, "confirming person's password reset");
             return (updated, temporary);
         }
     }

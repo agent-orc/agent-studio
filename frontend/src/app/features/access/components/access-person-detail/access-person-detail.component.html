@@ -1,0 +1,36 @@
+@if (user(); as person) {
+  <div class="access-stack" data-testid="access-person-detail">
+    <div class="access-facts">
+      <app-row variant="default"><span appRowLabel>State</span><span appRowValue>@if (status(); as state) { <app-status-indicator [tone]="state.tone" [label]="state.label" [compact]="true" testId="access-person-status" /> }</span></app-row>
+      <app-row variant="default"><span appRowLabel>Username</span><span appRowValue class="access-mono">{{ person.username }}</span></app-row>
+      <app-row variant="default"><span appRowLabel>Factor</span><span appRowValue>{{ person.hasFactor ? 'Registered' : 'None' }}</span></app-row>
+      <app-row variant="default"><span appRowLabel>Changed</span><span appRowValue class="access-numeric">{{ person.factorChangedAt ? time(person.factorChangedAt) : person.hasFactor ? 'Unknown' : 'Never' }}</span></app-row>
+    </div>
+
+    <app-page-section level="sub" anchor="access-person-roles" title="Roles" purpose="Deeper scopes add to the workspace. Roles held through a group are changed on the group.">
+      <app-access-binding-list principalKind="user" [principalId]="person.id" [canAdd]="!person.disabled" emptyText="No role: this person can sign in but reach nothing." />
+    </app-page-section>
+
+    <app-page-section level="sub" anchor="access-person-sign-in" title="Sign-in" purpose="A reset issues a one-time password and ends the open sessions.">
+      @if (temporaryPassword(); as value) {
+        <app-secret-reveal testId="access-temporary-password" [title]="'Temporary password for ' + person.username" [value]="value"
+          note="Copy it now. It is not shown again." copyLabel="Copy password" (dismissed)="temporaryPassword.set(null)" />
+      }
+      <div class="access-form__actions">
+        <app-session-manager [userId]="person.id" />
+        <button type="button" class="btn" data-testid="access-user-reset-password" [disabled]="access.busy()" (click)="resetPassword()">Reset password</button>
+      </div>
+    </app-page-section>
+
+    <div class="access-danger">
+      @if (person.disabled) {
+        <p class="access-hint">This person cannot sign in.</p>
+        <button type="button" class="btn" [attr.data-testid]="'access-user-toggle-' + person.username" [disabled]="access.busy()" (click)="setDisabled(false)">Enable</button>
+      } @else {
+        <app-inline-confirm label="Disable user" [testId]="'access-user-toggle-' + person.username"
+          [message]="'Open sessions of ' + person.displayName + ' end immediately. The user cannot sign in until enabled again.'"
+          [disabled]="access.busy()" [armed]="selection.armed() === 'disable'" (armedChange)="selection.setArmed('disable', $event)" (confirmed)="setDisabled(true)" />
+      }
+    </div>
+  </div>
+}

@@ -1,0 +1,65 @@
+@use '../../../styles/mixins' as m;
+
+// Page outline. The active entry follows the shared navigation contract
+// (AGT-2010): accent-tinted band plus the accent bar, from the nav tokens.
+:host { display: block; min-width: 0; }
+
+.outline { display: flex; flex-direction: column; gap: var(--studio-spacing-2); min-width: 0; }
+.outline__label { @include m.type-label; margin: 0; padding: 0 var(--studio-spacing-2); }
+
+.outline__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.outline__group {
+  @include m.type-label;
+  padding: var(--studio-spacing-3) var(--studio-spacing-2) 0;
+  color: var(--studio-fg-muted);
+}
+
+.outline__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--studio-spacing-2);
+  width: 100%;
+  min-height: var(--studio-action-height-sm);
+  padding: 0 var(--studio-spacing-2);
+  border: 0;
+  border-radius: var(--studio-action-radius-sm);
+  background: transparent;
+  color: var(--studio-fg-dim);
+  font: inherit;
+  font-size: var(--studio-font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.outline__item:hover { background: var(--studio-bg-hover); color: var(--studio-fg-strong); }
+.outline__item:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
+.outline__item[aria-current='location'] {
+  background: var(--studio-nav-active-bg);
+  box-shadow: inset 3px 0 0 0 var(--studio-nav-active-bar);
+  color: var(--studio-nav-active-fg);
+  font-weight: 600;
+}
+.outline__item[aria-current='location']:hover { background: var(--studio-nav-active-bg-hover); }
+.outline__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+// One scrolling line for narrow layouts: no label, no group headings.
+.outline--horizontal { flex-direction: row; }
+.outline--horizontal .outline__label,
+.outline--horizontal .outline__group { display: none; }
+.outline--horizontal .outline__list {
+  @include m.thin-scroll;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.outline--horizontal .outline__item { width: auto; min-height: var(--studio-row-min-h-interactive-cozy); white-space: nowrap; }
+.outline--horizontal .outline__item[aria-current='location'] { box-shadow: inset 0 -3px 0 0 var(--studio-nav-active-bar); }

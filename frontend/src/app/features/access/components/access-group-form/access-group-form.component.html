@@ -1,0 +1,12 @@
+<div class="access-form" data-testid="access-group-form">
+  <label class="access-field">Group name
+    <input data-testid="access-group-name" autocomplete="off" [value]="name()" (input)="name.set($any($event.target).value)" />
+  </label>
+  <label class="access-field">Description
+    <input data-testid="access-group-description" autocomplete="off" [value]="description()" (input)="description.set($any($event.target).value)" />
+  </label>
+  <p class="access-hint">Members and roles are added on the group after it exists.</p>
+  <div class="access-form__actions">
+    <button type="button" class="btn btn--primary" data-testid="access-group-create" [disabled]="!name().trim() || access.busy()" (click)="create()">Create group</button>
+  </div>
+</div>

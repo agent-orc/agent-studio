@@ -584,6 +584,8 @@ Do **not** select by CSS class names; they belong to styling and change often.
 
 | Spec | Summary |
 |------|---------|
+| `access-area.spec.ts` | Settings > Access: invitation flow, factor activity, in-place disable confirmation, API token role, session step-up, denied reload, runner project binding; light, dark and 390 px (mocked) |
+| `access-pilot.spec.ts` | AGT-4029 · Access as the pilot page of the UI standard: service account detail with bindings and tokens, one-time token with copy, revoke confirmed in place, every earlier action, outline counts, empty states; writes the `after/` and `patterns/` captures (mocked, data in `access-pilot.fixture.ts`) |
 | `appearance-layout-toggles.spec.ts` | Settings - Appearance/Layout segmented toggles |
 | `operator-agents.spec.ts` | AGT-3372 · Access operator agents: create, one-time session token, audited activity, chain and forwarding strip; AGT-3373 · kill switch: end one session, end all operator access, drill, acute states; light and dark (mocked) |
 | `quota-forecast.spec.ts` | AGT-3001 · CLI Management quota forecast: curve, rate, 100% time, session gauge, armed fallback (mocked) |

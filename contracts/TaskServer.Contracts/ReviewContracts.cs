@@ -145,7 +145,16 @@ public sealed record ReviewPlanDto(
     string? BuildTestDeferralDisabledReason = null,
     IReadOnlyList<ReviewPreparationSkipDto>? PreparationSkips = null,
     /// <summary>Exact target-branch commit from which the command plan was read.</summary>
-    string? PlanCommitSha = null);
+    string? PlanCommitSha = null,
+    ReviewSuiteSelectionDto? SuiteSelection = null);
+
+public sealed record ReviewSuiteSelectionDto(IReadOnlyList<string> SelectedSuites,
+    IReadOnlyList<string> OmittedSuites, IReadOnlyList<string> Reasons)
+{
+    public IReadOnlyDictionary<string, string> SuiteCommands { get; init; } = new Dictionary<string, string>();
+    public IReadOnlyList<string> AttemptedSuites { get; init; } = [];
+    public IReadOnlyDictionary<string, string> SuiteSteps { get; init; } = new Dictionary<string, string>();
+}
 
 /// <summary>Frozen engine decision visible with the review subject before any review command runs.</summary>
 public sealed record DeepReviewDecisionDto(string ReceiptId, string Mode, bool Selected,
@@ -760,7 +769,8 @@ public sealed record ReviewReportRequest(
     string? BriefSha256 = null,
     IReadOnlyList<ReviewSkippedAspectDto>? SkippedAspects = null,
     bool ArtifactsReduced = false,
-    string? QualityStudioCodeQualityMode = null);
+    string? QualityStudioCodeQualityMode = null,
+    ReviewSuiteSelectionDto? SuiteSelection = null);
 
 /// <summary>
 /// State of the task-folder evidence write (grade markdown, aspect files,

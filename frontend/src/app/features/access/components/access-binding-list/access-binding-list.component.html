@@ -1,0 +1,27 @@
+<div class="roles" data-testid="access-binding-list">
+  <ul class="roles__list">
+    @for (item of grants(); track item.id) {
+      <li class="roles__item" [attr.data-testid]="'access-binding-' + item.id">
+        <div class="roles__fact">
+          <app-chip [label]="item.role" [detail]="item.scope" [emphasis]="item.owner ? 'strong' : 'default'" />
+          <span class="access-hint">{{ item.via ? 'Through the group ' + item.via : 'Source: ' + item.binding.source }}</span>
+        </div>
+        @if (!item.via) {
+          <app-inline-confirm label="Remove" confirmLabel="Remove role" [testId]="'access-binding-remove-' + item.id"
+            [message]="name() + ' loses ' + item.role + ' in ' + item.scope + '.'" [disabled]="access.busy()"
+            [armed]="selection.armed() === armKey(item)" (armedChange)="selection.setArmed(armKey(item), $event)" (confirmed)="remove(item)" />
+        }
+      </li>
+    } @empty {
+      <li class="access-hint" data-testid="access-binding-list-empty">{{ emptyText() }}</li>
+    }
+  </ul>
+  @if (canAdd()) {
+    <div class="access-form">
+      <app-access-grant-form [roles]="access.overview()?.roles ?? []" [projects]="access.projects()" [principalKind]="principalKind()" (grantChange)="grant.set($event)" />
+      <div class="access-form__actions">
+        <button type="button" class="btn" data-testid="access-binding-add" [disabled]="!grant() || access.busy()" (click)="add()">Add role</button>
+      </div>
+    </div>
+  }
+</div>

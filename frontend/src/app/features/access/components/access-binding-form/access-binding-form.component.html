@@ -1,0 +1,14 @@
+<div class="access-form" data-testid="access-binding-form">
+  <label class="access-field">Principal
+    <select data-testid="access-binding-principal" (change)="principal.set($any($event.target).value)">
+      @for (item of principals(); track item.value) {
+        <option [value]="item.value" [selected]="item.value === selectedPrincipal()?.value">{{ item.label }}</option>
+      }
+    </select>
+  </label>
+  <app-access-grant-form [roles]="access.overview()?.roles ?? []" [projects]="access.projects()"
+                         [principalKind]="selectedPrincipal()?.kind ?? 'user'" (grantChange)="grant.set($event)" />
+  <div class="access-form__actions">
+    <button type="button" class="btn btn--primary" data-testid="access-binding-add" [disabled]="!grant() || !selectedPrincipal() || access.busy()" (click)="add()">Add binding</button>
+  </div>
+</div>

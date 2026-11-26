@@ -1,0 +1,38 @@
+{
+ "headings": [
+  "Access",
+  "Users",
+  "Factor activity",
+  "Invite a person",
+  "Role bindings per scope",
+  "Workspace\nworkspace",
+  "Mobile App\nproject",
+  "Website\nproject",
+  "Website · production\nenvironment",
+  "Website · stage\nenvironment",
+  "Add a role binding",
+  "Groups",
+  "Team Website",
+  "Service accounts and API tokens",
+  "deploy-bot",
+  "build bot API token",
+  "New service account",
+  "Runner enrollments and runners",
+  "Enrolled runners"
+ ],
+ "buttons": 27,
+ "tables": 9,
+ "selects": 13,
+ "inputs": 10,
+ "font": {
+  "declared": "Inter, -apple-system, BlinkMacSystemFont, \"Segoe UI\", system-ui, sans-serif",
+  "rendered": [
+   {
+    "familyName": "WenQuanYi Zen Hei",
+    "postScriptName": "WenQuanYiZenHei",
+    "isCustomFont": false,
+    "glyphCount": 5
+   }
+  ]
+ }
+}

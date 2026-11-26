@@ -1,0 +1,11 @@
+<span class="grants" [class.grants--fit]="fit()">
+  <span #list class="grants__list">
+    @for (grant of grants(); track grant.id) {
+      <app-chip [label]="grant.role" [detail]="grant.scope" [note]="grant.via && !fit() ? 'via ' + grant.via : null"
+                [emphasis]="grant.owner ? 'strong' : grant.via ? 'quiet' : 'default'" />
+    } @empty {
+      <span class="grants__none">{{ emptyLabel() }}</span>
+    }
+  </span>
+  @if (more() > 0) { <app-chip class="grants__more" [label]="'+' + more()" emphasis="quiet" /> }
+</span>

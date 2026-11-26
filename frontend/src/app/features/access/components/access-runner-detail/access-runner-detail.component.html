@@ -1,0 +1,77 @@
+@if (runner(); as item) {
+  <div class="access-stack" data-testid="access-runner-detail">
+    <div class="access-facts">
+      <app-row variant="default"><span appRowLabel>State</span><span appRowValue><app-status-indicator [tone]="item.runner.revokedAt ? 'neutral' : 'success'" [label]="item.runner.revokedAt ? 'Revoked' : 'Active'" [compact]="true" /></span></app-row>
+      <app-row variant="default"><span appRowLabel>Identity</span><span appRowValue>{{ item.identity }}</span></app-row>
+      <app-row variant="default"><span appRowLabel>Runner ID</span><span appRowValue class="access-mono">{{ item.runner.id }}</span></app-row>
+      <app-row variant="default"><span appRowLabel>Enrolled</span><span appRowValue class="access-numeric">{{ time(item.runner.createdAt) }}</span></app-row>
+      @if (item.runner.lastSeenAt) { <app-row variant="default"><span appRowLabel>Last seen</span><span appRowValue class="access-numeric">{{ time(item.runner.lastSeenAt) }}</span></app-row> }
+      @if (item.runner.revokedAt) { <app-row variant="default"><span appRowLabel>Revoked</span><span appRowValue class="access-numeric">{{ time(item.runner.revokedAt) }}</span></app-row> }
+    </div>
+
+    <app-page-section level="sub" anchor="access-runner-projects" title="Projects"
+      [purpose]="item.engine ? 'The engine authenticates with an orchestration credential and is not bound to projects.' : 'The runner claims and reads work only in these projects.'">
+      @if (!item.engine && !item.runner.revokedAt && draft() === null) {
+        <button sectionAction type="button" class="btn" [attr.data-testid]="'access-runner-edit-projects-' + item.runner.id" [disabled]="access.busy()" (click)="edit()">Edit projects</button>
+      }
+      @if (draft(); as chosen) {
+        <fieldset class="access-choices" [attr.data-testid]="'access-runner-project-editor-' + item.runner.id">
+          <legend>Projects {{ item.runner.name }} may work on</legend>
+          <label class="access-choice"><input type="checkbox" [checked]="chosen.includes(allProjects)" (change)="toggle(allProjects)" /> All projects</label>
+          @for (project of access.projects(); track project.id) {
+            <label class="access-choice">
+              <input type="checkbox" [attr.data-testid]="'access-runner-project-' + item.runner.id + '-' + project.id" [checked]="chosen.includes(project.id)" (change)="toggle(project.id)" />
+              {{ project.displayName }}
+            </label>
+          }
+          @if (!chosen.length) { <p class="access-hint">Without a project, the runner claims and reads nothing.</p> }
+        </fieldset>
+        <div class="access-form__actions">
+          <button type="button" class="btn btn--primary" [attr.data-testid]="'access-runner-save-projects-' + item.runner.id" [disabled]="access.busy()" (click)="saveProjects()">Save projects</button>
+          <button type="button" class="btn btn--ghost" (click)="draft.set(null)">Cancel</button>
+        </div>
+      } @else {
+        <p [attr.data-testid]="'access-runner-detail-projects-' + item.runner.id">{{ item.engine ? 'Not project-bound' : item.projects }}</p>
+        @if (item.runner.projectsNotice; as notice) { <p class="access-hint">{{ notice }}</p> }
+      }
+    </app-page-section>
+
+    <app-page-section level="sub" anchor="access-runner-credential" title="Credential" purpose="A new credential expires 30 days after enrollment.">
+      <div class="access-facts">
+        <app-row variant="default"><span appRowLabel>Active</span><span appRowValue class="access-numeric">{{ item.credentials }}</span></app-row>
+        <app-row variant="default"><span appRowLabel>Expiry</span><span appRowValue class="access-numeric">
+          @if (item.expiry.tone) { <app-status-indicator [tone]="item.expiry.tone" [label]="item.expiry.label" [compact]="true" /> } @else { {{ item.expiry.label || '–' }} }
+        </span></app-row>
+      </div>
+      @if (item.expiry.notice; as notice) { <p class="access-hint">{{ notice }}</p> }
+    </app-page-section>
+
+    @if (!item.runner.revokedAt) {
+      <div class="access-danger">
+        <app-inline-confirm label="Revoke runner" [testId]="'access-runner-revoke-' + item.runner.id"
+          [message]="item.runner.name + ' loses its credentials at once and must enroll again with a new code.'" [disabled]="access.busy()"
+          [armed]="selection.armed() === 'revoke'" (armedChange)="selection.setArmed('revoke', $event)" (confirmed)="revoke()" />
+      </div>
+    }
+  </div>
+}
+@if (enrollment(); as item) {
+  <div class="access-stack" data-testid="access-enrollment-detail">
+    <div class="access-facts">
+      <app-row variant="default"><span appRowLabel>State</span><span appRowValue><app-status-indicator [tone]="item.tone" [label]="item.status" [compact]="true" /></span></app-row>
+      <app-row variant="default"><span appRowLabel>Identity</span><span appRowValue>{{ item.identity }}</span></app-row>
+      <app-row variant="default"><span appRowLabel>Projects</span><span appRowValue>{{ item.projects || '–' }}</span></app-row>
+      <app-row variant="default"><span appRowLabel>Created</span><span appRowValue class="access-numeric">{{ time(item.enrollment.createdAt) }}</span></app-row>
+      <app-row variant="default"><span appRowLabel>Expires</span><span appRowValue class="access-numeric">{{ time(item.enrollment.expiresAt) }}</span></app-row>
+      @if (item.enrollment.usedAt) { <app-row variant="default"><span appRowLabel>Used</span><span appRowValue class="access-numeric">{{ time(item.enrollment.usedAt) }}</span></app-row> }
+    </div>
+    <p class="access-hint">The code itself was shown once when it was created and is not stored.</p>
+    @if (item.open) {
+      <div class="access-danger">
+        <app-inline-confirm label="Revoke code" [testId]="'access-enrollment-revoke-' + item.enrollment.id"
+          [message]="'The code for ' + item.enrollment.name + ' stops working. A host that has not enrolled yet needs a new code.'" [disabled]="access.busy()"
+          [armed]="selection.armed() === 'revoke'" (armedChange)="selection.setArmed('revoke', $event)" (confirmed)="revoke()" />
+      </div>
+    }
+  </div>
+}
