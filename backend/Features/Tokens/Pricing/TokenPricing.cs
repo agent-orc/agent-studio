@@ -17,7 +17,8 @@ public sealed record TokenCostEstimate(
     string ModelId,
     bool ModelKnown,
     EconomyPricing.PriceStatus Status,
-    TokenPriceBasis? PriceBasis);
+    TokenPriceBasis? PriceBasis,
+    string? IncompleteReason = null);
 
 /// <summary>The exact historical TokenEconomy catalog entry used for a calculation.</summary>
 public sealed record TokenPriceBasis(
@@ -72,7 +73,6 @@ public sealed class TokenPricingService(ITokenPriceProvider provider) : ITokenPr
 
     public IReadOnlyList<PricedTokenEntry> Price(IReadOnlyList<OrchestratorLogEntry> ledger)
         => ledger.Select(entry => new PricedTokenEntry(entry, entry.TokenUsage is { } usage
-            ? Estimate(usage.Model, usage.InputTokens, usage.OutputTokens,
-                usage.CacheReadTokens, usage.CacheCreationTokens, entry.Ts)
+            ? this.EstimateReceipt(usage, entry.Ts)
             : null)).ToList();
 }

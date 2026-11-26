@@ -32,6 +32,23 @@ public sealed class StepCostMeasurementTests : IDisposable
     private static PipelineExecutionLog NewLog() => new(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
 
     [Fact]
+    public void Missing_Codex_cache_split_stays_unpriced_in_step_stamp_and_rollups()
+    {
+        var step = Step(PipelineCatalogue.CoreAgentRunStepId, StepKind.Core,
+            LegacyCodexModel, 61_600_000, 111_000) with
+        {
+            InputIncludesCached = null, UsageNormalization = null,
+        };
+        var pricing = TokenTestServices.Pricing();
+        var stamped = StepCostMeasurement.Stamp(pricing, step);
+        Assert.False(stamped.ModelPriced);
+        Assert.Null(stamped.EstimatedCostUsd);
+        var summary = new PipelineCostCalculator(pricing).Summarize(Record("J1", TestAt, step));
+        Assert.Equal(0m, summary.TotalCostUsd);
+        Assert.Contains(Assert.Single(summary.Steps).PricingGaps, gap => gap.Reason == "missing-cache-split");
+    }
+
+    [Fact]
     public void Recording_legacy_step_preserves_counters_while_cost_reads_normalize_them()
     {
         var log = NewLog();
