@@ -1,5 +1,5 @@
-<div class="access-row" data-testid="access-grant-form">
-  <label>Scope
+<div class="access-form__row" data-testid="access-grant-form">
+  <label class="access-field">Scope
     <select data-testid="access-grant-scope" (change)="setScopeKind($any($event.target).value)">
       @for (option of scopeKinds; track option.kind) {
         <option [value]="option.kind" [selected]="option.kind === scopeKind()">{{ option.label }}</option>
@@ -7,7 +7,7 @@
     </select>
   </label>
   @if (scopeKind() !== 'workspace') {
-    <label>Project
+    <label class="access-field">Project
       <select data-testid="access-grant-project" (change)="project.set($any($event.target).value)">
         <option value="" [selected]="!project()">Choose a project</option>
         @for (item of projects(); track item.id) {
@@ -17,7 +17,7 @@
     </label>
   }
   @if (scopeKind() === 'environment') {
-    <label>Environment
+    <label class="access-field">Environment
       <select data-testid="access-grant-environment" (change)="environment.set($any($event.target).value)">
         @for (item of environments; track item.key) {
           <option [value]="item.key" [selected]="item.key === environment()">{{ item.label }}</option>
@@ -25,7 +25,7 @@
       </select>
     </label>
   }
-  <label>Role
+  <label class="access-field">Role
     <select data-testid="access-grant-role" (change)="role.set($any($event.target).value)">
       @for (item of availableRoles(); track item.id) {
         <option [value]="item.id" [selected]="item.id === role()">{{ item.displayName }}</option>

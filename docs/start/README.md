@@ -20,6 +20,7 @@ Use this page as the first stop when you need the right document quickly.
 | [cli/](../system/cli/README.md) | Supported CLI contract, per-CLI skills, audits, and investigations. |
 | [operations/](../operations/README.md) | Setup, onboarding, security docs, runtime observability, git doctrine, and test workspaces. |
 | [reports/](../system/reports/README.md) | Report contracts, HTML visual reports, and screenshot-backed visual documentation. |
+| [ui-standard/](../system/ui-standard/README.md) | Pilot pages of the UI standard: the patterns each one establishes and the shared components behind them. |
 | [concepts/](../concepts/README.md) | Architecture concepts that have not become a domain or ADR yet, plus hand-maintained living concept/knowledge pages with running knowledge logs, dated deep dives, mockups, and proposals. |
 | [archive/](../archive/README.md) | Quiet historical pages retained by explicit inventory passes, with pointers from their former current locations. |
 | [common-problems/](../operations/common-problems/README.md) | Known recurring problems with root-cause analysis, occurrence logs, and workarounds. Search here first on a familiar symptom. |
@@ -62,6 +63,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Studio website scheduled encrypted backups, off-host copy (SFTP, S3, mounted directory), Operations page state, backup and secret store key escrow, restore onto a new host (AGT-3574), and the host-level timer (AGT-3365) | [operations/setup/studio-backup-restore.md](../operations/setup/studio-backup-restore.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
+| Access page pilot of the UI standard: section, outline, grid, row detail, action placement, chips, confirm in place, empty state, secret reveal, and the shared components (AGT-4029) | [system/ui-standard/access-page-pilot.md](../system/ui-standard/access-page-pilot.md) |
 | Runner | [domains/runner.md](../system/domains/runner.md) |
 | Pipeline | [domains/pipeline.md](../system/domains/pipeline.md) |
 | Integration conflict history, record version 1, rates and selection evidence (AGT-3969) | [contract](../system/contracts/integration-conflicts.md) |

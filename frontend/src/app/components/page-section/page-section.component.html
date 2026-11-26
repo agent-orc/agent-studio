@@ -1,0 +1,18 @@
+<section class="page-section" [class.page-section--sub]="level() === 'sub'" [class.page-section--flush]="!divider()" [id]="anchor()"
+         [attr.aria-labelledby]="titleId()" [attr.data-testid]="testId()">
+  <header class="page-section__head">
+    <div class="page-section__titles">
+      @if (level() === 'sub') {
+        <h4 class="page-section__title" [id]="titleId()" tabindex="-1">{{ title() }} <app-count-badge [value]="count()" /></h4>
+      } @else {
+        <h3 class="page-section__title" [id]="titleId()" tabindex="-1">{{ title() }} <app-count-badge [value]="count()" /></h3>
+      }
+      @if (purpose(); as text) { <p class="page-section__purpose">{{ text }}</p> }
+    </div>
+    <div class="page-section__actions">
+      <ng-content select="[sectionTools]" />
+      <ng-content select="[sectionAction]" />
+    </div>
+  </header>
+  <div class="page-section__body"><ng-content /></div>
+</section>

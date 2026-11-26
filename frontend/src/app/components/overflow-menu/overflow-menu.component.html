@@ -1,0 +1,6 @@
+<button #trigger type="button" class="overflow-menu__trigger" aria-haspopup="menu" [attr.aria-expanded]="open()"
+        [attr.aria-label]="label()" [attr.data-testid]="testId()" (click)="open.set(!open())">
+  <app-studio-icon name="more" [size]="16" />
+</button>
+<app-menu [items]="items()" [open]="open()" [anchorEl]="trigger" [ariaLabel]="label()" [testIdPrefix]="testId()"
+          (itemClick)="onItem($event)" (closeRequest)="open.set(false)" />

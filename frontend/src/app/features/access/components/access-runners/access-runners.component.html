@@ -1,128 +1,50 @@
 <div class="runners" data-testid="access-runners">
-  @if (access.runnersError(); as message) { <p class="access-error" role="alert" data-testid="access-runners-error">{{ message }}</p> }
-  @if (code(); as value) {
-    <div class="runners__issued" data-testid="access-enrollment-code" role="status">
-      <p>Copy this enrollment code now. It is shown once and works for a single runner. The runner's credential expires 30 days after enrollment.</p>
-      <p class="access-secret">{{ value }}</p>
-      @if (hostCommand(); as command) {
-        <p>On the run host, enroll and start the deploy service. Enrollment prints the runner id (<code>runner_…</code>); the deploy service claims with it, and each environment this host serves names it as its <code>targetHostId</code>.</p>
-        <pre class="access-secret" data-testid="access-run-host-command">{{ command }}</pre>
-      }
-      <div class="access-row"><button type="button" class="access-secondary" (click)="done()">Done</button></div>
-    </div>
-  }
-  <div class="access-row">
-    <label>Runner name
-      <input data-testid="access-enrollment-name" [value]="name()" (input)="name.set($any($event.target).value)" />
-    </label>
-    <label>Identity
-      <select data-testid="access-enrollment-kind" (change)="setKind($any($event.target).value)">
-        <option value="runner" [selected]="kind() === 'runner'">Coding and review</option>
-        <option value="deploy" [selected]="kind() === 'deploy'">Run host (deploy)</option>
-        <option value="orchestrator" [selected]="kind() === 'orchestrator'">Orchestration engine</option>
-      </select>
-    </label>
-    <button type="button" data-testid="access-enrollment-create" [disabled]="!name().trim() || access.busy()" (click)="create()">Create code</button>
-  </div>
-  @if (kind() !== 'orchestrator') {
-    <fieldset class="runners__projects" data-testid="access-enrollment-projects">
-      <legend>{{ kind() === 'deploy' ? 'Projects this run host may deploy' : 'Projects this runner may work on' }}</legend>
-      <label class="runners__choice">
-        <input type="checkbox" [checked]="selected().includes(allProjects)" (change)="toggleSelected(allProjects)" />
-        All projects
-      </label>
-      @for (project of access.projects(); track project.id) {
-        <label class="runners__choice">
-          <input type="checkbox" [attr.data-testid]="'access-enrollment-project-' + project.id"
-            [checked]="selected().includes(project.id)" (change)="toggleSelected(project.id)" />
-          {{ project.displayName }}
-        </label>
-      }
-      @if (!selected().length) {
-        <p class="access-hint" data-testid="access-enrollment-no-project">{{ kind() === 'deploy' ? 'Without a project, the run host deploys nothing.' : 'Without a project, the runner claims and reads nothing.' }}</p>
-      }
-    </fieldset>
-  }
-  @if (access.enrollments().length) {
-    <table data-testid="access-enrollments">
-      <thead><tr><th scope="col">Enrollment</th><th scope="col">Projects</th><th scope="col">Expires</th><th scope="col">Status</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
-      <tbody>
-        @for (enrollment of access.enrollments(); track enrollment.id) {
-          <tr>
-            <td>{{ enrollment.name }}</td>
-            <td class="access-hint">{{ enrollment.projects ? projectNames(enrollment.projects) : '' }}</td>
-            <td class="access-numeric">{{ time(enrollment.expiresAt) }}</td>
-            <td><app-status-indicator [tone]="statusTone(enrollment)" [label]="status(enrollment)" testId="access-enrollment-status" /></td>
-            <td class="access-actions">
-              @if (open(enrollment)) { <button type="button" class="access-quiet" [disabled]="access.busy()" (click)="revokeEnrollment(enrollment)">Revoke code</button> }
-            </td>
-          </tr>
-        }
-      </tbody>
-    </table>
-  }
-  <h4>Enrolled runners</h4>
-  <table data-testid="access-enrolled-runners">
-    <thead><tr><th scope="col">Runner</th><th scope="col">Identity</th><th scope="col">Projects</th><th scope="col">Credentials</th><th scope="col">Credential expiry</th><th scope="col">Status</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
-    <tbody>
-      @for (runner of access.runners(); track runner.id) {
-        @let ends = expiry(runner);
-        <tr [attr.data-testid]="'access-runner-' + runner.id">
-          <td>{{ runner.name }}</td>
-          <td class="access-hint">{{ runner.id }}</td>
-          <td [attr.data-testid]="'access-runner-projects-' + runner.id">
-            @if (isEngine(runner)) {
-              <span class="access-hint">Not project-bound</span>
-            } @else {
-              <span>{{ projectNames(runner.projects) }}</span>
-              @if (runner.projectsNotice; as notice) {
-                <app-status-indicator tone="neutral" label="Before binding" [detail]="notice" [compact]="true" />
-                <p class="access-hint">{{ notice }}</p>
-              }
-            }
-          </td>
-          <td class="access-numeric">{{ activeCredentials(runner) }}</td>
-          <td [attr.data-testid]="'access-runner-expiry-' + runner.id">
-            @if (ends.tone) { <app-status-indicator [tone]="ends.tone" [label]="ends.label" [compact]="true" /> } @else if (ends.label) { <span>{{ ends.label }}</span> }
-            @if (ends.notice; as notice) { <p class="access-hint">{{ notice }}</p> }
-          </td>
-          <td><app-status-indicator [tone]="runner.revokedAt ? 'neutral' : 'success'" [label]="runner.revokedAt ? 'Revoked' : 'Active'" testId="access-runner-status" /></td>
-          <td class="access-actions">
-            @if (!runner.revokedAt && !isEngine(runner)) {
-              <button type="button" class="access-quiet" [attr.data-testid]="'access-runner-edit-projects-' + runner.id"
-                [disabled]="access.busy()" (click)="edit(runner)">Edit projects</button>
-            }
-            @if (!runner.revokedAt) { <button type="button" class="access-quiet" [disabled]="access.busy()" (click)="revokeRunner(runner)">Revoke runner</button> }
-          </td>
-        </tr>
-        @if (editing() === runner.id) {
-          <tr class="runners__editor" [attr.data-testid]="'access-runner-project-editor-' + runner.id">
-            <td colspan="7">
-              <fieldset class="runners__projects">
-                <legend>Projects {{ runner.name }} may work on</legend>
-                <label class="runners__choice">
-                  <input type="checkbox" [checked]="draft().includes(allProjects)" (change)="toggleDraft(allProjects)" />
-                  All projects
-                </label>
-                @for (project of access.projects(); track project.id) {
-                  <label class="runners__choice">
-                    <input type="checkbox" [attr.data-testid]="'access-runner-project-' + runner.id + '-' + project.id"
-                      [checked]="draft().includes(project.id)" (change)="toggleDraft(project.id)" />
-                    {{ project.displayName }}
-                  </label>
-                }
-                @if (!draft().length) { <p class="access-hint">Without a project, the runner claims and reads nothing.</p> }
-              </fieldset>
-              <div class="access-row">
-                <button type="button" [attr.data-testid]="'access-runner-save-projects-' + runner.id" [disabled]="access.busy()" (click)="saveProjects(runner)">Save projects</button>
-                <button type="button" class="access-secondary" (click)="cancelEdit()">Cancel</button>
-              </div>
-            </td>
-          </tr>
-        }
-      } @empty {
-        <tr><td colspan="7" class="access-hint">No runner is enrolled.</td></tr>
-      }
-    </tbody>
-  </table>
+  @if (access.runnersError(); as message) { <p class="runners__error" role="alert" data-testid="access-runners-error">{{ message }}</p> }
+
+  <app-page-section level="sub" anchor="access-enrolled-runners" title="Enrolled runners" [count]="runners().length">
+    <app-data-grid label="Enrolled runners" testId="access-enrolled-runners" [columns]="runnerColumns" [rows]="runners()" [rowId]="runnerId"
+                   [rowLabel]="runnerLabel" [rowTestId]="runnerTestId" [rowMuted]="runnerMuted" [selectable]="true"
+                   [selectedId]="selection.selectedId('runner')" (rowSelect)="selection.open('runner', $event.id)">
+      <ng-template appGridCell="access" [appGridCellOf]="runners()" let-row>
+        <span class="runners__access" [attr.data-testid]="'access-runner-projects-' + row.id">
+          <app-chip [label]="row.identity" [detail]="row.projects" />
+          @if (row.runner.projectsNotice; as notice) { <app-status-indicator tone="neutral" label="Before binding" [detail]="notice" [compact]="true" /> }
+        </span>
+      </ng-template>
+      <ng-template appGridCell="state" [appGridCellOf]="runners()" let-row>
+        <app-status-indicator [tone]="row.revoked ? 'neutral' : 'success'" [label]="row.revoked ? 'Revoked' : 'Active'" [compact]="true" testId="access-runner-status" />
+      </ng-template>
+      <ng-template appGridCell="meta" [appGridCellOf]="runners()" let-row>
+        <span class="runners__numeric" [attr.data-testid]="'access-runner-expiry-' + row.id">
+          @if (row.revoked) { <span class="runners__none">–</span> }
+          @else if (row.expiry.tone) { <app-status-indicator [tone]="row.expiry.tone" [label]="row.expiry.label" [detail]="row.expiry.notice" [compact]="true" /> }
+          @else if (row.expiry.label) { {{ row.expiry.label }} }
+          @else { <span class="runners__none">–</span> }
+        </span>
+      </ng-template>
+      <ng-template appGridCell="actions" [appGridCellOf]="runners()" let-row>
+        <app-overflow-menu [label]="'Actions for ' + row.name" [items]="row.menu" [testId]="'access-runner-menu-' + row.id" (itemSelect)="actRunner($event, row)" />
+      </ng-template>
+      <app-empty-state gridEmpty title="No runner is enrolled" body="A runner or the orchestration engine appears here once it has used an enrollment code." />
+    </app-data-grid>
+  </app-page-section>
+
+  <app-page-section level="sub" anchor="access-enrollment-codes" title="Enrollment codes" [count]="enrollments().length"
+                    purpose="A code works once, for a single runner, and for 15 minutes.">
+    <app-data-grid label="Enrollment codes" testId="access-enrollments" [columns]="enrollmentColumns" [rows]="enrollments()" [rowId]="enrollmentId"
+                   [rowLabel]="enrollmentLabel" [rowTestId]="enrollmentTestId" [rowMuted]="enrollmentMuted" [selectable]="true"
+                   [selectedId]="selection.selectedId('enrollment')" (rowSelect)="selection.open('enrollment', $event.id)">
+      <ng-template appGridCell="access" [appGridCellOf]="enrollments()" let-row>
+        <app-chip [label]="row.identity" [detail]="row.projects || null" />
+      </ng-template>
+      <ng-template appGridCell="state" [appGridCellOf]="enrollments()" let-row>
+        <app-status-indicator [tone]="row.tone" [label]="row.status" [compact]="true" testId="access-enrollment-status" />
+      </ng-template>
+      <ng-template appGridCell="meta" [appGridCellOf]="enrollments()" let-row><span class="runners__numeric">{{ row.expires }}</span></ng-template>
+      <ng-template appGridCell="actions" [appGridCellOf]="enrollments()" let-row>
+        <app-overflow-menu [label]="'Actions for the code for ' + row.name" [items]="row.menu" [testId]="'access-enrollment-menu-' + row.id" (itemSelect)="actEnrollment($event, row)" />
+      </ng-template>
+      <app-empty-state gridEmpty [compact]="true" title="No enrollment codes" body="Create a code, then use it once on the host that becomes the runner." />
+    </app-data-grid>
+  </app-page-section>
 </div>

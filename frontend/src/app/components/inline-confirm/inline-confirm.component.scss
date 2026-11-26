@@ -1,0 +1,35 @@
+@use '../../../styles/mixins' as m;
+
+// In-place confirmation of a destructive action. The armed strip is a
+// whole-surface danger tint (never a left bar), so it is set apart from the
+// safe actions around it.
+:host { display: block; min-width: 0; }
+@include m.action-buttons;
+
+.inline-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-spacing-3);
+  border: 1px solid color-mix(in srgb, var(--studio-error) 55%, var(--studio-card-border));
+  border-radius: var(--studio-action-radius-sm);
+  background: color-mix(in srgb, var(--studio-error) 8%, var(--studio-card-bg));
+  animation: inline-confirm-in 0.14s ease;
+}
+
+.inline-confirm__message { margin: 0; color: var(--studio-fg-strong); font-size: var(--studio-font-size-sm); line-height: 1.45; }
+.inline-confirm__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--studio-spacing-2); }
+
+@keyframes inline-confirm-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inline-confirm { animation-duration: 0s; }
+}
+
+// Narrow screens are touch screens: the actions get the coarse target height.
+@media (max-width: 640px) {
+  .btn { min-height: var(--studio-target-coarse-min); }
+}

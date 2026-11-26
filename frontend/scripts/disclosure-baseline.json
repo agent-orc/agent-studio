@@ -42,6 +42,10 @@
       "kind": "popup-trigger",
       "reason": "The Sessions button opens an anchored session popover over the page."
     },
+    "src/app/components/overflow-menu/overflow-menu.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Row context menu trigger. The more button opens the shared text-only overlay menu; nothing expands in the row."
+    },
     "src/app/features/shell/components/account-control/account-control.html": {
       "kind": "popup-trigger",
       "reason": "The account control opens a text-only overlay menu for sign-out; it does not expand content in the titlebar."

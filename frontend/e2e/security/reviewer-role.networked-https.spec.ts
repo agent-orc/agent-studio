@@ -129,7 +129,8 @@ test('a Reviewer is invited, sends a Human Review card back with a note, and acc
   await test.step('Owner invites a Reviewer and reads who the role is for', async () => {
     await page.goto('/#/workspace/settings/access', { waitUntil: 'domcontentloaded', timeout: 30_000 });
     const access = page.getByTestId('access-area');
-    await expect(access.getByRole('heading', { name: 'Users' })).toBeVisible({ timeout: 30_000 });
+    await expect(access.getByRole('heading', { name: /^People/ })).toBeVisible({ timeout: 30_000 });
+    await access.getByTestId('access-invite-open').click();
     const invite = access.getByTestId('access-invite-form');
     await invite.getByTestId('access-invite-username').fill('rui.reviewer');
     await invite.getByTestId('access-invite-display-name').fill('Rui Reviewer');
@@ -140,7 +141,7 @@ test('a Reviewer is invited, sends a Human Review card back with a note, and acc
     await shootThemes(page, 'owner-invite-reviewer', () => invite.scrollIntoViewIfNeeded());
     await invite.getByTestId('access-invite-submit').click();
     await expect(invite.getByTestId('access-invite-link')).toContainText('/?invite=');
-    inviteLink = (await invite.getByTestId('access-invite-link').textContent())!.trim();
+    inviteLink = (await invite.getByTestId('access-invite-link-value').textContent())!.trim();
     await expect(access.getByTestId('access-user-rui.reviewer')).toContainText('Invited');
   });
 

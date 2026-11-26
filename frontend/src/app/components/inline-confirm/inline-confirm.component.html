@@ -1,0 +1,11 @@
+@if (armed()) {
+  <div class="inline-confirm" role="group" [attr.aria-label]="'Confirm: ' + (confirmLabel() || label())" [attr.data-testid]="testId() + '-panel'">
+    <p class="inline-confirm__message" role="alert">{{ message() }}</p>
+    <div class="inline-confirm__actions">
+      <button #cancelButton type="button" class="btn" [attr.data-testid]="testId() + '-cancel'" (click)="cancel()">Cancel</button>
+      <button type="button" class="btn btn--danger" [attr.data-testid]="testId() + '-confirm'" [disabled]="disabled()" (click)="confirm()">{{ confirmLabel() || label() }}</button>
+    </div>
+  </div>
+} @else {
+  <button #trigger type="button" class="btn btn--ghost btn--danger" [attr.data-testid]="testId()" [disabled]="disabled()" (click)="armed.set(true)">{{ label() }}</button>
+}
