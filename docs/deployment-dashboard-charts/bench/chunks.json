@@ -1,0 +1,47 @@
+{
+ "builtAt": "2026-11-26T21:15:54.853Z",
+ "uplot": "1.6.32",
+ "chunks": {
+  "shell": {
+   "raw": 28661,
+   "gzip": 10733,
+   "brotli": 9556,
+   "inputs": [
+    "spec.js",
+    "assess.js",
+    "app.js"
+   ]
+  },
+  "charts2d": {
+   "raw": 69079,
+   "gzip": 30129,
+   "brotli": 27056,
+   "inputs": [
+    "uPlot.esm.js",
+    "charts.js"
+   ],
+   "withCss": {
+    "raw": 70936,
+    "gzip": 30845,
+    "brotli": 27560
+   }
+  },
+  "view3d": {
+   "raw": 4860,
+   "gzip": 2421,
+   "brotli": 2184,
+   "inputs": [
+    "view3d.js"
+   ]
+  },
+  "shared": {
+   "raw": 9904,
+   "gzip": 4669,
+   "brotli": 4173,
+   "inputs": [
+    "data.js",
+    "theme.js"
+   ]
+  }
+ }
+}

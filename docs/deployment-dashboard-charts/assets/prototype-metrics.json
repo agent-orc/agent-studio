@@ -1,0 +1,24 @@
+{
+ "measuredAt": "2026-11-26T21:15:46.372Z",
+ "loads": 5,
+ "firstMs": 59,
+ "allMs": 95,
+ "filterChanges": 20,
+ "filterMedianMs": 19,
+ "filterP95Ms": 42,
+ "domElements": 297,
+ "motionLarge": "off",
+ "cardsInList": 4019,
+ "cardRows": 17,
+ "idleSeconds": 3,
+ "idleFrames3d": 0,
+ "motionSmall": "on",
+ "motionReduced": "off",
+ "lazy": {
+  "requestsOnLoad": 3,
+  "view3dBeforeOpen": 0,
+  "view3dAfterOpen": 1,
+  "charts2dGzip": 30129,
+  "view3dGzip": 2421
+ }
+}
