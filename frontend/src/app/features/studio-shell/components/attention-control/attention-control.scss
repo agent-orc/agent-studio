@@ -236,3 +236,6 @@
     overflow: visible;
   }
 }
+
+.attention-list__options { margin: var(--studio-spacing-2) 0 0; padding-inline-start: var(--studio-spacing-4); overflow-wrap: anywhere; }
+.attention-list__row[data-attention-type='post-merge.red-incident'] .attention-list__reason { white-space: normal; overflow: visible; display: block; }

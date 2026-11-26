@@ -141,6 +141,8 @@
 
   &__search {
     display: flex;
+    min-width: 0;
+    overflow: hidden;
     align-items: center;
     gap: 6px;
     padding: 3px 10px;
@@ -169,6 +171,7 @@
 
   &__actions {
     display: flex;
+    flex-shrink: 0;
     align-items: center;
     gap: var(--studio-spacing-1);
     min-width: 0;

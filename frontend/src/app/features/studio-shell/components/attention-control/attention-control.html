@@ -63,6 +63,13 @@
                   } @else {
                     <p class="attention-list__reason" data-testid="attention-row-reason" [attr.title]="item.reason">{{ item.reason }}</p>
                   }
+                  @if (item.ownerOptions?.length) {
+                    <ul class="attention-list__options" data-testid="attention-owner-options">
+                      @for (option of item.ownerOptions; track option.id) {
+                        <li>{{ option.label }} @if (option.recommended) { <strong>Recommended</strong> }</li>
+                      }
+                    </ul>
+                  }
                 </div>
                 <button type="button" class="attention-list__action" data-testid="attention-row-action"
                         (click)="act(item, group.spec)">{{ actionLabel(item, group.spec) }}</button>

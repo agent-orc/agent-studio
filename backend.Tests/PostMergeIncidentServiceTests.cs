@@ -64,7 +64,10 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         Assert.Null(store.Read(project.Id).AttributionEscalatedTaskId);
         Assert.DoesNotContain(ReviewDecisionLog.ReadAll(_root, project.DisplayName),
             record => record.JobId == opened.RepairCardId);
-        Assert.Single(OwnerItems(project, store));
+        var choices = Assert.Single(OwnerItems(project, store)).OwnerOptions;
+        Assert.NotNull(choices);
+        Assert.Equal(3, choices.Count);
+        Assert.Equal(nameof(RedDevelopOwnerOption.KeepFixingForward), Assert.Single(choices, choice => choice.Recommended).Id);
         clock.Advance(TimeSpan.FromMinutes(37));
         var green = red with { Id = "green", Status = "green", Verdicts = [new("dotnet test", 0, false)],
             StartedAtUtc = Now.AddMinutes(156), FinishedAtUtc = Now.AddMinutes(157), Failure = null };

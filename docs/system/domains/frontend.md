@@ -1563,3 +1563,18 @@ warnings.
   `frontend/e2e/project/project-overview-dashboard.spec.ts`. The interactive
   design contract is covered separately by
   `frontend/e2e/mockups/project-overview-dashboard-mockup.spec.ts`.
+
+## Develop isolation visibility (RT-7)
+
+The global develop indicator reads `/api/develop-states` and uses the shared
+status indicator. A line-stop reason is the only error state. Running uses the
+running tone; green with quarantines uses the quiet warning tone and count.
+Its keyboard-accessible tooltip lists each test, kind and UTC end time.
+Project Operations owns the Isolated tests panel, reading
+`/api/projects/{name}/test-quarantines` independently of application telemetry.
+It refreshes every 30 seconds, excludes expired or lifted entries, and shows
+held areas, report-only entries, owning card links and time remaining. Empty,
+loading and retryable error states remain local to the panel.
+Needs you renders policy-provided `ownerOptions` with the recommendation marked;
+the existing repair-card action owns the next step. No client triage rules or
+new owner mutation routes are introduced.
