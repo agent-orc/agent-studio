@@ -588,7 +588,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `access-pilot.spec.ts` | AGT-4029 · Access as the pilot page of the UI standard: service account detail with bindings and tokens, one-time token with copy, revoke confirmed in place, every earlier action, outline counts, empty states; writes the `after/` and `patterns/` captures (mocked, data in `access-pilot.fixture.ts`) |
 | `appearance-layout-toggles.spec.ts` | Settings - Appearance/Layout segmented toggles |
 | `operator-agents.spec.ts` | AGT-3372 · Access operator agents: create, one-time session token, audited activity, chain and forwarding strip; AGT-3373 · kill switch: end one session, end all operator access, drill, acute states; light and dark (mocked) |
-| `structure-live.spec.ts` | AGT-4024 · Live structure view in Operations: select a node on the canvas, each of the five layers, outline selection, zoom levels by wheel and keys, not observed sources, phone sheet; light and dark (mocked) |
+| `structure-live.spec.ts` | AGT-4024 · Live structure view in Operations: select a node on the canvas, each of the five layers, one-click jump from the outline and the jump field to the container level, Back and Escape, drag, wheel, pinch and arrow keys, no bare box at the container level, facts per zoom level, place kept on layer switch and data refresh, not observed sources, phone sheet; light and dark (mocked) |
 | `quota-forecast.spec.ts` | AGT-3001 · CLI Management quota forecast: curve, rate, 100% time, session gauge, armed fallback (mocked) |
 | `remote-hosts.spec.ts` | Execution Hosts settings section |
 | `settings-consolidation.spec.ts` | Settings consolidation (AGT-2035) |

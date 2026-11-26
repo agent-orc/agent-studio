@@ -8,9 +8,11 @@ const clamp = (value: number, low: number, high: number): number => Math.max(low
 
 /**
  * Camera of the live structure canvas: a world point at the centre of the free
- * area plus a scale. Flights and wheel zoom ease; with reduced motion every
- * change applies at once. `step` returns true while something is still moving,
- * so the host draws frames only then.
+ * area plus a scale. It moves like a map: a drag follows the pointer and glides
+ * out, the wheel and a pinch zoom about the pointer, the arrow keys push the
+ * view in eased steps that add up while a key is held, and a jump flies there
+ * briefly. With reduced motion every change applies at once. `step` returns
+ * true while something is still moving, so the host draws frames only then.
  */
 export class LiveCamera {
   x = 0; y = 0; k = 1; ox = 0; oy = 0;
@@ -22,14 +24,22 @@ export class LiveCamera {
   private fly: { x0: number; y0: number; k0: number; x1: number; y1: number; k1: number; t0: number; dur: number } | null = null;
   private zoomTarget: { k: number; sx: number; sy: number; wx: number; wy: number; tc: number } | null = null;
   private inertia: { vx: number; vy: number } | null = null;
+  private push: { x: number; y: number } | null = null;
 
   readonly sx = (wx: number): number => (wx - this.x) * this.k + this.ox;
   readonly sy = (wy: number): number => (wy - this.y) * this.k + this.oy;
   readonly wx = (sx: number): number => (sx - this.ox) / this.k + this.x;
   readonly wy = (sy: number): number => (sy - this.oy) / this.k + this.y;
 
-  get moving(): boolean { return !!(this.fly || this.zoomTarget || this.inertia); }
-  stop(): void { this.fly = null; this.zoomTarget = null; this.inertia = null; }
+  get moving(): boolean { return !!(this.fly || this.zoomTarget || this.inertia || this.push); }
+  stop(): void { this.fly = null; this.zoomTarget = null; this.inertia = null; this.push = null; }
+  /** Where the camera is, or where the motion in progress will end. */
+  get view(): LiveView {
+    if (this.fly) return { x: this.fly.x1, y: this.fly.y1, k: this.fly.k1 };
+    const zoom = this.zoomTarget;
+    if (zoom) return { x: zoom.wx - (zoom.sx - this.ox) / zoom.k, y: zoom.wy - (zoom.sy - this.oy) / zoom.k, k: zoom.k };
+    return { x: this.push?.x ?? this.x, y: this.push?.y ?? this.y, k: this.k };
+  }
 
   /** New viewport size or insets. `keep` holds the world point under the old centre. */
   measure(width: number, height: number, safe: LiveSafeArea, keep: boolean): void {
@@ -59,15 +69,22 @@ export class LiveCamera {
     this.stop();
     if (instant || this.reduced) { this.x = view.x; this.y = view.y; this.k = view.k; return; }
     const distance = Math.hypot(view.x - this.x, view.y - this.y) * this.k;
+    // Brief, and a little longer for a long way, so the eye can follow where the view goes.
     this.fly = { x0: this.x, y0: this.y, k0: this.k, x1: view.x, y1: view.y, k1: view.k, t0: performance.now(),
-      dur: clamp(200 + 140 * Math.abs(Math.log(view.k / this.k)) + distance / 8, 220, 400) };
+      dur: clamp(200 + 140 * Math.abs(Math.log(view.k / this.k)) + distance / 8, 220, 450) };
   }
   fitAll(instant = false): void { this.go(this.viewFor(this.bounds, 0, 0.97), instant); }
   fitRect(rect: LiveRect, leaf: boolean, instant = false): void {
     const phone = this.width <= 720;
     this.go(this.viewFor(rect, leaf ? (phone ? this.width - 24 : 720) : 0, leaf ? (phone ? 0.94 : 0.86) : 0.92), instant);
   }
-  panBy(dxWorld: number, dyWorld: number): void { this.go({ x: this.x + dxWorld, y: this.y + dyWorld, k: this.k }); }
+  /** A keyboard step. Steps add up while a key repeats, and the view eases after them without restarting. */
+  panBy(dxScreen: number, dyScreen: number): void {
+    const from = this.push ?? { x: this.x, y: this.y }, b = this.bounds;
+    this.fly = null; this.inertia = null; this.zoomTarget = null;
+    this.push = { x: clamp(from.x + dxScreen / this.k, b.x, b.x + b.w), y: clamp(from.y + dyScreen / this.k, b.y, b.y + b.h) };
+    if (this.reduced) { this.x = this.push.x; this.y = this.push.y; this.push = null; }
+  }
   /** Moves without easing, for drags and trackpad pans. */
   nudge(dxScreen: number, dyScreen: number): void { this.x -= dxScreen / this.k; this.y -= dyScreen / this.k; this.clampCentre(); }
   centreOn(wx: number, wy: number): void { this.stop(); this.x = wx; this.y = wy; this.clampCentre(); }
@@ -77,7 +94,7 @@ export class LiveCamera {
 
   /** Zooms about a screen point, so what is under the cursor stays there. */
   zoomAt(sx: number, sy: number, factor: number, timeConstant = 0.085): void {
-    this.fly = null; this.inertia = null;
+    this.fly = null; this.inertia = null; this.push = null;
     const k = clamp((this.zoomTarget ? this.zoomTarget.k : this.k) * factor, this.kMin, this.kMax);
     this.zoomTarget = { k, sx, sy, wx: this.wx(sx), wy: this.wy(sy), tc: timeConstant };
     if (this.reduced) { this.applyZoom(k); this.zoomTarget = null; }
@@ -122,6 +139,10 @@ export class LiveCamera {
       const decay = Math.exp(-dt / 0.22);
       this.inertia.vx *= decay; this.inertia.vy *= decay;
       if (Math.hypot(this.inertia.vx, this.inertia.vy) < 12) this.inertia = null;
+    } else if (this.push) {
+      const f = 1 - Math.exp(-dt / 0.07);
+      this.x += (this.push.x - this.x) * f; this.y += (this.push.y - this.y) * f;
+      if (Math.hypot(this.push.x - this.x, this.push.y - this.y) * this.k < 0.5) { this.x = this.push.x; this.y = this.push.y; this.push = null; }
     }
     this.clampCentre();
     return this.moving;

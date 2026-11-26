@@ -1,3 +1,4 @@
+import { LIVE_METRICS } from './live-structure.layout';
 import { COVERAGE_WORD, NOT_OBSERVED, ago, diskPressure, diskUsed, gib, percent, rate, runsHere, size, subtreeWarnings,
   type LiveLayer, type LiveNode, type LiveScene } from './live-structure.model';
 
@@ -5,16 +6,18 @@ import { COVERAGE_WORD, NOT_OBSERVED, ago, diskPressure, diskUsed, gib, percent,
  * Facts of a node, each tagged with the zoom level that adds it and the layer it
  * belongs to (AGT-4024, semantic zoom). The canvas shows the facts up to the
  * level a node has on screen; the card details show all of them. A fact nobody
- * reports is kept as a "not observed" row and never appears before level 3, so
- * the far levels stay calm.
+ * reports is kept as a "not observed" fact with the reason it is missing. It
+ * never appears before level 3, so the far levels stay calm; from the container
+ * level on the canvas names what is not observed and why (`canvasGaps`), and at
+ * the machine level a node that has no fact at all says so too.
  */
 export type LiveLevel = 1 | 2 | 3 | 4;
 /** Level 5 is the card details only. */
 export type LiveFactLevel = 2 | 3 | 4 | 5;
 export const LIVE_LEVELS: readonly { level: LiveLevel; name: string; adds: string }[] = [
   { level: 1, name: 'Overview', adds: 'Name, role and health mark' },
-  { level: 2, name: 'Machine', adds: 'Load, memory, disk, slots and the count of what runs there' },
-  { level: 3, name: 'Container', adds: 'Image and version, ports, restarts, uptime, current job, last deploy' },
+  { level: 2, name: 'Machine', adds: 'State, load, memory, disk, slots and the count of what runs there' },
+  { level: 3, name: 'Container', adds: 'Image and version, restarts, uptime, current job; what is not observed, and why' },
   { level: 4, name: 'Closest', adds: 'Recent events and every value of the active layers' },
 ];
 export interface LiveFact {
@@ -29,7 +32,15 @@ export interface LiveFact {
   /** Drawn as a tinted band across the node (a warning in words). */
   band?: boolean;
   observed: boolean;
+  /** Not observed only: why the Studio has no value, as one sentence for the card details. */
+  why?: string;
+  /** Not observed only: the reason the canvas groups it under. */
+  gap?: LiveGapKind;
 }
+/** Why a value is missing: nothing reports from the node, nobody collects it, the read was refused, or it is listed elsewhere only. */
+export type LiveGapKind = 'source' | 'collect' | 'rights' | 'scope';
+/** Missing facts of one reason, as the canvas says them. Wordings from long to short; none is cut. */
+export interface LiveGap { kind: LiveGapKind; labels: string[]; values: string[]; }
 
 const isFrame = (node: LiveNode): boolean => node.kind === 'machine' || node.kind === 'vm' || node.kind === 'group' || node.kind === 'boundary';
 const isUnit = (node: LiveNode): boolean => (node.kind === 'container' || node.kind === 'service') && !(node.parent && (node.parent.kind === 'container' || node.parent.kind === 'service'));
@@ -52,10 +63,16 @@ export function nodeFacts(node: LiveNode, scene: LiveScene): LiveFact[] {
     const list = values.filter((value): value is string => !!value);
     if (list.length) facts.push({ key, level, layer, label, values: list, observed: true, ...extra });
   };
-  const missing = (level: LiveFactLevel, layer: LiveLayer | null, key: string, label: string): void => {
-    facts.push({ key, level: Math.max(level, 3) as LiveFactLevel, layer, label, values: [NOT_OBSERVED], tone: 'muted', observed: false });
-  };
   const reporting = !!node.source?.facts?.hostId;
+  const source = sourceGap(node);
+  /** `why` is a sentence of its own, or one of the reasons: the node has no reporter, or nobody collects the value. */
+  const missing = (level: LiveFactLevel, layer: LiveLayer | null, key: string, label: string, why: string | LiveGapKind = 'source'): void => {
+    const gap: LiveGapKind = why === 'source' || why === 'collect' || why === 'rights' || why === 'scope' ? why : 'collect';
+    // A host that reports, and still lacks a value, lacks it because its report does not carry it.
+    const sentence = why !== gap ? why : gap === 'source' ? (reporting ? 'The report of this host does not carry this value.' : source.long) : GAP_WHY[gap].long;
+    facts.push({ key, level: Math.max(level, 3) as LiveFactLevel, layer, label, values: [NOT_OBSERVED], tone: 'muted', observed: false,
+      why: sentence, gap: gap === 'source' && reporting ? 'collect' : gap });
+  };
   const runs = isUnit(node) || node.kind === 'machine' || node.kind === 'vm';
   const perf = node.perf;
 
@@ -82,7 +99,7 @@ export function nodeFacts(node: LiveNode, scene: LiveScene): LiveFact[] {
     const { busy, total } = node.slots;
     add(2, 'perf', 'slots', 'slots', total != null ? [`${busy} of ${total} in use`, `${busy}/${total}`] : [`${busy} in use`, String(busy)],
       total != null && total <= 24 ? { cells: { busy, total } } : {});
-  } else if (reporting) missing(2, 'perf', 'slots', 'slots');
+  } else if (reporting) missing(2, 'perf', 'slots', 'slots', 'collect');
   if (perf?.load) add(3, 'perf', 'load', 'load', [perf.load.map(value => value.toFixed(2)).join(' · '), perf.load[0].toFixed(2)]);
   else if (reporting || node.kind === 'machine') missing(3, 'perf', 'load', 'load');
   if (node.source?.observation?.activeGates != null) add(3, 'perf', 'gates', 'active gates', [String(node.source.observation.activeGates)]);
@@ -104,8 +121,8 @@ export function nodeFacts(node: LiveNode, scene: LiveScene): LiveFact[] {
     }
   } else if (runs) add(4, 'network', 'links', 'links', ['none reported'], { tone: 'muted' });
   if (perf?.rx != null && perf.tx != null) add(4, 'network', 'traffic', 'traffic', [`in ${rate(perf.rx)} · out ${rate(perf.tx)}`, `in ${rate(perf.rx)}`]);
-  else if (runs) missing(4, 'network', 'traffic', 'traffic');
-  if (runs && node.kind !== 'machine' && node.kind !== 'vm') missing(3, null, 'ports', 'ports');
+  else if (runs) missing(4, 'network', 'traffic', 'traffic', reporting ? 'collect' : 'Traffic is measured for a reporting host as a whole, not for this node.');
+  if (runs && node.kind !== 'machine' && node.kind !== 'vm') missing(3, null, 'ports', 'ports', 'No source lists published or listening ports.');
 
   // Storage: the fullest disk first, then each mount, then each data location.
   const storage = storageOf(node);
@@ -136,48 +153,59 @@ export function nodeFacts(node: LiveNode, scene: LiveScene): LiveFact[] {
       add(3, 'backup', 'offhost', 'off-host copy', [overview.offHost.state.replace('-', ' ')], overview.offHost.state === 'current' ? { tone: 'success' } : { tone: 'warning' });
       add(5, 'backup', 'next', 'next backup', [overview.nextBackupAt ? clock(overview.nextBackupAt) : overview.configured ? 'not scheduled' : null]);
       add(5, 'backup', 'policy', 'policy', [overview.configured ? `every ${overview.intervalHours} h · keeps ${overview.retentionCount}` : null]);
-    } else { missing(3, 'backup', 'last', 'last backup'); missing(3, 'backup', 'offhost', 'off-host copy'); }
+    } else { missing(3, 'backup', 'last', 'last backup', 'rights'); missing(3, 'backup', 'offhost', 'off-host copy', 'rights'); }
     for (const location of present) add(4, 'backup', `cover:${location.id}`, location.label, [COVERAGE_WORD[location.coverage] ?? location.coverage],
       { tone: location.coverage === 'none' ? 'warning' : location.coverage === 'git-remote' ? 'muted' : 'success' });
   } else if (node.kind === 'target') {
     const overview = scene.backup.overview;
     if (overview) {
-      add(2, 'backup', 'state', 'state', [node.health.word], { tone: node.health.tone === 'success' ? 'success' : node.health.tone === 'danger' ? 'danger' : 'warning' });
       add(3, 'backup', 'uploaded', 'last upload', [overview.offHost.lastUploadedAt ? `${ago(overview.offHost.lastUploadedAt, now)} ago` : 'none']);
       add(5, 'backup', 'error', 'last error', [overview.offHost.lastError]);
-    } else missing(2, 'backup', 'state', 'state');
-  } else if (reporting) missing(3, 'backup', 'data', 'data locations');
+    } else missing(2, 'backup', 'uploaded', 'last upload', 'rights');
+  } else if (reporting) missing(3, 'backup', 'data', 'data locations', 'scope');
 
-  // What runs here, and the container level: image and version, restarts, uptime, current job, last deploy.
+  // What runs here, and the container level: state, image and version, restarts, uptime, current job, last deploy.
   if (isFrame(node)) add(2, null, 'runs', 'runs', [runsHere(node).join(' · '), runsHere(node)[0]]);
+  // Every node says how it is, or that nobody looks: from the container level on no node is a bare box.
+  const seenAt = node.source?.facts?.lastSeenAt ?? node.source?.observation?.observedAt ?? null;
+  const tone = node.health.tone === 'success' || node.health.tone === 'warning' || node.health.tone === 'danger' ? { tone: node.health.tone } : {};
+  if (node.kind === 'disk') {
+    if (node.disks.length) add(3, null, 'status', 'reported', [`${node.disks.length} ${node.disks.length === 1 ? 'disk' : 'disks'} · ${node.locations.length} data locations`, `${node.disks.length} ${node.disks.length === 1 ? 'disk' : 'disks'}`]);
+    else missing(3, null, 'status', 'disk use');
+  } else if (node.kind === 'target') {
+    if (scene.backup.overview) add(2, null, 'status', 'state', [node.health.word.toLowerCase()], tone);
+    else missing(3, null, 'status', 'state', 'rights');
+  } else if (node.health.word !== 'Not observed') add(2, null, 'status', 'state',
+    [seenAt ? `${node.health.word.toLowerCase()} · seen ${ago(seenAt, now)} ago` : null, node.health.word.toLowerCase()], tone);
+  else missing(3, null, 'status', 'state');
   if (runs && node.kind !== 'vm') {
     const image = node.runner?.release?.imageRef ?? (node.version && isDigest(node.version) ? `sha256:${shortDigest(node.version)}` : null);
     if (image) add(3, null, 'image', 'image', [image, image.split('/').at(-1), image.split('@')[0].split('/').at(-1)]);
-    else if (node.kind === 'container') missing(3, null, 'image', 'image');
+    else if (node.kind === 'container') missing(3, null, 'image', 'image', 'No image name or tag is reported for this container.');
     const version = node.version && !isDigest(node.version) ? node.version : node.runner?.release?.version ?? null;
     if (version) add(3, null, 'version', 'version', [node.release?.stableVersion && node.release.stableVersion !== version
       ? `${version} · stable ${node.release.stableVersion}` : null, version], node.release?.behind ? { tone: 'warning' } : {});
-    else if (node.kind !== 'machine') missing(3, null, 'version', 'version');
+    else if (node.kind !== 'machine') missing(3, null, 'version', 'version', reporting ? 'collect' : 'No version is reported for this node.');
     const restarts = /restarts:\s*(\d+)/.exec(node.source?.observation?.detail ?? '')?.[1];
     if (node.runner?.reviewRestarts) add(3, null, 'restarts', 'restarts', [`${node.runner.reviewRestarts.length} of the review daemon`, String(node.runner.reviewRestarts.length)]);
     else if (restarts) add(3, null, 'restarts', 'restarts', [restarts]);
-    else if (node.kind !== 'machine') missing(3, null, 'restarts', 'restarts');
+    else if (node.kind !== 'machine') missing(3, null, 'restarts', 'restarts', 'Restart counts are collected for the review daemon of a runner only.');
     const since = node.runner?.restartedAt ?? node.runner?.registeredAt ?? null;
     if (since) add(3, null, 'uptime', 'uptime', [`${ago(since, now)} · since ${clock(since)}`, ago(since, now)]);
-    else if (node.kind !== 'machine') missing(3, null, 'uptime', 'uptime');
+    else if (node.kind !== 'machine') missing(3, null, 'uptime', 'uptime', 'Start times are known for runner processes only.');
     const cards = node.slots?.cards ?? [];
     if (cards.length) add(3, null, 'job', 'current job', [cards.join(', '), cards.length > 1 ? `${cards[0]} +${cards.length - 1}` : null, `${cards.length} cards`]);
     else if (node.gate) add(3, null, 'job', 'current job', [node.gate.currentRun ?? 'idle']);
     else if (node.slots && node.slots.busy === 0) add(3, null, 'job', 'current job', ['idle']);
-    else if (node.kind !== 'machine') missing(3, null, 'job', 'current job');
-    if (node.kind !== 'machine') missing(3, null, 'deploy', 'last deploy');
+    else if (node.kind !== 'machine') missing(3, null, 'job', 'current job', reporting ? 'collect' : 'Running cards are reported by runner and gate hosts only.');
+    if (node.kind !== 'machine') missing(3, null, 'deploy', 'last deploy', 'Deploys are recorded per project environment, not per node.');
     const seen = node.source?.facts?.lastSeenAt ?? node.source?.observation?.observedAt;
     if (seen) add(4, null, 'seen', 'last report', [`${ago(seen, now)} ago`]);
     const events = node.runner?.reviewRestarts ?? [];
     events.slice(0, 3).forEach((event, index) => add(4, null, `event:${index}`, clock(event.restartedAt),
       [`review daemon restarted · ${event.reviewsLost} reviews lost`, 'review daemon restarted', 'restart']));
-    if (!events.length) missing(4, null, 'events', 'recent events');
-    missing(4, null, 'log', 'log lines');
+    if (!events.length) missing(4, null, 'events', 'recent events', 'Events are not collected per node; only restarts of the review daemon are.');
+    missing(4, null, 'log', 'log lines', 'Log lines are not collected in the workspace picture.');
   }
 
   // Card details only: how the Studio knows the node.
@@ -226,23 +254,86 @@ function installationFacts(scene: LiveScene): LiveFact[] {
 /**
  * The facts a node shows on the canvas at a level. Order: level by level, and
  * inside a level the active layers first, the one switched on last leading, so
- * zooming in with the backup layer on adds backup facts first.
+ * zooming in with the backup layer on adds backup facts first. Values nobody
+ * reports are not rows; `canvasGaps` says them as sentences with their reason.
  */
 export function canvasFacts(node: LiveNode, scene: LiveScene, level: LiveLevel, active: readonly LiveLayer[]): LiveFact[] {
   if (level < 2) return [];
   const rank = (fact: LiveFact): number => fact.level * 1000 + (fact.band ? 0 : 100)
-    + (fact.layer ? active.indexOf(fact.layer) : active.length) * 10 + (fact.observed ? 0 : 5);
+    + (fact.layer ? active.indexOf(fact.layer) : active.length) * 10;
   return nodeFacts(node, scene)
-    .filter(fact => fact.level <= level && (fact.layer === null || active.includes(fact.layer)))
+    .filter(fact => fact.observed && fact.level <= level && (fact.layer === null || active.includes(fact.layer)))
     .map((fact, index) => ({ fact, index })).sort((a, b) => rank(a.fact) - rank(b.fact) || a.index - b.index).map(item => item.fact);
 }
 
-/** Level of a node from the size it has on screen. Frames are judged by their header, units by their box. */
+const GAP_WHY: Readonly<Record<Exclude<LiveGapKind, 'source'>, { long: string; short: string }>> = {
+  collect: { long: 'The Studio does not collect this per node yet.', short: 'not collected per node yet' },
+  rights: { long: 'The backup status could not be read; it needs operate rights.', short: 'backup status not readable' },
+  scope: { long: 'Data locations are listed for the Studio machine only.', short: 'listed for the Studio machine only' },
+};
+
+/** Why a node has no live values of its own, by what it is and how the Studio knows it. */
+export function sourceGap(node: LiveNode): { long: string; short: string } {
+  const chip = !!node.parent && (node.parent.kind === 'container' || node.parent.kind === 'service');
+  if (node.kind === 'external') return { long: 'It lies outside the installation and the Studio does not probe it.', short: 'outside, not probed' };
+  if (node.kind === 'target') return GAP_WHY.rights;
+  if (node.kind === 'disk') return { long: 'No host on this machine reports its disks.', short: 'no disk report from this machine' };
+  if (chip) return { long: 'Its host reports this service by name only.', short: 'reported by name only' };
+  if (node.kind === 'machine' || node.kind === 'vm' || node.kind === 'group') return node.source?.provenance === 'observed'
+    ? { long: 'A host inside names this machine; nothing reports from the machine itself.', short: 'named by a host, no report of its own' }
+    : { long: 'It is declared in the placement file and no host reports from it.', short: 'declared, no host reports from it' };
+  return { long: 'No agent runs inside it; load and disk are reported for its host only.', short: 'no agent inside reports' };
+}
+
+/**
+ * What a node cannot show at a level, grouped by reason (AGT-4024, owner feedback 2):
+ * from the container level on a node says what is not observed and why, instead of
+ * a row of "not observed" per value. The reason with the most values comes first.
+ */
+export function canvasGaps(node: LiveNode, scene: LiveScene, level: LiveLevel, active: readonly LiveLayer[]): LiveGap[] {
+  // At the machine level a node says it only when it has nothing else to show, so no readable box stays empty.
+  const bare = level === 2 && canvasFacts(node, scene, 2, active).length === 0;
+  if (level < 3 && !bare) return [];
+  const reach = Math.max(level, 3);
+  const groups = new Map<LiveGapKind, string[]>();
+  for (const fact of nodeFacts(node, scene)) {
+    if (fact.observed || fact.level > reach || !(fact.layer === null || active.includes(fact.layer)) || !fact.gap) continue;
+    groups.set(fact.gap, [...(groups.get(fact.gap) ?? []), fact.label]);
+  }
+  const source = sourceGap(node);
+  return [...groups.entries()].sort((a, b) => b[1].length - a[1].length).map(([kind, labels]) => {
+    const why = kind === 'source' ? source : GAP_WHY[kind];
+    const list = labels.join(', '), count = `${labels.length} facts`;
+    return { kind, labels, values: [`Not observed: ${list}. ${why.long}`, `Not observed: ${list} (${why.short}).`,
+      ...(labels.length > 1 ? [`${count} not observed: ${why.short}.`] : []), `Not observed: ${why.short}.`] };
+  });
+}
+
+/**
+ * Level of a node. Containers, services and storage strips are judged by the size
+ * they have on screen, frames by their header. A service drawn inside a container
+ * follows its container, and the small boxes (a machine that holds nothing, an
+ * external, the backup target) follow the scale a container would need, so at the
+ * container level everything in view is at the container level.
+ */
 export function levelOf(node: LiveNode, width: number, height: number, scale: number): LiveLevel {
   if (isFrame(node) && node.children.length) {
     const head = node.headH * scale;
-    return head >= 150 && width >= 760 ? 4 : head >= 98 && width >= 520 ? 3 : head >= 54 && width >= 300 ? 2 : 1;
+    return head >= 150 && width >= 760 ? 4 : head >= 98 && width >= 520 ? 3 : head >= 46 && width >= 300 ? 2 : 1;
   }
   if (node.kind === 'disk') return height >= 190 && width >= 620 ? 4 : height >= 120 && width >= 420 ? 3 : height >= 62 && width >= 240 ? 2 : 1;
+  const parent = node.parent;
+  if (parent && (parent.kind === 'container' || parent.kind === 'service')) return levelOf(parent, parent.rect.w * scale, parent.rect.h * scale, scale);
+  if (node.kind !== 'container' && node.kind !== 'service') { width = LIVE_METRICS.unitW * scale; height = LIVE_METRICS.unitH * scale; }
   return width >= 470 && height >= 300 ? 4 : width >= 290 && height >= 190 ? 3 : width >= 160 && height >= 84 ? 2 : 1;
 }
+
+/** Lowest scale at which a node is at the container level. */
+export function leastContainerScale(node: LiveNode): number {
+  if (node.parent && (node.parent.kind === 'container' || node.parent.kind === 'service')) return leastContainerScale(node.parent);
+  const small = node.kind !== 'container' && node.kind !== 'service' && node.kind !== 'disk';
+  const w = small ? LIVE_METRICS.unitW : node.rect.w, h = small ? LIVE_METRICS.unitH : node.rect.h;
+  return (node.kind === 'disk' ? Math.max(420 / w, 120 / h) : Math.max(290 / w, 190 / h)) * 1.02;
+}
+/** Scale at which a node is at the container level with room for its facts: the scale a jump lands on. */
+export const containerScale = (node: LiveNode): number => leastContainerScale(node) * (node.kind === 'disk' ? 1.12 : 1.4);

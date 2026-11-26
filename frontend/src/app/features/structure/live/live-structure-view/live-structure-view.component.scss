@@ -38,15 +38,29 @@
 .lsv__canvas[data-dragging='true'] { cursor: grabbing; }
 .lsv__canvas:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
 
-.lsv__crumbs { position: absolute; top: var(--studio-spacing-2); left: var(--studio-spacing-3); display: flex; align-items: center; gap: var(--studio-spacing-1);
-  max-width: calc(100% - 220px); padding: var(--studio-spacing-1) var(--studio-spacing-2); border: 1px solid var(--studio-border); border-radius: 6px;
+.lsv__top { position: absolute; top: var(--studio-spacing-2); left: var(--studio-spacing-3); display: flex; align-items: stretch; gap: var(--studio-spacing-2);
+  max-width: calc(100% - 268px); }
+.lsv__back { display: inline-flex; align-items: center; gap: var(--studio-spacing-1); flex: none; min-height: var(--studio-action-height-sm);
+  padding: 0 var(--studio-spacing-2); border: 1px solid var(--studio-border); border-radius: 6px; background: var(--studio-bg-surface); color: var(--studio-fg);
+  font: inherit; font-size: var(--studio-font-size-sm); font-weight: 600; cursor: pointer; }
+.lsv__back:hover:not(:disabled) { background: var(--studio-bg-hover); color: var(--studio-fg-strong); }
+.lsv__back:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
+.lsv__back:disabled { color: var(--studio-fg-muted); cursor: default; }
+.lsv__key { margin-left: var(--studio-spacing-1); padding: 0 var(--studio-spacing-1); border: 1px solid var(--studio-border); border-radius: 3px; color: var(--studio-fg-muted);
+  font-family: var(--font-mono); font-weight: 400; line-height: 16px; }
+.lsv__crumbs { display: flex; align-items: center; gap: var(--studio-spacing-1); min-width: 0;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2); border: 1px solid var(--studio-border); border-radius: 6px;
   background: var(--studio-bg-surface); font-size: var(--studio-font-size-sm); overflow: hidden; white-space: nowrap; }
-.lsv__crumb { padding: 0 var(--studio-spacing-1); border: 0; background: transparent; color: var(--studio-fg-muted); font: inherit; cursor: pointer; }
+.lsv__crumb { min-width: 0; padding: 0 var(--studio-spacing-1); border: 0; background: transparent; color: var(--studio-fg-muted); font: inherit; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; }
+.lsv__sep { flex: none; }
 .lsv__crumb:hover { color: var(--studio-fg-strong); }
 .lsv__crumb:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
 .lsv__crumb[aria-current='true'] { color: var(--studio-fg-strong); font-weight: 600; }
 .lsv__sep { color: var(--studio-fg-muted); }
-.lsv__level { position: absolute; top: var(--studio-spacing-2); right: var(--studio-spacing-3); display: flex; align-items: center; gap: var(--studio-spacing-2); margin: 0;
+.lsv__jump { position: absolute; top: var(--studio-spacing-2); right: var(--studio-spacing-3); width: 236px; }
+// The level read-out sits beside the key plan, so the top of the plan is left to the way back and the jump field.
+.lsv__level { position: absolute; bottom: var(--studio-spacing-3); left: calc(var(--studio-spacing-3) + 132px + var(--studio-spacing-2)); display: flex; align-items: center; gap: var(--studio-spacing-2); margin: 0;
   padding: var(--studio-spacing-1) var(--studio-spacing-2); border: 1px solid var(--studio-border); border-radius: 6px; background: var(--studio-bg-surface);
   color: var(--studio-fg); font-size: var(--studio-font-size-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .lsv__level-steps { display: inline-flex; align-items: flex-end; gap: var(--studio-spacing-1); }
@@ -90,7 +104,12 @@
   .lsv__panel { flex: none; border-left: 0; border-top: 1px solid var(--studio-border); }
   .lsv__panel[data-sheet='peek'] .lsv__tabs, .lsv__panel[data-sheet='peek'] .lsv__scroll { display: none; }
   .lsv__panel[data-sheet='open'] { height: 56%; }
-  .lsv__level { top: auto; bottom: var(--studio-spacing-3); right: auto; left: var(--studio-spacing-3); }
-  .lsv__crumbs { max-width: calc(100% - 24px); }
+  .lsv__level { left: var(--studio-spacing-3); }
+  // The jump field folds to its sign and opens over the breadcrumb when it is used.
+  .lsv__top { max-width: calc(100% - 24px - var(--studio-target-coarse-min) - var(--studio-spacing-2)); }
+  .lsv__back { min-height: var(--studio-target-coarse-min); }
+  .lsv__key { display: none; }
+  .lsv__jump { width: var(--studio-target-coarse-min); }
+  .lsv__jump:focus-within { width: calc(100% - 24px); z-index: 2; }
   .lsv__zoom-btn { width: var(--studio-target-coarse-min); height: var(--studio-target-coarse-min); }
 }

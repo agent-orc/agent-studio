@@ -7,9 +7,9 @@ interface OutlineRow { node: LiveNode; depth: number; warnings: number; value: s
 
 /**
  * The structure as a list: every node of the canvas, nested as it is drawn. A
- * click selects the node on the canvas, a second click on the selected row (or
- * Enter) zooms to it, and the row of the canvas selection is marked and kept in
- * view. It is also the keyboard and screen reader way into the canvas.
+ * click (or Enter) on a row selects the node and brings it into view on the
+ * canvas at the container level; the row of the canvas selection is marked and
+ * kept in view. It is also the keyboard and screen reader way into the canvas.
  */
 @Component({
   selector: 'app-live-structure-outline',
@@ -23,8 +23,8 @@ export class LiveStructureOutlineComponent {
   private readonly element = inject(ElementRef) as ElementRef<HTMLElement>;
   readonly scene = input.required<LiveScene>();
   readonly selected = input<string | null>(null);
-  readonly choose = output<string>();
-  readonly enter = output<string>();
+  /** A row was chosen: the canvas selects the node and goes to it. */
+  readonly jump = output<string>();
   readonly kindLabel = LIVE_KIND_LABEL;
 
   readonly rows = computed<OutlineRow[]>(() => {
@@ -51,10 +51,6 @@ export class LiveStructureOutlineComponent {
     });
   }
 
-  pick(node: LiveNode): void {
-    if (this.selected() === node.id) this.enter.emit(node.id);
-    else this.choose.emit(node.id);
-  }
   label(row: OutlineRow): string {
     return `${row.node.name}, ${this.kindLabel[row.node.kind]}, ${row.node.health.word}`
       + (row.warnings ? `, ${row.warnings} ${row.warnings === 1 ? 'warning' : 'warnings'}` : '');

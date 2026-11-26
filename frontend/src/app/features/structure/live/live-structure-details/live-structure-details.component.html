@@ -16,8 +16,8 @@
       <dl class="details__facts">
         <div><dt>Kind</dt><dd>{{ link.kind }}</dd></div>
         <div><dt>Transport</dt><dd [class.details__muted]="!link.transport">{{ link.transport ?? 'not observed' }}</dd></div>
-        <div><dt>Round trip</dt><dd [class.details__muted]="link.latencyMs === null">{{ link.latencyMs !== null ? link.latencyMs.toFixed(1) + ' ms' : 'not observed' }}</dd></div>
-        <div><dt>Traffic</dt><dd class="details__muted">not observed</dd></div>
+        <div><dt>Round trip</dt><dd [class.details__muted]="link.latencyMs === null">{{ link.latencyMs !== null ? link.latencyMs.toFixed(1) + ' ms' : 'not observed' }}@if (link.latencyMs === null) { <small class="details__why">Round trips are measured for Task Server connections only.</small> }</dd></div>
+        <div><dt>Traffic</dt><dd class="details__muted">not observed<small class="details__why">Traffic is measured per host, not per connection.</small></dd></div>
         <div><dt>Last probe</dt><dd [class.details__muted]="!link.probedAt">{{ probed(link) }}</dd></div>
         @if (link.source) { <div><dt>Known from</dt><dd>{{ link.source.sourceRef }}</dd></div> }
       </dl>
@@ -39,7 +39,7 @@
       </div>
     } @else {
       <div class="details__actions">
-        <button type="button" class="btn btn--primary" data-testid="live-details-zoom" (click)="zoom.emit(subject().id)">Zoom to</button>
+        <button type="button" class="btn btn--primary" data-testid="live-details-zoom" (click)="zoom.emit(subject().id)">Go to</button>
         @if (subject().parent; as parent) {
           <button type="button" class="btn" (click)="zoom.emit(parent.id)">Up to {{ parent.kind === 'boundary' ? 'installation' : parent.name }}</button>
         }
@@ -71,7 +71,7 @@
               <div [attr.data-fact]="fact.key"><dt>{{ fact.label }}</dt>
                 <dd [class.details__muted]="!fact.observed" [attr.data-tone]="fact.tone ?? null">
                   @if (fact.meter !== undefined) { <span class="details__meter" aria-hidden="true"><span [style.width.%]="fact.meter * 100"></span></span> }
-                  {{ fact.values[0] }}</dd></div>
+                  {{ fact.values[0] }}@if (fact.why) { <small class="details__why">{{ fact.why }}</small> }</dd></div>
             }
           </dl>
         }
@@ -109,7 +109,7 @@
       <h3 class="details__title">Facts</h3>
       <dl class="details__facts">
         @for (fact of general(); track fact.key) {
-          <div [attr.data-fact]="fact.key"><dt>{{ fact.label }}</dt><dd [class.details__muted]="!fact.observed" [attr.data-tone]="fact.tone ?? null">{{ fact.values[0] }}</dd></div>
+          <div [attr.data-fact]="fact.key"><dt>{{ fact.label }}</dt><dd [class.details__muted]="!fact.observed" [attr.data-tone]="fact.tone ?? null">{{ fact.values[0] }}@if (fact.why) { <small class="details__why">{{ fact.why }}</small> }</dd></div>
         }
       </dl>
     </section>
@@ -122,7 +122,7 @@
         <ul class="details__legend details__legend--layers">
           @for (layer of layerList; track layer.id) { <li><app-live-glyph [name]="layer.id" /><span><strong>{{ layer.label }}</strong> {{ layer.treatment }}</span></li> }
         </ul>
-        <p class="details__note">Drag to pan. Scroll or pinch to zoom, double click to enter a node. Keys: plus and minus zoom, 0 shows everything, 1 to 5 switch the layers, Escape goes up.</p>
+        <p class="details__note">Drag to move the plan, scroll or pinch to zoom towards the pointer. A double click, Enter, a row of the outline or the jump field brings a node to the container level; the same again goes to the closest level. Keys: arrows move, plus and minus zoom, 0 shows everything, slash opens the jump field, Escape goes back, 1 to 5 switch the layers.</p>
       </section>
     }
     <section class="details__section" data-testid="live-details-levels">

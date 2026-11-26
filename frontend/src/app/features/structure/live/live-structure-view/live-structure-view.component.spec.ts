@@ -71,4 +71,32 @@ describe('LiveStructureViewComponent', () => {
     expect(view.dataset['selected']).toBeUndefined();
     expect(root.querySelector('[data-testid="live-details-name"]')!.textContent).toBe('Agent Studio installation');
   });
+
+  it('jumps from the jump field and always offers the way back', () => {
+    const { fixture, view, root } = setup();
+    const back = root.querySelector<HTMLButtonElement>('[data-testid="live-back"]')!;
+    expect(back.disabled).toBe(true);
+    expect(root.querySelector('[data-testid="live-zoom-fit"]')).not.toBeNull();
+    expect(root.querySelector('[data-testid="live-crumbs"]')).not.toBeNull();
+    // The slash key opens the jump field from anywhere in the view.
+    view.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true }));
+    const field = root.querySelector<HTMLInputElement>('[data-testid="live-jump-field"]')!;
+    expect(document.activeElement).toBe(field);
+    field.value = 'gate host';
+    field.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    fixture.detectChanges();
+    expect(view.dataset['selected']).toBe('machine:gate-1');
+    expect(root.querySelector('[data-testid="live-details-name"]')!.textContent).toBe('Gate host');
+    expect(back.disabled).toBe(false);
+    // Escape goes back: here it drops the selection the jump made.
+    view.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+    expect(view.dataset['selected']).toBeUndefined();
+    // Typing in the field never switches a layer or moves the plan.
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }));
+    fixture.detectChanges();
+    expect(view.dataset['layers']).toBe('perf,network,warnings');
+  });
 });

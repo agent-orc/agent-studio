@@ -12,8 +12,8 @@ export interface LiveRoute { link: LiveLink; points: [number, number][]; length:
 export interface LiveLayout { mode: LiveLayoutMode; bounds: LiveRect; routes: LiveRoute[]; }
 
 export const LIVE_METRICS = {
-  unitW: 248, unitH: 164, gap: 14, pad: 20, machineHead: 62, frameHead: 50, chipH: 34, chipGap: 6,
-  diskH: 84, emptyW: 248, emptyH: 92, externalW: 200, externalH: 84, boundaryPad: 36, boundaryTop: 56, laneGap: 64,
+  unitW: 248, unitH: 164, gap: 14, pad: 20, machineHead: 62, frameHead: 50, chipH: 36, chipGap: 6,
+  diskH: 104, emptyW: 248, emptyH: 92, externalW: 200, externalH: 84, boundaryPad: 36, boundaryTop: 56, laneGap: 64,
 } as const;
 const M = LIVE_METRICS;
 const isFrame = (node: LiveNode): boolean => node.kind === 'machine' || node.kind === 'vm' || node.kind === 'group';
@@ -36,9 +36,10 @@ function natural(node: LiveNode, mode: LiveLayoutMode): number {
   return Math.max(grid, ...frames.map(frame => natural(frame, mode)), M.emptyW - 2 * M.pad) + 2 * M.pad;
 }
 
+/** A service inside a container takes a row of its own, wide enough for its name and a fact. */
 function unitHeight(node: LiveNode): number {
   const count = chips(node).length;
-  return M.unitH + (count ? Math.ceil(count / 2) * (M.chipH + M.chipGap) + M.chipGap : 0);
+  return M.unitH + (count ? count * (M.chipH + M.chipGap) + M.chipGap : 0);
 }
 
 /** Places a node at a given width, top down, and returns its height. */
@@ -48,13 +49,9 @@ function place(node: LiveNode, x: number, y: number, width: number, mode: LiveLa
   if (node.kind === 'disk') { node.rect.h = M.diskH + Math.max(0, node.disks.length - 1) * 20 + (node.locations.length ? 26 : 0); return node.rect.h; }
   if (!isFrame(node)) {
     node.rect.h = unitHeight(node);
-    const list = chips(node), per = Math.min(2, list.length);
-    const chipW = per ? (width - 20 - (per - 1) * M.chipGap) / per : 0;
-    const rows = Math.ceil(list.length / 2);
+    const list = chips(node);
     list.forEach((chip, index) => {
-      const row = Math.floor(index / 2);
-      chip.rect = { x: x + 10 + (index % 2) * (chipW + M.chipGap), y: y + node.rect.h - M.chipGap - (rows - row) * (M.chipH + M.chipGap) + M.chipGap,
-        w: chipW, h: M.chipH };
+      chip.rect = { x: x + 10, y: y + node.rect.h - M.chipGap - (list.length - index) * (M.chipH + M.chipGap) + M.chipGap, w: width - 20, h: M.chipH };
     });
     return node.rect.h;
   }

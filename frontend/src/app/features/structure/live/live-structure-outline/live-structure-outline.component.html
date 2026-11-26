@@ -5,7 +5,7 @@
       <li>
         <button type="button" class="outline__row" data-testid="live-outline-row" [attr.data-outline-id]="row.node.id"
                 [attr.aria-current]="selected() === row.node.id ? 'true' : null" [attr.aria-label]="label(row)"
-                (click)="pick(row.node)" (keydown.enter)="$event.preventDefault(); enter.emit(row.node.id)">
+                (click)="jump.emit(row.node.id)">
           <span class="outline__indent" aria-hidden="true" [style.width.px]="row.depth * 14"></span>
           <app-live-glyph [name]="row.node.kind" />
           <span class="outline__name">{{ row.node.name }}</span>

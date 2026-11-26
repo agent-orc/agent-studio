@@ -2,8 +2,11 @@ import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterNextRe
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { ModalStackService } from '../../../../services/modal-stack.service';
 import type { StructureData } from '../../structure.model';
 import { LiveStructureDetailsComponent } from '../live-structure-details/live-structure-details.component';
+import { LiveStructureJumpComponent } from '../live-structure-jump/live-structure-jump.component';
 import { LiveStructureLayersComponent } from '../live-structure-layers/live-structure-layers.component';
 import { LiveStructureOutlineComponent } from '../live-structure-outline/live-structure-outline.component';
 import { LiveCamera } from '../live-structure.camera';
@@ -12,6 +15,7 @@ import { attachLiveGestures } from '../live-structure.gestures';
 import { layoutLiveScene, type LiveLayout, type LiveLayoutMode } from '../live-structure.layout';
 import { drawLiveMinimap, type LiveMinimapTransform } from '../live-structure.minimap';
 import { LIVE_LAYERS, buildLiveScene, diskUsed, pathOf, percent, type LiveLayer, type LiveNode, type LiveScene } from '../live-structure.model';
+import { LiveHistory, anchorOf, closestView, focusOf, jumpView, restoreAnchor, sameView } from '../live-structure.navigation';
 import { readLivePalette, type LivePalette } from '../live-structure.painter';
 import { LiveRenderer } from '../live-structure.renderer';
 import { LiveStructureSourcesService } from '../live-structure.sources';
@@ -22,14 +26,15 @@ const DEFAULT_LAYERS: Layers = { perf: true, network: true, storage: false, back
 
 /**
  * Live structure view (AGT-4024): the installation as one zoomable plan with
- * five layers, an outline and card details. This component owns the canvas, the
- * camera and the selection; the drawing itself is in `LiveRenderer`.
+ * five layers, an outline, a jump field and card details. This component owns
+ * the canvas, the camera and the selection; the drawing itself is in
+ * `LiveRenderer`, the rules of where the camera goes in `live-structure.navigation`.
  */
 @Component({
   selector: 'app-live-structure-view',
   standalone: true,
-  imports: [DisclosureMarkerComponent, LiveStructureDetailsComponent, LiveStructureLayersComponent,
-    LiveStructureOutlineComponent, SegmentedControlComponent, StatusIndicatorComponent],
+  imports: [DisclosureMarkerComponent, LiveStructureDetailsComponent, LiveStructureJumpComponent, LiveStructureLayersComponent,
+    LiveStructureOutlineComponent, SegmentedControlComponent, StatusIndicatorComponent, StudioIconComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './live-structure-view.component.html',
   styleUrl: './live-structure-view.component.scss',
@@ -38,6 +43,7 @@ const DEFAULT_LAYERS: Layers = { perf: true, network: true, storage: false, back
 export class LiveStructureViewComponent {
   private readonly element = inject(ElementRef) as ElementRef<HTMLElement>;
   private readonly sources = inject(LiveStructureSourcesService);
+  private readonly modalStack = inject(ModalStackService);
   readonly data = input.required<StructureData>();
   /** True while structure changes arrive over the hub. */
   readonly live = input(false);
@@ -50,6 +56,7 @@ export class LiveStructureViewComponent {
   readonly canvasRef = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
   readonly stageRef = viewChild.required<ElementRef<HTMLElement>>('stage');
   readonly minimapRef = viewChild<ElementRef<HTMLCanvasElement>>('minimap');
+  readonly jumpRef = viewChild(LiveStructureJumpComponent);
 
   readonly layers = signal<Layers>({ ...DEFAULT_LAYERS });
   /** Active layers, the one switched on last first. */
@@ -61,13 +68,33 @@ export class LiveStructureViewComponent {
   readonly panelTab = signal<'details' | 'outline'>('details');
   readonly sheet = signal<'peek' | 'open'>('peek');
   readonly crumbs = signal<readonly { id: string; name: string }[]>([]);
+  /** The breadcrumb as it is shown: a long path keeps its start and its end, a phone keeps the end. */
+  readonly crumbTrail = computed(() => {
+    const path = this.crumbs(), keep = this.phone() ? 1 : 2;
+    const hidden = (index: number): boolean => path.length > keep + 1 && index < path.length - keep && (this.phone() || index > 0);
+    return path.map((crumb, index) => ({ ...crumb, hidden: hidden(index), gap: hidden(index) && !hidden(index + 1) }));
+  });
   readonly level = signal<LiveLevel>(1);
   readonly selectedLevel = signal<number | null>(null);
-  /** Screen box and level of every node once the camera rests: the hook the specs click and read. */
-  readonly probes = signal<readonly { id: string; level: number; box: string }[]>([]);
+  /** Screen box, level and number of facts drawn of every node once the camera rests: the hook the specs click and read. */
+  readonly probes = signal<readonly { id: string; level: number; box: string; facts: number }[]>([]);
+  /** Views to go back to: one for each jump, fit or breadcrumb step. */
+  readonly backSteps = signal(0);
+  /** The view shows something else than the whole installation. */
+  readonly away = signal(false);
+  /** Back has somewhere to go: an earlier view, a selection to drop, or a closer view to leave. */
+  readonly canBack = computed(() => this.backSteps() > 0 || !!this.selected() || !!this.selectedLink() || this.away());
   readonly panelTabs = [{ value: 'details', label: 'Details' }, { value: 'outline', label: 'Outline' }] as const;
 
-  readonly scene = computed<LiveScene>(() => buildLiveScene(this.data(), this.sources.sources()));
+  /** The same read again (same revision and time, same optional reads) keeps its scene, so nothing is laid out or drawn for it. */
+  private built: { key: string; sources: unknown; scene: LiveScene } | null = null;
+  readonly scene = computed<LiveScene>(() => {
+    const data = this.data(), sources = this.sources.sources();
+    const key = `${data.revision ?? ''}|${data.generatedAt ?? ''}|${data.nodes.length}|${data.links.length}`;
+    if (!this.built || this.built.key !== key || this.built.sources !== sources || data.revision == null)
+      this.built = { key, sources, scene: buildLiveScene(data, sources) };
+    return this.built.scene;
+  });
   readonly selectedNode = computed(() => { const id = this.selected(); return id ? this.scene().byId.get(id) ?? null : null; });
   readonly selectedLinkModel = computed(() => { const id = this.selectedLink(); return id ? this.scene().links.find(link => link.id === id) ?? null : null; });
   readonly levelName = computed(() => LIVE_LEVELS[this.level() - 1]);
@@ -91,8 +118,10 @@ export class LiveStructureViewComponent {
   private renderer: LiveRenderer | null = null;
   private raf = 0;
   private lastFrame = 0;
-  private shape = '';
   private aspect = 0;
+  /** The scene the canvas shows now; its arrangement is what a new one is anchored to. */
+  private drawn: LiveScene | null = null;
+  private readonly history = new LiveHistory();
   private hover: string | null = null;
   private hoverLink: string | null = null;
   private minimapTransform: LiveMinimapTransform | null = null;
@@ -104,6 +133,8 @@ export class LiveStructureViewComponent {
     this.sources.refresh();
     const timer = setInterval(() => { if (document.visibilityState === 'visible') this.sources.refresh(); }, 30_000);
     destroyRef.onDestroy(() => { clearInterval(timer); cancelAnimationFrame(this.raf); });
+    // The Studio hands Escape to whatever registered last (ModalStackService); a plain key handler never sees it.
+    this.modalStack.pushUntilDestroyed('live-structure-back', () => this.onEscape(), destroyRef);
     effect(() => {
       const layers = this.initialLayers(), focus = this.initialFocus();
       untracked(() => {
@@ -157,28 +188,33 @@ export class LiveStructureViewComponent {
     this.phone.set(phone);
     if (!width || !height || !this.renderer) return;
     this.mode.set(phone || width / height < 0.82 ? 'tall' : 'wide');
-    this.camera.measure(width, height, { left: 0, top: 44, right: 0, bottom: phone ? 44 : 12 }, true);
+    // The way back and the jump field lie over the top of the plan, the level read-out over its foot.
+    this.camera.measure(width, height, { left: 0, top: 44, right: 0, bottom: 48 }, true);
     this.renderer.resize(width, height);
     this.applyScene(this.scene(), this.mode());
   }
 
-  /** New data or a new arrangement. The camera stays where it is unless the set of nodes changed. */
+  /**
+   * New data or a new arrangement. Only the first one frames something; after that the view
+   * keeps its zoom and stays on the node it rests on, whatever appeared or moved elsewhere.
+   */
   private applyScene(scene: LiveScene, mode: LiveLayoutMode): void {
     if (!this.renderer || !this.camera.width) return;
     const safe = this.camera.safe;
     const aspect = Math.max(0.3, (this.camera.width - safe.left - safe.right) / Math.max(120, this.camera.height - safe.top - safe.bottom));
     // The arrangement follows the pane; it is kept while the pane changes little, so a resize does not reshuffle the plan.
     if (!this.aspect || Math.abs(aspect - this.aspect) / this.aspect > 0.25) this.aspect = aspect;
+    const anchor = this.drawn ? anchorOf(this.camera, this.drawn) : null;
     const layout = this.layout = layoutLiveScene(scene, mode, this.aspect);
     this.renderer.setScene(scene, layout);
     this.camera.setBounds(layout.bounds);
-    const shape = `${mode}\n${this.aspect}\n${scene.order.map(node => node.id).join('\n')}`;
-    if (shape !== this.shape) {
-      this.shape = shape;
+    if (anchor) restoreAnchor(this.camera, scene, anchor);
+    else {
       const focus = this.selectedNode();
-      if (focus && focus.kind !== 'boundary') this.camera.fitRect(focus.rect, !focus.children.length || focus.kind === 'container' || focus.kind === 'service', true);
+      if (focus && focus.kind !== 'boundary') this.camera.go(jumpView(this.camera, focus), true);
       else this.home(true);
     }
+    this.drawn = scene;
     this.invalidate();
   }
 
@@ -203,45 +239,34 @@ export class LiveStructureViewComponent {
     if (moving) this.invalidate(); else this.settle();
   }
 
-  /** The node the view is zoomed into: the innermost one that fills most of the free area. */
-  private focusNode(): LiveNode {
-    const cam = this.camera, safe = cam.safe;
-    const sw = cam.width - safe.left - safe.right, sh = cam.height - safe.top - safe.bottom;
-    let current = this.scene().boundary;
-    for (let next: LiveNode | undefined = current; next;) {
-      current = next;
-      next = current.children.find(child => {
-        const r = child.rect, share = child.children.length ? 0.78 : 0.56;
-        return cam.x >= r.x && cam.x <= r.x + r.w && cam.y >= r.y && cam.y <= r.y + r.h && (r.w * cam.k >= sw * share || r.h * cam.k >= sh * share);
-      });
-    }
-    return current;
-  }
-
   private readouts(): void {
-    const focus = this.focusNode(), renderer = this.renderer!;
-    const path = pathOf(focus).map(node => ({ id: node.id, name: node.kind === 'boundary' ? 'Installation' : node.name }));
-    if (path.map(item => item.id).join('\n') !== this.crumbs().map(item => item.id).join('\n')) this.crumbs.set(path);
+    const focus = focusOf(this.camera, this.scene()), renderer = this.renderer!;
     const selected = this.selectedNode();
-    const subject = selected && selected.kind !== 'boundary' ? selected : focus;
-    // With the whole installation in view the level is the deepest one any machine shows.
-    const level = subject.kind === 'boundary'
-      ? Math.max(1, ...subject.children.map(child => renderer.levels.get(child.id) ?? 1)) as LiveLevel
-      : renderer.levels.get(subject.id) ?? 1;
+    // At the container level on the selected node the breadcrumb leads down to it.
+    const chosen = selected && (renderer.levels.get(selected.id) ?? 0) >= 3 && pathOf(selected).includes(focus) ? selected : focus;
+    const path = pathOf(chosen).map(node => ({ id: node.id, name: node.kind === 'boundary' ? 'Installation' : node.name }));
+    if (path.map(item => item.id).join('\n') !== this.crumbs().map(item => item.id).join('\n')) this.crumbs.set(path);
+    // The read-out names the deepest level a node in view shows: what the owner can read right now.
+    const cam = this.camera, inView = (node: LiveNode): boolean => { const x = cam.sx(node.rect.x + node.rect.w / 2), y = cam.sy(node.rect.y + node.rect.h / 2);
+      return x >= 0 && x <= cam.width && y >= 0 && y <= cam.height; };
+    const level = Math.max(1, ...this.scene().order.filter(inView).map(node => renderer.levels.get(node.id) ?? 1)) as LiveLevel;
     if (level !== this.level()) this.level.set(level);
     const own = selected ? renderer.levels.get(selected.id) ?? null : null;
     if (own !== this.selectedLevel()) this.selectedLevel.set(own);
+    const away = !sameView(cam.view, cam.viewFor(cam.bounds, 0, 0.97));
+    if (away !== this.away()) this.away.set(away);
   }
 
   private settle(): void {
     const renderer = this.renderer!;
     const probes = this.scene().order.filter(node => node.kind !== 'boundary').map(node => {
       const r = renderer.rect(node.rect);
-      return { id: node.id, level: renderer.levels.get(node.id) ?? 0, box: [r.x, r.y, r.w, r.h].map(Math.round).join(',') };
+      return { id: node.id, level: renderer.levels.get(node.id) ?? 0, box: [r.x, r.y, r.w, r.h].map(Math.round).join(','), facts: renderer.shown.get(node.id) ?? 0 };
     });
     if (JSON.stringify(probes) !== JSON.stringify(this.probes())) this.probes.set(probes);
     const canvas = this.canvasRef().nativeElement;
     canvas.dataset['frames'] = String(renderer.frames);
+    canvas.dataset['view'] = `${this.camera.x.toFixed(1)},${this.camera.y.toFixed(1)},${this.camera.k.toFixed(3)}`;
     canvas.dataset['busy'] = 'false';
   }
 
@@ -258,7 +283,7 @@ export class LiveStructureViewComponent {
   }
   private onTap(x: number, y: number, double: boolean): void {
     const hit = this.renderer?.pick(x, y, this.state()) ?? null;
-    if (double) { if (hit?.node) this.zoomTo(hit.node); else { this.camera.zoomAt(x, y, 1.9); this.invalidate(); } return; }
+    if (double) { if (hit?.node) this.jumpTo(hit.node); else { this.camera.zoomAt(x, y, 1.9); this.invalidate(); } return; }
     if (hit?.link) this.chooseLink(hit.link);
     else if (hit?.node) this.choose(hit.node);
     else this.clear();
@@ -285,17 +310,56 @@ export class LiveStructureViewComponent {
     if (this.phone()) this.sheet.set('peek');
     this.emitRemember();
   }
-  /** Selects a node and frames it. Leaves frame to show their content; frames frame themselves. */
-  zoomTo(id: string): void {
-    const node = this.scene().byId.get(id);
+  /** Notes the view the owner is leaving, so Back and Escape return to it. */
+  private leave(to: Parameters<LiveCamera['go']>[0]): void {
+    const from = this.camera.view;
+    if (sameView(from, to)) return;
+    this.history.push({ view: from, selected: this.selected() });
+    this.backSteps.set(this.history.length);
+  }
+  /**
+   * The one action that brings a node into view (double click, Enter, an outline row, the jump
+   * field, a breadcrumb): it is selected and shown at the container level, a machine whole. The
+   * same action on a node already shown that way goes to the closest level, and back again.
+   */
+  jumpTo(id: string): void {
+    const node = this.scene().byId.get(id), cam = this.camera;
     if (!node) return;
-    if (node.kind === 'boundary') { this.clear(); this.camera.fitAll(); this.invalidate(); return; }
+    if (node.kind === 'boundary') { this.fit(); this.clear(); return; }
+    const near = jumpView(cam, node);
+    const to = this.selected() === id && sameView(cam.view, near) ? closestView(cam, node) : near;
+    this.leave(to);
     this.choose(id, false);
     if (this.phone()) this.sheet.set('peek');
-    this.camera.fitRect(node.rect, node.kind !== 'machine' && node.kind !== 'vm' && node.kind !== 'group');
+    cam.go(to);
     this.invalidate();
   }
-  fit(): void { this.camera.fitAll(); this.invalidate(); }
+  fit(): void { const cam = this.camera; this.leave(cam.viewFor(cam.bounds, 0, 0.97)); cam.fitAll(); this.invalidate(); }
+  /** The way back: the view before the last jump, then the selection is dropped, then one frame out, then everything. */
+  back(): void {
+    const stop = this.history.pop(), cam = this.camera;
+    this.backSteps.set(this.history.length);
+    if (stop) {
+      this.selected.set(stop.selected && this.scene().byId.has(stop.selected) ? stop.selected : null);
+      this.selectedLink.set(null);
+      this.emitRemember();
+      cam.go(stop.view);
+    } else if (this.selected() || this.selectedLink()) this.clear();
+    else {
+      const parent = focusOf(cam, this.scene()).parent;
+      if (parent && parent.kind !== 'boundary') cam.go(jumpView(cam, parent)); else cam.fitAll();
+    }
+    this.invalidate();
+  }
+  /** Escape is Back while the focus is in this view (or nowhere), except in a field, which keeps its own Escape. */
+  private onEscape(): boolean {
+    const active = document.activeElement as HTMLElement | null;
+    if (active && active !== document.body && !this.element.nativeElement.contains(active)) return false;
+    if ((active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) || !this.canBack()) return false;
+    this.back();
+    return true;
+  }
+  focusCanvas(): void { this.canvasRef().nativeElement.focus({ preventScroll: true }); }
   /**
    * The view a pane opens with. A wide pane shows the whole installation. A phone would show it
    * too small to read, so it opens on the top of the plan at reading width; Fit still shows all.
@@ -316,7 +380,7 @@ export class LiveStructureViewComponent {
     const x0 = cam.safe.left + margin, x1 = cam.width - cam.safe.right - margin, y0 = cam.safe.top + margin, y1 = cam.height - cam.safe.bottom - margin;
     if (r.w > x1 - x0 || r.h > y1 - y0) {
       const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-      if (cx < x0 || cx > x1 || cy < y0 || cy > y1) this.camera.fitRect(node.rect, !node.children.length);
+      if (cx < x0 || cx > x1 || cy < y0 || cy > y1) cam.go(jumpView(cam, node));
     } else {
       const dx = r.x < x0 ? x0 - r.x : r.x + r.w > x1 ? x1 - (r.x + r.w) : 0;
       const dy = r.y < y0 ? y0 - r.y : r.y + r.h > y1 ? y1 - (r.y + r.h) : 0;
@@ -347,24 +411,20 @@ export class LiveStructureViewComponent {
   onKeydown(event: KeyboardEvent): void {
     const target = event.target as HTMLElement | null;
     if (event.metaKey || event.ctrlKey || event.altKey || !target || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-    const onCanvas = target === this.canvasRef().nativeElement, cam = this.camera, step = 90 / cam.k;
+    // Arrow keys move the plan while the focus is on it or on one of its controls; elsewhere they scroll lists as usual.
+    const onStage = this.stageRef().nativeElement.contains(target), cam = this.camera, step = event.shiftKey ? 270 : 90;
     const layer = LIVE_LAYERS[Number(event.key) - 1];
     if (layer) this.toggleLayer(layer.id);
     else if (event.key === '+' || event.key === '=') this.zoomBy(1.5);
     else if (event.key === '-' || event.key === '_') this.zoomBy(1 / 1.5);
     else if (event.key === '0') this.fit();
-    else if (event.key === 'Escape') {
-      const focus = this.focusNode();
-      if (this.selected() || this.selectedLink()) this.clear();
-      else if (focus.parent && focus.parent.kind !== 'boundary') this.camera.fitRect(focus.parent.rect, false);
-      else this.camera.fitAll();
-      this.invalidate();
-    } else if (!onCanvas) return;
+    else if (event.key === '/') this.jumpRef()?.focus();
+    else if (!onStage) return;
     else if (event.key === 'ArrowLeft') cam.panBy(-step, 0);
     else if (event.key === 'ArrowRight') cam.panBy(step, 0);
     else if (event.key === 'ArrowUp') cam.panBy(0, -step);
     else if (event.key === 'ArrowDown') cam.panBy(0, step);
-    else if (event.key === 'Enter' && this.selected()) this.zoomTo(this.selected()!);
+    else if (event.key === 'Enter' && target === this.canvasRef().nativeElement && this.selected()) this.jumpTo(this.selected()!);
     else return;
     this.invalidate();
     event.preventDefault();

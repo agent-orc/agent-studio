@@ -38,6 +38,11 @@ describe('LiveStructureDetailsComponent', () => {
     // The reported host name is in the card and nowhere else.
     expect(root.querySelector('[data-fact="technical"]')!.textContent).toContain('review-3');
     expect(root.querySelector('[data-fact="ports"] dd')!.classList.contains('details__muted')).toBe(true);
+    // A missing value says why it is missing.
+    expect(root.querySelector('[data-fact="ports"] dd')!.textContent).toContain('No source lists published or listening ports.');
+    expect(root.querySelector('[data-fact="deploy"] dd')!.textContent).toContain('Deploys are recorded per project environment, not per node.');
+    expect(section('backup').querySelector('[data-fact="data"]')!.textContent).toContain('Data locations are listed for the Studio machine only.');
+    expect(root.querySelector('[data-fact="status"]')!.textContent).toContain('up · seen 0 s ago');
   });
 
   it('shows the installation when nothing is selected, with totals that add up', () => {
@@ -58,7 +63,7 @@ describe('LiveStructureDetailsComponent', () => {
     expect(text).toContain('4.5 ms');
     expect(text).toContain('https');
     const facts = Object.fromEntries([...root.querySelectorAll('dl > div')].map(row => [row.querySelector('dt')!.textContent, row.querySelector('dd')!.textContent]));
-    expect(facts['Traffic']).toBe('not observed');
+    expect(facts['Traffic']).toBe('not observedTraffic is measured per host, not per connection.');
     expect(facts['Round trip']).toBe('4.5 ms');
   });
 });

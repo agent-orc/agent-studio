@@ -39,6 +39,10 @@
     "src/app/features/usage-cockpit/components/usage-detail-panel/usage-detail-panel.html"
   ],
   "documented": {
+    "src/app/features/structure/live/live-structure-jump/live-structure-jump.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Jump field of the live structure view: a combobox whose list of matching nodes opens as an anchored overlay under the field; nothing expands in place."
+    },
     "src/app/features/access/components/session-manager/session-manager.component.html": {
       "kind": "popup-trigger",
       "reason": "The Sessions button opens an anchored session popover over the page."

@@ -81,6 +81,20 @@ export class LivePainter {
     }
     return null;
   }
+  /** The text broken at spaces into as many lines as it needs. Null when one word alone is too wide; nothing is cut. */
+  lines(value: string, max: number, font: string): string[] | null {
+    const out: string[] = [];
+    let line = '';
+    for (const word of value.split(' ')) {
+      const next = line ? `${line} ${word}` : word;
+      if (this.tw(next, font) <= max) { line = next; continue; }
+      if (!line || this.tw(word, font) > max) return null;
+      out.push(line);
+      line = word;
+    }
+    if (line) out.push(line);
+    return out;
+  }
   text(value: string, x: number, y: number, font: string, color: string, align: CanvasTextAlign = 'left'): void {
     const ctx = this.ctx;
     ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'middle';

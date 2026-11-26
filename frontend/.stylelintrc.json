@@ -356,6 +356,7 @@
         "src/app/features/structure/structure-view/structure-view.component.scss",
         "src/app/features/structure/live/live-glyph/live-glyph.component.scss",
         "src/app/features/structure/live/live-structure-details/live-structure-details.component.scss",
+        "src/app/features/structure/live/live-structure-jump/live-structure-jump.component.scss",
         "src/app/features/structure/live/live-structure-layers/live-structure-layers.component.scss",
         "src/app/features/structure/live/live-structure-outline/live-structure-outline.component.scss",
         "src/app/features/structure/live/live-structure-view/live-structure-view.component.scss",

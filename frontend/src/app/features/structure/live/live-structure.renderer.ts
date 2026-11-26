@@ -1,5 +1,5 @@
 import type { LiveCamera } from './live-structure.camera';
-import { canvasFacts, levelOf, type LiveFact, type LiveLevel } from './live-structure.facts';
+import { canvasFacts, canvasGaps, levelOf, nodeFacts, type LiveFact, type LiveGap, type LiveLevel } from './live-structure.facts';
 import type { LiveLayout, LiveRoute } from './live-structure.layout';
 import { COVERAGE_WORD, diskPressure, diskUsed, gib, percent, size, subtreeWarnings, type LiveLayer, type LiveLink, type LiveNode, type LiveRect, type LiveScene } from './live-structure.model';
 import { LivePainter, clamp, type LivePalette } from './live-structure.painter';
@@ -22,6 +22,8 @@ const LAYER_COLOR: Readonly<Record<LiveLayer, keyof LivePalette>> = { perf: 'per
  * constant, and only the number of facts changes with the zoom (semantic zoom).
  * Text is never shrunk or cut: a wording that does not fit is replaced by a
  * shorter one, and a fact with no fitting wording is left out at that level.
+ * From the container level on no node is a bare box: it shows facts, and for
+ * what the Studio does not know it says what is not observed and why.
  */
 export class LiveRenderer {
   private readonly p: LivePainter;
@@ -32,6 +34,8 @@ export class LiveRenderer {
   private height = 0;
   /** Level each node was last drawn at, for the level read-out and the tests. */
   readonly levels = new Map<string, LiveLevel>();
+  /** Facts and "not observed" sentences each node carried in the last frame it was drawn in. */
+  readonly shown = new Map<string, number>();
   /** Number of frames drawn, so a test can prove an idle canvas draws nothing. */
   frames = 0;
   /** Route labels placed in this frame; a label that would cover one of them is left out. */
@@ -42,7 +46,7 @@ export class LiveRenderer {
   }
 
   setPalette(palette: LivePalette): void { this.p.setPalette(palette); }
-  setScene(scene: LiveScene, layout: LiveLayout): void { this.scene = scene; this.layout = layout; this.levels.clear(); }
+  setScene(scene: LiveScene, layout: LiveLayout): void { this.scene = scene; this.layout = layout; this.levels.clear(); this.shown.clear(); }
   resize(width: number, height: number): void {
     const dpr = Math.min(window.devicePixelRatio || 1, 3);
     this.width = width; this.height = height;
@@ -148,18 +152,50 @@ export class LiveRenderer {
     }
     if (level < 2) return;
     // Facts sit to the right of the title, in columns over the full header height.
-    const facts = canvasFacts(node, this.scene!, level, this.state.order);
-    const top = r.y + 7, rows = Math.floor((head - 12) / 17);
-    const space = right - left;
-    const columns = Math.max(0, Math.floor((space + 16) / 216));
-    if (!columns || rows < 1) return;
-    const colW = (space - (columns - 1) * 16) / columns;
-    let slot = 0;
+    const space = right - left, columns = Math.floor((space + 16) / 216);
+    if (columns < 1) return;
+    this.shown.set(node.id, this.flow(canvasFacts(node, this.scene!, level, this.state.order), canvasGaps(node, this.scene!, level, this.state.order),
+      left, r.y + 7, space, head - 12, columns, 16));
+  }
+
+  /**
+   * Sets facts and "not observed" sentences into columns and returns how many it drew. Facts come
+   * first, spread evenly over the columns in reading order. The foot of the last column is kept
+   * for the first sentence, so a node still says what it lacks when its facts alone would fill
+   * it. A fact or sentence that does not fit is left out.
+   */
+  private flow(facts: readonly LiveFact[], gaps: readonly LiveGap[], x: number, y: number, w: number, h: number, columns: number, gutter: number): number {
+    const p = this.p, colW = (w - (columns - 1) * gutter) / columns, bottom = y + h + 0.5, line = 14, pitch = 18;
+    const font = p.font(400, 11, true);
+    const wordings = (gap: LiveGap): string[][] => gap.values.map(value => p.lines(value, colW - 13, font)).filter((lines): lines is string[] => !!lines);
+    const first = gaps.length ? wordings(gaps[0]) : [];
+    const least = first.length ? Math.min(...first.map(lines => lines.length)) * line + 2 : 0;
+    const reserve = least <= h * 0.5 ? least : 0;
+    const room = (column: number): number => Math.max(0, Math.floor((h + 3.5 - (column === columns - 1 ? reserve : 0)) / pitch));
+    const capacity = Array.from({ length: columns }, (_, column) => room(column)).reduce((sum, rows) => sum + rows, 0);
+    const each = Math.ceil(Math.min(facts.length, capacity) / columns);
+    const cursor = Array.from({ length: columns }, () => y), rows = Array.from({ length: columns }, () => 0);
+    let column = 0, drawn = 0;
     for (const fact of facts) {
-      if (slot >= rows * columns) break;
-      const col = Math.floor(slot / rows), row = slot % rows;
-      if (this.factRow(fact, left + col * (colW + 16), top + row * 17, colW, 15)) slot++;
+      while (column < columns && rows[column] >= Math.min(each, room(column))) column++;
+      if (column >= columns) break;
+      const fh = fact.cells ? 16 : 15;
+      if (!this.factRow(fact, x + column * (colW + gutter), cursor[column], colW, fh)) continue;
+      cursor[column] += pitch; rows[column]++; drawn++;
     }
+    for (const gap of gaps) {
+      // Under the shortest column, the rightmost of equals: after the facts in reading order.
+      const at = cursor.reduce((best, value, index) => value <= cursor[best] ? index : best, 0);
+      const lines = (gap === gaps[0] ? first : wordings(gap)).find(option => cursor[at] + option.length * line <= bottom);
+      if (!lines) continue;
+      // The empty ring is the mark of "not observed" everywhere in the view.
+      const gx = x + at * (colW + gutter), cy = cursor[at], { ctx, pal } = p;
+      ctx.strokeStyle = pal.ink3; ctx.lineWidth = 1.25; ctx.beginPath(); ctx.arc(gx + 4, cy + line / 2, 3, 0, Math.PI * 2); ctx.stroke();
+      lines.forEach((text, index) => p.text(text, gx + 13, cy + line / 2 + index * line, font, pal.ink2));
+      cursor[at] += lines.length * line + 4;
+      drawn++;
+    }
+    return drawn;
   }
 
   /** Container, service, external, backup target or storage strip. */
@@ -187,11 +223,11 @@ export class LiveRenderer {
       if (warned) { ctx.fillStyle = node.warnings.some(w => w.tone === 'danger') ? pal.dangerBg : pal.warnBg; ctx.globalAlpha = 0.45; ctx.fill(); ctx.globalAlpha = 1; }
       ctx.strokeStyle = machine ? pal.f1 : pal.f3; ctx.lineWidth = machine ? 1.5 : 1; ctx.stroke();
     }
-    if (r.w < 16 || r.h < 14) return;
+    if (r.w < 16 || r.h < 13) return;
     const pad = clamp(r.w * 0.06, 6, 16);
     const x = r.x + pad + (node.kind === 'service' && !chip ? clamp(r.w * 0.02, 0, 4) : 0), w = r.x + r.w - pad - x;
     const chips = chip ? 0 : node.children.length ? (r.y + r.h) - this.cam.sy(Math.min(...node.children.map(child => child.rect.y))) + 4 : 0;
-    const bottom = r.y + r.h - clamp(pad * 0.6, 4, 12) - chips;
+    const bottom = r.y + r.h - (chip ? 4 : clamp(pad * 0.6, 4, 12)) - chips;
     const ts = chip ? clamp(10.5 + r.w * 0.012, 11.5, 14) : clamp(10 + r.w * 0.02, 11.5, 17);
     const titleFont = p.font(600, ts), line = ts + 3;
     // A name that is too long for one line breaks into two; it is never shortened.
@@ -203,30 +239,38 @@ export class LiveRenderer {
     const load = node.slots?.total ? node.slots.busy / node.slots.total : node.perf?.cpu ?? null;
     if (level < 2 && !chip && layers.perf && load != null && r.w >= 40 && r.h >= 30 && !chips) this.gauge(r.x + pad, r.y + r.h - 8, r.w - 2 * pad, 3, load);
     const lines = name?.length ?? 1;
-    let y = r.y + (chip || r.h < lines * line + 22 ? Math.max(2, (r.h - lines * line) / 2) : clamp(pad * 0.8, 5, 14));
-    if (y + line > r.y + r.h) return;
+    // A service inside a container that has something to say under its name, and room for it, sets the name at the top.
+    const below = chip && level >= 3 && r.h >= line + 24
+      && (canvasFacts(node, this.scene!, level, this.state.order).some(fact => fact.key !== 'status') || canvasGaps(node, this.scene!, level, this.state.order).length > 0);
+    let y = r.y + (chip && !below ? (r.h - lines * line) / 2 : r.h < lines * line + 22 ? Math.max(2, (r.h - lines * line) / 2) : below ? 5 : clamp(pad * 0.8, 5, 14));
+    if (y + line > r.y + r.h + (chip ? 2 : 0)) return;
     if (!name) { if (r.w >= 18) p.mark(r.x + r.w / 2, r.y + r.h / 2, node.health.tone); return; }
     p.mark(x + 5, y + line / 2, node.health.tone);
     name.forEach((text, index) => p.text(text, x + 16, y + line / 2 + index * line, titleFont, pal.ink));
     if (chip && level < 2) return;
-    y += lines * line + 2;
     const subFont = p.font(400, 11, true);
-    const role = y + 14 <= bottom ? p.pick([node.role, node.role.split(' · ')[0]], w, subFont) : null;
+    let facts = canvasFacts(node, this.scene!, level, this.state.order), shown = 0;
+    if (chip) {
+      // Its state stands on the line of its name, so even the lowest service box says how it is.
+      const state = nodeFacts(node, this.scene!).find(fact => fact.key === 'status' && fact.level <= Math.max(level, 3) && (level >= 3 || fact.observed));
+      const value = state ? p.pick(state.values, w - 16 - p.tw(name[0], titleFont) - 14, p.font(500, 11, true)) : null;
+      if (state && value) {
+        p.text(value, x + w, y + line / 2, p.font(500, 11, true), state.tone === 'danger' ? pal.danger : state.tone === 'warning' ? pal.warn : state.observed ? pal.ink : pal.ink3, 'right');
+        facts = facts.filter(fact => fact !== state);
+        shown++;
+      }
+    }
+    y += lines * line + 2;
+    const role = y + 14 <= bottom && (!chip || r.h >= 88) ? p.pick([node.role, node.role.split(' · ')[0]], w, subFont) : null;
     if (role) { p.text(role, x, y + 7, subFont, node.kind === 'target' && layers.backup && node.health.tone !== 'success' ? pal.backup : pal.ink2); y += 18; }
     if (level < 2) return;
-    const facts = canvasFacts(node, this.scene!, level, this.state.order);
     // The first finding spans the node as a band; everything else is a row.
     const band = facts.find(fact => fact.band);
-    if (band && y + 19 <= bottom + 0.5 && this.factRow(band, x, y, w, 19)) y += 24;
-    // A wide node sets its rows in two columns, so a label and its value stay close together.
-    const columns = w >= 520 ? 2 : 1, colW = (w - (columns - 1) * 28) / columns, top = y;
-    let column = 0;
-    for (const fact of facts) {
-      if (fact.band) continue;
-      const h = fact.cells ? 16 : 15;
-      if (y + h > bottom + 0.5) { if (++column >= columns || top + h > bottom + 0.5) break; y = top; }
-      if (this.factRow(fact, x + column * (colW + 28), y, colW, h)) y += h + 3;
-    }
+    if (band && y + 19 <= bottom + 0.5 && this.factRow(band, x, y, w, 19)) { y += 24; shown++; }
+    // From the middle of the container level on a node sets its rows in two columns: twice the facts, each in
+    // the wording that fits the column, and a label stays close to its value.
+    shown += this.flow(facts.filter(fact => !fact.band), canvasGaps(node, this.scene!, level, this.state.order), x, y, w, bottom - y, w >= 330 ? 2 : 1, w >= 520 ? 28 : 20);
+    this.shown.set(node.id, shown);
   }
 
   private gauge(x: number, y: number, w: number, h: number, fraction: number): void {
@@ -312,6 +356,7 @@ export class LiveRenderer {
     const bottom = r.y + r.h - padY;
     const worst = [...node.disks].sort((a, b) => diskUsed(b) - diskUsed(a))[0];
     const pressure = worst ? diskPressure(worst) : null;
+    let shown = 0;
     if (r.h >= 34 && r.w >= 120) {
       const titleFont = p.font(600, clamp(11 + r.h * 0.03, 12, 14)), valueFont = p.font(500, 11, true);
       p.mark(x + 5, y + 8, node.health.tone);
@@ -320,7 +365,7 @@ export class LiveRenderer {
       const pinned = layers.warnings && node.warnings.length ? 12 : 0;
       const value = worst ? p.pick([`${percent(diskUsed(worst))} · ${gib(worst.usedBytes)} of ${gib(worst.totalBytes)}`, percent(diskUsed(worst))], x + w - pinned - nameEnd, valueFont)
         : p.pick(['disk use not observed', 'not observed'], x + w - pinned - nameEnd, valueFont);
-      if (value) p.text(value, x + w - pinned, y + 8, valueFont, !worst ? pal.ink3 : pressure && layers.warnings ? (pressure === 'danger' ? pal.danger : pal.warn) : pal.ink, 'right');
+      if (value) { p.text(value, x + w - pinned, y + 8, valueFont, !worst ? pal.ink3 : pressure && layers.warnings ? (pressure === 'danger' ? pal.danger : pal.warn) : pal.ink, 'right'); shown++; }
       const role = value ? p.pick([node.role], x + w - pinned - p.tw(value, valueFont) - 12 - nameEnd, p.font(400, 11, true)) : null;
       if (role) p.text(role, nameEnd, y + 8.5, p.font(400, 11, true), pal.ink2);
       y += 21;
@@ -387,17 +432,10 @@ export class LiveRenderer {
       if (limit > x) p.text(free, x + w, y + 7, font, pal.ink2, 'right');
       y += 18;
     }
-    if (level < 2) return;
-    // Remaining room: the facts of the active layers, in columns.
-    const rows = Math.floor((bottom - y) / 17), columns = Math.max(1, Math.floor((w + 20) / 300));
-    if (rows < 1) return;
-    const colW = (w - (columns - 1) * 20) / columns;
-    let slot = 0;
-    for (const fact of canvasFacts(node, this.scene!, level, this.state.order)) {
-      if (slot >= rows * columns) break;
-      if (fact.key === 'disk') continue;
-      if (this.factRow(fact, x + Math.floor(slot / rows) * (colW + 20), y + (slot % rows) * 17, colW, 15)) slot++;
-    }
+    // Remaining room: the facts of the active layers, in columns. The strip already says the fullest disk.
+    if (level >= 2) shown += this.flow(canvasFacts(node, this.scene!, level, this.state.order).filter(fact => fact.key !== 'disk'),
+      canvasGaps(node, this.scene!, level, this.state.order), x, y, w, bottom - y, Math.max(1, Math.floor((w + 20) / 300)), 20);
+    this.shown.set(node.id, shown);
   }
 
   private points(route: LiveRoute): [number, number][] { return route.points.map(q => [Math.round(this.cam.sx(q[0])) + 0.5, Math.round(this.cam.sy(q[1])) + 0.5]); }

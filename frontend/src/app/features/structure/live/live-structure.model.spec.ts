@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canvasFacts, levelOf, nodeFacts } from './live-structure.facts';
+import { canvasFacts, canvasGaps, containerScale, levelOf, nodeFacts, sourceGap } from './live-structure.facts';
 import { liveSourcesFixture, liveStructureFixture } from './live-structure.fixtures';
 import { layoutLiveScene } from './live-structure.layout';
 import { NOT_OBSERVED, buildLiveScene, descendants, subtreeWarnings, type LiveNode, type LiveRect } from './live-structure.model';
@@ -75,6 +75,30 @@ describe('live structure scene (AGT-4024)', () => {
     const blind = buildLiveScene(liveStructureFixture, NO_SOURCES);
     expect(nodeFacts(node('machine:review-2', blind), blind).find(fact => fact.key === 'uptime')?.observed).toBe(false);
   });
+
+  it('gives every node a state, and every missing value the reason it is missing', () => {
+    for (const s of [scene(), buildLiveScene(liveStructureFixture, NO_SOURCES)]) {
+      for (const item of s.order) {
+        if (item.kind === 'boundary') continue;
+        const facts = nodeFacts(item, s);
+        // The state is a fact of no layer, so no combination of layers can leave a node without one.
+        expect(facts.find(fact => fact.key === 'status' && fact.layer === null), item.id).toBeTruthy();
+        for (const fact of facts) if (!fact.observed) {
+          expect(fact.why, `${item.id} ${fact.key}`).toMatch(/\.$/);
+          expect(fact.gap, `${item.id} ${fact.key}`).toBeTruthy();
+        }
+      }
+    }
+    const s = scene();
+    const fact = (id: string, key: string) => nodeFacts(node(id, s), s).find(item => item.key === key);
+    expect(fact('machine:review-3', 'status')?.values[0]).toBe('up · seen 0 s ago');
+    expect(fact('component:studio-server:api', 'cpu')?.why).toBe('No agent runs inside it; load and disk are reported for its host only.');
+    expect(fact('component:studio-server:api', 'deploy')?.why).toBe('Deploys are recorded per project environment, not per node.');
+    expect(fact('machine:spare', 'status')).toMatchObject({ observed: false, why: 'It is declared in the placement file and no host reports from it.' });
+    expect(fact('machine:home-lab', 'status')?.why).toBe('A host inside names this machine; nothing reports from the machine itself.');
+    expect(sourceGap(node('external:cdn', s)).short).toBe('outside, not probed');
+    expect(sourceGap(node('component:review-1:review-1-runner', s)).short).toBe('reported by name only');
+  });
 });
 
 describe('live structure semantic zoom (AGT-4024)', () => {
@@ -84,11 +108,43 @@ describe('live structure semantic zoom (AGT-4024)', () => {
     const keys = (level: 2 | 3 | 4) => canvasFacts(host, s, level, ['warnings', 'network', 'perf']).map(fact => fact.key);
     expect(keys(2)).toEqual(expect.arrayContaining(['cpu', 'memory', 'slots', 'links']));
     expect(keys(2)).not.toContain('image');
-    expect(keys(3)).toEqual(expect.arrayContaining(['image', 'version', 'restarts', 'uptime', 'job', 'ports', 'deploy', 'load']));
-    expect(keys(3)).not.toContain('events');
-    expect(keys(4)).toEqual(expect.arrayContaining(['events', 'log', 'traffic', 'seen']));
+    expect(keys(3)).toEqual(expect.arrayContaining(['status', 'image', 'version', 'restarts', 'uptime', 'job', 'load']));
+    expect(keys(3)).not.toContain('seen');
+    expect(keys(4)).toEqual(expect.arrayContaining(['traffic', 'seen', 'sampled']));
     for (const key of keys(2)) expect(keys(3)).toContain(key);
     for (const key of keys(3)) expect(keys(4)).toContain(key);
+    // Only values somebody reports are rows.
+    expect(canvasFacts(host, s, 4, ['warnings', 'network', 'perf']).every(fact => fact.observed)).toBe(true);
+  });
+
+  it('says what is not observed and why from the container level on, grouped by reason', () => {
+    const s = scene(), host = node('machine:review-1', s), api = node('component:studio-server:api', s);
+    expect(canvasGaps(host, s, 2, ['perf'])).toEqual([]);
+    const near = canvasGaps(host, s, 3, []);
+    expect(near.map(gap => gap.kind)).toEqual(['collect']);
+    expect(near[0].labels).toEqual(['ports', 'last deploy']);
+    expect(near[0].values[0]).toBe('Not observed: ports, last deploy. The Studio does not collect this per node yet.');
+    expect(near[0].values.at(-1)).toBe('Not observed: not collected per node yet.');
+    expect(canvasGaps(host, s, 4, [])[0].labels).toEqual(['ports', 'last deploy', 'recent events', 'log lines']);
+    // A container nobody reports from inside: its load is missing for another reason than its ports.
+    const gaps = canvasGaps(api, s, 3, ['perf']);
+    expect(gaps.map(gap => gap.kind).sort()).toEqual(['collect', 'source']);
+    expect(gaps.find(gap => gap.kind === 'source')).toMatchObject({ labels: ['cpu', 'memory'],
+      values: expect.arrayContaining(['Not observed: cpu, memory. No agent runs inside it; load and disk are reported for its host only.']) });
+    // Facts of a layer that is off are not missed on the canvas either.
+    expect(canvasGaps(api, s, 3, []).flatMap(gap => gap.labels)).not.toContain('cpu');
+    // Each wording is shorter than the one before, so a smaller node still says the reason.
+    for (const gap of [...near, ...gaps]) for (let i = 1; i < gap.values.length; i++) expect(gap.values[i].length).toBeLessThan(gap.values[i - 1].length);
+  });
+
+  it('leaves no readable box empty at the machine level: a state where one is reported, else the reason', () => {
+    const s = scene();
+    const web = node('component:studio-server:web', s), spare = node('machine:spare', s);
+    expect(canvasFacts(web, s, 2, []).map(fact => fact.key)).toEqual(['status']);
+    expect(canvasGaps(web, s, 2, [])).toEqual([]);
+    expect(canvasFacts(spare, s, 2, [])).toEqual([]);
+    expect(canvasGaps(spare, s, 2, []).map(gap => gap.values.at(-1))).toEqual(['Not observed: declared, no host reports from it.']);
+    expect(canvasGaps(spare, s, 1, [])).toEqual([]);
   });
 
   it('shows only the facts of active layers, the layer switched on last first', () => {
@@ -110,6 +166,23 @@ describe('live structure semantic zoom (AGT-4024)', () => {
     const unit = node('machine:review-1', s), machine = node('machine:studio-server', s);
     expect([0.4, 0.8, 1.3, 2.1].map(k => levelOf(unit, unit.rect.w * k, unit.rect.h * k, k))).toEqual([1, 2, 3, 4]);
     expect([0.4, 1, 1.7, 2.6].map(k => levelOf(machine, machine.rect.w * k, machine.rect.h * k, k))).toEqual([1, 2, 3, 4]);
+  });
+
+  it('puts everything in view at the container level once a container is: its services, and the small boxes beside it', () => {
+    const s = scene();
+    layoutLiveScene(s, 'wide', 1.6);
+    const unit = node('machine:review-1', s), chip = node('component:review-1:review-1-runner', s);
+    for (const k of [0.4, 0.8, 1.3, 2.1, 3.5]) expect(levelOf(chip, chip.rect.w * k, chip.rect.h * k, k), `chip at ${k}`).toBe(levelOf(unit, unit.rect.w * k, unit.rect.h * k, k));
+    for (const id of ['machine:spare', 'external:cdn', 'backup-target']) {
+      const small = node(id, s);
+      expect([0.4, 0.8, 1.3, 2.1].map(k => levelOf(small, small.rect.w * k, small.rect.h * k, k)), id).toEqual([1, 2, 3, 4]);
+    }
+    // The scale a jump lands on shows a node at the container level, not yet at the closest.
+    for (const item of s.order) {
+      if (item.kind === 'boundary' || (item.children.length && item.kind !== 'container' && item.kind !== 'service')) continue;
+      const k = containerScale(item);
+      expect(levelOf(item, item.rect.w * k, item.rect.h * k, k), item.id).toBe(3);
+    }
   });
 });
 

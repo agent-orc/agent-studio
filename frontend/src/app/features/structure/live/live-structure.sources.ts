@@ -78,11 +78,13 @@ export class LiveStructureSourcesService {
       environment: this.http.get<LiveEnvironmentSnapshot>('/api/v1/management/environment').pipe(catchError(() => of(null))),
     }).subscribe(result => {
       this.reading = false;
-      this.sources.set({
+      const next: LiveSources = {
         backup: isBackup(result.backup) ? result.backup : null,
         runners: Array.isArray(result.runners) ? result.runners : null,
         environment: result.environment && typeof result.environment === 'object' ? result.environment : null,
-      });
+      };
+      // An answer that says the same as the last one keeps the last one, so the view has nothing to redraw.
+      if (JSON.stringify(next) !== JSON.stringify(this.sources())) this.sources.set(next);
       this.settled.set(true);
     });
   }

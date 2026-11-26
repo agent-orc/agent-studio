@@ -6,15 +6,14 @@ import { buildLiveScene } from '../live-structure.model';
 import { LiveStructureOutlineComponent } from './live-structure-outline.component';
 
 describe('LiveStructureOutlineComponent', () => {
-  it('lists every node of the scene nested, marks the selection, selects on click and zooms on the second click', () => {
+  it('lists every node of the scene nested, marks the selection, and one click on a row asks for the jump to it', () => {
     TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection()] });
     const scene = buildLiveScene(liveStructureFixture, liveSourcesFixture);
     const fixture = TestBed.createComponent(LiveStructureOutlineComponent);
     fixture.componentRef.setInput('scene', scene);
     fixture.componentRef.setInput('selected', 'machine:review-3');
-    const chosen: string[] = [], entered: string[] = [];
-    fixture.componentInstance.choose.subscribe(id => chosen.push(id));
-    fixture.componentInstance.enter.subscribe(id => entered.push(id));
+    const jumps: string[] = [];
+    fixture.componentInstance.jump.subscribe(id => jumps.push(id));
     fixture.detectChanges();
     const root = fixture.nativeElement as HTMLElement;
     const rows = [...root.querySelectorAll<HTMLButtonElement>('[data-outline-id]')];
@@ -29,7 +28,6 @@ describe('LiveStructureOutlineComponent', () => {
       .toEqual(['0px', '14px', '28px', '42px']);
     row('machine:gate-1').click();
     row('machine:review-3').click();
-    expect(chosen).toEqual(['machine:gate-1']);
-    expect(entered).toEqual(['machine:review-3']);
+    expect(jumps).toEqual(['machine:gate-1', 'machine:review-3']);
   });
 });
