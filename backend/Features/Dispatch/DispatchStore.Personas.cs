@@ -16,7 +16,11 @@ public sealed record DispatcherLogEntryV1(string Id, string Project, string Pers
     string OccurrenceId, DateTimeOffset At, string DecisionId, string StrategyId, string StrategyRevision,
     string Rule, string FactsDigest, IReadOnlyList<DispatchPassOver> PassedOver,
     IReadOnlyList<string> ExpectedOverlap, string Reason, bool Shadow, string? AuditId,
-    string? PreviousDigest, string Digest);
+    string? PreviousDigest, string Digest)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? ExpectedEffect { get; init; }
+}
 
 public sealed partial class DispatchStore
 {
@@ -96,7 +100,8 @@ public sealed partial class DispatchStore
             var entry = new DispatcherLogEntryV1(record.DecisionId, plan.Project, plan.Persona, "action-admitted",
                 record.EvaluationId, record.At, record.DecisionId, plan.StrategyId, plan.StrategyRevision,
                 rule, record.FactsDigest, passed, passed.Select(p => p.Detail).OfType<string>().Distinct().ToArray(),
-                reason, record.Shadow, null, previous, "");
+                reason, record.Shadow, null, previous, "")
+            { ExpectedEffect = $"{plan.Admitted.Count} candidates can start; {passed.Length} remain waiting under {rule}." };
             entry = entry with { Digest = LogDigest(entry) };
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             Write(recordPath, record);

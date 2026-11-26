@@ -9,6 +9,9 @@ namespace AgentStudio.Runner;
 /// <summary>Host boundary for the shared decision library. No transition rules belong here.</summary>
 public static class MonolithTransitionAdapter
 {
+    public static DispatchCompetitionEvaluation DispatchCompetition(DispatchCompetitionFacts facts)
+        => DispatchCompetitionPolicy.Evaluate(facts);
+
     public static bool DispatchDependencyRemoval(string persona, string? origin, bool redeemedT2)
         => DispatcherAuthorityPolicy.MayRemoveDependency(persona, origin, redeemedT2);
 

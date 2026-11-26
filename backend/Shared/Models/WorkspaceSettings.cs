@@ -26,6 +26,9 @@ namespace AgentStudio.Shared;
 /// </summary>
 public record WorkspaceSettings
 {
+    [System.Text.Json.Serialization.JsonPropertyName("dispatch.review.weights")]
+    public IReadOnlyList<AgentStudio.Dispatch.DispatchWeightRevision> DispatchReviewWeights { get; init; } = [];
+
     /// <summary>Workspace default for the coding process emergency stop, in seconds.</summary>
     public int? CodingEmergencyLimitSeconds { get; init; }
     /// <summary>Show chat usage metadata by default. Null uses the Agent Studio default, on.</summary>
