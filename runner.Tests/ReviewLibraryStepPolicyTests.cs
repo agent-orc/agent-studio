@@ -8,6 +8,30 @@ public sealed class ReviewLibraryStepPolicyTests
     private const string SubjectSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     [Fact]
+    public void Provider_switch_keeps_the_authored_digest_and_requires_the_selected_provider()
+    {
+        var original = ReviewLibraryStepPolicy.Seal(new ReviewPlanDto(
+            [new ReviewCommandDto("aspect-code-quality", "code-quality", "claude", [],
+                ExecutionKind: ReviewCommandKinds.AgentAspect, CliType: "claude", Model: "fixture-claude", ThinkingLevel: "high")],
+            ["code-quality"], LibraryVersion: 1), SubjectSha);
+        var selected = new SelectionResult { Outcome = SelectionOutcome.Fallback,
+            Primary = new("claude", "fixture-claude", "high"), Route = new("codex", "fixture-codex", "medium"),
+            Rule = SelectionRules.QuotaCap, Reason = "fixture quota exhausted" };
+        var switched = original with { Commands = [original.Commands[0] with
+        {
+            FileName = "codex", CliType = "codex", Model = "fixture-codex", ThinkingLevel = "medium", ModelSelection = selected,
+        }] };
+        Assert.True(ReviewLibraryStepPolicy.ValidPlan(switched, SubjectSha));
+        Assert.Contains(CapabilityProtocol.ProviderAuthentication("claude"), ReviewLibraryStepPolicy.RequiredCapabilities(switched));
+        var execution = ReviewLibraryStepPolicy.ExecutionCapabilities(switched).ToHashSet();
+        Assert.DoesNotContain(CapabilityProtocol.ProviderAuthentication("claude"), execution);
+        Assert.Contains(CapabilityProtocol.ProviderAuthentication("codex"), execution);
+        Assert.True(ReviewLibraryStepPolicy.Supports(switched, execution));
+        execution.Remove(CapabilityProtocol.ProviderAuthentication("codex"));
+        Assert.False(ReviewLibraryStepPolicy.Supports(switched, execution));
+    }
+
+    [Fact]
     public void Versioned_step_has_the_same_identity_and_evidence_contract_on_two_hosts()
     {
         var plan = Plan();

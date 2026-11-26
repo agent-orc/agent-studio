@@ -290,7 +290,7 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
         var capabilities = registry.AdmittedReviewCapabilities(host.RunnerId, host.InstanceId);
         if (!capabilities.Contains(Contract.ReviewCapabilities.ReviewExecutor)) return false;
         var plan = attempt.Subject.Plan;
-        return plan is null || Contract.ReviewLibraryStepPolicy.MissingCapabilities(plan, capabilities).Count == 0
+        return plan is null || Contract.ReviewLibraryStepPolicy.MissingCapabilities(plan, capabilities, routePending: true).Count == 0
             && Contract.ReviewRepositoryAccessPolicy.MissingCapabilities(
                 plan, attempt.Subject.RepositoryUrl, capabilities).Count == 0;
     }

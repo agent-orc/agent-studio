@@ -3369,6 +3369,13 @@
           <td>A strict-to-fast write left pending batch reviews on the disabled-batch full-suite fallback. Merge admission competed with suite gates; a stale-verdict recovery could escalate its queue timeout. AGT-3862's reported 03:05 failure predates the 03:07 switch, so that earlier incident cannot be attributed to the switch alone.</td>
           <td>No CLI crash. Integration checks now use a reserved slot and three bounded admission attempts, then report gate capacity. The switch retires running batches through publication fences and hands pending members to compile-before-integration; no switch cancellation consumes a card gate-infrastructure verdict.</td>
         </tr>
+        <tr id="case-review-provider-exhaustion-routing">
+          <td>2026-11-24</td>
+          <td><code>AGT-4035</code><br><span class="small">review-provider-exhaustion-routing</span></td>
+          <td>The owner reported manual coding switches to preserve Claude quota for review. The deterministic exhausted-session reproduction returned Wait despite an available equivalent.</td>
+          <td>Sealed review plans skipped quota replanning; same-session routing always held its provider. No CLI crash was reproduced in this drill. Earlier quota crashes remain recorded under AGT-3972.</td>
+          <td>Before: Wait on the exhausted session, or an unchanged sealed review route. Now: a pre-dispatch equivalent route with a receipt, or a visible wait when no published equivalent is available. Hard pins wait; running work is untouched.</td>
+        </tr>
       </tbody>
     </table>
 

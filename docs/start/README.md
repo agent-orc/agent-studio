@@ -100,7 +100,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Studio app and task header style guide | [frontend/style-guide/header.md](../quality/frontend/style-guide/header.md) |
 | Selectable Studio header prompt guide | [header-zones.md](../quality/header-zones.md) |
 | CLI | [domains/cli.md](../system/domains/cli.md) |
-| Model routing policy (model, thinking level, risk floors, benchmark evidence) | [domains/model-routing-policy.md](../system/domains/model-routing-policy.md) |
+| Model routing policy (Token Economy equivalence, step classes, quota reserve, switches, hard pins and dry-run drill) | [domains/model-routing-policy.md](../system/domains/model-routing-policy.md) |
 | Central model selection and fallback Dossier (MS-1 to MS-8, AGT-3473 to AGT-3480) | [decision Dossier](../model-selection-and-fallback/index.html) |
 | Portable skill library: required analysis, recommended decisions and thirteen complete sequential cards (AGT-4032, review repair AGT-4036) | [Dossier](../portable-skill-library/index.html) · [review map](../portable-skill-library/review-map.md) · [evidence](../portable-skill-library/evidence.md) |
 | Model selection ledger API (events, active fallbacks, effective routes, runner ingestion) | [contracts/model-selection-api.md](../system/contracts/model-selection-api.md) |

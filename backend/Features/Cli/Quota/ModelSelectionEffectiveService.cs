@@ -102,7 +102,7 @@ public sealed class ModelSelectionEffectiveService(
             IsExplicitPin = pinned,
             Pins = new SelectionPins(cli, model, thinking),
             Required = new SelectionRequirements(SameClassOnly: consumer.StartsWith("review-", StringComparison.Ordinal)),
-        }, $"effective:{consumer}")).Admission;
+        }, $"effective:{consumer}", Preview: true)).Admission;
         var rule = plan.IsFallback
             ? plan.ModelFallback?.Reason == "operator-preference" ? "operator-switch" : "quota-cap"
             : admission.IsOperatorSwitchActive(cli) ? "operator-switch"

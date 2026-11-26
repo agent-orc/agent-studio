@@ -371,17 +371,17 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
         Assert.Equal("gpt-6-sol", launch.Model);
 
         var hold = PlanFor(false);
-        Assert.Equal(QuotaAdmissionOutcome.Wait, hold.Outcome);
-        Assert.Equal(Now.AddDays(3), hold.NextResetAt);
+        Assert.Equal(QuotaAdmissionOutcome.HostCapabilityMissing, hold.Outcome);
+        Assert.Null(hold.NextResetAt);
         Assert.Contains("claiming host", hold.Reason);
 
         // The incident crossed the projected cap before the strict cap. One
         // free slot must not turn an unaccepted fallback into a launch.
         Snapshot("claude", ("5-hour", 60, Now.AddHours(2.5)));
         var projectedHold = PlanFor(false);
-        Assert.Equal(QuotaAdmissionOutcome.Wait, projectedHold.Outcome);
-        Assert.Equal(Now.AddHours(2.5), projectedHold.NextResetAt);
-        Assert.Contains("no accepted fallback", projectedHold.Reason);
+        Assert.Equal(QuotaAdmissionOutcome.HostCapabilityMissing, projectedHold.Outcome);
+        Assert.Null(projectedHold.NextResetAt);
+        Assert.Contains("model-acceptance:codex:gpt-6-sol", projectedHold.Reason);
     }
 
     [Fact]

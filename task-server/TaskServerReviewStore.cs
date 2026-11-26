@@ -443,9 +443,16 @@ public sealed partial class TaskServerStore
                         capabilityBlockReason = "workspace-quota";
                         continue;
                     }
+                    var routing = await RouteReviewAsync(connection, transaction, candidate.Subject, request.ExecutorId, ct);
+                    if (routing.Subject is null)
+                    {
+                        capabilityBlock = routing.Reason;
+                        capabilityBlockReason = "model-route-wait";
+                        continue;
+                    }
                     var candidateRequirements = RequiredReviewCapabilities(
                         request.RequiredCapabilities,
-                        candidate.Subject);
+                        routing.Subject);
                     var candidateAdmission = await EvaluateCapabilityAdmissionAsync(
                         connection,
                         transaction,
@@ -484,7 +491,7 @@ public sealed partial class TaskServerStore
                         }
                     }
                     attempt = candidate.Attempt;
-                    subject = candidate.Subject;
+                    subject = routing.Subject;
                     selectedQuotaWarning = quota.MeterUnavailable ? quota.Message : null;
                     selectedQuotaProject = quotaProjectName;
                     capabilityAdmission = candidateAdmission;
@@ -791,7 +798,7 @@ public sealed partial class TaskServerStore
             requirements.Add(ReviewCapabilities.BaselineComparison);
         if (subject.Plan.Preparation is { Count: > 0 })
             requirements.Add(ReviewCapabilities.DependencyPreparation);
-        foreach (var capability in ReviewLibraryStepPolicy.RequiredCapabilities(subject.Plan))
+        foreach (var capability in ReviewLibraryStepPolicy.ExecutionCapabilities(subject.Plan))
             requirements.Add(capability);
         if (subject.Plan.RequiredAspects.Any(aspect =>
                 aspect is "completion" or "requirements" or "code-quality" or "documentation" or "evidence"))
@@ -1116,6 +1123,12 @@ public sealed partial class TaskServerStore
                 classified.Classification, settledReport.Summary,
                 payloadHash, received, retry, taskState);
         }, ct);
+        if (_selectionPoster is not null)
+            foreach (var command in request.Commands.Where(command => command.ModelSelection?.LedgerId is not null))
+                await _selectionPoster.PostAsync(new { id = "executed:" + command.ModelSelection!.LedgerId,
+                    kind = "executed", executionId = command.ModelSelection.LedgerId, consumer = "review-aspect",
+                    executionProvider = command.CliType ?? command.ModelSelection.Route.CliType,
+                    providerFailure = command.ExitCode is not null and not 0 }, CancellationToken.None);
         return result!;
     }
 
@@ -2314,9 +2327,9 @@ public sealed partial class TaskServerStore
     /// Registered capabilities <paramref name="subject"/> needs and
     /// <paramref name="executor"/> lacks; empty when the executor can serve it.
     /// </summary>
-    private static IReadOnlyList<string> MissingSubjectCapabilities(ReviewExecutorRow executor, ReviewSubjectDto subject)
+    private IReadOnlyList<string> MissingSubjectCapabilities(ReviewExecutorRow executor, ReviewSubjectDto subject)
     {
-        var missing = new List<string>(ReviewLibraryStepPolicy.MissingCapabilities(subject.Plan, executor.Capabilities));
+        var missing = new List<string>(ReviewLibraryStepPolicy.MissingCapabilities(subject.Plan, executor.Capabilities, routePending: _modelRouteAdmission is not null));
         void Require(bool needed, string key)
         {
             if (needed && !executor.Capabilities.Contains(key) && !missing.Contains(key)) missing.Add(key);
@@ -2338,7 +2351,8 @@ public sealed partial class TaskServerStore
                      ReviewCommandKinds.IsAgent(command.ExecutionKind)))
         {
             Require(true, ReviewCapabilities.SemanticReview);
-            if (string.IsNullOrWhiteSpace(command.CliType)) continue;
+            if (string.IsNullOrWhiteSpace(command.CliType)
+                || _modelRouteAdmission is not null && command.ModelSelection is null) continue;
             Require(true, CapabilityProtocol.CliExecution(command.CliType));
             Require(true, CapabilityProtocol.ProviderAuthentication(command.CliType));
         }

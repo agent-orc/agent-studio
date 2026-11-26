@@ -35,7 +35,7 @@ public static class OperatorDecisionFacts
     };
 
     public static IReadOnlyList<OperatorDecisionFact> FromTasks(
-        IEnumerable<TaskInfo> tasks, Func<TaskInfo, QuotaFallbackStatus?> fallbackOf)
+        IEnumerable<TaskInfo> tasks, Func<TaskInfo, QuotaFallbackStatus?> fallbackOf, bool includeLegacyQuotaWait = true)
     {
         var facts = new List<OperatorDecisionFact>();
         foreach (var task in tasks)
@@ -63,7 +63,7 @@ public static class OperatorDecisionFacts
                     task.ProjectName, card,
                     FirstText(decision.Question) ?? $"Decision card {card} is open.",
                     Utc(task.CreatedAt), evidence, Title: task.Title));
-            if (task.QuotaWait is { } wait)
+            if (includeLegacyQuotaWait && task.QuotaWait is { } wait)
                 facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.QuotaExhausted,
                     Key(OperatorDecisionTypes.QuotaExhausted, "card", task.ProjectName, card, Stamp(wait.StartedAt)),
                     task.ProjectName, card,

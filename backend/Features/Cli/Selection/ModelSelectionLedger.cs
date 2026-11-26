@@ -5,6 +5,7 @@ namespace AgentStudio.Cli;
 public interface IModelSelectionLedger
 {
     void Record(SelectionLedgerEntry entry);
+    bool RecordExecution(string id, bool providerFailure = false) => false;
     SelectionLedgerEntry? GetActive(SelectionRequest request) => null;
     IReadOnlyList<SelectionLedgerEntry> Active() => [];
 }
@@ -31,6 +32,8 @@ public sealed class LoggingModelSelectionLedger : IModelSelectionLedger
         .Where(entry => entry.Kind is SelectionLedgerKinds.Switched or "operator-switch"
             && entry.From is not null && entry.To is not null)
         .Select(FromEvent).ToArray();
+
+    public bool RecordExecution(string id, bool providerFailure = false) => _ledger.RecordExecution(id, providerFailure);
 
     public void Record(SelectionLedgerEntry entry)
     {
@@ -63,6 +66,7 @@ public sealed class LoggingModelSelectionLedger : IModelSelectionLedger
             ReturnToPrimaryAt = entry.ReturnToPrimaryAt is { } returnAt
                 ? new DateTimeOffset(DateTime.SpecifyKind(returnAt, DateTimeKind.Utc)) : null,
             ClosesId = entry.ClosesId,
+            NearbyResetWait = entry.NearbyResetWait,
             PricePerMTok = entry.FromPricePerMTok is null && entry.ToPricePerMTok is null
                 ? null : new ModelSelectionPrice((double?)entry.FromPricePerMTok, (double?)entry.ToPricePerMTok),
         };

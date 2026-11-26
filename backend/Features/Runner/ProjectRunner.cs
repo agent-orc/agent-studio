@@ -3088,6 +3088,7 @@ public class ProjectRunner
             claimedRunThisCall = _activeRuns.TryClaim(new ActiveRun
             {
                 JobId = jobId,
+                SelectionEventId = admissionPlan.SelectionEventId,
                 JobFolder = jobFolder,
                 Intent = intent,
                 Followup = followupPrompt,
@@ -6312,6 +6313,7 @@ public class ProjectRunner
             }
             catch (Exception ex) { _logger.LogDebug(ex, "Bus mirror of run-finish failed for {JobId}", jobId); }
 
+            _modelSelection?.RecordExecution(run.SelectionEventId, cliType, execution.ExitCode is not null and not 0);
             // AGT-2100: record the CLI's cached quota snapshot at run-end, the
             // matching pair to the run-start emit. Cached-only - the run just
             // consumed quota, but we honour "no extra CLI call per run" and let

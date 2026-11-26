@@ -34,7 +34,7 @@ namespace AgentStudio.Tests;
 public sealed class QuotaFallbackCrossPathTests : IDisposable
 {
     [Theory]
-    [InlineData(false, CliTypes.Codex, ModelIds.Gpt56Sol)]
+    [InlineData(false, CliTypes.Claude, ModelIds.ClaudeSonnet5)]
     [InlineData(true, CliTypes.Claude, ModelIds.ClaudeSonnet5)]
     public async Task Monolith_claim_switches_capacity_model_on_one_host(
         bool siblingAlsoAtCapacity, string expectedCli, string expectedModel)
@@ -158,8 +158,8 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
 
     // ── Test A: remote-claim (/api/runner/claim) picks the equivalence fallback ──
     [Theory]
-    [InlineData(CliTypes.Codex, ModelIds.Gpt56Sol, "medium", CliTypes.Claude, ModelIds.ClaudeSonnet5, "high")]
-    [InlineData(CliTypes.Claude, ModelIds.ClaudeOpus5, "high", CliTypes.Codex, ModelIds.Gpt56Sol, "high")]
+    [InlineData(CliTypes.Codex, ModelIds.Gpt6Sol, "medium", CliTypes.Claude, ModelIds.ClaudeSonnet5, "high")]
+    [InlineData(CliTypes.Claude, ModelIds.ClaudeSonnet5, "high", CliTypes.Codex, ModelIds.Gpt6Sol, "medium")]
     public async Task Remote_claim_routes_a_quota_exhausted_card_to_the_equivalent_family(
         string configuredCli,
         string configuredModel,
@@ -252,8 +252,8 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
     // D4 keeps review fallbacks in the same capability class. The review route
     // retains medium thinking when Sonnet supports it, per the Dossier's
     // equivalence rule; the coding claim above still uses the catalogue's high.
-    [InlineData(CliTypes.Codex, ModelIds.Gpt56Sol, "medium", CliTypes.Claude, ModelIds.ClaudeSonnet5, "medium")]
-    [InlineData(CliTypes.Claude, ModelIds.ClaudeSonnet5, "medium", CliTypes.Codex, ModelIds.Gpt56Sol, "medium")]
+    [InlineData(CliTypes.Codex, ModelIds.Gpt6Sol, "medium", CliTypes.Claude, ModelIds.ClaudeSonnet5, "high")]
+    [InlineData(CliTypes.Claude, ModelIds.ClaudeSonnet5, "high", CliTypes.Codex, ModelIds.Gpt6Sol, "medium")]
     public async Task Review_claim_re_resolves_a_pinned_aspect_without_mutating_the_frozen_plan(
         string configuredCli,
         string configuredModel,
@@ -301,15 +301,13 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
         // The immutable ReviewAttempt is minted with an agent-aspect command
         // already pinned to codex - the "already-open attempt" incident shape:
         // the plan was frozen before codex hit its cap.
-        var frozenPlan = new Contract.ReviewPlanDto(
-            Commands:
-            [
-                new Contract.ReviewCommandDto(
-                    "aspect-code-quality", "code-quality", configuredCli, Array.Empty<string>(),
-                    ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
-                    CliType: configuredCli, Model: configuredModel, ThinkingLevel: configuredThinking),
-            ],
-            RequiredAspects: ["code-quality"]);
+        var aspects = new[] { "requirement-fit", "code-quality", "documentation-impact", "tests-and-evidence", "code-review-grade" };
+        var frozenPlan = Contract.ReviewLibraryStepPolicy.Seal(new Contract.ReviewPlanDto(
+            Commands: aspects.Select(aspect => new Contract.ReviewCommandDto(
+                aspect == "code-review-grade" ? "post-code-review-grade" : "aspect-" + aspect,
+                aspect, configuredCli, Array.Empty<string>(), ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
+                CliType: configuredCli, Model: configuredModel, ThinkingLevel: configuredThinking)).ToArray(),
+            RequiredAspects: aspects, LibraryVersion: 1), resultSha);
         var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
             taskKey, repositoryId, resultSha, run.AttemptId, "requirements", "policy",
             [], "quota-review-attempt-create",
@@ -350,7 +348,12 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
                 observedAt, 180, observedAt.Ticks,
                 [new Contract.AdvertisedCapabilityDto(
                     Contract.CapabilityProtocol.ModelAcceptance(expectedCli, expectedModel),
-                    "model-acceptance", "unknown")]));
+                    "model-acceptance", "unknown"),
+                 new(Contract.CapabilityProtocol.ModelAcceptance(configuredCli, configuredModel), "model-acceptance", "ready"),
+                 new(Contract.CapabilityProtocol.CliExecution("claude"), "cli-execution", "ready"),
+                 new(Contract.CapabilityProtocol.ProviderAuthentication("claude"), "provider-auth", "ready"),
+                 new(Contract.CapabilityProtocol.CliExecution("codex"), "cli-execution", "ready"),
+                 new(Contract.CapabilityProtocol.ProviderAuthentication("codex"), "provider-auth", "ready")]));
         reviewCapabilities.EnsureSuccessStatusCode();
 
         var unverified = await client.ClaimReviewAsync(
@@ -372,7 +375,12 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
             new Contract.CapabilityAdvertisementRequest(
                 reviewRunnerId, instanceId, Contract.CapabilityProtocol.CurrentSchemaVersion,
                 observedAt.AddSeconds(1), 180, observedAt.Ticks + 1,
-                [new Contract.AdvertisedCapabilityDto(expectedKey, "model-acceptance", "ready")]));
+                [new Contract.AdvertisedCapabilityDto(expectedKey, "model-acceptance", "ready"),
+                 new(Contract.CapabilityProtocol.ModelAcceptance(configuredCli, configuredModel), "model-acceptance", "ready"),
+                 new(Contract.CapabilityProtocol.CliExecution("claude"), "cli-execution", "ready"),
+                 new(Contract.CapabilityProtocol.ProviderAuthentication("claude"), "provider-auth", "ready"),
+                 new(Contract.CapabilityProtocol.CliExecution("codex"), "cli-execution", "ready"),
+                 new(Contract.CapabilityProtocol.ProviderAuthentication("codex"), "provider-auth", "ready")]));
         reviewCapabilities.EnsureSuccessStatusCode();
 
         var claim = await client.ClaimReviewAsync(
@@ -382,8 +390,15 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
         Assert.Equal("claimed", claim.Status);
         Assert.Null(factory.Services.GetRequiredService<ReviewClaimUnclaimableLog>().Latest(attemptId));
         Assert.NotNull(claim.Subject);
-        var returnedAspect = Assert.Single(
-            claim.Subject!.Plan.Commands, c => Contract.ReviewCommandKinds.IsAgent(c.ExecutionKind));
+        Assert.Equal(5, claim.Subject!.Plan.Commands.Count);
+        Assert.True(Contract.ReviewLibraryStepPolicy.ValidPlan(claim.Subject.Plan, resultSha));
+        Assert.All(claim.Subject.Plan.Commands, command =>
+        {
+            Assert.Equal(expectedCli, command.CliType);
+            Assert.Equal(expectedModel, command.Model);
+            Assert.NotNull(command.ModelSelection?.LedgerId);
+        });
+        var returnedAspect = claim.Subject.Plan.Commands[0];
         Assert.Equal(expectedCli, returnedAspect.CliType);
         Assert.Equal(expectedModel, returnedAspect.Model);
         Assert.Equal(expectedThinking, returnedAspect.ThinkingLevel);
@@ -392,8 +407,8 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
         // The durable, persisted ReviewAttempt plan is untouched: a second,
         // independent read of the frozen source-of-truth still shows codex.
         var storedAfterClaim = authority.GetReview(attemptId)!;
-        var storedAspect = Assert.Single(
-            storedAfterClaim.Subject.Plan!.Commands, c => Contract.ReviewCommandKinds.IsAgent(c.ExecutionKind));
+        var storedAspect = storedAfterClaim.Subject.Plan!.Commands[0];
+        Assert.All(storedAfterClaim.Subject.Plan.Commands, command => Assert.Null(command.ModelSelection));
         Assert.Equal(configuredCli, storedAspect.CliType);
         Assert.Equal(configuredModel, storedAspect.Model);
         Assert.Equal(configuredThinking, storedAspect.ThinkingLevel);

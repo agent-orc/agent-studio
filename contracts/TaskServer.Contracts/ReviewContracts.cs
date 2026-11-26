@@ -102,7 +102,9 @@ public sealed record ReviewCommandDto(
     string? ThinkingLevel = null,
     string BaselineMode = ReviewBaselineModes.TestFailures,
     string WorkingSubdir = "",
-    ReviewLibraryStepDto? LibraryStep = null);
+    ReviewLibraryStepDto? LibraryStep = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    SelectionResult? ModelSelection = null);
 
 public sealed record ReviewPlanDto(
     IReadOnlyList<ReviewCommandDto> Commands,
@@ -448,7 +450,9 @@ public sealed record ReviewCommandEvidenceDto(
     /// the failure names had no shape the repeat output could be checked for.
     /// </summary>
     string? RepeatObservation = null,
-    IReadOnlyDictionary<string, string>? FailureMessages = null);
+    IReadOnlyDictionary<string, string>? FailureMessages = null,
+    string? CliType = null,
+    SelectionResult? ModelSelection = null);
 
 /// <summary>
 /// Evidence levels for a passing clean repeat (AGT-3650). A test-name proof

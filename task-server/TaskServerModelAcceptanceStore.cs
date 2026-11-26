@@ -215,6 +215,9 @@ public sealed partial class TaskServerStore
     {
         var (provider, model, isPrimary) = await ReadEffectiveModelRouteAsync(
             connection, transaction, taskId, runnerId, ct);
+        var selected = await SelectTaskRouteAsync(connection, transaction, taskId, runnerId, provider, model, null, ct);
+        if (selected is { ShouldLaunch: false }) return selected.Reason;
+        if (selected is not null) { provider = selected.Route.CliType; model = selected.Route.Model; isPrimary = !selected.IsFallback; }
         if (string.IsNullOrWhiteSpace(model)) return null;
         if (provider == "codex" && CodexCliRelease.MinimumVersionForModel(model) is { } minimum)
         {
@@ -342,7 +345,7 @@ public sealed partial class TaskServerStore
     /// Named models the operator configured as quota routes or pinned on ready
     /// cards. Hosts probe these in addition to their built-in candidates.
     /// </summary>
-    private static async Task<IReadOnlyList<ConfiguredModelRouteDto>> ReadConfiguredModelRoutesAsync(
+    private async Task<IReadOnlyList<ConfiguredModelRouteDto>> ReadConfiguredModelRoutesAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         DateTime now,
@@ -380,7 +383,7 @@ public sealed partial class TaskServerStore
             }
             catch (JsonException) { /* An unreadable routes document configures no probe. */ }
         }
-        return routes.Distinct().ToArray();
+        return routes.Concat(_modelRouteAdmission?.ConfiguredRoutes ?? []).Distinct().ToArray();
     }
 
     private static void CollectQuotaRoutes(JsonElement element, List<ConfiguredModelRouteDto> routes)

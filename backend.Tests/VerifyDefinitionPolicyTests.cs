@@ -194,9 +194,10 @@ public sealed class VerifyDefinitionPolicyTests : IDisposable
 
         // The default strategy (fast) defers unchanged test commands to after
         // integration; strict keeps the declared command in the review plan.
-        var plan = Builder().Build(Task(), _repo,
-            new ProjectSettings { Testing = new ProjectTestingSettings { Strategy = "strict" } },
-            "develop", new string('b', 40), ["main.go"], "refs/heads/agent-studio/results/task");
+        var plan = Plan(["main.go"], new ProjectSettings
+        {
+            Testing = new ProjectTestingSettings { Strategy = TestingStrategies.Strict },
+        });
 
         Assert.Null(plan.VerifyDefinitionMissing);
         Assert.Contains(plan.Commands, command => command.Aspect == "build-tests");
@@ -300,8 +301,8 @@ public sealed class VerifyDefinitionPolicyTests : IDisposable
         Assert.Contains("./scripts/test.sh", proposal.Definition);
     }
 
-    private Contract.ReviewPlanDto Plan(IReadOnlyList<string> changed)
-        => Builder().Build(Task(), _repo, new ProjectSettings(), "develop", new string('b', 40), changed,
+    private Contract.ReviewPlanDto Plan(IReadOnlyList<string> changed, ProjectSettings? settings = null)
+        => Builder().Build(Task(), _repo, settings ?? new ProjectSettings(), "develop", new string('b', 40), changed,
             "refs/heads/agent-studio/results/task");
 
     private TaskInfo Task() => new()

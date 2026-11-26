@@ -11,6 +11,50 @@ public sealed class ModelSelectionLedgerTests : IDisposable
     private readonly DateTimeOffset _now = new(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public void Attention_uses_class_waits_instead_of_a_single_provider_limit()
+    {
+        var ledger = Create(_now);
+        var limits = new AgentStudio.Runner.ProviderLimitRegistry();
+        limits.Record(new("claude", _now.UtcDateTime, _now.AddHours(1).UtcDateTime, "quota", true));
+        var source = new AgentStudio.Operator.OperatorProviderLimitFactSource(limits, ledger);
+        Assert.Empty(source.Collect(_now.UtcDateTime)!);
+        Assert.True(ledger.Append(Sample(_now) with { Kind = "waiting", To = null,
+            Reason = "waiting: no provider can take this class" }));
+        Assert.Single(source.Collect(_now.UtcDateTime)!);
+        Assert.True(ledger.Append(Sample(_now) with { Id = "switch" }));
+        Assert.Empty(source.Collect(_now.UtcDateTime)!);
+        Assert.True(ledger.Append(Sample(_now) with { Id = "hard-wait", Kind = "waiting", To = null, Rule = "pin" }));
+        Assert.Empty(source.Collect(_now.UtcDateTime)!);
+    }
+
+    [Fact]
+    public void Execution_usage_counts_completed_calls_once_and_filters_projects()
+    {
+        var ledger = Create(_now);
+        var selected = Sample(_now);
+        Assert.True(ledger.Append(selected));
+        Assert.Empty(ledger.ExecutionUsage(_now.AddMinutes(-1), new HashSet<string> { "demo" }));
+        Assert.True(ledger.RecordExecution(selected.Id));
+        Assert.False(ledger.RecordExecution(selected.Id));
+        var usage = Assert.Single(ledger.ExecutionUsage(_now.AddMinutes(-1), new HashSet<string> { "demo" }));
+        Assert.Equal("codex", usage.Provider);
+        Assert.Equal(1, usage.Executions);
+        Assert.Equal(1, usage.SwitchExecutions);
+        Assert.Empty(ledger.ExecutionUsage(_now.AddMinutes(-1), new HashSet<string> { "other" }));
+    }
+
+    [Fact]
+    public void Return_to_primary_does_not_count_as_a_fallback_execution()
+    {
+        var ledger = Create(_now);
+        var returned = Sample(_now) with { Kind = "returned" };
+        ledger.Append(returned);
+        Assert.True(ledger.RecordExecution(returned.Id));
+        var usage = Assert.Single(ledger.ExecutionUsage(_now.AddMinutes(-1), new HashSet<string> { "demo" }));
+        Assert.Equal(0, usage.SwitchExecutions);
+    }
+
+    [Fact]
     public void RoundTrip_RedactsAndFiltersWithIdempotentIngestion()
     {
         var ledger = Create(_now);

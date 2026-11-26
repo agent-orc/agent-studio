@@ -769,53 +769,40 @@ and the comparable fallback is not accepted on that host, admission waits for
 the quota reset instead of launching the refused model. A launch-time model
 refusal with no salvage returns the card to Ready with a host capability hold.
 
-The equivalence adapter reads Token Economy's published, embedded model-routing
-knowledge base and price catalogue from the exactly pinned NuGet package. It
-selects another provider only within the same capability class, excludes
-unqualified and retired routes, and admits Codex routes only when their model
-appears in this repository's versioned routing tiers. That local policy gate
-keeps a TokenEconomy price or knowledge update from promoting a newly listed
-model into automatic quota fallback before Studio adopts the route. It
-preserves a supported explicit thinking level,
-and chooses the cheapest remaining comparable route. The package version and
-its independent routing-policy version are recorded together. Admission makes
-no network call. An operator-configured pair remains an explicit override and
-wins over catalogue selection.
+The equivalence adapter reads explicit provider fallback pairs from Token
+Economy's embedded knowledge base in the exactly pinned NuGet package. Complete
+model and reasoning tuples remain intact in either direction. Capability tiers,
+prices, supported reasoning levels and predecessor names do not establish an
+equivalence. Review and grade also enforce the same capability class. Coding
+retains its correctness floor. Workspace fallback preferences must match a
+published pair before admission can use them.
 
-With the current catalogue, Claude Opus 5/high maps to Sol/high, Claude Sonnet
-5 with no stronger pin maps to Sol/medium, and the Haiku class maps to
-Luna/medium. GPT-6 Astra remains unqualified for automatic selection under this
-policy. GPT-5.4 Mini is retired and never appears as a route. If no candidate
-preserves the capability and thinking floor, admission follows the existing
-wait policy instead of downgrading.
-
-When the catalogue has no route for a proposal-only successor, the lookup uses
-its predecessor from the migration catalog: Claude Opus 5.5 resolves through
-Opus 5 and GPT-6 Sol through GPT-5.6 Sol at the requested thinking level. The
-route still names the requested model. Proposal-only successors are never
-automatic fallback targets, even when Token Economy marks them selectable and
-cheaper. This is a comparable-model lookup, not an automatic migration.
+Token Economy 0.3.9 publishes Sonnet 5/high for terra-medium and sol-medium,
+excluding sol-xhigh. It publishes no Opus 5.5/low or Haiku 5.5/low pair. Missing
+pairs wait explicitly, with upstream qualification proposals listed by the
+routing drill. The package and routing-policy versions accompany each
+catalogue-selected receipt. See the pipeline-class contract below.
 
 The per-CLI **prefer fallback now** switch is a runtime admission input. It
-routes only new runs, continuations, remote claims, review commands, chats, and
-one-shots; it never interrupts running work. The preference expires at the next
-known reset for that CLI. A hard cap triggers the same selection automatically.
+routes new runs, remote claims, review commands, chats, and one-shots; healthy
+same-session continuations keep their provider. It never interrupts running
+work. The preference expires at the next known reset for that CLI. A hard cap triggers the same selection automatically.
 Every switch emits the shared `modelFallback` receipt:
 
 ```json
 {
-  "from": "claude-opus-5 high",
-  "to": "gpt-5.6-sol high",
+  "from": "claude-sonnet-5 high",
+  "to": "gpt-6-sol medium",
   "reason": "quota-cap",
   "window": "Weekly",
   "usedPct": 98,
-  "catalogueVersion": "TokenEconomy 0.3.5; routing 2026-09-24"
+  "catalogueVersion": "TokenEconomy 0.3.9; routing 2026-11-01"
 }
 ```
 
 `reason` is `quota-cap`, `operator-preference`, or `provider-rejection`.
-`catalogueVersion` is set only for catalogue-selected routes; operator overrides
-leave it null so their receipts do not claim catalogue provenance.
+`catalogueVersion` identifies the published pair used for a provider switch.
+An operator preference cannot create an unpublished equivalence.
 Provider-rejection continuations use the same record type. Remote runners never
 select a fallback independently: the task server records the admission decision
 and returns the effective CLI, model, and thinking level in the claim plan.
@@ -862,17 +849,18 @@ Token Economy catalogue, host acceptance, policy tiers) and receives a
 the deciding quota numbers, `retryAt` and `returnToPrimaryAt`.
 
 The quota admission, primary/fallback resolve, provider-refusal sibling,
-correctness-floor and fresh-round floor rules moved into the planner without a
-behaviour change; `backend.Tests/Golden/model-selection-planner.jsonl` records
-the old results over a quota, pin, preference and host matrix.
+correctness-floor and fresh-round floor rules live in the planner.
+`backend.Tests/Golden/model-selection-planner.jsonl` records the current results
+over a quota, pin, preference and host matrix; AGT-4035 updates the matrix for
+explicit published pairs and unavailable-session switching.
 `QuotaAdmissionPlanner`, `CliQuotaFallbackService.Resolve`,
 `ModelRoutingPolicyRegistry.RouteMeetsFloor`/`ProviderRejectionFallback`,
 `MechanicalFreshRunRoutePolicy` and `QuotaAdmissionService` remain as thin
-adapters until MS-6. A hard pin and a same-session continuation never switch;
-they wait with rule `pin`.
+adapters until MS-6. A hard pin waits with rule `pin`. As of AGT-4035, a healthy same-session
+continuation stays with its session and switches only when that provider cannot accept work.
 
 `ModelSelectionService` (`IModelSelectionService`) collects the facts, asks
-the planner and writes every non-primary result through
+the planner and writes route decisions, including primary selections, through
 `IModelSelectionLedger` into the shared JSONL ledger and active projection.
 Local runs, remote coding claims and the one-shot registry
 dispatch call it. The Task Server takes the refusal sibling and the runner the
@@ -950,3 +938,81 @@ cards, change correctness floors, or guarantee host model availability.
 - [Token aggregation](tokens.md)
 - [Quota snapshot run events](../../concepts/quota-snapshot-run-events.md)
 - [Model qualification event schema](../../app/schemas/model-qualification-event.schema.json)
+
+## Pipeline classes, quota reserve and provider switches (AGT-4035)
+
+Every catalogue step declares a `workClass`, including deterministic steps.
+The guard `PipelineWorkClassGuardTests` rejects new unclassified steps. Coding
+keeps its existing assessed difficulty and correctness floor. Other classes are
+review aspect, grade, summary, enrichment, conflict resolution, concept,
+decision and analysis. Class and preferred route are separate: class determines
+reserve admission; Token Economy supplies complete provider/model/reasoning
+pairs. An explicit step model is a preference unless `pinMode` is `hard`.
+
+The equivalence adapter now reads published Token Economy `providerFallbacks`
+and their complete route pairs in both directions. It preserves the published
+reasoning mapping, including medium to high. It does not infer equivalence from
+similar names, prices, capability tiers or model predecessors. Review and grade
+also require the same capability tier. Coding fallbacks must clear the existing
+correctness floor. Saved fallback profiles cannot create an automatic pair that
+Token Economy has not published. The former Studio-owned Sol/xhigh to
+Opus/xhigh exception and review fallback defaults are removed.
+
+Token Economy 0.3.9 publishes Sonnet 5/high for terra-medium and sol-medium,
+explicitly excluding sol-xhigh. It does not publish an Opus 5.5/low or Haiku
+5.5/low equivalent, nor a separate equivalence table qualified by review,
+summary or other step class. These routes wait when unavailable; they never
+inherit a guessed predecessor mapping. Upstream qualification must add a work
+class, both complete routes, evidence date and qualification status. The drill
+lists current configured pairs that need that entry.
+
+`model-selection-policy.json` exposes `shortStepReservePoints`, default **10**,
+range 0 to 50. New long work uses the configured window cap minus that reserve.
+For a 95% cap, new coding switches at 85%; short review, grade, summary,
+enrichment and bounded decisions can still use the last ten percentage points
+below the cap. The policy read API, usage view and `studio-op routing` show the
+setting. `PUT /api/model-selection/policy/reserve` accepts `{ "points": 10 }`
+under the existing central-policy permission. A reserve is admission headroom,
+not a token reservation or a guarantee about simultaneous in-flight usage.
+
+Selection happens before dispatch. Capped windows, unhealthy probes, host
+model/authentication refusal and the bounded provider-error circuit can trigger
+a switch. The circuit observes CLI failures from coding completions, review commands and one-shots, opens after at least five
+samples with at least half failing in fifteen minutes, and allows a recovery
+attempt after two minutes. Host capacity/authentication marks remain authoritative
+for remote work. Running processes are never interrupted. A healthy same-session
+continuation keeps its provider/model/reasoning, ignores conservation preferences
+and projections, and can use the short-step reserve. It switches only when its
+provider cannot accept work. Provider-native session ids never cross providers.
+A hard pin waits and names the pin in its receipt.
+
+The standalone Task Server calls the same installation routing authority through
+`POST /api/model-selection/plan`, using fresh accepted models and host health as
+facts. It reuses `TaskServer:QuotaAdmissionBaseUrl` and
+`TaskServer:ModelSelectionBearerToken`. A bounded background cache refreshes authority decisions outside claim transactions
+with one concurrent request, at most 32 pending reads and 256 cached entries.
+Decisions are fresh for 60 seconds and keyed by task version, step, route and
+host facts. The authority also supplies published equivalent models to the existing
+model-acceptance probe inventory, so a cold review host can prove the alternate
+model without an operator configuring a fallback profile. A pending read or three-second authority timeout returns a visible
+wait, without claiming work. An installation without that configured
+route retains the legacy standalone behavior. Review-library digests continue
+to bind the authored command: a separate claim-scoped `modelSelection` receipt
+names the execution route, original route and reason. Review evidence retains
+that receipt and actual provider/model.
+
+Completed model calls emit idempotent `executed` receipts tied to their selection
+id. The usage view counts completed calls and switched calls per provider for
+the current week, filtered to visible projects. Historic calls without a routing
+receipt are not inferred. Routing waits appear in the attention feed; a provider
+limit alone does not ask for intervention when another eligible route can run.
+Hard pins and opted-in nearby-reset waits do not raise that class-level item.
+
+Run `studio-op routing drill --dry-run --project <project> --json` to replay
+provider exhaustion in both directions, both providers exhausted, and follow-up
+rounds against the installation planner. It uses fake quota snapshots, writes no
+selection receipts and invokes no CLI. The result contains case decisions,
+reserve and catalogue version, plus missing configured equivalence. Missing
+upstream entries are explicit coverage gaps, even when the routing-rule drill
+passes. Focused tests exercise the same cases with a fixture equivalence source,
+and remote review tests cover all four aspects and grade with a sealed plan.
