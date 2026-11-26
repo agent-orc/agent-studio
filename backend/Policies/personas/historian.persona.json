@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "id": "historian",
+  "revision": "2026.11.1",
+  "title": "Historian",
+  "aspect": "delivery",
+  "kind": "dispatcher",
+  "charter": "Apply Surveyor rules. Serialize hot modules for 14 days and collided pairs during recovery. Chain sources whose earlier wave mean partner count exceeds five. With an empty ledger behave like Surveyor. Never change priority, capacity or test placement.",
+  "scope": {
+    "projects": [
+      "*"
+    ],
+    "areas": [
+      "dispatch.cards",
+      "dispatch.forecasts",
+      "dispatch.conflicts",
+      "dispatch.slots"
+    ]
+  },
+  "attributes": {
+    "autonomy": "A1",
+    "riskAppetite": "low",
+    "thoroughness": 3,
+    "signalThreshold": 40
+  },
+  "operations": [
+    "observe",
+    "dispatch.shadow.record",
+    "dispatch.plan.write",
+    "dispatch.hold",
+    "dispatch.release",
+    "dispatch.dependency.add",
+    "dispatch.dependency.remove",
+    "dispatch.exclusive.set"
+  ],
+  "model": {
+    "capabilityClass": "balanced",
+    "thinking": "medium"
+  },
+  "cadence": {
+    "report": "P7D",
+    "window": "P7D"
+  },
+  "triggers": [
+    "dispatch.wave.integrated",
+    "dispatch.conflict.attributed"
+  ],
+  "budget": {
+    "tokensPerWeek": 20000,
+    "sessionsPerWeek": 1,
+    "proposalsPerWeek": 3,
+    "draftCardsPerWeek": 2,
+    "minutesPerSession": 5
+  },
+  "report": {
+    "template": "dispatcher-v1",
+    "maxItems": 6,
+    "maxWords": 350
+  },
+  "floors": [
+    "dispatch.conflict.attributed:60"
+  ],
+  "dispatch": {
+    "strategy": {
+      "id": "ledger-learned-v1",
+      "revision": "2026.11.1"
+    },
+    "parameters": {},
+    "mode": "shadow",
+    "forecast": "model-free"
+  }
+}

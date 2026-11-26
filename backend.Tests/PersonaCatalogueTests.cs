@@ -17,8 +17,8 @@ public sealed class PersonaCatalogueTests
 {
     private static readonly string[] StarterIds =
     [
-        "budget-steward", "chief-of-staff", "cost-controller", "design-lead", "documentation-editor", "improvement-scout", "operations-warden",
-        "presenter", "product-manager", "quality-lead", "reliability-engineer", "security-officer",
+        "area-warden", "budget-steward", "chief-of-staff", "cost-controller", "design-lead", "documentation-editor", "historian", "improvement-scout", "operations-warden", "packer",
+        "presenter", "product-manager", "quality-lead", "queue-keeper", "reliability-engineer", "security-officer", "surveyor",
     ];
 
     [Fact]
@@ -56,7 +56,7 @@ public sealed class PersonaCatalogueTests
         var entries = new PersonaCatalogue().Entries.Select(entry => entry.Descriptor).ToList();
 
         // The scout joins the catalogue with its former 110,000-token Watcher subceiling.
-        Assert.Equal(1_220_000, entries.Sum(descriptor => descriptor.Budget.TokensPerWeek));
+        Assert.Equal(1_360_000, entries.Sum(descriptor => descriptor.Budget.TokensPerWeek));
         Assert.Equal(["cost-controller", "operations-warden"],
             entries.Where(descriptor => descriptor.StartsActive == true).Select(descriptor => descriptor.Id));
         Assert.Equal((9, 1, 2), (entries.Count(d => d.Kind == PersonaKinds.Persona), entries.Count(d => d.Kind == PersonaKinds.Presenter),

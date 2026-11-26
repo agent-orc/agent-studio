@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "id": "queue-keeper",
+  "revision": "2026.11.1",
+  "title": "Queue keeper",
+  "aspect": "delivery",
+  "kind": "dispatcher",
+  "charter": "Keep owner pins and urgent cards first within priority classes, then newest Ready entry. Respect dependencies and capacity. No holds, chains or recuts. Remain the control group and fallback. Never change priority, slot count or test placement.",
+  "scope": {
+    "projects": [
+      "*"
+    ],
+    "areas": [
+      "dispatch.cards",
+      "dispatch.forecasts",
+      "dispatch.conflicts",
+      "dispatch.slots"
+    ]
+  },
+  "attributes": {
+    "autonomy": "A1",
+    "riskAppetite": "low",
+    "thoroughness": 3,
+    "signalThreshold": 40
+  },
+  "operations": [
+    "observe",
+    "dispatch.shadow.record"
+  ],
+  "model": {
+    "capabilityClass": "balanced",
+    "thinking": "medium"
+  },
+  "cadence": {
+    "report": "P7D",
+    "window": "P7D"
+  },
+  "triggers": [
+    "dispatch.wave.integrated",
+    "dispatch.conflict.attributed"
+  ],
+  "budget": {
+    "tokensPerWeek": 20000,
+    "sessionsPerWeek": 1,
+    "proposalsPerWeek": 3,
+    "draftCardsPerWeek": 2,
+    "minutesPerSession": 5
+  },
+  "report": {
+    "template": "dispatcher-v1",
+    "maxItems": 6,
+    "maxWords": 350
+  },
+  "floors": [
+    "dispatch.conflict.attributed:60"
+  ],
+  "dispatch": {
+    "strategy": {
+      "id": "lane-entry-v1",
+      "revision": "2026.11.1"
+    },
+    "parameters": {},
+    "mode": "shadow",
+    "forecast": "model-free"
+  }
+}

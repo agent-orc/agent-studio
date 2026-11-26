@@ -89,7 +89,7 @@ public sealed class OverlapPredictionLedger(string? root = null)
 /// routing and leases. The cache depends on scope and delivery state, never on poll time.
 /// </summary>
 public sealed class OverlapDispatchGuard(TimeProvider time, ILogger<OverlapDispatchGuard> logger,
-    OverlapPredictionLedger evidence)
+    OverlapPredictionLedger evidence, AgentStudio.Dispatch.DispatcherShadowService? dispatchers = null)
 {
     private sealed record Cached(string Fingerprint, SlotAdmission Admission, DateTime Since, DateTime LoggedAt,
         TaskInfo Card, string Target);
@@ -102,6 +102,7 @@ public sealed class OverlapDispatchGuard(TimeProvider time, ILogger<OverlapDispa
     public SlotAdmission Decide(TaskInfo card, IReadOnlyList<RunningTask> running,
         IReadOnlyList<InFlightTask> inFlight, int max, string window, string path, string target)
     {
+        dispatchers?.RecordPick(card, running, inFlight, path);
         var now = time.GetUtcNow().UtcDateTime;
         var scope = TaskScopePrediction.Predict(card) with { BypassScope = OverlapComparisonSet.IsDeliveryRecovery(card) };
         var fingerprint = Hash(string.Join('|', window, max, card.State, card.EnteredLaneAt.Ticks,

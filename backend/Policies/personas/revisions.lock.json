@@ -37,6 +37,21 @@
     },
     "security-officer": {
       "2026.11.1": "sha256:09ccd4923d36f254d646ee0e090eb642e62a6357c30ac466c8824fff5099ca0c"
+    },
+    "queue-keeper": {
+      "2026.11.1": "sha256:fa309175b84ab7216352e27b622a6205276c0635e5fab9f4fd5ac4724539feaf"
+    },
+    "area-warden": {
+      "2026.11.1": "sha256:ecdda8add1d70add5e70acd52ae4038375a42f3b348e8066f4b45e0a69610829"
+    },
+    "surveyor": {
+      "2026.11.1": "sha256:acab661a1db43258577caf7e349baf559bca0cd9342b0bb6c6a5737338005e53"
+    },
+    "historian": {
+      "2026.11.1": "sha256:965fb9102493772880cf695d32d620d111b28e3ece98adc86a45ce1f513efb3e"
+    },
+    "packer": {
+      "2026.11.1": "sha256:388988cc7a5d7846b2ef4f629c5eabc24c395819e3e85e9b3eb076dfa7e603c9"
     }
   }
 }

@@ -8,6 +8,7 @@ public static class DispatchRegistration
     public static IServiceCollection AddDispatch(this IServiceCollection services)
     {
         services.AddSingleton<DispatchStore>();
+        services.AddSingleton<DispatcherShadowService>();
         services.AddSingleton<DispatchForecastService>();
         services.AddHostedService(provider => provider.GetRequiredService<DispatchForecastService>());
         return services;
@@ -15,6 +16,17 @@ public static class DispatchRegistration
 
     public static void MapDispatchEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/projects/{project}/dispatch/personas", (string project, HttpContext context,
+            TaskScannerService scanner, ProjectRegistry projects, DispatchStore store) =>
+        {
+            var entry = scanner.GetWatchPaths().FirstOrDefault(e => e.Name.Equals(project, StringComparison.OrdinalIgnoreCase));
+            if (entry is null) return Results.NotFound();
+            if (!ProjectAccessAuthorization.AllowsTasks(context, [entry.Name], IamPermissions.ProjectRead, projects))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            return Results.Ok(new { lease = store.ReadLease(entry.Name), shadow = store.ReadShadow(entry.Name),
+                log = store.ReadDispatcherLog(entry.Name), chainIntact = store.VerifyDispatcherLog(entry.Name) });
+        }).RequirePermission(IamPermissions.ProjectRead);
+
         app.MapGet("/api/projects/{project}/dispatch/conflicts", (string project, DateTimeOffset? from,
             DateTimeOffset? to, HttpContext context, TaskScannerService scanner, ProjectRegistry projects, DispatchStore store) =>
         {

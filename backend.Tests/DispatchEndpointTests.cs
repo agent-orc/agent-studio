@@ -97,6 +97,27 @@ public sealed class DispatchEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/projects/missing/dispatch/conflicts")).StatusCode);
     }
 
+    [Fact]
+    public async Task Dispatcher_read_uses_project_access_and_keeps_shadows_separate_from_conflicts()
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        factory.Services.GetRequiredService<TaskIndexCache>().GetSnapshot();
+        var service = factory.Services.GetRequiredService<DispatcherShadowService>();
+        service.Record(new AgentStudio.OrchestrationDecisions.DispatchFacts("Forecast Project",
+            new(2026, 11, 26, 12, 0, 0, TimeSpan.Zero), [], [], 1,
+            AgentStudio.OrchestrationDecisions.DispatchLedgerSummary.Empty, []),
+            factory.Services.GetRequiredService<AgentStudio.Personas.PersonaCatalogue>().Entries
+                .Select(e => e.Descriptor).Where(d => d.Kind == "dispatcher"), "remote-claim");
+        using var body = JsonDocument.Parse(await client.GetStringAsync("/api/projects/Forecast%20Project/dispatch/personas"));
+        Assert.Equal(5, body.RootElement.GetProperty("shadow").GetArrayLength());
+        Assert.Equal(5, body.RootElement.GetProperty("log").GetArrayLength());
+        Assert.True(body.RootElement.GetProperty("chainIntact").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("lease").ValueKind);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/projects/missing/dispatch/personas")).StatusCode);
+    }
+
     [Theory]
     [InlineData("DeterministicSuiteRed", true, 1)]
     [InlineData("DeterministicSuiteRed", true, 1, "write")]

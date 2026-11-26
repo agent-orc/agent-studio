@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "role": "dispatcher",
+  "grants": [
+    {
+      "operation": "dispatch.plan.write",
+      "tier": "T1",
+      "condition": "within priority; pins and urgent hard; current lease"
+    },
+    {
+      "operation": "dispatch.hold",
+      "tier": "T1",
+      "condition": "reason and waits-for; at most 24h; one renewal; at most 25% Ready"
+    },
+    {
+      "operation": "dispatch.release",
+      "tier": "T1",
+      "condition": "current lease"
+    },
+    {
+      "operation": "dispatch.dependency.add",
+      "tier": "T1",
+      "condition": "same project; Backlog or Ready; DAG"
+    },
+    {
+      "operation": "dispatch.dependency.remove",
+      "tier": "T1",
+      "condition": "own-edge; otherwise explicit expiring use-capped T2",
+      "bypassTier": "T2"
+    },
+    {
+      "operation": "dispatch.exclusive.set",
+      "tier": "T1",
+      "condition": "at most two per project"
+    },
+    {
+      "operation": "dispatch.recut.propose",
+      "tier": "T1",
+      "condition": "packaging only",
+      "packagingOnly": true
+    },
+    {
+      "operation": "dispatch.recut.apply",
+      "tier": "T1",
+      "condition": "packaging; unstarted automated-source; same project and Dossier; 24-hour undo; otherwise explicit expiring use-capped T2",
+      "bypassTier": "T2",
+      "packagingOnly": true
+    },
+    {
+      "operation": "dispatch.shadow.record",
+      "tier": "T1",
+      "condition": "shadow only"
+    }
+  ]
+}
