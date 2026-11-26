@@ -198,6 +198,12 @@ public sealed class ReviewInfrastructureRetryStrandingTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey)));
         _time.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal(1, await watchdog.RunOnceAsync());
+        var repark = records.All().OrderBy(record => record.DecidedAtUtc).Last();
+        Assert.Equal(park.OwnerLostAtUtc, repark.OwnerLostAtUtc);
+        var ownerlessMinutes = (_time.GetUtcNow().UtcDateTime - park.OwnerLostAtUtc!.Value).TotalMinutes;
+        Assert.Contains($"no active owner for {ownerlessMinutes:0} minutes",
+            factory.Services.GetRequiredService<TaskScannerService>()
+                .FindJob(TaskKey, _watchPath)!.ParkedBlocker!.Reason);
     }
 
     private TaskLiveQueue LiveQueue(WebApplicationFactory<Program> factory)

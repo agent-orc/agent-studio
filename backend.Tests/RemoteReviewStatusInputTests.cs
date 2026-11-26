@@ -131,7 +131,7 @@ public sealed class RemoteReviewStatusInputTests : IDisposable
     }
 
     [Fact]
-    public void Agent_report_at_the_bound_keeps_its_tail_and_drops_the_summary()
+    public void Agent_report_at_the_bound_keeps_its_head_and_tail()
     {
         const int bound = RemoteReviewPlanBuilder.ReviewStatus.Characters;
         var report = "report-head " + new string('r', bound) + " report-tail";
@@ -140,7 +140,7 @@ public sealed class RemoteReviewStatusInputTests : IDisposable
 
         Assert.True(status.Text.Length <= bound, $"{status.Text.Length} > {bound}");
         Assert.Contains("report-tail", status.Text);
-        Assert.DoesNotContain("report-head", status.Text);
+        Assert.Contains("report-head", status.Text);
         Assert.DoesNotContain("Short summary.", status.Text);
     }
 
@@ -149,13 +149,32 @@ public sealed class RemoteReviewStatusInputTests : IDisposable
     {
         const int bound = RemoteReviewPlanBuilder.ReviewStatus.Characters;
         File.WriteAllText(Path.Combine(_folder, "status.md"), new string('s', 40_000) + " see results/status.md");
-        File.WriteAllText(Path.Combine(_folder, "results", "status.md"), new string('r', 40_000) + " report-tail");
+        File.WriteAllText(Path.Combine(_folder, "results", "status.md"), "# Opening report\n" + new string('r', 40_000) + " report-tail");
 
         var status = RemoteReviewPlanBuilder.ReviewStatus.Read(_folder);
 
         Assert.True(status.Text.Length <= bound, $"{status.Text.Length} > {bound}");
         Assert.Contains("report-tail", status.Text);
+        Assert.Contains("# Opening report", status.Text);
         Assert.StartsWith(RemoteReviewPlanBuilder.ReviewStatus.AgentReportHeading, status.Text);
+        var fit = Assert.Single(BuildPlan(TaskModes.Coding).Commands, command => command.Aspect == "requirement-fit");
+        Assert.Contains("# Opening report", fit.Prompt);
+    }
+
+    [Fact]
+    public void Oversized_report_without_a_summary_keeps_its_head_within_the_bound()
+    {
+        File.WriteAllText(Path.Combine(_folder, "status.md"),
+            TaskTransitionService.ResultScaffoldMarker);
+        File.WriteAllText(Path.Combine(_folder, "results", "status.md"),
+            "# Opening report\n" + new string('r', 40_000) + " report-tail");
+
+        var status = RemoteReviewPlanBuilder.ReviewStatus.Read(_folder);
+
+        Assert.True(status.Text.Length <= RemoteReviewPlanBuilder.ReviewStatus.Characters);
+        Assert.Contains("# Opening report", status.Text);
+        Assert.Contains("report-tail", status.Text);
+        Assert.DoesNotContain(TaskTransitionService.ResultScaffoldMarker, status.Text);
     }
 
     [Fact]
