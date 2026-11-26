@@ -1158,6 +1158,7 @@ public sealed partial class BatchGatePilotService
                          && _store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
                      .ToArray()))
         {
+            if (!BatchEnabled(manifest.Scope.Project)) continue;
             var members = manifest.Members.Select(member => waiting.FirstOrDefault(item =>
                 item.Subject.TaskKey == member.TaskKey
                 && item.Subject.RunAttempt == member.RunAttempt)).ToArray();
@@ -2998,7 +2999,7 @@ public sealed partial class BatchGatePilotService
         {
             // Cancelled before the gate charged its start: keep a durable
             // active marker with the start charged, so the resume is bounded.
-            MarkStalledFallbackActive(pending);
+            if (!UsesPostMerge(pending.Subject.Project)) MarkStalledFallbackActive(pending);
         }
         finally
         {
@@ -3079,7 +3080,7 @@ public sealed partial class BatchGatePilotService
             ownership = RecordContainment(task, pending, containedInSha,
                 fallbackIntegrated: patchEquivalent);
         }
-        else if (!alreadyPassed)
+        else if (!alreadyPassed && !UsesPostMerge(pending.Subject.Project))
         {
             // A cascade-deferred replay never entered a conflicting tree.
             // Even a forced close below the batch minimum cannot turn it
@@ -3129,6 +3130,7 @@ public sealed partial class BatchGatePilotService
             // so the merged candidate is built on the tip the gate meets. The
             // slot is released when the gate returns, before any retest.
             using var gateSlot = await EnterPerTaskGateAsync(pending, ct).ConfigureAwait(false);
+            if (UsesPostMerge(pending.Subject.Project)) return false;
             FallbackStage(pending, PerTaskFallbackWaitKinds.Preparing);
             // AGT-3434: the gate tests the delivery merged onto the current
             // integration tip. A conflict goes to the agent without a gate.
@@ -3273,6 +3275,8 @@ public sealed partial class BatchGatePilotService
                     pending.Subject.TaskKey, pending.ReviewAttemptId, starts + 1);
                 return false;
             }
+            // The strategy switch owns this cancellation, not the card's gate verdict.
+            if (UsesPostMerge(pending.Subject.Project)) return false;
             // A stale result resolves as superseded; a queue overrun returns
             // to the queue. Neither reaches the settlement. A cancellation
             // keeps its own classification below, which supersedes a stale one.
@@ -3418,6 +3422,7 @@ public sealed partial class BatchGatePilotService
             // The review passed its gate; its queue wait no longer counts.
             _store.ClearQueueWait(pending.ReviewAttemptId);
         }
+        ownership ??= new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject);
         if (!patchEquivalent)
         {
             // The coordinator opens its own lane sequence for the same delivery.
@@ -3433,6 +3438,14 @@ public sealed partial class BatchGatePilotService
                 RecordFallbackSuites(pending, "publish-failed", result);
             if (!result.Outcome.IsSuccessfulIntegration())
             {
+                if (result.FailureCode == AcceptedIntegrationFailureCodes.GateCapacity)
+                {
+                    await EscalateFallbackAsync(task, pending, HumanReviewEscalation.FormatReason(
+                            GateQueueStallPolicy.GateCapacityCategory, result.Error ?? "Gate capacity exhausted."),
+                        infrastructure: true, recordInStore, ct,
+                        category: GateQueueStallPolicy.GateCapacityCategory).ConfigureAwait(false);
+                    return FallbackSettled(pending);
+                }
                 // A contained member whose tree already failed its gate has a
                 // verdict; replaying the no-op on every tick would not change it.
                 if (containedInSha is not null && result.Outcome == MergeIntoIntegrationOutcome.GateFailed)
@@ -3441,11 +3454,20 @@ public sealed partial class BatchGatePilotService
                         recordInStore, ct).ConfigureAwait(false);
                 return FallbackSettled(pending);
             }
-            BatchGateOwnershipStore.Write(task.FolderPath,
-                ownership! with { FallbackIntegrated = true });
+            if (UsesPostMerge(pending.Subject.Project) && ownership.FallbackTestedSha is null
+                && ReviewSubjectStore.IsValidResultSha(result.MergedSha))
+            {
+                // Persist publication evidence for lane admission without inventing a full-suite green.
+                ownership = RecordContainment(task, pending, result.MergedSha!, fallbackIntegrated: true);
+            }
+            else
+                BatchGateOwnershipStore.Write(task.FolderPath,
+                    ownership with { FallbackIntegrated = true });
         }
-        var fallbackRelease = new BatchGateOutcome(FallbackReleaseKey(pending, containedInSha),
-            containedInSha is null
+        var strategyHandoff = UsesPostMerge(pending.Subject.Project) && ownership.FallbackTestedSha is null;
+        const string handoffReason = "Integrated under the post-merge testing strategy; integration evidence is recorded and tests run afterwards.";
+        var fallbackRelease = new BatchGateOutcome(FallbackReleaseKey(pending, ownership.ContainedInSha ?? containedInSha),
+            strategyHandoff ? handoffReason : containedInSha is null
                 ? FallbackPassedReason(ownership)
                 : "The integration branch already contained the result SHA.");
         if (HoldForEngineBatchDecision(task, pending.ReviewAttemptId, fallbackRelease)) return false;
@@ -3455,17 +3477,19 @@ public sealed partial class BatchGatePilotService
             suppressProductExecution: true,
             expectedSourceState: TaskStates.AutoReview,
             transitionCause: LaneChangeCauses.ReviewVerdict,
-            transitionDetail: containedInSha is null ? "per-task-gate-passed" : AlreadyIntegratedResolution)
+            transitionDetail: strategyHandoff ? "strategy-handoff-integrated"
+                : containedInSha is null ? "per-task-gate-passed" : AlreadyIntegratedResolution)
             .ConfigureAwait(false);
         if (moved.Status == MoveJobStatus.Success)
         {
             RecordBatchShadowOutcome(task, pending.ReviewAttemptId, fallbackRelease);
             if (recordInStore)
                 _store.ResolvePending(pending.ReviewAttemptId,
-                    containedInSha is null ? "per-task-gate" : AlreadyIntegratedResolution);
+                    strategyHandoff ? "strategy-handoff-integrated"
+                        : containedInSha is null ? "per-task-gate" : AlreadyIntegratedResolution);
             _reviewJournal.RecordRemoteReviewParkVerdict(task.ProjectName, task.Id,
                 moved.NewFolderPath ?? task.FolderPath, "Pass",
-                containedInSha is null
+                strategyHandoff ? handoffReason : containedInSha is null
                     ? FallbackPassedReason(ownership)
                     : $"The integration branch already contained the result SHA at {containedInSha}; "
                       + "no batch candidate and no gate ran.");

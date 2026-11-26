@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, HostListener, input, output } from '@angular/core';
+import { scrollMainOnKey } from './main-scroll-keys';
 
 /**
  * AGT-3833: the shell's keyboard entry points. The skip links are the first
@@ -24,6 +25,9 @@ export class StudioKeyboardEntryComponent {
 
   @HostListener('document:keydown', ['$event'])
   onDocumentKeydown(event: KeyboardEvent): void {
+    // Vertical viewport keys scroll the main region when nothing else owns them.
+    // HostListener runs after the view shortcuts bubbled, so a view that took the key wins.
+    if (scrollMainOnKey(event, this.main())) return;
     if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key?.toLowerCase() !== 'k') return;
     event.preventDefault();
     this.searchShortcut.emit();

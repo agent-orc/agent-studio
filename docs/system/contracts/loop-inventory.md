@@ -195,3 +195,12 @@ These loops collect facts and admit bounded work. They do not re-enter card reco
 - **Breaker test:** `backend.Tests/Architecture/PostMergeWindowBudgetTests.cs`; real fake-host execution and restart coverage in `runner.Tests/PostMergeHostSchedulerTests.cs`.
 - **Last fired:** Not yet deployed; AGT-3967 fake-host busy-window reproduction.
 - **Notes:** Project discovery and state use the existing Runner principal. Per-project exceptions are logged and do not skip other projects. Host drain closes new admission; shutdown cancels the poll. Durable run fencing and checkout locks remain in force, including for legacy manual timers.
+
+### Integration gate admission retry (AGT-4038)
+
+- **Owner:** `PreDevelopBuildGate`, with the pure admission rule in `GateQueueStallPolicy` through `MonolithTransitionAdapter`.
+- **Trigger:** the exact merge check returns `machine-gate-queue` in phase `queue` before acquiring the reserved integration slot.
+- **Budget:** three total attempts on the same subject, 15 seconds between attempts. A test-run timeout or red test never enters this loop.
+- **Exhaustion:** rollback the unpushed merge and return `gate-capacity`, stating the three attempts. Ordinary caller settlement can then park the card; no earlier attempt produces a card failure.
+- **Reset:** a later explicit integration request starts a new bounded admission sequence. This does not consume agent repair rounds.
+- **Evidence:** `gate-capacity-retry` integration lane events and the final capacity reason; `IntegrationGateCapacityTests` and `GateQueueStallPolicyTests`.

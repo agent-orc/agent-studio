@@ -104,6 +104,8 @@ public sealed record BuildTestGateRequest(
     public int GateSlots { get; init; } = 1;
     /// <summary>Opportunistic work may use only slots after the first regular gate slot.</summary>
     public bool ReserveBatchSlot { get; init; }
+    /// <summary>Integration compile checks use the reserved cross-process merge slot.</summary>
+    public bool IntegrationPriority { get; init; }
 
     /// <summary>
     /// AGT-3423: the expected slot hold from the project's recent gate history,
@@ -568,7 +570,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                             fallbackCollision = true;
                             request.OnMachineGateWaiting?.Invoke();
                             request.OnMachineGateSlotWaiting?.Invoke(busy, total);
-                        }, ct, request.DurationClass, request.ReserveBatchSlot).ConfigureAwait(false);
+                        }, ct, request.DurationClass, request.ReserveBatchSlot, request.IntegrationPriority).ConfigureAwait(false);
                     fallbackQueueWaitMs = queueWatch.ElapsedMilliseconds;
                     if (lease is null)
                     {
@@ -1696,7 +1698,17 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     ? BuildTestGateVerdict.Warn
                     : BuildTestGateVerdict.Fail;
                 var reason = FailureReason(Describe(command), process);
-                if (guardStep) reason = $"guard violation, full suite not run: {reason}";
+                // AGT-4020: only a failed guard test is a guard violation. A guard
+                // step that timed out, ran out of the gate budget, crashed or
+                // could not start found no violation; calling it one sent a fix
+                // round after a host fault and hid the real cause on the card.
+                var guardViolation = guardStep && kind == BuildTestGateFailureKind.Code
+                    && (process.FailedTestsObserved
+                        || GateTestTiming.HasFailedTests(process.StandardOutput + "\n" + process.StandardError));
+                if (guardStep)
+                    reason = guardViolation
+                        ? $"guard violation, full suite not run: {reason}"
+                        : $"guard step failed without a failing guard test ({GuardStepFailure(kind, process)}), full suite not run: {reason}";
                 return WithFailure(new BuildTestGateResult(
                     verdict, process.ExitCode, sw.ElapsedMilliseconds, output.Text,
                     QuarantineReason(reason, quarantined), ranBackend, ranFrontend)
@@ -1710,7 +1722,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     FlakyQuarantinedFailures = flakyQuarantined,
                     QuarantinedFailures = quarantined,
                     QuarantineIssues = quarantine.Issues,
-                    GuardViolation = guardStep,
+                    GuardViolation = guardViolation,
                     FailedStepKind = command.Kind,
                     TestShards = testShards,
                 }, kind);
@@ -1837,6 +1849,21 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         var lines = text.Replace("\r", string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries);
         return string.Join('\n', lines.TakeLast(40));
     }
+
+    /// <summary>What stopped a guard step that reported no failing guard test (AGT-4020).</summary>
+    internal static string GuardStepFailure(BuildTestGateFailureKind kind, BuildTestGateProcessEvidence process)
+        => kind switch
+        {
+            BuildTestGateFailureKind.Timeout or BuildTestGateFailureKind.Environment when process.TimedOut
+                => process.ViolatedBudget is { } budget ? $"timed out on the {budget.Name} budget" : "timed out",
+            BuildTestGateFailureKind.Environment => "gate environment",
+            BuildTestGateFailureKind.OutOfMemory => "out of memory",
+            BuildTestGateFailureKind.ProcessLaunch => "the test process did not start",
+            BuildTestGateFailureKind.Lock => "a build output lock",
+            BuildTestGateFailureKind.DiskFull => "disk full",
+            BuildTestGateFailureKind.Cancellation => "cancelled",
+            _ => $"exit {process.ExitCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "n/a"} before any test failed",
+        };
 
     private static string FailureReason(
         string commandDescription,
