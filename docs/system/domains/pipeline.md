@@ -683,6 +683,14 @@ No action changes testing strategy or moves a reviewed or settled card. `RedDeve
 and two-hour compatibility behavior, delegating safe-revert and exact-file
 hold predicates to the new policies until host adoption in later slices.
 
+Policy evidence is covered by `RedTestTriagePolicyTests`,
+`BisectVerdictPolicyTests` and `HoldScopePolicyTests`. The historical-red
+table replays AGT-3975, AGT-3980, AGT-3981 and AGT-3983 as frozen facts,
+expecting Flaky, Flaky, Environment and Environment with no line stop.
+`RedDevelopRepairPolicyTests` covers compatibility, while
+`TransitionDecisionBoundaryTests` and `MonolithDecisionBoundaryTests` guard
+the separation between pure decisions and host application.
+
 This slice implements the Dossier's recorded D2 option A (`revert-first`). A
 terminal red T3 receipt carries failing tests, a bounded log excerpt, the
 first-parent suspects since the last green SHA, changed paths, and the result
