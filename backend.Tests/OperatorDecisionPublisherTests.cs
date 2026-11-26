@@ -74,7 +74,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
         var factTime = _clock.GetUtcNow().UtcDateTime;
         var expected = new Dictionary<string, DateTime>(StringComparer.Ordinal);
         // Deploy completion, environment incidents, review-host drift and
-        // missing post-merge runs and red post-merge incidents have their own sources. A running batch
+        // missing post-merge runs, red post-merge incidents and overlap starvation have their own sources. A running batch
         // without a live gate needs a stale snapshot; this fixture registers
         // the remaining sources.
         var seededTypes = OperatorDecisionTypes.All
@@ -84,6 +84,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
                 && type != OperatorDecisionTypes.ReviewHostDrift
                 && type != OperatorDecisionTypes.PostMergeRunsMissing
                 && type != OperatorDecisionTypes.PostMergeRedIncident
+                && type != OperatorDecisionTypes.OverlapStarved
                 && type != OperatorDecisionTypes.BatchRunningWithoutGate)
             .ToArray();
         foreach (var type in seededTypes) expected[type] = factTime;
@@ -133,7 +134,8 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
         Assert.Equal("A-8", events.Single(item => item.Type == OperatorDecisionTypes.PushPendingOverdue).CardKey);
         Assert.Equal("A-7", events.Single(item => item.Type == OperatorDecisionTypes.PushBlocked).CardKey);
         Assert.Equal(["A-11"], events.Single(item => item.Type == OperatorDecisionTypes.ReviewRetrySchedulerStalled).Cards);
-        Assert.Equal(2, events.Count(item => item.Type == OperatorDecisionTypes.QuotaExhausted));
+        // Task facts suppress legacy quota waits; the provider source owns this one item.
+        Assert.Single(events, item => item.Type == OperatorDecisionTypes.QuotaExhausted);
 
         // Facts that last are not published again by later sweeps.
         var head = log.Head;

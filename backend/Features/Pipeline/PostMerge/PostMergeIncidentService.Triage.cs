@@ -14,6 +14,8 @@ public sealed partial class PostMergeIncidentService
     private const string SystemPrincipal = "system:post-merge";
     private const string LiftCondition = "Two consecutive covering passes in the standard envelope on tips containing the repair integration, or an owner lift.";
     private readonly TestQuarantineStore _quarantines;
+    private readonly AgentStudio.Personas.LineGuardianStore _guardian;
+    private readonly AgentStudio.Bus.AgentMessageBusBridge? _guardianBus;
     private readonly AgentStudio.Git.GitService? _git;
     private readonly ModelRoutingPolicyRegistry _routing;
     private readonly IModelRoutingModeProvider? _routingMode;
@@ -21,7 +23,11 @@ public sealed partial class PostMergeIncidentService
 
     public void Apply(ProjectRecord project, PostMergeRunRecord run)
     {
-        if (run.Status is not ("red" or "green")) return;
+        if (run.Status is not ("red" or "green"))
+        {
+            RecordGuardianReceipt(project, run);
+            return;
+        }
         lock (_gate)
         {
             if (_quarantines.Read(project.Id).IncidentLog.Any(log => log.RunId == run.Id)
@@ -32,7 +38,10 @@ public sealed partial class PostMergeIncidentService
                 ApplyTests(project, run);
                 return;
             }
+            RecordGuardianReceipt(project, run);
             ApplyLegacy(project, run);
+            foreach (var closed in (_store.Read(project.Id).Incidents ?? []).Where(i => i.ResolvedAtUtc is not null))
+                GuardianClosed(project, GuardianIncidentKey(closed.TestId ?? "legacy", closed.Fingerprint, closed.FirstRedAtUtc));
             var reason = run.Status == "red" ? "Legacy red receipt without per-test confirmation evidence." : null;
             _store.SetDevelopDisposition(project.Id, run.Status, reason);
             _quarantines.Log(project.Id, new(run.Id + ":legacy", nameof(RedDevelopRepairPolicy), "compatibility.v1",
@@ -42,9 +51,49 @@ public sealed partial class PostMergeIncidentService
         }
     }
 
+    public AgentStudio.Personas.GuardianOwnerItem? RequestGuardianOperation(ProjectRecord project,
+        string runId, string testId, string operation)
+    {
+        lock (_gate)
+        {
+            var state = _store.Read(project.Id);
+            var run = state.Runs.FirstOrDefault(r => r.Id == runId)
+                ?? throw new InvalidOperationException("A persisted receipt is required.");
+            var test = run.TestVerdicts?.FirstOrDefault(t => t.Test == testId)
+                ?? throw new InvalidOperationException("The test is absent from the receipt.");
+            var fingerprint = Fingerprint(run, test);
+            var incident = state.Incidents?.LastOrDefault(i => i.TestId == testId && i.Fingerprint == fingerprint);
+            var facts = Facts(project, run, test, fingerprint, incident);
+            return _guardian.Request(project.Id, GuardianIncidentKey(testId, fingerprint, incident?.FirstRedAtUtc ?? run.FinishedAtUtc ?? run.StartedAtUtc),
+                new(operation, facts, incident is not null, facts.ActiveQuarantine?.Kind == RedTestQuarantineKind.Held,
+                    Now: _clock.GetUtcNow()));
+        }
+    }
+
+    private void RecordGuardianReceipt(ProjectRecord project, PostMergeRunRecord run)
+    {
+        var facts = new RedTestTriageFacts("receipt", "legacy", RedTestCategory.Routine)
+        { FirstResult = RedTestResult.Unknown, IncidentFingerprint = run.Failure?.Fingerprint ?? run.Id };
+        var system = new RedTestTriageDecision(RedTestClassification.Inconclusive, null, []);
+        _guardian.Evaluate(project.Id, run, facts, system, _clock.GetUtcNow(), run.Id + ":receipt:" + run.Status);
+    }
+
+    private static string GuardianIncidentKey(string test, string fingerprint, DateTimeOffset firstRed)
+        => test + ":" + fingerprint + ":" + firstRed.ToString("O");
+
+    private void GuardianClosed(ProjectRecord project, string incident)
+    {
+        if (_guardian.Close(project.Id, incident))
+            _guardianBus?.EmitLineGuardianAsync(project.Id, incident, "closed", "Red-test incident closed.")
+                .GetAwaiter().GetResult();
+    }
+
     public void CloseLifted(ProjectRecord project, ProjectTestQuarantine entry)
     {
         if (entry.LiftedAtUtc is null) return;
+        var incident = _store.Read(project.Id).Incidents?.LastOrDefault(i => i.TestId == entry.Test
+            && i.Fingerprint == entry.IncidentFingerprint && i.ResolvedAtUtc is null);
+        GuardianClosed(project, GuardianIncidentKey(entry.Test, entry.IncidentFingerprint, incident?.FirstRedAtUtc ?? entry.StartedAtUtc));
         _store.UpdateIncidents(project.Id, items => items.Select(item => item.Fingerprint == entry.IncidentFingerprint
             && item.TestId == entry.Test && item.ResolvedAtUtc is null
                 ? item with { ResolvedAtUtc = entry.LiftedAtUtc } : item).ToArray());
@@ -101,6 +150,7 @@ public sealed partial class PostMergeIncidentService
         foreach (var incident in (state.Incidents ?? []).Where(item => item.TestId is not null && item.ResolvedAtUtc is null))
             if (tests.All(test => test.Test != incident.TestId))
                 tests.Add(new(incident.TestId!, incident.SuiteId ?? "", incident.SuiteCategory ?? "routine", [], "inconclusive"));
+        if (tests.Count == 0) RecordGuardianReceipt(project, run);
         var logs = _quarantines.Read(project.Id).IncidentLog;
         var decisions = new List<RedTestTriageDecision>();
         foreach (var test in tests)
@@ -120,6 +170,11 @@ public sealed partial class PostMergeIncidentService
             if (prior is not null) continue;
             var facts = Facts(project, run, test, fingerprint, incident);
             var decision = MonolithTransitionAdapter.RedTestTriage(facts);
+            var comparison = _guardian.Evaluate(project.Id, run, facts, decision, _clock.GetUtcNow(), key,
+                state.Runs.LastOrDefault(previous => previous.Id != run.Id && previous.Status == "green")?.Envelope,
+                GuardianIncidentKey(test.Test, fingerprint, incident?.FirstRedAtUtc ?? run.FinishedAtUtc ?? run.StartedAtUtc));
+            if (!comparison.Shadow) decision = comparison.Guardian;
+            var principal = comparison.Shadow ? SystemPrincipal : AgentStudio.Personas.LineGuardianStore.Principal(project.Id);
             decisions.Add(decision);
             var actions = decision.Decisions;
             var needsCard = actions.Any(action => action.Action is RedTestAction.FixForward or RedTestAction.ProposeRevert
@@ -128,7 +183,7 @@ public sealed partial class PostMergeIncidentService
             {
                 var rung = actions.FirstOrDefault(action => action.ModelRung is not null)?.ModelRung ?? RedTestModelRung.Medium;
                 var card = RepairCard(project, run, test, fingerprint, rung, facts.SinceLastLift is not null,
-                    actions.Any(action => action.Action == RedTestAction.ProposeRevert));
+                    actions.Any(action => action.Action == RedTestAction.ProposeRevert), principal);
                 incident = new(fingerprint, card, actions.Any(action => action.Action == RedTestAction.ProposeRevert)
                     ? "Revert" : "FixForward", run.FinishedAtUtc ?? _clock.GetUtcNow(), null,
                     decision.AttributedMerge, [test.Test], test.CoveringFolders ?? [])
@@ -136,7 +191,7 @@ public sealed partial class PostMergeIncidentService
                 _store.UpdateIncidents(project.Id, items => [.. items, incident]);
             }
             foreach (var action in actions)
-                ApplyAction(project, run, test, fingerprint, incident, facts, action);
+                ApplyAction(project, run, test, fingerprint, incident, facts, action, principal);
             if (incident is not null && actions.FirstOrDefault(action => action.ModelRung is not null)?.ModelRung is { } modelRung)
                 SetRepairRung(project, incident.RepairCardId, modelRung);
             var reason = string.Join(" ", actions.Select(action => action.Reason));
@@ -144,8 +199,10 @@ public sealed partial class PostMergeIncidentService
                 Digest(JsonSerializer.Serialize(new { run.Id, run.TipSha, Facts = facts })),
                 decision.Classification.ToString(), null, actions.Select(action => action.Action.ToString()).ToArray(),
                 [], LiftCondition, reason.Length <= 280 ? reason : reason[..280], run.Id, run.TipSha, test.Test,
-                fingerprint, SystemPrincipal, _clock.GetUtcNow()));
+                fingerprint, principal, _clock.GetUtcNow()));
             state = _store.Read(project.Id);
+            foreach (var closed in (state.Incidents ?? []).Where(i => i.TestId == test.Test && i.ResolvedAtUtc is not null))
+                GuardianClosed(project, GuardianIncidentKey(closed.TestId!, closed.Fingerprint, closed.FirstRedAtUtc));
         }
         if (overdue) return;
         // A failed prepare/build has no per-test ledger. Keep the compatibility
@@ -222,7 +279,7 @@ public sealed partial class PostMergeIncidentService
     }
 
     private void ApplyAction(ProjectRecord project, PostMergeRunRecord run, PostMergeTestVerdict test,
-        string fingerprint, PostMergeIncident? incident, RedTestTriageFacts facts, RedTestDecision action)
+        string fingerprint, PostMergeIncident? incident, RedTestTriageFacts facts, RedTestDecision action, string principal)
     {
         var now = _clock.GetUtcNow();
         var entry = _quarantines.Read(project.Id).Entries.LastOrDefault(item => item.Test == test.Test
@@ -234,7 +291,7 @@ public sealed partial class PostMergeIncidentService
                 var expires = now + action.Duration!.Value;
                 _quarantines.Start(project.Id, PrepareQuarantine(project, new(Guid.NewGuid().ToString("N"), test.Test, incident!.RepairCardId,
                     DateOnly.FromDateTime(expires.UtcDateTime), null, action.Reason,
-                    action.Action == RedTestAction.StartHeld ? "held" : "report-only", SystemPrincipal, now, expires,
+                    action.Action == RedTestAction.StartHeld ? "held" : "report-only", principal, now, expires,
                     fingerprint, [run.Id], test.CoveringFolders ?? [])
                     {
                         SuiteId = test.SuiteId, TestFile = test.TestFile,
@@ -244,11 +301,11 @@ public sealed partial class PostMergeIncidentService
                     }), ActiveQuarantines(project));
                 break;
             case RedTestAction.Renew when entry is not null:
-                _quarantines.Renew(project.Id, entry.Id, SystemPrincipal, false, facts.RepairCardLane, now);
+                _quarantines.Renew(project.Id, entry.Id, principal, false, facts.RepairCardLane, now);
                 break;
             case RedTestAction.Lift when entry is not null:
                 var covering = CoveringRuns(project, entry, run).TakeLast(2).ToArray();
-                _quarantines.Lift(project.Id, entry.Id, SystemPrincipal, false,
+                _quarantines.Lift(project.Id, entry.Id, principal, false,
                     covering.Select(item => item.Fact).ToArray(), covering.Select(item => item.RunId).ToArray(), now);
                 _store.UpdateIncidents(project.Id, items => items.Select(item => item.Fingerprint == fingerprint
                     && item.TestId == test.Test && item.ResolvedAtUtc is null ? item with { ResolvedAtUtc = now } : item).ToArray());
@@ -279,7 +336,7 @@ public sealed partial class PostMergeIncidentService
     }
 
     private string RepairCard(ProjectRecord project, PostMergeRunRecord run, PostMergeTestVerdict test,
-        string fingerprint, RedTestModelRung rung, bool relapse, bool proposeRevert)
+        string fingerprint, RedTestModelRung rung, bool relapse, bool proposeRevert, string principal)
     {
         var title = "Repair red test: " + test.Test;
         var prior = relapse ? null : _scanner.ScanAllJobsWithArchive().FirstOrDefault(card => card.ProjectName == project.DisplayName
@@ -290,7 +347,7 @@ public sealed partial class PostMergeIncidentService
         var cardId = _mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
         {
             Project = project.Id, Title = title, TargetState = TaskStates.Preparation, TaskType = TaskTypes.Bug,
-            Order = 0, CreationSource = HumanReviewEscalationCategories.PostMergeRepairCreationSource, CreatedBy = SystemPrincipal,
+            Order = 0, CreationSource = HumanReviewEscalationCategories.PostMergeRepairCreationSource, CreatedBy = principal,
             CliType = route.Cli, Agent = route.Cli, Model = route.Model, ThinkingLevel = route.Thinking,
             ModelExplicit = true, ThinkingLevelExplicit = true,
             PromptMarkdown = Prompt(project, run, _store.Read(project.Id).LastGreenSha, run.Failure,

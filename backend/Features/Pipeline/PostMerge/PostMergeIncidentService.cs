@@ -28,7 +28,8 @@ public sealed partial class PostMergeIncidentService
         ILogger<PostMergeIncidentService> logger, TestQuarantineStore? quarantines = null,
         AgentStudio.Git.GitService? git = null, ModelRoutingPolicyRegistry? routing = null,
         IModelRoutingModeProvider? routingMode = null,
-        Func<ProjectRecord, string, string, bool>? containsRepair = null)
+        Func<ProjectRecord, string, string, bool>? containsRepair = null,
+        AgentStudio.Personas.LineGuardianStore? guardian = null, AgentStudio.Bus.AgentMessageBusBridge? bus = null)
     {
         _store = store;
         _mutations = mutations;
@@ -41,6 +42,8 @@ public sealed partial class PostMergeIncidentService
         _routing = routing ?? new ModelRoutingPolicyRegistry();
         _routingMode = routingMode;
         _containsRepair = containsRepair;
+        _guardian = guardian ?? new AgentStudio.Personas.LineGuardianStore(Path.Combine(store.Root, "..", "line-guardian"));
+        _guardianBus = bus;
     }
 
     private void ApplyLegacy(ProjectRecord project, PostMergeRunRecord run)

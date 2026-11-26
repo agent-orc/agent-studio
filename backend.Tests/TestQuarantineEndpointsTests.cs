@@ -46,6 +46,15 @@ public sealed class TestQuarantineEndpointsTests : IDisposable
         var tasks = Path.Combine(_root, "tasks");
         Directory.CreateDirectory(tasks);
         var project = registry.EnsureProjectForStorage(tasks, "demo", DefaultWorkspace.Id, _clock);
+        var role = await client.GetFromJsonAsync<System.Text.Json.JsonElement>("/api/projects/demo/line-guardian/role");
+        Assert.Equal("guardian", role.GetProperty("role").GetProperty("kind").GetString());
+        var guardian = await client.GetFromJsonAsync<AgentStudio.Personas.GuardianProjectState>("/api/projects/demo/line-guardian");
+        Assert.False(guardian!.Live);
+        (await client.PutAsJsonAsync("/api/projects/demo/line-guardian/mode",
+            new AgentStudio.Personas.GuardianModeRequest(true))).EnsureSuccessStatusCode();
+        Assert.True((await client.GetFromJsonAsync<AgentStudio.Personas.GuardianProjectState>("/api/projects/demo/line-guardian"))!.Live);
+        (await client.PutAsJsonAsync("/api/projects/demo/line-guardian/mode",
+            new AgentStudio.Personas.GuardianModeRequest(false))).EnsureSuccessStatusCode();
         var mutations = factory.Services.GetRequiredService<TaskMutationService>();
         var card = mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
             { Project = project.Id, Title = "Repair", TargetState = TaskStates.Preparation })!;

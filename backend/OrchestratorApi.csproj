@@ -160,6 +160,7 @@
     <EmbeddedResource Include="Policies\model-routing-policy.v1.json" />
     <EmbeddedResource Include="Policies\model-migration-catalog.v1.json" />
     <!-- Persona team PT-1: the built-in persona catalogue (backend/Policies/personas/<id>.persona.json). -->
+    <EmbeddedResource Include="Policies\personas\line-guardian.*.v1.json" LogicalName="Policies.personas.%(Filename)%(Extension)" />
     <EmbeddedResource Include="Policies\personas\dispatcher.*.v1.json" LogicalName="Policies.personas.%(Filename)%(Extension)" />
     <EmbeddedResource Include="Policies\personas\*.persona.json" LogicalName="Policies.personas.%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\docs\app\templates\article-document-v2.html"

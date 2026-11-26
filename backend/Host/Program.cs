@@ -1198,6 +1198,10 @@ builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.TestQuarantineStore
 builder.Services.AddSingleton<AgentStudio.Security.IOperatorGateEvidence, AgentStudio.Security.PostMergeGateEvidence>();
 // SM-5: approval requests of T2 operator requests notify the Owner through the operator feed and an optional push link.
 builder.Services.AddOperatorApprovals();
+builder.Services.AddSingleton<AgentStudio.Personas.ILineGuardianClassifier, AgentStudio.Personas.LineGuardianClassifier>();
+builder.Services.AddSingleton(sp => new AgentStudio.Personas.LineGuardianStore(
+    Path.Combine(sp.GetRequiredService<AgentStudio.Pipeline.PostMergeRunStore>().Root, "..", "line-guardian"),
+    sp.GetRequiredService<AgentStudio.Personas.ILineGuardianClassifier>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeIncidentService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeModeService>();
 // AGT-3965: fast and balanced say visibly when develop gets no post-merge runs.
@@ -1582,7 +1586,9 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPos
     (project, cardId) => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live is { } live
         && TaskScannerService.FindMatches(live.Where(task => string.Equals(task.ProjectName, project,
             StringComparison.OrdinalIgnoreCase)), cardId, null) is [var task, ..]
-        ? OperatorDecisionFacts.CardKey(task) : null));
+        ? OperatorDecisionFacts.CardKey(task) : null,
+    () => sp.GetRequiredService<ProjectRegistry>().List().Where(project => !project.Archived)
+        .Select(project => (project.DisplayName, sp.GetRequiredService<AgentStudio.Personas.LineGuardianStore>().Read(project.Id)))));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorEnvironmentIncidentFactSource(
     sp.GetRequiredService<HealthCheckStore>(),
     () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name),

@@ -78,6 +78,7 @@ public sealed record RedTestTriageFacts(string TestId, string SuiteId, RedTestCa
     public int EnvironmentOccurrences { get; init; } = 1;
     public int RepairAttempt { get; init; } = 1;
     public bool AmbiguousClassificationAttempted { get; init; }
+    public RedTestClassification? ModelClassification { get; init; }
     public bool RevertAppliesCleanly { get; init; }
     public bool LaterMergeCoupled { get; init; }
     public bool AreaHasNewFailure { get; init; }
