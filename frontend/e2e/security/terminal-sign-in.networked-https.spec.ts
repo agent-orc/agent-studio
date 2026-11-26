@@ -46,6 +46,9 @@ function studioOp(args: string[], home: string): { done: Promise<Run>; stderr: (
   // Only what the CLI needs, plus trust for the stack's self-signed certificate.
   const env: Record<string, string> = { PATH: process.env.PATH ?? '', HOME: home, USERPROFILE: home,
     NODE_EXTRA_CA_CERTS: process.env.PW_E2E_TLS_CERT ?? '' };
+  for (const name of ['TPM2OPENSSL_TCTI', 'OPENSSL_MODULES', 'LD_LIBRARY_PATH']) {
+    if (process.env[name]) env[name] = process.env[name]!;
+  }
   const child = spawn(process.execPath, [bin, ...args], { env, windowsHide: true });
   let stdout = '';
   let stderr = '';
@@ -147,6 +150,9 @@ test('studio-op login yields a session only after the Owner confirms with a fres
   await expect(panel.getByTestId('terminal-sign-in-code')).toHaveText(code);
   await expect(panel.getByTestId('terminal-sign-in-device')).toHaveText('opsagent@e2e-workstation');
   await expect(panel.getByTestId('terminal-sign-in-known')).toContainText('Unknown device');
+  const bindingLabel = login.stderr().includes('Device binding: tpm (') ? 'TPM key (not yet verified on real hardware)'
+    : login.stderr().includes('Device binding: secure-enclave (') ? 'Secure Enclave key (not yet verified on real hardware)' : 'Memory key';
+  await expect(panel.getByTestId('terminal-sign-in-binding')).toHaveText(bindingLabel);
   await expect(panel.getByTestId('terminal-sign-in-address-match')).toContainText('Same network as this browser');
   await expect(panel.getByTestId('terminal-sign-in-agent')).toHaveValue(agentId);
   await expect(panel.getByTestId('terminal-sign-in-lifetime')).toHaveValue('8');
@@ -196,7 +202,7 @@ test('studio-op login yields a session only after the Owner confirms with a fres
   const sessionId = status.json.credential.id as string;
   const device = page.getByTestId(`access-operator-session-device-${sessionId}`);
   await expect(device).toContainText('opsagent@e2e-workstation');
-  await expect(device).toContainText('Memory key');
+  await expect(device).toContainText(bindingLabel);
   await expect(page.getByTestId(`access-operator-session-thumbprint-${sessionId}`)).toHaveAttribute('title', /^[A-Za-z0-9_-]{43}$/);
   await expect(page.getByTestId(`access-operator-session-address-${sessionId}`)).toContainText('at confirmation');
   await expect(page.getByTestId(`access-operator-devices-${agentId}`)).toContainText('opsagent@e2e-workstation');

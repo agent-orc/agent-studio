@@ -5,6 +5,7 @@ import {
   displaySignInCode,
   normalizeSignInCode,
   shortThumbprint,
+  deviceBindingLabel,
   type TerminalSignInLookup,
 } from '../../models/terminal-sign-in.model';
 import type { GrantStepUp } from '../../services/standing-grants.service';
@@ -37,6 +38,7 @@ export class TerminalSignInConfirmComponent implements OnInit {
   readonly time = formatAccessTime;
   readonly display = displaySignInCode;
   readonly thumb = shortThumbprint;
+  readonly binding = deviceBindingLabel;
 
   /** True when the Owner types the code instead of using the link's. */
   readonly manual = signal(true);

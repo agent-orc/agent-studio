@@ -13,6 +13,8 @@ export interface OperatorSessionDevice {
   label: string;
   /** RFC 7638 thumbprint of the device key; stored now, enforced from ES-4 on. */
   keyThumbprint: string;
+  bindingKind?: 'tpm' | 'secure-enclave' | 'memory';
+  deviceKeyThumbprint?: string | null;
   requestedAddress: string | null;
   /** The Owner's browser address when confirming. */
   confirmedAddress: string | null;
@@ -24,6 +26,8 @@ export interface OperatorDevice {
   id: string;
   label: string;
   keyThumbprint: string;
+  bindingKind?: 'tpm' | 'secure-enclave' | 'memory';
+  deviceKeyThumbprint?: string | null;
   firstConfirmedAt: string;
   lastConfirmedAt: string;
   lastConfirmedBy: string | null;

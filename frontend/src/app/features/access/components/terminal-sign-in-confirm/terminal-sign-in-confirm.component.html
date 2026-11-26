@@ -59,8 +59,9 @@
             <span data-testid="terminal-sign-in-device">{{ found.deviceLabel }}</span>
             <app-status-indicator [tone]="known() ? 'success' : 'warning'" [label]="known() ? 'Known device' : 'Unknown device'" [compact]="true" testId="terminal-sign-in-known" />
           </dd>
+          <dt>Binding</dt><dd data-testid="terminal-sign-in-binding">{{ binding(found.bindingKind) }}</dd>
           <dt>Key thumbprint</dt>
-          <dd><code class="tsi__mono" data-testid="terminal-sign-in-thumbprint" [attr.title]="found.keyThumbprint">{{ thumb(found.keyThumbprint) }}</code></dd>
+          <dd><code class="tsi__mono" data-testid="terminal-sign-in-thumbprint" [attr.title]="found.deviceKeyThumbprint ?? found.keyThumbprint">{{ thumb(found.deviceKeyThumbprint ?? found.keyThumbprint) }}</code></dd>
           <dt>Requesting address</dt>
           <dd>
             <span class="tsi__numeric" data-testid="terminal-sign-in-address">{{ found.requestedAddress ?? 'Unknown' }}</span>

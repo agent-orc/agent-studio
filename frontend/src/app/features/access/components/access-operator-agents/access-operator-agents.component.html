@@ -53,7 +53,7 @@
                   <td [attr.data-testid]="'access-operator-session-device-' + session.id">
                     @if (session.device; as device) {
                       <span class="operators__device">
-                        <span>{{ device.label }} · Memory key</span>
+                        <span>{{ device.label }} · {{ binding(device.bindingKind) }}</span>
                         <code class="operators__actor" [attr.title]="device.keyThumbprint" [attr.data-testid]="'access-operator-session-thumbprint-' + session.id">{{ thumb(device.keyThumbprint) }}</code>
                         <span class="access-hint access-numeric" [attr.title]="device.confirmedAddress ? 'Confirmed in the browser at ' + device.confirmedAddress : null" [attr.data-testid]="'access-operator-session-address-' + session.id">From {{ device.requestedAddress ?? 'unknown address' }} at confirmation</span>
                       </span>

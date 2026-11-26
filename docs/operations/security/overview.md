@@ -719,9 +719,9 @@ D1, D4, and D11).
 
 Decisions ES-D3 B2 and ES-D4 A: every terminal sign-in binds its `oas.*`
 session to the fresh P-256 session key held only in `studio-op agent` memory.
-Hardware certification of that session key belongs to ES-5. The old Settings
+ES-5 adds hardware certification of that session key. The old Settings
 path alone issues unbound sessions; their rows say **Unbound**, while terminal
-session rows say **Memory key**. Existing terminal sessions need a new login
+session rows show the verified binding kind. Existing terminal sessions need a new login
 because their former disk keys are no longer used.
 
 The access middleware validates [RFC 9449](https://www.rfc-editor.org/rfc/rfc9449.html)
@@ -760,9 +760,67 @@ The resident stops after failed login, at session expiry, on a signed request's
 replaced or the server reports revocation. The monitor uses the same signed
 read route and grants no authority during a network outage. A denied second
 login preserves the previous session and resident. Memory keys change on each
-login, so these sign-ins appear as new devices until ES-5 supplies persistent
-hardware identity. Same-user or root process access remains outside this
+login, so memory-only sign-ins appear as new devices. ES-5 hardware keys
+provide persistent identity across fresh session keys. Same-user or root process access remains outside this
 binding's protection, as the Dossier states.
+
+### Hardware device certification (ES-5)
+
+Decisions ES-D3 B2 (hardware part) and ES-D4 A, amended by the operator on
+26 November 2026: hardware providers are **not yet verified on real hardware**
+and off by default on every platform. The default is the tested software memory
+key. Explicit per-platform `hardwareDeviceKeys` settings in `studio-op.json`
+(`win32`, `darwin`, `linux`, literal JSON `true`) opt in to that platform only.
+Confirmation, device and session labels mark hardware as not yet verified on real
+hardware. Provider opening, signing or certification verification failures fall
+back to memory binding with one clear login note and sign-in continues.
+`studio-op` supports Windows
+TPM through the per-user Microsoft Platform Crypto Provider, macOS Secure
+Enclave through the bundled Swift helper, or Linux TPM through the OpenSSL
+`tpm2` provider backed by `tpm2-tss`. All use P-256 and non-exportable private
+keys. Windows stores a per-user named signing key with export policy None;
+macOS and Linux store only device-wrapped blobs in the agent config directory
+with mode 600. Missing hardware, helper, permission or signing capability
+produces a clear note and the memory-key path. There is no persistent software
+private-key fallback. [Platform setup and verification](../setup/operator-agent.md#hardware-device-keys-es-5).
+
+After start, before displaying the confirmation code, login sends one DPoP-signed
+poll containing `certification: { publicKey, bindingKind, issuedAt, signature }`.
+`bindingKind` is `tpm` or `secure-enclave`; `issuedAt` is Unix seconds and
+`signature` is ES256/SHA-256 in base64url IEEE P1363 format. The signed UTF-8
+statement has no trailing newline:
+
+```text
+studio-op-device-certification-v1
+<session-key RFC 7638 thumbprint>
+<server sign-in id>
+<issuedAt in decimal>
+```
+
+Studio accepts the certification once, only while pending, verifies the P-256
+signature and a 60-second timestamp window, and compares the signing key's
+thumbprint and binding kind with the chosen agent's device records. A valid
+new key is unknown until the Owner confirms it. A failed signature, stale
+statement, different sign-in or different session key makes the device unknown
+and memory-bound. Repeated certification or certification after confirmation
+answers 409 `device-certification-used`. The poll remains protected by ES-4
+DPoP, including when the certification fails. The bound session thumbprint
+continues to identify the memory session key; its separate device thumbprint
+identifies the persistent hardware key. Forget device ends all sessions tied
+to that device key, across session-key rotations.
+
+The confirmation page shows binding kind and the hardware key thumbprint when
+present; the session row shows binding kind and its enforced session thumbprint.
+Known device rows retain the persistent thumbprint. Confirm and device-certify
+audit entries record binding kind and device thumbprint; poll collection returns
+the session binding kind. These are device-key possession checks, not remote
+manufacturer attestation: the platform provider reports its kind. Same-user
+and root access remain outside this boundary. Memory fallback remains allowed;
+ES-6 owns hourly recertification and lifetime limits, which are not changed here.
+
+Platform references: [Microsoft CNG creation parameters](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.cngkeycreationparameters),
+[Apple Secure Enclave](https://developer.apple.com/documentation/security/protecting-keys-with-the-secure-enclave),
+and [tpm2-openssl key operations](https://github.com/tpm2-software/tpm2-openssl/blob/master/docs/keys.md).
 
 ### Terminal sign-in confirmed with step-up (ES-3)
 
