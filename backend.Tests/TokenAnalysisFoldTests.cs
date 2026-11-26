@@ -125,6 +125,26 @@ public sealed class TokenAnalysisFoldTests
         Assert.True(Assert.Single(Pricing.Price([known])).Cost!.ModelKnown);
     }
 
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(false, true)]
+    public void Pipeline_only_analysis_withholds_cost_until_cache_evidence_is_recorded(
+        bool? inputIncludesCached, bool expectedPriced)
+    {
+        var log = Log();
+        var step = log.Steps[0] with { InputIncludesCached = inputIncludesCached };
+        log = log with { PreviousAttempts = [], Steps = [step] };
+        var item = Assert.Single(TokenAnalysisFold.Items(Pricing,
+            new TokenAnalysisJobInput("job-1", null, log, [])));
+
+        Assert.Equal(step.InputTokens, item.Input);
+        Assert.Equal(0, item.CacheRead);
+        Assert.Equal(expectedPriced, item.Priced);
+        Assert.Equal(expectedPriced
+            ? Pricing.Estimate(step.Model, step.InputTokens, step.OutputTokens, 0, 0, T1).Total
+            : 0m, item.CostUsd);
+    }
+
     [Fact]
     public void Identical_coding_event_counters_are_flagged_without_deleting_real_runs()
     {
