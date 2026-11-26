@@ -591,6 +591,12 @@ public sealed class TaskIndexCache
         lock (_lock) return _coreFactsByFolder.Values.ToArray();
     }
 
+    /// <summary>Resolve one watcher folder without scanning cards or refreshing the workspace.</summary>
+    internal TaskInfo? GetResidentTaskByFolder(string folder)
+    {
+        lock (_lock) return _coreFactsByFolder.GetValueOrDefault(folder);
+    }
+
     /// <summary>All resident cards named by an id or key, without waiting for a workspace scan.</summary>
     public IReadOnlyList<TaskInfo> GetMatchingCoreFacts(string identity, string? watchPath = null)
     {

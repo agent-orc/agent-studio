@@ -37,3 +37,21 @@ python3 -I docs/dispatcher-personas/replay/check_dossier.py     # contract and s
 
 The model and its limits are documented at the top of `replay.py`. A shared
 code file is an upper bound for a conflict. Rounds per card stand in for tokens.
+
+DS-1 backend checks live in `backend.Tests/DispatchReplayTests.cs`. They load this
+unchanged wave for pair F1, and use
+`backend.Tests/Fixtures/dispatch/source-findings.json` for the original problem,
+cause and acceptance criteria from the three source card lists. That fixture
+also freezes all 10,365 tracked paths at source integration tip `a4c7a149c`, so
+unique filename resolution cannot change as the repository grows. The three
+collection cards preserve their source findings, rather than synthesizing text
+from the expected citations. The timing check uses this full inventory and is
+marked `MachineBound`.
+
+Calibration distinguishes recovery of the published citations from exact set
+equality. The historical sets omit valid unique filenames and documentation
+citations, and expand two ambiguous basenames (`Program.cs` and
+`review-host-update.ts`). DS-1 keeps unique filename resolution as specified,
+reports both measurements, and does not rewrite the published wave to match the
+implementation. The original 50/55 exact-set acceptance target therefore remains
+a historical-data discrepancy, separate from citation recovery and pair F1.

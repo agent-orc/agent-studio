@@ -2,6 +2,7 @@ namespace AgentStudio.Shared;
 
 public record TaskDetail
 {
+    public AgentStudio.Dispatch.TouchForecastV1? TouchForecast { get; init; }
     public TaskInfo Info { get; init; } = new();
     public string? PromptMarkdown { get; init; }
     /// <summary>

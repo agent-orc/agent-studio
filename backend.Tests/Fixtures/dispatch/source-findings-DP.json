@@ -1,0 +1,329 @@
+[
+  {
+    "key": "AGT-3891",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D1",
+        "title": "Create a release from integrated cards without the promotion script",
+        "problem": "After SHOP-2, SHOP-3 and SHOP-4 were accepted and integrated (main 86afada, then 9e99dd5), no release appeared. The Releases tab said 'No releases yet. The next green build of the integration branch creates the first release.' Nothing in Deploy, deployment tools, the card menu or the release view creates one. A release exists only when a runner.release credential posts /api/deploy/gate-releases after scripts/release/promote-develop-to-main.sh has written promotion-record.json, release.tar.gz, release.sha256, full-gate.log and deploy-artifact.json into the server's Deploy:ReleaseEvidenceRoot, or when someone calls POST /api/projects/{p}/environments/releases for an artifact already registered that way. The owner would need a shell (evidence directory, server configuration) and the API (a credential scope the UI cannot issue). This run used a harness stand-in for the promotion train (scripts/train.sh).",
+        "cause": "backend/Features/Projects/ProjectOperatorDashboardEndpoints.cs:89-109 (gate-releases) and :151-157 (operator release route, no UI caller); ProjectEnvironmentService.cs:891-946 (RegisterGateArtifact, HasIndependentReleaseEvidence) and :630-644 (CanQueueRelease needs a gate-registered artifact); backend/Features/Deploy/Registry/ReleaseArtifactRegistry.cs:23-54; the only writer of the evidence is Studio's own develop-to-main train (scripts/release/promote-develop-to-main.sh:630-668). The UI promise is frontend/src/app/features/project-detail/components/project-deploy-releases/project-deploy-releases.html:18; docs/concepts/deployment-first-class.md:228 and docs/system/domains/pipeline.md:3638 say Staging deploys automatically after integration.",
+        "acceptanceCriteria": [
+          "After a card's delivery is integrated and the project's own gate is green on that commit, Studio creates a release of the integration branch tip, or offers it as one action, without a runner.release credential or files written from a shell.",
+          "The Releases tab names what will create the next release and, when something blocks it, shows the reason and a next step.",
+          "Projects that use the promotion train keep working unchanged.",
+          "A Playwright spec on the first-run stack with a fake run host integrates a card and sees a release and an automatic Staging run without API calls."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3892",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D2",
+        "title": "Let a project gated before merge pass the release candidate gate",
+        "problem": "The first release attempt for main 86afada answered 409 'The candidate must be the green post-merge tip before release.' That commit had a green pre-main test gate on exactly that SHA (SHOP-3). Demo Shop is not in post-merge mode, so no post-merge run ever records a verdict (/api/develop-states: developState null) and the gate can never pass. delivery.fullSuite: optional still requires post-merge green; only 'off' passes, which switches the check off instead of satisfying it. The reason appears only in the API response. The owner needed a card (SHOP-4) to set delivery.fullSuite: off.",
+        "cause": "backend/Features/Deploy/ReleaseCandidateGate.cs:35-58 requires the post-merge store's develop state to be green at the candidate SHA; ReleaseCandidateGatePolicy.Mode (:91-92) defaults to 'required' when Production is declared and Allows (:94-96) needs postMergeGreen even for 'optional'. Post-merge runs come only from runner merge windows in post-merge mode (AGT-3311, AGT-3314); AGT-3313 introduced the gate.",
+        "acceptanceCriteria": [
+          "A commit whose pre-main or batch gate passed on that exact SHA counts as a green candidate for a project that is not in post-merge mode, or the owner is told how to obtain a verdict.",
+          "'optional' admits a candidate when no post-merge history exists.",
+          "A refused release shows its reason and next step in the Deploy area, not only in an API response.",
+          "Backend tests cover required, optional and off with pre-main evidence only."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3893",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D3",
+        "title": "Let the owner sign in on the local profile where approval and enrollment need it",
+        "problem": "The first-run checklist says 'No owner sign-in is needed in the local profile.' Settings > Access then says, in red, 'Sign in to manage access. A local installation without sign-in has one implicit owner and needs no setup.' There is no sign-in control and no owner existed. Runner enrollment and production approval both require a signed-in Owner, so neither is reachable from the UI. The owner account was created and signed in with POST /api/auth/bootstrap (intervention 1), as the repository's own e2e helper does.",
+        "cause": "frontend/src/app/services/auth.service.ts:111-120 admits the local profile without a session, so app-auth-gate never renders; first-run-checklist.component.html:38; frontend/src/app/features/access/services/access.service.ts:67; backend/Features/Deploy/Lifecycle/DeployApprovalAuthority.cs:16-41 ('Approval needs a signed-in person in every profile'); AccessSecurityEndpoints.cs:277-286 (RequireOwner on enrollments).",
+        "acceptanceCriteria": [
+          "On the local profile, an action that needs a signed-in Owner (Approve production, create a runner enrollment, Access) offers Create owner or Sign in in place and then completes the action.",
+          "The first-run checklist says that production approval and run-host enrollment need the owner account and links to creating it.",
+          "The Access error offers the next step as a control.",
+          "A Playwright spec on a fresh local stack approves a Production run using only the UI."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3894",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D4",
+        "title": "Register a run host from the UI with a deploy credential",
+        "problem": "Settings > Access > Runner enrollments offers only 'Coding and review' and 'Orchestration engine'. The code it created carried runner.claim, runner.lease, runner.logs, runner.events, runner.artifacts and runner.completion, not runner.deploy, and defaulted to 'No project'. The first-run join token offers Coding and Review only; Settings > Environment > Hosts '+ Add host' is browser-only according to remote-hosts.service.ts. After enrollment through the API, Hosts listed 'run-host-1 \u00b7 Offline \u00b7 Not enrolled' while the host was claiming and deploying. The owner needed POST /api/auth/runner-enrollments with scopes [runner.deploy] (intervention 2) and a shell on the host to start the deploy loop.",
+        "cause": "frontend/src/app/features/access/components/access-runners/access-runners.component.html:9-20 and access.service.ts:130-135 send no scopes; the default scope set (backend/Features/Security/AccessSecurityModels.cs:80) lacks runner.deploy; task-server/HostJoinTokenEndpoints.cs:66-67 accepts coding or review only; remote-hosts.service.ts:529-541 keeps Add host local; the Hosts view counts heartbeats, which deploy hosts do not send.",
+        "acceptanceCriteria": [
+          "Access and the Hosts wizard offer a 'Run host (deploy)' identity that issues a runner.deploy credential bound to chosen projects and prints the host command with the id to use.",
+          "After enrollment the Hosts view lists the run host with its last claim or report, and the Deploy area shows which host serves each environment and whether it is reachable.",
+          "A Playwright spec enrolls a run host in the UI and sees it online after its first claim."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3895",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D5",
+        "title": "Declare staging and production with deploy steps in Studio, and show one environment state",
+        "problem": "Both templates (container-service, static-web) ship project.yml schema 1 without environments. Settings > Pipeline 'Write schema 2 to project.yml' committed Staging and protected Production straight to main (2859917) with 'No deploy step yet'. Settings then shows both environments, while Deploy > Overview still says 'No environments declared. Add one JSON file per environment under docs/deployments/environments/ \u2026', the legacy format. The Pipeline tab says 'Edit the file in the repository to change it.' The owner needed a card asking an agent to write the artifact and deploy steps (SHOP-2); without such an agent the owner needs a shell.",
+        "cause": "backend/Features/Projects/PipelineDefinition/PipelineMigrationPolicy.cs:36-111 writes deploy steps only from existing JSON declarations (:92); ProjectEnvironmentService.cs:279-366 (ApplyDefinition) creates environments from project.yml only when deploy steps exist (:285); project-deploy-overview.html:21; project-deploy-pipeline.html:3; project-templates/*/.agent-studio/project.yml.",
+        "acceptanceCriteria": [
+          "Studio offers a form for the artifact, target host, compose file or directory, health URL and timeout per environment, and writes valid schema 2 through a reviewable change.",
+          "Deploy > Overview shows environments declared in project.yml before they have deploy steps, marked 'No deploy step yet' with a way to add one; the JSON guidance appears only for legacy projects.",
+          "The container-service and static-web templates include a commented schema 2 deployment section."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3896",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D6",
+        "title": "Use one host identity from enrollment to deploy, and refuse a mismatch at claim time",
+        "problem": "The owner named the run host 'run-host-1' and used that as the target in project.yml. Enrollment created runner_97ffb5f5\u2026; on the local profile the claim under run-host-1 was accepted and release 1 deployed, but the first secret resolution (release 2) was refused 'workload-identity-denied: The deploy job is claimed by another host.' The generated id appears only in Access' Identity column. Changing the target to the id (SHOP-6) fixed resolution, but the target is also the SSH destination the executor connects to, so the SSH alias would have to equal a generated id.",
+        "cause": "ProjectOperatorDashboardEndpoints.cs:223 and :254 compare the credential's runner id with the host only on networked profiles; backend/Features/Secrets/SecretWorkloadBinding.cs:79-80 compares it on every profile; runner/SshDeployExecutor.cs:27 and :103 use step.Target as identity and ssh destination.",
+        "acceptanceCriteria": [
+          "A deploy claim whose credential does not belong to the job's host is refused on every profile, naming both ids, before any step runs.",
+          "project.yml names a host by an owner-chosen name that maps to the enrolled runner id, separate from the SSH address, or enrollment shows the exact value to put in project.yml.",
+          "The secret refusal names the job's host and the credential's host."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3897",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D7",
+        "title": "Offer deploy, redeploy and approval actions for a chosen release in the UI",
+        "problem": "After a person deployed release 2026.11.16.3 to Staging again (retry after a secret fix), Production showed 'Release 2026.11.16.3 is ready with 2 cards' and only 'Open last run': no approval request, no Deploy to Production, nothing on the release detail. Redeploying the current release (after a rotation or a lost host) has no button either. The owner needed POST \u2026/deploy/releases/{id}/deployments twice and POST \u2026/deploy/environments/production/redeploy once (interventions 6 to 8).",
+        "cause": "Approval requests come only from promotion records written for the automatic Staging job (ProjectEnvironmentService.cs:690 in QueueReleaseJob; DeploymentReconciler.cs:157-194). The frontend calls run actions only (project-deploy-data.service.ts:133-138), never POST releases/{id}/deployments or environments/{id}/redeploy; deploy-environment-card.ts:49 prints 'is ready' without an action. AGT-3886-C11 covers the Roll back button; AGT-3887-D6 covers permissions for a stage redeploy.",
+        "acceptanceCriteria": [
+          "Release detail and environment cards offer Deploy to Staging, Request Production approval (or Deploy to Production for an approver) and Redeploy, following the lifecycle rules and showing refusal reasons.",
+          "A successful Staging run started by a person creates the same Production approval request as the automatic one.",
+          "A Playwright spec against a real backend retries Staging and then approves Production without API calls."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3898",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D8",
+        "title": "Keep earlier releases deployable after the deploy target changes",
+        "problem": "After SHOP-6 changed the target from run-host-1 to the enrolled id, every rollback to releases 1 and 2 failed at once with 'Invalid SSH deploy target or step': the automatic Staging rollback (19:28 UTC), the automatic Production rollback after release 3 failed its health check (19:36) and the owner's manual Roll back (19:45). Production kept serving the release whose /health answered 503 until a fix-forward release 4 went through. The UI showed 'Automatic rollback failed' and opened a backlog card, but nothing said that no older release could be deployed again.",
+        "cause": "Releases snapshot each step's target (docs/concepts/deployment-first-class.md:211-227; docs/system/contracts/deploy-host-api.md:38-42); jobs are routed to the currently declared host, and runner/SshDeployExecutor.cs:27 refuses step.Target != host. The fake run host mirrored that check.",
+        "acceptanceCriteria": [
+          "A rollback or redeploy of an older release to an environment whose host moved runs on the current host with the snapshot's artifact, variables and paths, or is refused before queueing with a message naming the host change.",
+          "The Deploy area marks releases that can no longer be rolled back to, and says why, before an owner approves a release whose failure would need one.",
+          "A backend test changes the target, releases, fails health and expects a successful rollback or a refusal before queueing."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3899",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D9",
+        "title": "Show the release that actually runs after a failed deploy or rollback",
+        "problem": "When release 3 failed its Production health check and its rollback failed, the overview said Production ran 'Release 2026.11.16.1 \u00b7 Deployed 18 min ago' while the host served release 3 (503). After the failed manual rollback it showed 'Release 2026.11.16.1 \u00b7 Deployed 27 min ago' although release 4 was running. Roll back on the broken Production answered 409 'No previous artifact is available.' and the panel said only 'Rollback could not be queued.'",
+        "cause": "frontend/src/app/features/project-detail/state/deploy-area.model.ts:411-419 prefers the legacy AGT-3176 deployedArtifact over the release status; EnvironmentStatusProjection.cs:60-70 takes the last successful run, so a failed deploy that leaves a new revision running is not represented; ProjectOperatorDashboardEndpoints.cs:178-180 maps 'no older release' to 'No previous artifact' and project-deployment-panel.component.ts:61 drops the server message. AGT-3886-C10 covers the health contradictions, not which release runs.",
+        "acceptanceCriteria": [
+          "After a failed deploy the environment card says the running release is uncertain (failed release may be running) until a host report says otherwise, and never names the target of a failed rollback.",
+          "Overview, deployment tools and the workspace dashboard use one source for the environment's release.",
+          "A refused rollback shows the server's reason and the alternatives (redeploy, fix forward)."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3900",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D10",
+        "title": "Show a card's failed and rolled-back deployments on its environment badges",
+        "problem": "The card shows its environments as badges on the board card and the card detail header ('staging \u00b7 live \u00b7 2026.11.16.1 \u00b7 2026-11-16', 'production \u00b7 awaiting-approval \u00b7 2026.11.16.1'), in the board's Delivery group and on the workspace dashboard. Failure is invisible: SHOP-5's release failed in Staging and was rolled back, and its card said 'Staging pending'. SHOP-10's release failed in Production and was rolled back; it said 'Not yet in Production'. Badges print raw states ('awaiting-approval'). Every card, including Backlog incident cards and a card still in coding (SHOP-13), shows 'Staging pending \u00b7 Not yet in Production'. On a 1280 px board card the date is cut off.",
+        "cause": "backend/Features/Deploy/Status/CardDeploymentProjection.cs:36-55 shows an attempt only while it is the environment's last run and marks rolled-back only after a previous success; the key set includes every card; frontend/src/app/features/deployments/components/card-environment-badges/card-environment-badges.ts:40-44 maps not-deployed to 'Staging pending' / 'Not yet in Production' and passes other states through raw. AGT-3886-C06 notes the chips on incident cards.",
+        "acceptanceCriteria": [
+          "A card whose release failed in an environment shows that it failed there (and that it was rolled back) until a later release containing it succeeds there.",
+          "Badges use product words for every state and keep version and date readable on the board card.",
+          "Cards that are not integrated, and incident cards, show no delivery badges.",
+          "Projection tests cover failed-then-rolled-back and failed-then-fixed sequences."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3901",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D11",
+        "title": "Let an owner stop or remove an environment and say what happens to its data",
+        "problem": "There is no Remove, Stop or Pause control for an environment in the UI and no API to delete one. Asking an agent to remove Production from project.yml (SHOP-13) cannot succeed: schema 2 requires environments to be exactly [staging, production], and every delivery failed preparation with 'P1 environments must be [staging, production] in deployment order'. Production kept running. The UI does not say what would happen to deploy history, health samples, incidents and environment secrets; in code, history and secrets are kept and incidents close as check-removed.",
+        "cause": "contracts/TaskServer.Contracts/ProjectDeploymentDefinition.cs:463-492; no delete route (ProjectOperatorDashboardEndpoints.cs:188-215 has stop and run-target-removal/confirm, neither with a UI caller); EnvironmentHealthService.cs:40 and :169-173; ProjectEnvironmentService.cs:1752-1756 keeps deployments; no removal code touches environment secrets.",
+        "acceptanceCriteria": [
+          "The Deploy area offers Stop (take the app down, keep the declaration) and Remove (declaration change through a card or commit) with a confirmation that lists what is kept and what is deleted.",
+          "Schema 2 accepts a Staging-only project, or the UI explains that Production can be stopped but not removed.",
+          "Removing an environment takes its app off the host only after an explicit confirmation, as run-target removal already does."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3902",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D12",
+        "title": "Stop fix rounds that cannot repair an invalid project definition",
+        "problem": "SHOP-13's delivery failed repository preparation on every attempt. Studio sent it back as 'Merge gate failed on the delivery's own items' fix round after fix round: 22 runs from 19:47 to 20:02 UTC, never escalated, until the owner stopped it and moved it to Backlog. The reissue prompt told the agent 'commands.prepare is required and names a repository-relative script \u2026', which was not the failing rule. With a real CLI every round costs tokens.",
+        "cause": "backend/Features/Pipeline/GateFailureTriage/GateFailureRoutingPolicy.cs:72 and :110 cap fix rounds per delivery (MaxFixRoundsPerDelivery = 1); each fix round produces a new delivery SHA, so the cap does not stop the sequence (likely cause, not traced through every step). The definition:invalid preparation failure is routed as a product failure in the delivery's tree.",
+        "acceptanceCriteria": [
+          "A card whose deliveries fail with the same preparation fingerprint parks for the owner after at most two automatic rounds, naming the failing rule and its line.",
+          "The fix-round prompt quotes the failing issue codes and adds no unrelated remediation.",
+          "An orchestrator test feeds repeated identical definition:invalid failures across new delivery SHAs and expects the budget to stop them."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3903",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D13",
+        "title": "Keep the CSRF proof as long as the session, and name a missing sign-in on approval",
+        "problem": "After the browser restarted, the signed-in Owner pressed Approve on the Production run and got 'Approval requires the Owner or Maintainer role.' The session cookie lives 7 days; the CSRF cookie has no lifetime and is dropped with the browser session, so on the local profile the approval check sees no person. The owner needed POST /api/auth/login (intervention 5).",
+        "cause": "backend/Features/Security/AccessSecurityEndpoints.cs:539-556: SessionCookieOptions sets MaxAge, CsrfCookieOptions does not; DeployApprovalAuthority.cs:34-41 drops the user without the CSRF header; the run drawer shows the generic role message.",
+        "acceptanceCriteria": [
+          "The CSRF cookie lives as long as the session cookie, or is reissued on the first authenticated read.",
+          "A refused approval says 'Sign in again to approve' when the session or CSRF proof is missing, and names roles only when the person lacks them.",
+          "A Playwright spec signs in, restarts the browser context with persisted cookies and approves."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3904",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D14",
+        "title": "Warn about unbound secret references before a release is deployed or approved",
+        "problem": "SHOP-5 declared DATABASE_URL for Staging. The owner stored the secret in the staging scope, but the deploy still failed because the reference was not bound to the environment. The Deploy overview, the release and the approval drawer said nothing. The binding panel opened on 'preview' with 'Ready for deploy'; on 'stage' it showed '1 secret reference(s) need attention'. 'Bind DATABASE_URL' only fills the form; 'Bind reference' saves. For Production, binding was refused with 'The environment does not declare this secret name.' until a card changed project.yml, and then needed the 'Approve production binding' checkbox. A real host fails such a job with secret-reference-missing; this run's fake host went on and failed its health check instead.",
+        "cause": "The binding check runs only when a host claims the job (ProjectOperatorDashboardEndpoints.cs:356-386, MissingSecretRefs); CreateRelease and Approve do not consult ProjectSecretBindings; the project secrets page opens on the first environment ('preview'). AGT-3887-D10 covers naming on the secret screens and D8 the scope of a production binding approval.",
+        "acceptanceCriteria": [
+          "Release detail, environment cards and the approval drawer list unbound or missing secrets per environment, with a Bind action, before a run is queued.",
+          "Approving a Production run with missing bindings is refused with the names, or explicitly confirmed.",
+          "The binding panel opens on an environment that needs attention, and one action binds a listed reference."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3905",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D15",
+        "title": "Name every card new to Production on a Production failure card",
+        "problem": "Release 3 failed its Production health check. Failure card SHOP-7 listed 'Included cards: SHOP-6'. The change that broke /health was SHOP-5, which reached Production in the same jump from release 1 (release 2 never reached Production). Each failed rollback opened another card titled 'Investigate Production deployment of release 2026.11.16.1', although nobody deployed that release; the title does not say it was a rollback. Backlog ended with four failure cards, two of them for rollbacks.",
+        "cause": "backend/Features/Deploy/DeployService.cs:1467-1528 (CreateProductionFailureCards) lists the run's release CardKeys and opens a card for every failed Production run, rollbacks included. AGT-3886-C06 and C08 cover health incident cards.",
+        "acceptanceCriteria": [
+          "The failure card lists the cards added since the last release that was healthy in Production, and names that release.",
+          "A failed rollback updates the original failure card, or is titled 'Rollback to \u2026 failed', instead of opening a deployment card."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3906",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D16",
+        "title": "Let schema 2 environments on a private network be health-checked, and explain address-blocked",
+        "problem": "Both health URLs use 172.17.0.1, a private address. The Deploy overview showed a red 'Misconfigured' badge from declaration on, through every healthy deploy, with no reason on the card; Operations shows 'address-blocked'. Schema 2 has no way to set healthChecksAllowPrivateNetwork, which only JSON declarations accept, so an owner hosting on a LAN or VPN never gets a control-plane health signal, while the host-side deploy health check passed each time.",
+        "cause": "docs/operations/environment-health-checks.md (address policy); ProjectEnvironmentService.cs:279-366 builds schema 2 declarations with HealthChecksAllowPrivateNetwork false; ProjectDeploymentVocabulary has no key for it. AGT-3886-C10 covers the contradiction between surfaces and C09 probing before the first deploy.",
+        "acceptanceCriteria": [
+          "Schema 2 environments or deploy steps can opt into private-network health checks.",
+          "An address-blocked check shows on the environment card as a declaration problem with its fix, not as a red failure."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3907",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D17",
+        "title": "Refresh environment cards after an approval and when the host reports",
+        "problem": "After the owner approved Production, the drawer showed 'Queued', but the environment card kept 'Awaiting approval: web@sha256:8f3e0d237096', 'Nothing deployed yet' and a Review approval button for at least 20 s after the host reported healthy; only a reload showed the new state. The confirmation asks 'Approve production run 0e89a55e02fda97b?', naming the run id, not the release.",
+        "cause": "frontend/src/app/features/project-detail/components/project-deploy-area/project-deploy-area.ts:276-283 reloads runs after an action but not statuses or environments, and nothing polls while runs are queued; the confirm text is built from run.id (:266-269).",
+        "acceptanceCriteria": [
+          "After approve, reject, cancel or a host report, environment cards and history update within 5 s without a reload.",
+          "The confirmation names the environment, the release version and the number of cards."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3908",
+    "sourceTask": "AGT-3885",
+    "findings": [
+      {
+        "id": "AGT-3885-D18",
+        "title": "Write release notes and run logs in product language",
+        "problem": "Release notes are the card titles verbatim, including internal cards ('Let releases use the pre-main gate', 'Deploy to the enrolled run host id') and a title that did not match its change (SHOP-1). The release view says 'Quality: Not reviewed' for four cards whose reviews passed, and 'Release range: Not reviewed. The repository root range is unavailable.' A run whose health check failed logs 'Deploy host completed the step.' Each run lists a 'Log only \u00b7 Start container' step that schema 2 does not have. At 390 px the approval fact is cut to 'Waiting for an Owner or Maint\u2026'.",
+        "cause": "backend/Features/Deploy/Releases/ReleaseNotesProjection.cs (titles captured at release creation); DeploymentReconciler.cs:330-333 (AddResultLog for a failed health check); the legacy step in DeploymentStepPlan.",
+        "acceptanceCriteria": [
+          "Release notes can be edited or are written per card in product language, with maintenance cards marked or left out.",
+          "Release quality reflects the cards' review verdicts or says why it cannot.",
+          "Failed runs never log 'completed'; legacy steps do not appear on schema 2 runs."
+        ]
+      },
+      {
+        "id": "AGT-3885-D19",
+        "title": "Keep Studio's own stable-deploy history out of a project's deployment tools",
+        "problem": "Demo Shop's deployment tools show 'Stable baseline \u00b7 deploy-stable \u00b7 Source: logs/stable-restarts.jsonl', Studio's own self-deploy history, and 'Targets: 0 targets. No deployment target can be derived from repository facts or descriptors.' while project.yml declares two deploy steps.",
+        "cause": "project-deployment-panel.component.html:199-208 renders the DEP-1 stable baseline for every project; repository target derivation ignores schema 2 deploy steps.",
+        "acceptanceCriteria": [
+          "The deploy-stable baseline appears only for the Studio project.",
+          "Repository targets include schema 2 deploy steps, or the section is hidden when schema 2 is in use."
+        ]
+      },
+      {
+        "id": "AGT-3885-D20",
+        "title": "Use stable ids in secret references and one name per environment",
+        "problem": "References read 'secret://Demo Shop/stage/DATABASE_URL', with the display name and a space; renaming the project changes every reference. The same environment is 'staging' in project.yml and on the Deploy overview, 'stage' in the secret selectors, secret references and API ids, and 'Staging' in the Pipeline tab.",
+        "cause": "Secret scope paths use the route's display name (SecretEndpoints.cs:87-91); ProjectEnvironmentService.cs:316 stores schema 2 'staging' under the id 'stage'. AGT-3887-D10 covers the placeholder and scope wording.",
+        "acceptanceCriteria": [
+          "Secret references use the project id or short code.",
+          "Every surface shows one name per environment."
+        ]
+      }
+    ]
+  }
+]

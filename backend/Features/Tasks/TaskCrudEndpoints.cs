@@ -382,7 +382,7 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, AgentStudio.Operator.OperatorCoordinationStore attention, AgentStudio.Review.ReviewProjectionService reviews, TaskIntegrationStatusService integrationStatus, ILoggerFactory loggerFactory) =>
+        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Dispatch.DispatchStore dispatch, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, AgentStudio.Operator.OperatorCoordinationStore attention, AgentStudio.Review.ReviewProjectionService reviews, TaskIntegrationStatusService integrationStatus, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail",
                 loggerFactory.CreateLogger("TaskDetail"), includeNested: true);
@@ -400,7 +400,8 @@ public static class TaskCrudEndpoints
             if (!ProjectAccessAuthorization.AllowsTasks(context, [facts.Info.ProjectName], IamPermissions.ProjectRead, projects))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             context.Response.Headers["X-Task-Detail-Freshness"] = facts.Stale ? "stale" : "ready";
-            var detail = scanner.GetJobDetailFromInfo(facts.Info);
+            var detail = scanner.GetJobDetailFromInfo(facts.Info) with
+            { TouchForecast = dispatch.Read(facts.Info.ProjectName, facts.Info.TaskKey) };
             // Detail and the Git resource consume the same completed repository
             // snapshot. A stale result for an older task attempt is withheld.
             var gitRead = TaskSwitchTrace.Run("index.lookup", () => gitProjection.ReadTask(detail.Info));

@@ -1145,6 +1145,19 @@ public class ProjectSettingsService
         _logger.LogInformation("Intake enabled set to {Enabled} for project {Project}", enabled, projectName);
     }
 
+    /// <summary>Stores the project hub-file override; null restores the defaults.</summary>
+    public void SetDispatchHubFiles(string projectName, IReadOnlyList<string>? files)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { DispatchHubFiles = files?.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray() };
+            Persist();
+        }
+    }
+
     /// <summary>
     /// DS-0: stores <c>dispatch.overlapWindow</c>. A known window is stored as
     /// chosen; null clears it and the project resolves to

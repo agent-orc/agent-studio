@@ -1,0 +1,343 @@
+[
+  {
+    "key": "AGT-3936",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D13",
+        "title": "Offer Retry integration only when the checkout can actually serve the integration base",
+        "problem": "server-checkout-missing is also recorded when the checkout exists but origin/<integration branch> is missing after fetch. The card then immediately reads replayAvailable=true, the remedy claims the server now has a checkout, hides the Project Settings and setup guide links, and every Retry click replays and fails with the same code while staying replayable.",
+        "cause": "backend/Features/Tasks/TaskIntegrationStatusService.cs:541-558 (WithServerCheckoutReplay/HasServerCheckout) only checks for a .git in the repository root and does not distinguish the base-missing variant recorded at backend/Features/Git/IntegrationWorktreeProvider.cs:100-102. frontend/src/app/features/task-detail/components/server-checkout-remedy/server-checkout-remedy.component.html:2-18 drops the setup links in the ready branch.",
+        "acceptanceCriteria": [
+          "A server-checkout-missing failure whose integration base is missing after fetch does not set replayAvailable while the base ref is still absent.",
+          "The remedy keeps the Project Settings and setup guide links visible whenever the replay cannot be offered, and names the missing base branch for the base-missing variant.",
+          "A backend test reproduces the base-missing failure and asserts replayAvailable stays false until origin carries the branch, then true."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3937",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D14",
+        "title": "Keep the server-checkout failure on the card when the configured checkout path is not a checkout",
+        "problem": "When the project names a checkout path that does not exist or is not a Git checkout (typed before cloning or mistyped), integration records server-checkout-missing but the board and detail reads carry no integration verdict, so the remedy does not render and Continue (reissue) stays primary: the original AGT-3795 symptom.",
+        "cause": "BuildRecordedFailuresWithoutCheckout skips projects where HasConfiguredRepository is true (backend/Features/Tasks/TaskIntegrationStatusService.cs:527; backend/Features/Git/GitService.cs:2396-2398, configuration-only). The Git state index registers such a path (backend/Features/Git/GitStateIndexService.cs:355) but every run throws in GitConfigSignature.EnsureRepository (backend/Features/Git/GitConfigSignature.cs:88-92 via GitStateIndexService.cs:929) and publishes no projection (GitStateIndexService.cs:738-742).",
+        "acceptanceCriteria": [
+          "A delivered card whose project names a checkout path that is missing or not a Git checkout shows failure.code server-checkout-missing on board, detail and Git-detail reads.",
+          "The fallback decides 'no usable checkout' with the same files-only probe the integration worktree provider uses, not with configuration presence.",
+          "An endpoint test seeds a configured but non-existent checkout path and asserts the remedy code on every read."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3938",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D15",
+        "title": "Keep a tracked oversized file out of the fallback add when its folder is ignored",
+        "problem": "A tracked file above WorkspaceArtifacts:MaximumFileBytes inside an ignored folder is hashed into .git/objects on every flush (then unstaged), with a reason=git-add-refused warning each time; the size guard no longer keeps it out of git add, and the add timeout is sized without it.",
+        "cause": "check-ignore never reports tracked paths (WorkspaceArtifactCommitService.cs:854), so the file stays an exclude pathspec; git refuses the add naming the ignored parent folder; the fallback marks every excluded path under a reported folder add-free (:813) and reruns git add -A without the exclude (:822), staging the oversized blob before ResetPaths (:824) unstages it. AddTimeout (:1009) excludes the refused bytes.",
+        "acceptanceCriteria": [
+          "A flush with a tracked oversized file below an ignored folder commits the other evidence without writing the oversized file's blob to the object database",
+          "The tracked oversized file stays out of the commit and out of the index",
+          "A regression test covers a tracked oversized file below a folder ignored after it was tracked"
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3939",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D16",
+        "title": "Redact and refuse links when reading results/status.md into the remote review plan",
+        "problem": "The agent report enters every remote coding review plan unredacted and via a link-following read; the inventory excerpt it replaces was redacted and skipped links. Credential-shaped text in the report reaches the remote executor and review model verbatim, and a symlinked results/status.md pulls in a host file from outside results/.",
+        "cause": "backend/Features/Runner/RemoteReviewPlanBuilder.cs:1165 reads results/status.md with BoundedFileRead.ReadTailChars (no CredentialRedactor, follows links); :1101 excludes status.md from ResultsInventory.RenderForReview whose excerpts are redacted and skip reparse points (backend/Features/Runner/ReviewEvidenceContext.cs:108-123,169).",
+        "acceptanceCriteria": [
+          "A credential-shaped string in results/status.md is redacted in the remote review plan status text.",
+          "A results/status.md that is a symbolic link is not read into the plan, and the plan says the report was withheld.",
+          "A test pins both cases for ReviewStatus.Read."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3940",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D17",
+        "title": "Keep the priced subtotal on distribution rows that mix priced and unpriced usage",
+        "problem": "Card analysis 'By reasoning level' and 'By model' rows replace the whole cost with 'no price data' as soon as one slice is unpriced. A level with $40 of priced Claude work plus a little unpriced gpt-6.2-nova shows 'no price data', and the known amount is no longer shown. Other tables in the same view keep the subtotal and mark it incomplete.",
+        "cause": "frontend/src/app/features/token-analysis/token-analysis.util.ts:425 sets group.priced &&= slice.priced !== false for both dimensions (token-analysis-view.ts:89-90); token-analysis-distribution.html:39 renders the amount only when row.priced. Compare the costComplete handling at token-analysis.util.ts:275,285.",
+        "acceptanceCriteria": [
+          "A distribution row whose slices are all unpriced reads 'no price data' with the link to the unpriced-model list.",
+          "A distribution row with at least one priced slice shows the priced subtotal plus an incomplete marker linked to the unpriced-model list.",
+          "A unit test covers a reasoning-level row that mixes a priced and an unpriced model."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3941",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D18",
+        "title": "Make the unpriced-model list cover the usage the partial markers count",
+        "problem": "The footer and cost-detail markers count unpriced receipts in the current day or week, including workspace one-shot bus rows. The list they link to reads only project ledgers over all time. An unpriced model used only by one-shot calls produces '1 run without price' while the list says 'No active unpriced models'. The list can also show models that are unpriced only in old history, and it reports calls and tokens that include the model's priced calls.",
+        "cause": "UsageCockpitEndpoints.cs:112,121,123 merges WorkspaceBusUsage into the cost inputs. TokenPricingEndpoints.cs:62-64 uses tokens.WorkspaceAggregate(projects), which folds ProjectLifetimeSummary, that is _ledger.LoadSnapshot per project for all time (TokenAggregationService.cs:95-105,200-204), and never reads the workspace bus scope (WorkspaceBusUsage.cs:23-27). Row Calls and tokens count every call of the model (ModelUsageFold.cs:33,57).",
+        "acceptanceCriteria": [
+          "The unpriced-model list includes models that are unpriced in workspace one-shot usage (attributed and unattributed) whenever the footer counts them.",
+          "The list states its period and, by default, covers the same week as the cost detail it is linked from.",
+          "Each row reports the unpriced calls and tokens separately from the model's priced usage.",
+          "A test seeds an unpriced workspace one-shot receipt and asserts that both the footer count and the list show it."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3942",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D19",
+        "title": "Store the executing CLI for Codex summary generation and commit-message receipts",
+        "problem": "Summary generation that runs on Codex (configured or by quota fallback) is persisted with cliType 'claude', so its tokens appear in the Claude account page's per-window recorded attribution and are missing from Codex. Local Codex commit-message calls are stored as Claude calls. The wrong CLI is now stored permanently.",
+        "cause": "AdHocClaudeInvoker.Record defaults cliType to 'claude' (backend/Features/AdHoc/AdHocClaudeInvoker.cs:102, :110 usage?.CliType ?? cliType). CodexOneShot.ParseOutput builds Usage without CliType (backend/Features/Cli/Routing/OneShot/CodexOneShot.cs:242). SummaryGenerationService sets RecordUsage=false (:714) and records the raw r.Usage without cliType (:660), bypassing the envelope that carries EffectiveCliType. GitService records Codex commit-message calls with no usage and no cliType (backend/Features/Git/GitService.cs:3150, :3155).",
+        "acceptanceCriteria": [
+          "A summary-generation call executed by Codex (direct or quota fallback) is stored with CliType 'codex' and counted only in the Codex account page attribution.",
+          "Commit-message calls executed by Codex are stored with CliType 'codex'.",
+          "AdHocClaudeInvoker.Record has no implicit 'claude' default; every caller passes the executing CLI, guarded by a test."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3943",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D20",
+        "title": "Cover the capability re-probe route and claim-answer delivery with a test",
+        "problem": "No test exercises POST /api/v1/management/remote-hosts/{id}/capabilities/reprobe, the WithReviewClaimReprobes/WithCodingClaimReprobes endpoint filters or the review daemon branch; a filter that stopped matching would drop every request with all tests green.",
+        "cause": "backend/Features/Runner/CapabilityReprobeDelivery.cs and runner/RemoteReviewDaemon.cs:693 are untested; CapabilityHoldProjectionTests only checks the registry queue, the Playwright spec mocks the API.",
+        "acceptanceCriteria": [
+          "An endpoint test queues a re-probe and sees it once in the next OK review claim answer and not in the following one.",
+          "The same for the coding claim answer.",
+          "A non-OK claim answer keeps the request queued.",
+          "A runner test shows the review daemon refreshing the provider probe and re-advertising."
+        ]
+      },
+      {
+        "id": "AGT-3888-D21",
+        "title": "Accept a capability re-probe only for a key the role registered or holds",
+        "problem": "The route queues any non-blank token up to 200 characters per runner in an unbounded set that is drained only by that runner's next OK claim; a registered runner that does not poll keeps it for the process lifetime. Limited to authenticated owners and operators.",
+        "cause": "backend/Features/Management/ManagementEndpoints.cs:140 validates only the shape; V1ReviewExecutorRegistry.RequestReprobe (backend/Features/Runner/V1ReviewPlaneEndpoints.cs:4649) checks only that the runner is registered.",
+        "acceptanceCriteria": [
+          "A re-probe of a key the role neither registered nor holds returns 400.",
+          "The per-runner queue is capped.",
+          "Queued requests are dropped when the runner identity is removed."
+        ]
+      },
+      {
+        "id": "AGT-3888-D22",
+        "title": "Align the token and cost columns across run rows in the narrow Overview pane",
+        "problem": "In the narrow pane, a run row whose cost cell carries 'incomplete (N runs without price)' or 'usage not recorded' gets a wider cost track than its neighbours. Its token number moves left, out of line with the other runs and the task total, and its name track shrinks ('Run #4' with the Current badge shows as 'Ru...' at 340 px).",
+        "cause": "frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.scss:322 and :353 use minmax(4.5rem|3.5rem, max-content) for the cost track; every .ptu__row is its own grid, so the track width is computed per row from the unwrapped label width. The wide layout used the fixed --ov-pipeline-cost-col (11rem).",
+        "acceptanceCriteria": [
+          "At container widths 340, 400 and 560 px, the token cells of all run rows and the task total share the same right edge, with and without a partial-price or missing-usage label.",
+          "The run name with the Current badge is not cut to fewer than its run number at 340 px.",
+          "A layout test covers a run row with a partial-price label."
+        ]
+      },
+      {
+        "id": "AGT-3888-D23",
+        "title": "Keep the task total title whole between 460 px and the wide Overview layout",
+        "problem": "'All runs \u00b7 task total' wraps only below a 460 px container. Between 460 px and about 800 px it stays nowrap with an ellipsis in the 1fr name track and is cut. The 460-620 px band was restyled by this change without the fix.",
+        "cause": "frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.scss:358-370 (scope hidden, title spans 3/5, white-space normal) exist only in the max-width:460px block; .ptu__sum-title at frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.scss:106-113 keeps nowrap/ellipsis elsewhere.",
+        "acceptanceCriteria": [
+          "At every container width from 340 px to the maximized pane the task total title is fully readable (wrapped or unclipped).",
+          "The layout test asserts the title at one width inside the 460-620 px band as well."
+        ]
+      },
+      {
+        "id": "AGT-3888-D24",
+        "title": "Show quota resets in the workspace zone on every quota surface",
+        "problem": "The footer, usage panel and CLI account page show a reset in the workspace zone with UTC. The quota forecast panel, quota curve, CLI admin, CLI models and model-selection view show the same instant in the browser zone without UTC. One reset reads as two wall-clock times when the zones differ, and the repeated hour at a DST fall-back is ambiguous on those surfaces.",
+        "cause": "formatZonedTime(..., browserTimeZone()) at quota-forecast-panel.ts:157, quota-curve.ts:57, cli-admin-panel.ts:281, cli-models-panel.ts:323, model-selection-view.component.ts:128; the workspace zone is available from the usage cockpit store (as cli-window-analysis.ts:91 does).",
+        "acceptanceCriteria": [
+          "Quota and model-selection surfaces format instants in the workspace zone when one is known, with the UTC equivalent, exactly like the footer.",
+          "For the same reset instant, the footer and quota forecast panel show identical text."
+        ]
+      },
+      {
+        "id": "AGT-3888-D25",
+        "title": "Name the zone once in the quota-window reset table",
+        "problem": "The CLI window table header reads 'Resets (Europe/Berlin)' and every cell now also ends in 'Europe/Berlin'. With a UTC workspace the 'Resets (UTC)' and 'UTC' columns print the same string.",
+        "cause": "frontend/src/app/features/usage-cockpit/usage-detail.util.ts:65 now puts the zone name into UsageInstantView.local; usage-detail-panel.html:67 (header with zone) and :77 (cell) still assume local has no zone.",
+        "acceptanceCriteria": [
+          "The reset table names the zone once (header or cell, not both).",
+          "With a UTC workspace the table shows one reset column."
+        ]
+      },
+      {
+        "id": "AGT-3888-D26",
+        "title": "Repair the concept journey sentence in the e2e README",
+        "problem": "The concept-remote section now reads 'checks Dossier publication, owner choices, promotion, Promotion, the first slice start and the concept's acceptance go through the Studio controls.' The edit dropped 'and completion.' and left two sentences fused.",
+        "cause": "frontend/e2e/README.md:67-68: the diff replaced 'and completion. It then runs ...' with new text but kept the dangling 'promotion,' on line 67.",
+        "acceptanceCriteria": [
+          "The concept-remote paragraph in frontend/e2e/README.md lists what the spec checks in one grammatical sentence, including completion through Accept."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3944",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D27",
+        "title": "Include ledger-only promoted slices in the Dossier overview's linked cards",
+        "problem": "A slice that only the concept promotion ledger names is counted by the Dossier card list and the documentation banner, but not by linkedTaskKeys. The Dossier overview hydrates its reference statuses from linkedTaskKeys, so it shows no open card for that Dossier while the Dossier view says Still open. This lasts until backfill runs, and backfill never runs on read-only Wiki sources.",
+        "cause": "WorkbenchCatalogueService.cs:196 filters members to those with a primary Task.Dossier path. DossierMembership adds ledger members only when that path is empty (DossierCardsService.cs:100-101). workbench-overview.component.ts:215 prefers linkedTaskKeys.",
+        "acceptanceCriteria": [
+          "linkedTaskKeys contains every DossierMembership member, including ledger-only slices.",
+          "A catalogue test with a ledger-only open slice asserts that the slice is in linkedTaskKeys and in documentation.references."
+        ]
+      },
+      {
+        "id": "AGT-3888-D28",
+        "title": "Refresh the verify notice after the checkout is created or the path is saved",
+        "problem": "The notice tells the operator to set the checkout path and then review the verify plan. After the path is saved in Project basics, or the server checkout is created on the same page, 'Repository checkout missing' stays until a page reload.",
+        "cause": "project-settings-panel.component.ts:207-212 fetches /api/projects/{name}/build-profile once in ngOnInit, and buildProfileGate (:131) is never set again. Neither project-basics-card save nor server-checkout-notice create triggers a reload.",
+        "acceptanceCriteria": [
+          "After Project basics saves a valid checkout path, the verify notice reflects the new state without a page reload.",
+          "After Create server checkout reaches ready, the checkout-missing verify notice disappears without a page reload.",
+          "A component test drives one of these transitions."
+        ]
+      },
+      {
+        "id": "AGT-3888-D29",
+        "title": "Record the rework route change only when the round actually applied it",
+        "problem": "If the rework round is refused before the route is written (mode guard, no runner, local execution on a networked profile, admission denied), the card keeps its old route, but the receipt still says Agent changed from X to Y.",
+        "cause": "ProjectDocsEndpoints.cs:203 Confirm persists routeChangedFrom (WorkbenchDecisionService.cs:339-341) before revisions.StartAsync (ProjectDocsEndpoints.cs:211). ContinueJobAsync throws at TaskRunnerService.cs:778-811, before the route writes at :813-828. The receipt template (workbench-decision-panel.html:72-74) ignores the round outcome.",
+        "acceptanceCriteria": [
+          "A rework whose round fails before admission shows the requested route as requested, not as changed, or carries no routeChangedFrom.",
+          "An endpoint test with a refused continue asserts the receipt wording and that the card route is unchanged."
+        ]
+      },
+      {
+        "id": "AGT-3888-D30",
+        "title": "Let health endpoints proxied on the Studio origin bypass the service worker",
+        "problem": "With the production service worker in control, opening /healthz or /readyz on the Studio origin shows the Studio shell, not the API's health JSON. That is the same symptom F11 fixed for /api. An operator checking health in a browser tab sees the board and could take the stack for healthy.",
+        "cause": "frontend/ngsw-config.json:4-13 excludes only /api and /hubs (plus Angular's defaults). deploy/compose/monolith-networked/Caddyfile.frontend:13-14 proxies /healthz on the frontend origin, and deploy/compose/Caddyfile:15 proxies /healthz and /readyz. Both are extensionless and match '/**'.",
+        "acceptanceCriteria": [
+          "navigationUrls excludes every path the deploy Caddyfiles proxy to the API on the Studio origin (/healthz, /healthz/**, /readyz).",
+          "ngsw-navigation-urls.test.mjs pins /healthz and /readyz as backend documents."
+        ]
+      },
+      {
+        "id": "AGT-3888-D31",
+        "title": "Require the same override reason length in the toolbar as the server",
+        "problem": "The toolbar override form, which a content refusal now reaches, enables 'Accept with override' after one character. The completion policy needs at least 8, so a short reason comes back as 'An override needs a written reason of at least 8 characters.' The detail's form enforces 8.",
+        "cause": "frontend/src/app/features/studio-shell/components/acceptance-refusal/acceptance-refusal.component.ts:40 (length > 0) versus CompletionContractPolicy.MinimumOverrideReasonLength = 8 (backend/Features/Tasks/Acceptance/CompletionContractPolicy.cs:81, used by CompletionContentPolicy.Decide) and acceptance-next-steps.component.ts:113.",
+        "acceptanceCriteria": [
+          "The toolbar override submit stays disabled until the trimmed reason has at least 8 characters, and the form says so."
+        ]
+      },
+      {
+        "id": "AGT-3888-D32",
+        "title": "Use defined radius tokens in the acceptance next steps block",
+        "problem": "The new block and its buttons render with square corners, because their border-radius reads tokens that do not exist.",
+        "cause": "frontend/src/app/features/acceptance-readiness/components/acceptance-next-steps/acceptance-next-steps.scss:9, :23, :71 use var(--studio-radius-md) / var(--studio-radius-sm) with no fallback. Neither is defined in frontend/src/styles (the tokens that exist are --studio-card-radius, --studio-action-radius-sm and others). Some older files make the same mistake.",
+        "acceptanceCriteria": [
+          "acceptance-next-steps.scss reads only radius tokens defined in _tokens-semantic.scss."
+        ]
+      },
+      {
+        "id": "AGT-3888-D33",
+        "title": "Test the concerns, block and wait outcomes of the engine report review",
+        "problem": "Only the pass path and the no-verdict park are tested; the claimed concerns/block move to Human Review and the quota/host Wait that keeps the card in Auto Review are not exercised, and ReportReviewPolicy.Settle has no unit test.",
+        "cause": "backend.Tests/EngineReportReviewTests.cs covers pass, no verdict, ownership and recovery; orchestration-decisions/ReportReviewPolicy.cs and backend/Features/Runner/EngineReportReviewService.cs:153-160 (Wait) have no direct tests.",
+        "acceptanceCriteria": [
+          "A decision-library test pins Settle for pass, concerns, block, waiting, missing report and no verdict.",
+          "An integration test shows a concerns verdict moving a research card to Human Review with that verdict in the reason.",
+          "An integration test shows a quota-deferred review leaving the card in Auto Review with phase awaiting-review and no park."
+        ]
+      }
+    ]
+  },
+  {
+    "key": "AGT-3945",
+    "sourceTask": "AGT-3888",
+    "findings": [
+      {
+        "id": "AGT-3888-D34",
+        "title": "Test the Escalated to Human Review move of Retry integration against the real endpoint",
+        "problem": "The new lane move after an integrated replay is covered only by specs that mock the /integration/retry response (movedTo included); removing the move keeps every test green, and the browser criterion runs against a mocked backend.",
+        "cause": "backend/Features/Tasks/TaskIntegrationRetryEndpoints.cs:44-54 is untested; ServerCheckoutIntegrationRecoveryTests calls GateEnvironmentRetryService.RetryNowAsync directly; frontend/e2e/task-detail/escalation-summary.spec.ts and escalation-summary.component.spec.ts mock the response.",
+        "acceptanceCriteria": [
+          "An endpoint test posts /api/tasks/{id}/integration/retry for an Escalated card with a replayable server-checkout failure and asserts status integrated, movedTo 5-human-review and the card's lane.",
+          "The same test asserts a non-integrated replay leaves the card Escalated."
+        ]
+      },
+      {
+        "id": "AGT-3888-D35",
+        "title": "Assert the measured ownerless age in the re-park after Undo",
+        "problem": "The integration test for 'not reset by the undo' only asserts the re-park reason lacks 'no active owner for 0 minutes'; it passes for any other age or no age at all, so the restoredOwnerLoss query and OwnerLostAtUtc persistence are not pinned.",
+        "cause": "backend.Tests/ReviewInfrastructureRetryStrandingTests.cs:175; production logic at backend/Features/Runner/AutoReviewStrandingWatchdog.cs:109-116 is covered only through the pure TimeWithoutOwner unit test.",
+        "acceptanceCriteria": [
+          "The re-park after Undo states the ownerless age measured from the original owner loss (exact minutes under the test clock).",
+          "A test shows a new run or review attempt after Undo restarts the age from its own owner change."
+        ]
+      },
+      {
+        "id": "AGT-3888-D36",
+        "title": "Report a watch path whose ignored folder holds tracked changes instead of skipping it as all-paths-ignored",
+        "problem": "An ignored watch path that holds modified tracked files returns Skipped(all-paths-ignored) (success, no commit); the change stays staged in the index and the stall alarm sees no failure.",
+        "cause": "check-ignore does not report a folder with tracked content; the first add stages the tracked change and exits 1 naming the folder; the fallback removes it from pathspecs (WorkspaceArtifactCommitService.cs:811) and returns the skip (:820) without unstaging the data path.",
+        "acceptanceCriteria": [
+          "A watch path dropped by the fallback leaves no entries it staged in the index",
+          "Tracked changes below an ignored watch path are either committed or reported as a failure, not as success"
+        ]
+      },
+      {
+        "id": "AGT-3888-D37",
+        "title": "Log the ignored-path count once per repo instead of on every bucket change",
+        "problem": "The ignored-paths info line is written on every flush when buckets alternate, and the fallback warning is never deduped, contrary to 'log the dropped count once'.",
+        "cause": "NoteIgnoredPaths dedupes only on an unchanged count per root|scope (WorkspaceArtifactCommitService.cs:869-874); different watch-path sets and split calls change the count. The reason=git-add-refused warning (:815) has no dedupe.",
+        "acceptanceCriteria": [
+          "Repeated flushes over the same ignored paths write the ignored-paths line once until the set changes",
+          "The fallback warning is rate-limited per repo"
+        ]
+      },
+      {
+        "id": "AGT-3888-D38",
+        "title": "Keep the head of an oversized agent report in the review plan",
+        "problem": "For a report above about 15,900 characters only its tail is kept, the summary is omitted, and the inventory no longer excerpts the report head, so the opening of the report is absent from the plan although the pre-change excerpt showed it.",
+        "cause": "backend/Features/Runner/RemoteReviewPlanBuilder.cs:1176 keeps report[^reportRoom..]; :1101 applies the excerpt exclusion whenever CarriesAgentReport is true, also for a cut report.",
+        "acceptanceCriteria": [
+          "When results/status.md exceeds the status bound, the plan still contains its first lines (status text head slice or inventory excerpt).",
+          "The status text stays within 16,000 characters."
+        ]
+      },
+      {
+        "id": "AGT-3888-D39",
+        "title": "Assert the recorded attribution value in the account page spec",
+        "problem": "The account page spec passes even when the per-window attribution cell shows 'Unavailable'; the endpoint's interval math and permission filtering have no test.",
+        "cause": "cli-window-analysis.spec.ts:35 asserts 'Recorded attribution', which the old template also rendered; :36 asserts '10', which the burn text '10.0% / h' already contains. CliWindowAttributionTests covers only the pure fold, not WorkspaceEndpoints.cs:29-58.",
+        "acceptanceCriteria": [
+          "The spec asserts the text of [data-testid=cli-window-attribution] equals the flushed totalTokens and fails when the request errors.",
+          "An endpoint test covers [resetAt - length, min(resetAt, now)), a null resetAt, a past resetAt, and that a project-scoped user gets no unattributed rows."
+        ]
+      }
+    ]
+  }
+]
