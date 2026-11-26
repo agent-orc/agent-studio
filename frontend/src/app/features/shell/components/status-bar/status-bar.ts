@@ -17,7 +17,7 @@ import {
   setVisibleInterval,
   type VisibleIntervalHandle,
 } from '../../../../utils/visible-interval';
-import { UsageCockpitService, UsageAlarmStatusComponent, buildCliChipView, buildCostChipView } from '../../../usage-cockpit';
+import { UsageCockpitService, UsageAlarmStatusComponent, buildCliChipView, buildCostChipView, formatUsedPct } from '../../../usage-cockpit';
 import type { UsageCli } from '../../../usage-cockpit';
 import { ProviderAuthStatusService } from '../../../remote-hosts/services/provider-auth-status.service';
 import {
@@ -34,6 +34,8 @@ import { CrashRecoveryPromptComponent } from '../crash-recovery-prompt/crash-rec
 import { summarizeStatusBarHostLoad, summarizeStatusBarSlotsByRole } from './status-bar-host-load';
 import { describeStatusBarReviewLane, summarizeStatusBarReviewLane } from './status-bar-review-lane';
 import { withRouteSegment } from '../../../../services/url-hash.util';
+import { browserTimeZone, formatZonedTime } from '../../../../services/usage-time.util';
+import { injectUsageClock } from '../../../usage-cockpit/usage-clock';
 import { nameWithVisibleText } from '../../../../utils/accessible-name';
 
 const HOST_LOAD_REFRESH_MS = 30_000;
@@ -71,26 +73,38 @@ export class StatusBarComponent implements OnInit, OnDestroy {
   private hostLoadRefreshHandle: VisibleIntervalHandle | null = null;
   constructor() { this.usage.connect(inject(DestroyRef)); }
 
+  private readonly usageClock = injectUsageClock();
   readonly visibleUsageClis = computed(() => (this.usage.snapshot()?.clis ?? []).filter(cli =>
-    cli.windows.some(window => window.usedPct !== null)
+    cli.subscriptionKey || cli.probeFailedAt || cli.windows.some(window => window.usedPct !== null)
     || (this.usage.snapshot()?.runs ?? []).some(run => run.effectiveCli === cli.cliId)));
   usageView(cli: UsageCli) {
-    return buildCliChipView(cli.cliId, cli, this.usage.snapshot()?.timeZone ?? null, Date.now(), [], [], this.usage.readFailed());
+    return buildCliChipView(cli.cliId, cli, browserTimeZone(), this.usageClock(), [], [], this.usage.readFailed());
   }
-  /** The chip's visible text first, then the spoken windows (WCAG 2.5.3). */
+  footerWindows(cli: UsageCli) {
+    return cli.windows.filter(window => window.usedPct !== null).map(window => {
+      const label = window.label.toLowerCase();
+      const tag = label.includes('fable') ? 'Fable' : label.includes('spark') ? window.label
+        : label.includes('week') ? 'WK' : label.includes('5h') || label.includes('5-hour') ? 'Session' : window.label;
+      const reset = formatZonedTime(window.resetAtUtc, browserTimeZone());
+      const left = Date.parse(window.resetAtUtc ?? '') - this.usageClock();
+      const remaining = left <= 0 ? 'reset due' : left < 3_600_000
+        ? `in ${Math.ceil(left / 60_000)} min` : `in ${Math.round(left / 3_600_000)} h`;
+      return { id: window.id, text: `${tag} ${formatUsedPct(window.usedPct)}`, reset: reset ? `resets ${reset} (${remaining})` : 'reset unknown' };
+    });
+  }
+  /** Visible subscription text also leads the accessible name. */
   usageName(cli: UsageCli): string {
     const v = this.usageView(cli);
     return nameWithVisibleText([
-      v.name,
-      v.fable.reported ? `Fable ${v.fable.value}` : '',
-      v.weekly.reported ? `WK ${v.weekly.value}` : '',
-      v.session.reported ? `Session ${v.session.value}` : '',
-      v.state === 'stale' ? this.age(cli.fetchedAt) : '',
+      v.name, cli.windows.some(w => w.usedPct !== null) ? '' : 'Usage unavailable',
+      ...this.footerWindows(cli).map(w => `${w.text} ${w.reset}`),
+      cli.probeFailedAt ? 'Probe failed' : '',
+      v.state === 'stale' || cli.probeFailedAt ? this.age(cli.fetchedAt) : '',
     ].join(' '), v.ariaLabel);
   }
   costView() { return buildCostChipView(this.usage.snapshot()?.cost ?? null, Date.now(), [], this.usage.readFailed()); }
   age(iso: string | null | undefined): string {
-    const elapsed = Date.now() - Date.parse(iso ?? '');
+    const elapsed = this.usageClock() - Date.parse(iso ?? '');
     if (!Number.isFinite(elapsed) || elapsed < 0) return 'age unknown';
     if (elapsed < 60_000) return 'less than 1 min old';
     if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)} min old`;
@@ -99,7 +113,7 @@ export class StatusBarComponent implements OnInit, OnDestroy {
   }
   usageTooltip(cli: UsageCli): string {
     const view = this.usageView(cli);
-    return `${view.detail}\n${view.state === 'stale' ? 'Refresh the usage source or check the provider connection in Execution Hosts.' : 'Open usage detail.'}`;
+    return `${view.detail}\n${this.footerWindows(cli).map(w => `${w.text}: ${w.reset}`).join('\n')}\n${view.state === 'stale' ? 'Refresh the usage source or check the provider connection in Execution Hosts.' : 'Open usage detail.'}`;
   }
   readonly hostProblems = computed(() => {
     const problems = new Map<string, string[]>();

@@ -5,6 +5,40 @@ namespace AgentStudio.Tests;
 
 public class CodexQuotaProbeTests
 {
+    [Theory]
+    [InlineData("2026-11-26T10:00:00Z", "9:49 PM on 27 Nov", "2026-11-27T21:49:00")]
+    [InlineData("2026-12-31T10:00:00Z", "9:49 PM on 1 Jan", "2027-01-01T21:49:00")]
+    public void SharedParser_ParsesDatedAmPmReset(string observed, string label, string expected)
+    {
+        var window = Assert.Single(AgentStudio.CliHosting.SubscriptionQuotaParser.ParseCodex(
+            $"Weekly limit: 70% left (resets {label})", DateTime.Parse(observed).ToUniversalTime()));
+        Assert.Equal(TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(DateTime.Parse(expected), DateTimeKind.Unspecified),
+            TimeZoneInfo.Local), window.ResetAt);
+    }
+
+    [Fact]
+    public void SharedParser_UsesProducingHostZoneAndLogsUnknownLabelOnce()
+    {
+        var now = new DateTime(2026, 11, 26, 10, 0, 0, DateTimeKind.Utc);
+        var zone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
+        var window = Assert.Single(AgentStudio.CliHosting.SubscriptionQuotaParser.ParseCodex(
+            "Weekly limit: 70% left (resets 9:49 PM on 27 Nov)", now, zone));
+        Assert.Equal(new DateTime(2026, 11, 27, 20, 49, 0, DateTimeKind.Utc), window.ResetAt);
+        var claude = Assert.Single(AgentStudio.CliHosting.SubscriptionQuotaParser.ParseClaude(
+            "Current week (all models) 30% used Resets Dec1,1pm (Europe/Berlin)", now));
+        Assert.Equal(new DateTime(2026, 12, 1, 12, 0, 0, DateTimeKind.Utc), claude.ResetAt);
+        var warnings = new List<string>();
+        for (var i = 0; i < 2; i++)
+        {
+            var unknown = Assert.Single(AgentStudio.CliHosting.SubscriptionQuotaParser.ParseCodex(
+                "Weekly limit: 70% left (resets unknown-regression-label)", now, zone, warnings.Add));
+            Assert.Null(unknown.ResetAt);
+        }
+        Assert.Single(warnings);
+        Assert.Null(Assert.Single(AgentStudio.CliHosting.SubscriptionQuotaParser.ParseCodex(
+            "Weekly limit: 70% left (resets 9:49 PM on 31 Nov)", now, zone)).ResetAt);
+    }
+
     private static string ReadFixture(string name)
         => File.ReadAllText(Path.Combine(
             AppContext.BaseDirectory,

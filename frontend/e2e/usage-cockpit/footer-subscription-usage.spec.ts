@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { setTheme, dismissDevErrorDialog } from '../helpers/theme';
 import { SNAPSHOT, GEMINI_UNAVAILABLE, FIXTURE_NOW } from '../../src/mockups/usage-chips/app/usage-chips.fixtures';
 
+test.use({ timezoneId: 'America/New_York' });
+
 const shots = join(process.env.JOB_RESULTS_DIR ?? 'test-results', 'bars');
 const observedAt = new Date(FIXTURE_NOW).toISOString();
 
@@ -116,6 +118,9 @@ test('one footer entry per subscription, honest age, host problem, account and r
   const footer = page.getByTestId('status-bar');
   await expect(footer.getByTestId('footer-usage-claude')).toContainText('WK 7%', { timeout: 60_000 });
   await expect(footer.getByTestId('footer-usage-codex')).toContainText('WK 15%');
+  await expect(footer.getByTestId('footer-usage-codex')).toContainText(/resets .*\(in \d+ h\)/);
+  await expect(footer.getByTestId('footer-usage-codex')).toContainText(
+    await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone));
   await expect(footer.getByTestId('footer-usage-claude')).toContainText('1 h old');
   await expect(footer.getByTestId('footer-usage-claude')).toHaveAttribute('title', /Refresh the usage source or check the provider connection in Execution Hosts/);
   await expect(footer.getByTestId('footer-usage-claude')).not.toContainText('Session');
@@ -169,8 +174,11 @@ test('one footer entry per subscription, honest age, host problem, account and r
       return {
         separatorBetweenGroups: !separator || !visible(separator)
           || (children.indexOf(separator) > 0 && children.indexOf(separator) < children.length - 1),
-        entryGaps: entries.slice(1).map((entry, index) =>
-          entry.getBoundingClientRect().left - entries[index].getBoundingClientRect().right),
+        entryGaps: entries.slice(1).flatMap((entry, index) => {
+          const current = entry.getBoundingClientRect();
+          const previous = entries[index].getBoundingClientRect();
+          return Math.abs(current.top - previous.top) < 1 ? [current.left - previous.right] : [];
+        }),
         rightEdgeGap: barBox.right - right.right,
         leftBeforeRight: bar.querySelector('[data-testid="status-bar-running"]')!
           .getBoundingClientRect().left < right.left,
@@ -202,6 +210,7 @@ test('one footer entry per subscription, honest age, host problem, account and r
         }
         await expect(footer.getByTestId('footer-usage-claude')).toContainText('WK 7%');
         await expect(footer.getByTestId('footer-usage-codex')).toContainText('WK 15%');
+
         await expect(footer.getByTestId('footer-usage-cost')).toContainText('$12.48');
         await footer.getByTestId('footer-usage-cost').click();
         const sheet = page.getByTestId('usage-detail-surface');
@@ -217,7 +226,7 @@ test('one footer entry per subscription, honest age, host problem, account and r
         await page.getByTestId('usage-detail-close').click();
       }
       await page.mouse.move(1, 1);
-      await page.screenshot({ path: join(shots, `after-${width}-${theme}.png`), fullPage: false, animations: 'disabled' });
+      await page.screenshot({ path: join(shots, `after-${width}-${theme}--mocked.png`), fullPage: false, animations: 'disabled' });
     }
     if (width === 390) {
       await footer.getByTestId('footer-usage-cost').click();
@@ -319,5 +328,43 @@ test('Fable weekly allowance appears independently in the footer in both themes'
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);
       await page.screenshot({ path: join(shots, `fable-weekly-${width}-${theme}--mocked.png`), animations: 'disabled' });
     }
+  }
+});
+
+test('failed subscriptions retain their own values and first failures remain explicitly unavailable', async ({ page }) => {
+  test.setTimeout(90_000);
+  mkdirSync(shots, { recursive: true });
+  await page.clock.setFixedTime(FIXTURE_NOW);
+  await page.setViewportSize({ width: 390, height: 900 });
+  const snapshot = cockpit();
+  const claude = snapshot.clis.find(cli => cli.cliId === 'claude')!;
+  const failedAt = new Date(FIXTURE_NOW - 60_000).toISOString();
+  snapshot.clis.push({
+    ...claude, subscriptionKey: 'failed-with-history',
+    fetchedAt: new Date(FIXTURE_NOW - 2 * 3_600_000).toISOString(), probeFailedAt: failedAt,
+    windows: claude.windows.map(window => ({ ...window, usedPct: 35 })),
+    availability: { ...claude.availability, status: 'stale', reason: 'A claude host quota probe failed.' },
+  }, {
+    ...claude, subscriptionKey: 'failed-without-history', fetchedAt: null, probeFailedAt: failedAt,
+    windows: [], availability: { ...claude.availability, observedAt: null, status: 'unavailable',
+      reason: 'A claude host quota probe failed.' },
+  });
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({ json: snapshot }));
+  await page.goto('/');
+  await dismissDevErrorDialog(page);
+  const entries = page.getByTestId('footer-usage-claude');
+  await expect(entries).toHaveCount(3);
+  const retained = entries.filter({ hasText: 'WK 35%' });
+  await expect(retained).toContainText('Probe failed');
+  await expect(retained).toContainText('2 h old');
+  const unavailable = entries.filter({ hasText: 'Usage unavailable' });
+  await expect(unavailable).toContainText('Probe failed');
+  await expect(unavailable).toContainText('age unknown');
+  await expect(unavailable).not.toContainText('35%');
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await expect(retained).toBeVisible();
+    await expect(unavailable).toBeVisible();
+    await page.screenshot({ path: join(shots, `quota-failures-390-${theme}--mocked.png`), animations: 'disabled' });
   }
 });

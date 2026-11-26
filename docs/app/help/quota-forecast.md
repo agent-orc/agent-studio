@@ -81,3 +81,22 @@ does not starve the rate window.
 - UI: `frontend/src/app/features/quota/components/quota-forecast-panel/` and
   `quota-curve/`; the armed decision is `quotaFallbackStatus` in
   `quota-forecast.util.ts`.
+
+## Reset times and probe failures
+
+`GET /api/cli/quota` reports `hostTimeZone` on snapshots produced by host
+probes. Codex reset labels, including `9:49 PM on 27 Nov`, are interpreted on
+that host and converted to UTC, with January dates rolling into the next year
+when observed in December. Unknown labels retain their text and a null
+`resetAt`; each unknown label produces one warning per probe process.
+
+Each response window includes `elapsedPct` (0 to 100) at the report's `at`
+time. It uses `observedStartAt`, or the reset minus the known window duration.
+Unknown resets, missing anchors with no inferred duration, and suspicious projection anchors
+return null. Elapsed share is time, independent of the quota's `usedPct`.
+
+The usage footer lists subscription windows with used percent, reset time in
+the viewer's browser time zone, and time remaining. A failed probe shows
+`Probe failed` alongside the last good values and their age. Accounts with no
+good observation show `Usage unavailable`. Subscriptions remain separate by
+subscription key; one account's values never stand in for another's.

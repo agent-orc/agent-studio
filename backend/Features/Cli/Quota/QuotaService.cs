@@ -96,8 +96,9 @@ public sealed class QuotaService
     public QuotaReport GetCached()
     {
         if (_pinnedDemo) return PinnedDemoReport();
-        return new QuotaReport
+        return QuotaWindowProjection.WithElapsedPercent(new QuotaReport
         {
+            At = _clock.GetUtcNow().UtcDateTime,
             TtlSeconds = (int)_ttl.TotalSeconds,
             Snapshots = _probes.Keys.SelectMany(k =>
             {
@@ -126,7 +127,7 @@ public sealed class QuotaService
                     Error = $"No healthy reporting host has supplied a {k} sign-in reading."
                 }];
             }).ToList()
-        };
+        });
     }
 
     /// <summary>
@@ -169,6 +170,7 @@ public sealed class QuotaService
         {
             CliType = reading.Provider,
             SubscriptionKey = reading.SubscriptionKey,
+            HostTimeZone = reading.HostTimeZone,
             FetchedAt = reading.ObservedAt,
             CliVersion = reading.CliVersion,
             Plan = reading.Plan,
@@ -423,12 +425,12 @@ public sealed class QuotaService
     private QuotaReport PinnedDemoReport()
     {
         var now = _clock.GetUtcNow().UtcDateTime;
-        return new QuotaReport
+        return QuotaWindowProjection.WithElapsedPercent(new QuotaReport
         {
             At = now,
             TtlSeconds = (int)_ttl.TotalSeconds,
             Snapshots = _probes.Keys.Select(k => PinnedFor(k, now)).ToList()
-        };
+        });
     }
 
     private QuotaSnapshot? PinnedDemoFor(string cliType)

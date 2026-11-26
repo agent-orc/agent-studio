@@ -17,6 +17,8 @@ export interface QuotaWindow {
   label: string;
   /** Duration inferred by the shared backend quota policy. */
   windowHours?: number | null;
+  /** Elapsed share at report.at, 0..100; null when the window is unknown. */
+  elapsedPct?: number | null;
   usedPct: number | null;
   used: number | null;
   limit: number | null;
@@ -29,6 +31,7 @@ export interface QuotaWindow {
 export interface QuotaSnapshot {
   cliType: CliType;
   subscriptionKey?: string | null;
+  hostTimeZone?: string | null;
   fetchedAt: string;
   /** CLI `--version` output recorded alongside this probe. */
   cliVersion?: string | null;

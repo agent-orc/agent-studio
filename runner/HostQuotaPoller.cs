@@ -25,11 +25,11 @@ public sealed class HostQuotaPoller(TaskServerClient client, RunnerOptions optio
                     if (claim is null) return; // Older Task Server or local compatibility profile.
                     if (!claim.Granted || claim.ProbeId is null) continue;
                     var binary = provider == "claude" ? options.ClaudeCliBin : options.CodexCliBin;
-                    var reading = await HostQuotaReader.ReadAsync(provider, binary, ct);
+                    var reading = await HostQuotaReader.ReadAsync(provider, binary, ct, log);
                     await client.ReportHostQuotaAsync(new(
                         client.RunnerInstanceId, provider, key, claim.ProbeId,
                         reading.ObservedAt, reading.CliVersion, reading.Plan,
-                        reading.Windows, reading.Error), ct);
+                        reading.Windows, reading.Error, reading.HostTimeZone), ct);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
                 catch (Exception exception)
@@ -124,7 +124,7 @@ public static class HostQuotaIdentity
 }
 
 public sealed record HostQuotaRead(DateTime ObservedAt, string? CliVersion, string? Plan,
-    IReadOnlyList<HostQuotaWindowDto> Windows, string? Error);
+    IReadOnlyList<HostQuotaWindowDto> Windows, string? Error, string? HostTimeZone = null);
 
 public static class HostQuotaReader
 {
@@ -136,7 +136,7 @@ public static class HostQuotaReader
     private static readonly Regex CodexStatus = new(@"5h\s*limit|Weekly\s*limit|Account:", RegexOptions.IgnoreCase);
 
     public static async Task<HostQuotaRead> ReadAsync(string provider, string binary,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Action<string>? warn = null)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(65));
@@ -185,7 +185,7 @@ public static class HostQuotaReader
             var observed = DateTime.UtcNow;
             var parsed = provider == "claude"
                 ? SubscriptionQuotaParser.ParseClaude(output, observed)
-                : SubscriptionQuotaParser.ParseCodex(output, observed);
+                : SubscriptionQuotaParser.ParseCodex(output, observed, TimeZoneInfo.Local, warn);
             var plan = provider == "claude" ? ClaudePlan(output) : SubscriptionQuotaParser.CodexPlan(output);
             var versionMatch = provider == "claude"
                 ? Regex.Match(output, @"Claude\s*Code\s*v?\s*(?<version>\d+\.\d+\.\d+)", RegexOptions.IgnoreCase)
@@ -198,7 +198,7 @@ public static class HostQuotaReader
                     ? "Provider sign-in is unavailable."
                     : "Quota panel did not contain a parseable window."
                 : null;
-            return new(observed, version, plan, windows, error);
+            return new(observed, version, plan, windows, error, TimeZoneInfo.Local.Id);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception exception)
@@ -207,7 +207,7 @@ public static class HostQuotaReader
                 exception is OperationCanceledException ? "Quota probe timed out."
                 : exception is System.ComponentModel.Win32Exception or FileNotFoundException
                     ? "Provider CLI is unavailable on this host."
-                    : "Host quota probe failed.");
+                    : "Host quota probe failed.", TimeZoneInfo.Local.Id);
         }
     }
 

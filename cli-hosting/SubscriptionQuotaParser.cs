@@ -103,12 +103,12 @@ public static class SubscriptionQuotaParser
         catch (InvalidTimeZoneException) { return TimeZoneInfo.Local; }
     }
 
-    public static IReadOnlyList<SubscriptionQuotaWindow> ParseCodex(string text, DateTime nowUtc)
+    public static IReadOnlyList<SubscriptionQuotaWindow> ParseCodex(string text, DateTime nowUtc, TimeZoneInfo? hostZone = null, Action<string>? warn = null)
     {
         var windows = new List<SubscriptionQuotaWindow>();
         var spark = Spark.Match(text);
-        AddCodex(windows, spark.Success ? text[..spark.Index] : text, "", nowUtc);
-        if (spark.Success) AddCodex(windows, text[(spark.Index + spark.Length)..], "Spark ", nowUtc);
+        AddCodex(windows, spark.Success ? text[..spark.Index] : text, "", nowUtc, hostZone ?? TimeZoneInfo.Local, warn);
+        if (spark.Success) AddCodex(windows, text[(spark.Index + spark.Length)..], "Spark ", nowUtc, hostZone ?? TimeZoneInfo.Local, warn);
         if (windows.Count == 0 && Footer.Match(text) is { Success: true } footer)
         {
             windows.Add(new("5-hour", 100 - int.Parse(footer.Groups["h5"].Value, CultureInfo.InvariantCulture)));
@@ -117,7 +117,7 @@ public static class SubscriptionQuotaParser
         return windows;
     }
 
-    private static void AddCodex(List<SubscriptionQuotaWindow> windows, string text, string prefix, DateTime nowUtc)
+    private static void AddCodex(List<SubscriptionQuotaWindow> windows, string text, string prefix, DateTime nowUtc, TimeZoneInfo zone, Action<string>? warn)
     {
         var matches = CodexLimit.Matches(text);
         for (var i = 0; i < matches.Count; i++)
@@ -130,32 +130,38 @@ public static class SubscriptionQuotaParser
             var resetRaw = reset.Success ? reset.Groups["reset"].Value.Trim() : null;
             var label = match.Groups["kind"].Value.Equals("5h", StringComparison.OrdinalIgnoreCase)
                 ? "5-hour" : "Weekly";
+            var resetAt = resetRaw is null ? null : CodexResetAt(resetRaw, nowUtc, zone);
+            if (resetRaw is not null && resetAt is null && warn is not null
+                && UnparsedCodexResets.TryAdd(resetRaw, 0))
+                warn($"Could not parse Codex reset label: {resetRaw}");
             windows.Add(new(prefix + label,
                 100 - int.Parse(match.Groups["left"].Value, CultureInfo.InvariantCulture),
-                resetRaw is null ? null : CodexResetAt(resetRaw, nowUtc), resetRaw));
+                resetAt, resetRaw));
         }
     }
 
-    private static DateTime? CodexResetAt(string raw, DateTime nowUtc)
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> UnparsedCodexResets = new();
+
+    private static DateTime? CodexResetAt(string raw, DateTime nowUtc, TimeZoneInfo tz)
     {
-        var tz = TimeZoneInfo.Local;
         var now = TimeZoneInfo.ConvertTime(DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc), tz);
-        var date = Regex.Match(raw, @"^(?<time>\d{1,2}:\d{2})\s*on\s*(?<day>\d{1,2})\s*(?<mon>[A-Za-z]+)$", RegexOptions.IgnoreCase);
-        if (date.Success && DateTime.TryParseExact(date.Groups["time"].Value, "H:mm",
+        var date = Regex.Match(raw, @"^(?<time>\d{1,2}:\d{2}\s*(?:am|pm)?)\s*on\s*(?<day>\d{1,2})\s*(?<mon>[A-Za-z]+)$", RegexOptions.IgnoreCase);
+        if (date.Success && DateTime.TryParseExact(date.Groups["time"].Value.Replace(" ", ""), ["H:mm", "HH:mm", "h:mmtt", "hh:mmtt"],
                 CultureInfo.InvariantCulture, DateTimeStyles.None, out var time)
             && DateTime.TryParseExact(date.Groups["mon"].Value, ["MMM", "MMMM"],
                 CultureInfo.InvariantCulture, DateTimeStyles.None, out var month)
             && int.TryParse(date.Groups["day"].Value, out var day))
         {
+            if (day < 1 || day > DateTime.DaysInMonth(now.Year, month.Month)) return null;
             var candidate = new DateTime(now.Year, month.Month, day, time.Hour, time.Minute, 0);
             if (candidate < now.AddDays(-1)) candidate = candidate.AddYears(1);
-            return TimeZoneInfo.ConvertTimeToUtc(candidate, tz);
+            return tz.IsInvalidTime(candidate) ? null : TimeZoneInfo.ConvertTimeToUtc(candidate, tz);
         }
-        if (!DateTime.TryParseExact(raw, ["H:mm", "HH:mm", "h:mmtt", "hh:mmtt"],
+        if (!DateTime.TryParseExact(raw.Replace(" ", ""), ["H:mm", "HH:mm", "h:mmtt", "hh:mmtt"],
                 CultureInfo.InvariantCulture, DateTimeStyles.None, out var clock)) return null;
         var next = new DateTime(now.Year, now.Month, now.Day, clock.Hour, clock.Minute, 0);
         if (next <= now) next = next.AddDays(1);
-        return TimeZoneInfo.ConvertTimeToUtc(next, tz);
+        return tz.IsInvalidTime(next) ? null : TimeZoneInfo.ConvertTimeToUtc(next, tz);
     }
 
     public static string? CodexPlan(string text)

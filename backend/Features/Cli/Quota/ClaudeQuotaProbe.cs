@@ -170,6 +170,7 @@ public sealed class ClaudeQuotaProbe : QuotaProbeBase
             return new QuotaSnapshot
             {
                 CliType   = CliType,
+                HostTimeZone = TimeZoneInfo.Local.Id,
                 CliVersion = cliVersion,
                 Plan      = plan,
                 Source    = "/usage",
@@ -188,6 +189,7 @@ public sealed class ClaudeQuotaProbe : QuotaProbeBase
             return new QuotaSnapshot
             {
                 CliType = CliType,
+                HostTimeZone = TimeZoneInfo.Local.Id,
                 CliVersion = cliVersion,
                 Source = "/usage",
                 Error = DescribeProbeFailure(ex)

@@ -25,6 +25,29 @@ namespace AgentStudio.Cli;
 /// </summary>
 public static class QuotaWindowProjection
 {
+    /// <summary>Add elapsed time percentages at the response clock, without changing cached readings.</summary>
+    public static QuotaReport WithElapsedPercent(QuotaReport report)
+        => report with
+        {
+            Snapshots = report.Snapshots.Select(snapshot => snapshot with
+            {
+                Windows = snapshot.Windows.Select(window => window with
+                {
+                    ElapsedPct = ElapsedPercent(window, report.At)
+                }).ToList()
+            }).ToList()
+        };
+
+    private static double? ElapsedPercent(QuotaWindow window, DateTime nowUtc)
+    {
+        if (window.ResetAt is not { } end || !string.IsNullOrWhiteSpace(window.ProjectionSuspiciousReason)) return null;
+        var start = window.ObservedStartAt
+            ?? (window.WindowHours is { } hours ? end.AddHours(-hours) : (DateTime?)null);
+        return start is { } from && end > from
+            ? Math.Clamp((nowUtc - from).TotalSeconds / (end - from).TotalSeconds * 100, 0, 100)
+            : null;
+    }
+
     private static readonly TimeSpan StartAnchorTolerance = SelectionQuotaMath.StartAnchorTolerance;
     private static readonly TimeSpan WeeklyLength = TimeSpan.FromDays(7);
 
