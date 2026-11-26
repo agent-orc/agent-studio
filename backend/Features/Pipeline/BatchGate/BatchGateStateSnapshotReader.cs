@@ -43,7 +43,8 @@ public static class BatchGateStateSnapshotReader
         string? diskPauseReason = null,
         int? configuredGateSlots = null,
         BatchReservationWait? reservationWait = null,
-        BatchLaneAdmissionSnapshot? laneAdmission = null)
+        BatchLaneAdmissionSnapshot? laneAdmission = null,
+        bool postMerge = false, Func<BatchGateSubject, bool>? settledMember = null)
     {
         // AGT-3569: the durable claim on the project's flight slot, live or last ended.
         var flightClaim = store.ReadFlightClaim(project);
@@ -69,7 +70,8 @@ public static class BatchGateStateSnapshotReader
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
         var at = now ?? DateTimeOffset.UtcNow;
         var today = DateOnly.FromDateTime(at.UtcDateTime);
-        var pending = store.ListPending().Where(item =>
+        bool Settled(BatchGateSubject member) => settledMember?.Invoke(member) == true;
+        var pending = store.ListPending().Where(item => !Settled(item.Subject) &&
                 string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase))
             .OrderBy(item => item.Subject.EnqueueSequence).ToArray();
         var preChecks = store.ListPreChecks(project).OrderByDescending(item => item.CompletedAtUtc).ToArray();
@@ -87,7 +89,10 @@ public static class BatchGateStateSnapshotReader
         // readable batch with a phase inferred from an older state row.
         var projectManifests = store.ListManifests()
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase)
-                && store.LatestState(item.BatchId).Reason != BatchGateStore.StateUnreadableReason)
+                && store.LatestState(item.BatchId).Reason != BatchGateStore.StateUnreadableReason
+                && !(store.LatestState(item.BatchId).Phase is
+                    (BatchPhase.Abandoned or BatchPhase.Paused or BatchPhase.Published or BatchPhase.Red)
+                    && item.Members.All(Settled)))
             .ToArray();
         var nonterminalManifests = projectManifests.Where(item => StateOf(store, item).Phase
             is not (BatchPhase.Published or BatchPhase.Paused or BatchPhase.Abandoned)).ToArray();
@@ -116,6 +121,14 @@ public static class BatchGateStateSnapshotReader
                 ?? new BatchPlanDecision(pending.Length == 0 ? "idle" : "wait",
                     pending.Length == 0 ? "no eligible cards" : "awaiting planner tick",
                     null, [], 0, []);
+        var pendingKeys = pending.Select(item => item.Subject.TaskKey).ToHashSet(StringComparer.Ordinal);
+        plan = plan with
+        {
+            ProposedMembers = plan.ProposedMembers.Where(pendingKeys.Contains).ToArray(),
+            ExcludedMembers = (plan.ExcludedMembers ?? []).Where(item => pendingKeys.Contains(item.TaskKey)).ToArray(),
+        };
+        if (pending.Length == 0 && plan.Decision == "wait")
+            plan = new BatchPlanDecision("idle", "no eligible cards", null, [], 0, [], ExcludedMembers: []);
         if (pushWait is not null)
             plan = plan with { Reason = pushWait.Reason };
         var recoverable = store.ListRecoverableManifests()
@@ -179,6 +192,9 @@ public static class BatchGateStateSnapshotReader
             };
         if (diskPauseReason is not null)
             plan = plan with { Decision = "wait", Reason = diskPauseReason };
+        if (postMerge)
+            plan = new BatchPlanDecision("disabled",
+                "This project integrates post-merge and does not use a batch gate.", null, [], 0, [], ExcludedMembers: []);
         var manifests = projectManifests
             .OrderByDescending(item => item.ClosedAtUtc)
             .Take(Math.Clamp(history, 0, 500))
@@ -253,6 +269,7 @@ public static class BatchGateStateSnapshotReader
                     ? Math.Max(0, (at - claim.StageStartedAtUtc).TotalMinutes) : (double?)null,
                 reservationWaitsFor = claim is not null && flightReservationWait is not null
                     ? flightReservationWait.Reason : null,
+                publicationRecovery = store.ReadPublicationRecovery(manifest.BatchId),
                 nextAction = phase.Phase == BatchPhase.Red && claim is null
                     ? RedNextAction(manifest, isolationActive, recovers, findings)
                     : NextAction(phase, claim, recoveryStatus?.Invoke(manifest.BatchId), at),
@@ -262,7 +279,7 @@ public static class BatchGateStateSnapshotReader
                 phaseReason = phase.Reason,
                 isolationActive,
                 isolationPending = recovers,
-                heldTaskKeys = held,
+                heldTaskKeys = held.Where(key => !manifest.Members.Any(member => member.TaskKey == key && Settled(member))).ToArray(),
                 phaseHistory = store.StateHistory(manifest.BatchId).Select(item => new {
                     phase = item.Phase.ToString().ToLowerInvariant(), reason = item.Reason, atUtc = item.RecordedAtUtc,
                 }).ToArray(),
@@ -425,6 +442,7 @@ public static class BatchGateStateSnapshotReader
             for (var index = 0; index < manifest.Members.Count; index++)
             {
                 var member = manifest.Members[index];
+                if (Settled(member)) continue;
                 var released = publication is not null && store.TryReadMember(
                     manifest.BatchId, member.TaskKey, publication.BatchRunId) is not null;
                 // An ejected member left its batch for the per-task gate; the
@@ -489,6 +507,9 @@ public static class BatchGateStateSnapshotReader
                 reason = route.Rule, reasonDetail = route.Event,
                 fallbackRule = route.Rule, fallbackEvent = route.Event,
                 preCheck = (BatchGatePreCheckVerdict?)null });
+        foreach (var member in allPending.Select(item => item.Subject)
+                     .Where(member => Settled(member) && !pendingKeys.Contains(member.TaskKey)))
+            members.Remove(member.TaskKey);
         return new
         {
             diskPauseReason,
