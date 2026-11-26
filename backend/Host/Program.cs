@@ -1588,7 +1588,10 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPos
             StringComparison.OrdinalIgnoreCase)), cardId, null) is [var task, ..]
         ? OperatorDecisionFacts.CardKey(task) : null,
     () => sp.GetRequiredService<ProjectRegistry>().List().Where(project => !project.Archived)
-        .Select(project => (project.DisplayName, sp.GetRequiredService<AgentStudio.Personas.LineGuardianStore>().Read(project.Id)))));
+        .Select(project => (project.DisplayName, sp.GetRequiredService<AgentStudio.Personas.LineGuardianStore>().Read(project.Id))),
+    cardState: (project, cardId) => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live is { } live
+        && TaskScannerService.FindMatches(live.Where(task => string.Equals(task.ProjectName, project,
+            StringComparison.OrdinalIgnoreCase)), cardId, null) is [var task, ..] ? task.State : null));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorEnvironmentIncidentFactSource(
     sp.GetRequiredService<HealthCheckStore>(),
     () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name),

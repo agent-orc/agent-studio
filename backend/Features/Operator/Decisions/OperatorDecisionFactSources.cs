@@ -355,17 +355,33 @@ public sealed class OperatorPostMergeCoverageFactSource(Func<IReadOnlyList<PostM
 public sealed class OperatorPostMergeRedIncidentFactSource(
     Func<IEnumerable<(string Project, AgentStudio.TaskServer.Contracts.PostMergeProjectState State)>> states,
     Func<string, string, string?>? cardKey = null,
-    Func<IEnumerable<(string Project, AgentStudio.Personas.GuardianProjectState State)>>? guardianStates = null) : IOperatorDecisionFactSource
+    Func<IEnumerable<(string Project, AgentStudio.Personas.GuardianProjectState State)>>? guardianStates = null,
+    Func<string, string, string?>? cardState = null) : IOperatorDecisionFactSource
 {
     public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.PostMergeRedIncident];
 
     public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
     {
         var facts = new List<OperatorDecisionFact>();
+        var pickupCards = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (project, state) in states())
         foreach (var incident in state.Incidents ?? [])
         {
             if (incident.ResolvedAtUtc is not null) continue;
+            var lane = cardState?.Invoke(project, incident.RepairCardId);
+            if (state.DevelopState == "red" && cardState is not null
+                && AgentStudio.Runner.MonolithTransitionAdapter.RedRepairPickupOverdue(
+                    new DateTimeOffset(DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc)) - incident.FirstRedAtUtc, lane)
+                && pickupCards.Add(project + "|" + incident.RepairCardId))
+            {
+                var key = cardKey?.Invoke(project, incident.RepairCardId) ?? incident.RepairCardId;
+                var title = $"develop is red since {incident.FirstRedAtUtc:yyyy-MM-dd HH:mm} UTC, repair card {key} is {lane ?? "missing"}";
+                facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.PostMergeRedIncident,
+                    $"{OperatorDecisionTypes.PostMergeRedIncident}|{project}|pickup|{incident.RepairCardId}|{incident.FirstRedAtUtc:O}",
+                    project, key, title, incident.FirstRedAtUtc.AddMinutes(10).UtcDateTime,
+                    [new("repair card", "/#/tasks/" + Uri.EscapeDataString(key)),
+                     new("latest red receipt", "/api/runner/post-merge/projects/" + Uri.EscapeDataString(project))], Title: title));
+            }
             var questions = incident.OwnerQuestions.Count > 0 ? incident.OwnerQuestions
                 : incident.OwnerQuestion is { } legacy ? [legacy with { AskedAtUtc = incident.OwnerAskedAtUtc }] : [];
             foreach (var question in questions)

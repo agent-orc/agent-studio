@@ -39,7 +39,7 @@ public sealed record RedDevelopRepairDecision(RedDevelopRepairAction Action, str
 /// <summary>What a host does with an earlier repair card of the same fingerprint when a new incident opens.</summary>
 public enum RecurringRepairCardAction
 {
-    /// <summary>Move the card back to Preparation with the new evidence.</summary>
+    /// <summary>Move the queued card to Ready with the new evidence.</summary>
     Reopen,
     /// <summary>Link the incident to the card and leave its lane and attempt alone.</summary>
     Attach,
@@ -101,6 +101,28 @@ public static class RedDevelopRepairPolicy
         TaskStates.Progress or TaskStates.AutoReview or TaskStates.HumanReview => RecurringRepairCardAction.Attach,
         _ => RecurringRepairCardAction.Reopen,
     };
+
+    public static string CreationLane => TaskStates.Ready;
+
+    public static RedTestModelRung SharedRepairRung(RedTestModelRung requested,
+        IEnumerable<RedTestModelRung> active) => active.Append(requested).Max();
+
+    public static bool QueuedRepair(string lane)
+        => lane is TaskStates.Preparation or TaskStates.Backlog or TaskStates.Ready;
+
+    public static bool SameRedState(IReadOnlyCollection<string> previous, IReadOnlyCollection<string> current)
+    {
+        if (previous.Count == 0 || current.Count == 0) return false;
+        var overlap = previous.Intersect(current, StringComparer.Ordinal).Count();
+        return overlap * 2 > Math.Min(previous.Count, current.Count);
+    }
+
+    public static bool CloseUnusedOnGreen(string lane, bool hasRun)
+        => !hasRun && lane is TaskStates.Preparation or TaskStates.Ready or TaskStates.Backlog;
+
+    public static bool PickupOverdue(TimeSpan age, string? lane)
+        => age >= TimeSpan.FromMinutes(10) && lane is not (TaskStates.Progress or TaskStates.AutoReview
+            or TaskStates.Completed or TaskStates.Archive);
 
     public static bool MayMerge(IReadOnlyCollection<string> changedPaths,
         IReadOnlyCollection<string> failingArea)

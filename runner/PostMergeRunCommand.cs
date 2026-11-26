@@ -368,7 +368,13 @@ public sealed class PostMergeRunCommand
         => new(command, result.ExitCode, result.TimedOut,
             result.ExitCode == 0 ? null : PostMergeAttributor.Excerpt(result.Output),
             result.ExitCode == 0 ? null : PostMergeAttributor.FailedTests(result.Output))
-        { DurationMs = result.DurationMs };
+        { DurationMs = result.DurationMs,
+            FailureMessages = result.ExitCode == 0 ? null : PostMergeAttributor.FailedTests(result.Output)
+                .Take(64).ToDictionary(test => test, test =>
+                {
+                    var error = TestFailureMessages.FirstError(result.Output, test);
+                    return error[..Math.Min(error.Length, 2000)];
+                }, StringComparer.Ordinal) };
 
     private async Task<(int ExitCode, bool TimedOut, string Output, long DurationMs)> TimedRun(string command,
         IReadOnlyDictionary<string, string> environment, CancellationToken ct)
@@ -409,6 +415,18 @@ public sealed class PostMergeRunCommand
         if (!listedProjects.Success) throw new IOException(listedProjects.StdErr);
         var projectMap = new PostMergeProjectMap(_options.Checkout,
             listedProjects.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        var reach = new PostMergeCoveringFolders.Index(await ListTrackedFiles(ct), path =>
+        {
+            try { return File.ReadAllText(Path.Combine(_options.Checkout, path)); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                _output.WriteLine($"post-merge test reach unavailable for {path}: {exception.Message}");
+                return null;
+            }
+        });
+        var testProject = PostMergeAttributor.TestProject(failed.Command);
+        var testDirectory = testProject is null ? null : Path.GetDirectoryName(testProject.Replace('\\', '/'));
+        var scopes = blocking.Select(test => reach.For(test, testDirectory)).ToArray();
         var pathsByCommit = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
         var candidates = new List<(string Sha, IReadOnlyList<string> Paths)>();
         foreach (var commit in commits)
@@ -470,8 +488,12 @@ public sealed class PostMergeRunCommand
             if (!message.Success) throw new IOException(message.StdErr);
             attributedTaskId = PostMergeAttributor.TaskIdFromMergeMessage(message.StdOut);
         }
+        // Keep the measured RT control/bisect protocol independent of the static reach heuristic.
+        // A proven attribution wins even when source-name matching misses its dependency.
+        var suspects = candidates.Where(candidate => candidate.Sha == attributed
+            || PostMergeAttributor.TouchesFailure(candidate.Paths, scopes)).Select(candidate => candidate.Sha).ToArray();
         return new(fingerprint, blocking, excerpt, failingPaths,
-            candidates.Select(candidate => candidate.Sha).TakeLast(512).ToArray(),
+            suspects.TakeLast(512).ToArray(),
             attributed, clean, laterDepends,
             AttributedTaskId: attributedTaskId, NoRelevantMerges: candidates.Count == 0)
         { Attribution = attribution };
