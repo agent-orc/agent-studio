@@ -3380,6 +3380,30 @@
           <td>Sealed review plans skipped quota replanning; same-session routing always held its provider. No CLI crash was reproduced in this drill. Earlier quota crashes remain recorded under AGT-3972.</td>
           <td>Before: Wait on the exhausted session, or an unchanged sealed review route. Now: a pre-dispatch equivalent route with a receipt, or a visible wait when no published equivalent is available. Hard pins wait; running work is untouched.</td>
         </tr>
+        <tr>
+          <td>2026-11-26</td>
+          <td><code>AGT-4006</code><br><span class="small">scoped-quarantine-integration-hold</span></td>
+          <td>No CLI crashed. RT-5's scoped hold replaces the old integration wait.</td>
+          <td>The old hold depended on the latest red verdict and suspect files,
+            so green develop could admit a delivery into an active held area.</td>
+          <td>Active quarantines now hold covering folders independently of develop
+            color. Overlapping deliveries stay pending without spending retries
+            or repair rounds; unrelated and repair deliveries continue. The
+            terminal is integration after repair, lift, expiry or exemption.</td>
+        </tr>
+        <tr>
+          <td>2026-11-26</td>
+          <td><code>AGT-4006</code><br><span class="small">rt5-documentation-integration-recovery</span></td>
+          <td>No CLI crashed. The delivery stopped at <code>merge-into-develop</code>
+            after direct merge, mechanical merge and rebase fallback conflicted.</td>
+          <td>The RT-5 implementation additions shared insertion points with the
+            newer RT-7 Dossier record and DS-5 orchestration contract.</td>
+          <td>The observed terminal was an integration-conflict continuation.
+            Recovery retains the newer text verbatim alongside the RT-5 additions,
+            restores the delivery patch and verifies the build, focused classes,
+            guard filters and lint. Publication and integration remain owned by
+            the pipeline.</td>
+        </tr>
       </tbody>
     </table>
 

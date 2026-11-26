@@ -69,7 +69,7 @@ public static class PostMergeRunEndpoints
                     // AGT-3965: fast selects the affected routine suites, balanced every routine suite.
                     WindowSuites = TestingStrategies.WindowSuites(strategy),
                 };
-            return Results.Ok(state with { Quarantines = incidents.ActiveQuarantines(record) });
+            return Results.Ok(state with { Quarantines = incidents.ActiveQuarantines(record), Holds = incidents.ActiveHolds(record) });
         });
         app.MapPost("/api/runner/post-merge/projects/{project}/escalation-check", (string project,
             ProjectRegistry registry, PostMergeIncidentService incidents) =>
@@ -121,7 +121,7 @@ public static class PostMergeRunEndpoints
             var state = store.Record(record.Id, safe);
             if (state is not null) incidents.Apply(record, safe);
             return state is null ? Results.Conflict(new { error = "post-merge run already claimed or stale" })
-                : Results.Ok(store.Read(record.Id) with { Quarantines = incidents.ActiveQuarantines(record) });
+                : Results.Ok(store.Read(record.Id) with { Quarantines = incidents.ActiveQuarantines(record), Holds = incidents.ActiveHolds(record) });
         });
     }
 

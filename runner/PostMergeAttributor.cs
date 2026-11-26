@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using AgentStudio.TaskServer.Contracts;
@@ -109,37 +108,8 @@ public static partial class PostMergeAttributor
 
     public static IReadOnlyList<string> BlockingTests(string checkout, IReadOnlyList<string> failed,
         DateTimeOffset now)
-    {
-        var path = Path.Combine(checkout, ".agent-studio", "test-quarantine.json");
-        if (!File.Exists(path)) return failed;
-        JsonDocument document;
-        try { document = JsonDocument.Parse(File.ReadAllText(path)); }
-        catch (JsonException) { return failed; }
-        using (document)
-        {
-        if (document.RootElement.ValueKind != JsonValueKind.Object
-            || !document.RootElement.TryGetProperty("tests", out var rows)
-            || rows.ValueKind != JsonValueKind.Array) return failed;
-        var active = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var entry in rows.EnumerateArray())
-        {
-            if (entry.ValueKind != JsonValueKind.Object
-                || !entry.TryGetProperty("test", out var test) || test.ValueKind != JsonValueKind.String
-                || !entry.TryGetProperty("card", out var card) || card.ValueKind != JsonValueKind.String
-                || string.IsNullOrWhiteSpace(card.GetString())
-                || !entry.TryGetProperty("expiresOn", out var expires)
-                || expires.ValueKind != JsonValueKind.String
-                || !DateOnly.TryParse(expires.GetString(), out var expiry)
-                || expiry < DateOnly.FromDateTime(now.UtcDateTime)) continue;
-            if (entry.TryGetProperty("resolvedOn", out var resolved)
-                && resolved.ValueKind == JsonValueKind.String
-                && DateOnly.TryParse(resolved.GetString(), out var resolvedAt)
-                && resolvedAt <= DateOnly.FromDateTime(now.UtcDateTime)) continue;
-            active.Add(test.GetString()!);
-        }
-        return failed.Where(test => !active.Contains(test)).ToArray();
-        }
-    }
+        => TestQuarantinePolicy.Partition(failed, TestQuarantinePolicy.Read(checkout).Entries,
+            DateOnly.FromDateTime(now.UtcDateTime)).Blocking;
 
     public static string Fingerprint(IReadOnlyList<string> failedTests, string command, string excerpt)
     {

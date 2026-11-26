@@ -9,6 +9,11 @@ public sealed record ProjectTestQuarantine(
     DateTimeOffset? LiftedAtUtc = null, string Source = "store")
 {
     public string? SuiteId { get; init; }
+    public string? TestFile { get; init; }
+    public IReadOnlyList<string> SuiteAreas { get; init; } = [];
+    public IReadOnlyList<string> ConfirmedSuspectPaths { get; init; } = [];
+    public string? AttributedRevertCardId { get; init; }
+    public IReadOnlyList<string> OwnerExemptCardIds { get; init; } = [];
 }
 
 /// <summary>One immutable incident decision with the PersonaLogEntryV1 decision fields.</summary>
@@ -19,3 +24,8 @@ public sealed record PostMergeIncidentLogEntry(
 
 public sealed record TestQuarantineAudit(string Id, string QuarantineId, string Operation, string Actor,
     DateTimeOffset AtUtc, ProjectTestQuarantine? Before, ProjectTestQuarantine After);
+
+/// <summary>RT-5 hold facts, shared with integration and the future dispatcher pick gate.</summary>
+public sealed record TestQuarantineHoldFact(string QuarantineId, string Test, string RepairCardId,
+    IReadOnlyList<string> CoveringFolders, IReadOnlyList<string> Files, IReadOnlyList<string> SuiteAreas,
+    DateTimeOffset ExpiresAtUtc, string? AttributedRevertCardId, IReadOnlyList<string> OwnerExemptCardIds);

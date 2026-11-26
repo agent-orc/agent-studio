@@ -188,6 +188,79 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Declared_quarantine_runs_and_reports_the_failure_without_blocking_post_merge(bool fromStore)
+    {
+        Directory.CreateDirectory(_root);
+        var seed = Path.Combine(_root, "seed");
+        var checkout = Path.Combine(_root, "checkout");
+        await Git(_root, "init", "--quiet", "-b", "develop", seed);
+        await Git(seed, "config", "user.name", "Test");
+        await Git(seed, "config", "user.email", "test@example.invalid");
+        Directory.CreateDirectory(Path.Combine(seed, ".agent-studio"));
+        File.WriteAllText(Path.Combine(seed, ".agent-studio", "project.yml"), """
+            schemaVersion: 1
+            stack: [custom]
+            toolVersions:
+            commands:
+              prepare: .agent-studio/prepare
+              build:
+                - "true"
+              test:
+                - "sh suite.sh"
+              lint:
+            testSuites:
+              - id: routine
+                category: routine
+                expectedDurationSeconds: 5
+                command: "sh suite.sh"
+            cachePaths:
+            capabilities: [git]
+            """);
+        var prepare = Path.Combine(seed, ".agent-studio", "prepare");
+        File.WriteAllText(prepare, "#!/bin/sh\ntrue\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(prepare, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        File.WriteAllText(Path.Combine(seed, "suite.sh"), "echo '  Failed Product.Tests.Isolated [1 ms]'\nexit 1\n");
+        var definition = ProjectDefinitionReader.ReadWorkspace(seed);
+        Assert.True(definition.IsValid, string.Join("; ", definition.Issues.Select(issue => issue.Message)));
+        if (!fromStore)
+            File.WriteAllText(Path.Combine(seed, TestQuarantineFile.RelativePath),
+                """{"tests":[{"test":"Product.Tests.Isolated","card":"repair","expiresOn":"2026-10-28"}]}""");
+        await Git(seed, "add", ".");
+        await Git(seed, "commit", "--quiet", "-m", "base");
+        await Git(_root, "clone", "--quiet", "--branch", "develop", seed, checkout);
+        var receipts = new List<PostMergeRunRecord>();
+        using var http = new HttpClient(new Handler(async request =>
+        {
+            if (request.Method == HttpMethod.Get)
+                return Json(PostMergeProjectState.Empty("PROJ-002") with { Quarantines = fromStore
+                    ? [new("quarantine-one", "Product.Tests.Isolated", "repair", DateOnly.MaxValue, null,
+                        "confirmed twice", "held", "system:post-merge", Now, DateTimeOffset.MaxValue,
+                        "fingerprint", [], ["backend/Features/Pipeline/PostMerge"])] : [] });
+            if (request.RequestUri!.AbsolutePath.EndsWith("/runs", StringComparison.Ordinal))
+                receipts.Add((await request.Content!.ReadFromJsonAsync<PostMergeRunRecord>())!);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        })) { BaseAddress = new Uri("http://test/") };
+        var options = new PostMergeRunOptions("demo", checkout, "http://test/", "develop", "origin", "unused",
+            "nightly", 1, TimeSpan.Zero, 8, [], false);
+        var output = new StringWriter();
+        var exit = await new PostMergeRunCommand(options, output, new FixedClock(), http, () => new(0, 0))
+            .ExecuteAsync(CancellationToken.None);
+        Assert.True(exit == 0, output.ToString());
+        var run = receipts[^1];
+        Assert.Equal("green", run.Status);
+        var test = Assert.Single(run.TestVerdicts!);
+        Assert.Equal("Product.Tests.Isolated", test.Test);
+        Assert.True(test.Quarantined);
+        Assert.Contains(run.Verdicts, verdict => verdict.OutputTail?.Contains("Product.Tests.Isolated", StringComparison.Ordinal) == true);
+        Assert.DoesNotContain(run.Verdicts, verdict => verdict.Retried);
+    }
+
     private static HttpResponseMessage Json(object value) => new(HttpStatusCode.OK)
     {
         Content = System.Net.Http.Json.JsonContent.Create(value),

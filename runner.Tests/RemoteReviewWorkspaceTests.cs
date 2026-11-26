@@ -1827,6 +1827,33 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Declared_quarantined_review_failure_is_reported_and_remains_non_blocking(bool fromStore)
+    {
+        var (_, sha) = fromStore ? await SeedSubjectBranchAsync()
+            : await SeedSubjectBranchWithFileAsync("task/new-failure", TestQuarantineFile.RelativePath,
+                """{"tests":[{"test":"Product.Tests.Isolated","card":"repair","expiresOn":"9999-12-31"}]}""");
+        var command = BaselineCommand(": 'dotnet test'; printf '  Failed Product.Tests.Isolated [1 ms]\\n'; exit 1");
+        var (workspace, subject) = Workspace("attempt-declared-quarantine", sha, [command], 26330,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main",
+            quarantines: fromStore ? [new("quarantine-one", "Product.Tests.Isolated", "repair", DateOnly.MaxValue,
+                null, "confirmed twice", "held", "system:post-merge", DateTimeOffset.UnixEpoch,
+                DateTimeOffset.MaxValue, "fingerprint", [], ["backend/Features/Pipeline/PostMerge"])] : []);
+        await workspace.PrepareAsync(null!, default);
+        var evidence = await workspace.ExecutePlanAsync(default);
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal("Pass", ReviewReportDiagnosisPolicy.Normalize(Report(evidence, workspace), subject.Plan).Outcome);
+        var failed = Assert.Single(evidence.Commands);
+        Assert.Equal(1, failed.ExitCode);
+        Assert.False(failed.RetryPerformed);
+        Assert.Equal("Product.Tests.Isolated", Assert.Single(failed.QuarantinedFailures).Test);
+        Assert.Contains("Product.Tests.Isolated", Assert.Single(evidence.Verdicts).Summary);
+    }
+
     [Fact]
     public async Task Red_baseline_blocks_the_new_test_failure_and_records_the_pre_existing_one()
     {
@@ -3835,7 +3862,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Func<string, Task<FailureFingerprintHistoryDto?>>? historyReader = null,
         AgentRunner.SourceFacts.ISourceFactsClient? sourceFacts = null,
         bool productionTempBase = false,
-        string? planCommitSha = null)
+        string? planCommitSha = null,
+        IReadOnlyList<ProjectTestQuarantine>? quarantines = null)
     {
         var repositoryId = TaskServerClient.RepositoryIdentity(_origin)!;
         var subject = new ReviewSubjectDto(
@@ -3856,7 +3884,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
                 IntegrationRef: integrationRef,
                 Preparation: preparation,
                 PreserveGlobs: preserveGlobs,
-                PlanCommitSha: planCommitSha),
+                PlanCommitSha: planCommitSha) { Quarantines = quarantines ?? [] },
             DateTime.UtcNow);
         var lease = new ReviewLeaseDto(
             "lease-" + attemptId,

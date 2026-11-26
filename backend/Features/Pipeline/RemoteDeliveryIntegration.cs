@@ -357,7 +357,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     {
         while (true)
         {
-            QueuedDelivery delivery;
+            QueuedDelivery? delivery;
+            TimeSpan wait = TimeSpan.Zero;
             lock (_gate)
             {
                 if (projectQueue.Pending.Count == 0)
@@ -373,21 +374,23 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     return;
                 }
 
-                var nextIndex = 0;
-                for (var index = 1; index < projectQueue.Pending.Count; index++)
+                var now = DateTimeOffset.UtcNow;
+                delivery = projectQueue.Pending.Where(item => item.NotBeforeUtc <= now)
+                    .OrderBy(item => item, QueuedDeliveryComparer.Instance).FirstOrDefault();
+                if (delivery is null)
+                    wait = projectQueue.Pending.Min(item => item.NotBeforeUtc) - now;
+                else
                 {
-                    if (QueuedDeliveryComparer.Instance.Compare(
-                            projectQueue.Pending[index],
-                            projectQueue.Pending[nextIndex]) < 0)
-                    {
-                        nextIndex = index;
-                    }
+                    projectQueue.Pending.Remove(delivery);
+                    projectQueue.Current = delivery;
+                    projectQueue.CurrentSinceUtc = now;
                 }
-                delivery = projectQueue.Pending[nextIndex];
-                projectQueue.Pending.RemoveAt(nextIndex);
-                projectQueue.Current = delivery;
-                projectQueue.CurrentSinceUtc = DateTimeOffset.UtcNow;
                 PublishBoard(project, projectQueue);
+            }
+            if (delivery is null)
+            {
+                await Task.Delay(wait > TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : wait).ConfigureAwait(false);
+                continue;
             }
 
             try
@@ -431,6 +434,23 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 MergeIntoIntegrationResult result;
                 using (IntegrationLaneEvents.BeginDelivery(delivery.Sequence))
                     result = await _integrate(delivery.Request).ConfigureAwait(false);
+                if (MonolithTransitionAdapter.IntegrationResult(result.Outcome.ToString(), 0).Action
+                    == AgentStudio.OrchestrationDecisions.IntegrationResultAction.Requeue)
+                {
+                    _board.RecordOutcome(project, delivery.Request.JobId, result.Error);
+                    IntegrationLaneEvents.Append(delivery.Request.JobFolderPath, project, delivery.Request.JobId,
+                        "held", sequence: delivery.Sequence, outcome: result.Outcome.ToString(), reason: result.Error);
+                    lock (_gate)
+                    {
+                        projectQueue.Pending.Add(delivery with
+                        {
+                            NotBeforeUtc = DateTimeOffset.UtcNow + HoldRetryDelay,
+                        });
+                        projectQueue.Current = null;
+                        PublishBoard(project, projectQueue);
+                    }
+                    continue;
+                }
                 // The runner's publication fence already decided a merge; its
                 // result stays true. Only an unmerged delivery could still start
                 // a stale repair round, so recheck card and profile ownership.
@@ -612,6 +632,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         }
     }
 
+    internal TimeSpan HoldRetryDelay { get; set; } = MonolithTransitionAdapter.IntegrationHoldRecheckInterval;
+
     private sealed class ProjectQueue
     {
         public List<QueuedDelivery> Pending { get; } = [];
@@ -646,7 +668,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         RemoteDeliveryIntegrationRequest[] behind;
         lock (_gate)
         {
-            behind = projectQueue.Pending.OrderBy(item => item, QueuedDeliveryComparer.Instance)
+            behind = projectQueue.Pending.Where(item => item.NotBeforeUtc <= DateTimeOffset.UtcNow)
+                .OrderBy(item => item, QueuedDeliveryComparer.Instance)
                 .Select(item => item.Request)
                 .Where(request => string.Equals(request.IntegrationBranch, head.Request.IntegrationBranch,
                     StringComparison.OrdinalIgnoreCase))
@@ -683,7 +706,10 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         RemoteDeliveryIntegrationRequest Request,
         string DeliveryKey,
         long Sequence,
-        TaskCompletionSource<MergeIntoIntegrationResult> Completion);
+        TaskCompletionSource<MergeIntoIntegrationResult> Completion)
+    {
+        public DateTimeOffset NotBeforeUtc { get; init; } = DateTimeOffset.MinValue;
+    }
 
     private sealed record DeliveryReplay(
         long Sequence,

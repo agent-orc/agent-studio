@@ -297,7 +297,9 @@ public sealed class PostMergeRunCommand
                     if (verdicts[index].ExitCode == 0) continue;
                     var initial = verdicts[index];
                     var observed = initial.FailedTests ?? PostMergeAttributor.FailedTests(initial.OutputTail ?? "");
-                    var blocking = PostMergeAttributor.BlockingTests(_options.Checkout, observed, _clock.GetUtcNow());
+                    var blocking = TestQuarantinePolicy.Partition(observed,
+                        TestQuarantinePolicy.ReadUnion(_options.Checkout, state.Quarantines, _clock.GetUtcNow()).Entries,
+                        DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime)).Blocking;
                     ledger.Initial(suite, initial.Command, observed, blocking, tip);
                     verdicts[index] = await PostMergeTestRetry.RepeatAsync(initial, _ => blocking,
                         retry => RunCommand(retry, definition.Environment, ct), ledger.Record, tip);
@@ -382,7 +384,9 @@ public sealed class PostMergeRunCommand
         var failed = verdicts.First(verdict => verdict.ExitCode != 0);
         var excerpt = PostMergeAttributor.Excerpt(failed.OutputTail ?? "");
         var observed = failed.FailedTests ?? PostMergeAttributor.FailedTests(excerpt);
-        var blocking = PostMergeAttributor.BlockingTests(_options.Checkout, observed, _clock.GetUtcNow());
+        var blocking = TestQuarantinePolicy.Partition(observed,
+                        TestQuarantinePolicy.ReadUnion(_options.Checkout, state.Quarantines, _clock.GetUtcNow()).Entries,
+                        DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime)).Blocking;
         var focused = PostMergeAttributor.FocusedCommand(failed.Command, blocking)
             ?? PostMergeAttributor.FocusedVitestCommand(failed.Command, blocking);
         var build = PostMergeAttributor.PartialBuildCommand(definition, failed.Command, blocking);

@@ -2375,7 +2375,7 @@ public sealed class BatchGatePilotRecoveryTests : BatchGatePilotServiceTests
         await pilot.TickAsync(CancellationToken.None);
 
         var manifest = Assert.Single(store.ListManifests(), item => item.ParentBatchId is null);
-        Assert.NotEqual("flaky quarantine requires a fresh gate verdict",
+        Assert.NotEqual("re-run cleared requires a fresh gate verdict",
             store.LatestState(manifest.BatchId).Reason);
         Assert.Equal("deterministic-suite-red", store.ReadVerdict(manifest.BatchId,
             Assert.Single(store.ListRuns(manifest.BatchId)).BatchRunId)?.Classification);

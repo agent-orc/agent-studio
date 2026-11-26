@@ -106,26 +106,33 @@ public sealed class IntegrationPublisherTests : IDisposable
     }
 
     [Fact]
-    public async Task RedDevelopHoldsAnOverlappingDeliveryButPublishesAnUnrelatedOne()
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task HeldQuarantineHoldsItsCoveringFolderWithGreenDevelopAndAllowsUnrelatedAndExemptCards()
     {
         var (origin, work) = await RepositoryAsync();
         var baseSha = await RevParseAsync(work, "HEAD");
-        var overlapping = await CommitAsync(work, "feature.txt", "broken area", "Overlapping");
+        var overlapping = await CommitAsync(work, "backend/Features/Pipeline/PostMerge/Changed.cs", "broken area", "Overlapping");
         await Git(work, "push", "-q", origin, "HEAD:refs/heads/results/overlap");
-        var red = new PostMergeProjectState("prj", "red", baseSha, baseSha, null,
-            [new PostMergeRunRecord("red", "demo", "window", baseSha, null, null, null, 1,
-                ["test"], [new("test", 1, false)], "red", DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch)],
-            [new PostMergeIncident("fingerprint", "repair", "FixForward", DateTimeOffset.UnixEpoch,
-                null, null, ["Demo.Fails"], ["feature.txt"])]);
+        var red = PostMergeProjectState.Empty("prj") with
+        {
+            Quarantines = [new("quarantine-one", "Product.Tests.Isolated", "repair", DateOnly.MaxValue, null,
+                "confirmed twice", "held", "system:post-merge", DateTimeOffset.UnixEpoch, DateTimeOffset.MaxValue,
+                "fingerprint", [], ["backend/Features/Pipeline/PostMerge"])
+                { AttributedRevertCardId = "revert", OwnerExemptCardIds = ["exempt"] }],
+        };
 
         var blocked = await IntegrationPublisher.PublishAsync(
             Command(origin, "develop", "refs/heads/results/overlap", overlapping), 1,
             Path.Combine(_workspace.Path, "state"), _log.Add, default, red);
         Assert.Equal(IntegrationOutcomeKinds.BlockedFailingArea, blocked.Outcome);
+        Assert.Contains("quarantine-one", blocked.Detail);
+        Assert.Contains("Product.Tests.Isolated", blocked.Detail);
+        Assert.Contains("backend/Features/Pipeline/PostMerge", blocked.Detail);
         Assert.Equal(baseSha, await RevParseAsync(origin, "refs/heads/develop"));
 
         await Git(work, "checkout", "-q", "--detach", baseSha);
-        var unrelated = await CommitAsync(work, "other.txt", "safe", "Unrelated");
+        var unrelated = await CommitAsync(work, "frontend/safe.ts", "safe", "Unrelated");
         await Git(work, "push", "-q", origin, "HEAD:refs/heads/results/unrelated");
         var published = await IntegrationPublisher.PublishAsync(
             Command(origin, "develop", "refs/heads/results/unrelated", unrelated), 2,
@@ -158,6 +165,7 @@ public sealed class IntegrationPublisherTests : IDisposable
 
     private static async Task<string> CommitAsync(string work, string file, string content, string message)
     {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(work, file))!);
         await File.WriteAllTextAsync(Path.Combine(work, file), content + "\n");
         await Git(work, "add", file);
         await Git(work, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",

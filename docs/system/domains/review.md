@@ -1592,6 +1592,18 @@ store under the same item identity as gate triage. The review executor only
 quarantines marked items after a successful repeat; its original failed
 observation remains in the existing diagnosis history.
 
+RT-5 adds a separate declared-quarantine exemption. Frozen plans carry the RT-4
+state union, and `RemoteReviewWorkspace` uses the shared `TestQuarantinePolicy`
+reader with its workspace file. Exact active names remain in
+`quarantinedFailures` command evidence with owning card and expiry. A command
+whose only failures are declared quarantined tests passes with a named
+`TestQuarantine` verdict, retaining its actual exit code and logs. Shared report
+admission checks that the typed hits cover every original failure before
+excluding that command from product-failure diagnosis. Mixed failures retain
+normal baseline and repeat attribution for their unquarantined tests. Declared
+quarantines do not require a passing repeat; the flake-proof rule above still
+applies to failures inferred to be flaky during this run.
+
 **Fallbacks.** Each automatic route is bounded, and when it runs out the card
 parks with a typed category rather than `operator-decision`:
 `gate-environment-exhausted` (ladder spent, or automatic continuations

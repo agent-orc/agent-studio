@@ -178,6 +178,7 @@ public static class ReviewReportDiagnosisPolicy
             command.Phase == "verification"
             && command.WorkspaceRole == "candidate"
             && command.ExitCode != 0
+            && !TestQuarantinePolicy.CoversReviewFailure(command)
             && !ReviewCommandKinds.IsAgent(command.ExecutionKind)).ToArray();
 
     public static bool HasNewTestFailures(ReviewCommandEvidenceDto command, ReviewPlanDto? plan)

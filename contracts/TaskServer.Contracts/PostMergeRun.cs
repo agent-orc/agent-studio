@@ -178,6 +178,7 @@ public sealed record PostMergeProjectState(
     public string? LineStop { get; init; }
     public string? InconclusiveRunId { get; init; }
     public IReadOnlyList<ProjectTestQuarantine> Quarantines { get; init; } = [];
+    public IReadOnlyList<TestQuarantineHoldFact> Holds { get; init; } = [];
     public int QuarantinedCount => Quarantines.Count;
     public int HeldCount => Quarantines.Count(entry => entry.Kind == "held");
     public static PostMergeProjectState Empty(string project) => new(project, "green", null, null, null, [], []);
