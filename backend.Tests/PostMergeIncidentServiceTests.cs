@@ -218,13 +218,192 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         Assert.False(Assert.Single(store.Read(project.Id).Incidents!).OriginalReopened);
     }
 
+    [Fact]
+    public void Routine_twice_red_is_green_with_one_held_entry_one_first_repair_and_one_log()
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup();
+        mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+            { Project = project.Id, Title = "Waiting", TargetState = TaskStates.Preparation, Order = -10 });
+        var red = TypedRed();
+        Record(store, service, project, red);
+        service.Apply(project, red);
+        var entry = Assert.Single(service.ActiveQuarantines(project));
+        Assert.Equal("held", entry.Kind);
+        Assert.Equal("green", store.Read(project.Id).DevelopState);
+        Assert.Null(store.Read(project.Id).LineStop);
+        var repair = scanner.FindJob(entry.Card, project.StorageLocation)!;
+        Assert.Equal("Repair red test: Demo.Tests.Fails", repair.Title);
+        Assert.Equal(TaskStates.Preparation, repair.State);
+        Assert.Equal(repair.Id, scanner.ScanAllJobs().Where(card => card.State == TaskStates.Preparation).MinBy(card => card.Order)!.Id);
+        var quarantine = Quarantines(store).Read(project.Id);
+        Assert.Single(quarantine.IncidentLog);
+        Assert.True(quarantine.IncidentLog[0].Reason.Length <= 280);
+        Assert.Single(quarantine.Audit);
+    }
+
+    [Fact]
+    public void Repair_rung_uses_the_project_provider_override_from_the_configured_tiers()
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup();
+        project = project with { CliDefault = CliTypes.Claude };
+        Record(store, service, project, TypedRed());
+        var repair = scanner.FindJob(Assert.Single(service.ActiveQuarantines(project)).Card, project.StorageLocation)!;
+        Assert.Equal(CliTypes.Claude, repair.CliType);
+        var expected = new ModelRoutingPolicyRegistry().Policy.Tiers.Single(tier => tier.Rank == 2).VendorOverrides["anthropic"];
+        Assert.Equal(expected.Model, repair.Model);
+        Assert.Equal(expected.ThinkingLevel, repair.ThinkingLevel);
+    }
+
+    [Fact]
+    public void Base_twice_red_stops_the_line_and_asks_after_sixty_minutes()
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup();
+        var red = TypedRed(category: "base");
+        Record(store, service, project, red);
+        Assert.Empty(service.ActiveQuarantines(project));
+        Assert.Equal("red", store.Read(project.Id).DevelopState);
+        Assert.NotNull(store.Read(project.Id).LineStop);
+        clock.Advance(TimeSpan.FromHours(1));
+        service.AskOwnerWhenOverdue(project);
+        service.AskOwnerWhenOverdue(project);
+        var incident = Assert.Single(store.Read(project.Id).Incidents!);
+        var question = Assert.Single(incident.OwnerQuestions);
+        Assert.Equal("LineStopAge", question.Reason);
+        Assert.Equal("KeepFixingForward", question.Recommended);
+        Assert.Single(OwnerItems(project, store));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Lift_requires_two_covering_greens_containing_the_repair_and_relapse_asks_the_owner(bool containsRepair)
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup(containsRepair);
+        Record(store, service, project, TypedRed());
+        var entry = Assert.Single(service.ActiveQuarantines(project));
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Record(store, service, project, Green("unrelated", clock.GetUtcNow(), "other-suite"));
+        Record(store, service, project, Green("green-1", clock.GetUtcNow()));
+        Assert.Single(service.ActiveQuarantines(project));
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Record(store, service, project, Green("green-2", clock.GetUtcNow()));
+        if (!containsRepair)
+        {
+            Assert.Single(service.ActiveQuarantines(project));
+            return;
+        }
+        Assert.Empty(service.ActiveQuarantines(project));
+        var lifted = Assert.Single(Quarantines(store).Read(project.Id).Entries);
+        Assert.Equal(["green-1", "green-2"], lifted.LiftEvidence);
+        clock.Advance(TimeSpan.FromDays(1));
+        Record(store, service, project, TypedRed() with
+            { Id = "relapse", StartedAtUtc = clock.GetUtcNow(), FinishedAtUtc = clock.GetUtcNow() });
+        var relapse = Assert.Single(service.ActiveQuarantines(project));
+        Assert.NotEqual(entry.Card, relapse.Card);
+        var incident = store.Read(project.Id).Incidents!.Single(item => item.ResolvedAtUtc is null);
+        Assert.Equal("ReholdNewCardHigherRung", Assert.Single(incident.OwnerQuestions).Recommended);
+    }
+
+    [Fact]
+    public void Sharded_covering_receipts_lift_even_when_filters_are_rewritten()
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup(containsRepair: true);
+        Record(store, service, project, TypedRed());
+        foreach (var id in new[] { "shard-1", "shard-2" })
+        {
+            clock.Advance(TimeSpan.FromMinutes(1));
+            Record(store, service, project, Green(id, clock.GetUtcNow()) with
+            {
+                Verdicts = [new("dotnet test --settings /tmp/shard.runsettings", 0, false) { SuiteId = "backend-routine" }],
+                SuiteSelection = new(["backend-routine"], [], [])
+                    { SuiteCommands = new Dictionary<string, string> { ["backend-routine"] = "dotnet test --filter Category!=MachineBound" } },
+            });
+        }
+        Assert.Empty(service.ActiveQuarantines(project));
+    }
+
+    [Fact]
+    public void Fourth_held_test_stops_line_and_raises_the_cap_owner_question()
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup();
+        for (var i = 1; i <= 4; i++)
+        {
+            var red = TypedRed(test: "Tests.Fail" + i) with { Id = "red-" + i };
+            Record(store, service, project, red);
+        }
+        Assert.Equal(3, service.ActiveQuarantines(project).Count);
+        Assert.NotNull(store.Read(project.Id).LineStop);
+        var question = Assert.Single(store.Read(project.Id).Incidents!.SelectMany(item => item.OwnerQuestions));
+        Assert.Equal("CapExceeded", question.Reason);
+        Assert.Equal("StopLine", question.Recommended);
+    }
+
+    [Fact]
+    public void Flaky_third_distinct_run_starts_report_only_and_environment_remains_inconclusive()
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup();
+        for (var i = 1; i <= 3; i++)
+        {
+            var run = TypedRed() with { Id = "flaky-" + i, Status = "green", Failure = null,
+                Verdicts = [new("dotnet test", 0, false, FlakyTests: ["Demo.Tests.Fails"])],
+                TestVerdicts = [new("Demo.Tests.Fails", "backend-routine", "routine",
+                    [new("initial", "fail", null, Tip), new("repeat", "pass", 1, Tip)], "flaky")] };
+            Record(store, service, project, run);
+            if (i < 3) Assert.Empty(service.ActiveQuarantines(project));
+        }
+        Assert.Equal("report-only", Assert.Single(service.ActiveQuarantines(project)).Kind);
+        Assert.Equal("green", store.Read(project.Id).DevelopState);
+        var environment = TypedRed(test: "Environment.Fail") with { Id = "environment", EnvelopeCanaryPassed = false };
+        Record(store, service, project, environment);
+        Assert.Equal("environment", store.Read(project.Id).InconclusiveRunId);
+        Assert.Null(store.Read(project.Id).LineStop);
+    }
+
+    [Fact]
+    public void Ladder_renews_once_while_repair_is_in_progress_then_asks_at_forty_eight_hours_even_after_green()
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup();
+        Record(store, service, project, TypedRed());
+        var entry = Assert.Single(service.ActiveQuarantines(project));
+        states.MoveJob(entry.Card, TaskStates.Ready, project.StorageLocation);
+        states.MoveJob(entry.Card, TaskStates.Progress, project.StorageLocation);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Record(store, service, project, Green("unrelated", clock.GetUtcNow(), "other-suite"));
+        clock.Advance(TimeSpan.FromHours(24));
+        service.AskOwnerWhenOverdue(project);
+        Assert.Equal(1, Quarantines(store).Read(project.Id).Entries.Single().Renewals);
+        clock.Advance(TimeSpan.FromHours(24));
+        service.AskOwnerWhenOverdue(project);
+        service.AskOwnerWhenOverdue(project);
+        var question = Assert.Single(store.Read(project.Id).Incidents!.Single().OwnerQuestions);
+        Assert.Equal("RenewalLimit", question.Reason);
+        Assert.Equal("ReportOnlyWithCard", question.Recommended);
+    }
+
+    private static TestQuarantineStore Quarantines(PostMergeRunStore store)
+        => new(Path.Combine(store.Root, "..", "test-quarantines"));
+    private static void Record(PostMergeRunStore store, PostMergeIncidentService service, ProjectRecord project, PostMergeRunRecord run)
+    {
+        Assert.NotNull(store.Record(project.Id, run with { Status = "running", Verdicts = [], FinishedAtUtc = null }));
+        Assert.NotNull(store.Record(project.Id, run));
+        service.Apply(project, run);
+    }
+    private static PostMergeRunRecord Green(string id, DateTimeOffset now, string suite = "backend-routine")
+        => Red() with { Id = id, Status = "green", StartedAtUtc = now, FinishedAtUtc = now,
+            Failure = null, Verdicts = [new("dotnet test", 0, false)],
+            SuiteSelection = new([suite], [], []) { SuiteCommands = new Dictionary<string, string> { [suite] = "dotnet test" } } };
+    private static PostMergeRunRecord TypedRed(string category = "routine", string test = "Demo.Tests.Fails")
+        => Red() with { TestVerdicts = [new(test, "backend-routine", category,
+            [new("initial", "fail", null, Tip), new("repeat", "fail", 10, Tip)], "ambiguous")
+            { CoveringFolders = ["backend/Features/Pipeline"] }] };
+
     private static PostMergeRunRecord Red() => new("red", "demo", "window", Tip, null, Now, Now, 1,
         ["dotnet test"], [new("dotnet test", 1, false)], "red", Now, Now,
         Failure: new("fingerprint", ["Demo.Tests.Fails"], "failure", [], [], null, false, false));
 
     private (ProjectRecord Project, FakeTimeProvider Clock, TaskScannerService Scanner,
         TaskMutationService Mutations, TaskStateMachine States, PostMergeRunStore Store,
-        PostMergeIncidentService Service) Setup()
+        PostMergeIncidentService Service) Setup(bool containsRepair = false)
     {
         var projectPath = Path.Combine(_root, "projects", "demo");
         Directory.CreateDirectory(projectPath);
@@ -248,7 +427,7 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
         var store = new PostMergeRunStore(Path.Combine(_root, "post-merge"));
         var service = new PostMergeIncidentService(store, mutations, scanner, states, clock,
-            NullLogger<PostMergeIncidentService>.Instance);
+            NullLogger<PostMergeIncidentService>.Instance, containsRepair: (_, _, _) => containsRepair);
         return (project, clock, scanner, mutations, states, store, service);
     }
 

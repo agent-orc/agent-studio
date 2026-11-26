@@ -303,6 +303,8 @@ public sealed class PostMergeRunCommand
                         retry => RunCommand(retry, definition.Environment, ct), ledger.Record, tip);
                     if (verdicts[index].ExitCode == 0) quarantinedFailures++;
                 }
+                for (var index = verdictStart; index < verdicts.Count; index++)
+                    verdicts[index] = verdicts[index] with { SuiteId = suite.Id };
             }
             if (verdicts.Any(verdict => verdict.ExitCode != 0)) break;
         }
@@ -335,8 +337,8 @@ public sealed class PostMergeRunCommand
         await Post(started with { Status = status, Verdicts = verdicts, Failure = failure,
             SuiteSelection = new(selection.Suites, selection.OmittedSuites, selection.Reasons)
             {
-                AttemptedSuites = definition.TestSuites.Where(suite => verdicts.Any(verdict =>
-                    verdict.Command == suite.Command || verdict.Command.StartsWith(suite.Command + " ", StringComparison.Ordinal)))
+                SuiteCommands = definition.TestSuites.ToDictionary(suite => suite.Id, suite => suite.Command),
+                AttemptedSuites = definition.TestSuites.Where(suite => verdicts.Any(verdict => verdict.SuiteId == suite.Id))
                     .Select(suite => suite.Id).ToArray(),
             },
             Reason = quarantinedFailures > 0
@@ -552,7 +554,8 @@ public sealed class PostMergeRunCommand
         var evidence = new PostMergeAttributionEvidence(lastGreen, controls.Select(Name).ToArray(),
             points.Select(point => new PostMergeBisectPointEvidence(point.Sha,
                 [Name(point.Runs.First), Name(point.Runs.Second)],
-                BisectVerdictPolicy.Verdict(point.Runs).ToString().ToLowerInvariant())).ToArray(),
+                BisectVerdictPolicy.Verdict(point.Runs).ToString().ToLowerInvariant())
+                { ParentResults = [Name(point.ParentRuns.First), Name(point.ParentRuns.Second)] }).ToArray(),
             Hint(decision.Classification), stop) { BuildCommand = build };
         return new(evidence, decision.AttributedMerge, controls, points);
     }

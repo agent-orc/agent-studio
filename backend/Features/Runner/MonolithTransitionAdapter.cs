@@ -33,6 +33,20 @@ public static class MonolithTransitionAdapter
         => RedDevelopRepairPolicy.RecurringCard(lane);
     public static bool MayCreateRelease(bool developRed)
         => RedDevelopRepairPolicy.MayCreateRelease(developRed);
+    public static RedTestTriageDecision RedTestTriage(RedTestTriageFacts facts) => RedTestTriagePolicy.Decide(facts);
+    public static bool QuarantineActive(AgentStudio.TaskServer.Contracts.ProjectTestQuarantine entry, DateTimeOffset now)
+        => TestQuarantineLifecyclePolicy.Active(entry, now);
+    public static string? QuarantineStartRefusal(IReadOnlyList<AgentStudio.TaskServer.Contracts.ProjectTestQuarantine> active,
+        string kind, bool baseTest) => TestQuarantineLifecyclePolicy.StartRefusal(active, kind, baseTest);
+    public static string? QuarantineRenewRefusal(AgentStudio.TaskServer.Contracts.ProjectTestQuarantine entry,
+        bool owner, string? lane, DateTimeOffset now) => TestQuarantineLifecyclePolicy.RenewRefusal(entry, owner, lane, now);
+    public static string? QuarantineLiftRefusal(bool owner, IReadOnlyList<RedTestLiftRun> runs)
+        => TestQuarantineLifecyclePolicy.LiftRefusal(owner, runs);
+    public static string QuarantineDevelopState(string? lineStop) => TestQuarantineLifecyclePolicy.DevelopState(lineStop);
+    public static bool MayReleaseQuarantines(string? lineStop, bool held)
+        => TestQuarantineLifecyclePolicy.MayCreateRelease(lineStop, held);
+    public static bool MayIntegrateLineStop(string? lineStop, string cardId, IReadOnlyList<string> repairs)
+        => TestQuarantineLifecyclePolicy.MayIntegrateLineStop(lineStop, cardId, repairs);
     public static ReviewBudgetDecision ReviewBudget(ReviewBudgetFacts facts) => ReviewBudgetPolicy.Decide(facts);
     public static DeepReviewDecision DeepReview(DeepReviewGrounds facts, string mode,
         string? ruleVersionId = null, bool? ruleSelection = null, string? ruleModel = null,

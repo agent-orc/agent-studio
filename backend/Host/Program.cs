@@ -1192,6 +1192,8 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedBatchGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeRunStore>();
+builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.TestQuarantineStore(
+    Path.Combine(sp.GetRequiredService<AgentStudio.Pipeline.PostMergeRunStore>().Root, "..", "test-quarantines")));
 // SM-4: the operator policy step reads gate evidence to classify stage deploys and promotions (D2).
 builder.Services.AddSingleton<AgentStudio.Security.IOperatorGateEvidence, AgentStudio.Security.PostMergeGateEvidence>();
 // SM-5: approval requests of T2 operator requests notify the Owner through the operator feed and an optional push link.

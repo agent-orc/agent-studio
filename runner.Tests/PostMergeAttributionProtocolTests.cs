@@ -41,6 +41,9 @@ public sealed class PostMergeAttributionProtocolTests : IDisposable
         Assert.Equal([(fixture.Merges[0], "pass"), (fixture.Merges[1], "fail")],
             attribution.Points.Select(point => (point.Sha, point.Verdict)));
         Assert.All(attribution.Points, point => Assert.Equal(2, point.Results.Count));
+        Assert.All(attribution.Points, point => Assert.Equal(["pass", "pass"], point.ParentResults));
+        Assert.True(terminal.SuiteSelection!.SuiteCommands.ContainsKey("runner-routine"));
+        Assert.Contains(terminal.Verdicts, verdict => verdict.SuiteId == "runner-routine");
         Assert.Equal(PartialBuild, attribution.BuildCommand);
 
         var runs = terminal.FocusedRuns!;

@@ -66,6 +66,31 @@ public sealed class IntegrationPublisherTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task A_line_stop_holds_an_unrelated_delivery_and_allows_its_repair()
+    {
+        var (origin, work) = await RepositoryAsync();
+        var baseSha = await RevParseAsync(work, "HEAD");
+        var result = await CommitAsync(work, "unrelated.txt", "unrelated", "Delivery");
+        await Git(work, "push", "-q", origin, "HEAD:refs/heads/results/stopped");
+        var state = PostMergeProjectState.Empty("project") with
+        {
+            LineStop = "Base suite failed twice",
+            Incidents = [new("fingerprint", "repair", "FixForward", DateTimeOffset.UnixEpoch,
+                null, null, ["Base.Test"], [])],
+        };
+        var command = Command(origin, "develop", "refs/heads/results/stopped", result);
+        var blocked = await IntegrationPublisher.PublishAsync(command, 1, Path.Combine(_workspace.Path, "state"),
+            _log.Add, default, state);
+        Assert.Equal(IntegrationOutcomeKinds.BlockedFailingArea, blocked.Outcome);
+        Assert.Contains("Base suite failed twice", blocked.Detail);
+        Assert.Equal(baseSha, await RevParseAsync(origin, "refs/heads/develop"));
+        var repair = await IntegrationPublisher.PublishAsync(command with { TaskId = "repair" }, 2,
+            Path.Combine(_workspace.Path, "state"), _log.Add, default, state);
+        Assert.Equal(IntegrationOutcomeKinds.Integrated, repair.Outcome);
+    }
+
+    [Fact]
     public async Task A_result_ref_that_names_another_sha_is_refused()
     {
         var (origin, work) = await RepositoryAsync();

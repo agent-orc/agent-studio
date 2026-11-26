@@ -22,6 +22,9 @@ public sealed record PostMergeRunRecord(
     /// <summary>RT-3 (RT-D10 B, fingerprint part): the test envelope the run's commands saw.</summary>
     public PostMergeEnvelopeFingerprint? Envelope { get; init; }
     public ReviewSuiteSelectionDto? SuiteSelection { get; init; }
+    /// <summary>Measured envelope checks when available. Null keeps the RT-3 single-envelope assumption until RT-6.</summary>
+    public bool? EnvelopeCanaryPassed { get; init; }
+    public bool? FingerprintMatchesReference { get; init; }
     public IReadOnlyList<string> FlakyTests => Verdicts.SelectMany(verdict => verdict.FlakyTests ?? [])
         .Distinct(StringComparer.Ordinal).ToArray();
     public int FlakyCount => FlakyTests.Count;
@@ -34,6 +37,8 @@ public sealed record PostMergeCommandVerdict(string Command, int ExitCode, bool 
 {
     /// <summary>Wall-clock duration of the command's first run; null on older receipts.</summary>
     public long? DurationMs { get; init; }
+    /// <summary>The executed suite, including shard commands whose filter was rewritten.</summary>
+    public string? SuiteId { get; init; }
 }
 
 /// <summary>Values of <see cref="PostMergeTestAttempt.Phase"/> and <see cref="PostMergeFocusedRun.Phase"/>.</summary>
@@ -123,7 +128,10 @@ public sealed record PostMergeAttributionEvidence(string? LastGreenSha, IReadOnl
 }
 
 /// <summary>One tested bisect point, in candidate order, with the verdict of its two runs.</summary>
-public sealed record PostMergeBisectPointEvidence(string Sha, IReadOnlyList<string> Results, string Verdict);
+public sealed record PostMergeBisectPointEvidence(string Sha, IReadOnlyList<string> Results, string Verdict)
+{
+    public IReadOnlyList<string>? ParentResults { get; init; }
+}
 
 /// <summary>Runner-collected facts from the exact fetched tip; no host chooses the repair action.</summary>
 public sealed record PostMergeFailureEvidence(
@@ -167,6 +175,11 @@ public sealed record PostMergeProjectState(
     /// the affected selection.
     /// </summary>
     public string? WindowSuites { get; init; }
+    public string? LineStop { get; init; }
+    public string? InconclusiveRunId { get; init; }
+    public IReadOnlyList<ProjectTestQuarantine> Quarantines { get; init; } = [];
+    public int QuarantinedCount => Quarantines.Count;
+    public int HeldCount => Quarantines.Count(entry => entry.Kind == "held");
     public static PostMergeProjectState Empty(string project) => new(project, "green", null, null, null, [], []);
 }
 
@@ -179,6 +192,12 @@ public sealed record PostMergeIncident(string Fingerprint, string RepairCardId, 
     DateTimeOffset? OwnerAskedAtUtc = null,
     PostMergeOwnerQuestion? OwnerQuestion = null)
 {
+    public string? TestId { get; init; }
+    public string? SuiteId { get; init; }
+    public string? SuiteCategory { get; init; }
+    public string? ModelRung { get; init; }
+    public string? LineStopReason { get; init; }
+    public IReadOnlyList<PostMergeOwnerQuestion> OwnerQuestions { get; init; } = [];
     public double? RedMinutes => ResolvedAtUtc is { } resolved
         ? Math.Max(0, (resolved - FirstRedAtUtc).TotalMinutes) : null;
 }
@@ -190,7 +209,11 @@ public sealed record PostMergeIncident(string Fingerprint, string RepairCardId, 
 /// name the latest red receipt the question was asked on.
 /// </summary>
 public sealed record PostMergeOwnerQuestion(IReadOnlyList<string> Options, string Recommended,
-    string RecommendationReason, string? RedRunId, string? RedTipSha);
+    string RecommendationReason, string? RedRunId, string? RedTipSha)
+{
+    public string? Reason { get; init; }
+    public DateTimeOffset? AskedAtUtc { get; init; }
+}
 
 /// <summary>Registry-derived execution target for the host-owned T3 scheduler.</summary>
 public sealed record PostMergeProjectTarget(string ProjectId, string Project, string RepositoryUrl, string Branch);

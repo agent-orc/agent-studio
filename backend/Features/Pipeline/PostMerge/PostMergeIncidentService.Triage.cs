@@ -1,0 +1,353 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Registry;
+using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Tasks;
+
+namespace AgentStudio.Pipeline;
+
+public sealed partial class PostMergeIncidentService
+{
+    private const string SystemPrincipal = "system:post-merge";
+    private const string LiftCondition = "Two consecutive covering passes in the standard envelope on tips containing the repair integration, or an owner lift.";
+    private readonly TestQuarantineStore _quarantines;
+    private readonly AgentStudio.Git.GitService? _git;
+    private readonly ModelRoutingPolicyRegistry _routing;
+    private readonly IModelRoutingModeProvider? _routingMode;
+    private readonly Func<ProjectRecord, string, string, bool>? _containsRepair;
+
+    public void Apply(ProjectRecord project, PostMergeRunRecord run)
+    {
+        if (run.Status is not ("red" or "green")) return;
+        lock (_gate)
+        {
+            if (_quarantines.Read(project.Id).IncidentLog.Any(log => log.RunId == run.Id)
+                && (run.TestVerdicts?.Count ?? 0) <= _quarantines.Read(project.Id).IncidentLog.Count(log => log.RunId == run.Id)) return;
+            if (run.TestVerdicts is not null || run.Status == "green"
+                && (_store.Read(project.Id).Incidents ?? []).Any(item => item.TestId is not null && item.ResolvedAtUtc is null))
+            {
+                ApplyTests(project, run);
+                return;
+            }
+            ApplyLegacy(project, run);
+            var reason = run.Status == "red" ? "Legacy red receipt without per-test confirmation evidence." : null;
+            _store.SetDevelopDisposition(project.Id, run.Status, reason);
+            _quarantines.Log(project.Id, new(run.Id + ":legacy", nameof(RedDevelopRepairPolicy), "compatibility.v1",
+                Digest(JsonSerializer.Serialize(run)), "Legacy", null, [run.Status == "red" ? "LineStop" : "Close"],
+                [], LiftCondition, reason ?? "Green legacy receipt.", run.Id, run.TipSha, "unknown",
+                run.Failure?.Fingerprint ?? FallbackFingerprint(run), SystemPrincipal, _clock.GetUtcNow()));
+        }
+    }
+
+    public void CloseLifted(ProjectRecord project, ProjectTestQuarantine entry)
+    {
+        if (entry.LiftedAtUtc is null) return;
+        _store.UpdateIncidents(project.Id, items => items.Select(item => item.Fingerprint == entry.IncidentFingerprint
+            && item.TestId == entry.Test && item.ResolvedAtUtc is null
+                ? item with { ResolvedAtUtc = entry.LiftedAtUtc } : item).ToArray());
+    }
+
+    public IReadOnlyList<ProjectTestQuarantine> ActiveQuarantines(ProjectRecord project)
+        => _quarantines.Active(project.Id, Repository(project), _clock.GetUtcNow());
+
+    private string? Repository(ProjectRecord project)
+        => AgentStudio.Docs.ProjectRepoResolver.Resolve(project,
+            _scanner.GetWatchPaths().FirstOrDefault(entry => string.Equals(entry.Path, project.StorageLocation,
+                StringComparison.OrdinalIgnoreCase)));
+
+    private void ApplyTests(ProjectRecord project, PostMergeRunRecord run, bool overdue = false)
+    {
+        var state = _store.Read(project.Id);
+        var tests = (run.TestVerdicts ?? []).ToList();
+        // Green receipts carry only previously failed tests. Include unresolved entries
+        // so selected-suite passes can prove a lift without inventing coverage.
+        foreach (var incident in (state.Incidents ?? []).Where(item => item.TestId is not null && item.ResolvedAtUtc is null))
+            if (tests.All(test => test.Test != incident.TestId))
+                tests.Add(new(incident.TestId!, incident.SuiteId ?? "", incident.SuiteCategory ?? "routine", [], "inconclusive"));
+        var logs = _quarantines.Read(project.Id).IncidentLog;
+        var decisions = new List<RedTestTriageDecision>();
+        foreach (var test in tests)
+        {
+            var fingerprint = Fingerprint(run, test);
+            var incident = (state.Incidents ?? []).LastOrDefault(item => item.TestId == test.Test
+                && item.Fingerprint == fingerprint && item.ResolvedAtUtc is null);
+            if (test.Attempts.Count == 0)
+            {
+                incident = (state.Incidents ?? []).LastOrDefault(item => item.TestId == test.Test && item.ResolvedAtUtc is null);
+                if (incident is null) continue;
+                fingerprint = incident.Fingerprint;
+            }
+            var key = run.Id + ":" + test.Test + ":" + fingerprint
+                + (overdue ? ":ladder:" + (int)(_clock.GetUtcNow() - (incident?.FirstRedAtUtc ?? _clock.GetUtcNow())).TotalHours : "");
+            var prior = logs.FirstOrDefault(log => log.DecisionId == key);
+            if (prior is not null) continue;
+            var facts = Facts(project, run, test, fingerprint, incident);
+            var decision = MonolithTransitionAdapter.RedTestTriage(facts);
+            decisions.Add(decision);
+            var actions = decision.Decisions;
+            var needsCard = actions.Any(action => action.Action is RedTestAction.FixForward or RedTestAction.ProposeRevert
+                or RedTestAction.StartHeld or RedTestAction.StartReportOnly or RedTestAction.LineStop or RedTestAction.AskOwner);
+            if (needsCard && incident is null)
+            {
+                var rung = actions.FirstOrDefault(action => action.ModelRung is not null)?.ModelRung ?? RedTestModelRung.Medium;
+                var card = RepairCard(project, run, test, fingerprint, rung, facts.SinceLastLift is not null,
+                    actions.Any(action => action.Action == RedTestAction.ProposeRevert));
+                incident = new(fingerprint, card, actions.Any(action => action.Action == RedTestAction.ProposeRevert)
+                    ? "Revert" : "FixForward", run.FinishedAtUtc ?? _clock.GetUtcNow(), null,
+                    decision.AttributedMerge, [test.Test], test.CoveringFolders ?? [])
+                { TestId = test.Test, SuiteId = test.SuiteId, SuiteCategory = test.SuiteCategory, ModelRung = rung.ToString() };
+                _store.UpdateIncidents(project.Id, items => [.. items, incident]);
+            }
+            foreach (var action in actions)
+                ApplyAction(project, run, test, fingerprint, incident, facts, action);
+            if (incident is not null && actions.FirstOrDefault(action => action.ModelRung is not null)?.ModelRung is { } modelRung)
+                SetRepairRung(project, incident.RepairCardId, modelRung);
+            var reason = string.Join(" ", actions.Select(action => action.Reason));
+            _quarantines.Log(project.Id, new(key, nameof(RedTestTriagePolicy), "rt-4.v1",
+                Digest(JsonSerializer.Serialize(new { run.Id, run.TipSha, Facts = facts })),
+                decision.Classification.ToString(), null, actions.Select(action => action.Action.ToString()).ToArray(),
+                [], LiftCondition, reason.Length <= 280 ? reason : reason[..280], run.Id, run.TipSha, test.Test,
+                fingerprint, SystemPrincipal, _clock.GetUtcNow()));
+            state = _store.Read(project.Id);
+        }
+        if (overdue) return;
+        // A failed prepare/build has no per-test ledger. Keep the compatibility
+        // repair path until producers supply an explicit twice-confirmed receipt.
+        var current = _store.Read(project.Id);
+        var openStops = (current.Incidents ?? []).Where(item => item.ResolvedAtUtc is null && item.LineStopReason is not null).ToArray();
+        var lineStop = openStops.FirstOrDefault()?.LineStopReason;
+        var inconclusive = decisions.Any(decision => decision.Decisions.Any(action => action.Action == RedTestAction.MarkInconclusive));
+        _store.SetDevelopDisposition(project.Id, MonolithTransitionAdapter.QuarantineDevelopState(lineStop), lineStop,
+            inconclusive ? run.Id : null);
+    }
+
+    private RedTestTriageFacts Facts(ProjectRecord project, PostMergeRunRecord run, PostMergeTestVerdict test,
+        string fingerprint, PostMergeIncident? incident)
+    {
+        var now = _clock.GetUtcNow();
+        var state = _store.Read(project.Id);
+        var entries = _quarantines.Read(project.Id).Entries;
+        var entry = entries.LastOrDefault(item => item.Test == test.Test && item.IncidentFingerprint == fingerprint
+            && item.LiftedAtUtc is null);
+        var lastLift = entries.Where(item => item.Test == test.Test && item.LiftedAtUtc <= now)
+            .MaxBy(item => item.LiftedAtUtc)?.LiftedAtUtc;
+        var controls = test.Attempts.Where(attempt => attempt.Phase == PostMergeRunPhases.Control)
+            .Select(attempt => Result(attempt.Result)).Take(2).ToArray();
+        var points = (run.Failure?.Attribution?.Points ?? []).Where(point => point.ParentResults?.Count == 2)
+            .Select(point => new RedTestBisectPoint(point.Sha, Pair(point.Results), Pair(point.ParentResults!))).ToArray();
+        var lane = incident is null ? null : _scanner.FindJob(incident.RepairCardId, project.StorageLocation)?.State;
+        return new(test.Test, test.SuiteId, test.SuiteCategory == "base" ? RedTestCategory.Base : RedTestCategory.Routine)
+        {
+            IncidentFingerprint = fingerprint,
+            FirstResult = test.Attempts.Count == 0 && run.Status == "green" ? RedTestResult.Pass
+                : Result(test.Attempts.FirstOrDefault(attempt => attempt.Phase == PostMergeRunPhases.Initial
+                    && attempt.Sha == run.TipSha)?.Result),
+            SameShaRepeat = Result(test.Attempts.LastOrDefault(attempt => attempt.Phase == PostMergeRunPhases.Repeat
+                && attempt.Sha == run.TipSha)?.Result),
+            // RT-3 uses one run-owned envelope. RT-6 supplies measured canary/reference
+            // comparisons; any explicit negative fact overrides that compatibility assumption.
+            EnvelopeCanary = run.EnvelopeCanaryPassed == false ? RedTestResult.Fail : RedTestResult.Pass,
+            FingerprintMatchesReference = EnvelopeMatches(run, state.Runs.FirstOrDefault(previous =>
+                previous.Id == entry?.EvidenceRunIds.FirstOrDefault())
+                ?? state.Runs.LastOrDefault(previous => previous.Id != run.Id && previous.Status == "green")),
+            LastGreenControlResults = controls,
+            BisectPoints = points,
+            ProjectQuarantines = ActiveQuarantines(project).Select(item => new RedTestQuarantine(item.Test,
+                item.IncidentFingerprint, item.Kind == "held" ? RedTestQuarantineKind.Held : RedTestQuarantineKind.ReportOnly)).ToArray(),
+            ActiveQuarantine = entry is null ? null : new(entry.Kind == "held" ? RedTestQuarantineKind.Held
+                : RedTestQuarantineKind.ReportOnly, now - entry.StartedAtUtc, entry.Renewals),
+            DistinctFlakyRuns14Days = (state.FlakyHistory ?? []).Where(item => item.Test == test.Test
+                && item.AtUtc >= now.AddDays(-14) && item.AtUtc <= now).Select(item => item.RunId)
+                .Concat(_quarantines.Read(project.Id).IncidentLog.Where(log => log.Test == test.Test
+                    && log.Class == nameof(RedTestClassification.Flaky) && log.AtUtc >= now.AddDays(-14)
+                    && log.AtUtc <= now).Select(log => log.RunId)).Append(run.Id).Distinct().Count(),
+            EnvironmentOccurrences = _quarantines.Read(project.Id).IncidentLog.Where(log => log.Test == test.Test
+                && log.Class == nameof(RedTestClassification.Environment)).Select(log => log.RunId)
+                .Append(run.Id).Distinct().Count(),
+            SinceLastLift = lastLift is null ? null : now - lastLift,
+            RepairCardLane = lane,
+            IncidentAge = incident is null ? TimeSpan.Zero : now - incident.FirstRedAtUtc,
+            LineStopAge = incident?.LineStopReason is null ? TimeSpan.Zero : now - incident.FirstRedAtUtc,
+            LineStopActive = incident?.LineStopReason is not null,
+            RevertAppliesCleanly = run.Failure?.RevertAppliesCleanly == true,
+            LaterMergeCoupled = run.Failure?.LaterMergeDependsOnSuspect == true,
+            AreaHasNewFailure = state.Runs.Where(candidate => candidate.FinishedAtUtc > incident?.FirstRedAtUtc)
+                .Any(candidate => (candidate.TestVerdicts ?? []).Any(other =>
+                    (other.Test == test.Test || (other.CoveringFolders ?? []).Intersect(test.CoveringFolders ?? [],
+                        StringComparer.OrdinalIgnoreCase).Any())
+                    && Result(other.Attempts.LastOrDefault(attempt => attempt.Sha == candidate.TipSha
+                        && attempt.Phase is PostMergeRunPhases.Initial or PostMergeRunPhases.Repeat)?.Result) == RedTestResult.Fail)),
+            LiftRuns = entry is not null ? CoveringRuns(project, entry, run).Select(item => item.Fact).ToArray()
+                : incident is null ? [] : CoveringRuns(project, new("line-stop", test.Test, incident.RepairCardId,
+                    DateOnly.MaxValue, null, null, "held", SystemPrincipal, incident.FirstRedAtUtc, DateTimeOffset.MaxValue,
+                    fingerprint, [], []), run).Select(item => item.Fact).ToArray(),
+        };
+    }
+
+    private void ApplyAction(ProjectRecord project, PostMergeRunRecord run, PostMergeTestVerdict test,
+        string fingerprint, PostMergeIncident? incident, RedTestTriageFacts facts, RedTestDecision action)
+    {
+        var now = _clock.GetUtcNow();
+        var entry = _quarantines.Read(project.Id).Entries.LastOrDefault(item => item.Test == test.Test
+            && item.IncidentFingerprint == fingerprint && item.LiftedAtUtc is null);
+        switch (action.Action)
+        {
+            case RedTestAction.StartHeld:
+            case RedTestAction.StartReportOnly:
+                var expires = now + action.Duration!.Value;
+                _quarantines.Start(project.Id, new(Guid.NewGuid().ToString("N"), test.Test, incident!.RepairCardId,
+                    DateOnly.FromDateTime(expires.UtcDateTime), null, action.Reason,
+                    action.Action == RedTestAction.StartHeld ? "held" : "report-only", SystemPrincipal, now, expires,
+                    fingerprint, [run.Id], test.CoveringFolders ?? []) { SuiteId = test.SuiteId }, ActiveQuarantines(project));
+                break;
+            case RedTestAction.Renew when entry is not null:
+                _quarantines.Renew(project.Id, entry.Id, SystemPrincipal, false, facts.RepairCardLane, now);
+                break;
+            case RedTestAction.Lift when entry is not null:
+                var covering = CoveringRuns(project, entry, run).TakeLast(2).ToArray();
+                _quarantines.Lift(project.Id, entry.Id, SystemPrincipal, false,
+                    covering.Select(item => item.Fact).ToArray(), covering.Select(item => item.RunId).ToArray(), now);
+                _store.UpdateIncidents(project.Id, items => items.Select(item => item.Fingerprint == fingerprint
+                    && item.TestId == test.Test && item.ResolvedAtUtc is null ? item with { ResolvedAtUtc = now } : item).ToArray());
+                break;
+            case RedTestAction.WithdrawAttribution when incident is not null:
+                _store.UpdateIncidents(project.Id, items => items.Select(item => item.Fingerprint == fingerprint
+                    && item.TestId == test.Test && item.ResolvedAtUtc is null
+                        ? item with { AttributedMerge = null, FailingPaths = test.CoveringFolders ?? [] } : item).ToArray());
+                break;
+            case RedTestAction.ResolveLineStop when incident is not null:
+                _store.UpdateIncidents(project.Id, items => items.Select(item => item.Fingerprint == fingerprint
+                    && item.TestId == test.Test && item.ResolvedAtUtc is null ? item with { ResolvedAtUtc = now } : item).ToArray());
+                break;
+            case RedTestAction.LineStop when incident is not null:
+                _store.UpdateIncidents(project.Id, items => items.Select(item => item.Fingerprint == fingerprint
+                    && item.TestId == test.Test && item.ResolvedAtUtc is null ? item with { LineStopReason = action.Reason } : item).ToArray());
+                break;
+            case RedTestAction.AskOwner when incident is not null && action.Question is { } question:
+                var asked = new PostMergeOwnerQuestion(question.Options.Select(option => option.ToString()).ToArray(),
+                    question.Recommended.ToString(), question.RecommendationReason, run.Id, run.TipSha)
+                    { Reason = question.Reason.ToString(), AskedAtUtc = now };
+                _store.UpdateIncidents(project.Id, items => items.Select(item => item.Fingerprint == fingerprint
+                    && item.TestId == test.Test && item.ResolvedAtUtc is null
+                    && item.OwnerQuestions.All(existing => existing.Reason != asked.Reason)
+                        ? item with { OwnerQuestions = [.. item.OwnerQuestions, asked] } : item).ToArray());
+                break;
+        }
+    }
+
+    private string RepairCard(ProjectRecord project, PostMergeRunRecord run, PostMergeTestVerdict test,
+        string fingerprint, RedTestModelRung rung, bool relapse, bool proposeRevert)
+    {
+        var title = "Repair red test: " + test.Test;
+        var prior = relapse ? null : _scanner.ScanAllJobsWithArchive().FirstOrDefault(card => card.ProjectName == project.DisplayName
+            && card.Title == title && card.CreationSource == HumanReviewEscalationCategories.PostMergeRepairCreationSource
+            && MonolithTransitionAdapter.RecurringRepairCard(card.State) != RecurringRepairCardAction.CreateNew);
+        if (prior is not null) return prior.Id;
+        var route = RepairRoute(project, rung);
+        var cardId = _mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+        {
+            Project = project.Id, Title = title, TargetState = TaskStates.Preparation, TaskType = TaskTypes.Bug,
+            Order = 0, CreationSource = HumanReviewEscalationCategories.PostMergeRepairCreationSource, CreatedBy = SystemPrincipal,
+            CliType = route.Cli, Agent = route.Cli, Model = route.Model, ThinkingLevel = route.Thinking,
+            ModelExplicit = true, ThinkingLevelExplicit = true,
+            PromptMarkdown = Prompt(project, run, _store.Read(project.Id).LastGreenSha, run.Failure,
+                proposeRevert ? RedDevelopRepairAction.Revert : RedDevelopRepairAction.FixForward, fingerprint) + $"\nTest: {test.Test}\nModel rung: {rung}\n",
+        }) ?? throw new InvalidOperationException("The red-test repair card could not be created.");
+        _states.SetOrderInLane(cardId, project.StorageLocation, 0);
+        return cardId;
+    }
+
+    private ModelRoutingTier RepairTier(RedTestModelRung rung)
+    {
+        var rank = rung switch { RedTestModelRung.Medium => 2, RedTestModelRung.High => 3, _ => 4 };
+        if (_routingMode?.EconomyMode == true) rank = Math.Max(2, rank - _routing.Policy.EconomyMode.DowngradeSteps);
+        return _routing.Policy.Tiers.Where(tier => tier.Rank <= rank).MaxBy(tier => tier.Rank)!;
+    }
+
+    private (string Cli, string Model, string? Thinking) RepairRoute(ProjectRecord project,
+        RedTestModelRung rung, string? existingCli = null)
+    {
+        var tier = RepairTier(rung);
+        var cli = existingCli ?? project.CliDefault ?? CliTypes.Codex;
+        if (cli == CliTypes.Claude && tier.VendorOverrides.TryGetValue("anthropic", out var vendor))
+            return (cli, vendor.Model, vendor.ThinkingLevel);
+        return (CliTypes.Codex, tier.Model, tier.ThinkingLevel);
+    }
+
+    private void SetRepairRung(ProjectRecord project, string cardId, RedTestModelRung rung)
+    {
+        var card = _scanner.FindJob(cardId, project.StorageLocation);
+        if (card?.State is not (TaskStates.Preparation or TaskStates.Ready)) return;
+        var route = RepairRoute(project, rung, card.CliType);
+        _store.UpdateIncidents(project.Id, items => items.Select(item => item.RepairCardId == cardId
+            && item.ResolvedAtUtc is null ? item with { ModelRung = rung.ToString() } : item).ToArray());
+        if (card.Model != route.Model) _mutations.SetJobModel(cardId, route.Model, project.StorageLocation);
+        if (card.ThinkingLevel != route.Thinking) _mutations.SetJobThinkingLevel(cardId, route.Thinking, project.StorageLocation);
+        _states.SetOrderInLane(cardId, project.StorageLocation, 0);
+    }
+
+    public IReadOnlyList<(string RunId, RedTestLiftRun Fact)> CoveringRuns(ProjectRecord project,
+        ProjectTestQuarantine entry, PostMergeRunRecord? current = null)
+    {
+        var state = _store.Read(project.Id);
+        var incident = (state.Incidents ?? []).LastOrDefault(item => item.RepairCardId == entry.Card);
+        var runs = state.Runs.Concat(current is null ? [] : [current]).DistinctBy(run => run.Id)
+            .Where(run => run.FinishedAtUtc >= entry.StartedAtUtc && run.Status is "green" or "red")
+            .OrderByDescending(run => run.FinishedAtUtc);
+        var result = new List<(string, RedTestLiftRun)>();
+        foreach (var run in runs)
+        {
+            var test = run.TestVerdicts?.FirstOrDefault(test => test.Test == entry.Test);
+            var selected = run.SuiteSelection;
+            var suite = entry.SuiteId ?? incident?.SuiteId;
+            var command = suite is not null && selected?.SuiteCommands.TryGetValue(suite, out var suiteCommand) == true
+                ? suiteCommand : null;
+            var suiteVerdicts = run.Verdicts.Where(verdict => suite is not null && verdict.SuiteId == suite
+                || verdict.SuiteId is null && command is not null && (verdict.Command == command
+                    || verdict.Command.StartsWith(command + " ", StringComparison.Ordinal))).ToArray();
+            var covered = test is not null || suite is not null
+                && selected?.SelectedSuites.Contains(suite, StringComparer.Ordinal) == true && suiteVerdicts.Length > 0;
+            if (!covered) continue;
+            var outcome = test is not null ? Result(test.Attempts.LastOrDefault(attempt => attempt.Sha == run.TipSha
+                    && attempt.Phase is PostMergeRunPhases.Initial or PostMergeRunPhases.Repeat)?.Result)
+                : suiteVerdicts.All(verdict => verdict.ExitCode == 0) ? RedTestResult.Pass : RedTestResult.Unknown;
+            result.Add((run.Id, new(outcome, run.EnvelopeCanaryPassed != false && EnvelopeMatches(run,
+                state.Runs.FirstOrDefault(previous => previous.Id == entry.EvidenceRunIds.FirstOrDefault())),
+                ContainsRepair(project, entry.Card, run.TipSha))));
+            if (result.Count == 2) break;
+        }
+        result.Reverse();
+        return result;
+    }
+
+    private bool ContainsRepair(ProjectRecord project, string cardId, string tip)
+    {
+        if (_containsRepair is not null) return _containsRepair(project, cardId, tip);
+        var card = _scanner.FindJob(cardId, project.StorageLocation);
+        var integration = card is null ? null : IntegrationVerificationStore.Read(card.FolderPath);
+        return integration is { Sha: { } sha } && Repository(project) is { } root
+            && _git?.IsAncestor(root, sha, tip) == true;
+    }
+
+    private static bool EnvelopeMatches(PostMergeRunRecord run, PostMergeRunRecord? reference)
+    {
+        if (run.FingerprintMatchesReference is { } measured) return measured;
+        if (run.Envelope is not { } actual || reference?.Envelope is not { } expected) return true;
+        return actual.AllowlistDigest == expected.AllowlistDigest
+            && actual.DeclaredEnvironmentDigest == expected.DeclaredEnvironmentDigest
+            && actual.CgroupKind == expected.CgroupKind && actual.CpuMax == expected.CpuMax
+            && actual.ProcessorCount == expected.ProcessorCount && actual.SdkVersion == expected.SdkVersion;
+    }
+
+    private static string Fingerprint(PostMergeRunRecord run, PostMergeTestVerdict test)
+        => run.Failure?.Fingerprint ?? Digest(test.Test + "\n" + string.Join("\n", run.Verdicts
+            .Where(verdict => verdict.ExitCode != 0).Select(verdict => verdict.OutputTail)))[..16];
+    private static string Digest(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+    private static RedTestRunPair Pair(IReadOnlyList<string> results)
+        => new(Result(results.ElementAtOrDefault(0)), Result(results.ElementAtOrDefault(1)));
+    private static RedTestResult Result(string? result) => result switch
+    { "pass" => RedTestResult.Pass, "fail" => RedTestResult.Fail, _ => RedTestResult.Unknown };
+}

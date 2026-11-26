@@ -15,6 +15,20 @@ public sealed class PostMergeRunStore
         _root = root ?? LocalStateRoot.Combine("agentstudio", "post-merge");
     }
 
+    internal string Root => _root;
+
+    public PostMergeProjectState SetDevelopDisposition(string projectId, string developState, string? lineStop,
+        string? inconclusiveRunId = null)
+    {
+        lock (_gate)
+        {
+            var state = ReadLocked(projectId) with { DevelopState = developState, LineStop = lineStop,
+                InconclusiveRunId = inconclusiveRunId };
+            WriteLocked(projectId, state);
+            return state;
+        }
+    }
+
     public PostMergeProjectState Read(string projectId)
     {
         lock (_gate) return ReadLocked(projectId);
@@ -65,14 +79,14 @@ public sealed class PostMergeRunStore
                         Status = "red", FinishedAtUtc = run.StartedAtUtc,
                         Reason = "runner claim expired before a terminal receipt",
                     }] };
-                state = state with { DevelopState = "running", ActiveRun = run, PendingWindow = null };
+                state = state with { DevelopState = state.LineStop is null ? "running" : "red", ActiveRun = run, PendingWindow = null };
             }
             else if (run.Status == "skipped")
             {
                 if (active is not null
                     || !string.Equals(run.TipSha, state.LastGreenSha, StringComparison.OrdinalIgnoreCase))
                     return null;
-                state = state with { DevelopState = "green",
+                state = state with { DevelopState = state.LineStop is null ? "green" : "red",
                     Runs = [.. state.Runs.TakeLast(511), run] };
             }
             else if (run.Status is "green" or "red")
