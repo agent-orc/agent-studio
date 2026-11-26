@@ -84,6 +84,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
                 && type != OperatorDecisionTypes.ReviewHostDrift
                 && type != OperatorDecisionTypes.PostMergeRunsMissing
                 && type != OperatorDecisionTypes.PostMergeRedIncident
+                && type != OperatorDecisionTypes.CapacityUnderused
                 && type != OperatorDecisionTypes.OverlapStarved
                 && type != OperatorDecisionTypes.BatchRunningWithoutGate)
             .ToArray();

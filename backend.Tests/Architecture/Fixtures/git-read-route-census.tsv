@@ -137,6 +137,7 @@
 /api/operator/backups	free	-	-	-
 /api/operator/batch-triage	free	-	-	-
 /api/operator/capacity	free	-	-	-
+/api/operator/coding-capacity	free	-	-	-
 /api/operator/decisions	free	-	-	-
 /api/operator/decisions/stream	free	-	-	-
 /api/operator/log	free	-	-	-
