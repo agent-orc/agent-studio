@@ -10,25 +10,20 @@ public enum RemoteIntegrationContinuationAction
 /// <summary>
 /// Pure continuation policy for an integration result. A result that cannot
 /// retain unambiguous delivery SHA attribution receives a bounded number of
-/// automatic steer rounds for that fenced delivery. Repeated ambiguity reaches
+/// automatic steer rounds per card and integration target. Repeated ambiguity reaches
 /// Human Review instead of opening an unbounded coding loop.
 /// </summary>
 public static class RemoteIntegrationContinuationPolicy
 {
-    public const int MaxAutomaticAgentRounds = 1;
+    public const int MaxAutomaticAgentRounds = AgentStudio.OrchestrationDecisions.IntegrationConflictPolicy.MaximumRounds;
 
     public static RemoteIntegrationContinuationAction Decide(
         MergeIntoIntegrationOutcome outcome,
         int automaticAgentRoundsUsed,
         int maximumAgentRounds = MaxAutomaticAgentRounds)
     {
-        if (outcome is not (MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict))
-            return RemoteIntegrationContinuationAction.None;
-
-        return Math.Max(0, automaticAgentRoundsUsed) < Math.Min(MaxAutomaticAgentRounds,
-            Math.Max(1, maximumAgentRounds))
-            ? RemoteIntegrationContinuationAction.StartAgentRound
-            : RemoteIntegrationContinuationAction.LeaveForHumanReview;
+        return (RemoteIntegrationContinuationAction)AgentStudio.Runner.MonolithTransitionAdapter.IntegrationConflictRound(
+            outcome.ToString(), automaticAgentRoundsUsed, maximumAgentRounds);
     }
 }
 
@@ -156,6 +151,7 @@ public sealed class IntegrationAgentRoundService
     private readonly TimelineLog _timeline;
     private readonly ILogger<IntegrationAgentRoundService> _logger;
     private readonly int _maximumRecoveryRounds;
+    private readonly GitService? _git;
 
     public IntegrationAgentRoundService(
         TaskScannerService scanner,
@@ -164,9 +160,11 @@ public sealed class IntegrationAgentRoundService
         TimelineLog timeline,
         ILogger<IntegrationAgentRoundService> logger,
         IConfiguration? configuration = null,
-        ProjectSettingsService? settings = null)
+        ProjectSettingsService? settings = null,
+        GitService? git = null)
     {
         _scanner = scanner;
+        _git = git;
         _settings = settings;
         _mutations = mutations;
         _states = states;
@@ -196,14 +194,19 @@ public sealed class IntegrationAgentRoundService
         MergeIntoIntegrationResult result,
         IReadOnlyList<string> involvedCards)
     {
-        var conflictedFiles = result.ConflictReport?.ConflictedFiles is { Count: > 0 } reported
-            ? reported : result.ConflictedFiles;
+        var conflictedFiles = result.ConflictedFiles.Count > 0 ? result.ConflictedFiles
+            : result.ConflictReport?.ConflictedFiles ?? [];
         var job = _scanner.FindJob(request.JobId, request.WatchPath);
         if (job is null)
             return Task.FromResult(Failed("The task disappeared before its automatic integration recovery round could start."));
 
         if (result.Outcome is not (MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict))
             return Task.FromResult(Failed("The integration result does not require an agent continuation."));
+
+        // Superseding a delivery clears its review subject. A stale call after
+        // the Ready handoff must not turn that expected cleanup into a new conflict.
+        if (!string.Equals(job.State, TaskStates.AutoReview, StringComparison.Ordinal))
+            return Task.FromResult(Failed($"Automatic integration recovery expected {TaskStates.AutoReview}, but the task is in {job.State}."));
 
         if (_settings?.Get(job.ProjectName).AutomaticFailureContinuationsEnabled == false)
         {
@@ -223,10 +226,36 @@ public sealed class IntegrationAgentRoundService
             return Task.FromResult(Failed(reason));
         }
 
-        var budget = IntegrationRecoveryBudget.Count(
-            _timeline.ReadAll(job.FolderPath),
-            subject,
-            request.IntegrationBranch);
+        var entries = _timeline.ReadAll(job.FolderPath);
+        var tip = result.ConflictReport?.IntegrationTipSha ?? result.PreviousIntegrationSha ?? "";
+        var conflictId = IntegrationConflictLedger.Hash($"{request.IntegrationBranch}\n{subject.ResultSha}\n{tip}");
+        var budget = IntegrationRecoveryBudget.Count(entries, subject, request.IntegrationBranch);
+        var prior = entries.LastOrDefault(entry => entry.Details?.GetValueOrDefault("conflictId") == conflictId);
+        if (prior is not null)
+            return Task.FromResult(prior.Kind == TimelineEventKinds.IntegrationFailed && budget.Used >= _maximumRecoveryRounds
+                ? Failed(prior.Summary, Math.Min(budget.Used, _maximumRecoveryRounds), _maximumRecoveryRounds, true)
+                : Failed("This delivery conflict has already been handled; a changed delivery or relevant target change is required."));
+
+        IntegrationConflictContext? context = null;
+        try
+        {
+            var collision = IntegrationConflictLedger.Default.ReadCollision(request.Project, subject.TaskKey,
+                request.IntegrationBranch, subject.ResultSha, tip);
+            conflictedFiles = conflictedFiles.Concat(collision?.Files.Select(file => file.Path) ?? [])
+                .Distinct(StringComparer.Ordinal).ToArray();
+            involvedCards = involvedCards.Concat(collision?.Files.SelectMany(file => file.CardKeys) ?? [])
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var repo = _git?.ResolveRepoRootForWatchPath(job.WatchPath);
+            if (_git is not null && !string.IsNullOrWhiteSpace(repo) && !string.IsNullOrWhiteSpace(tip))
+                context = _git.ConflictChanges(repo, subject.ResultSha, subject.BaseSha, tip,
+                    conflictedFiles, subject.TaskKey, request.Project);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            _logger.LogWarning(ex, "Optional conflict attribution could not be read for {JobId}; recovery continues with the merge report", job.Id);
+        }
+        involvedCards = involvedCards.Concat(context?.Cards ?? []).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
         var action = RemoteIntegrationContinuationPolicy.Decide(
             result.Outcome,
             budget.Used,
@@ -234,7 +263,11 @@ public sealed class IntegrationAgentRoundService
         if (action == RemoteIntegrationContinuationAction.LeaveForHumanReview)
         {
             var reason = budget.ExhaustedReason(_maximumRecoveryRounds)
-                + "." + ConflictSummary(conflictedFiles, involvedCards);
+                + "." + ConflictSummary(conflictedFiles, involvedCards)
+                + " Previous automatic conflict rounds: " + string.Join("; ", entries
+                    .Where(entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued
+                        && entry.Details?.GetValueOrDefault("automatic") == "true")
+                    .Select(entry => $"{entry.Ts:O}: {entry.Details?.GetValueOrDefault("resultSha")}; files {entry.Details?.GetValueOrDefault("conflictedFiles")}; cards {entry.Details?.GetValueOrDefault("involvedCards")}"));
             RecordFailure(job.FolderPath, request, result, reason, epoch, subject, budget,
                 conflictedFiles, involvedCards);
             return Task.FromResult(Failed(
@@ -244,14 +277,7 @@ public sealed class IntegrationAgentRoundService
                 budgetExhausted: true));
         }
 
-        if (!string.Equals(job.State, TaskStates.AutoReview, StringComparison.Ordinal))
-        {
-            var reason = $"Automatic integration recovery expected {TaskStates.AutoReview}, but the task is in {job.State}.";
-            RecordFailure(job.FolderPath, request, result, reason, epoch);
-            return Task.FromResult(Failed(reason));
-        }
-
-        var prompt = BuildPrompt(job, subject, request, result, involvedCards);
+        var prompt = BuildPrompt(job, subject, request, result, conflictedFiles, involvedCards, context);
         var intent = _mutations.SavePendingIntent(
             job.Id,
             ContinueModes.Steer,
@@ -279,25 +305,29 @@ public sealed class IntegrationAgentRoundService
 
         // Ready is immediately claimable. Persist both the route and typed
         // lineage first, just like acceptance-rail integration recovery.
-        var route = TaskIntegrationRecoveryService.SelectRecoveryRoute(job, new ModelRoutingPolicyRegistry());
-        if (route.Selected != route.Previous)
-        {
-            var level = route.Selected[(route.Selected.LastIndexOf('/') + 1)..];
-            if (!_mutations.SetRecoveryThinkingLevel(job.Id, level, job.WatchPath))
-                return Task.FromResult(Failed("The integration recovery reasoning route could not be persisted."));
-        }
+        var previous = $"{job.Model ?? "default"}/{job.ThinkingLevel ?? "default"}";
+        var lastRun = SessionContinuationLedgerStore.Latest(job.FolderPath);
+        var lastRunMatches = lastRun?.AttemptId == subject.RunAttemptId;
+        var model = (lastRunMatches ? lastRun?.Model : null) ?? job.Execution?.Model ?? job.Model;
+        var cli = (lastRunMatches ? lastRun?.Provider : null) ?? job.CliType ?? job.Agent;
+        if (!_mutations.SetIntegrationConflictRoute(job.Id, cli, model, job.WatchPath))
+            return Task.FromResult(Failed("The integration conflict route could not be persisted."));
+        var selected = $"{model ?? "default"}/medium";
         SessionContinuationLedgerStore.SaveDelta(job.FolderPath, new AgentStudio.TaskServer.Contracts.MechanicalRoundDelta(
             result.ConflictReport?.IntegrationTipSha ?? result.PreviousIntegrationSha ?? string.Empty,
             subject.ImmutableResultRef ?? subject.ResultRef!,
             subject.ResultSha,
-            result.ConflictReport?.ConflictedFiles ?? result.ConflictedFiles,
+            conflictedFiles,
             prompt,
             IntegrationContinuationPrompt.VerificationScope.Trim()));
 
+        IntegrationConflictRecovery.PrepareQueued(request with { JobFolderPath = job.FolderPath }, subject.ResultSha, result);
         var position = _states.PromoteToReadyTop(
             job.Id, job.WatchPath,
             transitionCause: LaneChangeCauses.IntegrationRecovery,
-            transitionDetail: result.Outcome.ToString());
+            transitionDetail: result.Outcome.ToString(),
+            expectedSourceState: TaskStates.AutoReview,
+            beforePendingIntents: true);
         var queued = _scanner.FindJob(job.Id, job.WatchPath);
         if (position <= 0 || queued is null || queued.State != TaskStates.Ready)
         {
@@ -310,7 +340,8 @@ public sealed class IntegrationAgentRoundService
             queued.FolderPath,
             TimelineEventKinds.IntegrationRecoveryQueued,
             TimelineActors.System,
-            "Automatically started a new agent round to preserve unambiguous delivery SHA attribution.",
+            "Automatically started a new agent round to preserve unambiguous delivery SHA attribution."
+                + ConflictSummary(conflictedFiles, involvedCards),
             payloadRef: "orchestrator-follow-up.md",
             details: new Dictionary<string, string>
             {
@@ -328,10 +359,14 @@ public sealed class IntegrationAgentRoundService
                 ["budgetUsed"] = Invariant(budget.Used + 1),
                 ["budgetLimit"] = Invariant(_maximumRecoveryRounds),
                 ["legacyRecoveryRoundsCounted"] = Invariant(budget.LegacyRounds),
-                ["previousRoute"] = route.Previous,
-                ["selectedRoute"] = route.Selected,
-                ["routeReason"] = route.Reason,
-                ["policyVersion"] = route.PolicyVersion,
+                ["previousRoute"] = previous,
+                ["selectedRoute"] = selected,
+                ["routeReason"] = "same CLI and model as the delivery run; medium reasoning",
+                ["cliType"] = cli,
+                ["conflictId"] = conflictId,
+                ["integrationTipSha"] = tip,
+                ["deliveryBaseSha"] = context?.BaseSha ?? subject.BaseSha ?? "not recorded",
+                ["targetChanges"] = context?.Changes ?? "not available",
             });
         _logger.LogInformation(
             "integration-agent-round-started project={Project} job={JobId} deliveryChain={DeliveryChain} epoch={Epoch} position={Position} supersededCommits={SupersededCommits}",
@@ -362,13 +397,20 @@ public sealed class IntegrationAgentRoundService
         IReadOnlyList<string>? conflictedFiles = null,
         IReadOnlyList<string>? involvedCards = null)
     {
+        conflictedFiles ??= result.ConflictedFiles;
         var conflictSubject = subject ?? ReviewSubjectStore.Read(folderPath);
+        var tip = result.ConflictReport?.IntegrationTipSha ?? result.PreviousIntegrationSha ?? "";
+        var conflictId = IntegrationConflictLedger.Hash($"{request.IntegrationBranch}\n{conflictSubject?.ResultSha}\n{tip}");
+        if (_timeline.ReadAll(folderPath).Any(entry => entry.Details?.GetValueOrDefault("conflictId") == conflictId))
+            return;
         if (conflictSubject is not null)
             IntegrationConflictLedger.Default.Resolve(request.Project, conflictSubject.TaskKey,
                 conflictSubject.ResultSha, request.IntegrationBranch, "parked",
                 integrationTip: result.ConflictReport?.IntegrationTipSha ?? result.PreviousIntegrationSha);
         var details = new Dictionary<string, string>
         {
+            ["conflictId"] = conflictId,
+            ["integrationTipSha"] = tip,
             ["outcome"] = result.Outcome.ToString(),
             ["integrationBranch"] = request.IntegrationBranch,
             ["detail"] = result.Error ?? string.Empty,
@@ -402,14 +444,17 @@ public sealed class IntegrationAgentRoundService
         ReviewSubjectRecord subject,
         RemoteDeliveryIntegrationRequest request,
         MergeIntoIntegrationResult result,
-        IReadOnlyList<string> involvedCards)
+        IReadOnlyList<string> conflictedFiles,
+        IReadOnlyList<string> involvedCards,
+        IntegrationConflictContext? context)
     {
         return IntegrationContinuationPrompt.Build(
             job.Key ?? job.Id, subject.ImmutableResultRef ?? subject.ResultRef, subject.ResultSha,
             request.IntegrationBranch, "merge-into-develop",
             result.Error ?? "Delivery attribution needs a new agent round.", result.ConflictReport,
-            conflictedFiles: result.ConflictedFiles, runnerMergesIntegration: true,
-            involvedCards: involvedCards);
+            conflictedFiles: conflictedFiles, runnerMergesIntegration: true,
+            involvedCards: involvedCards,
+            evidence: context is null ? null : $"Delivery base: {context.BaseSha}.\n{context.Changes}");
     }
 
     private static IntegrationAgentRoundStartResult Failed(

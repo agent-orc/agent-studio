@@ -106,6 +106,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     private readonly Func<IReadOnlyList<RemoteDeliveryIntegrationRequest>, Task>? _planTrain;
     private readonly DeliveryIntegrationQueueBoard _board;
     private long _sequence;
+    private readonly IntegrationConflictRecovery? _conflictRecovery;
 
     /// <summary>Error prefix of a review-driven delivery refused at dequeue because its card was reissued (AGT-3091).</summary>
     public const string ReviewedDeliverySupersededError = "reviewed-delivery-superseded";
@@ -156,7 +157,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             request => ReclaimBranchesAfterIntegration(request, scanner, git, branchReclaim),
             configuration: null,
             planTrain: queue => PlanTrainAsync(runner, queue),
-            queueBoard: queueBoard)
+            queueBoard: queueBoard,
+            conflictRecovery: git is null ? null : new IntegrationConflictRecovery(git, scanner))
     {
     }
 
@@ -217,8 +219,10 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         Action<RemoteDeliveryIntegrationRequest>? reclaimAfterIntegration = null,
         IConfiguration? configuration = null,
         Func<IReadOnlyList<RemoteDeliveryIntegrationRequest>, Task>? planTrain = null,
-        DeliveryIntegrationQueueBoard? queueBoard = null)
+        DeliveryIntegrationQueueBoard? queueBoard = null,
+        IntegrationConflictRecovery? conflictRecovery = null)
     {
+        _conflictRecovery = conflictRecovery;
         _planTrain = planTrain;
         _board = queueBoard ?? new DeliveryIntegrationQueueBoard();
         _integrate = integrate;
@@ -296,7 +300,11 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         lock (_gate)
         {
             PruneCompletedReplays(DateTimeOffset.UtcNow);
-            if (discardCompletedReplay
+            if ((discardCompletedReplay || _conflictRecovery is not null
+                    && _deliveryReplays.TryGetValue(deliveryKey, out var cached)
+                    && cached.Completion.Task.IsCompletedSuccessfully
+                    && cached.Completion.Task.Result.Outcome is (MergeIntoIntegrationOutcome.Conflict or MergeIntoIntegrationOutcome.AgentRoundRequired)
+                    && _conflictRecovery.Replay(request) is null)
                 && _deliveryReplays.TryGetValue(deliveryKey, out var finished)
                 && finished.CompletedAtUtc is not null)
             {
@@ -375,10 +383,16 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 }
 
                 var now = DateTimeOffset.UtcNow;
-                delivery = projectQueue.Pending.Where(item => item.NotBeforeUtc <= now)
-                    .OrderBy(item => item, QueuedDeliveryComparer.Instance).FirstOrDefault();
+                var candidates = projectQueue.Pending.Where(item => item.NotBeforeUtc <= now)
+                    .OrderBy(item => item, QueuedDeliveryComparer.Instance).ToArray();
+                var eligible = _conflictRecovery?.Eligible(candidates.Select(item => item.Request).ToArray());
+                delivery = eligible is null ? candidates.FirstOrDefault()
+                    : candidates.FirstOrDefault(item => ReferenceEquals(item.Request, eligible.FirstOrDefault()));
                 if (delivery is null)
+                {
                     wait = projectQueue.Pending.Min(item => item.NotBeforeUtc) - now;
+                    if (wait <= TimeSpan.Zero) wait = HoldRetryDelay;
+                }
                 else
                 {
                     projectQueue.Pending.Remove(delivery);
@@ -433,7 +447,11 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 await PlanTrainBehindAsync(project, projectQueue, delivery).ConfigureAwait(false);
                 MergeIntoIntegrationResult result;
                 using (IntegrationLaneEvents.BeginDelivery(delivery.Sequence))
-                    result = await _integrate(delivery.Request).ConfigureAwait(false);
+                {
+                    var replay = _conflictRecovery?.Replay(delivery.Request);
+                    result = replay ?? await _integrate(delivery.Request).ConfigureAwait(false);
+                    if (replay is null) _conflictRecovery?.Record(delivery.Request, result);
+                }
                 if (MonolithTransitionAdapter.IntegrationResult(result.Outcome.ToString(), 0).Action
                     == AgentStudio.OrchestrationDecisions.IntegrationResultAction.Requeue)
                 {
@@ -650,9 +668,11 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         if (queue.Current is { } current)
             rows.Add(new DeliveryIntegrationQueueRow(current.Request.JobId, queue.CurrentActivity,
                 queue.CurrentSinceUtc));
-        rows.AddRange(queue.Pending.OrderBy(item => item, QueuedDeliveryComparer.Instance)
-            .Select(item => new DeliveryIntegrationQueueRow(item.Request.JobId,
-                DeliveryIntegrationQueueBoard.Waiting, item.Request.DeliveredAtUtc)));
+        var pending = queue.Pending.OrderBy(item => item, QueuedDeliveryComparer.Instance)
+            .Select(item => item.Request).ToArray();
+        if (_conflictRecovery is not null) pending = _conflictRecovery.Order(pending).ToArray();
+        rows.AddRange(pending.Select(request => new DeliveryIntegrationQueueRow(request.JobId,
+            DeliveryIntegrationQueueBoard.Waiting, request.DeliveredAtUtc)));
         _board.Publish(project, rows);
     }
 
@@ -676,6 +696,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 .ToArray();
         }
         behind = behind.Where(request => request.ReviewAttemptId is null || _isAdmissibleDelivery(request)).ToArray();
+        if (_conflictRecovery is not null) behind = _conflictRecovery.Eligible(behind).ToArray();
         if (behind.Length == 0) return;
         lock (_gate)
         {

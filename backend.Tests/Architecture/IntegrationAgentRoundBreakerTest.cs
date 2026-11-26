@@ -12,16 +12,16 @@ namespace AgentStudio.Tests;
 public sealed class IntegrationAgentRoundBreakerTest
 {
     [Fact]
-    public void Budget_AllowsExactlyOneAutomaticRound()
+    public void Budget_AllowsTwoAutomaticRoundsAndEscalatesTheThird()
     {
-        Assert.Equal(1, RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds);
+        Assert.Equal(2, RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds);
         Assert.Equal(
             RemoteIntegrationContinuationAction.StartAgentRound,
             RemoteIntegrationContinuationPolicy.Decide(
                 MergeIntoIntegrationOutcome.AgentRoundRequired,
                 automaticAgentRoundsUsed: 0));
         Assert.Equal(
-            RemoteIntegrationContinuationAction.LeaveForHumanReview,
+            RemoteIntegrationContinuationAction.StartAgentRound,
             RemoteIntegrationContinuationPolicy.Decide(
                 MergeIntoIntegrationOutcome.AgentRoundRequired,
                 automaticAgentRoundsUsed: 1));
@@ -34,7 +34,7 @@ public sealed class IntegrationAgentRoundBreakerTest
             RemoteIntegrationContinuationAction.LeaveForHumanReview,
             RemoteIntegrationContinuationPolicy.Decide(
                 MergeIntoIntegrationOutcome.Conflict,
-                automaticAgentRoundsUsed: 1,
+                automaticAgentRoundsUsed: 2,
                 maximumAgentRounds: 3));
     }
 
@@ -86,7 +86,7 @@ public sealed class IntegrationAgentRoundBreakerTest
 
         Assert.Equal(1, usage.Used);
         Assert.Equal(
-            RemoteIntegrationContinuationAction.LeaveForHumanReview,
+            RemoteIntegrationContinuationAction.StartAgentRound,
             RemoteIntegrationContinuationPolicy.Decide(
                 MergeIntoIntegrationOutcome.Conflict,
                 usage.Used));

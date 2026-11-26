@@ -2823,6 +2823,26 @@ public class TaskMutationService
         }
     }
 
+    public bool SetIntegrationConflictRoute(string jobId, string cli, string? model, string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info is null) return false;
+        using (AcquireRoutingLock(info.FolderPath))
+        {
+            if (!TaskJsonFile.UpdateFields(info.FolderPath, new Dictionary<string, object>
+                {
+                    ["cliType"] = cli,
+                    ["agent"] = cli,
+                    ["model"] = model ?? "",
+                    ["thinkingLevel"] = "medium",
+                    ["modelExplicit"] = true,
+                    ["thinkingLevelExplicit"] = true,
+                    ["pinMode"] = "strict",
+                }, _logger, _keyFileWriter)) return false;
+            return RoutingUpdated(info);
+        }
+    }
+
     public bool SetRecoveryThinkingLevel(string jobId, string level, string? watchPath = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);

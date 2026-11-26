@@ -82,3 +82,42 @@ The project Pipeline panel shows the last seven days, daily rates, top five file
 and top five pairs. Missing history, loading, errors and zero denominators have
 explicit states. History begins when capture is deployed, so the absence of old
 records cannot validate a historical conflict-rate claim.
+
+## Automatic individual integration recovery (AGT-4048)
+
+Both direct-merge recovery and net-change replay return the exact delivery SHA,
+target tip and conflicting files. The latter uses `merge-tree`, so its files have
+no index markers and their hunk counts can be null. The automatic round includes
+the target's commit subjects, owning card keys and changed paths since the
+delivery's leased base. The target patch starts at that base's common ancestor
+with the target, so an unintegrated continuation base does not show the delivery's
+own changes as reversals. Missing legacy bases use the Git merge base and say so.
+Context beyond 48,000 characters carries an explicit truncation notice and the
+range to inspect.
+
+The shared decision library allows two automatic conflict rounds per card and
+target, counted across new deliveries and reviews. The third conflict escalates
+with the prior rounds' files and cards. Each collision records one handling row
+in the card timeline, with delivery SHA, target tip, files and involved cards.
+The follow-up retains the source run's CLI and model from its session ledger
+(with the existing card route as the legacy fallback), selects medium reasoning,
+and moves to the front of Ready after persisting the route and session delta.
+The runner owns merging develop into the delivery branch; the agent resolves
+conflicts keeping both sides, runs focused verification and delivers again.
+
+Individual integration also saves `integration-conflict-recovery.json` in the
+application-owned task folder. It moves with the card and has no expiry. Review
+id changes, explicit integration retries and process restarts cannot erase the
+failed collision. Integration can run again only when the delivery SHA changes,
+or when a changed target tip includes commits or a tree change on the conflicting
+paths. Unknown Git evidence retains the collision.
+
+A queued recovery reserves its conflicting paths and original delivery time.
+The individual integration queue holds later overlapping deliveries while the
+recovery is in Ready, Progress or Auto Review. A repaired delivery retains that
+original time when it re-enters the queue; unrelated deliveries can pass. A
+successful integration removes the reservation, and parking or moving out of
+those active lanes stops it applying. Holds and infrastructure errors retain the
+receipt. The cost is waiting on shared files for the recovery and its review,
+plus a bounded recheck delay (30 seconds by default). An already running merge
+cannot be preempted. Batch formation, gates and review verdicts are unchanged.

@@ -262,7 +262,7 @@ public sealed class BatchGateEngineApplierContractTests : BatchGatePilotServiceT
 
     /// <summary>
     /// The review of 20.10.2026: two reviews of one delivery share its
-    /// automatic agent rounds (MaxAutomaticAgentRounds = 1). The second
+    /// automatic agent rounds (MaxAutomaticAgentRounds = 2). The next
     /// review's integration conflicts again with the budget spent, so the
     /// round service leaves the card in Auto Review for Human Review. The
     /// first review's round row names the same SHA, but it is older than this
@@ -277,7 +277,11 @@ public sealed class BatchGateEngineApplierContractTests : BatchGatePilotServiceT
         using var factory = BuildFactory(configuration: UnguardedDeliveryChain,
             testServices: ConflictingIntegration);
         var (occurrence, arranged, _, lane, owed) = await ApplyContractCaseAsync(factory, "ReviewReport",
-            nameof(TransitionAction.AcceptAndIntegrate), BudgetSpentVariant, SeedEarlierRound);
+            nameof(TransitionAction.AcceptAndIntegrate), BudgetSpentVariant, (seeded, decision) =>
+            {
+                SeedEarlierRound(seeded, decision);
+                SeedEarlierRound(seeded, decision);
+            });
 
         Assert.Equal("completed", occurrence.Run.Status);
         Assert.Equal(TaskStates.HumanReview, lane);
