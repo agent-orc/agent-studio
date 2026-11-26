@@ -63,6 +63,13 @@ export class OperatorAttentionService {
   readonly readinessLoading = this._readinessLoading.asReadonly();
   readonly readinessError = this._readinessError.asReadonly();
 
+  async runAnyway(item: OperatorAttentionItem): Promise<void> {
+    if (!item.project) return;
+    await firstValueFrom(this.http.post(`/api/projects/${encodeURIComponent(item.project)}/dispatch/run-anyway`, { fact: item.id }));
+    this._facts.update(items => items.filter(fact => fact.id !== item.id));
+    this.refresh();
+  }
+
   setArchivedProjects(names: readonly string[]): void {
     this._archivedProjects.set(new Set(names.map(name => name.toLowerCase())));
   }

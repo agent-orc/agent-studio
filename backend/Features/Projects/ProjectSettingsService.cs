@@ -1150,7 +1150,7 @@ public class ProjectSettingsService
     /// chosen; null clears it and the project resolves to
     /// <see cref="OverlapWindows.Default"/> again.
     /// </summary>
-    public void SetDispatchOverlapWindow(string projectName, string? window)
+    public void SetDispatchOverlapWindow(string projectName, string? window, int? starvationMinutes = null)
     {
         var normalized = window is null ? null : OverlapWindows.Normalize(window)
             ?? throw new ArgumentException($"Unknown overlap window '{window}'.", nameof(window));
@@ -1159,7 +1159,8 @@ public class ProjectSettingsService
         {
             var key = ResolveAliasLocked(projectName);
             var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
-            _cache[key] = current with { DispatchOverlapWindow = normalized };
+            _cache[key] = current with { DispatchOverlapWindow = normalized,
+                DispatchOverlapStarvationMinutes = starvationMinutes ?? current.DispatchOverlapStarvationMinutes };
             Persist();
         }
         _logger.LogInformation("Dispatch overlap window set to {Window} for project {Project}",
