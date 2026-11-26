@@ -19,6 +19,21 @@ public sealed class TestQuarantineStoreTests : IDisposable
             "fingerprint-" + id, ["red"], ["backend/Features/Pipeline"]);
 
     [Fact]
+    public void Owner_can_exempt_cards_on_an_existing_hold_without_extending_it()
+    {
+        var store = new TestQuarantineStore(_root);
+        var entry = store.Start(Project, Entry("a", Now), []);
+        var intent = entry with { OwnerExemptCardIds = ["approved"], AttributedRevertCardId = "revert",
+            StartedBy = "owner", StartedAtUtc = Now.AddHours(1), ExpiresAtUtc = Now.AddDays(2) };
+        Assert.Empty(store.Start(Project, intent, [], owner: false).OwnerExemptCardIds);
+        var updated = store.Start(Project, intent, [], owner: true);
+        Assert.Equal(["approved"], updated.OwnerExemptCardIds);
+        Assert.Equal("revert", updated.AttributedRevertCardId);
+        Assert.Equal(entry.ExpiresAtUtc, updated.ExpiresAtUtc);
+        Assert.Equal("exemptions", store.Read(Project).Audit.Last().Operation);
+    }
+
+    [Fact]
     public void Restart_preserves_lifted_entries_and_all_mutations_are_audited()
     {
         var store = new TestQuarantineStore(_root);

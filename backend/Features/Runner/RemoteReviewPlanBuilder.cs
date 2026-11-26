@@ -201,6 +201,7 @@ public sealed partial class RemoteReviewPlanBuilder
         => WithVerifyDefinition(task, BuildPlan(task, repositoryPath, projectSettings, integrationRef,
                 expectedResultSha, changedFiles, immutableResultRef) with
             {
+                Quarantines = task is null ? [] : _postMergeMode?.ReadState(task.ProjectName)?.Quarantines ?? [],
                 PrivateRepository = task is not null && _visibility is not null
                     ? _visibility.IsPrivate(task, projectSettings)
                     : Contract.ReviewRepositoryAccessPolicy.IsPrivate(projectSettings?.RepositoryVisibility),

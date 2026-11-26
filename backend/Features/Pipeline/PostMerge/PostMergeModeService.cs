@@ -15,6 +15,7 @@ public sealed class PostMergeModeService
 {
     private readonly ProjectRegistry? projects;
     private readonly PostMergeRunStore? runs;
+    private readonly PostMergeIncidentService? incidents;
 
     /// <summary>A service without a run store; <see cref="ReadState"/> answers null.</summary>
     public PostMergeModeService() { }
@@ -24,10 +25,11 @@ public sealed class PostMergeModeService
     /// evidence of fast and balanced integrations (AGT-4020). The placement
     /// itself stays the configured one.
     /// </summary>
-    public PostMergeModeService(ProjectRegistry projects, PostMergeRunStore runs)
+    public PostMergeModeService(ProjectRegistry projects, PostMergeRunStore runs, PostMergeIncidentService? incidents = null)
     {
         this.projects = projects;
         this.runs = runs;
+        this.incidents = incidents;
     }
 
     public string Resolve(string project, ProjectSettings? settings)
@@ -39,7 +41,12 @@ public sealed class PostMergeModeService
         if (projects is null || runs is null) return null;
         var record = projects.FindByIdOrDisplayName(project);
         if (record is null) return null;
-        try { return runs.Read(record.Id); }
+        try
+        {
+            var state = runs.Read(record.Id);
+            return incidents is null ? state : state with { Quarantines = incidents.ActiveQuarantines(record),
+                Holds = incidents.ActiveHolds(record) };
+        }
         catch (IOException) { return null; }
     }
 

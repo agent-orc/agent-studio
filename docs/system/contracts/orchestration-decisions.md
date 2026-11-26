@@ -889,3 +889,15 @@ The lease is project-scoped, persisted and fenced; descriptor mode alone has
 no authority. DS-6 applies live plans, DS-7 supplies rollout gates, and DS-8
 projects weekly and wave reports. Source-wave and source-prior inputs remain
 unknown until their source integration lands; no model is called on pickup.
+
+RT-5 (AGT-4006) adopts these hold rules in both integration hosts.
+`HoldScopePolicy.ActiveHolds` projects exact active held entries to typed
+`TestQuarantineHoldFact` values; `IntegrationBlock` applies `MayIntegrate` and
+names the blocking quarantine, test and folder. Scope facts include the test
+file, covering folders, confirmed suspect files, recursive fallback areas,
+expiry and repair, revert and owner exemptions. No latest-red predicate limits
+these holds. `IntegrationResultPolicy` maps both the wire and local held outcome
+to requeue, with a thirty-second recheck and no repair round. Hosts apply that
+decision through `MonolithTransitionAdapter`; dispatcher consumption remains
+for DS-6. The shared contracts `TestQuarantinePolicy` owns file parsing and
+exact-name partitioning, rather than an orchestration transition rule.

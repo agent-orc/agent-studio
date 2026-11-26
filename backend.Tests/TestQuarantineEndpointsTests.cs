@@ -1,3 +1,5 @@
+extern alias Runner;
+
 using System.Net;
 using System.Net.Http.Json;
 using AgentStudio.Deploy;
@@ -55,6 +57,37 @@ public sealed class TestQuarantineEndpointsTests : IDisposable
         Assert.Equal(1, summary.HeldCount);
         var state = await client.GetFromJsonAsync<PostMergeProjectState>("/api/runner/post-merge/projects/demo");
         Assert.Equal(entry.Id, Assert.Single(state!.Quarantines).Id);
+        Assert.Equal(entry.Id, Assert.Single(state.Holds).QuarantineId);
+        var repo = Path.Combine(_root, "hold-repository");
+        Directory.CreateDirectory(repo);
+        async Task Git(params string[] args)
+        {
+            var result = await Runner::AgentRunner.ProcessRunner.RunAsync("git", args, repo, ct: CancellationToken.None);
+            Assert.True(result.Success, result.StdErr);
+        }
+        await Git("init", "-q", "-b", "develop");
+        await Git("config", "user.name", "Test");
+        await Git("config", "user.email", "test@example.invalid");
+        File.WriteAllText(Path.Combine(repo, "base.txt"), "base");
+        await Git("add", ".");
+        await Git("commit", "-qm", "base");
+        await Git("checkout", "-qb", "delivery");
+        Directory.CreateDirectory(Path.Combine(repo, "backend", "Features", "Pipeline"));
+        File.WriteAllText(Path.Combine(repo, "backend", "Features", "Pipeline", "Changed.cs"), "changed");
+        await Git("add", ".");
+        await Git("commit", "-qm", "delivery");
+        var local = factory.Services.GetRequiredService<MergeIntoDevelopRunner>();
+        var blocked = local.QuarantineHoldReason("demo", "ordinary", tasks, repo, "develop", "delivery");
+        Assert.Contains(entry.Id, blocked);
+        Assert.Contains("Tests.Fails", blocked);
+        Assert.Contains("backend/Features/Pipeline", blocked);
+        Assert.Null(local.QuarantineHoldReason("demo", card, tasks, repo, "develop", "delivery"));
+        await Git("checkout", "-qb", "unrelated", "develop");
+        Directory.CreateDirectory(Path.Combine(repo, "frontend"));
+        File.WriteAllText(Path.Combine(repo, "frontend", "safe.ts"), "safe");
+        await Git("add", ".");
+        await Git("commit", "-qm", "unrelated");
+        Assert.Null(local.QuarantineHoldReason("demo", "ordinary", tasks, repo, "develop", "unrelated"));
         var release = factory.Services.GetRequiredService<DeployService>().CreateRelease("demo", "image", new string('a', 40), "owner");
         Assert.Equal(DeployOutcomeKind.Conflict, release.Kind);
         Assert.Equal("test-quarantine-held", release.Reason);
