@@ -501,6 +501,7 @@ public static class RoutePermissionCatalog
         // models here without the rest of the project settings (OP-1).
         Add("PUT", IamPermissions.ProjectPipelineWrite, "/api/projects/{}/pipeline-step");
         // Only project settings writers may enable shadow package review.
+        Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/testing");
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/review-package");
         Add("GET", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/incident-webhook");
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/incident-webhook");

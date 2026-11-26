@@ -90,6 +90,10 @@ public sealed class TestingStrategyEndpointTests : IDisposable
         strict.EnsureSuccessStatusCode();
         var written = await strict.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("strict", written.GetProperty("strategy").GetString());
+        var transition = written.GetProperty("transition");
+        Assert.Equal("fast", transition.GetProperty("previousStrategy").GetString());
+        Assert.Equal("strict", transition.GetProperty("strategy").GetString());
+        Assert.Empty(transition.GetProperty("cards").EnumerateArray());
         Assert.True(written.GetProperty("stored").GetBoolean());
         Assert.Equal("full", written.GetProperty("perCard").GetString());
         Assert.Equal("pre-merge", written.GetProperty("mode").GetString());

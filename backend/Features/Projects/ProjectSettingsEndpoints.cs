@@ -1329,6 +1329,8 @@ public static class ProjectSettingsEndpoints
 
         app.MapPut("/api/projects/{projectName}/testing", async (
             string projectName,
+            HttpContext context,
+            ControlPlaneAuditLog audit,
             TestingStrategyRequest req,
             ProjectSettingsService settings,
             TaskScannerService scanner,
@@ -1353,9 +1355,16 @@ public static class ProjectSettingsEndpoints
             if (!TestingStrategies.IsKnown(req.Strategy))
                 return Results.BadRequest(new { error = "strategy must be 'fast', 'balanced' or 'strict'." });
             var transition = await batchGate.SwitchTestingStrategyAsync(projectName, req.Strategy!, ct);
+            var oldStrategy = transition.PreviousStrategy;
+            var newStrategy = transition.Strategy;
+            var reason = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal { Operator: not null }
+                ? AccessSecurityMiddleware.StatedReason(context.Request.Headers[OperatorApprovalHeaders.Reason].ToString()) : null;
+            audit.Append(new ControlPlaneAuditRecord(ControlPlaneAuditStreams.Operator,
+                AgentStudio.Operator.OperatorEndpoints.Actor(context), OperatorOperationIds.ProjectTestingSet,
+                "updated", projectName, Details: new { project = projectName, oldStrategy, newStrategy, reason }));
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             return Results.Ok(TestingView(projectName, settings, postMergeMode, coverage, transition));
-        }).RequireStudioRole(StudioRoles.Owner);
+        }).RequirePermission(IamPermissions.ProjectSettingsWrite);
 
         // AGT-3400 S4: review.package. Shadow forms Dossier wave packages beside
         // the unchanged per-card review; dossier (live, S5) is not accepted yet.
