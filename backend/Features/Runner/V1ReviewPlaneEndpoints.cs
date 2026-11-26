@@ -1936,7 +1936,7 @@ public static class V1ReviewPlaneEndpoints
                     var followUp = BuildRemoteConcernFollowUp(reviewFollowUp.Findings, settled.ReviewAttempt.AttemptId);
                     if (!string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
                     {
-                        var followUpId = mutations.CreateJob(new CreateTaskRequest
+                        var followUpId = mutations.CreateReviewFollowUp(new CreateTaskRequest
                         {
                             Title = $"Follow-up: review concerns in {task.Key ?? task.Id}",
                             Agent = task.Agent,
@@ -1950,7 +1950,7 @@ public static class V1ReviewPlaneEndpoints
                             OwnerClientId = task.OwnerClientId,
                             CreationSource = "review-concern-follow-up",
                             CreatedBy = "pipeline",
-                        });
+                        }, task);
                         var created = followUpId is null ? null : scanner.FindJob(followUpId, task.WatchPath);
                         if (created is not null)
                         {
@@ -1959,6 +1959,7 @@ public static class V1ReviewPlaneEndpoints
                             mutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
                             {
                                 FollowUpOf = [sourceKey],
+                                DependsOn = created.References.DependsOn.Append(new TaskDependencyReference(sourceKey)).ToList(),
                             }, created.WatchPath);
                             mutations.SetTaskReferences(task.Id, (task.References ?? new TaskReferences()) with
                             {
@@ -3438,7 +3439,7 @@ public static class V1ReviewPlaneEndpoints
                 + (string.IsNullOrWhiteSpace(verdict.EvidenceChecked) ? "" : $" Evidence: {verdict.EvidenceChecked}")));
         if (created is null)
         {
-            var id = mutations.CreateJob(new CreateTaskRequest
+            var id = mutations.CreateReviewFollowUp(new CreateTaskRequest
             {
                 Title = title,
                 Agent = source.Agent,
@@ -3452,7 +3453,7 @@ public static class V1ReviewPlaneEndpoints
                 OwnerClientId = source.OwnerClientId,
                 CreationSource = "review-budget-follow-up",
                 CreatedBy = "pipeline",
-            });
+            }, source);
             created = id is null ? null : scanner.FindJob(id, source.WatchPath);
         }
         else if (ReviewRoundBudgetStore.Read(source.FolderPath).Rounds
@@ -3467,6 +3468,7 @@ public static class V1ReviewPlaneEndpoints
         mutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
         {
             FollowUpOf = [sourceKey],
+            DependsOn = created.References.DependsOn.Append(new TaskDependencyReference(sourceKey)).ToList(),
         }, created.WatchPath);
         var latestSource = scanner.FindJob(source.Id, source.WatchPath) ?? source;
         mutations.SetTaskReferences(source.Id, (latestSource.References ?? new TaskReferences()) with
@@ -3487,7 +3489,7 @@ public static class V1ReviewPlaneEndpoints
         TaskScannerService scanner,
         TimelineLog timeline)
     {
-        var followUpId = mutations.CreateJob(new CreateTaskRequest
+        var followUpId = mutations.CreateReviewFollowUp(new CreateTaskRequest
         {
             Title = $"Follow-up: review concerns in {source.Key ?? source.Id}",
             Agent = source.Agent,
@@ -3501,7 +3503,7 @@ public static class V1ReviewPlaneEndpoints
             OwnerClientId = source.OwnerClientId,
             CreationSource = "review-concern-follow-up",
             CreatedBy = "pipeline",
-        });
+        }, source);
         var created = followUpId is null ? null : scanner.FindJob(followUpId, source.WatchPath);
         if (created is null) return null;
 
@@ -3510,6 +3512,7 @@ public static class V1ReviewPlaneEndpoints
         mutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
         {
             FollowUpOf = [sourceKey],
+            DependsOn = created.References.DependsOn.Append(new TaskDependencyReference(sourceKey)).ToList(),
         }, created.WatchPath);
         mutations.SetTaskReferences(source.Id, (source.References ?? new TaskReferences()) with
         {

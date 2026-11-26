@@ -539,7 +539,7 @@ public sealed class MonolithOrchestrationApplier(
                 + string.Join("\n", decision.Findings.Select(item => $"- {item.Aspect}: {item.Summary}")
                     .Distinct(StringComparer.Ordinal))
                 + $"\n\nSource card: {sourceKey}.";
-            var createdId = mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+            var createdId = mutations.CreateReviewFollowUp(new AgentStudio.Shared.CreateTaskRequest
             {
                 Title = title,
                 Agent = task.Agent,
@@ -553,7 +553,7 @@ public sealed class MonolithOrchestrationApplier(
                 OwnerClientId = task.OwnerClientId,
                 CreationSource = marker,
                 CreatedBy = "pipeline",
-            }) ?? throw new IOException("The engine follow-up could not be created.");
+            }, task) ?? throw new IOException("The engine follow-up could not be created.");
             existing = scanner.FindJob(createdId, task.WatchPath)
                 ?? throw new IOException("The engine follow-up could not be read.");
         }
@@ -572,7 +572,8 @@ public sealed class MonolithOrchestrationApplier(
         var followUpKey = existing.Key ?? existing.Id;
         if (!mutations.SetTaskReferences(existing.Id,
                 (existing.References ?? new AgentStudio.Shared.TaskReferences()) with
-                { FollowUpOf = [sourceKey] }, existing.WatchPath))
+                { FollowUpOf = [sourceKey], DependsOn = existing.References.DependsOn
+                    .Append(new AgentStudio.Shared.TaskDependencyReference(sourceKey)).ToList() }, existing.WatchPath))
             throw new IOException("The engine follow-up source link could not be written.");
         var latestSource = scanner.FindJob(task.Id, task.WatchPath) ?? task;
         if (!mutations.SetTaskReferences(task.Id, (latestSource.References ?? new AgentStudio.Shared.TaskReferences()) with

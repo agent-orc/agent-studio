@@ -9,6 +9,14 @@ namespace AgentStudio.Runner;
 /// <summary>Host boundary for the shared decision library. No transition rules belong here.</summary>
 public static class MonolithTransitionAdapter
 {
+    public static bool MayWaitForIntegration(IntegrationBlockerFacts facts)
+        => IntegrationBlockerPolicy.MayWait(facts);
+
+    public static string IntegrationBlockerWaitLane => IntegrationBlockerPolicy.WaitLane;
+
+    public static string? IntegrationBlockerDependency(string category, string reason)
+        => IntegrationBlockerPolicy.Dependency(category, reason);
+
     public static int DispatchWaveOrder(int requested, int allocated, string? wave)
         => DispatchWavePolicy.InitialOrder(requested, allocated, wave);
     public static bool DispatchNeedsWave(int count) => DispatchWavePolicy.NeedsWave(count);

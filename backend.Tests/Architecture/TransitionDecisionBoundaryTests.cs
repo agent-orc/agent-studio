@@ -22,7 +22,7 @@ public sealed class TransitionDecisionBoundaryTests
         "OrchestrationSettlementPolicy", "RepeatedReviewBlockPolicy", "StageDecisionPolicy",
         "CouncilDecisionPolicy", "LocalLoopDecisionPolicy", "ReviewBudgetPolicy", "TransitionDecisionPolicy",
         "RoundCounterPolicy", "ContinuationReplayPolicy", "RepeatedAspectDecisionPolicy",
-        "IntegrationResultPolicy", "LoopExhaustionPolicy",
+        "IntegrationResultPolicy", "LoopExhaustionPolicy", "IntegrationBlockerPolicy",
         // AGT-3060 (I18): background deciders moved out of the monolith.
         "AiOperatorDecisionPolicy", "RunLivenessPolicy", "SteerTimeoutPolicy", "StaleProgressPolicy",
         "GateEnvironmentRetryPolicy", "GateEnvironmentContinuationPolicy",

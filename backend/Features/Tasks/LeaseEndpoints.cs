@@ -3117,6 +3117,10 @@ public static class LeaseEndpoints
                         task.State,
                         $"Escalation lane move refused: {escalated.Status} {escalated.Message}",
                         RunAttemptId: attemptId));
+                var settledTask = scanner.FindJob(task.Id, task.WatchPath);
+                if (settledTask?.State == TaskStates.Ready)
+                    return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
+                        TaskStates.Ready, "Waiting for parent delivery integration.", RunAttemptId: attemptId));
                 timeline.Append(
                     escalated.NewFolderPath ?? task.FolderPath,
                     TimelineEventKinds.OrchestratorEscalated,
