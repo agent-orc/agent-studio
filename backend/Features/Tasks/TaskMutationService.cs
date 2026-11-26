@@ -1296,13 +1296,29 @@ public class TaskMutationService
     /// caller's job (the endpoint owns the cross-task graph); this writer is
     /// deliberately thin so it can also persist a programmatically-built set.
     /// </summary>
-    public bool SetTaskReferences(string jobId, TaskReferences references, string? watchPath = null)
+    public bool SetTaskReferences(string jobId, TaskReferences references, string? watchPath = null,
+        TaskReferences? expectedReferences = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         var clean = TaskReferenceValidator.Normalize(references ?? new TaskReferences());
-        clean = AuthorizeDependencyChanges(info, clean);
-        if (!TaskJsonFile.UpdateField(info.FolderPath, "references", clean, _logger, _keyFileWriter)) return false;
+        lock (TaskJsonFile.SyncRoot(info.FolderPath))
+        {
+            if (expectedReferences is not null)
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(info.FolderPath, "task.json")));
+                var field = document.RootElement.EnumerateObject().FirstOrDefault(p => p.Name.Equals("references", StringComparison.OrdinalIgnoreCase));
+                var current = field.Value.ValueKind == JsonValueKind.Undefined ? new TaskReferences()
+                    : field.Value.Deserialize<TaskReferences>(TaskJsonFile.ReadOpts) ?? new();
+                if (JsonSerializer.Serialize(TaskReferenceValidator.Normalize(current))
+                    != JsonSerializer.Serialize(TaskReferenceValidator.Normalize(expectedReferences)))
+                    throw new AgentStudio.Security.SecurityOperationException(409, "references-changed",
+                        "The references changed after the operation was planned.");
+                info = info with { References = current };
+            }
+            clean = AuthorizeDependencyChanges(info, clean);
+            if (!TaskJsonFile.UpdateField(info.FolderPath, "references", clean, _logger, _keyFileWriter)) return false;
+        }
         _logger.LogInformation(
             "task-references-set job={JobId} dependsOn={DependsOn} relatedTo={RelatedTo} blockedBy={BlockedBy} supersedes={Supersedes} followUpOf={FollowUpOf} raisedFollowUps={RaisedFollowUps} workbenches={Workbenches}",
             jobId, clean.DependsOn.Count, clean.RelatedTo.Count, clean.BlockedBy.Count,

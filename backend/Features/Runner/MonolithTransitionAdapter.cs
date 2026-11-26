@@ -9,6 +9,13 @@ namespace AgentStudio.Runner;
 /// <summary>Host boundary for the shared decision library. No transition rules belong here.</summary>
 public static class MonolithTransitionAdapter
 {
+    public static DispatchRecutPlan DispatchRecut(DispatchRecutFacts facts) => DispatchRecutPolicy.Plan(facts);
+    public static bool DispatchRecutArchive(DispatchRecutArchiveFacts facts) => DispatchRecutPolicy.MayArchive(facts);
+    public static string DispatchSourceKind(string source) => DispatchRecutPolicy.SourceKind(source);
+    public static double? DispatchSizePrior(IReadOnlyList<int> counts) => DispatchRecutPolicy.Median(counts);
+    public static bool DispatchRecutUndo(string state, DateTimeOffset? until, DateTimeOffset now)
+        => DispatchRecutPolicy.MayUndo(state, until, now);
+
     public static DispatchCompetitionEvaluation DispatchCompetition(DispatchCompetitionFacts facts)
         => DispatchCompetitionPolicy.Evaluate(facts);
 

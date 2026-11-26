@@ -41,7 +41,7 @@ public sealed class TransitionDecisionBoundaryTests
         // AGT-3568: formation planner (repack, formation intents, intent recovery).
         "BatchFormationPolicy",
         // AGT-3993 (DS-3): dispatch plan of the dispatcher personas.
-        "DispatchPickupPolicy", "DispatchPlanPolicy", "DispatchConflictPolicy", "DispatchCompetitionPolicy",
+        "DispatchPickupPolicy", "DispatchPlanPolicy", "DispatchConflictPolicy", "DispatchCompetitionPolicy", "DispatchRecutPolicy",
     ];
 
     [Fact]

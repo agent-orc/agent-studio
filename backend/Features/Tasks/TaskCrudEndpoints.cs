@@ -1515,7 +1515,7 @@ public static class TaskCrudEndpoints
                 });
 
             bool success;
-            try { success = mutations.SetTaskReferences(jobId, proposed, watchPath); }
+            try { success = mutations.SetTaskReferences(jobId, proposed, watchPath, req?.ExpectedReferences); }
             catch (AgentStudio.Security.SecurityOperationException ex)
             { return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status); }
             if (!success) return Results.NotFound();
@@ -1695,9 +1695,22 @@ public static class TaskCrudEndpoints
         {
             var card = scanner.FindJob(jobId, watchPath);
             if (card is null) return Results.NotFound();
+            expectedState ??= request.ExpectedSourceState;
+            if (request.RequireUnstarted && (card.ExecutionLocation?.StartedAt is not null || card.SessionChain.Count > 0
+                || card.SessionName is not null || card.LastUsage is not null || card.Commits.Count > 0
+                || authority.GetTaskProjection(card.Key ?? card.TaskKey).CurrentRunAttempt is not null))
+                return Results.Conflict(new { error = "card-started" });
             if (expectedState is not null && card.State != expectedState)
                 return Results.Json(new { error = "lane-changed", message = $"The card left {expectedState}.", state = card.State },
                     statusCode: StatusCodes.Status409Conflict);
+            AgentStudio.Dispatch.DispatchRecutArchivePermit? recutPermit = null;
+            if (request.DispatchRecutId is not null)
+            {
+                recutPermit = context.RequestServices.GetRequiredService<AgentStudio.Dispatch.DispatchRecutService>()
+                    .ArchivePermit(card, request.DispatchRecutId);
+                if (request.TargetState != TaskStates.Archive || !request.RequireUnstarted || recutPermit is null)
+                    return Results.Conflict(new { error = "recut-archive-refused" });
+            }
             var attention = context.RequestServices.GetRequiredService<AgentStudio.Operator.OperatorCoordinationStore>();
             var actor = AgentStudio.Operator.OperatorEndpoints.Actor(context);
             var owner = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
@@ -1762,6 +1775,8 @@ public static class TaskCrudEndpoints
             Task<MoveJobOutcome> Move() => transitions.MoveAsync(
                 jobId, request.TargetState, watchPath, ct, request.TargetIndex,
                 cause: OperatorActor(context), reason: request.Reason,
+                expectedSourceState: expectedState,
+                recutArchive: recutPermit,
                 operatorOverride: request.OperatorOverride,
                 archiveOverride: request.ArchiveOverride,
                 reissueInstructions: request.ReissueInstructions,

@@ -72,7 +72,11 @@ public sealed class PersonaProposalLifecycle
         switch (outcome)
         {
             case Accepted:
-                promoted = Promote(item);
+                // A recut is a coordination proposal over existing cards. Acceptance
+                // records the owner's choice; applying it still needs the recut API's
+                // live lease and bounded T1 checks, or a separate explicit T2 action.
+                if (!item.Body.StartsWith("dispatch.recut.propose\n", StringComparison.Ordinal))
+                    promoted = Promote(item);
                 break;
             case Rejected:
                 var root = _configuration["TaskRepository"];

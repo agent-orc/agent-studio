@@ -138,7 +138,8 @@ public class TaskStateMachine
         bool operatorDecisionPark = false,
         Func<TaskInfo, MoveJobOutcome?>? beforeMove = null,
         DateTime? expectedSourceEnteredLaneAt = null,
-        long? expectedSourceTaskJsonWriteTicks = null)
+        long? expectedSourceTaskJsonWriteTicks = null,
+        AgentStudio.Dispatch.DispatchRecutArchivePermit? recutArchive = null)
     {
         if (!TaskStates.All.Contains(targetState))
             return new MoveJobOutcome(MoveJobStatus.Failure, $"Invalid state: {targetState}");
@@ -209,7 +210,8 @@ public class TaskStateMachine
             return new MoveJobOutcome(MoveJobStatus.Failure,
                 "Historical acceptance repair requires a written operator override on a Human Review card.");
 
-        if (_guardedDelivery && _integrationStatus is not null && !archiveOverrideRollback)
+        if (_guardedDelivery && _integrationStatus is not null && !archiveOverrideRollback
+            && !(targetState == TaskStates.Archive && recutArchive?.Allows(recheck) == true))
         {
             var status = targetState == TaskStates.Completed
                 ? _integrationStatus.BuildForCompletion(recheck)

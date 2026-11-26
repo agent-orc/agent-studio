@@ -169,7 +169,8 @@ public sealed class TaskTransitionService
         string? automaticAcceptanceBy = null,
         string? batchWithdrawalId = null,
         DateTime? expectedSourceEnteredLaneAt = null,
-        long? expectedSourceTaskJsonWriteTicks = null)
+        long? expectedSourceTaskJsonWriteTicks = null,
+        AgentStudio.Dispatch.DispatchRecutArchivePermit? recutArchive = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
@@ -361,7 +362,8 @@ public sealed class TaskTransitionService
                 operatorDecisionPark: operatorDecisionPark,
                 beforeMove: EnsureResultAfterAdmission,
                 expectedSourceEnteredLaneAt: expectedSourceEnteredLaneAt,
-                expectedSourceTaskJsonWriteTicks: expectedSourceTaskJsonWriteTicks);
+                expectedSourceTaskJsonWriteTicks: expectedSourceTaskJsonWriteTicks,
+                recutArchive: recutArchive);
             if (!archiveOverride || moved.Status != MoveJobStatus.Success)
                 return moved;
 
