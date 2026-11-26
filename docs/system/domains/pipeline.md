@@ -4476,6 +4476,11 @@ its existing 20-file display cap. The dispatch ledger records all conflict
 paths, the delivery base and integration tip, and partner cards from attributed
 commits and provenance, with the primary owning card in a commit subject as
 historical fallback. Other card references in a subject are not owners.
+Ownership lookup is shared per task-index publication, including archived cards,
+and refreshed when card metadata publishes a new generation. Backfill captures
+one ownership lookup and one existing-record inventory for the run. Delivery-time
+conflict collection logs evidence failures and lets forecast delivery facts persist;
+the owner backfill command still reports failures to its caller.
 
 Integration reports, delivery-chain merge decisions, queued agent sync rounds,
 and sync commits observed at delivery produce separate evidence kinds.

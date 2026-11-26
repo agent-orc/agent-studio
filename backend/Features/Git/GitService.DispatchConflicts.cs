@@ -13,19 +13,19 @@ public partial class GitService
     public DispatchConflictRecordV1 RecordDispatchConflict(string repo, string project, string card,
         string kind, string baseSha, string tip, IReadOnlyList<string> files,
         string evidenceId, DateTimeOffset at, bool backfilled = false)
+        => RecordDispatchConflict(repo, project, card, kind, baseSha, tip, files, evidenceId, at,
+            backfilled, ReadDispatchConflictAttribution());
+
+    internal DispatchConflictAttribution ReadDispatchConflictAttribution()
+        => _scanner.ReadPerGeneration("dispatch-conflict-attribution", 1,
+            publication => DispatchConflictAttribution.Build(publication.Live.Concat(publication.Archive)));
+
+    private DispatchConflictRecordV1 RecordDispatchConflict(string repo, string project, string card,
+        string kind, string baseSha, string tip, IReadOnlyList<string> files,
+        string evidenceId, DateTimeOffset at, bool backfilled, DispatchConflictAttribution attribution)
     {
         var partners = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var cards = _scanner.ScanAllJobsWithArchive()
-            .Where(task => task.ProjectName.Equals(project, StringComparison.OrdinalIgnoreCase)).ToArray();
-        var own = cards.FirstOrDefault(task => task.TaskKey == card || task.Id == card || task.Key == card);
-        card = own?.Key ?? own?.Id ?? card;
-        var ownership = cards
-            .SelectMany(task => task.Commits.SelectMany(commit => new[] { commit.Sha, commit.SupersededBySha }
-                    .OfType<string>().Select(sha => (Sha: sha, Card: task.Key ?? task.Id)))
-                .Concat(new[] { task.Provenance?.Merge?.MergeCommit }.OfType<string>()
-                    .Select(sha => (Sha: sha, Card: task.Key ?? task.Id))))
-            .GroupBy(item => item.Sha, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.Select(item => item.Card).Distinct().ToArray(), StringComparer.OrdinalIgnoreCase);
+        card = attribution.Card(project, card);
         if (files.Count > 0 && baseSha.Length > 0 && tip.Length > 0)
         {
             var (log, error, code) = RunGitArgs(repo, ["log", "--full-history", "--format=%H%x00%s%x00",
@@ -34,7 +34,7 @@ public partial class GitService
             var fields = log.Split('\0');
             for (var index = 0; index + 1 < fields.Length; index += 2)
             {
-                if (ownership.TryGetValue(fields[index].Trim(), out var owners)) partners.UnionWith(owners);
+                if (attribution.Owners(project, fields[index].Trim()) is { } owners) partners.UnionWith(owners);
                 else if (PrimaryConflictCard(fields[index + 1]) is { } owner) partners.Add(owner);
             }
         }
@@ -86,6 +86,15 @@ public partial class GitService
             prior?.ConflictedFiles ?? (captured.Length > 0 ? captured : report?.ConflictedFiles ?? []), evidenceId, DateTimeOffset.UtcNow);
     }
 
+    /// <summary>Ledger collection must not prevent the forecast collector from saving delivery facts.</summary>
+    public void TryBackfillDispatchConflicts(string repo, string project, DateTimeOffset now,
+        string? deliveryBase, string deliveryTip, string ownCard)
+    {
+        try { BackfillDispatchConflicts(repo, project, now, deliveryBase, deliveryTip, ownCard, backfilled: false); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
+        { _logger.LogWarning(ex, "Dispatch conflict collection failed for {Card}; delivery forecast collection continues", ownCard); }
+    }
+
     /// <summary>The Dossier wave method: card-owned sync and conflict-resolution commits on all refs.</summary>
     public int BackfillDispatchConflicts(string repo, string project, DateTimeOffset now,
         string? deliveryBase = null, string? deliveryTip = null, string? ownCard = null, bool backfilled = true)
@@ -98,6 +107,8 @@ public partial class GitService
         if (code != 0) throw new IOException($"Dispatch backfill history unavailable: {error}");
         var fields = log.Split('\0');
         var count = 0;
+        DispatchConflictAttribution? attribution = null;
+        var existing = DispatchConflicts.ReadConflicts(project).Select(row => row.Id).ToHashSet(StringComparer.Ordinal);
         for (var index = 0; index + 3 < fields.Length; index += 4)
         {
             var sha = fields[index].Trim();
@@ -123,10 +134,11 @@ public partial class GitService
             var (paths, pathError, pathCode) = RunGitArgs(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", parents[0], sha, "--");
             if (pathCode != 0) throw new IOException($"Dispatch backfill paths unavailable: {pathError}");
             var id = IntegrationConflictLedger.Hash($"{project.ToUpperInvariant()}\n{card}\ndevelop-sync\n{sha}");
-            if (DispatchConflicts.ReadConflicts(project).Any(row => row.Id == id)) continue;
+            if (!existing.Add(id)) continue;
             RecordDispatchConflict(repo, project, card, "develop-sync", baseSha, tip,
                 paths.Split('\0', StringSplitOptions.RemoveEmptyEntries), sha,
-                DateTimeOffset.Parse(fields[index + 2], System.Globalization.CultureInfo.InvariantCulture), backfilled);
+                DateTimeOffset.Parse(fields[index + 2], System.Globalization.CultureInfo.InvariantCulture), backfilled,
+                attribution ??= ReadDispatchConflictAttribution());
             count++;
         }
         return count;

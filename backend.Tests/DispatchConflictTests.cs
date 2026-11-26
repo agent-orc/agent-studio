@@ -198,6 +198,57 @@ public sealed class DispatchConflictTests : IDisposable
         Assert.Contains(rows, row => row.PartnerCards.Contains("AGT-2"));
     }
 
+    [Fact]
+    public void AttributionReusesOnePublicationAndRefreshesAfterMetadataChanges()
+    {
+        var config = Config;
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var cache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
+        scanner.SetIndexCache(cache);
+        cache.GetSnapshot();
+        var service = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var before = service.ReadDispatchConflictAttribution();
+        Assert.Same(before, service.ReadDispatchConflictAttribution());
+        Assert.Null(before.Owners("project", "sha"));
+        AddCard("AGT-2", new { commits = new[] { new { sha = "sha", supersededBySha = "replacement" } } });
+        cache.Invalidate();
+        var after = service.ReadDispatchConflictAttribution();
+        Assert.NotSame(before, after);
+        Assert.Same(after, service.ReadDispatchConflictAttribution());
+        Assert.Equal(new[] { "AGT-2" }, after.Owners("PROJECT", "SHA"));
+        Assert.Equal(new[] { "AGT-2" }, after.Owners("project", "replacement"));
+        Assert.Null(after.Owners("other", "sha"));
+        Assert.Null(before.Owners("project", "sha"));
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void DeliveryConflictCollectionFailureDoesNotBlockDeliveryFacts()
+    {
+        Init();
+        File.WriteAllText(Path.Combine(Repo, "shared.cs"), "base");
+        Commit("base");
+        var baseSha = Git("rev-parse", "HEAD");
+        File.WriteAllText(Path.Combine(Repo, "shared.cs"), "sync");
+        Commit("AGT-1: sync develop");
+        var result = Git("rev-parse", "HEAD");
+        // A file in place of the ledger root deterministically refuses its writes.
+        File.WriteAllText(Path.Combine(_root, "ledger"), "unavailable");
+        var service = Service();
+        Assert.ThrowsAny<IOException>(() => service.BackfillDispatchConflicts(Repo, "project", At,
+            baseSha, result, "AGT-1", backfilled: false));
+        var collector = new DispatchForecastService(null!, null!, null!, null!, null!, service,
+            new DispatchStore(Config), NullLogger<DispatchForecastService>.Instance);
+        var forecast = TouchForecast.Compute("shared.cs", TouchForecast.BuildIndex(baseSha, At, ["shared.cs"], []), []);
+        var delivery = collector.CollectDelivery(Repo, "project", "AGT-1", baseSha,
+            new AgentStudio.Pipeline.ReviewSubjectRecord { BaseSha = baseSha, ResultSha = result },
+            forecast, At, CancellationToken.None);
+        Assert.Equal(new[] { "shared.cs" }, delivery.RealFiles);
+        Assert.Equal(result, delivery.ResultSha);
+        service.TryBackfillDispatchConflicts(Repo, "project", At, baseSha, "missing-ref", "AGT-1");
+    }
+
     private void Init()
     {
         Directory.CreateDirectory(Repo);
