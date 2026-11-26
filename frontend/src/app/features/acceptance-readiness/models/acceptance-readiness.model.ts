@@ -35,6 +35,11 @@ export interface AcceptanceReadinessItem {
   aspect: string | null;
   contentStatus: string | null;
   concern: string | null;
+  /** Source of the content verdict used by completion, rather than the overall attempt outcome. */
+  reviewAttemptId?: string | null;
+  reviewedAtUtc?: string | null;
+  runAttemptId?: string | null;
+  reportRef?: string | null;
   missing: string | null;
   latestResultRef: string | null;
   round: AcceptanceReadinessRound | null;

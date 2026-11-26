@@ -24,6 +24,7 @@ interface Fixture {
   headline: string;
   reason: string;
   refusal: string;
+  orchestratorVerdict?: 'accept';
   concern?: string;
   missing?: string;
 }
@@ -65,7 +66,7 @@ const FIXTURES: Fixture[] = [
     refusal: 'Content review passed for the current brief.' },
 ];
 
-function card(fixture: Pick<Fixture, 'id' | 'key' | 'title'>) {
+function card(fixture: Pick<Fixture, 'id' | 'key' | 'title' | 'orchestratorVerdict'>) {
   return {
     id: fixture.id,
     taskKey: `${WATCH_PATH}::${fixture.id}`,
@@ -90,6 +91,10 @@ function card(fixture: Pick<Fixture, 'id' | 'key' | 'title'>) {
     commits: [],
     ownerClientId: 'local-default',
     tags: [],
+    orchestratorVerdict: fixture.orchestratorVerdict,
+    acceptanceScope: fixture.orchestratorVerdict === 'accept'
+      ? { deliveryMode: 'bounded-slice', slice: 'Show concern provenance', criteria: ['Name the review attempt and concern.'] }
+      : null,
   };
 }
 
@@ -108,6 +113,9 @@ function item(fixture: Fixture) {
     refusal: fixture.refusal,
     aspect: 'requirement-fit',
     contentStatus: fixture.readiness === 'review-concerns' ? 'concerns' : 'pass',
+    reviewAttemptId: fixture.concern ? 'review-current-slice' : null,
+    reviewedAtUtc: fixture.concern ? '2026-11-26T10:00:00Z' : null,
+    overrideAllowed: true,
     concern: fixture.concern ?? null,
     missing: fixture.missing ?? null,
     latestResultRef: offersRound ? RESULT_REF : null,
@@ -282,6 +290,42 @@ async function openBoard(page: Page): Promise<void> {
 
 test.describe('Human Review acceptance readiness', () => {
   test.setTimeout(180_000);
+
+  test('shows accept versus concerns with provenance and both remedies on bounded-slice cards', async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on('pageerror', error => pageErrors.push(error.message));
+    await installRoutes(page, [{ ...FIXTURES[3], orchestratorVerdict: 'accept' }]);
+    await openBoard(page);
+    const card = page.getByTestId('task-card').filter({ hasText: 'Explorer counts parked cards' });
+    await expect(card.getByTestId('acceptance-verdict-conflict'))
+      .toContainText('Review decision: accept; requirement-fit: concerns');
+    await expect(card.getByTestId('acceptance-readiness-reason')).toContainText(FIXTURES[3].concern!);
+    await expect(card.getByTestId('acceptance-review-source')).toContainText('review-current-slice');
+    await expect(card.getByTestId('acceptance-review-source')).toContainText('2026-11-26T10:00:00Z');
+    await expect(card.getByTestId('acceptance-send-round')).toBeVisible();
+    await expect(card.getByTestId('acceptance-with-reason-link')).toHaveAttribute('href', /tasks\/AGT-4104$/);
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      if (width === 390) {
+        await page.getByRole('combobox', { name: 'Board lane' }).selectOption({ label: 'Human review' });
+        await expect(page.getByTestId('lane-5-human-review')).toBeVisible();
+      }
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await dismissDevErrorDialog(page);
+        await card.scrollIntoViewIfNeeded();
+        await card.screenshot({ path: path.join(RESULTS_DIR, `completion-concern-${width}-${theme}--mocked.png`) });
+        const note = card.getByTestId('acceptance-readiness-note');
+        expect(await note.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      }
+    }
+    await card.getByTestId('acceptance-send-round').click();
+    await expect(page.getByTestId('acceptance-round-prompt')).toHaveValue(/requirement-fit concern:/);
+    await page.getByTestId('acceptance-round-cancel').click();
+    await card.getByTestId('acceptance-with-reason-link').click();
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toContain('/tasks/AGT-4104');
+    expect(pageErrors).toEqual([]);
+  });
 
   test('archives a project with an open Human Review card without showing it as unregistered', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });

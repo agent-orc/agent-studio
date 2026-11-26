@@ -235,6 +235,10 @@ export interface TaskDeliveryClaimAnswer {
     requiredAspect: string;
     contentStatus: string | null;
     contentSummary: string | null;
+    reviewAttemptId?: string | null;
+    reviewedAtUtc?: string | null;
+    runAttemptId?: string | null;
+    reportRef?: string | null;
     evidenceChecked: string | null;
     missing: string | null;
     ranAspects: string[];

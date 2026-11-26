@@ -1686,6 +1686,21 @@ claim and a `completion_content_overridden` timeline entry. The Human Review
 delivery panel displays these grounds, the content citations, and ran/skipped
 aspects before acceptance.
 
+Completion's content evidence exposes `runAttemptId`, `reviewAttemptId`,
+`reviewedAtUtc`, and `reportRef` alongside the aspect status, summary and
+missing evidence. A content refusal returns those facts as `contentReview`
+in the 409 response and includes the concern and its provenance in the error
+text. Acceptance readiness carries the same source identifiers to the board
+and detail. Human Review explicitly shows an `accept` decision conflicting
+with content concerns, with a round and acceptance with a written reason as
+remedies. Unknown legacy local review dates remain unrecorded. The attempt's
+overall `Pass` outcome and the decision log's `accept` do not replace the
+current delivery's semantic content verdict, including for bounded slices.
+Content lookup uses `TaskIdentity.AuthorityKey`, matching run claims: stable
+key, composite task key, then slug, with blank keys treated as absent. This
+keeps a legacy card's current remote review authoritative when an older local
+content artifact remains in its folder.
+
 When the delivery or verdict brief version differs from the current brief,
 Human Review announces the acceptance block before the owner acts. Prompt edits
 record `brief_changed` and retain the immediately preceding text for a brief

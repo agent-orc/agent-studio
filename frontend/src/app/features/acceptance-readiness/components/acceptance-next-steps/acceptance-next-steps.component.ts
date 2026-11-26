@@ -63,6 +63,9 @@ export class AcceptanceNextStepsComponent {
    * and the board note; the brief gap and the other gaps are listed under it.
    * The brief gap leads only without a refusal or when the verdict is stale.
    */
+  readonly reviewSource = computed(() => this.item() ?? this.contentReview());
+  readonly verdictConflict = computed(() => this.job().orchestratorVerdict === 'accept'
+    && ['concerns', 'block'].includes(this.reviewSource()?.contentStatus?.toLowerCase() ?? ''));
   readonly primary = computed(() => acceptancePrimaryReason(this.item()));
   readonly briefLeads = computed(() => !!this.briefGap()
     && (!this.primary() || this.primary()!.readiness === 'verdict-stale'));

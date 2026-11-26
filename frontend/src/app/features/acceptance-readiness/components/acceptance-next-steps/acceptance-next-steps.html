@@ -18,6 +18,14 @@
     } @else if (contentGap(); as review) {
       <p data-testid="content-verdict-acceptance">Accept will be refused. The {{ review.requiredAspect }} review of the current brief {{ briefLabel(review.currentBriefVersion) }} returned {{ review.contentStatus }}. {{ review.contentSummary }}</p>
     }
+    @if (verdictConflict()) {
+      <p data-testid="acceptance-verdict-conflict">Review decision: accept; {{ item()?.aspect || contentReview()?.requiredAspect }}: {{ reviewSource()?.contentStatus }}. Acceptance needs a round or a written reason.</p>
+    }
+    @if (reviewSource(); as source) {
+      @if (source.reviewAttemptId || source.reviewedAtUtc || source.reportRef) {
+        <p data-testid="acceptance-review-source">Review {{ source.reviewAttemptId || 'local' }} · <time [attr.datetime]="source.reviewedAtUtc">{{ source.reviewedAtUtc || 'date not recorded' }}</time></p>
+      }
+    }
     @if (briefLeads() && contentReview(); as review) {
       @if (briefGap() === 'unrecorded') {
         <p data-testid="stale-brief-acceptance" data-brief-gap="unrecorded"><strong>No brief version was recorded.</strong> No brief version was recorded for {{ unrecordedBriefSubject(review) }}, so it cannot show which brief it was built or reviewed against. The current brief is {{ briefLabel(review.currentBriefVersion) }}. Review the delivery against the current brief before deciding whether to accept it.</p>

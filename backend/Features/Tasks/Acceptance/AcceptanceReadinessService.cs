@@ -20,7 +20,11 @@ public sealed record AcceptanceReadinessItem(
     string? Missing,
     string? LatestResultRef,
     AcceptanceReadinessRound? Round,
-    bool OverrideAllowed);
+    bool OverrideAllowed,
+    string? RunAttemptId = null,
+    string? ReviewAttemptId = null,
+    DateTime? ReviewedAtUtc = null,
+    string? ReportRef = null);
 
 /// <summary>The prefilled continue round for a refused card; nothing is sent until the owner confirms.</summary>
 public sealed record AcceptanceReadinessRound(string Prompt, string? BaseRef);
@@ -80,7 +84,8 @@ public sealed class AcceptanceReadinessService(
             card.Id, card.TaskKey, card.Key, card.ProjectName, card.Title,
             verdict.Readiness, verdict.Headline, verdict.Reason, admission.Stage, admission.Message,
             verdict.Aspect, verdict.ContentStatus, verdict.Concern, verdict.Missing, latestRef, round,
-            admission.OverrideAllowed);
+            admission.OverrideAllowed, admission.Content?.RunAttemptId,
+            admission.Content?.ReviewAttemptId, admission.Content?.ReviewedAtUtc, admission.Content?.ReportRef);
     }
 
     /// <summary>The ref a continue round without a named base starts from (AGT-3483).</summary>

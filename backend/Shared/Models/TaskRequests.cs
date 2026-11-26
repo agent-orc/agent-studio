@@ -206,6 +206,8 @@ public record MoveJobOutcome(MoveJobStatus Status, string? Message = null, strin
 {
     /// <summary>The batch named by an <see cref="MoveJobStatus.ActiveBatchMember"/> refusal.</summary>
     public AgentStudio.Pipeline.ActiveBatchMembership? ActiveBatch { get; init; }
+    /// <summary>The exact content evidence that refused completion, including concern provenance.</summary>
+    public AgentStudio.Tasks.CompletionContentFacts? ContentReview { get; init; }
 }
 
 /// <summary>Result of <c>POST /api/tasks/{id}/restore-from-failed-pickup</c>.</summary>

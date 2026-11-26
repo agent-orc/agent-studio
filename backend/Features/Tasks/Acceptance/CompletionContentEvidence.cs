@@ -32,9 +32,9 @@ public static class CompletionContentEvidence
         var required = TaskModes.IsConcept(task.Mode) ? "concept-fit" : "requirement-fit";
         if (authority is not null)
         {
-            // Attempt authority keys remote runs by the card's stable key, not
-            // the scanner's watch-path-qualified TaskKey.
-            var projection = authority.GetTaskProjection(task.Key ?? task.Id);
+            // Match run claims, including the composite identity of legacy
+            // cards without a stable key.
+            var projection = authority.GetTaskProjection(TaskIdentity.AuthorityKey(task));
             var run = projection.CurrentRunAttempt;
             if (run is not null)
             {
@@ -62,7 +62,11 @@ public static class CompletionContentEvidence
                         task.Mode, current, run.BriefVersion, local.BriefVersion,
                         required, local.Status, local.Ran, [],
                         ContentSummary: local.Summary,
-                        EvidenceChecked: local.EvidenceChecked);
+                        EvidenceChecked: local.EvidenceChecked,
+                        Missing: local.Missing,
+                        RunAttemptId: run.AttemptId,
+                        ReviewedAtUtc: local.ReviewedAtUtc,
+                        ReportRef: $"aspect-{required}.json");
                 var reviewVersion = report?.BriefSha256 ?? review?.Subject.Plan?.BriefSha256;
                 reviewVersion = NormalizeLegacyConceptReviewVersion(task, current,
                     run.BriefVersion, reviewVersion);
@@ -73,6 +77,10 @@ public static class CompletionContentEvidence
                     ContentSummary: content?.Summary,
                     EvidenceChecked: content?.EvidenceChecked,
                     Missing: content?.Missing,
+                    RunAttemptId: run.AttemptId,
+                    ReviewAttemptId: review?.AttemptId,
+                    ReviewedAtUtc: read?.Entry?.ReceivedAtUtc is { } received && received != default ? received : null,
+                    ReportRef: review is null ? null : RemoteReviewReportEvidence.EvidenceFileName(review.AttemptId),
                     Settlement: review is null && TaskModes.IsReportOnly(task.Mode)
                         ? new(null, CompletionSettlementProblem.NoReportReview, null)
                         : Settlement(run.AttemptId, projection.CurrentReviewAttempt, review, read));
@@ -85,7 +93,11 @@ public static class CompletionContentEvidence
             return new(task.Mode, current, evidence.BriefVersion, evidence.BriefVersion, required,
                 evidence.Status, evidence.Ran, ["not recorded for local review"],
                 ContentSummary: evidence.Summary,
-                EvidenceChecked: evidence.EvidenceChecked);
+                EvidenceChecked: evidence.EvidenceChecked,
+                Missing: evidence.Missing,
+                RunAttemptId: evidence.RunAttemptId,
+                ReviewedAtUtc: evidence.ReviewedAtUtc,
+                ReportRef: $"aspect-{required}.json");
         return new(task.Mode, current, null, null, required, null, [], []);
     }
 
@@ -122,7 +134,9 @@ public static class CompletionContentEvidence
         string? Status,
         IReadOnlyList<string> Ran,
         string? Summary,
-        string? EvidenceChecked);
+        string? EvidenceChecked,
+        string? Missing,
+        DateTime? ReviewedAtUtc);
 
     private static LocalContent? ReadLocal(string folder, string required)
     {
@@ -135,6 +149,9 @@ public static class CompletionContentEvidence
             var version = context.RootElement.GetProperty("briefVersion").GetString();
             var runAttemptId = context.RootElement.TryGetProperty("runAttemptId", out var runValue)
                 && runValue.ValueKind == JsonValueKind.String ? runValue.GetString() : null;
+            var reviewedAt = context.RootElement.TryGetProperty("reviewedAt", out var date)
+                && date.ValueKind == JsonValueKind.String && date.TryGetDateTime(out var parsedDate)
+                    ? (DateTime?)parsedDate : null;
             using var document = JsonDocument.Parse(File.ReadAllText(contentPath));
             var root = document.RootElement;
             var ran = Directory.GetFiles(folder, "aspect-*.json")
@@ -145,7 +162,9 @@ public static class CompletionContentEvidence
             return new LocalContent(version, runAttemptId,
                 root.GetProperty("status").GetString(), ran,
                 root.TryGetProperty("summary", out var summary) ? summary.GetString() : null,
-                root.TryGetProperty("evidenceChecked", out var checkedValue) ? checkedValue.GetString() : null);
+                root.TryGetProperty("evidenceChecked", out var checkedValue) ? checkedValue.GetString() : null,
+                root.TryGetProperty("missing", out var missing) ? missing.GetString() : null,
+                reviewedAt);
         }
         catch (Exception ex) when (ex is IOException or JsonException or KeyNotFoundException or InvalidOperationException)
         {
