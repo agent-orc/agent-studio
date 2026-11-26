@@ -1503,6 +1503,11 @@ warnings.
 
 ## Verification
 
+- Vitest workers share a module cache (`isolate: false`). Shared test data
+  belongs in helpers under the feature's `testing/` directory, never in an
+  imported `.spec.ts` file. Importing a spec can register its tests in another
+  suite and leave its own collection empty. The access account, detail and
+  bindings specs share `access-account-fixtures.ts` without importing a suite.
 - Visual or behavioral changes require relevant Playwright specs. Add or extend
   a spec when none covers the changed behavior.
 - Capture screenshots for review-relevant states and persist them in the task

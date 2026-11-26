@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { AccessSelectionService } from '../../services/access-selection.service';
 import { AccessService } from '../../services/access.service';
 import { accessOverview, fakeAccessService } from '../../testing/access-fixtures';
-import { ACCOUNTS, ACCOUNT_BINDINGS } from '../access-service-accounts/access-service-accounts.component.spec';
+import { ACCOUNTS, ACCOUNT_BINDINGS } from '../../testing/access-account-fixtures';
 import { AccessBindingsComponent } from './access-bindings.component';
 
 describe('AccessBindingsComponent', () => {

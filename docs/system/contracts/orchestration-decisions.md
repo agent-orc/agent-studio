@@ -826,6 +826,25 @@ calls or transition receipts; later slices collect facts and apply actions
 through the owning adapter. The architecture guard inventories all three
 policies.
 
+The implemented working choices are RT-D1 B, RT-D2 B, RT-D4 B, RT-D5 B,
+RT-D6 B, RT-D7 B and RT-D9 B. The lifecycle contract is:
+
+| Evidence | Returned action |
+|---|---|
+| Confirmed build, prepare or base failure without an environment explanation | `LineStop`, with no automatic quarantine |
+| Confirmed routine regression or ambiguous failure | `StartHeld` within the project caps |
+| Recovering same-SHA repeat or mixed bisect point | `CountFlaky`; `StartReportOnly` after three distinct runs in 14 days or immediately for a mixed point |
+| Failed canary, passing reference-envelope repeat after a fingerprint mismatch, or failing last-green control | `MarkInconclusive`, no merge attribution; recurring environment incidents may start report-only |
+| Two latest covering passes in the standard envelope on tips containing the repair | `Lift` |
+| Held expiry at 24 hours with the repair in Progress or Auto Review | One `Renew` for 24 hours, bounded by 48 hours from the original start |
+| Line stop at 60 minutes, held renewal limit, cap breach, confirmed seven-day relapse or T2 request | `AskOwner` with typed reason, options and recommendation |
+
+Owner questions describe decisions for the owning host to present. Returning a
+question does not grant its recommended option or change a project's strategy.
+The legacy `RedDevelopRepairPolicy` retains RT-1's two-hour owner question for
+existing callers and delegates its safe-revert and exact-file hold predicates
+to the new policies.
+
 RT-3 (AGT-4004) adds two pure entry points for the post-merge runner, which
 records facts and never acts on them. `RedTestTriagePolicy.ClassificationHint`
 classifies one test from the facts the runner measures (same-SHA repeat,
