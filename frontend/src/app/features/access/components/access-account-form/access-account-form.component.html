@@ -1,0 +1,13 @@
+<div class="access-form" data-testid="access-account-form">
+  <label class="access-field">Name
+    <input data-testid="access-service-account-name" autocomplete="off" [value]="name()" (input)="name.set($any($event.target).value)" />
+  </label>
+  <label class="access-field">Description
+    <input data-testid="access-service-account-description" autocomplete="off" [value]="description()" (input)="description.set($any($event.target).value)" />
+  </label>
+  <app-access-grant-form [roles]="access.overview()?.roles ?? []" [projects]="access.projects()" principalKind="service-account" (grantChange)="grant.set($event)" />
+  <p class="access-hint">The first role is optional. Tokens are issued on the account after it exists.</p>
+  <div class="access-form__actions">
+    <button type="button" class="btn btn--primary" data-testid="access-service-account-create" [disabled]="!name().trim() || access.busy()" (click)="create()">Create service account</button>
+  </div>
+</div>

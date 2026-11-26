@@ -9,6 +9,9 @@ public static class CauseBreakerSettingsDefaults
 
 public record ProjectSettings
 {
+    /// <summary>Null uses the default dispatch hubs; an empty list excludes no files.</summary>
+    public IReadOnlyList<string>? DispatchHubFiles { get; init; }
+
     /// <summary>Quality Studio's durable project-to-repository mapping and last registration outcome.</summary>
     [System.Text.Json.Serialization.JsonPropertyName("qualityStudio")]
     public QualityStudioRegistration? QualityStudio { get; init; }
@@ -302,10 +305,14 @@ public record ProjectSettings
     /// <c>docs/dispatcher-personas/index.html</c>): which cards the pick-gate
     /// compares a candidate's scope with, on the local pickup and the remote
     /// claim. Null resolves to <see cref="OverlapWindows.Default"/>
-    /// (<c>in-flight</c>); see <see cref="OverlapWindows"/>.
+    /// (<c>off</c>); see <see cref="OverlapWindows"/>.
     /// </summary>
     [System.Text.Json.Serialization.JsonPropertyName("dispatch.overlapWindow")]
     public string? DispatchOverlapWindow { get; init; }
+
+    /// <summary>Minutes of continuous scope-only starvation before Needs you offers Run anyway.</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("dispatch.overlapStarvationMinutes")]
+    public int DispatchOverlapStarvationMinutes { get; init; } = 30;
 
     /// <summary>
     /// ADR-0052: branch that parallel task worktrees branch off and merge back
@@ -1321,19 +1328,19 @@ public static class ReviewPackageSetting
 }
 
 /// <summary>
-/// Values of <c>dispatch.overlapWindow</c> (DS-0). A card stays exposed from
-/// its start until it integrates, so the default compares a candidate with
-/// every card of the project that started a coding run and has not integrated
-/// yet. <see cref="Running"/> keeps the comparison with running cards only, the
-/// local behaviour before DS-0.
+/// Values of <c>dispatch.overlapWindow</c>. Off records advisory predictions
+/// without scope serialization. Enforcing windows compare running deliveries
+/// or all open deliveries awaiting integration. Default advisory until paired
+/// integration evidence supports enforcement.
 /// </summary>
 public static class OverlapWindows
 {
     public const string Running = "running";
     public const string InFlight = "in-flight";
-    public const string Default = InFlight;
+    public const string Off = "off";
+    public const string Default = Off;
 
-    public static readonly IReadOnlyList<string> All = [Running, InFlight];
+    public static readonly IReadOnlyList<string> All = [Off, Running, InFlight];
 
     /// <summary>The known window for a stored or requested value, or null.</summary>
     public static string? Normalize(string? value)

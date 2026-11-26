@@ -18,6 +18,17 @@ namespace AgentStudio.Tests;
 public sealed class RoutePermissionInventoryTests : IDisposable
 {
     [Fact]
+    public void Overlap_window_uses_project_settings_write_without_an_owner_floor()
+    {
+        using var factory = Factory(SecurityProfiles.Local, null);
+        var endpoint = Assert.Single(Routes(factory.Services).Where(route => route.RoutePattern.RawText
+            == "/api/projects/{projectName}/dispatch/overlap-window" && RoutePermissionCatalog.Methods(route).Contains("PUT")));
+        Assert.Equal(IamPermissions.ProjectSettingsWrite, RoutePermissionCatalog.Resolve(endpoint, "PUT")?.Permission);
+        Assert.Null(endpoint.Metadata.GetMetadata<StudioRoleRequirement>());
+        Assert.Contains(IamRoles.All, role => role.Id == IamRoles.Admin && role.Permissions.Contains(IamPermissions.ProjectSettingsWrite));
+    }
+
+    [Fact]
     public void ModelSelectionIngestionIsRunnerScoped()
     {
         Assert.Equal(IamPermissions.RunnerService,

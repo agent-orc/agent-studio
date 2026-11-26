@@ -11,6 +11,20 @@ public sealed class UsageCockpitContractTests
     private static readonly ProjectTokenDataFreshness Complete = new() { Status = "complete" };
 
     [Fact]
+    public void Missing_Codex_cache_split_withholds_cost_and_marks_coverage_partial()
+    {
+        var entry = Entry("legacy", At, 61_600_000, 0);
+        entry = entry with { TokenUsage = entry.TokenUsage! with { InputIncludesCached = null, UsageNormalization = null } };
+        var cost = UsageCockpitProjection.Cost(TokenTestServices.Pricing(),
+            UsageCockpitProjection.Calendar(At, "Etc/UTC", null),
+            [new UsageCostInput("project", "Studio", [entry], Complete)], At);
+        Assert.Equal(0m, cost.TodayUsd);
+        Assert.Equal("partial", cost.Coverage.Status);
+        Assert.Equal(1, cost.UnpricedTodayRuns);
+        Assert.Contains("cost is withheld", cost.Projects[0].Coverage.Reason);
+    }
+
+    [Fact]
     public void One_shot_sources_reconcile_with_cost_for_today_and_week()
     {
         var title = Entry(null, At, 100, 0) with { ParticipantId = "support:adhoc", Topic = "title-generation" };

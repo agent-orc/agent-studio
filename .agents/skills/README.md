@@ -16,7 +16,7 @@ add `scripts/`, `references/`, and `tests/` siblings.
 | **Task API** | Create / move / triage tasks via HTTP. Required reading for any CLI work that touches the task queue. | [`task-api/`](task-api/SKILL.md) |
 | **Regenerate README** | Rewrite `README.md` from current product reality (after a load-bearing change). | [`regenerate-readme/`](regenerate-readme/SKILL.md) |
 | **Runtime log analysis** | Inspect backend / runner / CLI logs after an incident. | [`runtime-log-analysis/`](runtime-log-analysis/SKILL.md) |
-| **Visual design** | UI work whose acceptance is visual quality: dashboards and charts, structure and topology canvases, interactive 3D scenes, small games, landing pages. Direction first, desktop and phone screenshots in both themes, rubric critique, at least one iteration. | [`visual-design/`](visual-design/SKILL.md) |
+| **Visual design** | UI work whose acceptance is visual quality: dashboards and charts, structure and topology canvases, interactive 3D scenes, small games, landing pages. Content first for technical views, Studio style tokens only, direction first, desktop and phone screenshots in both themes, rubric critique, at least one iteration. | [`visual-design/`](visual-design/SKILL.md) |
 
 ## How to add a skill
 

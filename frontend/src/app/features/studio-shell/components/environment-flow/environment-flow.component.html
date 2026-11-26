@@ -95,7 +95,7 @@
       @if (unlinkedAttempts().length) {
         <div class="environment-flow__unlinked"><strong>Attempts on hosts absent from the current host list</strong>
           @for (attempt of unlinkedAttempts(); track attempt.attemptId) {
-            <p [attr.data-attempt-id]="attempt.attemptId">{{ attempt.hostId }} · {{ attempt.project }} · {{ attempt.subject }} ·
+            <p [attr.data-attempt-id]="attempt.attemptId">{{ attempt.hostId | hostName }} · {{ attempt.project }} · {{ attempt.subject }} ·
               {{ attempt.executor }} · {{ attempt.occupancy }} · lease {{ attempt.leaseState }} · cleanup {{ attempt.cleanupStatus }}</p>
           }
         </div>

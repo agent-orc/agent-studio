@@ -203,3 +203,25 @@ Catalog updates also carry routing knowledge. Automatic Codex equivalence
 candidates remain restricted to Studio's versioned routing tiers and declared
 provider-rejection fallbacks; a new model in TokenEconomy does not grant it
 an automatic Studio route.
+
+## Receipt evidence gaps (AGT-3973)
+
+Scalar price lookup still resolves the historical catalog price. Receipt-aware
+pricing additionally requires evidence for the input dimensions: OpenAI
+receipts with positive input, zero cache read and no normalization provenance
+are unpriced with `IncompleteReason = "missing-cache-split"`. Counters stay
+visible, and saved estimated costs cannot override this evidence gap. A known
+zero cache count with explicit parser evidence is priceable. For remote
+receipts, the legacy input-semantics boolean alone does not prove that the
+cache field was reported; zero-cache rows require the versioned marker. No cache
+ratio is inferred from neighboring runs or rounded USD estimates. See the
+[token domain](tokens.md#remote-receipt-replay-and-missing-cache-evidence-agt-3973).
+
+Pricing fixtures that expect an OpenAI receipt to be priced must declare their
+known input semantics or normalization provenance. Project and per-card
+summaries keep a cataloged model known when cache evidence is absent, but
+mark its cost unpriced. `TokenSummaryTests` covers missing evidence alongside
+explicit zero-cache input semantics.
+`RemotePipelineExecutionProjectionTests` also checks both cases through the
+remote lifecycle projection: stored USD estimates survive only with cache
+evidence, while ambiguous receipts retain their tokens with unpriced cost.

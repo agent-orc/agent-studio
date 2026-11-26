@@ -1,6 +1,6 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { AccessService } from '../../services/access.service';
 import { fakeAccessService } from '../../testing/access-fixtures';
 import { AccessInviteFormComponent } from './access-invite-form.component';
@@ -45,7 +45,9 @@ describe('AccessInviteFormComponent', () => {
     expect(link).toContain('only to new.user');
     expect(link).toContain('works once');
     expect(link).toContain('second factor is recommended');
-    expect(element.querySelector('[data-testid="access-invite-copy"]')?.textContent).toContain('Copy link');
+    expect(link).toContain('Shown once');
+    expect(element.querySelector('[data-testid="access-invite-link-value"]')?.textContent).toBe(`${location.origin}/?invite=inv.abc`);
+    expect(element.querySelector('[data-testid="access-invite-link-copy"]')?.textContent).toContain('Copy link');
   });
 
   it('hides the first link and names the next invite while its request is pending', async () => {
@@ -72,21 +74,10 @@ describe('AccessInviteFormComponent', () => {
 
     expect(access.invite).toHaveBeenLastCalledWith('reviewer.user', '', [{ role: 'viewer', scope: { kind: 'project', project: 'PROJ-001' } }]);
     expect(element.querySelector('[data-testid="access-invite-link"]')).toBeNull();
-    expect(element.querySelector('[data-testid="access-invite-copy"]')).toBeNull();
+    expect(element.querySelector('[data-testid="access-invite-link-copy"]')).toBeNull();
     expect(element.querySelector('[data-testid="access-invite-pending"]')?.textContent).toContain('reviewer.user');
     expect(element.querySelector('[data-testid="access-invite-pending"]')?.textContent).toContain('Viewer');
     expect((element.querySelector('[data-testid="access-invite-submit"]') as HTMLButtonElement).disabled).toBe(true);
-
-    const writeText = vi.fn();
-    const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-    try {
-      await fixture.componentInstance.copyLink();
-      expect(writeText).not.toHaveBeenCalled();
-    } finally {
-      if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard);
-      else Reflect.deleteProperty(navigator, 'clipboard');
-    }
 
     finishSecondInvite({ user: { username: 'reviewer.user' }, signInLink: '/?invite=inv.second', expiresAt: '2026-10-21T09:00:00Z' });
     await fixture.whenStable();

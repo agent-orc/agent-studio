@@ -2885,3 +2885,57 @@ requeues it.
   metadata selection, archive and orphan counts, tamper mismatch, idempotent
   replay, Maintenance initialization, pointer-only evidence, and an empty-store
   backup/restore with the same inventory hash.
+
+### Dispatch touch forecasts (DS-1, AGT-3991)
+
+DS-D4 option B supplies a shared model-free `TouchForecastV1`. `AddDispatch`
+registers its store and background collector; `MapDispatchEndpoints` maps its
+routes. The collector wakes on task creation, mutation and lane transitions,
+with a one-minute retry wake and a daily full recovery pass. Path events resolve
+one resident card through the folder index; requested refreshes resolve canonical
+card keys without scanning the board. A Ready entry or changed title, prompt or hub
+setting refreshes the forecast. `IntakeRunner.DetectTaskAreas` still enriches
+prompts independently. No dispatch order or admission rule changes in this slice.
+
+Citations resolve exact repository paths and unique file names against the
+integration tip's tracked tree, read with `git ls-tree` so the host checkout's
+index cannot leak another branch into the forecast. Co-change expansion is
+one hop and directional: a partner must share at least three commits and half
+of the cited file's eligible commits. Commits over 40 code files and merge
+commits are excluded. The index covers 60 days and refreshes on the first
+background pass of each UTC day. Dated snapshots remain available through
+`DispatchStore.IndexAsOf(project, waveStart)`; a future snapshot is never used.
+Each index write prunes snapshots older than 60 days before the newest stored
+index, keeping the last snapshot before that boundary for as-of lookups. Late
+historical writes do not move the retention window backwards. Timestamps are
+UTC; snapshot selection filters file dates before reading index contents. This
+retention covers the 30-day replay window. Card forecasts and their delivery
+evidence are retained independently.
+
+Modules follow `frontend/src/app/features/<x>`, `frontend/src/app/<x>`,
+`frontend/e2e/<x>`, `backend/Features/<X>`, then the top folder. Hubs remain in
+the file forecast but never define modules. Directory citations without a
+resolved file produce `module-only` confidence; no resolved citation produces
+`none`. These are facts for later pure decision-library strategies.
+
+`GET /api/projects/{project}/dispatch/forecasts?cards=KEY,KEY` returns a map from
+canonical task keys to forecasts, including null for cards awaiting collection.
+Explicit card selection supports archived cards and accepts at most 200 keys.
+Without `cards`, it returns resident active cards. Card detail includes
+`touchForecast`. Reads use stored facts and never start Git.
+`GET` and `PUT /api/projects/{project}/dispatch/hub-files` expose the project
+setting. PUT takes `{ "files": ["path/to/file.cs"] }`; null restores defaults,
+an empty array excludes no hubs. The write requires the Owner role and project
+settings permission. Defaults are Program.cs, RoutePermissionCatalog.cs and
+task.model.ts at the paths listed in the Dossier.
+
+Storage lives under `<TaskRepository>/.dispatch/`, with hashed project and card
+identities, atomic replacements and dated index files. `Dispatch:StoragePath`
+can relocate it. The collector records each immutable review-subject delivery
+once, using the merge base of the integration tip and result SHA. For an already
+integrated delivery, recovery uses the immutable lease base, or the forecast
+integration tip for older subjects, to avoid recording an empty delivery. Real code paths, modules, precision and
+recall are retained with the exact forecast that was measured, even after a
+later prompt edit. An empty precision or recall denominator is null. Failed
+Git collection logs a warning and retries without recording an empty diff as
+success. No task workspace files are written by the dispatch collector.

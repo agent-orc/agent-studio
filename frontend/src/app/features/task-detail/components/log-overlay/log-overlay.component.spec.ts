@@ -38,3 +38,21 @@ describe('LogOverlayComponent (smoke)', () => {
     expect(fixture.componentInstance).toBeTruthy();
   });
 });
+
+describe('LogOverlayComponent host ids', () => {
+  it('shows no runner_<hex> id in activity or protocol lines', async () => {
+    await TestBed.configureTestingModule({
+      imports: [LogOverlayComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(LogOverlayComponent);
+    const id = 'runner_d9a38223247c41e4bab44778397c0794';
+    fixture.componentRef.setInput('cliOutput', [{ timestamp: 't', stream: 'out', text: `claimed by ${id}` }]);
+    fixture.componentRef.setInput('log', [{ timestamp: 't', event: 'claim', detail: `host ${id}` }]);
+    const c = fixture.componentInstance;
+    expect(c.shownOutput()[0].text).not.toMatch(/runner_[0-9a-f]{8,}/);
+    expect(c.shownLog()[0].detail).not.toMatch(/runner_[0-9a-f]{8,}/);
+    expect(c.shownOutput()[0].text.startsWith('claimed by ')).toBe(true);
+  });
+});
+

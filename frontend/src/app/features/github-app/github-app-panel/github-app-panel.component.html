@@ -101,7 +101,7 @@
         <thead><tr><th scope="col">Host</th><th scope="col">Access</th><th scope="col">Repositories</th><th scope="col">Last fetched</th></tr></thead>
         <tbody>
           @for (host of current.hosts; track host.runnerId + host.access) {
-            <tr><td>{{ host.runnerId }}</td><td>{{ host.access }}</td><td>{{ host.repositories }}</td><td>{{ host.lastSyncUtc | date: 'medium' }}</td></tr>
+            <tr><td>{{ host.runnerId | hostName }}</td><td>{{ host.access }}</td><td>{{ host.repositories }}</td><td>{{ host.lastSyncUtc | date: 'medium' }}</td></tr>
           }
         </tbody>
       </table>

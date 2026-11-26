@@ -55,6 +55,15 @@ contract and the task-card application of
 
 **Don't** rebuild the recipe inline. If your pill needs the same shape and tint behaviour, `@include m.chip(...)`. If it genuinely needs a different shape (e.g. a square corner), discuss the variant in this doc.
 
+## Chip — neutral (`<app-chip>`, pilot)
+
+The Access page pilot (AGT-4029) ships the neutral chip as a component:
+[`<app-chip>`](../../../../frontend/src/app/components/chip/chip.component.ts),
+sentence case, `--studio-card-pill-height` high, with an optional second
+segment (`label` and `detail`, read as "role in scope"), a muted `note`, and
+three emphasis levels. A state still uses `<app-status-indicator>`. The mixin
+proposal below stays open for the inlined recipes that have not moved.
+
 ## Chip — neutral (proposal)
 
 A short label without an accent tint. Today every consumer rebuilds:

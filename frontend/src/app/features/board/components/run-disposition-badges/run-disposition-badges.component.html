@@ -1,4 +1,4 @@
-<app-execution-location-badge [execution]="execution()" />
+<app-execution-location-badge [execution]="execution()" [hostNamedElsewhere]="hostNamedElsewhere()" />
 @if (state() !== '3-progress' && execution()?.state === 'remote-running') {
   <app-status-indicator tone="warning" label="Remote run still live" [compact]="true"
                         testId="task-card-live-remote-outside-progress" />

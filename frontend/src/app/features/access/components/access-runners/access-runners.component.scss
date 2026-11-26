@@ -1,28 +1,12 @@
-@use '../../access-controls' as access;
-
 :host { display: block; min-width: 0; }
-@include access.controls;
-@include access.table;
-.runners { display: flex; flex-direction: column; gap: var(--studio-spacing-2); }
-.runners__issued { display: flex; flex-direction: column; gap: var(--studio-spacing-1); padding: var(--studio-spacing-2); border-radius: 4px; background: var(--studio-card-attention-bg); color: var(--studio-fg); font-size: 0.78rem; }
-.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-// SM-9: the project set of an enrollment code or an enrolled runner.
-.runners__projects {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--studio-spacing-1) var(--studio-spacing-3);
-  margin: 0;
-  padding: var(--studio-spacing-2);
-  border: 1px solid var(--studio-border);
-  border-radius: 4px;
+.runners { display: flex; flex-direction: column; gap: var(--studio-spacing-3); min-width: 0; }
+.runners__error { margin: 0; color: var(--studio-error); font-size: var(--studio-font-size-sm); }
+.runners__access { display: flex; align-items: center; gap: var(--studio-spacing-2); min-width: 0; }
+.runners__access app-chip { flex: 0 1 auto; }
+.runners__access app-status-indicator { flex: 0 0 auto; }
+.runners__numeric { font-variant-numeric: tabular-nums; }
+.runners__none { color: var(--studio-fg-muted); }
+
+@container (max-width: 760px) {
+  .runners__access { flex-wrap: wrap; }
 }
-.runners__projects legend { padding: 0 var(--studio-spacing-1); color: var(--studio-fg-dim); font-size: 0.72rem; }
-.runners__projects .access-hint { flex-basis: 100%; }
-.runners__choice { flex-direction: row; align-items: center; gap: var(--studio-spacing-1); color: var(--studio-fg); font-size: 0.78rem; }
-.runners__choice input { min-height: auto; padding: 0; accent-color: var(--studio-accent); }
-.runners__editor td { background: var(--studio-surface-muted); }
-.runners__editor .access-row { margin-top: var(--studio-spacing-2); }
-td .access-hint { margin-top: var(--studio-spacing-1); }
-// F4: the run host commands wrap instead of widening the panel.
-pre.access-secret { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -469,6 +469,7 @@ public class PipelineConfigAndCostTests
                 {
                     StepId = "core-agent-run", Kind = StepKind.Core,
                     Model = "gpt-5.6-sol", InputTokens = 500_000, OutputTokens = 100_000,
+                    InputIncludesCached = true,
                 },
             },
         };

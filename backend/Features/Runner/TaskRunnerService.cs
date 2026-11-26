@@ -18,6 +18,7 @@ public class TaskRunnerService : BackgroundService
     private readonly ILogger<TaskRunnerService> _logger;
     private readonly TaskScannerService _scanner;
     private readonly TaskIntegrationStatusService? _dependencyIntegration;
+    private readonly OverlapDispatchGuard? _overlapGuard;
     private readonly TaskListGitProjectionCache? _dependencyGitProjection;
     private readonly TaskStateMachine _states;
     private readonly TaskMutationService _mutations;
@@ -184,13 +185,15 @@ public class TaskRunnerService : BackgroundService
         RemoteRunStopRequestStore? runStops = null,
         ModelSelectionLedger? selectionLedger = null,
         TaskIntegrationStatusService? dependencyIntegration = null,
-        TaskListGitProjectionCache? dependencyGitProjection = null)
+        TaskListGitProjectionCache? dependencyGitProjection = null,
+        OverlapDispatchGuard? overlapGuard = null)
     {
         _config = config;
         _logger = logger;
         _scanner = scanner;
         _dependencyIntegration = dependencyIntegration;
         _dependencyGitProjection = dependencyGitProjection;
+        _overlapGuard = overlapGuard;
         _states = states;
         _mutations = mutations;
         _sessions = sessions;
@@ -456,6 +459,7 @@ public class TaskRunnerService : BackgroundService
                 quotaAdmission: _quotaAdmission,
                 dependencyIntegration: _dependencyIntegration,
                 dependencyGitProjection: _dependencyGitProjection,
+                overlapGuard: _overlapGuard,
                 failureInterventions: _failureInterventions,
                 projectUrls: registryProject?.Urls,
                 projectUrlPortInspector: _projectUrlPortInspector,
@@ -1939,6 +1943,7 @@ public class TaskRunnerService : BackgroundService
             quotaWaitPolicy: _quotaWaitPolicy,
             dependencyIntegration: _dependencyIntegration,
             dependencyGitProjection: _dependencyGitProjection,
+            overlapGuard: _overlapGuard,
             loadThrottle: _loadThrottle,
             modelMigrationCatalog: _modelMigrationCatalog,
             promptEnrichment: _promptEnrichment,

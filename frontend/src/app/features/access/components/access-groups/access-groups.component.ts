@@ -1,59 +1,66 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import type { AccessGroup, AccessUser } from '../../models/access.model';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { DataGridComponent, GridCellDirective } from '../../../../components/data-grid';
+import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
+import type { MenuItem } from '../../../../components/menu';
+import { OverflowMenuComponent } from '../../../../components/overflow-menu/overflow-menu.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { accessColumns, grantsOf, type GrantView } from '../../models/access-view.model';
+import { AccessSelectionService } from '../../services/access-selection.service';
 import { AccessService } from '../../services/access.service';
+import { AccessGrantsComponent } from '../access-grants/access-grants.component';
 
-/** Groups bundle users; their role bindings apply to every member. */
+export interface GroupRow {
+  id: string;
+  name: string;
+  sub: string;
+  grants: readonly GrantView[];
+  status: 'Active' | 'No members' | 'No role';
+  tone: StatusTone;
+  /** Names of the members: the fourth column of the group grid. */
+  meta: string;
+  menu: readonly MenuItem[];
+}
+
+const MENU: readonly MenuItem[] = [
+  { kind: 'row', id: 'open', label: 'Open details' },
+  { kind: 'separator' },
+  { kind: 'row', id: 'delete', label: 'Delete…', danger: true },
+];
+
+/** Groups bundle people; a role bound to the group applies to every member. */
 @Component({
   selector: 'app-access-groups',
   standalone: true,
+  imports: [AccessGrantsComponent, DataGridComponent, EmptyStateComponent, GridCellDirective, OverflowMenuComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-groups.component.html',
   styleUrl: './access-groups.component.scss',
 })
 export class AccessGroupsComponent {
   readonly access = inject(AccessService);
-  readonly name = signal('');
-  readonly description = signal('');
-  readonly users = computed(() => this.access.overview()?.users ?? []);
-  readonly groups = computed(() => this.access.overview()?.groups ?? []);
+  readonly selection = inject(AccessSelectionService);
+  readonly columns = accessColumns('Group', 'Roles', 'Members');
 
-  members(group: AccessGroup): AccessUser[] {
-    return group.members
-      .map(id => this.users().find(user => user.id === id))
-      .filter((user): user is AccessUser => !!user);
-  }
+  readonly rows = computed<GroupRow[]>(() => {
+    const overview = this.access.overview();
+    const names = new Map((overview?.users ?? []).map(user => [user.id, user.displayName]));
+    return (overview?.groups ?? []).map(group => {
+      const grants = grantsOf('group', group.id, overview, this.access.projects());
+      const members = group.members.map(id => names.get(id)).filter((name): name is string => !!name);
+      // A group grants something only with both a member and a role.
+      const status = members.length === 0 ? 'No members' : grants.length === 0 ? 'No role' : 'Active';
+      return {
+        id: group.id, name: group.name, sub: group.description ?? '', grants, status, tone: status === 'Active' ? 'success' : 'neutral',
+        meta: members.join(', '), menu: MENU,
+      };
+    });
+  });
 
-  candidates(group: AccessGroup): AccessUser[] {
-    return this.users().filter(user => !group.members.includes(user.id));
-  }
+  readonly rowId = (row: GroupRow) => row.id;
+  readonly rowLabel = (row: GroupRow) => row.name;
+  readonly rowTestId = (row: GroupRow) => `access-group-${row.id}`;
 
-  bindingLabel(group: AccessGroup): string {
-    const count = (this.access.overview()?.bindings ?? [])
-      .filter(binding => binding.principalKind === 'group' && binding.principalId === group.id).length;
-    return `${count} ${count === 1 ? 'binding' : 'bindings'}`;
-  }
-
-  async create(): Promise<void> {
-    const name = this.name().trim();
-    if (!name || this.access.busy()) return;
-    if (await this.access.createGroup(name, this.description().trim(), [])) {
-      this.name.set('');
-      this.description.set('');
-    }
-  }
-
-  async addMember(group: AccessGroup, userId: string): Promise<void> {
-    if (!userId || this.access.busy()) return;
-    await this.access.updateGroupMembers(group.id, [...group.members, userId]);
-  }
-
-  async removeMember(group: AccessGroup, userId: string): Promise<void> {
-    if (this.access.busy()) return;
-    await this.access.updateGroupMembers(group.id, group.members.filter(member => member !== userId));
-  }
-
-  async remove(group: AccessGroup): Promise<void> {
-    if (this.access.busy()) return;
-    await this.access.deleteGroup(group.id);
+  act(action: string, row: GroupRow): void {
+    this.selection.open('group', row.id, action === 'delete' ? 'delete' : null);
   }
 }

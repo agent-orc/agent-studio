@@ -1,3 +1,4 @@
+import { HostNamePipe } from '../../../components/identity-chip/host-name.pipe';
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { DisclosureMarkerComponent } from '../../../components/disclosure-marker/disclosure-marker.component';
@@ -21,7 +22,7 @@ const coverageStates: Readonly<Record<GitHubAppCoverageState, { tone: StatusTone
 @Component({
   selector: 'app-github-app-panel',
   standalone: true,
-  imports: [DatePipe, DisclosureMarkerComponent, StatusIndicatorComponent],
+  imports: [HostNamePipe, DatePipe, DisclosureMarkerComponent, StatusIndicatorComponent],
   templateUrl: './github-app-panel.component.html',
   styleUrl: './github-app-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

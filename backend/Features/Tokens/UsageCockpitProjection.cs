@@ -53,8 +53,7 @@ public static class UsageCockpitProjection
             receiptCount++;
             try
             {
-                var price = pricing.Estimate(usage.Model, usage.InputTokens, usage.OutputTokens,
-                    usage.CacheReadTokens, usage.CacheCreationTokens, AsUtc(entry.Ts));
+                var price = pricing.EstimateReceipt(usage, AsUtc(entry.Ts));
                 if (price.ModelKnown) provisional += price.Total;
                 else hasUnpriced = true;
             }
@@ -114,6 +113,7 @@ public static class UsageCockpitProjection
             var unpricedWeekIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var unpricedTodayIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var legacyUnknown = false;
+            var cacheSplitMissing = false;
             foreach (var entry in source.Entries)
             {
                 var at = AsUtc(entry.Ts);
@@ -125,8 +125,7 @@ public static class UsageCockpitProjection
                 TokenCostEstimate estimate;
                 try
                 {
-                    estimate = pricing.Estimate(usage.Model, usage.InputTokens,
-                        usage.OutputTokens, usage.CacheReadTokens, usage.CacheCreationTokens, at);
+                    estimate = pricing.EstimateReceipt(usage, at);
                 }
                 catch (Exception) {
                     unpriced = true;
@@ -136,9 +135,12 @@ public static class UsageCockpitProjection
                     if (at >= calendar.DayStartUtc && at < calendar.DayEndUtc && unpricedTodayIds.Add(runId)) unpricedTodayRuns++;
                     continue;
                 }
+                var missingCacheSplit = ReceiptTokenPricing.MissingCacheSplit(usage.Model, usage.InputTokens,
+                    usage.CacheReadTokens, usage.InputIncludesCached, usage.UsageNormalization);
+                cacheSplitMissing |= missingCacheSplit;
                 if (!estimate.ModelKnown) {
                     unpriced = true;
-                    unpricedModels.Add(usage.Model ?? "Unknown model");
+                    if (!missingCacheSplit) unpricedModels.Add(usage.Model ?? "Unknown model");
                     var runId = entry.JobId ?? $"receipt:{at.Ticks}";
                     if (unpricedWeekIds.Add(runId)) unpricedWeekRuns++;
                     if (at >= calendar.DayStartUtc && at < calendar.DayEndUtc && unpricedTodayIds.Add(runId)) unpricedTodayRuns++;
@@ -156,8 +158,9 @@ public static class UsageCockpitProjection
                 : source.Freshness.Status == "partial" || unpriced || legacyUnknown ? "partial" : "complete";
             var reason = string.Join(" ", new[] {
                 source.Freshness.Warning,
-                unpriced ? $"No historical USD price for {string.Join(", ", unpricedModels.Order(StringComparer.OrdinalIgnoreCase))}." : null,
-                legacyUnknown ? "Some legacy OpenAI receipts lack normalization provenance." : null
+                unpricedModels.Count > 0 ? $"No historical USD price for {string.Join(", ", unpricedModels.Order(StringComparer.OrdinalIgnoreCase))}." : null,
+                legacyUnknown ? "Some legacy OpenAI receipts lack normalization provenance." : null,
+                cacheSplitMissing ? "Some OpenAI receipts lack a cache split; their cost is withheld." : null
             }.Where(value => !string.IsNullOrWhiteSpace(value)));
             children.Add(new UsageProjectCost(source.ProjectId, source.Name,
                 available ? today : null, available ? week : null,

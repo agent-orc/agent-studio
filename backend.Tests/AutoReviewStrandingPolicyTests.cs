@@ -116,6 +116,22 @@ public sealed class AutoReviewStrandingPolicyTests
     }
 
     [Fact]
+    public void Review_after_undo_restarts_ownerless_age_at_its_terminal_time()
+    {
+        var now = new DateTime(2026, 11, 15, 22, 45, 0, DateTimeKind.Utc);
+        var ownerLostAt = now.AddMinutes(-18);
+        var subject = new ReviewSubjectDto("subject", "repo", new string('a', 40), "run",
+            "requirements", "policy", [], now.AddMinutes(-4));
+        var review = new ReviewAttemptDto("review", "AGT-1", "repo", "run", null,
+            subject, AttemptLifecycleState.Completed, null, 1, 1,
+            now.AddMinutes(-4), now.AddMinutes(-3), ReviewTerminalOutcome.Pass,
+            null, subject.ExpectedResultSha, "Review passed.", []);
+
+        Assert.Equal(TimeSpan.FromMinutes(3), AutoReviewStrandingWatchdog.TimeWithoutOwner(
+            now, now.AddMinutes(-5), null, review, null, null, ownerLostAt));
+    }
+
+    [Fact]
     public void Report_only_summary_failure_restarts_post_processing()
         => Assert.Equal(AutoReviewStrandingAction.StartStep,
             AutoReviewStrandingPolicy.Decide(Stranded() with { ReportOnly = true, HasCompletedRun = false }));

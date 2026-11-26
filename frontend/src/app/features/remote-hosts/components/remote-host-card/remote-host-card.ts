@@ -1,3 +1,4 @@
+import { HostNameEditorComponent } from '../../../../components/host-name-editor/host-name-editor.component';
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
@@ -77,6 +78,7 @@ interface Meter {
   selector: 'app-remote-host-card',
   standalone: true,
   imports: [
+    HostNameEditorComponent,
     DatePipe,
     AppTooltipDirective,
     CapabilityHealthComponent,

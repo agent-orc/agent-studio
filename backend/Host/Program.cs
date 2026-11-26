@@ -1,3 +1,4 @@
+using AgentStudio.Dispatch;
 
 
 using Microsoft.AspNetCore.SignalR;
@@ -83,6 +84,7 @@ Log.Logger = new LoggerConfiguration()
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddDispatch();
 // WebApplicationFactory can use the default environment, so also detect its
 // in-process xunit host before loading any machine-specific settings.
 var underTestHost = Array.Exists(
@@ -1529,6 +1531,11 @@ builder.Services.AddSingleton(sp => new WatcherLeaseService(
     sp.GetRequiredService<OperatorDecisionOptions>(), sp.GetRequiredService<OperatorDecisionLog>(),
     sp.GetRequiredService<ControlPlaneAuditLog>(), sp.GetRequiredService<TimeProvider>(),
     sp.GetService<ILogger<WatcherLeaseService>>()));
+builder.Services.AddSingleton<OverlapPredictionLedger>();
+builder.Services.AddSingleton<OverlapDispatchGuard>();
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorOverlapFactSource(
+    sp.GetRequiredService<OverlapDispatchGuard>(), sp.GetRequiredService<TaskScannerService>(),
+    sp.GetRequiredService<ProjectSettingsService>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorTaskFactSource(
     () => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live,
     task => sp.GetRequiredService<TaskRunnerService>().GetQuotaFallbackForJob(task.Id, task.ProjectName)

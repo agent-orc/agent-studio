@@ -1,0 +1,15 @@
+<nav class="outline" [class.outline--horizontal]="orientation() === 'horizontal'" [attr.aria-label]="label()" [attr.data-testid]="testId()">
+  <p class="outline__label">{{ label() }}</p>
+  <ul class="outline__list">
+    @for (item of items(); track item.id) {
+      @if (item.group; as group) { <li class="outline__group" role="presentation">{{ group }}</li> }
+      <li>
+        <button type="button" class="outline__item" [attr.aria-current]="active() === item.id ? 'location' : null"
+                [attr.data-testid]="testId() + '-' + item.id" (click)="jump(item.id)">
+          <span class="outline__text">{{ item.label }}</span>&ngsp;
+          <app-count-badge [value]="item.count ?? null" />
+        </button>
+      </li>
+    }
+  </ul>
+</nav>
