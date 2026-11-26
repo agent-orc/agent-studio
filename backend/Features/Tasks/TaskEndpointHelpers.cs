@@ -248,6 +248,12 @@ internal static class TaskEndpointHelpers
                 SuggestedRemoteRunnerId: runners.SuggestedRemoteRunnerId,
                 DenyAllLocalRuns: runners.DenyAllLocalRuns))
             : null;
+        var dispatch = runners.DispatchPresentation(job);
+        if (pickupHold is null && dispatch is { Admit: false })
+            pickupHold = new PickupHoldStatus { Mechanism = "dispatch-plan",
+                Reason = $"{dispatch.Reason}: waits for {dispatch.WaitsFor}"
+                    + (dispatch.ExpiresAt is { } expiry ? $" until {expiry:u}." : "."),
+                SinceUtc = job.EnteredLaneAt, ExpiresAtUtc = dispatch.ExpiresAt?.UtcDateTime };
         return job with
         {
             Execution = exec,
@@ -282,6 +288,7 @@ internal static class TaskEndpointHelpers
             WaitsOn = waitsOn,
             BlockedBy = DecisionBlockProjection.BlockedBy(waitsOn),
             PickupHold = pickupHold,
+            DispatchPlanPosition = dispatch?.Position,
             TransitiveWaiters = transitiveWaiters,
             PlanningSpawn = planningSpawn,
             ConceptDossier = conceptDossier

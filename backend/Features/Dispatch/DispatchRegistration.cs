@@ -16,6 +16,26 @@ public static class DispatchRegistration
 
     public static void MapDispatchEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/projects/{project}/dispatch/mode", (string project,
+            TaskScannerService scanner, ProjectSettingsService settings, HttpContext context, ProjectRegistry projects) =>
+        {
+            var entry = scanner.GetWatchPaths().FirstOrDefault(e => e.Name.Equals(project, StringComparison.OrdinalIgnoreCase));
+            if (entry is null) return Results.NotFound();
+            if (!ProjectAccessAuthorization.AllowsTasks(context, [entry.Name], IamPermissions.ProjectRead, projects))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            return Results.Ok(new { mode = settings.Get(entry.Name).DispatchMode });
+        })
+            .RequirePermission(IamPermissions.ProjectRead);
+        app.MapPut("/api/projects/{project}/dispatch/mode", (string project, DispatchModeRequest request,
+            TaskScannerService scanner, ProjectSettingsService settings) =>
+        {
+            if (!scanner.GetWatchPaths().Any(e => e.Name.Equals(project, StringComparison.OrdinalIgnoreCase))) return Results.NotFound();
+            if (request.Mode is not ("off" or "shadow" or "live"))
+                return Results.BadRequest(new { error = "Use off, shadow or live." });
+            settings.SetDispatchMode(project, request.Mode);
+            return Results.Ok(new { mode = settings.Get(project).DispatchMode });
+        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.ProjectSettingsWrite);
+
         app.MapGet("/api/projects/{project}/dispatch/personas", (string project, HttpContext context,
             TaskScannerService scanner, ProjectRegistry projects, DispatchStore store) =>
         {
@@ -23,7 +43,8 @@ public static class DispatchRegistration
             if (entry is null) return Results.NotFound();
             if (!ProjectAccessAuthorization.AllowsTasks(context, [entry.Name], IamPermissions.ProjectRead, projects))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
-            return Results.Ok(new { lease = store.ReadLease(entry.Name), shadow = store.ReadShadow(entry.Name),
+            return Results.Ok(new { lease = store.ReadLease(entry.Name), shadow = store.ReadShadow(entry.Name).Where(r => r.Shadow),
+                live = store.ReadLive(entry.Name), runDecisions = store.ReadRunDecisions(entry.Name),
                 log = store.ReadDispatcherLog(entry.Name), chainIntact = store.VerifyDispatcherLog(entry.Name) });
         }).RequirePermission(IamPermissions.ProjectRead);
 
@@ -102,3 +123,5 @@ public static class DispatchRegistration
 }
 
 public sealed record DispatchHubFilesRequest(IReadOnlyList<string>? Files);
+
+public sealed record DispatchModeRequest(string Mode);

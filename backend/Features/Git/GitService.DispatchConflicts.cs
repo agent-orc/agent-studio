@@ -46,7 +46,7 @@ public partial class GitService
         {
             EvidenceId = evidenceId, Backfilled = backfilled,
             DispatchDecisionIds = ordered.Prepend(card).Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(key => key, _ => (string?)null),
+                .ToDictionary(key => key, key => backfilled ? null : DispatchConflicts.AdmittingDecision(project, key)),
         };
         DispatchConflicts.AppendConflict(record);
         return record;

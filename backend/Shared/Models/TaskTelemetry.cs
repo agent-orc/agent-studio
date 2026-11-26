@@ -101,6 +101,7 @@ public record TaskTokenCall
 /// </summary>
 public record SessionEvent
 {
+    public string? DispatchDecisionId { get; init; }
     public DateTime Ts { get; init; }
     /// <summary><c>start</c> | <c>continue</c> | <c>recovery</c></summary>
     public string Kind { get; init; } = "";

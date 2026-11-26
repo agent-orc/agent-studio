@@ -489,6 +489,7 @@ export interface PickupHoldResolution {
  * on every card that is genuinely pickup-eligible.
  */
 export interface PickupHoldStatus {
+  expiresAtUtc?: string | null;
   /** Dependency liveness: `satisfiable-soon`, `stalled`, or `unsatisfiable`. */
   classification?: 'satisfiable-soon' | 'stalled' | 'unsatisfiable' | string;
   /**
@@ -874,6 +875,7 @@ export interface TaskInfo {
    * genuinely queued and the lane position is honest.
    */
   pickupHold?: PickupHoldStatus | null;
+  dispatchPlanPosition?: number | null;
   /** Active cards that reach this human-review card through dependsOn edges. */
   transitiveWaiters?: TransitiveWaitersStatus | null;
   /**

@@ -19,6 +19,13 @@ public static class MonolithTransitionAdapter
         bool expired, long expectedFence, long fence)
         => DispatcherAuthorityPolicy.MayAcquireLease(persona, active, grants, shadowGate, expired, expectedFence, fence);
 
+    public static DispatchPlan DispatchExclusive(DispatchPlan plan, IReadOnlyList<DispatchExclusiveMark> prior,
+        IReadOnlySet<string> present) => DispatchPickupPolicy.PreserveExclusive(plan, prior, present);
+
+    public static DispatchPickupDecision DispatchPickup(DispatchPlan? plan, string card, DateTimeOffset now,
+        bool authority, IReadOnlySet<string> satisfied)
+        => DispatchPickupPolicy.Decide(plan, card, now, authority, satisfied);
+
     public static DispatchPlan DispatchPlan(DispatchFacts facts, DispatchStrategy strategy)
         => DispatchPlanPolicy.Plan(facts, strategy);
 

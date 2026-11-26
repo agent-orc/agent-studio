@@ -204,8 +204,8 @@ part). Every strategy keeps pins and `urgent` first within a priority class,
 dependsOn, exclusive runs, the slot count, a hold of at most 24 hours renewed
 once, and at most 25 % of Ready held. `lane-entry-v1` with the `Running`
 window equals the `LaneSortApplier` order and `ParallelSlotPolicy` admissions
-(`DispatchPlanPolicyEquivalenceTests`). No host calls the policy yet; DS-5
-records shadow plans and DS-6 makes the pick-gate read the live plan.
+(`DispatchPlanPolicyEquivalenceTests`). DS-5 records shadow plans. DS-6 applies the leased live plan through
+`DispatchPickupPolicy` on both pickup paths.
 
 ## Decision grounds, shadow receipts and active coding choice
 
@@ -889,3 +889,32 @@ The lease is project-scoped, persisted and fenced; descriptor mode alone has
 no authority. DS-6 applies live plans, DS-7 supplies rollout gates, and DS-8
 projects weekly and wave reports. Source-wave and source-prior inputs remain
 unknown until their source integration lands; no model is called on pickup.
+
+
+AGT-3996 (DS-6): project `dispatch.mode` is `off`, `shadow` (default), or
+`live`, read and written at `/api/projects/{project}/dispatch/mode`. Off keeps
+pickup unchanged; shadow records active personas and keeps today's order.
+Live applies a separate, fenced plan through the shared overlap guard. Its
+forecast scopes contain non-hub forecast files for candidates, running cards
+and every in-flight card of the project until integration. An unavailable
+lease or inactive persona holds pickup with a named reason. Setting live does
+not acquire a lease or pass a rollout gate; DS-7 owns those gates.
+
+`DispatchPickupPolicy` applies plan positions, named holds until their UTC
+expiry, dependency edges and slot decisions. Hosts pass the remaining routable
+pickup candidates so a skipped head cannot reserve capacity. A resumed card
+never overlaps itself. Owner pins, urgent, existing dependencies and project
+capacity remain the planner's hard constraints. Edges stay in the plan with
+the dispatcher origin; they never rewrite owner or Dossier edges. Exclusive
+marks survive reevaluation while their cards remain Ready or in flight.
+
+The application-owned `.dispatch` store persists the live plan and append-only
+run admission or serialization receipts. A claimed run binds its admitting
+decision to the attempt; session events and `RunRecord.DispatchDecisionId`
+preserve it in run history. Conflict records resolve only claimed admissions,
+so a later serialize or failed claim cannot replace the admitting decision.
+The persona read route includes live plan and run receipts. Ready cards expose
+`dispatchPlanPosition` and use the existing pickup-hold surface with a named
+wait and optional expiry. The browser clears an expired hold on its clock tick.
+Working decisions DS-D1 through DS-D10 remain option B; rollout, scoring and
+recut workflows remain in their designated slices.
