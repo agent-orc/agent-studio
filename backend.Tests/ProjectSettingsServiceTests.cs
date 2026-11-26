@@ -763,6 +763,32 @@ public sealed class ProjectSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SetTestingStrategy_ReturnsEachWritersOwnTransitionWithoutAnExternalLock()
+    {
+        var svc = Build();
+        using var start = new ManualResetEventSlim();
+        var writes = new[] { TestingStrategies.Balanced, TestingStrategies.Strict }
+            .Select(strategy => Task.Run(() =>
+            {
+                start.Wait();
+                var change = svc.SetTestingStrategy("runbook", strategy);
+                Assert.Equal(strategy, change.NewStrategy);
+                return change;
+            })).ToArray();
+
+        start.Set();
+        var changes = await Task.WhenAll(writes);
+
+        var first = Assert.Single(changes, change => change.OldStrategy == TestingStrategies.Fast);
+        var second = Assert.Single(changes, change => change.OldStrategy == first.NewStrategy);
+        Assert.Equal(second.NewStrategy, TestingStrategies.Resolve(Build().Get("runbook")));
+        Assert.Equal((second.NewStrategy, TestingStrategies.Fast), svc.SetTestingStrategy("runbook", null));
+        // Returned values remain this write's snapshot after subsequent mutations.
+        Assert.Equal(TestingStrategies.Fast, first.OldStrategy);
+        Assert.NotEqual(first.NewStrategy, second.NewStrategy);
+    }
+
+    [Fact]
     public void StoredLegacyPerCardAndModeAreIgnoredAndTheProjectResolvesToFast()
     {
         File.WriteAllText(StorePath(),

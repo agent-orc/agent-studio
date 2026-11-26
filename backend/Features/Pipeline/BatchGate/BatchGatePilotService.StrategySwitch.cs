@@ -19,19 +19,14 @@ public sealed partial class BatchGatePilotService
         {
             strategy = TestingStrategies.Normalize(strategy)
                 ?? throw new ArgumentException("Unknown testing strategy.", nameof(strategy));
-            var previous = TestingStrategies.Resolve(_settings.Get(project));
-            if (previous == strategy)
-            {
-                _settings.SetTestingStrategy(project, strategy);
-                return new(previous, strategy, []);
-            }
             BatchGatePendingRecord[] activeFallbacks;
             lock (_fallbackFlights)
                 activeFallbacks = _fallbackFlights.Values.Select(flight => flight.Pending).ToArray();
             var pending = _store.ListPending().Concat(activeFallbacks)
                 .DistinctBy(item => item.ReviewAttemptId).Where(item => string.Equals(
                     item.Subject.Project, project, StringComparison.OrdinalIgnoreCase)).ToArray();
-            _settings.SetTestingStrategy(project, strategy);
+            var (previous, current) = _settings.SetTestingStrategy(project, strategy);
+            if (previous == current) return new(previous, current, []);
             var cards = new List<GateStrategyCardTransition>();
             foreach (var item in pending)
             {

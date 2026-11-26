@@ -51,11 +51,17 @@ async function mockStudio(page: Page, state: { strategy: string; writes: string[
     humanReview: [], completed: [], archive: [],
   })));
   await page.route('**/api/v1/studio/auth/status', route => route.fulfill(json({
-    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+    profile: 'networked', bootstrapRequired: false, authenticated: true,
+    user: { id: 'project-admin', username: 'project.admin', displayName: 'Project Admin', role: 'operator',
+      projects: [project], disabled: false, mustChangePassword: false, hasFactor: true },
   })));
   await page.route('**/api/watch-paths**', route => route.fulfill(json([
     { name: project, path: '/tasks', rootPath: '/repo', repositoryPath: '/repo' },
   ])));
+  await page.route('**/api/v1/management/retention/policy**', route => route.fulfill(json({
+    scope: route.request().url().includes('/projects/') ? 'project' : 'workspace',
+    version: 1, updatedAt: '2026-11-23T00:00:00Z', updatedBy: 'fixture', rules: [], fullBackups: null,
+  })));
   await page.route('**/api/environment', route => route.fulfill(json({ isDev: false, devTools: {} })));
   await page.route('**/api/usage/cockpit**', route => route.fulfill(json({}, 503)));
   // The settings page also mounts the quota panel; it shows its own error line for a missing snapshot.
@@ -79,6 +85,10 @@ async function mockStudio(page: Page, state: { strategy: string; writes: string[
   await page.route(`**/api/projects/${project}/environments`, route => route.fulfill(json({
     project, environments: [], promotions: [], failureCards: [] })));
   await page.route(`**/api/projects/${project}/workbenches**`, route => route.fulfill(json({ items: [] })));
+  await page.route(`**/api/projects/${project}/execution/proposal-preview`, route => route.fulfill({ json: {
+    definition: 'schemaVersion: 1', prepareScript: '#!/bin/sh', detectedStacks: ['dotnet'],
+    reasoning: 'Fixture build profile.', reviewCommands: { build: [], test: [], lint: [] },
+  } }));
   await page.route(`**/api/projects/${project}/execution`, route => route.fulfill({ json: { valid: true, issues: [], source: 'subject-commit' } }));
   await page.route('**/api/projects/settings', route => route.fulfill({ json: { [project]: settings() } }));
   await page.route(`**/api/projects/${project}/snapshot`, route => route.fulfill({ json: { settings: settings() } }));
@@ -109,8 +119,6 @@ async function mockStudio(page: Page, state: { strategy: string; writes: string[
 
 async function openStudio(page: Page) {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
-  await page.evaluate(() => document.querySelectorAll('[data-testid="error-dialog-overlay"], vite-error-overlay')
-    .forEach(element => ((element as HTMLElement).style.display = 'none')));
 }
 
 function resultsDir(): string {
@@ -120,7 +128,7 @@ function resultsDir(): string {
   return results!;
 }
 
-test('the Owner chooses the testing strategy and fast warns while post-merge runs are missing', async ({ page }) => {
+test('a project Admin chooses the testing strategy and fast warns while post-merge runs are missing', async ({ page }) => {
   const state = { strategy: 'fast', writes: [] as string[] };
   await mockStudio(page, state, 'settings');
   await openStudio(page);
@@ -135,8 +143,10 @@ test('the Owner chooses the testing strategy and fast warns while post-merge run
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
     await section.scrollIntoViewIfNeeded();
-    await expect(page.getByText('Unexpected application error', { exact: true })).toHaveCount(0);
-    await section.screenshot({ path: join(results, `testing-strategy-fast-warning-${theme}--mocked.png`) });
+    await page.mouse.move(0, 0);
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    await expect(page.getByTestId('error-dialog')).toHaveCount(0);
+    await section.screenshot({ path: join(results, `testing-strategy-admin-fast-warning-${theme}--mocked.png`) });
   }
 
   await section.getByTestId('project-detail-testing-strategy-strict').click();
@@ -146,7 +156,9 @@ test('the Owner chooses the testing strategy and fast warns while post-merge run
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
     await section.scrollIntoViewIfNeeded();
-    await section.screenshot({ path: join(results, `testing-strategy-strict-${theme}--mocked.png`) });
+    await page.mouse.move(0, 0);
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    await section.screenshot({ path: join(results, `testing-strategy-admin-strict-${theme}--mocked.png`) });
   }
 });
 
@@ -160,7 +172,7 @@ test('the Operations view names missing post-merge runs and links to the strateg
   const results = resultsDir();
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
-    await expect(page.getByText('Unexpected application error', { exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('error-dialog')).toHaveCount(0);
     await page.getByTestId('project-operations').screenshot({ path: join(results, `operations-post-merge-warning-${theme}--mocked.png`) });
   }
 });
