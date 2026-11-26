@@ -98,6 +98,7 @@ public class ProjectRunner
 
     private readonly ILogger _logger;
     private readonly TaskScannerService _scanner;
+    private readonly OverlapDispatchGuard _overlapGuard;
     private readonly TaskIntegrationStatusService? _dependencyIntegration;
     private readonly TaskListGitProjectionCache? _dependencyGitProjection;
     private readonly TaskStateMachine _states;
@@ -503,7 +504,8 @@ public class ProjectRunner
         ModelSelectionLedger? selectionLedger = null,
         IModelSelectionService? modelSelection = null,
         TaskIntegrationStatusService? dependencyIntegration = null,
-        TaskListGitProjectionCache? dependencyGitProjection = null)
+        TaskListGitProjectionCache? dependencyGitProjection = null,
+        OverlapDispatchGuard? overlapGuard = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -511,6 +513,9 @@ public class ProjectRunner
         _scanner = scanner;
         _dependencyIntegration = dependencyIntegration;
         _dependencyGitProjection = dependencyGitProjection;
+        _overlapGuard = overlapGuard ?? new OverlapDispatchGuard(TimeProvider.System,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<OverlapDispatchGuard>.Instance,
+            new OverlapPredictionLedger());
         _states = states;
         _sessions = sessions;
         _router = router;
@@ -1657,7 +1662,6 @@ public class ProjectRunner
                     skippedForConflict.Add(reason);
                     _lastPickReason = $"parallel-conflict-skip: {reason}";
                     skips.Add(new RunnerPickupSkip(candidate.Info.Id, RunnerPickupWaitCodes.ParallelConflict, adm.Reason));
-                    LogPickupSerialize(candidate.Info.Id, adm);
                     continue;
                 }
 
@@ -1687,28 +1691,13 @@ public class ProjectRunner
             ? reason
             : $"{reason}; skipped earlier conflicting candidate(s): {string.Join("; ", skippedForConflict)}";
 
-    /// <summary>
-    /// DS-0: one runner log line per serialize. A scope serialize names the
-    /// window, the conflicting card, its lane and the shared prefix, with the
-    /// same fields as the remote claim's line, so over-serialization can be
-    /// counted per window on both claim paths.
-    /// </summary>
-    private void LogPickupSerialize(string candidateId, SlotAdmission adm)
-    {
-        if (adm.IsScopeConflict)
-            _logger.LogInformation(
-                "[taskboard] overlap-serialize path=local window={Window} project={Project} candidate={Candidate} conflict={Conflict} lane={Lane} prefix={Prefix}",
-                adm.Window, ProjectName, candidateId, adm.ConflictTaskId, adm.ConflictLane, adm.SharedPrefix);
-        else
-            _logger.LogInformation(
-                "[taskboard] skipping visible pickup candidate {Job} on {Project}: {Reason}",
-                candidateId, ProjectName, adm.Reason);
-    }
-
     /// <summary>AGT-3579: replaces the skip list whole, so a status read never sees a half-built pass.</summary>
     private TaskInfo? PublishPickupSkips(List<RunnerPickupSkip> skips, TaskInfo? picked)
     {
         _pickupSkips = skips;
+        _overlapGuard.FinishSweep(ProjectName, picked is null && _activeRuns.Count < SlotMax()
+            && skips.Count > 0 && skips.All(skip => skip.Code == RunnerPickupWaitCodes.ParallelConflict
+                && skip.Detail.StartsWith("scope conflict", StringComparison.Ordinal)));
         return picked;
     }
 
@@ -1773,12 +1762,18 @@ public class ProjectRunner
     /// </summary>
     private IReadOnlyList<InFlightTask> CollectInFlight(string window)
     {
-        if (window != OverlapWindows.InFlight) return Array.Empty<InFlightTask>();
+        if (window == OverlapWindows.Running) return Array.Empty<InFlightTask>();
         var running = new HashSet<string>(
             _activeRuns.RunningTasks().Select(r => r.TaskId), StringComparer.OrdinalIgnoreCase);
         try
         {
-            return OverlapComparisonSet.Collect(_scanner.ScanAllAutomationJobs(), ProjectName, running, PredictParallelism);
+            var cards = _scanner.ScanAllAutomationJobs();
+            var membership = _dependencyGitProjection?.ReadDependencyIntegration(cards);
+            var target = _projectSettings.Get(ProjectName).IntegrationBranch;
+            return OverlapComparisonSet.Collect(cards.Select(card => membership?.TryGetValue(card.TaskKey, out var status) == true
+                && (string.IsNullOrWhiteSpace(target) || TaskIntegrationBranch.Name(status.IntegrationBranch) == TaskIntegrationBranch.Name(target))
+                    ? card with { Integration = status } : card),
+                ProjectName, running, PredictParallelism);
         }
         catch (Exception ex)
         {
@@ -1801,8 +1796,13 @@ public class ProjectRunner
     private SlotAdmission DecideAdmission(
         TaskInfo candidate, int slotMax, IReadOnlyList<InFlightTask> inFlight, string window)
     {
-        return ParallelSlotPolicy.Decide(candidate.Id, PredictParallelism(candidate), _activeRuns.RunningTasks(), slotMax,
-            OverlapComparisonSet.For(candidate, inFlight), window);
+        var running = _activeRuns.RunningTasks().Select(row =>
+            _scanner.FindJob(row.TaskId, Entry.Path) is { } live
+                ? row with { CardKey = live.Key ?? live.TaskKey, Version = OverlapComparisonSet.DeliveryVersion(live) }
+                : row).ToArray();
+        return _overlapGuard.Decide(candidate, running,
+            OverlapComparisonSet.For(candidate, inFlight), slotMax, window, "local",
+            TaskIntegrationBranch.Name(candidate.IntegrationBranch, TaskIntegrationBranch.Name(_projectSettings.Get(ProjectName).IntegrationBranch)));
     }
 
     /// <summary>Where isolated coding worktrees live (sibling temp root, off the repo).</summary>
@@ -3063,6 +3063,7 @@ public class ProjectRunner
                 }
                 localAuthorityAcquired = true;
                 _localAuthorityTaskKeys[jobId] = localAuthorityTaskKey;
+                _overlapGuard.Claimed(info, claim.Lease?.AttemptId);
             }
 
             var uiProjectSettings = AgentStudio.Pipeline.PipelineTypeSettings.ForTask(
@@ -3124,6 +3125,7 @@ public class ProjectRunner
                     RunRejectReason.ProjectBusy,
                     $"Job '{jobId}' was claimed by another launch before admission completed."));
             }
+            if (_localRunClaims is null) _overlapGuard.Claimed(info);
             // ASS-1732 "always-worktree": a CODING run mutates the source tree, so
             // it ALWAYS executes in its own isolated task/<id> worktree - the
             // primary/sequential slot included, and for every intent (fresh

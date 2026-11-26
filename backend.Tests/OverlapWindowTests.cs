@@ -19,7 +19,7 @@ public sealed class OverlapWindowTests
     // ---- TaskScopePrediction: unchanged behaviour of the former ProjectRunner.PredictParallelism
 
     [Fact]
-    public void Prediction_takes_the_parent_directory_of_every_named_root_path()
+    public void Prediction_keeps_every_named_file_path()
     {
         var p = TaskScopePrediction.FromText(
             "Fix backend/Features/Runner/ProjectRunner.cs and docs/system/domains/runner.md, "
@@ -28,7 +28,7 @@ public sealed class OverlapWindowTests
         Assert.False(p.Exclusive);
         Assert.False(p.ReadOnly);
         Assert.Equal(
-            ["backend/Features/Runner", "docs/system/domains", "frontend/src/app"],
+            ["backend/Features/Runner/ProjectRunner.cs", "docs/system/domains/runner.md", "frontend/src/app/app.ts", "Backend/Features/Runner/ActiveRuns.cs"],
             p.PredictedScope);
     }
 
@@ -42,14 +42,14 @@ public sealed class OverlapWindowTests
     }
 
     [Fact]
-    public void Prediction_keeps_at_most_24_prefixes_and_maps_a_root_child_to_the_root()
+    public void Prediction_keeps_at_most_24_paths_and_ignores_top_level_folders()
     {
         var text = string.Join(" ", Enumerable.Range(0, 30).Select(i => $"tools/d{i}/file.sh"));
         var p = TaskScopePrediction.FromText(text);
         Assert.Equal(24, p.PredictedScope.Count);
-        Assert.Equal("tools/d0", p.PredictedScope[0]);
+        Assert.Equal("tools/d0/file.sh", p.PredictedScope[0]);
 
-        Assert.Equal(["src"], TaskScopePrediction.FromText("see src/readme").PredictedScope);
+        Assert.Empty(TaskScopePrediction.FromText("see src/readme").PredictedScope);
     }
 
     [Fact]
@@ -61,7 +61,7 @@ public sealed class OverlapWindowTests
         {
             File.WriteAllText(Path.Combine(dir, "prompt.md"), "Edit frontend/src/app/a.ts");
             var p = TaskScopePrediction.Predict(new TaskInfo { Title = "docs/x/y.md", FolderPath = dir });
-            Assert.Equal(["docs/x", "frontend/src/app"], p.PredictedScope);
+            Assert.Equal(["docs/x/y.md", "frontend/src/app/a.ts"], p.PredictedScope);
             Assert.Empty(TaskScopePrediction.Predict(new TaskInfo { FolderPath = Path.Combine(dir, "missing") })
                 .PredictedScope);
         }
@@ -71,12 +71,12 @@ public sealed class OverlapWindowTests
     // ---- OverlapWindows setting
 
     [Fact]
-    public void Overlap_window_defaults_to_in_flight()
+    public void Overlap_window_defaults_to_advisory_off()
     {
-        Assert.Equal(OverlapWindows.InFlight, OverlapWindows.Default);
-        Assert.Equal(OverlapWindows.InFlight, OverlapWindows.Resolve(new ProjectSettings()));
-        Assert.Equal(OverlapWindows.InFlight, OverlapWindows.Resolve(null));
-        Assert.Equal(OverlapWindows.InFlight,
+        Assert.Equal(OverlapWindows.Off, OverlapWindows.Default);
+        Assert.Equal(OverlapWindows.Off, OverlapWindows.Resolve(new ProjectSettings()));
+        Assert.Equal(OverlapWindows.Off, OverlapWindows.Resolve(null));
+        Assert.Equal(OverlapWindows.Off,
             OverlapWindows.Resolve(new ProjectSettings { DispatchOverlapWindow = "bogus" }));
         Assert.Equal(OverlapWindows.Running,
             OverlapWindows.Resolve(new ProjectSettings { DispatchOverlapWindow = " Running " }));
@@ -229,6 +229,7 @@ public sealed class OverlapWindowTests
             NoBranchExpected = noBranch,
             PendingIntent = intent,
             IntegrationRecords = records ?? [],
+            Commits = state is TaskStates.HumanReview ? [new TaskCommitInfo { Sha = "delivery" }] : [],
             Provenance = builder.Build(),
         };
     }

@@ -48,6 +48,8 @@ export class AttentionControlComponent {
   private readonly trigger = viewChild<ElementRef<HTMLButtonElement>>('trigger');
   private releaseModal: (() => void) | null = null;
 
+  readonly overlapPending = signal<string | null>(null);
+  readonly overlapError = signal<string | null>(null);
   readonly open = signal(false);
   readonly batchProject = signal<string | null>(null);
   readonly now = signal(Date.now());
@@ -113,6 +115,19 @@ export class AttentionControlComponent {
 
   actionLabel(item: OperatorAttentionItem, spec: AttentionClassSpec): string {
     return attentionActionLabel(item, spec);
+  }
+
+  async runAnyway(item: OperatorAttentionItem): Promise<void> {
+    if (this.overlapPending()) return;
+    this.overlapPending.set(item.id);
+    this.overlapError.set(null);
+    try {
+      await this.attention.runAnyway(item);
+    } catch {
+      this.overlapError.set('Run anyway could not be applied. The wait may have changed or access was refused. Refresh the list and try again.');
+    } finally {
+      this.overlapPending.set(null);
+    }
   }
 
   act(item: OperatorAttentionItem, spec: AttentionClassSpec): void {

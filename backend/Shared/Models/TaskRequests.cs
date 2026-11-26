@@ -758,12 +758,13 @@ public record SetAutonomyLevelRequest
 
 /// <summary>
 /// Body for <c>PUT /api/projects/{name}/dispatch/overlap-window</c> (DS-0):
-/// <c>running</c> or <c>in-flight</c>; null clears the stored value and the
-/// project resolves to the default <c>in-flight</c>.
+/// <c>off</c>, <c>running</c> or <c>in-flight</c>; null clears the stored value and the
+/// project resolves to the default <c>off</c>.
 /// </summary>
 public record SetDispatchOverlapWindowRequest
 {
     public string? Window { get; init; }
+    public int? StarvationMinutes { get; init; }
 }
 
 /// <summary>

@@ -386,6 +386,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr>
+          <td>2026-11-26</td>
+          <td>overlap-dispatch-starvation (AGT-4037)</td>
+          <td>No CLI crashed. AGT-3988's integration recovery could wait behind reviewed cards whose delivery had already integrated, while parent-folder scope predictions serialized unrelated work. A completed AGT-3974 cannot match the deployed predicate with a current Completed snapshot; the original snapshot was unavailable.</td>
+          <td>Exposure relied on lane and timestamped local merge facts rather than current branch membership. Every cited file became its parent folder, and pipeline recovery candidates still compared scope with post-coding cards.</td>
+          <td>The overlap check now reads current delivery membership, excludes stale lane snapshots, and admits pipeline recovery past scope checks. The serial lane queues the round and continues without waiting for its claim. Default advisory predictions collect evidence. Enforced scope-only starvation offers a named, expiring Run anyway permit in Needs you. Terminal in regression replay: recovery claimed and the next card integrated.</td>
+        </tr>
         <tr id="case-red-develop-project-fallback">
           <td>2026-11-23</td>
           <td><code>AGT-4002</code><br><span class="small">red-develop-project-fallback</span> (Dossier AGT-3988, RT-1)</td>
