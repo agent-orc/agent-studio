@@ -298,4 +298,26 @@ public sealed class RedTestTriagePolicyTests
     [InlineData(RedTestClassification.Flaky, 3, RedTestModelRung.High)]
     public void Repair_model_moves_one_rung_on_second_attempt(RedTestClassification classification, int attempt, RedTestModelRung expected)
         => Assert.Equal(expected, RedTestTriagePolicy.RepairRung(classification, attempt));
+
+    [Fact]
+    public void Runner_hint_uses_measured_facts_and_leaves_unmeasured_envelope_facts_to_the_server()
+    {
+        // RT-3: the post-merge runner measures repeats, controls and points, not the reference envelope.
+        var unmeasured = Regression with { EnvelopeCanary = RedTestResult.Unknown, FingerprintMatchesReference = null };
+        Assert.Equal(RedTestClassification.Inconclusive, RedTestTriagePolicy.Classify(unmeasured));
+        Assert.Equal(RedTestClassification.Regression, RedTestTriagePolicy.ClassificationHint(unmeasured));
+        Assert.Equal(RedTestClassification.Flaky, RedTestTriagePolicy.ClassificationHint(
+            unmeasured with { SameShaRepeat = RedTestResult.Pass }));
+        Assert.Equal(RedTestClassification.Environment, RedTestTriagePolicy.ClassificationHint(
+            unmeasured with { LastGreenControlResults = [RedTestResult.Fail, RedTestResult.Fail], BisectPoints = [] }));
+        Assert.Equal(RedTestClassification.Ambiguous, RedTestTriagePolicy.ClassificationHint(unmeasured with { BisectPoints = [] }));
+        // Without a control the facts decide nothing; RT-2 calls that ambiguous.
+        Assert.Equal(RedTestClassification.Ambiguous, RedTestTriagePolicy.ClassificationHint(
+            unmeasured with { LastGreenControlResults = [], BisectPoints = [] }));
+        Assert.Equal(RedTestClassification.Inconclusive, RedTestTriagePolicy.ClassificationHint(
+            unmeasured with { SameShaRepeat = RedTestResult.Unknown }));
+        // A measured envelope fact still decides.
+        Assert.Equal(RedTestClassification.Environment, RedTestTriagePolicy.ClassificationHint(
+            unmeasured with { EnvelopeCanary = RedTestResult.Fail }));
+    }
 }

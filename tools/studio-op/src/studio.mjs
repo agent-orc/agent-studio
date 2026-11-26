@@ -1,3 +1,4 @@
+import { signFromAgent, stopAgent } from './agent.mjs';
 import { CredentialError } from './credential.mjs';
 import { EXIT, httpExitCode } from './exit-codes.mjs';
 
@@ -26,7 +27,7 @@ function isLoopback(hostname) {
  * without a token file is refused before the first request.
  */
 export class StudioClient {
-  constructor({ url, credential, clientId }) {
+  constructor({ url, credential, clientId, anonymous = false, configDir }) {
     let base;
     try { base = new URL(url); }
     catch { throw new OperationError('invalid-url', `The Studio URL "${url}" is not a URL.`, { exitCode: EXIT.USAGE }); }
@@ -35,12 +36,16 @@ export class StudioClient {
     const loopback = isLoopback(base.hostname);
     if (credential && base.protocol === 'http:' && !loopback)
       throw new CredentialError('token-requires-https', 'A token is sent only over HTTPS or to a loopback address.');
-    if (!credential && !(base.protocol === 'http:' && loopback))
+    // A sign-in receives a session, so it needs the same transport a token needs.
+    if (anonymous && base.protocol === 'http:' && !loopback)
+      throw new CredentialError('token-requires-https', 'A sign-in receives a session only over HTTPS or from a loopback address.');
+    if (!anonymous && !credential && !(base.protocol === 'http:' && loopback))
       throw new CredentialError('token-file-missing',
         'A networked Studio needs a token file. Run studio-op auth status for the path and setup.');
     this.base = base;
     this.credential = credential;
     this.clientId = clientId;
+    this.configDir = configDir;
   }
 
   headers(extra = {}) {
@@ -50,6 +55,12 @@ export class StudioClient {
       ...(this.credential ? { Authorization: `Bearer ${this.credential.token}` } : {}),
       ...extra,
     };
+  }
+
+  async signedHeaders(method, url, extra = {}) {
+    const proof = this.credential?.token.startsWith('oas.') && this.configDir
+      ? await signFromAgent(this.configDir, this.credential.token, method, url) : null;
+    return this.headers({ ...extra, ...(proof ? { DPoP: proof } : {}) });
   }
 
   url(path, query = {}) {
@@ -64,10 +75,12 @@ export class StudioClient {
   /** Sends one request and returns { status, body, headers } without judging the status. */
   async send(method, path, { query, body, headers, signal } = {}) {
     let response;
+    const target = this.url(path, query);
+    const requestHeaders = await this.signedHeaders(method, target, { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers });
     try {
-      response = await fetch(this.url(path, query), {
-        method,
-        headers: this.headers({ ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers }),
+      response = await fetch(target, {
+        method, redirect: 'manual',
+        headers: requestHeaders,
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
@@ -75,6 +88,7 @@ export class StudioClient {
       throw new OperationError('studio-unreachable',
         `Studio at ${this.base.origin} did not answer (${error.cause?.code ?? error.name}).`, { exitCode: EXIT.UNREACHABLE });
     }
+    if (response.status === 401 && requestHeaders.DPoP && this.configDir) await stopAgent(this.configDir);
     const text = await response.text();
     let parsed = null;
     if (text) {
@@ -93,9 +107,11 @@ export class StudioClient {
   /** Opens the decision stream; returns the fetch response with a readable body. */
   async stream(path, { query, signal }) {
     let response;
+    const target = this.url(path, query);
+    const requestHeaders = await this.signedHeaders('GET', target, { Accept: 'text/event-stream' });
     try {
-      response = await fetch(this.url(path, query), {
-        headers: this.headers({ Accept: 'text/event-stream' }),
+      response = await fetch(target, {
+        redirect: 'manual', headers: requestHeaders,
         signal,
       });
     } catch (error) {
@@ -103,6 +119,7 @@ export class StudioClient {
       throw new OperationError('studio-unreachable',
         `Studio at ${this.base.origin} did not answer (${error.cause?.code ?? error.name}).`, { exitCode: EXIT.UNREACHABLE });
     }
+    if (response.status === 401 && requestHeaders.DPoP && this.configDir) await stopAgent(this.configDir);
     if (!response.ok) {
       const text = await response.text();
       let body = null;

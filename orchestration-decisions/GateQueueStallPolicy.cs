@@ -59,6 +59,12 @@ public static class GateQueueStallPolicy
     /// <summary>The budget name the machine gate stamps on a queue wait overrun.</summary>
     public const string QueueBudgetName = "machine-gate-queue";
 
+    /// <summary>Three admission attempts for the same exact merge subject.</summary>
+    public const int IntegrationAdmissionAttempts = 3;
+
+    public static bool RetryIntegrationAdmission(string? budgetName, string? phase, int attempts)
+        => IsQueueOverrun(budgetName, phase) && attempts < IntegrationAdmissionAttempts;
+
     /// <summary>The budget phase of a wait for a machine slot.</summary>
     public const string QueuePhase = "queue";
 

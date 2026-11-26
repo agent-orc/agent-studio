@@ -42,7 +42,11 @@ It names the token file, its mode, the identity check, the routes an operator
 credential never reaches, and what stays with the Owner. Installation and token
 setup are in [docs/operations/setup/studio-op.md](../../../docs/operations/setup/studio-op.md).
 If it reports `token-file-missing`, `token-file-permissions` or exit 3, stop
-and ask the Owner; do not work around it.
+and ask the Owner; do not work around it. When the Owner wants a fresh
+operator session, run `studio-op login --agent "<agent name>"` and tell the
+Owner the code it prints; the Owner confirms it in Studio with a second factor.
+Never ask for the token itself, and never confirm a sign-in on the Owner's
+behalf.
 
 ## Guardrails
 

@@ -3,6 +3,7 @@ using System.Text.Json;
 
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -337,6 +338,9 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
                     ["WatchPaths:0:RepositoryPath"] = _repo,
                 }));
             builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(_clock));
+            builder.ConfigureTestServices(services =>
+                services.AddHostedService(provider =>
+                    provider.GetRequiredService<AgentStudio.Git.GitStateIndexService>()));
         });
 
     /// <summary>

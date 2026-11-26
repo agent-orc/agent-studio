@@ -14,11 +14,12 @@ namespace AgentStudio.Tests;
 
 /// <summary>
 /// AGT-3310: <c>testing.perCard</c> on the Remote Review plan, derived from
-/// <c>testing.strategy</c> since AGT-3965. Strict (full) and every T1 fallback
-/// keep the plan byte-identical; fast and balanced (affected, the default) run
+/// <c>testing.strategy</c> since AGT-3965. Strict (full) and balanced T1 fallback
+/// keep the full plan; fast fallback keeps build and lint; fast and balanced (affected, the default) run
 /// build, lint, the touched-area fast checks and the tests the generated
 /// project map selects.
 /// </summary>
+[Trait("Category", "MachineBound")]
 public sealed class PerCardReviewPlanTests : IDisposable
 {
     private const string ResultRef = "refs/heads/agent-studio/results/task";
@@ -50,7 +51,7 @@ public sealed class PerCardReviewPlanTests : IDisposable
     [Theory]
     [InlineData("backend/FooService.cs")]
     [InlineData("global.json")]
-    public void StrictAndEveryFallbackKeepThePlanByteIdentical(string changed)
+    public void StrictAndBalancedFallbackKeepTheFullPlan(string changed)
     {
         var resultSha = Commit(changed);
         // AGT-3965: the plan before testing.strategy existed is the plan
@@ -60,11 +61,38 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Assert.Equal(today, Json(Build(Settings(TestingStrategies.Strict), resultSha, changed)));
         if (changed == "global.json")
         {
-            Assert.Equal(today, Json(Build(Settings(TestingStrategies.Fast), resultSha, changed)));
-            Assert.Equal(today, Json(Build(new ProjectSettings(), resultSha, changed)));
+            Assert.Equal(today, Json(Build(Settings(TestingStrategies.Balanced), resultSha, changed)));
+            foreach (var settings in new[] { Settings(TestingStrategies.Fast), new ProjectSettings() })
+            {
+                var plan = Build(settings, resultSha, changed);
+                Assert.Equal(TestExecutionLevels.BuildOnly, plan.TestLevel);
+                Assert.DoesNotContain(plan.Commands, command => command.Arguments.Contains(BackendTest)
+                    || command.Arguments.Contains(FrontendUnit));
+                Assert.Contains(plan.Commands, command => command.Arguments.Contains("echo build"));
+            }
         }
         else
             Assert.NotEqual(today, Json(Build(new ProjectSettings(), resultSha, changed)));
+    }
+
+    [Fact]
+    public void Fast_defers_a_mapped_whole_test_project_command_to_after_integration()
+    {
+        var resultSha = Commit("backend/FooService.cs");
+        var settings = Settings(TestingStrategies.Fast) with
+        {
+            TestExecution = new TestExecutionPolicy
+            {
+                FolderToTestProjects = [new TestFolderMapping
+                {
+                    Folder = "backend", Module = "backend",
+                    TestProjects = ["backend.Tests/OrchestratorApi.Tests.csproj"],
+                }],
+            },
+        };
+        var plan = Build(settings, resultSha, "backend/FooService.cs");
+        Assert.DoesNotContain(plan.Commands, command => command.Arguments.Contains(BackendTest));
+        Assert.Contains(plan.Commands, command => command.Arguments.Contains("echo build"));
     }
 
     [Fact]
@@ -341,25 +369,27 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Assert.False(plan.BuildTestDeferredToBatch);
     }
 
-    [Fact]
-    public void AgentStudioSharedTestHelperRunsTheWholeTestProject()
+    [Theory]
+    [InlineData("fast", false)]
+    [InlineData("strict", true)]
+    public void SharedTestHelperDefersFullProjectSuiteOnlyUnderFast(string strategy, bool fullBeforeMerge)
     {
         Write("backend.Tests/SharedFixtureTests.cs", "namespace AgentStudio.Tests;\npublic sealed class SharedFixtureTests { }\n");
         Git("add", ".");
         Git("commit", "-qm", "shared test fixture");
         var sha = Commit("backend.Tests/SharedFixtureTests.cs");
 
-        var plan = Build(Settings(TestingStrategies.Fast), sha,
+        var plan = Build(Settings(strategy), sha,
             "backend.Tests/SharedFixtureTests.cs");
 
-        Assert.Contains(plan.Commands, command => command.Arguments.Contains(BackendTest));
+        Assert.Equal(fullBeforeMerge, plan.Commands.Any(command => command.Arguments.Contains(BackendTest)));
         Assert.Contains(plan.Commands, command => command.Arguments.Contains("echo build"));
     }
 
     [Theory]
     [InlineData("tests/TokenEconomy.Tests/WebsiteCostFrontierDataTests.cs")]
     [InlineData("tests/TokenEconomy.Tests/TokenEconomy.Tests.csproj")]
-    public void TokenEconomyTestDiffRunsItsProjectAndSynthesizesBuild(string changed)
+    public void TokenEconomyTestDiffDefersFullProjectSuiteAndKeepsBuild(string changed)
     {
         Write("src/TokenEconomy/TokenEconomy.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
         Write("tests/TokenEconomy.Tests/TokenEconomy.Tests.csproj",
@@ -378,8 +408,8 @@ public sealed class PerCardReviewPlanTests : IDisposable
 
         var plan = Build(Settings(TestingStrategies.Fast), sha, changed);
 
-        Assert.Contains(plan.Commands, command => command.Arguments.Any(argument =>
-            argument.Contains("dotnet test tests/TokenEconomy.Tests/TokenEconomy.Tests.csproj", StringComparison.Ordinal)));
+        Assert.DoesNotContain(plan.Commands, command => command.Arguments.Contains(
+            "dotnet test tests/TokenEconomy.Tests/TokenEconomy.Tests.csproj --no-build --filter Category!=MachineBound"));
         Assert.Contains(plan.Commands, command => command.Arguments.Any(argument =>
             argument.Contains("dotnet build", StringComparison.Ordinal)));
     }
@@ -399,7 +429,7 @@ public sealed class PerCardReviewPlanTests : IDisposable
     }
 
     [Fact]
-    public void AffectedFrontendDiffAddsTheTypeCheckAndRunsFrontendUnitOnly()
+    public void AffectedFrontendDiffKeepsTypeCheckAndDefersUnnarrowedUnitSuite()
     {
         var resultSha = Commit("frontend/src/app.ts");
 
@@ -409,7 +439,7 @@ public sealed class PerCardReviewPlanTests : IDisposable
             command.Arguments.Contains("bash scripts/npm-frontend.sh run typecheck"));
         Assert.Equal("lint", typecheck.Aspect);
         Assert.Equal(Contract.ReviewBaselineModes.ExitStatus, typecheck.BaselineMode);
-        Assert.Contains(plan.Commands, command => command.Arguments.Contains(FrontendUnit));
+        Assert.DoesNotContain(plan.Commands, command => command.Arguments.Contains(FrontendUnit));
         Assert.DoesNotContain(plan.Commands, command =>
             command.Arguments.Any(argument => argument.StartsWith("dotnet test", StringComparison.Ordinal)));
     }

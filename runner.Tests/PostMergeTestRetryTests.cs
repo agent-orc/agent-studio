@@ -56,4 +56,24 @@ public sealed class PostMergeTestRetryTests
         Assert.Equal(["Runner.One"], verdict.FlakyTests);
         Assert.Equal(["Runner.Two"], verdict.FailedTests);
     }
+
+    [Fact]
+    public async Task EveryRepeatIsRecordedWithItsTestsAndDuration()
+    {
+        var sha = new string('b', 40);
+        var recorded = new List<PostMergeTestRun>();
+        await PostMergeTestRetry.RepeatAsync(new("dotnet test runner.Tests/Tests.csproj",
+            1, false, FailedTests: ["Runner.One", "Runner.Two"]), tests => tests,
+            command => Task.FromResult((command.Contains("Runner.One", StringComparison.Ordinal) ? 0 : 1, false, "")),
+            recorded.Add, sha);
+        Assert.Equal([["Runner.One"], ["Runner.Two"]], recorded.Select(run => run.Tests.ToArray()));
+        Assert.All(recorded, run =>
+        {
+            Assert.Equal(PostMergeRunPhases.Repeat, run.Phase);
+            Assert.Equal(sha, run.Sha);
+            Assert.True(run.DurationMs >= 0);
+        });
+        Assert.Equal([PostMergeTestResults.Pass, PostMergeTestResults.Fail],
+            recorded.Select((run, index) => run.ResultOf(run.Tests[0])));
+    }
 }
