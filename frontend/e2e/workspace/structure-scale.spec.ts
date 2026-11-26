@@ -58,7 +58,7 @@ function renderedCrossings(page: Page) {
 
 /** A hash-only navigation would keep the loaded declarations; reload so each fixture is fetched. */
 async function open(page: Page, name: FixtureName): Promise<void> {
-  await page.goto('/#/workspace/operations/structure');
+  await page.goto('/#/workspace/operations/structure?mode=classic');
   await page.reload();
   const first = structureFixtures[name].nodes.find(node => node.kind === 'boundary')!;
   await expect(page.locator(`[data-node-id="${first.id}"]`)).toContainText(first.label);

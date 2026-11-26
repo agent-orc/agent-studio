@@ -59,7 +59,7 @@ test('project Operations explains an empty structure in both themes and at phone
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ nodes: [], links: [] }) }));
   await page.route('**/api/v1/operations/structure/library**', route =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ registries: [], consumers: [] }) }));
-  await page.goto('/#/workspace/operations/structure');
+  await page.goto('/#/workspace/operations/structure?mode=classic');
   await expect(page.getByTestId('structure-empty')).toContainText('No structure has been recorded');
   await expect(page.getByTestId('structure-canvas')).not.toBeVisible();
   await expect(page.getByTestId('structure-shortcuts')).toHaveCount(0);
@@ -127,7 +127,7 @@ test('declared structure is accessible in both projections, widths and themes', 
     if (url.includes('/api/workbenches')) return json({ projectName: null, count: 0, currentCount: 0, historyCount: 0, items: [] });
     return json([]);
   });
-  await page.goto('/#/workspace/operations/structure');
+  await page.goto('/#/workspace/operations/structure?mode=classic');
   const view = page.getByTestId('structure-view');
   await expect(view).toBeVisible();
   const library = page.getByTestId('structure-library');
@@ -184,7 +184,7 @@ test('declared structure is accessible in both projections, widths and themes', 
     await destinationPage.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
       v: 1, tabs: [{ kind: 'structure' }], activeKey: 'structure',
     })));
-    await destinationPage.goto('/#/workspace/operations/structure');
+    await destinationPage.goto('/#/workspace/operations/structure?mode=classic');
     const diagram = destinationPage.getByTestId('structure-view');
     await expect(diagram).toBeVisible();
     await diagram.locator(`[data-outline-id="${id}"]`).click();
@@ -273,7 +273,7 @@ test('observed differences, versions and a stopped host refresh in both themes',
     if (url.includes('/api/workbenches')) return json({ projectName: null, count: 0, currentCount: 0, historyCount: 0, items: [] });
     return json([]);
   });
-  await page.goto('/#/workspace/operations/structure');
+  await page.goto('/#/workspace/operations/structure?mode=classic');
   const view = page.getByTestId('structure-view');
   await expect(view.locator('[data-node-id="host"]')).toBeVisible();
   await page.keyboard.press('3');

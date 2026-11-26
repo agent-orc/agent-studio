@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="color-scheme" content="light dark">
+<title>Structure · Agent Studio</title>
+<link rel="stylesheet" href="css/app.css">
+<script>
+  // Theme before first paint: explicit choice in the URL hash, else the system preference.
+  (function () {
+    var m = /theme=(light|dark)/.exec(location.hash);
+    var t = m ? m[1] : (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="1.5" y="1.5" width="21" height="21" rx="3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 2 1 2"/><rect x="5" y="6" width="14" height="13" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="8" y="10" width="5" height="6" fill="currentColor"/></svg>
+      <div class="brand-text"><strong>Structure</strong><span>Agent Studio · self-hosted</span></div>
+    </div>
+    <nav class="crumbs" id="crumbs" aria-label="Current zoom level"></nav>
+    <div class="bar-right">
+      <button class="live" id="live" type="button" aria-pressed="true" title="Pause or resume the feed (Space)">
+        <span class="live-dot" aria-hidden="true"></span><span class="live-label" id="live-label">Live</span><time id="clock">00:00:00</time>
+      </button>
+      <button class="icon-btn" id="theme" type="button" aria-label="Switch between light and dark" title="Switch theme">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10 3.5a6.5 6.5 0 0 1 0 13z" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="stage" id="stage">
+    <canvas id="cv" tabindex="0" role="application" aria-label="Structure plan of the installation. Drag to pan, scroll or pinch to zoom. The outline in the panel lists every element for keyboard use."></canvas>
+
+    <div class="layers" id="layers" role="group" aria-label="Layers">
+      <button type="button" data-layer="perf" aria-pressed="true"><i></i><span>Perf</span></button>
+      <button type="button" data-layer="network" aria-pressed="true"><i></i><span class="l-full">Network</span></button>
+      <button type="button" data-layer="storage" aria-pressed="false"><i></i><span>Storage</span></button>
+      <button type="button" data-layer="backup" aria-pressed="false"><i></i><span>Backup</span></button>
+      <button type="button" data-layer="warnings" aria-pressed="true"><i></i><span>Warnings</span><b id="warn-count">3</b></button>
+    </div>
+
+    <nav class="crumbs crumbs-float" id="crumbs-float" aria-label="Current zoom level"></nav>
+
+    <div class="zoom" role="group" aria-label="Zoom">
+      <button type="button" id="z-in" aria-label="Zoom in" title="Zoom in (+)"><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" fill="none"/></svg></button>
+      <button type="button" id="z-out" aria-label="Zoom out" title="Zoom out (-)"><svg viewBox="0 0 16 16"><path d="M3 8h10" stroke="currentColor" stroke-width="1.5" fill="none"/></svg></button>
+      <button type="button" id="z-fit" aria-label="Show the whole installation" title="Whole installation (0)"><svg viewBox="0 0 16 16"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" stroke="currentColor" stroke-width="1.5" fill="none"/></svg></button>
+    </div>
+
+    <aside class="titleblock" id="titleblock" aria-label="Key plan and legend">
+      <div class="tb-key">
+        <canvas id="key" title="Key plan: click or drag to move the view" aria-label="Key plan. Click to move the view."></canvas>
+      </div>
+      <div class="tb-legend" id="legend"></div>
+    </aside>
+
+    <aside class="panel" id="panel" data-sheet="peek" aria-label="Details">
+      <button class="sheet-handle" id="sheet-handle" type="button" aria-label="Expand or collapse details"><span></span></button>
+      <div class="panel-scroll" id="panel-body"></div>
+    </aside>
+  </main>
+</div>
+
+<script src="js/model.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/render.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+:host { display: inline-flex; flex: none; color: var(--studio-fg-muted); }
+.live-glyph { width: 26px; height: 14px; overflow: visible; }
+.line { fill: none; stroke: currentColor; stroke-width: 1.25; }
+.strong { stroke-width: 1.75; }
+.surface { fill: var(--studio-bg-surface); }
+.fill { fill: currentColor; stroke: none; }
+.cut { fill: none; stroke: var(--studio-bg-surface); stroke-width: 1.6; stroke-linecap: round; }
+.dashed { stroke-dasharray: 3 2.5; }
+.dotted { stroke-dasharray: 1.5 2.5; }
+.dashdot { stroke-dasharray: 6 2 1 2; }
+// Each layer keeps one sign and one token hue. Backup is the hatched one and stays in ink.
+[data-glyph='perf'] { color: var(--studio-accent-teal); }
+[data-glyph='network'] { color: var(--studio-accent-3-strong); }
+[data-glyph='storage'] { color: var(--studio-accent-4-strong); }
+[data-glyph='backup'] { color: var(--studio-fg); }
+[data-glyph='warnings'] { color: var(--studio-status-warning); }
+[data-off] { color: var(--studio-fg-muted); opacity: 0.7; }

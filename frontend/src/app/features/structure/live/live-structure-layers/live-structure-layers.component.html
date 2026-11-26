@@ -1,0 +1,19 @@
+<div class="layers" role="group" aria-label="Layers" data-testid="live-layers">
+  <span class="layers__title">Layers</span>
+  @for (layer of all; track layer.id; let index = $index) {
+    <button type="button" role="switch" class="layers__switch" [attr.aria-checked]="layers()[layer.id]"
+            [attr.data-testid]="'live-layer-' + layer.id" [attr.data-layer]="layer.id"
+            [attr.aria-label]="layer.label + ' layer'"
+            [appTooltip]="layer.treatment + '. Key ' + (index + 1) + '.'" (click)="layerToggle.emit(layer.id)">
+      <app-live-glyph [name]="layer.id" [off]="!layers()[layer.id]" />
+      <span class="layers__text">
+        <span class="layers__name"><span class="layers__full">{{ layer.label }}</span><span class="layers__short">{{ layer.short }}</span></span>
+        <span class="layers__fact" [attr.data-testid]="'live-layer-fact-' + layer.id">{{ summaries()[layer.id] }}</span>
+      </span>
+      <span class="layers__state">
+        <span class="layers__track" aria-hidden="true"><span class="layers__thumb"></span></span>
+        <span class="layers__word">{{ layers()[layer.id] ? 'On' : 'Off' }}</span>
+      </span>
+    </button>
+  }
+</div>

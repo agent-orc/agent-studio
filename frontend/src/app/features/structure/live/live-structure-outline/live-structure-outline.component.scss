@@ -1,0 +1,20 @@
+@use '../../../../../styles/mixins' as m;
+
+:host { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.outline { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
+.outline__title { @include m.type-label; margin: 0; padding: var(--studio-spacing-3) var(--studio-spacing-3) var(--studio-spacing-2); }
+.outline__list { @include m.thin-scroll; margin: 0; padding: 0 0 var(--studio-spacing-3); list-style: none; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.outline__row { display: flex; align-items: center; gap: var(--studio-spacing-2); width: 100%; min-height: var(--studio-row-min-h-interactive);
+  padding: var(--studio-spacing-1) var(--studio-spacing-3); border: 0; background: transparent; color: var(--studio-fg); font: inherit;
+  font-size: var(--studio-font-size-md); text-align: left; cursor: pointer; }
+.outline__row:hover { background: var(--studio-bg-hover); }
+.outline__row:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
+// Selection follows the shared navigation contract (AGT-2010).
+.outline__row[aria-current='true'] { background: var(--studio-nav-active-bg); color: var(--studio-nav-active-fg);
+  box-shadow: inset 3px 0 0 0 var(--studio-nav-active-bar); }
+.outline__indent { flex: none; }
+.outline__name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.outline__value { flex: none; color: var(--studio-fg-muted); font-family: var(--font-mono); font-size: var(--studio-font-size-sm); font-variant-numeric: tabular-nums; }
+.outline__warnings { flex: none; color: var(--studio-status-warning); font-family: var(--font-mono); font-size: var(--studio-font-size-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
+.outline__warnings::before { content: '\25B2\00A0'; font-size: 9px; }
+.outline__health { flex: none; }
