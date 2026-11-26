@@ -76,11 +76,22 @@ export async function stopAgent(configDir) {
   } catch { /* already ended */ }
 }
 
-export async function serveAgent(configDir, ready = () => {}) {
+export async function serveAgent(configDir, ready = () => {}, { now = () => Date.now(), fetchImpl = fetch, monitorIntervalMs = 5000 } = {}) {
   // The private KeyObject is never exported, serialized or persisted.
   let { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
-  const publicJwk = publicKey.export({ format: 'jwk' });
+  let publicJwk = publicKey.export({ format: 'jwk' });
   const thumbprint = keyThumbprint(publicJwk);
+  const { openDeviceKey, certifySession } = await import('./device-key.mjs');
+  let config = {};
+  try { config = JSON.parse(fs.readFileSync(path.join(configDir, 'studio-op.json'), 'utf8')); } catch { /* defaults */ }
+  const devicePrivateKey = privateKey;
+  const memoryProvider = { bindingKind: 'memory', publicJwk,
+    sign: data => crypto.sign('sha256', data, { key: devicePrivateKey, dsaEncoding: 'ieee-p1363' }) };
+  let { provider, note } = config.hardwareDeviceKeys?.[process.platform] === true
+    ? openDeviceKey(configDir, { hardwareDeviceKeys: config.hardwareDeviceKeys })
+    : { provider: memoryProvider, note: 'Device binding: memory. Hardware keys are off by default and not yet verified on real hardware.' };
+  // On a memory host the initial session key is also the device key. It stays resident across rotations.
+  if (provider.bindingKind === 'memory') provider = memoryProvider;
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-op-agent-'));
   if (process.platform !== 'win32') fs.chmodSync(directory, 0o700);
   const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\studio-op-${crypto.randomUUID()}` : path.join(directory, 'sign.sock');
@@ -92,7 +103,7 @@ export async function serveAgent(configDir, ready = () => {}) {
   const close = () => {
     if (ended) return;
     ended = true;
-    privateKey = null;
+    privateKey = null; provider = null;
     clearInterval(monitor); clearTimeout(pendingEnd);
     server?.close(); bridge?.kill();
     fs.rmSync(directory, { recursive: true, force: true });
@@ -100,12 +111,18 @@ export async function serveAgent(configDir, ready = () => {}) {
   const handle = message => {
     if (ended) throw new Error('Session ended.');
     if (message.operation === 'stop') { setImmediate(close); return { stopped: true }; }
+    if (message.operation === 'certify') {
+      if (session) throw new Error('Sign-in finished.');
+      try { return { certification: certifySession(provider, thumbprint, message.signInId), note }; }
+      catch { provider = memoryProvider; return { certification: null, note: 'Device binding: memory. Hardware signing failed; using the resident session key.' }; }
+    }
     if (message.operation === 'attach') {
       if (session) throw new Error('Session already attached.');
       const expires = Date.parse(message.expiresAt);
       const origin = new URL(message.baseUrl);
-      if (!Number.isFinite(expires) || expires <= Date.now() || !message.token?.startsWith('oas.')) throw new Error('Invalid session.');
-      session = { token: message.token, expires, baseUrl: origin.href };
+      if (!Number.isFinite(expires) || expires <= now() || !message.token?.startsWith('oas.')) throw new Error('Invalid session.');
+      session = { token: message.token, expires, baseUrl: origin.href, sessionId: message.sessionId,
+        keyExpires: Date.parse(message.keyExpiresAt) || expires };
       clearTimeout(pendingEnd);
       return { attached: true };
     }
@@ -115,7 +132,7 @@ export async function serveAgent(configDir, ready = () => {}) {
       if (!uri.pathname.endsWith('/api/auth/operator-sign-in/poll')) throw new Error('Only sign-in polling is allowed.');
       return { proof: proofFor(privateKey, publicJwk, 'POST', uri.href, message.pollHandle) };
     }
-    if (message.operation !== 'sign' || !session || session.expires <= Date.now()
+    if (message.operation !== 'sign' || !session || session.expires <= now()
       || message.tokenHash !== digest(session.token)) throw new Error('No active session.');
     const uri = new URL(message.url);
     if (uri.origin !== new URL(session.baseUrl).origin) throw new Error('Different Studio origin.');
@@ -133,16 +150,38 @@ export async function serveAgent(configDir, ready = () => {}) {
     checking = true;
     try {
       const file = path.join(configDir, 'operator-session');
-      if (session.expires <= Date.now() || !fs.existsSync(file) || fs.readFileSync(file, 'utf8').trim() !== session.token) return close();
+      if (session.expires <= now() || session.keyExpires <= now() || !fs.existsSync(file) || fs.readFileSync(file, 'utf8').trim() !== session.token) return close();
       const root = session.baseUrl.endsWith('/') ? session.baseUrl : session.baseUrl + '/';
-      const url = new URL('api/operator/decisions?limit=1', root);
-      const response = await fetch(url, { headers: { Authorization: `Bearer ${session.token}`,
+      if (session.sessionId && session.keyExpires - now() <= 10 * 60_000) {
+        const next = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+        const nextJwk = next.publicKey.export({ format: 'jwk' });
+        const issuedAt = Math.floor(now() / 1000);
+        const statement = `studio-op-session-renewal-v1\n${session.sessionId}\n${keyThumbprint(nextJwk)}\n${issuedAt}`;
+        const renewalUrl = new URL('api/auth/operator-session/renew', root);
+        const renewed = await fetchImpl(renewalUrl, { method: 'POST', headers: { Authorization: `Bearer ${session.token}`,
+          'Content-Type': 'application/json', DPoP: proofFor(privateKey, publicJwk, 'POST', renewalUrl.href, session.token) },
+        body: JSON.stringify({ sessionId: session.sessionId, newPublicKey: nextJwk, issuedAt,
+          signature: provider.sign(Buffer.from(statement)).toString('base64url') }), redirect: 'manual', signal: AbortSignal.timeout(5000) });
+        if (!renewed.ok) {
+          await renewed.body?.cancel();
+          if (renewed.status === 401 || renewed.status === 403) {
+            fs.writeFileSync(path.join(configDir, 'operator-session-ended'), 'Session renewal refused. Run studio-op login.\n', { mode: 0o600 });
+            return close();
+          }
+          return;
+        }
+        const answer = await renewed.json();
+        privateKey = next.privateKey; publicJwk = nextJwk;
+        session.keyExpires = Date.parse(answer.keyExpiresAt);
+      }
+      const url = new URL('api/auth/operator-session/status', root);
+      const response = await fetchImpl(url, { headers: { Authorization: `Bearer ${session.token}`,
         DPoP: proofFor(privateKey, publicJwk, 'GET', url.href, session.token) }, redirect: 'manual', signal: AbortSignal.timeout(5000) });
       await response.body?.cancel();
       if (response.status === 401) close();
     } catch { /* transport loss grants no authority; the server still enforces expiry and revocation */ }
     finally { checking = false; }
-  }, 5000);
+  }, monitorIntervalMs);
   process.once('SIGTERM', close); process.once('SIGINT', close);
   if (process.platform === 'win32') {
     // Windows PowerShell provides an explicit user-only pipe ACL; Node's default pipe ACL is insufficient.

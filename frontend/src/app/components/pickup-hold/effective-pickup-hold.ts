@@ -7,8 +7,9 @@ import { claimLoadGateLabel, type RemoteHost } from '../../features/remote-hosts
  * Shared by the card's hold block and the Ready lane header split so both
  * count the same card under the same hold.
  */
-export function effectivePickupHold(task: TaskInfo, hosts: readonly RemoteHost[]): PickupHoldStatus | null {
-  if (task.pickupHold) return task.pickupHold;
+export function effectivePickupHold(task: TaskInfo, hosts: readonly RemoteHost[], now = Date.now()): PickupHoldStatus | null {
+  if (task.pickupHold && !(task.pickupHold.mechanism === 'dispatch-plan'
+    && task.pickupHold.expiresAtUtc && Date.parse(task.pickupHold.expiresAtUtc) <= now)) return task.pickupHold;
   if (task.state !== TaskState.Ready) return null;
   const runnerId = task.executionLocation?.configuredRunnerId;
   if (!runnerId) return null;

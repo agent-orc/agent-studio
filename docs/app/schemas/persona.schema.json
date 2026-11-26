@@ -26,10 +26,10 @@
     "aspect": {
       "enum": [
         "security", "operations", "reliability", "quality", "design", "product", "cost",
-        "documentation", "improvement", "presentation", "management"
+        "documentation", "improvement", "presentation", "management", "delivery"
       ]
     },
-    "kind": { "enum": ["persona", "presenter", "manager"] },
+    "kind": { "enum": ["persona", "presenter", "manager", "dispatcher"] },
     "startsActive": {
       "description": "Starter catalogue hint (PT-D12): the Team page offers these first. Activation still needs the Owner and a fresh step-up.",
       "type": "boolean"
@@ -51,7 +51,10 @@
         "enum": [
           "observe", "persona.item.publish", "persona.report.publish", "persona.proposal.draft",
           "persona.decision.request", "persona.proposal.accept", "persona.importance.adjust",
-          "persona.budget.rebalance", "persona.pause", "card.requeue"
+          "persona.budget.rebalance", "persona.pause", "card.requeue",
+          "dispatch.plan.write", "dispatch.hold", "dispatch.release", "dispatch.dependency.add",
+          "dispatch.dependency.remove", "dispatch.exclusive.set", "dispatch.recut.propose",
+          "dispatch.recut.apply", "dispatch.shadow.record"
         ]
       }
     },
@@ -104,6 +107,59 @@
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" }
+        }
+      }
+    },
+    "dispatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy"
+      ],
+      "properties": {
+        "strategy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "revision"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "enum": [
+                "lane-entry-v1",
+                "one-per-area-v1",
+                "file-overlap-v1",
+                "ledger-learned-v1",
+                "package-then-chain-v1"
+              ]
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "mode": {
+          "enum": [
+            "shadow",
+            "live"
+          ],
+          "default": "shadow"
+        },
+        "forecast": {
+          "enum": [
+            "model-free",
+            "model-assisted"
+          ],
+          "default": "model-free"
         }
       }
     },

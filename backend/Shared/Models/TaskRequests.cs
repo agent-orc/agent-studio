@@ -134,6 +134,12 @@ public record ExternalCompletionResponse
 
 public record MoveJobRequest
 {
+    /// <summary>Optional compare-and-swap fence for API orchestration clients.</summary>
+    public string? ExpectedSourceState { get; init; }
+    /// <summary>Refuse a move once any run attempt or session has started.</summary>
+    public bool RequireUnstarted { get; init; }
+    /// <summary>Saved Packer receipt authorizing archival of an untouched recut member.</summary>
+    public string? DispatchRecutId { get; init; }
     public string TargetState { get; init; } = "";
     /// <summary>Findings and owner note explicitly chosen for an Escalated to Ready reissue.</summary>
     public OperatorReissueInstructions? ReissueInstructions { get; init; }
@@ -296,6 +302,8 @@ public record CreateTaskRequest
     public int Order { get; init; } = 999;
     public string Agent { get; init; } = "claude";
     public string? CreationSource { get; init; }
+    public string? WaveId { get; init; }
+    public IReadOnlyList<string> CitedPaths { get; init; } = [];
     public string? CreatedBy { get; init; }
 
     /// <summary>
@@ -899,3 +907,5 @@ public record SetCliModelRouteRequest
     public string? FallbackModel { get; init; }
     public string? FallbackThinkingLevel { get; init; }
 }
+
+public sealed record CreateTaskBatchRequest(IReadOnlyList<CreateTaskRequest> Cards);

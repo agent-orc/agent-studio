@@ -93,11 +93,12 @@ capabilities, and registers the `toolchain:dotnet`, `toolchain:node`, and
 [review lane runbook](../review-lane-runbook.md) for the typed empty-claim
 reason and the review-claim stall alarm. Each claimed ReviewAttempt receives a fresh workspace, cache,
 temporary directory, eight-port block, Compose namespace, database namespace,
-and fenced cleanup lifecycle. Child processes start from a cleared environment.
-Only names in `RUNNER_REVIEW_CREDENTIAL_ENV` are admitted to cleared review
-child-process environments. The shared `provider-auth.env` is loaded by both
-service units but does not cross that review boundary unless explicitly
-allowlisted. Coding deploy keys must not be present in the review unit.
+and fenced cleanup lifecycle. Project commands start from the cleared
+[shared test envelope](#shared-test-command-envelope-rt-6). Provider and Git
+credentials from the daemon, including names in `RUNNER_REVIEW_CREDENTIAL_ENV`,
+do not enter prepare, build or test commands. Semantic review uses its separate
+provider authentication path. Coding deploy keys must not be present in the
+review unit.
 
 The executor fetches the immutable result ref or verified Git bundle, proves
 repository identity, HEAD, tree, and clean state, then proves HEAD again before
@@ -120,11 +121,12 @@ capabilities, and registers the `toolchain:dotnet`, `toolchain:node`, and
 [review lane runbook](../review-lane-runbook.md) for the typed empty-claim
 reason and the review-claim stall alarm. Each claimed ReviewAttempt receives a fresh workspace, cache,
 temporary directory, eight-port block, Compose namespace, database namespace,
-and fenced cleanup lifecycle. Child processes start from a cleared environment.
-Only names in `RUNNER_REVIEW_CREDENTIAL_ENV` are admitted to cleared review
-child-process environments. The shared `provider-auth.env` is loaded by both
-service units but does not cross that review boundary unless explicitly
-allowlisted. Coding deploy keys must not be present in the review unit.
+and fenced cleanup lifecycle. Project commands start from the cleared
+[shared test envelope](#shared-test-command-envelope-rt-6). Provider and Git
+credentials from the daemon, including names in `RUNNER_REVIEW_CREDENTIAL_ENV`,
+do not enter prepare, build or test commands. Semantic review uses its separate
+provider authentication path. Coding deploy keys must not be present in the
+review unit.
 
 The executor fetches the immutable result ref or verified Git bundle, proves
 repository identity, HEAD, tree, and clean state, then proves HEAD again before
@@ -991,7 +993,8 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_ROLE` | `--role` | `coding` | `coding`, the separately registered `review` service, the separately registered `gate` service, or the separately registered `integration` service. The gate role uses its own runner identity, credential, state directory, and disposable `RUNNER_REVIEW_WORKDIR`; see the [claimable gate contract](../../system/domains/runner.md#claimable-gate-host-and-task-api). The integration role (AGT-3061) claims accepted deliveries from a standalone Task Server under the project's publication lease, merges them into the registered integration ref in a disposable repository below `RUNNER_STATE_DIR`, and pushes without force; the host's Git credentials must allow that push. |
 | `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly, with a combined size budget across this root and its `-stale` sibling. The reusable `.baseline-cache`, `.verify-cache` and `.dependency-cache` are preserved; the shared NuGet folder `.dependency-cache/nuget-packages` drops package versions older than 30 days while no attempt is active. Attempt temp directories live in `/tmp/rv-<digest>` and are removed with their attempt; see [Baseline verify result cache](#baseline-verify-result-cache) and [Verify result reuse after ReviewInfra](#verify-result-reuse-after-reviewinfra). |
 | `RUNNER_REVIEW_RETENTION_GIB` | none | `20` | Combined budget in GiB for inactive review attempts and their temp directories, including the review work root's `-stale` sibling. Oldest attempts are removed first. Active attempts and current-root reusable caches are preserved; abandoned caches in the stale sibling count toward the budget. Divide the host budget across containers with separate work roots. |
-| `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
+| `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Legacy review credential allowlist. It does not admit credentials into RT-6 project commands; semantic review and Git fetch use separate authentication paths. |
+| `TEST_ENVELOPE_CORES` | env only | `3` | Shared CPU token for review, build-test gate and post-merge commands. Integer `1..64`; invalid values use `3`. Sets `DOTNET_PROCESSOR_COUNT` and Linux worker `cpu.max`. Configure consistently on every execution service; see [Shared test command envelope](#shared-test-command-envelope-rt-6). |
 | `RUNNER_REVIEW_GIT_CREDENTIALS_FILE` | `--review-git-credentials-file` | (none) | Review role only. Owner-only `git credential-store` file with one read-only, repository-scoped `https://` credential per private repository. Registers `review:repository-read:<host>/<owner>/<repo>` and is used only by the review clone and fetch processes; see [Private repositories](#private-repositories). |
 | `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` | `--review-no-cpu-progress-seconds` | `900` | Floor for the hang watchdog on review commands. A command's whole process tree must burn at least one percent of one core within the *effective* window; otherwise the tree is killed and the attempt is reported as `ReviewInfra/NoCpuProgress`. The effective window is `max(this value, 50%` of that command's own budget`)` (AGT-2851), so a legitimately quiet suite with a large budget is not killed for sitting near 0% CPU during a real test wait. `0` disables the watchdog outright, ignoring the budget-derived floor. Linux only: the tree's CPU time is read from `/proc`. See [Review parallelism and build-server isolation](#review-parallelism-and-build-server-isolation). |
 | `RUNNER_REVIEW_ASPECT_PARALLELISM` | `--review-aspect-parallelism` | `4` | Agent review aspects one Remote Review attempt runs at the same time, after its tool commands have finished (AGT-3424). `1` runs them serially; values above `4` are capped at `4`. The aspects share the attempt's review slot, so this does not admit more attempts. See [Aspect execution within one attempt](../../system/domains/review.md#aspect-execution-within-one-attempt-agt-3424). |
@@ -1027,8 +1030,10 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 
 The SSH build/test worker on kori-gate is configured through the dispatching
 API's `RemoteGate__GateSlots=3` and `RemoteGate__ProcessorCount=6`. Its 24-core,
-48 GB Docker VM then admits three suites with six processors each. This is
-separate from `RUNNER_ROLE=gate` claim capacity. See the
+48 GB Docker VM then admits three suites with a six-processor dispatch
+budget each. RT-6 project commands use `TEST_ENVELOPE_CORES` for their actual
+processor count and worker quota, overriding the inherited processor hint.
+Dispatch admission remains separate from `RUNNER_ROLE=gate` claim capacity. See the
 [remote gate capacity procedure](../remote-hosts.md#remote-buildtest-gate-capacity)
 before changing either value.
 
@@ -1519,6 +1524,50 @@ naming the two variables rather than blaming the current load. Load-aware
 backpressure for an already running worker stays out of scope: the envelope is
 the mechanism, and the silence and no-CPU-progress watchdogs are unchanged.
 
+### Shared test command envelope (RT-6)
+
+RT-D10 option B applies one test envelope to Remote Review, the build-test gate
+and post-merge commands. The shared builder clears the inherited environment,
+then supplies tool and OS variables, the project's declared `environment`, and
+run-owned `HOME` and temp roots. Provider, Git and token credentials are
+excluded even from declarations. Daemon variables are never inherited. A
+forbidden daemon variable explicitly declared by the project, such as
+`RUNNER_SERVER_URL`, remains visible so the base canary diagnoses the declaration.
+Preparation-owned dependency caches and review resource namespaces still apply.
+
+Set `TEST_ENVELOPE_CORES=3` in the service environments of the review executor,
+the gate execution process and the coding daemon that schedules post-merge
+checks. Three cores is the default; accepted values are integers from 1 through
+64, and invalid values fall back to 3. Use the same value on every execution
+host. The builder sets `DOTNET_PROCESSOR_COUNT` to this value, overriding any
+inherited or project-declared processor count. Configure this through the
+operator-owned provisioning path: `agent-runner-deploy config` currently accepts
+only `RUNNER_MAX_PARALLELISM`, not `TEST_ENVELOPE_CORES`. Apply environment changes
+when replacing the affected service process after its active work has drained.
+
+On Linux every command creates a fresh sibling `worker-test-*` leaf under an
+already delegated service subtree. With the default token its `cpu.max` is
+`300000 100000`; changing the token changes the quota to
+`<cores * 100000> 100000`. The role aggregate and detached coding worker burst
+settings above still serve their existing purposes. Command teardown kills
+remaining residents of the test leaf. Keep `Delegate=cpu pids` and
+`DelegateSubgroup=daemon` on native host units. If the execution host cannot
+delegate, execution continues: the envelope fingerprint records
+`cgroupKind: unavailable` and `cpuMax: null`. Missing delegation does not defer
+the post-merge scheduler or claim that a worker quota was applied.
+
+Review, gate and post-merge receipts carry the envelope fingerprint, including
+the allowlist and declared-environment digests, cgroup kind and measured quota,
+processor count, SDK, shard plan and start and peak load per core. Compare these
+fields when investigating different outcomes at the same SHA. A failed
+`TestEnvelopeCanaryTests` base check is environment evidence and makes the run
+inconclusive, never red. The serial one-process reference repeat uses the same
+CPU token and allowlist, recorded as `reference=1`.
+
+The [pipeline envelope contract](../../system/domains/pipeline.md#shared-test-envelope-rt-6)
+and [runner post-merge contract](../../system/domains/runner.md#automatic-post-merge-checks)
+describe receipts, canary handling and confirmation repeats.
+
 ### Stale MSBuild nodes and preparation hangs
 
 AGT-3005. On 2026-09-29 `agent-runner-01` carried 89 `MSBuild.dll` and
@@ -1785,6 +1834,10 @@ Observation has a two-minute deadline per project; execution retains the legacy
 three-hour window and twelve-hour nightly service limits.
 The server's existing exact-tip run fencing prevents competing hosts or legacy
 timers from executing the same project concurrently.
+Commands use the [shared test envelope](#shared-test-command-envelope-rt-6),
+including the coding daemon's `TEST_ENVELOPE_CORES` setting. An undelegated host
+records an unavailable cgroup in the receipt and continues execution; it does
+not wait for delegation before admitting a window or nightly run.
 
 #### Retiring hand-installed timers
 

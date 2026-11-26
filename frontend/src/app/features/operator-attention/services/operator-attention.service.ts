@@ -218,5 +218,6 @@ function readinessKey(project: string, card: string): string {
 function sameRows(current: readonly OperatorAttentionItem[], next: readonly OperatorAttentionItem[]): boolean {
   return current.length === next.length
     && current.every((item, index) => item.id === next[index].id && item.reason === next[index].reason
-      && item.title === next[index].title);
+      && item.title === next[index].title
+      && JSON.stringify(item.ownerOptions ?? []) === JSON.stringify(next[index].ownerOptions ?? []));
 }

@@ -139,7 +139,7 @@ public sealed class PostMergeHostEndpointsTests : IDisposable
         var failure = new PostMergeFailureEvidence("fingerprint", [test.Test], "Failed Runner.Tests.FeatureTests.Works",
             ["runner/Feature.cs"], [point], point, true, false)
         {
-            Attribution = new(green, ["pass", "pass"], [new(point, ["fail", "fail"], "fail")],
+            Attribution = new(green, ["pass", "pass"], [new(point, ["fail", "fail"], "fail") { ParentResults = ["pass", "pass"] }],
                 PostMergeClassificationHints.Regression) { BuildCommand = "dotnet build runner.Tests/AgentRunner.Tests.csproj --no-restore" },
         };
         var terminal = running with
@@ -166,6 +166,7 @@ public sealed class PostMergeHostEndpointsTests : IDisposable
         Assert.Equal(61_000, stored.Verdicts[0].DurationMs);
         var verdict = Assert.Single(stored.TestVerdicts!);
         Assert.Equal(test.Attempts, verdict.Attempts);
+        Assert.Equal(["pass", "pass"], Assert.Single(stored.Failure!.Attribution!.Points).ParentResults);
         Assert.Equal(["runner/Services"], verdict.CoveringFolders);
         Assert.False(verdict.CoveringFallback);
         Assert.Equal("runner.Tests/FeatureTests.cs", verdict.TestFile);

@@ -62,6 +62,7 @@ public sealed record InFlightTask(string TaskId, TaskParallelism Parallelism, st
 /// <summary>Result of one pick-gate evaluation, with a human-readable rationale for the timeline.</summary>
 public sealed record SlotAdmission(SlotDecision Decision, string Reason)
 {
+    public string? DispatchDecisionId { get; init; }
     public bool Admitted => Decision is SlotDecision.Admit or SlotDecision.RunExclusive;
 
     /// <summary>The overlap window the scope check used (<see cref="OverlapWindows"/>).</summary>

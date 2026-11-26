@@ -5,8 +5,10 @@ import {
   displaySignInCode,
   normalizeSignInCode,
   shortThumbprint,
+  deviceBindingLabel,
   type TerminalSignInLookup,
 } from '../../models/terminal-sign-in.model';
+import { lifetimeLabel } from '../../services/operator-session-limits.service';
 import type { GrantStepUp } from '../../services/standing-grants.service';
 import { TerminalSignInRouteService } from '../../services/terminal-sign-in-route.service';
 import { TerminalSignInService } from '../../services/terminal-sign-in.service';
@@ -35,8 +37,11 @@ export class TerminalSignInConfirmComponent implements OnInit {
   private readonly route = inject(TerminalSignInRouteService);
 
   readonly time = formatAccessTime;
+  readonly lifetimeLabel = lifetimeLabel;
+  readonly allowedLifetimes = computed(() => this.lookup()?.agents.find(agent => agent.id === this.agentId())?.lifetimeHours ?? this.lookup()?.lifetimeHours ?? [8]);
   readonly display = displaySignInCode;
   readonly thumb = shortThumbprint;
+  readonly binding = deviceBindingLabel;
 
   /** True when the Owner types the code instead of using the link's. */
   readonly manual = signal(true);
@@ -92,6 +97,8 @@ export class TerminalSignInConfirmComponent implements OnInit {
 
   setAgent(value: string): void {
     this.agentId.set(value || null);
+    const selected = this.lookup()?.agents.find(agent => agent.id === value);
+    this.lifetime.set(selected?.defaultLifetimeHours ?? this.lookup()?.defaultLifetimeHours ?? 8);
   }
 
   toggleClass(id: string, kept: boolean): void {
@@ -104,7 +111,7 @@ export class TerminalSignInConfirmComponent implements OnInit {
 
   setLifetime(value: string): void {
     const hours = Number(value);
-    if (this.lookup()?.lifetimeHours.includes(hours)) this.lifetime.set(hours);
+    if (this.allowedLifetimes().includes(hours)) this.lifetime.set(hours);
   }
 
   async confirm(): Promise<void> {

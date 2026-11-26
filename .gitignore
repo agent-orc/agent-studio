@@ -21,6 +21,8 @@ frontend/build_log.txt
 # re-include specific tracked files below; a bare tools/ would prevent any
 # whitelisting under it.
 tools/*
+!tools/dispatch-replay/
+!tools/dispatch-replay/**
 !tools/remote-test-suite/
 !tools/remote-test-suite/**
 !tools/project-deployment-import/

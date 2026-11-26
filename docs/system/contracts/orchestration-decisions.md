@@ -204,8 +204,8 @@ part). Every strategy keeps pins and `urgent` first within a priority class,
 dependsOn, exclusive runs, the slot count, a hold of at most 24 hours renewed
 once, and at most 25 % of Ready held. `lane-entry-v1` with the `Running`
 window equals the `LaneSortApplier` order and `ParallelSlotPolicy` admissions
-(`DispatchPlanPolicyEquivalenceTests`). No host calls the policy yet; DS-5
-records shadow plans and DS-6 makes the pick-gate read the live plan.
+(`DispatchPlanPolicyEquivalenceTests`). DS-5 records shadow plans. DS-6 applies the leased live plan through
+`DispatchPickupPolicy` on both pickup paths.
 
 ## Decision grounds, shadow receipts and active coding choice
 
@@ -833,7 +833,7 @@ RT-D6 B, RT-D7 B and RT-D9 B. The lifecycle contract is:
 |---|---|
 | Confirmed build, prepare or base failure without an environment explanation | `LineStop`, with no automatic quarantine |
 | Confirmed routine regression or ambiguous failure | `StartHeld` within the project caps |
-| Recovering same-SHA repeat or mixed bisect point | `CountFlaky`; `StartReportOnly` after three distinct runs in 14 days or immediately for a mixed point |
+| Recovering same-SHA or matching reference repeat, or mixed bisect point | `CountFlaky`; `StartReportOnly` after three distinct runs in 14 days or immediately for a mixed point |
 | Failed canary, passing reference-envelope repeat after a fingerprint mismatch, or failing last-green control | `MarkInconclusive`, no merge attribution; recurring environment incidents may start report-only |
 | Two latest covering passes in the standard envelope on tips containing the repair | `Lift` |
 | Held expiry at 24 hours with the repair in Progress or Auto Review | One `Renew` for 24 hours, bounded by 48 hours from the original start |
@@ -853,3 +853,216 @@ reference fingerprint as not contradicting; `Classify` and `Decide` remain the
 server's decision. `HoldScopePolicy.UsesSuiteAreaFallback` is the zero or more
 than 12 covering-folder rule that `Create` applies, so the receipt's
 `coveringFallback` cannot drift from the hold scope.
+
+RT-4 (AGT-4005) adds `TestQuarantineLifecyclePolicy` for explicit quarantine
+mutation admission, UTC expiry, release holds and line-stop integration
+admission. `RedTestTriagePolicy` also resolves a line stop on covering repair
+evidence and raises a waiting repair's model rung at its two-hour re-evaluation.
+The post-merge host supplies frozen per-test receipts, union quarantine facts,
+repair lanes, clocks and covering runs through `MonolithTransitionAdapter`.
+It applies the actions, persists the quarantine audit and incident decision
+log, and projects owner options. No project-wide testing strategy changes.
+
+RT-6 (AGT-4007) supplies measured envelope canaries, fingerprints and reference
+attempts. Environment evidence takes precedence over attribution. A recovery
+in a matching reference envelope is flaky, including for a base test, and
+cannot stop the line. A recovery after a fingerprint mismatch remains
+environment evidence. These classifications stay in `RedTestTriagePolicy`;
+hosts record attempts and apply the resulting disposition.
+
+RT-5 (AGT-4006) adopts these hold rules in both integration hosts.
+`HoldScopePolicy.ActiveHolds` projects exact active held entries to typed
+`TestQuarantineHoldFact` values; `IntegrationBlock` applies `MayIntegrate` and
+names the blocking quarantine, test and folder. Scope facts include the test
+file, covering folders, confirmed suspect files, recursive fallback areas,
+expiry and repair, revert and owner exemptions. No latest-red predicate limits
+these holds. `IntegrationResultPolicy` maps both the wire and local held outcome
+to requeue, with a thirty-second recheck and no repair round. Hosts apply that
+decision through `MonolithTransitionAdapter`; dispatcher consumption remains
+for DS-6. The shared contracts `TestQuarantinePolicy` owns file parsing and
+exact-name partitioning, rather than an orchestration transition rule.
+
+
+AGT-3995 (DS-5): `DispatcherAuthorityPolicy` owns the narrow dispatcher
+operation authority and fenced lease admission. Shadow activations hold only `observe` and `dispatch.shadow.record`, with no
+generic IAM write grant. The standalone operation data
+lives in `backend/Policies/personas/dispatcher.grants.v1.json`; it grants no
+capacity or test-placement changes. A foreign dependency removal requires an
+explicit, unexpired, use-capped T2 grant. Existing API mutation paths also
+protect foreign edges using the middleware's redeemed owner approval receipt.
+Optional dependency origins are `owner`, `dossier` or `dispatch:<persona>`;
+legacy string edges remain owner-controlled. Normalization preserves origin
+and treats conflicting duplicate origins as owner-controlled.
+
+`AddDispatch` registers `DispatcherShadowService`. Both admission paths call
+it through the shared overlap guard. It collects the project queue, forecasts,
+slot holders, delivery exposure and conflict pairs, then records all active
+dispatcher strategies on the same frozen facts and time. It applies no plan.
+Records under the application-owned `.dispatch` store have evaluation and
+decision ids; the append-only dispatcher log chains entry digests and keeps
+strategy revisions, rules, fact digests, pass-overs, expected overlaps and a
+reason capped at 280 characters. `GET /api/projects/{project}/dispatch/personas`
+requires project read access and returns the lease, shadow records, log and
+chain verification. Logs carry ids and rule evidence, not prompts or secrets.
+The lease is project-scoped, persisted and fenced; descriptor mode alone has
+no authority. DS-6 applies live plans, DS-7 supplies rollout gates, and DS-8
+projects weekly and wave reports. Source-wave and source-prior inputs remain
+unknown until their source integration lands; no model is called on pickup.
+
+
+AGT-3996 (DS-6): project `dispatch.mode` is `off`, `shadow` (default), or
+`live`, read and written at `/api/projects/{project}/dispatch/mode`. Off keeps
+pickup unchanged; shadow records active personas and keeps today's order.
+Live applies a separate, fenced plan through the shared overlap guard. Its
+forecast scopes contain non-hub forecast files for candidates, running cards
+and every in-flight card of the project until integration. An unavailable
+lease or inactive persona holds pickup with a named reason. Setting live does
+not acquire a lease or pass a rollout gate; DS-7 owns those gates.
+
+`DispatchPickupPolicy` applies plan positions, named holds until their UTC
+expiry, dependency edges and slot decisions. Hosts pass the remaining routable
+pickup candidates so a skipped head cannot reserve capacity. A resumed card
+never overlaps itself. Owner pins, urgent, existing dependencies and project
+capacity remain the planner's hard constraints. Edges stay in the plan with
+the dispatcher origin; they never rewrite owner or Dossier edges. Exclusive
+marks survive reevaluation while their cards remain Ready or in flight.
+
+The application-owned `.dispatch` store persists the live plan and append-only
+run admission or serialization receipts. A claimed run binds its admitting
+decision to the attempt; session events and `RunRecord.DispatchDecisionId`
+preserve it in run history. Conflict records resolve only claimed admissions,
+so a later serialize or failed claim cannot replace the admitting decision.
+The persona read route includes live plan and run receipts. Ready cards expose
+`dispatchPlanPosition` and use the existing pickup-hold surface with a named
+wait and optional expiry. The browser clears an expired hold on its clock tick.
+Working decisions DS-D1 through DS-D10 remain option B; rollout, scoring and
+recut workflows remain in their designated slices.
+
+## Packer wave recuts (AGT-3999, DS-9)
+
+`DispatchRecutPolicy` owns deterministic cuts of one explicitly identified source
+wave. Packages require every pair to share two non-hub forecast files, at most
+three source findings in total, and a combined source prior of at most 25 code
+files. The prior is the median real code-file count of earlier delivered cards
+of that source kind from DS-1 delivery records. Missing history stays unknown
+and prevents a package. Remaining overlap components form source-order chains
+with `origin: dispatch:packer`. More than three forecast modules, a prior above
+25, or a collection touching a conflict-hot module yields an owner split
+proposal. Hot parts name the module and the cluster cards they must follow;
+cold collections stay whole. Hot evidence uses the existing 14-day window.
+
+All Dossier decisions DS-D1 through DS-D10 retain option B. In particular,
+Packer stays in shadow by default. `AddDispatch` registers the recut services.
+The API is an owner-triggered wave boundary for source integration in DS-10:
+
+- `POST /api/projects/{project}/dispatch/recuts/waves/{wave}` accepts
+  `{ "cards": [{ "key": "P-1", "findingRefs": ["finding:source-1"] }], "apply": false }`.
+  Array order is source order. Canonical keys and finding references are
+  recorded immutably for that wave and application mode. Reusing the wave with
+  different membership is refused. No model predicts the cut or the prior.
+- `GET /api/projects/{project}/dispatch/recuts` reads saved plans, texts,
+  source snapshots, proposals, replacement keys and recovery state.
+- `POST /api/projects/{project}/dispatch/recuts/{id}/undo` restores original
+  references and lanes and archives replacement cards during the 24-hour
+  window. It preserves later owner edits and refuses undo once an affected
+  card has started. Undo is repeat-safe and resumes an interrupted undo.
+
+`apply: true` still requires live project mode, active scoped Packer and its
+fenced, unexpired lease certifying live standing grants. The same lease fence
+is checked before every mutating API call. Owner-written or started cards,
+owner pins and urgent cards, incompatible execution settings, cross-Dossier
+packages and cards with incoming dependencies remain proposals. The incoming
+edge restriction prevents archiving from satisfying a foreign dependency
+prematurely. No T2 bypass is redeemed by this API. Split cuts always remain
+proposals. Accepting a recut feed item records the owner's choice without
+promoting another Dossier or bypassing the recut checks.
+
+Application uses the existing task creation, reference and move HTTP endpoints,
+with the caller's authentication, CSRF and project authorization. Connections
+are pinned to the current listener; redirects and proxies are disabled.
+`MoveJobRequest.expectedSourceState` and `requireUnstarted` fence staging under
+the existing local and remote claim gate. Ready members first stage in Backlog.
+References retain existing gate flags and origins; the reference endpoint
+performs its existing DAG check. Merged cards retain complete source prompts,
+finding references and `supersedes` links to every original. Originals are
+archived with a `relatedTo` pointer, never deleted. New packages stay in Backlog;
+unmerged chain members regain their original lane. No lane order field changes.
+
+A durable receipt precedes model work and every replacement identity. Retry
+uses deterministic creation slugs and saved snapshots; partial applications
+can be retried or undone. Recut receipts also enter the hash-chained dispatcher
+log. One optional Claude one-shot drafts all titles and coordination prefaces
+for a wave within the Packer allowance. The complete source prompts are always
+appended verbatim. A 16,000-token reservation shares the persona scheduling
+ledger and weekly pool; an uncertain or unmetered call retains that charge.
+Missing allowance, paused model work, oversized input, invalid output or a
+failed call produces the full deterministic concatenation stub. There is no
+model retry. DS-10 owns automatic source emission; DS-11 owns promotion and
+wave-window rollout. This slice neither promotes Packer nor changes admission.
+
+A recut archive also carries `MoveJobRequest.dispatchRecutId`. The pure
+`DispatchRecutPolicy.MayArchive` admits only a recorded package original while
+applying under the same live lease, or its unstarted replacement while the
+owner's undo is in progress. The saved window must remain open, original cards
+must link to their replacement, and foreign incoming dependencies refuse the
+permit. The application-issued permit is checked again inside the keyed lane
+writer. This is archival of untouched recut work, with no completion claim or
+archive override; the ordinary delivery guard continues to protect every
+started or unrelated coding card.
+
+Reference writes also pass `SetTaskReferencesRequest.expectedReferences`.
+`TaskMutationService` compares that snapshot under the same task JSON lock as
+the atomic write, returning `references-changed` on a concurrent edit. Recut
+apply and undo always use this fence; legacy callers may omit it. Replacement
+creation keeps the automated source family and appends the Packer receipt id,
+so subsequent real deliveries continue to inform the source's size prior.
+
+## Source wave emission (AGT-4000, DS-10)
+
+DS-D1 through DS-D10 option B remain the working decisions. `CreateTaskRequest`
+accepts `waveId` (at most 200 characters) and `citedPaths` (at most 200
+repository-relative file paths, without line suffixes). Both persist in task
+metadata and detail facts. New wave cards retain the unpinned order sentinel
+999 by default; explicit owner positions remain intact. Cited paths join the source prompt as inputs to the
+shared model-free forecast, including Backlog cards. Packer packages retain
+the wave and the union of their originals' citations.
+
+`POST /api/tasks/batch` accepts `{ "cards": [...] }` with 1 to 200 ordinary
+creation requests. It uses the single-card handler, including project access,
+routing, model qualification and delivery guards. More than five cards sharing
+one creation source receive one generated wave id before
+any creation; explicit wave ids remain intact. The response lists each created
+card and wave id. A partial failure returns completed entries, the failed index
+and refusal status, so clients must resume only the uncreated suffix with the
+saved wave id. The operation does not roll back completed cards.
+
+`DispatchWavePolicy` owns the pure wave threshold, landing and release rules.
+With dispatch off, explicit lanes keep their existing behavior. In shadow or
+live, ordinary wave cards land in Backlog even when Ready was requested.
+Decision cards retain their preparation-lane contract. Sources submit their
+complete list before calling
+`POST /api/projects/{project}/dispatch/waves/{wave}/plan` (Owner with card-write
+permission). This explicit completion call prevents planning an unfinished
+list. `awaiting-forecasts` and `awaiting-live-dispatcher` leave the wave in
+Backlog and can be retried. Shadow records plans and releases no cards.
+
+Live planning requires the active dispatcher's fenced lease and forecasts for
+every member. Only Packer calls the existing DS-9 recut API, retaining its
+proposals, bounds and undo contract. Other personas order the wave. The
+separate plan includes all surviving wave cards before any moves to Ready;
+A fenced, persisted wave-release marker closes local and remote admission
+until all surviving members are Ready. HTTP task API moves run in reverse
+plan order so newest-first lane entry preserves the plan, without rewriting
+owner order fields. Mode and lease fences are checked between moves; opening
+pickup also requires the current lease. An interrupted marker survives restart
+and a retry completes the pending moves before opening pickup. A changed or
+started card refuses further application. Ready pickup
+continues to enforce the existing pins, urgent status, holds, dependencies,
+exclusive marks and project-wide in-flight overlap. This slice grants no
+bypass and performs no live promotion.
+
+The task API skill supplies the playthrough and review-finding source
+instruction: group a shared cause file, state must-land-first relationships,
+and emit cited paths from the cause. The runtime report prompts that emit
+follow-up suggestions carry the same instruction and additive cause, citation
+and ordering fields. Existing report suggestions remain drafts for promotion.

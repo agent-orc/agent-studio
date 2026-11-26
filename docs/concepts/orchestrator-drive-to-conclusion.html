@@ -386,6 +386,20 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-rt6-integration-recovery">
+          <td>2026-11-26</td>
+          <td><code>AGT-4007</code><br><span class="small">rt6-integration-recovery</span></td>
+          <td>No CLI crashed. The delivery stopped at <code>merge-into-develop</code> after direct merge, mechanical merge and rebase fallback conflicted in <code>PostMergeIncidentService.Triage.cs</code>.</td>
+          <td>RT-6 added inconclusive receipts to per-test triage at the same entry point where RT-8 added guardian observations for other receipt states.</td>
+          <td>The recovery retains both paths: inconclusive receipts with per-test facts reach RT-2 and the guardian, and other receipt states retain their guardian observation. The delivery patch and Linux host setup correction are restored for focused checks. Publication and integration remain pipeline-owned.</td>
+        </tr>
+        <tr id="case-test-envelope-canary">
+          <td>2026-11-26</td>
+          <td><code>AGT-4007</code><br><span class="small">test-envelope-canary</span> (RT-6)</td>
+          <td>No CLI crashed. The AGT-3981 daemon-environment failure is replayed with a base canary and an intentionally declared runner setting.</td>
+          <td>Review, gate and post-merge previously built different process environments and resource limits.</td>
+          <td>All three use the shared test envelope. The first real canary exposed the test bootstrap escaping a long temp path; short run roots keep its child directory inside the envelope. RT-2 consumes a failed canary as environment evidence. Terminal in the regression fixture: an inconclusive receipt, no line stop and no merge attribution. A confirmed non-canary failure also records one serial reference-envelope repeat.</td>
+        </tr>
         <tr>
           <td>2026-11-26</td>
           <td>overlap-dispatch-starvation (AGT-4037)</td>
@@ -398,7 +412,16 @@
           <td><code>AGT-4002</code><br><span class="small">red-develop-project-fallback</span> (Dossier AGT-3988, RT-1)</td>
           <td>No CLI crashed. After two hours of red develop the project resolved to pre-merge, the batch gate came back and every review ran the full suite with baseline and clean repeat; nothing integrated between 23:00Z and 04:00Z for four reds that were not regressions.</td>
           <td>One project-wide timer (<code>PostMergeModeService.EscalationActive</code>, plus a second copy of the two-hour constant in <code>RedDevelopRepairPolicy</code>) mixed incident age with the need for a human, and an escalated repair card also switched the placement.</td>
-          <td>Placement is the configured one. <code>RedDevelopRepairPolicy</code> returns Revert, FixForward, Hold or AskOwner from the repair lane and the per-incident age; at two hours it raises one <code>post-merge.red-incident</code> Needs you item per incident and moves no card. Terminal: the incident waits in Needs you for the owner's answer while integration keeps flowing. RT-2 (AGT-4003) adds pure per-test classification, bounded quarantine, controlled attribution and hold-scope policies for later host adoption. It preserves this compatibility flow and adds no CLI retry or lane movement. RT-3 (AGT-4004) makes the post-merge runner collect that policy's facts: two focused runs at the last green SHA and at every bisect point after a test-project build, a stop on mixed results, revert independence by file overlap, per-test verdicts with a classification hint, covering folders and an envelope fingerprint on the receipt. The same-SHA repeat count is unchanged, and the receipt still feeds the compatibility repair flow; no lane moves.</td>
+          <td>Placement is the configured one. <code>RedDevelopRepairPolicy</code> returns Revert, FixForward, Hold or AskOwner from the repair lane and the per-incident age; at two hours it raises one <code>post-merge.red-incident</code> Needs you item per incident and moves no card. Terminal: the incident waits in Needs you for the owner's answer while integration keeps flowing. RT-2 (AGT-4003) adds pure per-test classification, bounded quarantine, controlled attribution and hold-scope policies for later host adoption. It preserves this compatibility flow and adds no CLI retry or lane movement. RT-3 (AGT-4004) makes the post-merge runner collect that policy's facts: two focused runs at the last green SHA and at every bisect point after a test-project build, a stop on mixed results, revert independence by file overlap, per-test verdicts with a classification hint, covering folders and an envelope fingerprint on the receipt. The same-SHA repeat count is unchanged, and the receipt still feeds the compatibility repair flow; no lane moves. RT-4 (AGT-4005) applies per-test decisions as the system principal:
+        routine double failures become bounded held quarantines and keep develop green,
+        base double failures stop the line, and each incident reaches its own renewal,
+        evidence lift or owner item. Unrelated green receipts do not cancel that clock.
+        Repair cards under review or settled retain their lanes; no project-wide fallback.
+        RT-8 (AGT-4009) records a separate line guardian decision beside every receipt,
+        in shadow until an owner enables its project principal. One schema-bound
+        classification per incident supplies evidence to the pure rules; model or
+        compute budget exhaustion raises one owner item while those rules continue.
+        Quarantine and repair writes retain RT-4's normal mutation path.</td>
         </tr>
         <tr id="case-post-merge-daemon-cgroup">
           <td>2026-11-23</td>
@@ -3375,6 +3398,30 @@
           <td>The owner reported manual coding switches to preserve Claude quota for review. The deterministic exhausted-session reproduction returned Wait despite an available equivalent.</td>
           <td>Sealed review plans skipped quota replanning; same-session routing always held its provider. No CLI crash was reproduced in this drill. Earlier quota crashes remain recorded under AGT-3972.</td>
           <td>Before: Wait on the exhausted session, or an unchanged sealed review route. Now: a pre-dispatch equivalent route with a receipt, or a visible wait when no published equivalent is available. Hard pins wait; running work is untouched.</td>
+        </tr>
+        <tr>
+          <td>2026-11-26</td>
+          <td><code>AGT-4006</code><br><span class="small">scoped-quarantine-integration-hold</span></td>
+          <td>No CLI crashed. RT-5's scoped hold replaces the old integration wait.</td>
+          <td>The old hold depended on the latest red verdict and suspect files,
+            so green develop could admit a delivery into an active held area.</td>
+          <td>Active quarantines now hold covering folders independently of develop
+            color. Overlapping deliveries stay pending without spending retries
+            or repair rounds; unrelated and repair deliveries continue. The
+            terminal is integration after repair, lift, expiry or exemption.</td>
+        </tr>
+        <tr>
+          <td>2026-11-26</td>
+          <td><code>AGT-4006</code><br><span class="small">rt5-documentation-integration-recovery</span></td>
+          <td>No CLI crashed. The delivery stopped at <code>merge-into-develop</code>
+            after direct merge, mechanical merge and rebase fallback conflicted.</td>
+          <td>The RT-5 implementation additions shared insertion points with the
+            newer RT-7 Dossier record and DS-5 orchestration contract.</td>
+          <td>The observed terminal was an integration-conflict continuation.
+            Recovery retains the newer text verbatim alongside the RT-5 additions,
+            restores the delivery patch and verifies the build, focused classes,
+            guard filters and lint. Publication and integration remain owned by
+            the pipeline.</td>
         </tr>
       </tbody>
     </table>

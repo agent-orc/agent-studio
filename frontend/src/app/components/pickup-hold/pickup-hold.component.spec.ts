@@ -142,6 +142,22 @@ describe('PickupHoldComponent', () => {
     fixture = TestBed.createComponent(PickupHoldComponent);
   });
 
+  it('shows the dispatch position and named wait, then clears the hold at expiry', () => {
+    fixture.componentRef.setInput('task', { ...task({ mechanism: 'dispatch-plan',
+      reason: 'area-busy: waits for AGT-9001', sinceUtc: new Date(NOW).toISOString(),
+      expiresAtUtc: new Date(NOW + 1000).toISOString(), unsatisfiable: false, resolutions: [] }),
+      dispatchPlanPosition: 3 });
+    fixture.detectChanges();
+    const element: HTMLElement = fixture.nativeElement;
+    expect(element.querySelector('[data-testid="dispatch-plan-position"]')?.textContent).toContain('Dispatch #3');
+    expect(element.querySelector('[data-testid="pickup-hold-mechanism"]')?.textContent).toContain('Dispatch hold');
+    expect(element.querySelector('[data-testid="pickup-hold-reason"]')?.textContent).toContain('waits for AGT-9001');
+    now.set(NOW + 1000);
+    fixture.detectChanges();
+    expect(element.querySelector('[data-testid="pickup-hold"]')).toBeNull();
+    expect(element.querySelector('[data-testid="dispatch-plan-position"]')).not.toBeNull();
+  });
+
   function render(hold: PickupHoldStatus | null, variant: 'card' | 'detail' = 'card'): HTMLElement {
     fixture.componentRef.setInput('task', task(hold));
     fixture.componentRef.setInput('variant', variant);

@@ -53,6 +53,8 @@ A single Markdown reply that opens with a one-sentence verdict and is structured
 
 When the queue is too dirty (stray lane folders, missing `job.json`, contradictory states) or the evidence is incomplete (key docs missing, recent reports stale), say so explicitly in the verdict. Do not invent confidence you do not have.
 
+Group findings that share a cause file into one card, state which finding must land before which, and emit repository-relative `citedPaths` from the `cause` field (strip line numbers) in each follow-up suggestion.
+
 ## Output contract
 
 Append exactly one fenced JSON block at the very end of your reply. The Markdown body above is the durable human artifact; the JSON sidecar is the additive app contract. If you cannot produce valid JSON, omit the block entirely - an unstructured report is still a useful report.
@@ -76,6 +78,9 @@ Append exactly one fenced JSON block at the very end of your reply. The Markdown
   "followUpTaskSuggestions": [
     {
       "title": "<short imperative title>",
+      "cause": "<cause with file and line citations>",
+      "citedPaths": ["<repository-relative cause file>"],
+      "mustLandBefore": ["<dependent finding title, if any>"],
       "summary": "<2-3 sentence rationale>",
       "priority": "Low|Normal|High|Critical",
       "relatedTopic": "RoadmapAlignment|QueueHealth|DocsDrift|StaleJobs|Security|Architecture|Qa|TokenSpend|RuntimeObservability|UxUi|Other"

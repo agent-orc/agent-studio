@@ -15,7 +15,7 @@ namespace AgentStudio.Tests;
 /// ten minutes, and five wrong entries per Owner within 15 minutes lock code
 /// entry for 15 minutes.
 /// </summary>
-public sealed class OperatorSignInTests : IDisposable
+public sealed partial class OperatorSignInTests : IDisposable
 {
     private const string Password = "correct horse battery staple!";
     private const string Terminal = "198.51.100.7";
@@ -106,6 +106,94 @@ public sealed class OperatorSignInTests : IDisposable
     private IReadOnlyList<string> AuditOperations()
         => _store.ControlPlaneAudit.Read(0, 1000).Select(entry => entry.Operation).ToList();
 
+    private OperatorDeviceCertification Certification(ECDsa key, OperatorSignIn signIn, string kind = "tpm", long? at = null)
+    {
+        var point = key.ExportParameters(false).Q;
+        var publicKey = new OperatorDevicePublicKey("EC", "P-256", OperatorDevicePublicKey.Base64Url(point.X!), OperatorDevicePublicKey.Base64Url(point.Y!));
+        var issuedAt = at ?? _clock.GetUtcNow().ToUnixTimeSeconds();
+        var bytes = System.Text.Encoding.UTF8.GetBytes(AccessSecurityStore.DeviceCertificationStatement(signIn.KeyThumbprint, signIn.Id, issuedAt));
+        return new(publicKey, kind, issuedAt, OperatorDevicePublicKey.Base64Url(key.SignData(bytes, HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation)));
+    }
+
+    [Theory]
+    [InlineData("tpm")]
+    [InlineData("secure-enclave")]
+    public void Device_certification_records_binding_and_recognizes_the_same_device_with_a_new_session_key(string kind)
+    {
+        var agent = NewAgent();
+        using var hardware = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        for (var login = 0; login < 2; login++)
+        {
+            var started = Start();
+            var cert = Certification(hardware, started.SignIn, kind);
+            _store.PollOperatorSignIn(started.Poll, certification: cert);
+            var lookup = _store.LookupOperatorSignIn(started.Code, Owner(), Terminal);
+            Assert.Equal(kind, lookup.BindingKind);
+            Assert.Equal(cert.PublicKey.Thumbprint(), lookup.DeviceKeyThumbprint);
+            Assert.Equal(login == 1, lookup.KnownForAgentIds.Contains(agent.Id));
+            Confirm(started.Code, agent.Id);
+            Assert.Equal(kind, Poll(started.Poll).BindingKind);
+            var session = _store.ListOperatorAgents().Single().Sessions!.Last();
+            Assert.Equal(kind, session.Device!.BindingKind);
+            Assert.Equal(started.SignIn.KeyThumbprint, session.Device.KeyThumbprint);
+            Assert.Equal(cert.PublicKey.Thumbprint(), session.Device.DeviceKeyThumbprint);
+            Assert.Equal(kind, _store.ToOperatorSessionResponse(agent.Id, session).Device!.BindingKind);
+        }
+        Assert.Single(_store.ListOperatorAgents().Single().Devices!);
+        Assert.Equal(2, _store.ToOperatorAgentResponse(_store.ListOperatorAgents().Single()).Devices!.Single().ActiveSessions);
+        var known = _store.ListOperatorAgents().Single().Devices!.Single();
+        _store.ForgetOperatorDevice(agent.Id, known.Id, _ownerId);
+        Assert.All(_store.ListOperatorAgents().Single().Sessions!, session => Assert.NotNull(session.RevokedAt));
+    }
+
+    [Theory]
+    [InlineData("signature")]
+    [InlineData("session-key")]
+    [InlineData("signin-id")]
+    [InlineData("stale")]
+    [InlineData("future")]
+    [InlineData("kind")]
+    public void Invalid_certification_from_a_known_device_is_unknown_and_memory_bound(string alteration)
+    {
+        var agent = NewAgent();
+        using var hardware = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var first = Start();
+        _store.PollOperatorSignIn(first.Poll, certification: Certification(hardware, first.SignIn));
+        Confirm(first.Code, agent.Id);
+        Poll(first.Poll);
+        var started = Start();
+        var source = alteration == "session-key" ? started.SignIn with { KeyThumbprint = NewKey().Thumbprint() }
+            : alteration == "signin-id" ? first.SignIn : started.SignIn;
+        var cert = Certification(hardware, source, at: _clock.GetUtcNow().ToUnixTimeSeconds()
+            + (alteration == "stale" ? -61 : alteration == "future" ? 61 : 0));
+        if (alteration == "signature") cert = cert with { Signature = new string('A', 86) };
+        if (alteration == "kind") cert = cert with { BindingKind = "untrusted" };
+        _store.PollOperatorSignIn(started.Poll, certification: cert);
+        var lookup = _store.LookupOperatorSignIn(started.Code, Owner(), Terminal);
+        Assert.Empty(lookup.KnownForAgentIds);
+        Assert.Equal("memory", lookup.BindingKind);
+        Assert.Null(lookup.DeviceKeyThumbprint);
+        Confirm(started.Code, agent.Id);
+        Assert.Equal("memory", Poll(started.Poll).BindingKind);
+    }
+
+    [Fact]
+    public void Certification_is_single_use_and_cannot_be_attached_after_owner_confirmation()
+    {
+        var agent = NewAgent();
+        using var hardware = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var started = Start();
+        var cert = Certification(hardware, started.SignIn);
+        _store.PollOperatorSignIn(started.Poll, certification: cert);
+        Assert.Equal("device-certification-used", Assert.Throws<SecurityOperationException>(() =>
+            _store.PollOperatorSignIn(started.Poll, certification: cert)).Code);
+        var other = Start();
+        Confirm(other.Code, agent.Id);
+        Assert.Equal("device-certification-used", Assert.Throws<SecurityOperationException>(() =>
+            _store.PollOperatorSignIn(other.Poll, certification: Certification(hardware, other.SignIn))).Code);
+    }
+
     [Fact]
     public void A_session_is_issued_only_after_an_owner_confirms_with_a_fresh_second_factor()
     {
@@ -123,16 +211,16 @@ public sealed class OperatorSignInTests : IDisposable
         Assert.Equal(("agent@workstation", agent.Id, Terminal, false), (lookup.DeviceLabel, lookup.RequestedAgentId, lookup.RequestedAddress, lookup.AddressMatches));
         Assert.Empty(lookup.KnownForAgentIds);
         Assert.Equal(["cards.accept-override", "project.testing"], lookup.RequestedClasses.Select(entry => entry.Id));
-        Assert.Equal(Enumerable.Range(1, 8), lookup.LifetimeHours);
+        Assert.Equal([8, 24], lookup.LifetimeHours);
 
         // Without a fresh step-up the confirmation answers step-up-required and changes nothing.
         var refused = Assert.Throws<SecurityOperationException>(() => _store.ConfirmOperatorSignIn(
-            new ConfirmOperatorSignInRequest(started.Code, agent.Id, null, 2), Owner(), "203.0.113.20"));
+            new ConfirmOperatorSignInRequest(started.Code, agent.Id, null, 8), Owner(), "203.0.113.20"));
         Assert.Equal((403, "step-up-required"), (refused.Status, refused.Code));
         Assert.Equal(OperatorSignInPollStatuses.Pending, Poll(started.Poll).Status);
         Assert.Empty(_store.ListOperatorAgents().Single().Sessions!);
 
-        var confirmed = Confirm(started.Code, agent.Id, ["project.testing"], 2);
+        var confirmed = Confirm(started.Code, agent.Id, ["project.testing"], 8);
         var pending = _store.ListOperatorAgents().Single().Sessions!.Single();
         Assert.Equal(OperatorSessionStates.Pending, AccessSecurityStore.OperatorSessionState(pending, _clock.GetUtcNow().UtcDateTime));
 
@@ -147,7 +235,7 @@ public sealed class OperatorSignInTests : IDisposable
 
         var session = _store.ListOperatorAgents().Single().Sessions!.Single();
         Assert.Equal(confirmed.ExpiresAt, session.ExpiresAt);
-        Assert.Equal(_clock.GetUtcNow().UtcDateTime.AddHours(2).AddSeconds(-5), session.ExpiresAt);
+        Assert.Equal(_clock.GetUtcNow().UtcDateTime.AddHours(8).AddSeconds(-5), session.ExpiresAt);
         Assert.Equal(("agent@workstation", key.Thumbprint(), Terminal, "203.0.113.20", Owner().Session.Id),
             (session.Device!.Label, session.Device.KeyThumbprint, session.Device.RequestedAddress, session.Device.ConfirmedAddress,
                 session.Device.ConfirmingSessionId));

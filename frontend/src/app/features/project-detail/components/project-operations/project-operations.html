@@ -19,6 +19,7 @@
       </div>
     }
   }
+  <app-isolated-tests [projectName]="projectName()" (openCard)="openCard.emit($event)" />
   @if (error(); as message) { <p role="alert">{{ message }}</p> }
   @if (snapshot(); as state) {
     @if (!state.environments.length) { <p>No application environments are configured.</p> }

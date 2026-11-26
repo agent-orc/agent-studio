@@ -1023,7 +1023,7 @@ public static class TaskCrudEndpoints
             return success ? Results.Ok() : Results.NotFound();
         });
 
-        group.MapPost("/", async (
+        async Task<IResult> CreateTask(
             CreateTaskRequest req,
             HttpContext ctx,
             TaskMutationService mutations,
@@ -1035,7 +1035,7 @@ public static class TaskCrudEndpoints
             QuotaAdmissionService quotaAdmission,
             AgentStudio.Tags.AutoTagCreationWorker autoTag,
             IConfiguration configuration,
-            CancellationToken ct) =>
+            CancellationToken ct)
         {
             if (req.CompatibilityFields?.Keys.Any(key =>
                 string.Equals(key, "epicId", StringComparison.OrdinalIgnoreCase)) == true)
@@ -1058,6 +1058,8 @@ public static class TaskCrudEndpoints
                     return Results.StatusCode(StatusCodes.Status403Forbidden);
                 req = ContributorAccessPolicy.ForProductCreate(req, productUser.Id);
             }
+            if (!AgentStudio.Dispatch.DispatchSourceMetadata.Valid(req))
+                return Results.BadRequest(new { error = "Use a nonempty wave id of at most 200 characters and at most 200 repository-relative cited paths." });
             if (string.IsNullOrWhiteSpace(req.Title))
                 return Results.BadRequest("Title is required");
             if (req.Kind is not null && !TaskKinds.All.Contains(req.Kind.Trim(), StringComparer.OrdinalIgnoreCase))
@@ -1202,7 +1204,40 @@ public static class TaskCrudEndpoints
             return jobId is null
                 ? Results.Conflict("Job already exists or invalid input")
                 : Results.Ok(new { id = jobId, routing = resolvedRouting });
+        }
+
+        group.MapPost("/", CreateTask);
+
+        group.MapPost("/batch", async (CreateTaskBatchRequest request,
+            HttpContext ctx,
+            TaskMutationService mutations,
+            AgentStudio.Registry.ProjectRegistry projects,
+            AgentStudio.Registry.ComponentRoutingService routing,
+            ModelRoutingPolicyRegistry modelRouting,
+            IModelRoutingModeProvider routingMode,
+            CliRouter cliRouter,
+            QuotaAdmissionService quotaAdmission,
+            AgentStudio.Tags.AutoTagCreationWorker autoTag,
+            IConfiguration configuration,
+            CancellationToken ct) =>
+        {
+            IReadOnlyList<CreateTaskRequest> cards;
+            try { cards = AgentStudio.Dispatch.DispatchSourceMetadata.Prepare(request.Cards); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            var created = new List<object>();
+            foreach (var card in cards)
+            {
+                var result = await CreateTask(card, ctx, mutations, projects, routing, modelRouting,
+                    routingMode, cliRouter, quotaAdmission, autoTag, configuration, ct);
+                if (result is not IStatusCodeHttpResult { StatusCode: StatusCodes.Status200OK })
+                    return Results.Json(new { error = "Batch creation stopped; completed cards remain in their landing lane.",
+                        created, failedIndex = created.Count, failure = (result as IValueHttpResult)?.Value, status = (result as IStatusCodeHttpResult)?.StatusCode },
+                        statusCode: (result as IStatusCodeHttpResult)?.StatusCode ?? 409);
+                created.Add(new { card = (result as IValueHttpResult)?.Value, card.WaveId });
+            }
+            return Results.Ok(new { created });
         });
+
 
         group.MapPost("/reorder", (ReorderRequest req, HttpContext ctx, TaskStateMachine states,
             TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects) =>
@@ -1514,7 +1549,10 @@ public static class TaskCrudEndpoints
                     })
                 });
 
-            var success = mutations.SetTaskReferences(jobId, proposed, watchPath);
+            bool success;
+            try { success = mutations.SetTaskReferences(jobId, proposed, watchPath, req?.ExpectedReferences); }
+            catch (AgentStudio.Security.SecurityOperationException ex)
+            { return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status); }
             if (!success) return Results.NotFound();
             return Results.Ok(new
             {
@@ -1589,8 +1627,11 @@ public static class TaskCrudEndpoints
                     }),
                 });
 
-            var changed = mutations.EditTaskWaitsOn(
-                jobId, req.Add ?? [], removed, req.Reason, OperatorActor(ctx), watchPath);
+            bool changed;
+            try { changed = mutations.EditTaskWaitsOn(
+                jobId, req.Add ?? [], removed, req.Reason, OperatorActor(ctx), watchPath); }
+            catch (AgentStudio.Security.SecurityOperationException ex)
+            { return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status); }
             if (!changed) return Results.NotFound();
             var cycleResolved = !req.RequireCycleEdge
                 || !WaitsOnEvaluator.SitsOnCycle(
@@ -1689,9 +1730,22 @@ public static class TaskCrudEndpoints
         {
             var card = scanner.FindJob(jobId, watchPath);
             if (card is null) return Results.NotFound();
+            expectedState ??= request.ExpectedSourceState;
+            if (request.RequireUnstarted && (card.ExecutionLocation?.StartedAt is not null || card.SessionChain.Count > 0
+                || card.SessionName is not null || card.LastUsage is not null || card.Commits.Count > 0
+                || authority.GetTaskProjection(card.Key ?? card.TaskKey).CurrentRunAttempt is not null))
+                return Results.Conflict(new { error = "card-started" });
             if (expectedState is not null && card.State != expectedState)
                 return Results.Json(new { error = "lane-changed", message = $"The card left {expectedState}.", state = card.State },
                     statusCode: StatusCodes.Status409Conflict);
+            AgentStudio.Dispatch.DispatchRecutArchivePermit? recutPermit = null;
+            if (request.DispatchRecutId is not null)
+            {
+                recutPermit = context.RequestServices.GetRequiredService<AgentStudio.Dispatch.DispatchRecutService>()
+                    .ArchivePermit(card, request.DispatchRecutId);
+                if (request.TargetState != TaskStates.Archive || !request.RequireUnstarted || recutPermit is null)
+                    return Results.Conflict(new { error = "recut-archive-refused" });
+            }
             var attention = context.RequestServices.GetRequiredService<AgentStudio.Operator.OperatorCoordinationStore>();
             var actor = AgentStudio.Operator.OperatorEndpoints.Actor(context);
             var owner = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
@@ -1756,6 +1810,8 @@ public static class TaskCrudEndpoints
             Task<MoveJobOutcome> Move() => transitions.MoveAsync(
                 jobId, request.TargetState, watchPath, ct, request.TargetIndex,
                 cause: OperatorActor(context), reason: request.Reason,
+                expectedSourceState: expectedState,
+                recutArchive: recutPermit,
                 operatorOverride: request.OperatorOverride,
                 archiveOverride: request.ArchiveOverride,
                 reissueInstructions: request.ReissueInstructions,

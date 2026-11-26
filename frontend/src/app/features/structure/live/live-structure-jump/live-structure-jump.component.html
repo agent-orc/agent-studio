@@ -1,0 +1,25 @@
+<div class="jump" data-testid="live-jump" [attr.data-open]="listed() || null">
+  <app-studio-icon class="jump__icon" name="search" [size]="14" />
+  <input #field class="jump__field" type="text" role="combobox" autocomplete="off" spellcheck="false" data-testid="live-jump-field"
+         placeholder="Jump to a container" aria-label="Jump to a node of the structure" aria-autocomplete="list" aria-keyshortcuts="/"
+         aria-controls="live-jump-list" [attr.aria-expanded]="listed()"
+         [attr.aria-activedescendant]="listed() && matches().length ? 'live-jump-option-' + active() : null"
+         [value]="query()" (input)="onInput($any($event.target).value)" (focus)="open.set(true)" (blur)="open.set(false)" (keydown)="onKeydown($event)">
+  <span class="jump__key" aria-hidden="true">/</span>
+  @if (listed()) {
+    <ul class="jump__list" id="live-jump-list" role="listbox" aria-label="Matching nodes" data-testid="live-jump-list">
+      @for (node of matches(); track node.id; let index = $index) {
+        <li role="presentation">
+          <button type="button" class="jump__option" role="option" tabindex="-1" [id]="'live-jump-option-' + index" [attr.aria-selected]="index === active()"
+                  data-testid="live-jump-option" [attr.data-node-id]="node.id" (mousedown)="$event.preventDefault()" (click)="pick(node)">
+            <app-live-glyph [name]="node.kind" />
+            <span class="jump__text"><span class="jump__name">{{ node.name }}</span><span class="jump__where">{{ kindLabel[node.kind] }} · {{ where(node) }}</span></span>
+            <app-status-indicator [tone]="node.health.tone" [label]="node.health.word" [compact]="true" />
+          </button>
+        </li>
+      } @empty {
+        <li class="jump__none" role="option" aria-disabled="true" aria-selected="false" data-testid="live-jump-none">No node matches. Try a role, such as review or gate.</li>
+      }
+    </ul>
+  }
+</div>

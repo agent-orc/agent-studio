@@ -56,7 +56,7 @@ internal sealed class PostMergeTestLedger
     {
         _runs.Add(run);
         if (run.Tests.Count == 0) return;
-        var suite = run.Phase == PostMergeRunPhases.Repeat ? _repeatSuite : _attributionSuite;
+        var suite = run.Phase is PostMergeRunPhases.Repeat or PostMergeRunPhases.Reference ? _repeatSuite : _attributionSuite;
         if (suite is null) return;
         foreach (var test in run.Tests)
         {
@@ -130,8 +130,10 @@ internal sealed class PostMergeTestLedger
         => RedTestTriagePolicy.ClassificationHint(new RedTestTriageFacts(entry.Test, entry.Suite.Id,
             entry.Suite.Category == ProjectTestSuiteCategories.Base ? RedTestCategory.Base : RedTestCategory.Routine)
         {
+            EnvelopeCanary = TestEnvelope.CanaryFailed([entry.Test]) ? RedTestResult.Fail : RedTestResult.Pass,
             FirstResult = RedTestResult.Fail,
             SameShaRepeat = entry.Repeat,
+            ReferenceEnvelopeRepeat = Parse(entry.Attempts.LastOrDefault(attempt => attempt.Phase == PostMergeRunPhases.Reference)?.Result ?? "unknown"),
             LastGreenControlResults = entry.Controls,
             BisectPoints = entry.Points,
         });

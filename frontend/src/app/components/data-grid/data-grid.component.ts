@@ -32,6 +32,8 @@ export class DataGridComponent<T> {
   /** Accessible name of the grid. */
   readonly label = input.required<string>();
   readonly selectable = input(false);
+  /** Several direct text actions need their own line on a narrow grid. */
+  readonly stackActionsOnNarrow = input(false);
   readonly selectedId = input<string | null>(null);
   /** Names the row in the accessible label of its open-details button. */
   readonly rowLabel = input<(row: T) => string>(() => '');

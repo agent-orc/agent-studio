@@ -13,6 +13,21 @@ public sealed class PostMergeRunStoreTests : IDisposable
     private const string Second = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
     [Fact]
+    public void A_skipped_unchanged_tip_does_not_clear_an_open_line_stop()
+    {
+        var store = new PostMergeRunStore(_root);
+        var run = Run("green", First, "window");
+        store.Record(Project, run);
+        store.Record(Project, run with { Status = "green", FinishedAtUtc = Now.AddMinutes(1),
+            Verdicts = [new("dotnet test", 0, false)] });
+        store.SetDevelopDisposition(Project, "red", "Base suite failed twice");
+        var skipped = store.Record(Project, Run("skip", First, "window") with { Status = "skipped" });
+        Assert.NotNull(skipped);
+        Assert.Equal("red", skipped.DevelopState);
+        Assert.Equal("Base suite failed twice", skipped.LineStop);
+    }
+
+    [Fact]
     public void GreenAdvancesLastGreenRedKeepsItAndSkippedRunIsRecorded()
     {
         var store = new PostMergeRunStore(_root);

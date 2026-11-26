@@ -1,9 +1,18 @@
-<section class="structure-view" [class.structure-view--embedded]="embedded()" data-testid="structure-view" aria-label="Structure and library registries" [attr.data-overlay]="overlay()"
+<section class="structure-view" [class.structure-view--embedded]="embedded()" data-testid="structure-view" aria-label="Structure and library registries" [attr.data-overlay]="overlay()" [attr.data-mode]="mode()"
          [attr.data-live]="live()" [attr.data-revision]="data().revision ?? null">
   <header class="structure-header">
     <div><p class="structure-eyebrow">Operations</p><h1>Structure</h1>
       <p>{{ projectName() ? projectName() + ' partial picture' : 'Workspace whole picture' }}</p></div>
     <div class="structure-controls" aria-label="Structure controls">
+      @if (liveCanvas() && !embedded() && !hostOnly()) {
+        @if (mode() === 'live') {
+          <app-status-indicator [tone]="live() ? 'success' : 'neutral'" [label]="live() ? 'Live updates' : 'Reads every 5 seconds'" [compact]="true" testId="structure-live-state"
+                                [detail]="data().generatedAt ? 'Last read ' + (data().generatedAt | date:'mediumTime') : null" />
+        }
+        <app-segmented-control [options]="modeOptions" [value]="mode()" ariaLabel="Structure drawing"
+                               (valueChange)="setMode($event)" />
+      }
+      @if (mode() === 'classic') {
       @if (!hostOnly()) {
         <app-segmented-control [options]="viewOptions" [value]="view()" ariaLabel="Projection"
                                (valueChange)="setView($event)" />
@@ -16,13 +25,19 @@
         <option value="" [selected]="!environment()">All environments</option>
         @for (item of environments(); track item.id) { <option [value]="item.environmentId || item.id" [selected]="environment() === (item.environmentId || item.id)">{{ item.label }}</option> }
       </select></label>
+      }
     </div>
   </header>
   @if (error()) { <p role="alert">{{ error() }}</p> }
   @if (loaded() && !error() && !data().nodes.length) {
     <p class="structure-empty" data-testid="structure-empty">No structure has been recorded yet.</p>
   }
-  @if (library().registries.length || libraryError()) {
+  @if (mode() === 'live') {
+    @if (liveComponent(); as component) {
+      @if (loaded() && data().nodes.length) { <ng-container *ngComponentOutlet="component; inputs: liveInputs()" /> }
+    } @else { <p class="structure-empty">Loading the live structure…</p> }
+  }
+  @if (mode() === 'classic' && (library().registries.length || libraryError())) {
     <section class="structure-library" aria-label="Library and registry inventory" data-testid="structure-library">
       <div class="structure-library-head"><div><h2>Libraries and registries</h2>
         <p>Published channels and workspace consumers</p></div>
@@ -62,7 +77,7 @@
       }
     </section>
   }
-  <div class="structure-body" [style.display]="loaded() && !data().nodes.length ? 'none' : null">
+  <div class="structure-body" [style.display]="mode() === 'live' || (loaded() && !data().nodes.length) ? 'none' : null">
     <div class="structure-main" tabindex="0" role="region" aria-label="Structure diagram"
          (keydown)="onCanvasKeydown($event)">
       <div class="structure-canvas" data-testid="structure-canvas" [attr.data-layout-ms]="layout().ms"
@@ -194,7 +209,7 @@
       }
     </aside>
   </div>
-  @if (data().nodes.length) {
+  @if (data().nodes.length && mode() === 'classic') {
     <p class="structure-shortcuts" data-testid="structure-shortcuts">Keys 1–3 change detail · H host · C container · Escape clears selection</p>
   }
 </section>

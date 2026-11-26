@@ -947,7 +947,7 @@ public static class LeaseEndpoints
                     .ToList();
                 // AGT-3587: claim in each project's displayed Ready order, the
                 // same order the local runner and the board use.
-                var eligible = LaneSortApplier.PickupOrder(routable, settings.Get);
+                var eligible = overlapGuard.Order(routable, settings.Get, path: "remote-claim");
                 var occupiedByProject = ProjectExecutionPolicy.ProjectOccupancy(liveSnapshot);
                 // DS-0: the scope comparison set per project, built once per
                 // claim and only for a project that has a candidate.
@@ -1243,7 +1243,7 @@ public static class LeaseEndpoints
                         if (!overlapSets.TryGetValue(task.ProjectName, out var overlapSet))
                         {
                             overlapSet = OverlapComparisonSet.ForProject(
-                                liveSnapshot, task.ProjectName, overlapWindow, TaskScopePrediction.Predict,
+                                liveSnapshot, task.ProjectName, overlapWindow, overlapGuard.Predict,
                                 overlapIntegration, repository.DefaultBranch);
                             overlapSets[task.ProjectName] = overlapSet;
                         }
@@ -1469,6 +1469,12 @@ public static class LeaseEndpoints
                     : req.IdempotencyKey.Trim();
                 var briefVersion = BriefVersionStore.ReadOrCreate(candidate.FolderPath);
                 runSpec = runSpec with { BriefVersion = briefVersion };
+                if (!overlapGuard.ValidateLive(candidate))
+                {
+                    RecordRejection(candidate, "dispatch-plan-refresh", "The live dispatch plan or lease changed; wait for the next claim.");
+                    return Results.Ok(WithCapacity(new RunnerClaimResponse(RunnerClaimStatus.Empty,
+                        Message: "The live dispatch plan or lease changed; retry the claim.")));
+                }
                 var acquire = leases.TryAcquire(new RunLeaseAcquireRequest(
                     taskKey, req.RunnerId.Trim(), req.RunnerName.Trim(), req.Hostname,
                     req.Pid, req.BackendName, req.RequestedTtlSeconds,
@@ -1636,6 +1642,7 @@ public static class LeaseEndpoints
                     TriggerSource = remoteTrigger.TriggerSource,
                     Cli = "remote-runner",
                     RunAttemptId = acquire.Lease.AttemptId,
+                    DispatchDecisionId = overlapGuard.TakeDecisionId(candidate),
                     Model = runSpec.Model,
                     ThinkingLevel = runSpec.ThinkingLevel,
                     Cwd = candidate.FolderPath,

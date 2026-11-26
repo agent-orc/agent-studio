@@ -22,6 +22,18 @@ public sealed class OperatorAttentionTests : IDisposable
         TimeSpan.FromSeconds(5), TimeSpan.FromHours(24), TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(15));
 
     [Fact]
+    public void Owner_options_preserve_policy_labels_and_recommendations()
+    {
+        OperatorOwnerOption[] options = [new("Extend24Hours", "extend 24 hours", false),
+            new("ReportOnlyWithCard", "report-only with a card", true)];
+        var fact = new OperatorDecisionFact(OperatorDecisionTypes.PostMergeRedIncident, "expired", "alpha", "AGT-1",
+            "Quarantine reached 48 hours.", At, [], OwnerOptions: options);
+        var item = Assert.Single(OperatorAttention.Project([fact], OperatorDecisionReader.Everything).Items);
+        Assert.Equal(options, item.OwnerOptions);
+        Assert.Equal("ReportOnlyWithCard", Assert.Single(item.OwnerOptions!, option => option.Recommended).Id);
+    }
+
+    [Fact]
     public void Open_health_incident_is_first_and_clears_on_recovery_while_successful_deploys_stay_quiet()
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>

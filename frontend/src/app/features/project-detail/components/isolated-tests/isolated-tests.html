@@ -1,0 +1,23 @@
+<section data-testid="isolated-tests" aria-labelledby="isolated-tests-title" [attr.aria-busy]="loading()">
+  <header><h3 id="isolated-tests-title">Isolated tests</h3><span>{{ active().length }} active</span></header>
+  <p>Held tests pause integration in their area and block releases. Report-only tests hold nothing.</p>
+  @if (loading()) {
+    <app-loading-surface label="Loading isolated tests…" />
+  } @else if (error()) {
+    <p role="alert">Isolated tests could not be loaded. <button type="button" (click)="load(projectName())">Try again</button></p>
+  } @else if (!active().length) {
+    <p data-testid="isolated-tests-empty">No isolated tests.</p>
+  } @else {
+    <div class="columns" aria-hidden="true"><span>Test</span><span>Kind</span><span>Area held</span><span>Card</span><span>Ends in</span></div>
+    @for (entry of active(); track entry.id) {
+      <article data-testid="isolated-test-row">
+        <strong>{{ entry.test }}</strong>
+        <app-status-indicator [tone]="entry.kind === 'held' ? 'warning' : 'neutral'"
+          [label]="entry.kind === 'held' ? 'Held' : 'Report-only'" [compact]="true" />
+        <div><small>Area held</small>{{ entry.kind === 'report-only' ? 'None' : (entry.coveringFolders.join(', ') || entry.suiteId || 'Test project') }}</div>
+        <a [href]="'#/tasks/' + entry.card" (click)="$event.preventDefault(); openCard.emit(entry.card)">{{ entry.card }}</a>
+        <span class="ends" [title]="(entry.expiresAtUtc | date:'medium':'UTC') + ' UTC'"><small>Ends in</small>{{ endsIn(entry) }}</span>
+      </article>
+    }
+  }
+</section>

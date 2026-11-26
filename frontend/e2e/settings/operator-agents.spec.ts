@@ -706,3 +706,37 @@ test('owner opens and closes a break-glass window with two fresh factor checks',
   await expect(section.getByTestId('break-glass-windows')).toContainText('AGT-9000');
   await shoot(page, 'section[aria-labelledby="access-break-glass-title"]', 'break-glass-closed');
 });
+
+for (const [kind, label] of [['tpm', 'TPM key (not yet verified on real hardware)'], ['secure-enclave', 'Secure Enclave key (not yet verified on real hardware)'], ['memory', 'Memory key']]) {
+  test(`hardware binding ${kind} appears on confirmation and session rows in both themes`, async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1200 });
+    mkdirSync(resultDir, { recursive: true });
+    const state = await stubNetworkedOwner(page);
+    const thumb = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
+    const agent = state.agents[0];
+    Object.assign(agent.sessions[0], { device: { deviceId: 'device-hardware', label: 'agent@workstation', bindingKind: kind,
+      keyThumbprint: thumb, deviceKeyThumbprint: kind === 'memory' ? null : thumb,
+      requestedAddress: '198.51.100.7', confirmedAddress: '198.51.100.7', signInId: 'signin-hardware' } });
+    await page.route('**/api/auth/iam/operator-sign-ins/lookup', route => json(route, {
+      signInId: 'signin-hardware', userCode: 'WDJB-MJHT', state: 'pending', deviceLabel: 'agent@workstation',
+      keyThumbprint: thumb, deviceKeyThumbprint: kind === 'memory' ? null : thumb, bindingKind: kind,
+      knownForAgentIds: [], requestedAgent: agent.name, requestedAgentId: agent.id, requestedClasses: [],
+      requestedAddress: '198.51.100.7', browserAddress: '198.51.100.7', addressMatches: true,
+      createdAt: created, expiresAt: new Date(Date.now() + 600_000).toISOString(), lifetimeHours: [1, 8], defaultLifetimeHours: 8,
+      agents: [{ id: agent.id, name: agent.name }],
+    }));
+    const access = await openAccess(page);
+    const row = access.getByTestId(`access-operator-session-device-${agent.sessions[0].id}`);
+    await expect(row).toContainText(label);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await row.screenshot({ path: join(resultDir, `binding-${kind}-session-${theme}--mocked.png`) });
+    }
+    await page.goto('/#/terminal-sign-in?code=WDJBMJHT');
+    await expect(page.getByTestId('terminal-sign-in-binding')).toHaveText(label);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.getByTestId('terminal-sign-in').screenshot({ path: join(resultDir, `binding-${kind}-confirmation-${theme}--mocked.png`) });
+    }
+  });
+}

@@ -12,7 +12,7 @@ namespace AgentStudio.Tests;
 /// </summary>
 internal static class JsonSchemaSubsetValidator
 {
-    private static readonly HashSet<string> Annotations = ["$schema", "$id", "title", "description", "$defs"];
+    private static readonly HashSet<string> Annotations = ["$schema", "$id", "title", "description", "default", "$defs"];
 
     public static IReadOnlyList<string> Validate(JsonElement schema, JsonElement instance)
     {

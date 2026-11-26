@@ -60,6 +60,7 @@ describe('AccessOperatorAgentsComponent', () => {
     fixture.detectChanges();
     const device = byTestId('access-operator-session-device-ses_term')?.textContent ?? '';
     expect(device).toContain('opsagent@workstation');
+    expect(device).toContain('Memory key');
     expect(byTestId('access-operator-session-thumbprint-ses_term')?.getAttribute('title')).toBe('NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs');
     expect(byTestId('access-operator-session-thumbprint-ses_term')?.textContent).toBe('NzbLsXh8uDCcd-6M…');
     expect(byTestId('access-operator-session-address-ses_term')?.textContent).toContain('From 198.51.100.7 at confirmation');

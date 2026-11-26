@@ -1,5 +1,5 @@
 @if (rows().length) {
-  <table class="grid" [attr.aria-label]="label()" [attr.data-testid]="testId()">
+  <table class="grid" [class.grid--stack-actions]="stackActionsOnNarrow()" [attr.aria-label]="label()" [attr.data-testid]="testId()">
     <colgroup>
       @for (column of columns(); track column.key) { <col [style.width]="column.width ?? null" /> }
     </colgroup>

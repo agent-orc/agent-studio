@@ -1,3 +1,6 @@
+@if (task().state === '2-ready' && task().dispatchPlanPosition; as position) {
+  <span class="pickup-hold__position" data-testid="dispatch-plan-position">Dispatch #{{ position }}</span>
+}
 @if (hold(); as held) {
   <section class="pickup-hold"
            [class.pickup-hold--detail]="variant() === 'detail'"

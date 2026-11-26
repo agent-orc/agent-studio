@@ -117,8 +117,8 @@ to stderr) and `--url`.
 
 | Command | Routes | Notes |
 |---|---|---|
-| `login [--agent <name>] [--label <text>] [--class <id>]... [--no-qr]` | `POST /api/auth/operator-sign-in`, `POST /api/auth/operator-sign-in/poll` | See [Login](#login). Sends no credential. |
-| `auth status` | `GET /api/operator/decisions?limit=1`, `GET /api/watch-paths` | Local file checks plus the identity probe. |
+| `login [--agent <name>] [--label <text>] [--class <id>]... [--lifetime <value>] [--no-qr]` | `POST /api/auth/operator-sign-in`, `POST /api/auth/operator-sign-in/poll` | See [Login](#login). Sends no credential. |
+| `auth status` | `GET /api/operator/decisions?limit=1`, `GET /api/watch-paths`, `GET /api/auth/operator-session/status` for an operator session | Local file checks, identity probe, chosen end, idle end and binding kind. |
 | `watch [--session <label>] [--after <cursor>\|--from-start] [--take-over --reason <text>] [--timeout <s>]` | `POST/DELETE /api/operator/watcher/lease`, `.../heartbeat`, `GET /api/operator/decisions/stream` | See [Watch](#watch). |
 | `triage [--project <p>]` | `GET /api/operator/batch-triage` | Flights, red and isolating members, pending pushes with age, next safe member operation. |
 | `eject <card> [--project <p>]` | `POST /api/projects/{p}/batch-gate/members/{card}/eject` | The only member action during isolation. |
@@ -173,7 +173,7 @@ It:
 5. writes the session into `operator-session` (mode 600, through a temporary
    file and a rename), sets `"credential": "operator-session"` in
    `studio-op.json` when it selects another file, and reports the actor, the
-   delegating Owner, the expiry and the classes. The token is never printed;
+   delegating Owner, the chosen end and the classes. The token is never printed;
    every later line masks it.
 
 A denied sign-in exits 13 (`sign-in-denied`), an expired code 14
@@ -183,8 +183,20 @@ private key only in resident memory. Commands and streams sign through a
 mode-600 socket or, on Windows, a named pipe with a user-only ACL (Windows
 PowerShell provides the transport). `operator-session-agent.json` stores only
 public connection metadata. `studio-op agent` runs a foreground signer for
-diagnostics; login starts and manages its own resident automatically. Hardware
-certification of the memory session key arrives in ES-5.
+diagnostics; login starts and manages its own resident automatically. ES-5
+certifies that session key with a persistent hardware device key before showing
+the code, when a platform provider is available. Login reports `tpm`,
+`secure-enclave` or a clear `memory` fallback, and `--json` reports the session's
+`bindingKind`. See [platform setup](operator-agent.md#hardware-device-keys-es-5).
+
+ES-6 adds `--lifetime 8h`, `24h`, `7d` or `30d`. This requests a shorter
+preselection; it cannot increase the installation default. Studio offers only
+lifetimes admitted by the role, agent and binding limits, with the Owner's
+second factor confirming the choice. The resident renews its 60-minute session
+key ten minutes before it ends, with a device signature and a proof from the
+current key. Renewal and resident status checks do not count as idle activity.
+A refusal names the reason and asks for `studio-op login`. No second factor is
+needed for renewal. See the [lifetime and ending guide](operator-agent.md#choose-a-lifetime-and-renew-the-device-binding-es-6).
 
 A copied session file gets 401 `dpop-required`. After the resident ends, sign
 in again. It stops on failed login, expiry, a signed 401, or within five seconds

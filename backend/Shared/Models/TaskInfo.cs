@@ -52,6 +52,8 @@ public record TaskInfo
     public string Agent { get; init; } = "";
     public DateTime CreatedAt { get; init; }
     public string CreationSource { get; init; } = "human";
+    public string? WaveId { get; init; }
+    public IReadOnlyList<string> CitedPaths { get; init; } = [];
     public string CreatedBy { get; init; } = "human";
     public string WatchPath { get; init; } = "";
     public string ProjectName { get; init; } = "";
@@ -556,6 +558,7 @@ public record TaskInfo
     /// every lane that is not a pickup lane. Never persisted to <c>task.json</c>.
     /// </summary>
     public PickupHoldStatus? PickupHold { get; init; }
+    public int? DispatchPlanPosition { get; init; }
 
     /// <summary>
     /// AGT-2069 — read-time spawn-visibility + spawn-contract projection for a

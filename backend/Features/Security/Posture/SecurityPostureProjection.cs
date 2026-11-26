@@ -116,7 +116,21 @@ public static class SecurityPostureProjection
 
         var agents = facts.OperatorAgents.Select(agent =>
         {
-            var live = agent.Sessions.Where(session => session.RevokedAt is null && session.ExpiresAt > facts.Now).ToArray();
+            var live = agent.Sessions.Where(session => session.RevokedAt is null && session.ExpiresAt > facts.Now
+                && (session.Device is null || ((session.KeyExpiresAt is null || session.KeyExpiresAt > facts.Now)
+                    && (session.LastUsedAt ?? session.CreatedAt).AddHours(facts.OperatorIdleHours) > facts.Now))).ToArray();
+            if (!agent.Disabled)
+            foreach (var session in live.Where(session => AccessSecurityStore.IsElevatedSession(session)
+                && facts.Now >= (session.ReviewedAt ?? session.CreatedAt).AddDays(30)))
+                drafts.Add(new Draft($"credentials:elevated-session:{agent.Id}:{session.Id}", 10, SecurityPostureAreas.Credentials,
+                    $"Elevated session running 30 days: {agent.Name} on {session.Device?.Label ?? session.Name}",
+                    "Keep this session for another 30 days of review, or end it. Its chosen end and idle limit still apply.", false,
+                    Subject: $"{agent.Id}:{session.Id}"));
+            if (!agent.Disabled)
+            foreach (var session in live.Where(session => session.NewAddressAt is { } addressAt && addressAt >= facts.Now.AddDays(-30)))
+                drafts.Add(new Draft($"credentials:renewal-address:{agent.Id}:{session.Id}", 10, SecurityPostureAreas.Credentials,
+                    $"Session renewed from a new address: {session.Device?.Label ?? session.Name}",
+                    $"Last renewal address: {session.LastAddress ?? "unknown"}. Review it in Settings > Access > Elevated sessions.", false));
             return new SecurityPostureOperatorAgent(agent.Id, agent.Name, agent.Disabled,
                 agent.Disabled ? 0 : live.Length, agent.Disabled ? null : live.Select(s => (DateTime?)s.ExpiresAt).Min());
         }).ToList();

@@ -108,6 +108,7 @@ public sealed record PickupHoldResolution(
 /// </summary>
 public sealed record PickupHoldStatus
 {
+    public DateTime? ExpiresAtUtc { get; init; }
     /// <summary>Dependency liveness class: satisfiable-soon, stalled, or unsatisfiable.</summary>
     public string Classification { get; init; } = PickupHoldClassifications.SatisfiableSoon;
     /// <summary>One of <see cref="PickupHoldMechanisms"/>.</summary>

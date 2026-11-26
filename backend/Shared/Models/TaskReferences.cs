@@ -13,14 +13,16 @@ namespace AgentStudio.Shared;
 [JsonConverter(typeof(TaskDependencyReferenceJsonConverter))]
 public sealed record TaskDependencyReference
 {
-    public TaskDependencyReference(string key, bool releaseGate = false, bool requiresCompletion = false)
+    public TaskDependencyReference(string key, bool releaseGate = false, bool requiresCompletion = false, string? origin = null)
     {
         Key = key;
+        Origin = origin;
         ReleaseGate = releaseGate;
         RequiresCompletion = requiresCompletion;
     }
 
     public string Key { get; init; }
+    public string? Origin { get; init; }
     public bool ReleaseGate { get; init; }
     public bool RequiresCompletion { get; init; }
 
@@ -49,12 +51,18 @@ public sealed class TaskDependencyReferenceJsonConverter : JsonConverter<TaskDep
             && gateElement.ValueKind == JsonValueKind.True;
         var requiresCompletion = root.TryGetProperty("requiresCompletion", out var completionElement)
             && completionElement.ValueKind == JsonValueKind.True;
-        return new TaskDependencyReference(key, releaseGate, requiresCompletion);
+        var origin = root.TryGetProperty("origin", out var originElement) && originElement.ValueKind == JsonValueKind.String
+            ? originElement.GetString() : null;
+        if (origin is not null && origin is not ("owner" or "dossier")
+            && !(origin.StartsWith("dispatch:", StringComparison.Ordinal)
+                && AgentStudio.Personas.PersonaDescriptorValidator.Slug().IsMatch(origin[9..])))
+            throw new JsonException("Dependency origin must be owner, dossier or dispatch:<persona>.");
+        return new TaskDependencyReference(key, releaseGate, requiresCompletion, origin);
     }
 
     public override void Write(Utf8JsonWriter writer, TaskDependencyReference value, JsonSerializerOptions options)
     {
-        if (!value.ReleaseGate && !value.RequiresCompletion)
+        if (!value.ReleaseGate && !value.RequiresCompletion && value.Origin is null)
         {
             writer.WriteStringValue(value.Key);
             return;
@@ -62,6 +70,7 @@ public sealed class TaskDependencyReferenceJsonConverter : JsonConverter<TaskDep
 
         writer.WriteStartObject();
         writer.WriteString("key", value.Key);
+        if (value.Origin is not null) writer.WriteString("origin", value.Origin);
         if (value.ReleaseGate) writer.WriteBoolean("releaseGate", true);
         if (value.RequiresCompletion) writer.WriteBoolean("requiresCompletion", true);
         writer.WriteEndObject();
@@ -153,6 +162,8 @@ public static class TaskReferenceKinds
 /// </summary>
 public record SetTaskReferencesRequest
 {
+    /// <summary>Optional compare-and-swap snapshot for reversible API operations.</summary>
+    public TaskReferences? ExpectedReferences { get; init; }
     public List<TaskDependencyReference>? DependsOn { get; init; }
     public List<string>? RelatedTo { get; init; }
     public List<string>? BlockedBy { get; init; }
@@ -290,12 +301,14 @@ public static class TaskReferenceValidator
             if (!indexes.TryGetValue(key, out var index))
             {
                 indexes[key] = result.Count;
-                result.Add(new TaskDependencyReference(key, dependency.ReleaseGate, dependency.RequiresCompletion));
+                result.Add(new TaskDependencyReference(key, dependency.ReleaseGate, dependency.RequiresCompletion, dependency.Origin));
             }
             else if (dependency.ReleaseGate && !result[index].ReleaseGate)
             {
                 result[index] = result[index] with { ReleaseGate = true };
             }
+            if (result[indexes[key]].Origin != dependency.Origin)
+                result[indexes[key]] = result[indexes[key]] with { Origin = "owner" };
             if (dependency.RequiresCompletion && !result[indexes[key]].RequiresCompletion)
                 result[indexes[key]] = result[indexes[key]] with { RequiresCompletion = true };
         }

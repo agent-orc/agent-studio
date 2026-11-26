@@ -60,6 +60,25 @@ public sealed class WorkspaceSettingsService
         }
     }
 
+    public AgentStudio.Dispatch.DispatchWeightRevision ReviseDispatchReviewWeights(string workspaceId,
+        IReadOnlyDictionary<string, int> weights, double gate, string author, DateTimeOffset at, string? reason)
+    {
+        AgentStudio.Dispatch.DispatchWeightRevision.Validate(weights, gate);
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var current = Get(workspaceId);
+            var history = current.DispatchReviewWeights.Count == 0
+                ? new[] { AgentStudio.Dispatch.DispatchWeightRevision.Default } : current.DispatchReviewWeights;
+            var revision = new AgentStudio.Dispatch.DispatchWeightRevision($"w{history.Count + 1}", author, at,
+                reason, new Dictionary<string, int>(weights), gate);
+            _cache[workspaceId] = current with { DispatchReviewWeights = [.. history, revision] };
+            try { Persist(throwOnFailure: true); }
+            catch { _cache[workspaceId] = current; throw; }
+            return revision;
+        }
+    }
+
     public void SetCodingEmergencyLimit(string workspaceId, int? seconds)
     {
         if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("Workspace is required.", nameof(workspaceId));
@@ -193,7 +212,7 @@ public sealed class WorkspaceSettingsService
         }
     }
 
-    private void Persist()
+    private void Persist(bool throwOnFailure = false)
     {
         var path = ResolveStorePath();
         if (path == null) return;
@@ -212,6 +231,7 @@ public sealed class WorkspaceSettingsService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to write workspace-settings.json at {Path}", path);
+            if (throwOnFailure) throw;
         }
     }
 

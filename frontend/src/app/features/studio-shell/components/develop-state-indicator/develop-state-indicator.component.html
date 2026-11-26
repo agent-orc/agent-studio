@@ -1,8 +1,6 @@
 @if (row(); as current) {
-  @if (current.developState) {
-  <span class="develop-state" [attr.data-state]="current.developState" data-testid="board-develop-state"
-    [title]="current.project + ' last green develop SHA: ' + (current.lastGreenSha || 'not recorded')">
-    <i aria-hidden="true"></i>Develop {{ current.developState }}
-  </span>
+  @if (current.developState || current.lineStop) {
+    <app-status-indicator [tone]="tone()" [label]="label()" [detail]="detail()"
+      [wrap]="true" testId="board-develop-state" />
   }
 }

@@ -51,9 +51,11 @@ public class TaskMutationService
     /// </summary>
     private readonly IAtomicJsonFileWriter? _keyFileWriter;
     private readonly bool _guardedDelivery;
+    private readonly AgentStudio.Projects.ProjectSettingsService? _dispatchSettings;
 
-    public TaskMutationService(TaskScannerService scanner, ClientIdentityStore clients, ProjectRegistry projectRegistry, TaskChangeNotifier notifier, ILogger<TaskMutationService> logger, TimelineLog? timeline = null, LaneMutexRegistry? laneMutex = null, GitService? git = null, IAtomicJsonFileWriter? fileWriter = null, OrchestratorLog? activityFeed = null, IConfiguration? configuration = null)
+    public TaskMutationService(TaskScannerService scanner, ClientIdentityStore clients, ProjectRegistry projectRegistry, TaskChangeNotifier notifier, ILogger<TaskMutationService> logger, TimelineLog? timeline = null, LaneMutexRegistry? laneMutex = null, GitService? git = null, IAtomicJsonFileWriter? fileWriter = null, OrchestratorLog? activityFeed = null, IConfiguration? configuration = null, AgentStudio.Projects.ProjectSettingsService? dispatchSettings = null)
     {
+        _dispatchSettings = dispatchSettings;
         _scanner = scanner;
         _clients = clients;
         _projectRegistry = projectRegistry;
@@ -607,8 +609,10 @@ public class TaskMutationService
                     source.InputTokens, source.CacheReadTokens, source.InputIncludesCached, source.UsageNormalization))
                     original = original with
                     {
-                        InputIncludesCached = null, UsageNormalization = null,
-                        ModelPriced = false, EstimatedApiCostUsd = 0m,
+                        InputIncludesCached = null,
+                        UsageNormalization = null,
+                        ModelPriced = false,
+                        EstimatedApiCostUsd = 0m,
                     };
                 else if (original is not null && !string.IsNullOrWhiteSpace(source.UsageNormalization))
                     original = original with
@@ -1294,18 +1298,58 @@ public class TaskMutationService
     /// caller's job (the endpoint owns the cross-task graph); this writer is
     /// deliberately thin so it can also persist a programmatically-built set.
     /// </summary>
-    public bool SetTaskReferences(string jobId, TaskReferences references, string? watchPath = null)
+    public bool SetTaskReferences(string jobId, TaskReferences references, string? watchPath = null,
+        TaskReferences? expectedReferences = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         var clean = TaskReferenceValidator.Normalize(references ?? new TaskReferences());
-        if (!TaskJsonFile.UpdateField(info.FolderPath, "references", clean, _logger, _keyFileWriter)) return false;
+        lock (TaskJsonFile.SyncRoot(info.FolderPath))
+        {
+            if (expectedReferences is not null)
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(info.FolderPath, "task.json")));
+                var field = document.RootElement.EnumerateObject().FirstOrDefault(p => p.Name.Equals("references", StringComparison.OrdinalIgnoreCase));
+                var current = field.Value.ValueKind == JsonValueKind.Undefined ? new TaskReferences()
+                    : field.Value.Deserialize<TaskReferences>(TaskJsonFile.ReadOpts) ?? new();
+                if (JsonSerializer.Serialize(TaskReferenceValidator.Normalize(current))
+                    != JsonSerializer.Serialize(TaskReferenceValidator.Normalize(expectedReferences)))
+                    throw new AgentStudio.Security.SecurityOperationException(409, "references-changed",
+                        "The references changed after the operation was planned.");
+                info = info with { References = current };
+            }
+            clean = AuthorizeDependencyChanges(info, clean);
+            if (!TaskJsonFile.UpdateField(info.FolderPath, "references", clean, _logger, _keyFileWriter)) return false;
+        }
         _logger.LogInformation(
             "task-references-set job={JobId} dependsOn={DependsOn} relatedTo={RelatedTo} blockedBy={BlockedBy} supersedes={Supersedes} followUpOf={FollowUpOf} raisedFollowUps={RaisedFollowUps} workbenches={Workbenches}",
             jobId, clean.DependsOn.Count, clean.RelatedTo.Count, clean.BlockedBy.Count,
             clean.Supersedes.Count, clean.FollowUpOf.Count, clean.RaisedFollowUps.Count,
             clean.Workbenches.Count);
         return Updated(info);
+    }
+
+    private static TaskReferences AuthorizeDependencyChanges(TaskInfo info, TaskReferences clean)
+    {
+        if (OperatorActorScope.Current is { PersonaId: { } persona } actor)
+        {
+            var old = info.References?.DependsOn ?? [];
+            var approved = actor.ApprovalId is not null && actor.ApprovedBy is not null;
+            foreach (var edge in old)
+            {
+                var replacement = clean.DependsOn.FirstOrDefault(e => e.Key.Equals(edge.Key, StringComparison.OrdinalIgnoreCase));
+                if (replacement == edge) continue;
+                // Approval metadata is installed only after middleware redeems a live, use-capped owner approval.
+                var permitted = AgentStudio.Runner.MonolithTransitionAdapter.DispatchDependencyRemoval(
+                    persona, edge.Origin, approved);
+                if (!permitted) throw new AgentStudio.Security.SecurityOperationException(403,
+                    "dispatch-foreign-edge", "Removing or changing another actor's dependency requires an explicit T2 approval.");
+            }
+            clean = clean with { DependsOn = clean.DependsOn.Select(edge =>
+                old.Any(e => e.Key.Equals(edge.Key, StringComparison.OrdinalIgnoreCase)) ? edge
+                    : edge with { Origin = "dispatch:" + persona }).ToList() };
+        }
+        return clean;
     }
 
     /// <summary>Atomically changes kind and content for the operator migration.</summary>
@@ -1454,6 +1498,7 @@ public class TaskMutationService
         {
             DependsOn = dependencies,
         });
+        references = AuthorizeDependencyChanges(info, references);
         TaskJsonFile.UpdateField(info.FolderPath, "references", references, _logger);
         _timeline?.Append(info.FolderPath, new TimelineEvent
         {
@@ -1961,6 +2006,7 @@ public class TaskMutationService
             : watchPaths.FirstOrDefault(w => WatchPathComparison.PathsEqual(w.Path, requestedPath));
 
         if (entry == null) return null;
+        if (!AgentStudio.Dispatch.DispatchSourceMetadata.Valid(req)) return null;
 
         var acceptanceScope = TaskAcceptanceScopes.Normalize(req.AcceptanceScope);
         if (req.AcceptanceScope is not null && acceptanceScope is null) return null;
@@ -2012,6 +2058,8 @@ public class TaskMutationService
                 ? req.TargetState
                 : null;
         if (targetState == null) return null;
+        targetState = AgentStudio.Runner.MonolithTransitionAdapter.DispatchWaveLanding(targetState, req.WaveId,
+            _dispatchSettings?.Get(entry.Name).DispatchMode ?? "off", isDecision);
         if (isDecision && targetState != TaskStates.Preparation) return null;
         // A new card has no review verdict, accepted epoch, or integration
         // proof. Protected lanes can only be entered through a guarded move.
@@ -2109,7 +2157,7 @@ public class TaskMutationService
                         && job.State == targetState)
                     .Select(job => (int?)job.Order).Max() ?? 0;
                 var nextOrder = Math.Max(residentMax, _lastCreateOrder.GetValueOrDefault(orderKey)) + 10;
-                resolvedOrder = req.Order != 999 ? req.Order : nextOrder;
+                resolvedOrder = AgentStudio.Runner.MonolithTransitionAdapter.DispatchWaveOrder(req.Order, nextOrder, req.WaveId);
                 _lastCreateOrder[orderKey] = Math.Max(residentMax, resolvedOrder);
             }
         }
@@ -2162,6 +2210,8 @@ public class TaskMutationService
             ["title"] = req.Title,
             ["createdAt"] = DateTime.UtcNow.ToString("o"),
             ["creationSource"] = string.IsNullOrWhiteSpace(req.CreationSource) ? "human" : req.CreationSource.Trim(),
+            ["waveId"] = req.WaveId?.Trim(),
+            ["citedPaths"] = req.CitedPaths.Select(p => p.Trim()).Distinct(StringComparer.Ordinal).ToArray(),
             ["createdBy"] = string.IsNullOrWhiteSpace(req.CreatedBy) ? ownerClientId : req.CreatedBy.Trim(),
             // Lane-entry sort anchor: a freshly created task has just entered
             // its initial lane, so stamp it now. Re-stamped on every move.

@@ -14,6 +14,7 @@ import type { PickupHoldStatus, TaskInfo, TaskLiveQueue } from './task.model';
 /** Mechanism keys as the backend `PickupHoldMechanisms` spells them. */
 const HOLD_LABELS: Record<string, string> = {
   'dependency-gate': 'Dependency gate',
+  'dispatch-plan': 'Dispatch hold',
   'dispatch-rejection': 'Dispatch refused',
   'crash-backoff': 'Crash cooldown',
   'pickup-policy': 'Pickup policy',

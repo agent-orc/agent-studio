@@ -89,7 +89,7 @@ public sealed class OverlapPredictionLedger(string? root = null)
 /// routing and leases. The cache depends on scope and delivery state, never on poll time.
 /// </summary>
 public sealed class OverlapDispatchGuard(TimeProvider time, ILogger<OverlapDispatchGuard> logger,
-    OverlapPredictionLedger evidence)
+    OverlapPredictionLedger evidence, AgentStudio.Dispatch.DispatcherShadowService? dispatchers = null)
 {
     private sealed record Cached(string Fingerprint, SlotAdmission Admission, DateTime Since, DateTime LoggedAt,
         TaskInfo Card, string Target);
@@ -99,9 +99,62 @@ public sealed class OverlapDispatchGuard(TimeProvider time, ILogger<OverlapDispa
     private readonly Dictionary<string, (string Fingerprint, DateTime Until)> _overrides = new(StringComparer.OrdinalIgnoreCase);
     public static readonly TimeSpan ReminderInterval = TimeSpan.FromMinutes(5);
 
+    public bool IsLive(string project) => dispatchers?.IsLive(project) == true;
+    public TaskParallelism Predict(TaskInfo card) => dispatchers?.Predict(card) ?? TaskScopePrediction.Predict(card);
+    public AgentStudio.OrchestrationDecisions.DispatchPickupDecision? Presentation(TaskInfo card) => dispatchers?.Presentation(card);
+    private readonly Dictionary<string, TaskInfo[]> _queues = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _decisionIds = new(StringComparer.OrdinalIgnoreCase);
+    public string? DecisionId(TaskInfo card) { lock (_gate) return _decisionIds.GetValueOrDefault(Key(card)); }
+
+    public string? TakeDecisionId(TaskInfo card)
+    {
+        lock (_gate)
+        {
+            _decisionIds.Remove(Key(card), out var id);
+            return IsLive(card.ProjectName) ? id : null;
+        }
+    }
+
+    public bool ValidateLive(TaskInfo card)
+        => !IsLive(card.ProjectName) || dispatchers?.Validate(card, DecisionId(card)) == true;
+
+    public IReadOnlyList<TaskInfo> Order(IEnumerable<TaskInfo> cards, Func<string, ProjectSettings> settings,
+        IReadOnlyList<RunningTask>? running = null, IReadOnlyList<InFlightTask>? inFlight = null, string path = "local")
+    {
+        var list = cards.ToArray();
+        var plans = new Dictionary<string, AgentStudio.OrchestrationDecisions.DispatchPlan>(StringComparer.OrdinalIgnoreCase);
+        foreach (var project in list.GroupBy(c => c.ProjectName))
+        {
+            var record = dispatchers?.RecordPick(project.First(), running ?? [], inFlight ?? [], path,
+                project.Select(c => c.Key ?? c.TaskKey).ToArray());
+            if (record is not null) plans[project.Key] = record.Plan;
+        }
+        var ordered = AgentStudio.Tasks.LaneSortApplier.PickupOrder(list, settings, project => plans.GetValueOrDefault(project));
+        lock (_gate)
+            foreach (var project in ordered.GroupBy(c => c.ProjectName)) _queues[path + "/" + project.Key] = project.ToArray();
+        return ordered;
+    }
+
     public SlotAdmission Decide(TaskInfo card, IReadOnlyList<RunningTask> running,
         IReadOnlyList<InFlightTask> inFlight, int max, string window, string path, string target)
     {
+        TaskInfo[]? queue;
+        lock (_gate) queue = _queues.GetValueOrDefault(path + "/" + card.ProjectName);
+        var considered = queue?.Any(c => c.Id == card.Id) == true
+            ? queue.SkipWhile(c => c.Id != card.Id).Select(c => c.Key ?? c.TaskKey).ToArray() : new[] { card.Key ?? card.TaskKey };
+        var dispatchRecord = dispatchers?.RecordPick(card, running, inFlight, path, considered);
+        if (IsLive(card.ProjectName))
+        {
+            var planDecision = dispatchers!.Pickup(card, dispatchRecord);
+            var id = dispatchRecord?.DecisionId ?? Guid.NewGuid().ToString("N");
+            lock (_gate) _decisionIds[Key(card)] = id;
+            dispatchers.RecordAdmission(card, id, planDecision, path);
+            return new SlotAdmission(planDecision.Admit
+                ? planDecision.Exclusive ? SlotDecision.RunExclusive : SlotDecision.Admit : SlotDecision.Serialize,
+                planDecision.Admit ? planDecision.Reason : $"{planDecision.Reason}: waits for {planDecision.WaitsFor}")
+                { DispatchDecisionId = id, Window = OverlapWindows.InFlight,
+                    ConflictTaskId = planDecision.Admit ? null : planDecision.WaitsFor };
+        }
         var now = time.GetUtcNow().UtcDateTime;
         var scope = TaskScopePrediction.Predict(card) with { BypassScope = OverlapComparisonSet.IsDeliveryRecovery(card) };
         var fingerprint = Hash(string.Join('|', window, max, card.State, card.EnteredLaneAt.Ticks,
@@ -171,6 +224,7 @@ public sealed class OverlapDispatchGuard(TimeProvider time, ILogger<OverlapDispa
 
     public void Claimed(TaskInfo card, string? attemptId = null)
     {
+        if (IsLive(card.ProjectName) && DecisionId(card) is { } decisionId) dispatchers?.BindRun(card, decisionId, attemptId);
         lock (_gate)
         {
             _overrides.Remove(Key(card));

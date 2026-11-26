@@ -2939,3 +2939,14 @@ recall are retained with the exact forecast that was measured, even after a
 later prompt edit. An empty precision or recall denominator is null. Failed
 Git collection logs a warning and retries without recording an empty diff as
 success. No task workspace files are written by the dispatch collector.
+
+### Line guardian role (RT-8)
+
+The project-scoped `line-guardian` uses the dispatcher's role-file pattern,
+with kind `guardian` and aspect `delivery`, independently of dispatcher
+strategies and ordinary persona occurrence scheduling. Its charter, exact
+rights tiers and budget are in `backend/Policies/personas/line-guardian.*.v1.json`.
+Authority starts in shadow and changes only through an owner project setting.
+Its principal is `persona:line-guardian:<project-id>`. The receipt journal,
+budget admission, owner requests and API are documented in
+[pipeline.md](pipeline.md#line-guardian-authority-and-shadow-journal-rt-8-agt-4009).

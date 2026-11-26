@@ -8,6 +8,11 @@ public static class DispatchRegistration
     public static IServiceCollection AddDispatch(this IServiceCollection services)
     {
         services.AddSingleton<DispatchStore>();
+        services.AddSingleton<DispatchWaveService>();
+        services.AddSingleton<IDispatchRecutDrafting, DispatchRecutDrafting>();
+        services.AddSingleton<DispatchRecutService>();
+        services.AddSingleton<DispatchReviewService>();
+        services.AddSingleton<DispatcherShadowService>();
         services.AddSingleton<DispatchForecastService>();
         services.AddHostedService(provider => provider.GetRequiredService<DispatchForecastService>());
         return services;
@@ -15,6 +20,63 @@ public static class DispatchRegistration
 
     public static void MapDispatchEndpoints(this WebApplication app)
     {
+        app.MapDispatchRecutEndpoints();
+        app.MapDispatchWaveEndpoints();
+        app.MapDispatchReviewEndpoints();
+        app.MapGet("/api/projects/{project}/dispatch/mode", (string project,
+            TaskScannerService scanner, ProjectSettingsService settings, HttpContext context, ProjectRegistry projects) =>
+        {
+            var entry = scanner.GetWatchPaths().FirstOrDefault(e => e.Name.Equals(project, StringComparison.OrdinalIgnoreCase));
+            if (entry is null) return Results.NotFound();
+            if (!ProjectAccessAuthorization.AllowsTasks(context, [entry.Name], IamPermissions.ProjectRead, projects))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            return Results.Ok(new { mode = settings.Get(entry.Name).DispatchMode });
+        })
+            .RequirePermission(IamPermissions.ProjectRead);
+        app.MapPut("/api/projects/{project}/dispatch/mode", (string project, DispatchModeRequest request,
+            TaskScannerService scanner, ProjectSettingsService settings) =>
+        {
+            if (!scanner.GetWatchPaths().Any(e => e.Name.Equals(project, StringComparison.OrdinalIgnoreCase))) return Results.NotFound();
+            if (request.Mode is not ("off" or "shadow" or "live"))
+                return Results.BadRequest(new { error = "Use off, shadow or live." });
+            settings.SetDispatchMode(project, request.Mode);
+            return Results.Ok(new { mode = settings.Get(project).DispatchMode });
+        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.ProjectSettingsWrite);
+
+        app.MapGet("/api/projects/{project}/dispatch/personas", (string project, HttpContext context,
+            TaskScannerService scanner, ProjectRegistry projects, DispatchStore store) =>
+        {
+            var entry = scanner.GetWatchPaths().FirstOrDefault(e => e.Name.Equals(project, StringComparison.OrdinalIgnoreCase));
+            if (entry is null) return Results.NotFound();
+            if (!ProjectAccessAuthorization.AllowsTasks(context, [entry.Name], IamPermissions.ProjectRead, projects))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            return Results.Ok(new { lease = store.ReadLease(entry.Name), shadow = store.ReadShadow(entry.Name).Where(r => r.Shadow),
+                live = store.ReadLive(entry.Name), runDecisions = store.ReadRunDecisions(entry.Name),
+                log = store.ReadDispatcherLog(entry.Name), chainIntact = store.VerifyDispatcherLog(entry.Name) });
+        }).RequirePermission(IamPermissions.ProjectRead);
+
+        app.MapGet("/api/projects/{project}/dispatch/conflicts", (string project, DateTimeOffset? from,
+            DateTimeOffset? to, HttpContext context, TaskScannerService scanner, ProjectRegistry projects, DispatchStore store) =>
+        {
+            var entry = scanner.GetWatchPaths().FirstOrDefault(entry => entry.Name.Equals(project, StringComparison.OrdinalIgnoreCase));
+            if (entry is null) return Results.NotFound();
+            if (!ProjectAccessAuthorization.AllowsTasks(context, [entry.Name], IamPermissions.ProjectRead, projects))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (from is not null && to is not null && from >= to)
+                return Results.BadRequest(new { error = "Use a start time before the end time." });
+            return Results.Ok(store.ReadConflicts(entry.Name, from, to));
+        }).RequirePermission(IamPermissions.ProjectRead);
+
+        app.MapPost("/api/projects/{project}/dispatch/conflicts/backfill", (string project,
+            TaskScannerService scanner, AgentStudio.Git.GitService git) =>
+        {
+            var entry = scanner.GetWatchPaths().FirstOrDefault(entry => entry.Name.Equals(project, StringComparison.OrdinalIgnoreCase));
+            if (entry is null) return Results.NotFound();
+            var repo = git.ResolveRepositoryRoot(entry);
+            if (repo is null) return Results.Conflict(new { error = "The project repository is unavailable." });
+            return Results.Ok(new { added = git.BackfillDispatchConflicts(repo, entry.Name, DateTimeOffset.UtcNow) });
+        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.WorkspaceAdminister);
+
         app.MapGet("/api/projects/{project}/dispatch/forecasts", async (string project, string? cards,
             HttpContext context, TaskScannerService scanner, TaskIndexCache tasks, ProjectRegistry projects, DispatchStore store) =>
         {
@@ -63,8 +125,10 @@ public static class DispatchRegistration
             settings.SetDispatchHubFiles(entry.Name, request.Files);
             forecasts.Refresh();
             return Results.Ok(settings.Get(entry.Name).DispatchHubFiles ?? TouchForecast.DefaultHubFiles);
-        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.ProjectSettingsWrite);
+        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.WorkspaceAdminister);
     }
 }
 
 public sealed record DispatchHubFilesRequest(IReadOnlyList<string>? Files);
+
+public sealed record DispatchModeRequest(string Mode);

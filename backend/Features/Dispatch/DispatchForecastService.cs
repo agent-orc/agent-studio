@@ -124,7 +124,8 @@ public sealed class DispatchForecastService(TaskScannerService scanner, TaskInde
                                     var subject = ReviewSubjectStore.Read(card.FolderPath);
                                     if (subject is not null && !previous.Deliveries.Any(delivery => delivery.ResultSha == subject.ResultSha))
                                     {
-                                        var delivery = ReadDelivery(repo, tip, subject, previous, now, stoppingToken);
+                                        var delivery = CollectDelivery(repo, project.Name, card.Key ?? card.Id,
+                                            tip, subject, previous, now, stoppingToken);
                                         previous = previous with { Deliveries = [.. previous.Deliveries, delivery] };
                                         store.Write(project.Name, key, previous);
                                     }
@@ -133,7 +134,7 @@ public sealed class DispatchForecastService(TaskScannerService scanner, TaskInde
                                 {
                                     var promptPath = Path.Combine(card.FolderPath, "prompt.md");
                                     var prompt = File.Exists(promptPath) ? File.ReadAllText(promptPath) : "";
-                                    var text = card.Title + "\n" + prompt;
+                                    var text = card.Title + "\n" + prompt + "\n" + string.Join("\n", card.CitedPaths);
                                     var revision = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
                                     if (previous is null || enteredReady || previous.PromptRevision != revision || !previous.HubFiles.SequenceEqual(hubs)
                                         || (card.State == TaskStates.Ready && previous.ReadyEntryAt != card.EnteredLaneAt))
@@ -174,6 +175,13 @@ public sealed class DispatchForecastService(TaskScannerService scanner, TaskInde
             changes.JobsBulkChanged -= Refresh;
             watcher.OnPathChanged -= PathChanged;
         }
+    }
+
+    internal TouchDelivery CollectDelivery(string repo, string project, string card, string integrationTip,
+        ReviewSubjectRecord subject, TouchForecastV1 forecast, DateTimeOffset now, CancellationToken token)
+    {
+        git.TryBackfillDispatchConflicts(repo, project, now, subject.BaseSha, subject.ResultSha, card);
+        return ReadDelivery(repo, integrationTip, subject, forecast, now, token);
     }
 
     internal static TouchDelivery ReadDelivery(string repo, string integrationTip, ReviewSubjectRecord subject,

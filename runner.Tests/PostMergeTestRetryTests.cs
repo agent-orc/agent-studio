@@ -5,6 +5,22 @@ namespace AgentRunner.Tests;
 
 public sealed class PostMergeTestRetryTests
 {
+    [Fact]
+    public async Task Confirmed_failure_runs_once_in_the_reference_envelope_and_records_the_result()
+    {
+        var runs = new List<PostMergeTestRun>();
+        var referenceCalls = 0;
+        var verdict = await PostMergeTestRetry.RepeatAsync(new("dotnet test runner.Tests/Tests.csproj", 1, false,
+            FailedTests: ["Runner.Tests.Example.Fails"]), tests => tests,
+            _ => Task.FromResult((1, false, "")), runs.Add, new string('a', 40),
+            referenceRun: _ => { referenceCalls++; return Task.FromResult((0, false, "")); });
+        Assert.Equal(1, referenceCalls);
+        Assert.Equal([PostMergeRunPhases.Repeat, PostMergeRunPhases.Reference], runs.Select(run => run.Phase));
+        Assert.True(runs[1].Passed);
+        Assert.Equal(0, verdict.ExitCode);
+        Assert.Equal(["Runner.Tests.Example.Fails"], verdict.FlakyTests);
+    }
+
     [Theory]
     [InlineData("runner", 0)]
     [InlineData("runner", 1)]

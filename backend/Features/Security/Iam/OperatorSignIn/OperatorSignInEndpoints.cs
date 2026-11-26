@@ -20,6 +20,7 @@ public static class OperatorSignInEndpoints
 
     public static void MapOperatorSignInEndpoints(this WebApplication app)
     {
+        app.MapOperatorSessionEndpoints();
         app.MapPost(StartPath, async (HttpContext context, AccessSecurityStore store) =>
         {
             var (request, refusal) = await ReadBoundedAsync<StartOperatorSignInRequest>(context);
@@ -44,13 +45,14 @@ public static class OperatorSignInEndpoints
             return AccessSecurityEndpoints.Execute(() =>
             {
                 context.Response.Headers.CacheControl = "no-store";
-                return Results.Ok(store.PollOperatorSignIn(request!.PollHandle, context.Request));
+                return Results.Ok(store.PollOperatorSignIn(request!.PollHandle, context.Request, request.Certification));
             });
         });
     }
 
     public static void MapOperatorSignInOwnerEndpoints(this RouteGroupBuilder iam)
     {
+        iam.MapOperatorSessionOwnerEndpoints();
         var signIns = iam.MapGroup("/operator-sign-ins");
 
         signIns.MapPost("/lookup", (OperatorSignInCodeRequest request, HttpContext context, AccessSecurityStore store) =>
@@ -86,7 +88,7 @@ public static class OperatorSignInEndpoints
     }
 
     /// <summary>Reads at most 4 KiB of JSON before binding, with or without Content-Length.</summary>
-    private static async Task<(T? Request, IResult? Refusal)> ReadBoundedAsync<T>(HttpContext context) where T : class
+    internal static async Task<(T? Request, IResult? Refusal)> ReadBoundedAsync<T>(HttpContext context) where T : class
     {
         if (!context.Request.HasJsonContentType()) return (null, Results.StatusCode(StatusCodes.Status415UnsupportedMediaType));
         if (context.Request.ContentLength > MaxBodyBytes) return (null, Results.StatusCode(StatusCodes.Status413PayloadTooLarge));

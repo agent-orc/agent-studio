@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-12
+Version: 2026-11-26
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -461,22 +461,8 @@ The timers use a dedicated checkout and a local exclusive claim file; the
 server fences the active run ID. A second claim waits, and an abandoned server
 claim expires after four hours for windows or fourteen hours for the nightly
 suite. Prepare, build, test discovery, shards, retries, and attribution commands
-start with a cleared process environment (AGT-3981). Only tool and OS variables
-(`PATH`, `HOME`, `DOTNET_ROOT`, locale, certificate paths, temp paths, the
-`PLAYWRIGHT_BROWSERS_PATH` tool cache required by preparation, and Windows
-process plumbing) and the project's declared environment are supplied. Daemon
-`RUNNER_*`, `AGENT_HOST_*`, provider credentials, and Git credentials are not
-inherited. The worker also removes its service-token variables from declared
-values. Repository fetches keep the host's existing credential routing.
-Host-owned Linux commands also run in a fresh sibling `worker-*` cgroup for
-each command (AGT-3983), using the coding worker's CPU and task envelope under
-the role aggregate. Attachment is required before the command executes. The
-scheduler defers execution when delegation is unavailable; it never falls back
-into the daemon leaf. Completion or cancellation kills remaining cgroup
-residents and removes the command marker. The review build-server fence also
-prevents host-shared MSBuild or Roslyn servers from doing work outside that
-command's cgroup. Standalone timer invocations keep
-their independently configured service context. Real cgroup tests are
+use the shared [test envelope](#shared-test-envelope-rt-6). Repository fetches
+keep their separate credential routing. Real cgroup tests are
 `MachineBound` and require an explicitly owned transient test scope, rather
 than borrowing the daemon's delegated service subtree.
 
@@ -499,7 +485,7 @@ alter integration transitions.
 No automatic code path moves a repair card out of Progress, Auto Review
 (including queued or executing gates and the wait for integration), Human
 Review or Completed because of a red develop, and no review attempt is
-superseded. Both receipt processing and the periodic overdue check take the
+superseded. Legacy receipt processing and its periodic overdue check take the
 decision from `RedDevelopRepairPolicy`, whose facts carry the repair card's
 lane and the incident age.
 
@@ -565,6 +551,55 @@ a static artifact, and no promotion train. Agent Studio declares no Stage
 environment (its Studio instance is its Production, AGT-3879), so it does not
 opt in.
 
+### Shared test envelope (RT-6)
+
+RT-D10 option B is implemented by `TestEnvelope` and `TestCommandEnvelope` in
+TaskServer.Contracts. Remote Review, the build-test gate and post-merge commands
+start with a cleared environment. The builder supplies tool and OS variables,
+the project's declared `environment`, and run-owned HOME and temporary roots.
+Prepare, build and tests share the writable roots for the lifetime of the run,
+so restored packages remain available. Envelope roots are short enough for the
+test bootstrap to create its own child temp root without leaving the run.
+Preparation-owned dependency cache
+bindings and review resource namespaces still apply. Daemon settings are never
+inherited; provider, Git and token credentials are also excluded from declared
+values. A declared `RUNNER_SERVER_URL` remains visible to the canary so a bad
+project declaration is diagnosed rather than silently accepted.
+
+On Linux each command receives a fresh sibling `worker-test-*` leaf under an
+already delegated service subtree. `cpu.max` is `300000 100000` by default and
+`DOTNET_PROCESSOR_COUNT` is 3. Set `TEST_ENVELOPE_CORES` consistently on all
+three execution services to configure the shared token size. Existing daemon
+processor settings do not leak into the test process. The build-server fence
+keeps compilation inside the command. Teardown kills remaining cgroup residents.
+A host without delegation records `cgroupKind: unavailable` and a null `cpuMax`
+and continues; it does not claim to have applied a worker limit.
+
+Review environment and command receipts, gate process receipts and post-merge
+receipts carry `envelope`: allowlist-name and declared-environment digests,
+cgroup kind and measured quota, processor count, SDK version, shard plan, and
+start and peak load per core (15-second samples). The allowlist digest describes
+the shared builder's variable names; run-owned path values and role-specific
+resource names do not change it. Digests never expose values. Old receipts
+remain readable. Verdict cache identities include the envelope revision and
+processor count, and reused review evidence retains its original fingerprint.
+
+`TestEnvelopeCanaryTests` belongs to `backend-base`. From inside the test host it
+checks forbidden variables, owned HOME and temp, configured processor count,
+and worker membership when delegation is available. It accepts only an explicit
+`unavailable` observation on a Linux host without delegation. A failed canary
+is environment evidence for RT-2, produces an inconclusive post-merge receipt
+and no merge attribution or line stop. Gate and review failures use their
+infrastructure path. A failure that survives the same-SHA confirmation gets one
+serial reference repeat per failed method (or one whole-command repeat when a
+focused filter is unavailable), using `reference=1` and the same token size.
+Its attempts and fingerprint are retained separately for RT-2 comparison.
+Recovery in the matching reference envelope is flaky, runs no attribution and
+never stops the line; recovery after a fingerprint mismatch remains environment
+evidence in RT-2.
+The canary adds one small process-local check to the base suite; its 600-second
+cap remains unchanged.
+
 ### Flaky tests after integration (AGT-3976)
 
 Every failed routine suite in a window or nightly run gets one same-tip repeat,
@@ -629,11 +664,10 @@ so receipts of older runners stay valid, and the run route bounds them:
   candidate order with their two results and verdict, the bisect
   classification, the stop reason and the partial build command.
 - `testVerdicts[]`: one entry per failed test with suite id and category,
-  every attempt (`initial`, `repeat`, `control`, `bisect`) with result, SHA and
+  every attempt (`initial`, `repeat`, `reference`, `control`, `bisect`) with result, SHA and
   the duration of the run that produced it, `quarantined`, and the RT-2
-  `classificationHint` from `RedTestTriagePolicy.ClassificationHint`. The hint
-  treats envelope facts the runner does not measure (canary, reference
-  fingerprint) as not contradicting; the server's triage decides.
+  `classificationHint` from `RedTestTriagePolicy.ClassificationHint`. The hint carries measured canary evidence; the server also consumes reference-repeat
+  and fingerprint evidence through RT-2.
 - `testFile`, `coveringFolders` and `coveringFallback` per test that did not
   recover. The test source file is found by class name in the test project.
   Identifiers of at least eight characters that name a tracked `.cs` type file
@@ -644,27 +678,68 @@ so receipts of older runners stay valid, and the run route bounds them:
   runtime coverage.
 - `focusedRuns[]`: every repeat, control and bisect run and every partial build
   with phase, SHA, test count, exit code and duration, and `durationMs` on each
-  command verdict. These replace the Dossier's unmeasured estimate of a focused
-  run's cost. A short measurement note follows here one week after the slice
-  is deployed.
+  command verdict. The [measurement note](#focused-run-cost-measurement)
+  records a local baseline and defines the first-week receipt cohort.
 - `envelope` on the running and terminal receipt of every window and nightly
-  run: digest of the allowlisted variable names passed from the host, digest of
-  the declared environment, cgroup kind (`worker`, `daemon`, `process`,
-  `none`) and `cpu.max` when readable, processor count, SDK version, shard
+  run: digest of the shared allowlist names, digest of
+  the declared environment, cgroup kind (`worker`, `unavailable`, `none`; older receipts also use
+  `daemon` and `process`) and `cpu.max` when readable, processor count, SDK version, shard
   plan, load per core at start and the peak of a 15-second load sample during
   the run. Skip receipts run nothing and carry no envelope. Comparing
-  fingerprints with a reference envelope is RT-6.
+  fingerprints uses the RT-6 reference receipt.
 
 The receipt still feeds the compatibility repair flow in the next section. Quarantine starts,
-covering-folder holds and the triage ladder belong to RT-4 and RT-5.
+covering-folder holds and the triage ladder are implemented by RT-4 and RT-5.
+
+#### Focused-run cost measurement
+
+The 26 November 2026 delivery check measured the Dossier's previously unmeasured
+test-host startup and discovery cost with one backend method. The reproducible
+recipe is four sequential pairs of the focused command below, each preceded
+by `dotnet build backend.Tests/OrchestratorApi.Tests.csproj --no-restore`:
+
+```sh
+dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter '(Category!=MachineBound)&(FullyQualifiedName=AgentStudio.Tests.PostMergeRunStoreTests.GreenAdvancesLastGreenRedKeepsItAndSkippedRunIsRecorded)'
+```
+
+On the shared Linux runner with SDK 10.0.301 and 12 logical processors, all
+samples passed. The one-minute host load was 12.14 at start and 10.45 at end.
+The measured recipe took 66.09 seconds in total:
+
+| Command | Samples | Median | p95 (nearest rank) | Total |
+|---|---:|---:|---:|---:|
+| Focused test run | 8 | 5.78 s | 6.89 s | 47.72 s |
+| Test-project build | 4 | 4.63 s | 4.85 s | 18.37 s |
+
+This is a warm-cache local baseline at one SHA, outside the post-merge worker
+envelope. It excludes the initial same-tip repeat, tip preparation and full
+build, checkout time, and failure-dependent test work. It measures elapsed
+time, not CPU time or core-minutes. The raw samples, environment, exact commands
+and reproduction script are in AGT-4004's collected results (`focused-cost.json`,
+`cost-sample-*.log`, `measure-focused-cost.py`).
+
+For the first seven days after deployment, use terminal window and nightly
+receipts returned by `GET /api/runner/post-merge/projects/{project}`; retain
+daily exports because the store keeps only 512 receipts. Deduplicate by `id`
+and include only receipts carrying `focusedRuns`; report missing fields from
+older runners separately. Group by run kind, phase and stable envelope fields
+(digests, cgroup, processor count, SDK and shard plan), keeping start and peak
+load alongside the figures. Report counts, median, p95 and total `durationMs` for
+`repeat`, `control`, `bisect`, `control-build` and `bisect-build`, plus summed
+focused-run and partial-build time per incident (`failure.fingerprint`). Sum
+`focusedRuns` once per command execution, rather than `testVerdicts[].attempts`
+where one shared run's duration appears for each test.
+Record the date range, receipt and incident counts, and exclusions alongside
+the figures. A first-week production cohort is not available in this checkout;
+the local baseline cannot establish a production incident budget.
 
 ### Red develop repair (AGT-3312)
 
 RT-2 (AGT-4003) adds the pure `RedTestTriagePolicy`, `BisectVerdictPolicy` and
 `HoldScopePolicy` for the recommended RT-D1, RT-D2, RT-D4, RT-D5, RT-D6,
 RT-D7 and RT-D9 option B in the [Red test isolation Dossier](../../red-test-isolation/index.html).
-This slice adds no host wiring: the current repair flow below remains in use.
-Hosts will supply per-test repeat and envelope facts, last-green controls,
+RT-4 (AGT-4005) wires these decisions into the post-merge host for per-test
+receipts. Hosts supply per-test repeat and envelope facts, last-green controls,
 explicit double-run bisect points and their parents, project quarantine entries,
 repair lanes, ages and lift runs. Environment evidence marks a run inconclusive;
 a regression requires two passing controls and a failing point with a passing
@@ -694,6 +769,127 @@ expecting Flaky, Flaky, Environment and Environment with no line stop.
 `RedDevelopRepairPolicyTests` covers compatibility, while
 `TransitionDecisionBoundaryTests` and `MonolithDecisionBoundaryTests` guard
 the separation between pure decisions and host application.
+
+#### Quarantine authority and incident ladder (RT-4)
+
+Working decisions are RT-D2 B, RT-D3 B, RT-D4 B, RT-D5 B, RT-D7 B and
+RT-D11 B (API). `TestQuarantineStore` lives in `test-quarantines/` beside the
+`post-merge/` local-state directory. Each project has one atomically replaced
+record containing entries, mutation audit and immutable incident decisions.
+Resolved entries and audit are retained. The store never writes the repository
+file or creates a platform commit.
+
+`GET /api/projects/{name}/test-quarantines` lists server entries, including
+resolved entries, and active repository-file entries. The runner state route
+`GET /api/runner/post-merge/projects/{project}` exposes their active union as
+`quarantines`. File entries are owner report-only entries. Their `expiresOn`
+remains inclusive of the entire UTC day; server entries use exact UTC expiry.
+Both that route and `/api/develop-states` expose `quarantinedCount`, `heldCount`
+and `lineStop`. Develop is green for isolated routine failures and red for a
+line stop. `inconclusiveRunId` identifies an environment or unconfirmed receipt
+without treating it as proof of a code regression. Raw run evidence is retained.
+
+RT-7 (AGT-4008), working choice RT-D11 B, projects this state through the shared
+header status indicator: green, green with a quarantine count, running, or
+stopped with the line-stop reason. Only the line stop uses error tone. Its
+accessible tooltip lists quarantined tests, kinds and end times. Project
+Operations lists active isolated tests, held areas, fix cards and time remaining
+from `/api/projects/{name}/test-quarantines`, with local loading, empty and error
+states. Needs you presents the policy's owner options and marks its recommended
+option via the additive `ownerOptions` attention field. Existing repair-card
+and testing-settings actions remain the places to apply an owner answer.
+
+The owner can `POST` to `/api/projects/{name}/test-quarantines/start`,
+`/{id}/renew` and `/{id}/lift`. A runner with the completion scope applies the
+persisted receipt as the system principal until RT-8; it cannot choose a class,
+invent lift evidence, or lift without it. Owner mutations require
+`workspace.administer`; reads require `project.read`. A start names the test,
+fix card, kind, incident fingerprint, covering folders and optionally the suite
+and evidence run. Lift evidence names the last two covering receipts. The
+server checks the actual receipts and repair integration ancestry. Only the
+owner may lift without evidence or renew report-only entries. A held entry
+lasts 24 hours, renews once while its repair is in Progress or Auto Review
+(including integration wait), and never exceeds 48 hours. Report-only lasts
+seven days. Three held and eight total active entries are the project caps,
+including curated file entries in the total.
+
+Every terminal per-test receipt runs `RedTestTriagePolicy` through the monolith
+adapter. It creates or reuses `Repair red test: <test>` first in Preparation,
+puts a waiting Ready repair first too, and selects the configured model tier
+for the decision's rung within the economy mode. Review, active coding and
+settled lanes retain their owner. Two consecutive covering passes on tips that
+contain the repair lift the entry. Unselected suites and unknown ancestry do
+not count. The runner supplies suite commands, per-command suite IDs (also for shards
+whose filters are rewritten) and optional bisect parent results so the host can verify coverage and regression evidence mechanically.
+Until RT-6 provides measured canary/reference comparisons, RT-3's run-owned
+envelope is the working standard-envelope assumption. Explicit negative
+`envelopeCanaryPassed` or `fingerprintMatchesReference` facts override it.
+
+The periodic escalation check re-evaluates open incidents even after unrelated
+green runs: one rung up at two hours for waiting repairs, one renewal at
+24 hours if the repair is in progress, and an owner choice at 48 hours. A line
+stop asks the owner at 60 minutes. Cap breaches and relapses within seven days
+also raise owner items with their options and recommendation. Each reason is
+asked once per incident. No timer changes testing strategy or moves a reviewed
+or settled repair. The remote integration executor holds every non-repair
+publication during a line stop. RT-5 applies covering-folder integration holds and the shared union readers
+described below. Model classification
+requests are logged for RT-8; RT-4 itself makes no model classification call.
+
+Every applied decision records the PersonaLogEntryV1 decision fields: id,
+rule/revision, frozen-facts digest, class/confidence, actions, held cards, lift
+condition and a reason capped at 280 characters. The log is retained with the
+quarantine store. Replayed receipts do not create duplicate repair cards or
+log entries. Release creation refuses either an active held quarantine or a
+line stop; report-only entries do not block releases.
+
+#### Scoped integration holds and shared readers (RT-5)
+
+Working choices are RT-D6 B and RT-D3 B (readers). The remote publisher and
+local merge path evaluate `HoldScopePolicy.MayIntegrate` through its named
+block result on the delivery's merge-base diff, for every active held quarantine,
+regardless of the latest T3 verdict or develop color. Covering folders match
+immediate directories. The test file and confirmed suspect paths match exact
+files; zero or more than twelve covering folders use the generated test-project
+reference graph's recursive suite areas, collected and persisted when the
+quarantine is written so state GET routes remain free of Git. Missing graph
+evidence uses a visible repository fallback. The repair, attributed revert and explicitly owner-exempt
+cards pass their own hold. Other held quarantines still apply. An owner can
+repeat `start` for the same test and fingerprint with `ownerExemptCardIds` and
+`attributedRevertCardId` to update exemptions on an existing hold; this is audited
+and never extends its expiry.
+
+A refusal names the quarantine id, test, folder and repair. Remote publication
+keeps `blocked-failing-area` and its existing retry-budget exemption. The local
+merge records a pending `BlockedFailingArea` result. Its delivery coordinator
+requeues it after thirty seconds without completing the delivery or starting a
+repair round, so unrelated deliveries and repairs can pass. The runner state
+route exposes typed `holds` with paths, expiry and exemptions. DS-6 has not landed
+in this checkout, so dispatcher admission is unchanged; those facts are its
+future pick-gate input.
+
+`TestQuarantinePolicy` in TaskServer.Contracts owns the only repository-file
+parser, union reader and exact-name failure partition. `TestQuarantineFile`
+retains forwarding entry points for compatibility. Gate requests and frozen
+Remote Review plans carry the RT-4 state union to their workers; workers combine
+it with their exact workspace file through that reader. Post-merge reads the
+same state union. File dates stay inclusive; server expiry uses exact UTC time.
+Tests still execute. Quarantined failures remain in gate results, per-test
+post-merge receipts and typed review command evidence, and do not block any of
+the three. A review with only declared quarantined failures needs no clean
+repeat, and report admission preserves that result. Unquarantined failures,
+interrupted commands and missing test reports keep their existing checks.
+Gate verdict caching is disabled while a quarantine declaration is present,
+so a lift or expiry cannot reuse an ignored-failure verdict.
+
+The batch gate's re-run pause is called "re-run cleared" in its reason text.
+Stored `flaky-quarantined-pass` verdicts remain readable for historical evidence.
+
+#### Legacy receipt compatibility
+
+The compatibility flow below applies to receipts without the RT-3 per-test
+evidence. It preserves the existing repair contract and conservatively holds
+the line for an unclassified red rather than inventing confirmation evidence.
 
 This slice implements the Dossier's recorded D2 option A (`revert-first`). A
 terminal red T3 receipt carries failing tests, a bounded log excerpt, the
@@ -4474,3 +4670,94 @@ project time-range API, rate denominator and attribution limitations are specifi
 in [Integration conflict evidence](../contracts/integration-conflicts.md). The
 project Pipeline panel shows seven days of daily rates, top files and card pairs.
 This evidence supports later selection work; it changes no transition policy.
+
+## Dispatch conflict evidence (DS-2)
+
+`DispatchStore` keeps immutable `DispatchConflictRecordV1` records under the
+application-owned `.dispatch/<project-hash>/conflicts/` directory. This is
+separate from the latest per-card `IntegrationConflictReport`, which retains
+its existing 20-file display cap. The dispatch ledger records all conflict
+paths, the delivery base and integration tip, and partner cards from attributed
+commits and provenance, with the primary owning card in a commit subject as
+historical fallback. Other card references in a subject are not owners.
+Ownership lookup is shared per task-index publication, including archived cards,
+and refreshed when card metadata publishes a new generation. Backfill captures
+one ownership lookup for the run and checks existing evidence by its record id.
+Recovery reads the matching collision directly, without scanning unrelated ledger
+records. Delivery-time conflict collection logs evidence failures and lets forecast
+delivery facts persist; the owner backfill command still reports failures to its caller.
+Semantic evidence failures are logged without interrupting isolation findings, and
+failed collection remains eligible for retry after storage recovers.
+
+Integration reports, delivery-chain merge decisions, queued agent sync rounds,
+and sync commits observed at delivery produce separate evidence kinds.
+Deterministic red-batch isolation records a semantic pair when isolation names two members with overlapping forecasts within the same immutable parent batch admission window. A failing two-card
+isolation child names a pair; for a two-card parent, both members must pass
+separately before the parent is treated as an interaction. Transport failures and failing singletons do not count.
+Decision ids and persona identity remain null until DS-6 supplies admission
+receipts. No persona selection or pickup behavior changes in DS-2.
+
+`GET /api/projects/{project}/dispatch/conflicts?from=&to=` requires project read
+access and returns a UTC half-open interval. Reads skip malformed, null or
+unreadable records individually, logging read failures and leaving the original
+files unchanged so valid evidence remains available. The owner can run the one-shot
+30-day Git backfill with:
+
+```sh
+bash scripts/dispatch-conflicts-backfill.sh http://localhost:5030 'Project name'
+```
+
+The command calls the owner-only application endpoint
+`POST /api/projects/{project}/dispatch/conflicts/backfill`; it does not start a
+backend. Set `DISPATCH_API_TOKEN` when authentication requires it. Repeating it
+preserves existing records, including their original timestamps and live status.
+Backfilled records carry `backfilled: true`. The Dossier wave method searches
+all refs for card-owned develop sync and conflict-resolution commits, including
+rewritten copies. Historical sync paths come from the complete first-parent
+change, not a reconstructed textual-conflict list. A surviving sync merge
+provides its incoming integration tip and merge base; linear history without
+those anchors has no recoverable partner evidence. These historical limits do
+not turn a clean shared-file change into proof of a textual conflict.
+
+#### Line guardian authority and shadow journal (RT-8, AGT-4009)
+
+Working decisions are RT-D8 B and RT-D13 B (shadow portion). The separate
+`line-guardian` role has kind `guardian`, aspect `delivery` and project scope.
+It starts in shadow with a recommended seven-day comparison period; only an
+owner changes authority. No timer promotes it. The DS-5 role and rights files
+live in `backend/Policies/personas/` with an append-only revision lock.
+
+`LineGuardianStore` persists per-project authority, immutable decision
+comparisons, model reservations, receipt compute and expiring, use-capped
+owner requests beside `post-merge/` in `line-guardian/`. Each receipt records
+its proposed guardian decision beside the applied system decision. Shadow
+writes only this journal. Once live, per-test quarantine audit and repair
+creation use `persona:line-guardian:<project-id>`. RT-4 retains the mutation
+path, evidence requirements and review-lane protections. Legacy receipts keep
+their compatibility repair path and also get a guardian observation.
+
+The model sees at most 2,000 redacted excerpt characters, an envelope
+comparison and a bounded suspect-path summary. One read-only one-shot call
+per incident returns a strict class, evidence and confidence object. Unknown
+fields, actions and invalid values are discarded. The pure triage policy
+then chooses actions. A reservation survives a crash, timeout or invalid
+response, so no receipt retry makes another call for that incident.
+
+Admission reserves 8,000 tokens, with metered overages charged, against
+60,000 tokens per project per UTC calendar week. Confirmation, control and
+bisect compute is charged from focused-run durations times the receipt's
+processor count, conservatively charging the run to each participating
+incident, and once per run for the project. At 90 core-minutes per incident
+or 600 per project week, model work stops and one budget owner item is raised;
+the deterministic rules keep running. A T2 operation request is never applied
+by the request route. Its owner item states the proposed expiry and one-use
+cap. Non-grantable operations fail closed in `LineGuardianPolicy`.
+
+`GET /api/projects/{name}/line-guardian` exposes the journal and owner items.
+Its `/role` subroute exposes the charter and rights catalogue.
+`PUT /api/projects/{name}/line-guardian/mode` accepts `{ "live": true }` or
+`{ "live": false }` from the owner only. `POST /api/projects/{name}/line-guardian/requests` takes
+`runId`, `test`, and `operation`; it collects policy facts from a persisted
+receipt. Owner items also appear through the existing post-merge Needs you
+fact source. One closed-incident feed observation is emitted on an evidence
+or owner lift. The weekly criteria projection and switch UI remain RT-9.

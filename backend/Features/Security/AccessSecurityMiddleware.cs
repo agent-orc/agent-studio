@@ -132,6 +132,7 @@ public sealed class AccessSecurityMiddleware
                 _store.AppendServiceAccountAudit(bound, context.Request.Method, path, 401, path, null, reason: refusal);
                 return;
             }
+            context.Items["OperatorSession.ProofThumbprint"] = thumbprint;
         }
         if (IsHealth(path)) { await _next(context); return; }
         if (!context.Request.IsHttps)
@@ -197,6 +198,12 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
+        // These endpoints enforce the bearer and proof themselves. Neither is activity.
+        if (path is OperatorSessionEndpoints.RenewPath or OperatorSessionEndpoints.StatusPath)
+        {
+            await _next(context);
+            return;
+        }
         context.Items[AttributionClientIdItem] = context.Request.Headers["X-Client-Id"].FirstOrDefault();
         if (path.StartsWith("/api/auth", StringComparison.OrdinalIgnoreCase))
             context.Response.Headers.CacheControl = "no-store";
@@ -207,7 +214,7 @@ public sealed class AccessSecurityMiddleware
         var human = _store.AuthenticateSession(sessionToken);
         var bearer = presentedBearer;
         var runner = _store.AuthenticateRunner(bearer);
-        var serviceAccount = human is null && runner is null ? _store.AuthenticateServiceAccount(bearer) : null;
+        var serviceAccount = human is null && runner is null ? _store.AuthenticateServiceAccount(bearer, recordOperatorUse: false) : null;
         if (HttpMethods.IsGet(context.Request.Method)
             && path.StartsWith("/api/quota/admission/", StringComparison.OrdinalIgnoreCase))
         {
@@ -250,6 +257,8 @@ public sealed class AccessSecurityMiddleware
         // makes is audited, refused calls included. An operator session runs
         // inside its actor scope, so every timeline event and audit entry the
         // request writes names the session (security model SM-1).
+        if (serviceAccount.Operator is not null && bearer is not null)
+            _store.RecordOperatorSessionUse(bearer, context.Connection.RemoteIpAddress?.ToString());
         context.Items[ServiceAccountPrincipalItem] = serviceAccount;
         context.Items["ClientId"] = serviceAccount.ActorId;
         var parameterDigest = await ParameterDigestAsync(context.Request, path);
@@ -257,6 +266,10 @@ public sealed class AccessSecurityMiddleware
         var breakGlass = serviceAccount.Operator is { } emergencyActor
             ? _store.ActiveBreakGlassWindow(emergencyActor.SessionId) : null;
         using var operatorScope = serviceAccount.Operator is { } operatorActor ? OperatorActorScope.Enter(operatorActor) : null;
+        using var streamMonitor = serviceAccount.Operator is not null
+            && (context.WebSockets.IsWebSocketRequest || BrowserOriginPolicy.IsEventStream(path, context.Request.Headers))
+            ? new CancellationTokenSource() : null;
+        var monitor = streamMonitor is null ? Task.CompletedTask : MonitorOperatorConnection(context, bearer!, streamMonitor.Token);
         var faulted = false;
         try
         {
@@ -269,6 +282,7 @@ public sealed class AccessSecurityMiddleware
         }
         finally
         {
+            if (streamMonitor is not null) { await streamMonitor.CancelAsync(); await monitor; }
             var status = faulted ? StatusCodes.Status500InternalServerError : context.Response.StatusCode;
             _store.AppendServiceAccountAudit(serviceAccount, context.Request.Method, path, status,
                 AuditTarget(context, path), parameterDigest.Value, context.Items[OperatorPolicyItem] as OperatorPolicyDecision,
@@ -280,6 +294,17 @@ public sealed class AccessSecurityMiddleware
             // SM-5: the result of a request an approval admitted is recorded against that approval.
             if (context.Items[OperatorApprovalItem] is string approvalId) _store.RecordOperatorApprovalResult(approvalId, status);
         }
+    }
+
+    private async Task MonitorOperatorConnection(HttpContext context, string bearer, CancellationToken stop)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15), _clock);
+            while (await timer.WaitForNextTickAsync(stop))
+                if (_store.AuthenticateOperatorSession(bearer, recordUse: false) is null) { context.Abort(); return; }
+        }
+        catch (OperationCanceledException error) when (stop.IsCancellationRequested) { AgentStudio.Diagnostics.SilentCatch.Note(error, "Operator stream completed"); }
     }
 
     private async Task AuthorizeAsync(
@@ -1286,14 +1311,23 @@ public sealed class AccessSecurityMiddleware
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/complete", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         if (HttpMethods.IsPost(method) && path.StartsWith("/api/clients/", StringComparison.OrdinalIgnoreCase)
             && path.EndsWith("/runner-git-capability", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
+        if (IsTestQuarantineRoute(path))
+            return HttpMethods.IsGet(method) ? RunnerScopes.Claim : RunnerScopes.Completion;
         if (path.Equals("/api/runner/post-merge/projects", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/runner/post-merge/projects/", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsGet(method) ? RunnerScopes.Claim : RunnerScopes.Completion;
         return GateRunnerScope(method, path);
     }
 
+    private static bool IsTestQuarantineRoute(string path)
+    {
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 4 && parts[0] == "api" && parts[1] == "projects" && parts[3] == "test-quarantines";
+    }
+
     private static bool IsHumanSessionRead(string method, string path)
     {
+        if (IsTestQuarantineRoute(path)) return true;
         if (!HttpMethods.IsGet(method)) return false;
         if (path is "/api/system/about" or "/api/v1/projects") return true;
         if (path.StartsWith("/api/v1/failure-fingerprints", StringComparison.OrdinalIgnoreCase)
@@ -1566,7 +1600,7 @@ public sealed class AccessSecurityMiddleware
             // on every affected task via ProjectAccessAuthorization.AllowsTasks /
             // FilterTasks, so the middleware defers instead of inferring a single
             // project from the literal path segment.
-            if (taskId is "reorder" or "batch-move" or "reference-status" or "acceptance-readiness" or "archive")
+            if (taskId is "batch" or "reorder" or "batch-move" or "reference-status" or "acceptance-readiness" or "archive")
                 return ProjectRouteAddress.DeferredToHandler;
             // A literal route under /api/tasks/ names no task: the board and
             // other collection reads (grouped, code-review/defaults,

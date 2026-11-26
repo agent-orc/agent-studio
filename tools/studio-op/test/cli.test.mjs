@@ -231,39 +231,50 @@ test('preflight names its blockers and exits with the preflight code', async () 
 test('two concurrent watchers: the second exits with the watcher-active code', { timeout: 30_000 }, async () => {
   const homeA = makeHome();
   const first = start(['watch', '--session', 'first', '--json'], { home: homeA });
-  await until(() => /watching/i.test(first.stderr()), 'the first watcher to connect');
-  assert.equal(studio.lease?.session, 'first');
+  let next;
+  try {
+    await until(() => /watching/i.test(first.stderr()), 'the first watcher to connect');
+    assert.equal(studio.lease?.session, 'first');
 
-  // Another machine: the server lease refuses it.
-  const remote = await run(['watch', '--session', 'second', '--json'], { home: makeHome() });
-  assert.equal(remote.code, 9, remote.stdout + remote.stderr);
-  assert.equal(remote.json.error, 'watcher-active');
-  assert.equal(remote.json.session, 'first');
-  // The same machine: the local lock file refuses it before any request.
-  const requestsBefore = studio.requests.length;
-  const local = await run(['watch', '--json'], { home: homeA });
-  assert.equal(local.code, 9);
-  assert.equal(local.json.error, 'watcher-active');
-  assert.equal(local.json.scope, 'local-lock');
-  assert.equal(studio.requests.length, requestsBefore);
+    // Another machine: the server lease refuses it.
+    const remote = await run(['watch', '--session', 'second', '--json'], { home: makeHome() });
+    assert.equal(remote.code, 9, remote.stdout + remote.stderr);
+    assert.equal(remote.json.error, 'watcher-active');
+    assert.equal(remote.json.session, 'first');
+    // The same machine: the local lock file refuses it before any request.
+    // The existing watcher may heartbeat while the local child starts.
+    const foregroundRequests = () => studio.requests.filter(request =>
+      !/^\/api\/operator\/watcher\/lease\/[^/]+\/heartbeat$/.test(request.path)).length;
+    const requestsBefore = foregroundRequests();
+    const local = await run(['watch', '--json'], { home: homeA });
+    assert.equal(local.code, 9);
+    assert.equal(local.json.error, 'watcher-active');
+    assert.equal(local.json.scope, 'local-lock');
+    assert.equal(foregroundRequests(), requestsBefore);
 
-  studio.publish('watcher.heartbeat', { project: null, cardKey: null });
-  const event = studio.publish('human-review.ready', { cardKey: 'DEMO-1' });
-  const result = await first.done;
-  assert.equal(result.code, 21, result.stdout + result.stderr);
-  assert.equal(result.json.event.type, 'human-review.ready');
-  assert.equal(result.json.event.cardKey, 'DEMO-1');
-  assert.equal(result.json.cursor, event.cursor);
-  assert.equal(studio.lease, null, 'the watcher releases its lease on exit');
-  assert.ok(!fs.existsSync(path.join(homeA, '.config', 'agent-studio', 'studio-op-watch.lock')));
+    studio.publish('watcher.heartbeat', { project: null, cardKey: null });
+    const event = studio.publish('human-review.ready', { cardKey: 'DEMO-1' });
+    const result = await first.done;
+    assert.equal(result.code, 21, result.stdout + result.stderr);
+    assert.equal(result.json.event.type, 'human-review.ready');
+    assert.equal(result.json.event.cardKey, 'DEMO-1');
+    assert.equal(result.json.cursor, event.cursor);
+    assert.equal(studio.lease, null, 'the watcher releases its lease on exit');
+    assert.ok(!fs.existsSync(path.join(homeA, '.config', 'agent-studio', 'studio-op-watch.lock')));
 
-  // The next watch resumes after the saved cursor and wakes on the next event.
-  const next = start(['watch', '--json'], { home: homeA });
-  await until(() => /watching/i.test(next.stderr()), 'the resumed watcher');
-  studio.publish('batch.red', { cardKey: null });
-  const resumed = await next.done;
-  assert.equal(resumed.code, 24);
-  assert.equal(resumed.json.event.type, 'batch.red');
+    // The next watch resumes after the saved cursor and wakes on the next event.
+    next = start(['watch', '--json'], { home: homeA });
+    await until(() => /watching/i.test(next.stderr()), 'the resumed watcher');
+    studio.publish('batch.red', { cardKey: null });
+    const resumed = await next.done;
+    assert.equal(resumed.code, 24);
+    assert.equal(resumed.json.event.type, 'batch.red');
+  } finally {
+    for (const watcher of [first, next]) {
+      if (watcher && watcher.child.exitCode === null) watcher.child.kill('SIGTERM');
+      if (watcher) await watcher.done;
+    }
+  }
 });
 
 test('watch with a stale local lock of a dead process takes the lock', { timeout: 30_000 }, async () => {

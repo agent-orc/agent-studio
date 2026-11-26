@@ -189,7 +189,8 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.Anonymous, "/api/auth/status", "/api/auth/invite/preview", "/recovery");
         Add("POST", IamPermissions.Anonymous,
             "/api/auth/bootstrap", "/api/auth/login", "/api/auth/invite/accept", "/api/auth/runner-enroll",
-            "/api/auth/passkeys/assertion-options", "/api/auth/operator-sign-in", "/api/auth/operator-sign-in/poll");
+            "/api/auth/passkeys/assertion-options", "/api/auth/operator-sign-in", "/api/auth/operator-sign-in/poll", OperatorSessionEndpoints.RenewPath);
+        Add("GET", IamPermissions.Anonymous, OperatorSessionEndpoints.StatusPath);
         Add("R", IamPermissions.SelfSession, "/api/auth/session");
         Add("R", IamPermissions.SelfSession, "/api/auth/directory");
         Add("POST", IamPermissions.SelfSession, "/api/auth/logout", "/api/auth/change-password");
@@ -454,7 +455,7 @@ public static class RoutePermissionCatalog
         AddProjectChecked("POST", IamPermissions.ProjectRead, "/api/tasks/acceptance-readiness");
         // Creation, reorder, and batch-move check every affected project in
         // the handler; title and prompt helpers touch no project.
-        AddProjectChecked("POST", IamPermissions.ProjectCardsWrite, "/api/tasks", "/api/tasks/reorder", "/api/tasks/batch-move",
+        AddProjectChecked("POST", IamPermissions.ProjectCardsWrite, "/api/tasks", "/api/tasks/batch", "/api/tasks/reorder", "/api/tasks/batch-move",
             "/api/title/generate", "/api/prompt/enhance");
         Add("DELETE", IamPermissions.ProjectCardsWrite, "/api/tasks/{}");
         Under("W", IamPermissions.ProjectCardsWrite, "/api/tasks/{}",

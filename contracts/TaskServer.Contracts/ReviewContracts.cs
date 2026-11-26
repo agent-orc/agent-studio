@@ -148,7 +148,10 @@ public sealed record ReviewPlanDto(
     IReadOnlyList<ReviewPreparationSkipDto>? PreparationSkips = null,
     /// <summary>Exact target-branch commit from which the command plan was read.</summary>
     string? PlanCommitSha = null,
-    ReviewSuiteSelectionDto? SuiteSelection = null);
+    ReviewSuiteSelectionDto? SuiteSelection = null)
+{
+    public IReadOnlyList<ProjectTestQuarantine> Quarantines { get; init; } = [];
+}
 
 public sealed record ReviewSuiteSelectionDto(IReadOnlyList<string> SelectedSuites,
     IReadOnlyList<string> OmittedSuites, IReadOnlyList<string> Reasons)
@@ -452,7 +455,11 @@ public sealed record ReviewCommandEvidenceDto(
     string? RepeatObservation = null,
     IReadOnlyDictionary<string, string>? FailureMessages = null,
     string? CliType = null,
-    SelectionResult? ModelSelection = null);
+    SelectionResult? ModelSelection = null)
+{
+    public PostMergeEnvelopeFingerprint? Envelope { get; init; }
+    public IReadOnlyList<TestQuarantineHit> QuarantinedFailures { get; init; } = [];
+}
 
 /// <summary>
 /// Evidence levels for a passing clean repeat (AGT-3650). A test-name proof
@@ -586,7 +593,10 @@ public sealed record ReviewEnvironmentDto(
     string RuntimeVersion,
     IReadOnlyDictionary<string, string> Toolchain,
     IReadOnlyDictionary<string, string> Isolation,
-    ReviewWorkerProvenanceDto? Worker = null);
+    ReviewWorkerProvenanceDto? Worker = null)
+{
+    public PostMergeEnvelopeFingerprint? Envelope { get; init; }
+}
 
 /// <summary>
 /// Which agent-host build actually produced a verdict. The detached review
@@ -774,7 +784,10 @@ public sealed record ReviewReportRequest(
     IReadOnlyList<ReviewSkippedAspectDto>? SkippedAspects = null,
     bool ArtifactsReduced = false,
     string? QualityStudioCodeQualityMode = null,
-    ReviewSuiteSelectionDto? SuiteSelection = null);
+    ReviewSuiteSelectionDto? SuiteSelection = null)
+{
+    public IReadOnlyList<ProjectTestQuarantine> Quarantines { get; init; } = [];
+}
 
 /// <summary>
 /// State of the task-folder evidence write (grade markdown, aspect files,

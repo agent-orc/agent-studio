@@ -100,7 +100,7 @@ public sealed partial class BatchGatePilotService
     /// would record nothing new; with <paramref name="skipSettled"/> it is
     /// skipped. A restart starts with no memo and derives every parent once.
     /// </summary>
-    private void DeriveIsolationFindings(BatchGateManifest parent,
+    internal void DeriveIsolationFindings(BatchGateManifest parent,
         IEnumerable<BatchGateManifest> childManifests, bool skipSettled = false)
     {
         var phases = childManifests.Select(manifest => (Manifest: manifest, Phase: ChildPhase(manifest.BatchId)))
@@ -136,6 +136,44 @@ public sealed partial class BatchGatePilotService
             var unknown = child.Manifest.Members.Where(member => !green.Contains(member.TaskKey)).ToArray();
             if (unknown.Length == 1)
                 Record(unknown[0], "proven-red", Evidence(child.Manifest));
+        }
+        // The parent is the immutable admission window until DS-6 provides dispatch windows.
+        if (_services?.GetService<AgentStudio.Dispatch.DispatchStore>() is { } dispatch)
+        {
+            var groups = red.Select(item => item.Manifest).Prepend(parent);
+            foreach (var group in groups.Where(group => group.Members.Count == 2))
+            {
+                try
+                {
+                    var run = _store.ListRuns(group.BatchId).LastOrDefault();
+                    var verdict = run is null ? null : _store.ReadVerdict(group.BatchId, run.BatchRunId);
+                    var first = group.Members[0];
+                    var second = group.Members[1];
+                    var watch = _scanner.GetWatchPaths().FirstOrDefault(entry => entry.Name == parent.Scope.Project)?.Path;
+                    var firstCard = _scanner.FindJob(first.TaskKey, watch);
+                    var secondCard = _scanner.FindJob(second.TaskKey, watch);
+                    var overlap = (dispatch.Read(parent.Scope.Project, firstCard?.TaskKey ?? first.TaskKey)?.ForecastFiles ?? [])
+                        .Intersect(dispatch.Read(parent.Scope.Project, secondCard?.TaskKey ?? second.TaskKey)?.ForecastFiles ?? [], StringComparer.Ordinal)
+                        .Order(StringComparer.Ordinal).ToArray();
+                    if (!MonolithTransitionAdapter.DispatchSemanticPair(verdict?.Classification == "DeterministicSuiteRed",
+                        parent.Members.Any(member => member.TaskKey == first.TaskKey)
+                            && parent.Members.Any(member => member.TaskKey == second.TaskKey), group.Members.Count,
+                        group.ParentBatchId is not null || (green.Contains(first.TaskKey) && green.Contains(second.TaskKey)), overlap)) continue;
+                    dispatch.AppendConflict(new AgentStudio.Dispatch.DispatchConflictRecordV1(
+                        "semantic:" + parent.BatchId + ":" + first.TaskKey + ":" + second.TaskKey,
+                        parent.Scope.Project, firstCard?.Key ?? firstCard?.Id ?? first.TaskKey, "semantic", parent.BaseSha, run!.CandidateSha,
+                        overlap, [secondCard?.Key ?? secondCard?.Id ?? second.TaskKey], run.StartedAtUtc)
+                    {
+                        EvidenceId = parent.BatchId + ":" + run.BatchRunId,
+                        DispatchDecisionIds = new Dictionary<string, string?> { [first.TaskKey] = null, [second.TaskKey] = null },
+                    });
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+                {
+                    settled = false;
+                    _logger.LogWarning(ex, "Dispatch semantic evidence failed for batch {BatchId}; isolation continues", group.BatchId);
+                }
+            }
         }
         if (settled) _derivedIsolation[parent.BatchId] = fingerprint;
         else _derivedIsolation.TryRemove(parent.BatchId, out _);

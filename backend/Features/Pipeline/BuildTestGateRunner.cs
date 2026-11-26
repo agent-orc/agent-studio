@@ -49,6 +49,7 @@ public sealed record BuildTestGateRequest(
     bool RequireExactSubject = true)
 {
     public bool DisableVerdictCache { get; init; }
+    public IReadOnlyList<ProjectTestQuarantine> Quarantines { get; init; } = [];
     /// <summary>True when the exact delivery was integrated before this gate began.</summary>
     public bool DeliveryIntegratedAtStart { get; init; }
     public string GateId { get; init; } = PipelineCatalogue.BuildTestGateStepId;
@@ -158,6 +159,7 @@ public sealed record BuildTestGateRequest(
 
 public sealed record BuildTestGateProcessEvidence
 {
+    public PostMergeEnvelopeFingerprint? Envelope { get; init; }
     public string? Host { get; init; }
     public GateResourceEvidence? Resources { get; init; }
     public GateBudgetExtensionEvidence? BudgetExtension { get; init; }
@@ -445,6 +447,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
     private readonly MachineGateSlots _machineSlots = new(MachineGateLockPath);
     private readonly int _localGateSlots;
     private static readonly AsyncLocal<int?> ActiveSlot = new();
+    private static readonly AsyncLocal<TestEnvelopeWorkspace?> ActiveTestWorkspace = new();
+    private static readonly AsyncLocal<IReadOnlyDictionary<string, string>?> ActiveDeclaredEnvironment = new();
     private readonly Func<int, IGateProcessResources> _resourceFactory = pid => new GateProcessResources(pid);
     private readonly Func<CancellationToken, Task<bool>> _composeRenderHost = ComposeRenderHostProbe.IsAvailableAsync;
     internal TimeSpan? ShardIdleBoundForTesting { get; set; }
@@ -508,9 +512,13 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         TimeSpan timeout,
         CancellationToken ct)
     {
+        using var testWorkspace = new TestEnvelopeWorkspace();
+        ActiveTestWorkspace.Value = testWorkspace;
         if (mode == PostStepMode.Off) return Skipped("mode=off");
         // A narrowed green is not a full-suite green; it never meets the cache.
-        if (request.NarrowCheck is not null) request = request with { DisableVerdictCache = true };
+        if (request.NarrowCheck is not null || request.Quarantines.Count > 0
+            || TestQuarantineFile.Read(request.RepositoryPath).Entries.Count > 0)
+            request = request with { DisableVerdictCache = true };
 
         var repositoryPath = Path.GetFullPath(request.RepositoryPath);
         var cacheProject = request.Project ?? repositoryPath;
@@ -535,6 +543,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
 
         MachineGateSlots.Lease? machineLease = null;
         ExactWorkspaceLease? workspaceLease = null;
+        IDisposable? cacheExecutionLease = null;
         ProjectPreparationResult? projectPreparation = null;
         BuildTestGateResult? completed = null;
         string? workspace = null;
@@ -667,6 +676,9 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 }
             }
 
+            if (workspace is not null && TestQuarantineFile.Read(workspace).Entries.Count > 0)
+                request = request with { DisableVerdictCache = true };
+
             // A hit must bypass project preparation as well as verification.
             // The SHA fixes repository-owned command definitions. Resolve the
             // same deterministic scope used after preparation before lookup.
@@ -694,6 +706,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                             toolchainIdentity ??= GateResultCache.LocalToolchainIdentity(preflightCommands, workspace!);
                             profileDigest = GateResultCache.ProfileDigest(
                                 request, profile, mode, preflightCommands, toolchainIdentity);
+                            cacheExecutionLease ??= await _verdictCache.AcquireExecutionAsync(
+                                cacheProject, testedSha!, profileDigest, ct).ConfigureAwait(false);
                             BuildTestGateResult? cached;
                             using (await _verdictCache.AcquireAsync(cacheProject, ct).ConfigureAwait(false))
                                 cached = _verdictCache.TryRead(cacheProject, testedSha!, profileDigest);
@@ -817,6 +831,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                             toolchainIdentity ??= GateResultCache.LocalToolchainIdentity(commands, workspace!);
                             profileDigest = GateResultCache.ProfileDigest(
                                 request, profile, mode, commands, toolchainIdentity);
+                            cacheExecutionLease ??= await _verdictCache.AcquireExecutionAsync(
+                                cacheProject, testedSha!, profileDigest, ct).ConfigureAwait(false);
                             BuildTestGateResult? cached = null;
                             if (staged.Audit.UnmappedSourceDirectories.Count == 0)
                             {
@@ -858,7 +874,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                         : await RunCommandsAsync(
                             workspace!, preparation, commands, plan.Source, mode, timeout,
                             [], projectPreparation, ct, ShardContext(request),
-                            guardFirst: request.NarrowCheck is null)
+                            guardFirst: request.NarrowCheck is null, serverQuarantines: request.Quarantines)
                             .ConfigureAwait(false);
                     if (completed.VerdictSource != GateVerdictSource.CacheHit)
                     {
@@ -993,6 +1009,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         }
         finally
         {
+            cacheExecutionLease?.Dispose();
             if (workspaceLease is not null)
             {
                 await workspaceLease.RemoveBestEffortAsync(infrastructureTimeout).ConfigureAwait(false);
@@ -1314,7 +1331,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     : GatePreparationPlanner.Plan(workspacePath, profile, commands);
             return await RunCommandsAsync(
                 workspacePath, prepCommands, commands, $"diagnostic-{role}",
-                PostStepMode.Fail, timeout, [], preparation, ct, ShardContext(request)).ConfigureAwait(false);
+                PostStepMode.Fail, timeout, [], preparation, ct, ShardContext(request), serverQuarantines: request.Quarantines).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -1450,8 +1467,11 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         ProjectPreparationResult? projectPreparation,
         CancellationToken ct,
         GateShardContext? sharding = null,
-        bool guardFirst = true)
+        bool guardFirst = true,
+        IReadOnlyList<ProjectTestQuarantine>? serverQuarantines = null)
     {
+        ActiveDeclaredEnvironment.Value = ProjectDefinitionReader.ReadWorkspace(repositoryPath).Definition?.Environment
+            ?? TestEnvelope.EmptyEnvironment;
         var sw = Stopwatch.StartNew();
         var budget = new GateContentionBudget(timeout);
         var output = new RingOutput(MaxOutputLines);
@@ -1464,7 +1484,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         var ranFrontend = false;
         var flakyQuarantined = new List<string>();
         var retryPerformed = false;
-        var quarantine = TestQuarantineFile.Read(repositoryPath);
+        var quarantine = TestQuarantinePolicy.ReadUnion(repositoryPath, serverQuarantines ?? [], DateTimeOffset.UtcNow);
         var quarantineDay = DateOnly.FromDateTime(DateTime.UtcNow);
         var quarantined = new List<TestQuarantineHit>();
         foreach (var issue in quarantine.Issues) output.AppendLine($"# test quarantine issue: {issue}");
@@ -2441,16 +2461,23 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         GateShardHangWatch? shardWatch = null)
     {
         var startedAt = DateTimeOffset.UtcNow;
+        var declared = ActiveDeclaredEnvironment.Value ?? ProjectDefinitionReader.ReadWorkspace(workingDirectory).Definition?.Environment
+            ?? TestEnvelope.EmptyEnvironment;
+        using var envelope = new TestCommandEnvelope(declared, output.AppendLine, ActiveTestWorkspace.Value?.Home, ActiveTestWorkspace.Value?.Temp);
+        await envelope.ProbeSdkAsync(workingDirectory, ct);
+        var launch = envelope.Launch(fileName, args);
         var psi = new ProcessStartInfo
         {
-            FileName = fileName,
+            FileName = launch.FileName,
             WorkingDirectory = workingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        foreach (var arg in args) psi.ArgumentList.Add(arg);
+        foreach (var arg in launch.Arguments) psi.ArgumentList.Add(arg);
+        psi.Environment.Clear();
+        foreach (var (name, value) in envelope.Environment) psi.Environment[name] = value;
         var npmCache = ActiveNpmCachePath;
         psi.Environment["NPM_CONFIG_CACHE"] = npmCache;
         if (GateArtifactOutput.Current is { } artifactDirectory)
@@ -2610,6 +2637,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             var signal = ResolveTerminationSignal(exitCode, timedOut, cancelled);
             return NewProcessEvidence(startedAt, command, fileName, args, workingDirectory, phase) with
             {
+                Envelope = envelope.Fingerprint(declared, command),
                 CompletedAtUtc = completedAt,
                 ExitCode = exitCode,
                 TerminationSignal = signal,
@@ -2676,6 +2704,10 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
     internal static BuildTestGateFailureKind ClassifyFailure(BuildTestGateProcessEvidence process)
     {
         var evidence = process.StandardError + "\n" + process.StandardOutput;
+        if (evidence.Contains("test envelope attach failed", StringComparison.Ordinal)) return BuildTestGateFailureKind.Environment;
+        if (TestEnvelope.CanaryFailed(process.TestReport?.FailedTests
+                ?? GateFlakyRerunPolicy.ParseFailedTests(evidence)))
+            return BuildTestGateFailureKind.Environment;
         if (process.ShardHang is not null) return BuildTestGateFailureKind.Environment;
         if (ContainsAny(evidence, "no space left on device", "out of diskspace", "disk full"))
             return BuildTestGateFailureKind.DiskFull;

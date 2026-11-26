@@ -33,7 +33,9 @@
 /api/auth/iam/operator-approvals/	free	-	-	-
 /api/auth/iam/operator-catalogue	free	-	-	-
 /api/auth/iam/operator-kill-switch/	free	-	-	-
+/api/auth/iam/session-limits	free	-	-	-
 /api/auth/iam/standing-grants/	free	-	-	-
+/api/auth/operator-session/status	free	-	-	-
 /api/auth/runner	free	-	-	-
 /api/auth/runner-enrollments	free	-	-	-
 /api/auth/runners	free	-	-	-
@@ -167,6 +169,9 @@
 /api/projects/pipeline-catalogue	reachable	frozen	Pipeline	Pipeline reads from the Git fact store
 /api/projects/settings	free	-	-	-
 /api/projects/{name}/integration-conflicts	free	-	-	-
+/api/projects/{name}/line-guardian	free	-	-	-
+/api/projects/{name}/line-guardian/role	free	-	-	-
+/api/projects/{name}/test-quarantines	free	-	-	-
 /api/projects/{projId:regex(^PROJ-\d{{3,}}$)}	free	-	-	-
 /api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/ownership-mappings/audit	free	-	-	-
 /api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/url-suggestions	free	-	-	-
@@ -238,8 +243,13 @@
 /api/projects/{projectName}/design/references/{fileName}	free	-	-	-
 /api/projects/{projectName}/dispatch/overlap-evidence	free	-	-	-
 /api/projects/{projectName}/dispatch/overlap-window	free	-	-	-
+/api/projects/{project}/dispatch/conflicts	free	-	-	-
 /api/projects/{project}/dispatch/forecasts	free	-	-	-
 /api/projects/{project}/dispatch/hub-files	free	-	-	-
+/api/projects/{project}/dispatch/mode	free	-	-	-
+/api/projects/{project}/dispatch/personas	free	-	-	-
+/api/projects/{project}/dispatch/recuts	free	-	-	-
+/api/projects/{project}/dispatch/review	free	-	-	-
 /api/projects/{projectName}/environments	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/health	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/databases/	reachable	gap	Deploy and environments	Environment declarations from the Git fact store

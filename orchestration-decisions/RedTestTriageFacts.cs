@@ -6,7 +6,7 @@ public enum RedTestClassification { Flaky, Environment, Regression, WrongAttribu
 public enum RedTestQuarantineKind { Held, ReportOnly }
 public enum RedTestAction
 {
-    LineStop, StartHeld, StartReportOnly, CountFlaky, MarkInconclusive, Renew, Lift,
+    LineStop, ResolveLineStop, StartHeld, StartReportOnly, CountFlaky, MarkInconclusive, Renew, Lift,
     AskOwner, ProposeRevert, FixForward, WithdrawAttribution, RequestClassification,
 }
 /// <summary>Abstract economy rungs; the host maps them to configured models within its economy dial.</summary>
@@ -28,6 +28,7 @@ public static class RedTestTriageBounds
     public static readonly TimeSpan ReportOnlyDuration = TimeSpan.FromDays(7);
     public static readonly TimeSpan FlakyWindow = TimeSpan.FromDays(14);
     public static readonly TimeSpan RelapseWindow = TimeSpan.FromDays(7);
+    public static readonly TimeSpan ReevaluateAge = TimeSpan.FromHours(2);
     public static readonly TimeSpan LineStopOwnerAskAge = TimeSpan.FromMinutes(60);
     public const int MaximumRenewals = 1;
     public const int MaximumHeld = 3;
@@ -72,10 +73,12 @@ public sealed record RedTestTriageFacts(string TestId, string SuiteId, RedTestCa
     public string? RepairCardLane { get; init; }
     public TimeSpan IncidentAge { get; init; }
     public TimeSpan LineStopAge { get; init; }
+    public bool LineStopActive { get; init; }
     public bool BuildOrPrepareFailure { get; init; }
     public int EnvironmentOccurrences { get; init; } = 1;
     public int RepairAttempt { get; init; } = 1;
     public bool AmbiguousClassificationAttempted { get; init; }
+    public RedTestClassification? ModelClassification { get; init; }
     public bool RevertAppliesCleanly { get; init; }
     public bool LaterMergeCoupled { get; init; }
     public bool AreaHasNewFailure { get; init; }
