@@ -87,6 +87,11 @@ public sealed record WorkerCgroupPressure(
 /// </summary>
 internal sealed class WorkerCgroup
 {
+    internal static AgentStudio.TaskServer.Contracts.TestCommandEnvelope PrepareTestCommand(
+        IReadOnlyDictionary<string, string> declared, Action<string> log, string? home = null, string? temp = null,
+        AgentStudio.TaskServer.Contracts.TestEnvelopeDefinition? definition = null)
+        => new(declared, log, home, temp, definition);
+
     internal const string DefaultMountRoot = "/sys/fs/cgroup";
     internal const string DaemonLeafName = "daemon";
     internal const string WorkerPrefix = "worker-";

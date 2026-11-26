@@ -60,7 +60,7 @@ public sealed class PostMergeAttributionProtocolTests : IDisposable
         Assert.Equal("runner-routine", verdict.SuiteId);
         Assert.Equal(ProjectTestSuiteCategories.Routine, verdict.SuiteCategory);
         Assert.Equal(PostMergeClassificationHints.Regression, verdict.ClassificationHint);
-        Assert.Equal(["initial:fail", "repeat:fail", "control:pass", "control:pass",
+        Assert.Equal(["initial:fail", "repeat:fail", "reference:fail", "control:pass", "control:pass",
                 "bisect:fail", "bisect:fail", "bisect:pass", "bisect:pass"],
             verdict.Attempts.Select(attempt => attempt.Phase + ":" + attempt.Result));
         Assert.Null(verdict.Attempts[0].DurationMs);
@@ -76,7 +76,7 @@ public sealed class PostMergeAttributionProtocolTests : IDisposable
         Assert.Equal(0.4, envelope.StartLoadPerCore);
         Assert.True(envelope.PeakLoadPerCore >= envelope.StartLoadPerCore);
         Assert.True(envelope.ProcessorCount > 0);
-        Assert.Contains(envelope.CgroupKind, new[] { "worker", "daemon", "process", "none" });
+        Assert.Contains(envelope.CgroupKind, new[] { "worker", "daemon", "process", "none", "unavailable" });
         Assert.All(terminal.Verdicts, item => Assert.NotNull(item.DurationMs));
     }
 
@@ -102,9 +102,9 @@ public sealed class PostMergeAttributionProtocolTests : IDisposable
     [Fact]
     public async Task FlakyResultAtAPointIsMixedAndAttributesNoMerge()
     {
-        // Runs one and two fail at the tip, the control passes twice, and the first
+        // Runs one and two fail at the tip, the reference fails, the control passes twice, and the first
         // bisect point fails and then passes.
-        var fixture = await Fixture("case \"$n\" in 1|2|5) fail;; esac");
+        var fixture = await Fixture("case \"$n\" in 1|2|3|6) fail;; esac");
         var (exit, terminal, output) = await Run(fixture);
 
         Assert.True(exit == 1, output);
@@ -120,6 +120,22 @@ public sealed class PostMergeAttributionProtocolTests : IDisposable
         Assert.Contains("mixed", attribution.StopReason);
         Assert.Equal(2, terminal.FocusedRuns!.Count(run => run.Phase == PostMergeRunPhases.Bisect));
         Assert.Equal(PostMergeClassificationHints.Flaky, Assert.Single(terminal.TestVerdicts!).ClassificationHint);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Reference_recovery_is_flaky_and_runs_no_control_or_bisect()
+    {
+        var fixture = await Fixture("case \"$n\" in 1|2) fail;; esac");
+        var (exit, terminal, output) = await Run(fixture);
+        Assert.True(exit == 0, output);
+        Assert.Equal("green", terminal.Status);
+        Assert.Null(terminal.Failure);
+        Assert.Equal([Test], terminal.FlakyTests);
+        Assert.Equal(PostMergeClassificationHints.Flaky, Assert.Single(terminal.TestVerdicts!).ClassificationHint);
+        Assert.Contains(terminal.FocusedRuns!, run => run.Phase == PostMergeRunPhases.Reference);
+        Assert.DoesNotContain(terminal.FocusedRuns!, run => run.Phase is PostMergeRunPhases.Control or PostMergeRunPhases.Bisect);
     }
 
     [Fact]
@@ -142,6 +158,25 @@ public sealed class PostMergeAttributionProtocolTests : IDisposable
         Assert.Equal(PostMergeClassificationHints.Environment, Assert.Single(terminal.TestVerdicts!).ClassificationHint);
         // Without an attribution the hold falls back to every candidate's paths, as before.
         Assert.Equal(4, failure.FailingPaths.Count);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Canary_failure_is_inconclusive_and_never_attributed()
+    {
+        var fixture = await Fixture("fail");
+        // The fixture fetches origin, so change its tracked script in the seed before running.
+        var seedScript = Path.Combine(_root, "seed", "suite.sh");
+        var content = File.ReadAllText(seedScript).Replace(Test, "AgentStudio.Tests.TestEnvelopeCanaryTests.Envelope");
+        File.WriteAllText(seedScript, content);
+        await Git(Path.Combine(_root, "seed"), "add", "suite.sh");
+        await Git(Path.Combine(_root, "seed"), "commit", "--quiet", "-m", "fixture canary failure");
+        var (_, terminal, _) = await Run(fixture);
+        Assert.Equal("inconclusive", terminal.Status);
+        Assert.False(terminal.EnvelopeCanaryPassed);
+        Assert.Null(terminal.Failure);
+        Assert.Equal(PostMergeClassificationHints.Environment, Assert.Single(terminal.TestVerdicts!).ClassificationHint);
     }
 
     private sealed record FixtureRepository(string Checkout, string Green, IReadOnlyList<string> Merges);

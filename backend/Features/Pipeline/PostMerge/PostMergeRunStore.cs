@@ -89,7 +89,7 @@ public sealed class PostMergeRunStore
                 state = state with { DevelopState = state.LineStop is null ? "green" : "red",
                     Runs = [.. state.Runs.TakeLast(511), run] };
             }
-            else if (run.Status is "green" or "red")
+            else if (run.Status is "green" or "red" or "inconclusive")
             {
                 if (active is null || active.Id != run.Id || active.TipSha != run.TipSha
                     || active.Kind != run.Kind || run.FinishedAtUtc is null

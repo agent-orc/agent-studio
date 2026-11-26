@@ -386,6 +386,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-test-envelope-canary">
+          <td>2026-11-26</td>
+          <td><code>AGT-4007</code><br><span class="small">test-envelope-canary</span> (RT-6)</td>
+          <td>No CLI crashed. The AGT-3981 daemon-environment failure is replayed with a base canary and an intentionally declared runner setting.</td>
+          <td>Review, gate and post-merge previously built different process environments and resource limits.</td>
+          <td>All three use the shared test envelope. The first real canary exposed the test bootstrap escaping a long temp path; short run roots keep its child directory inside the envelope. RT-2 consumes a failed canary as environment evidence. Terminal in the regression fixture: an inconclusive receipt, no line stop and no merge attribution. A confirmed non-canary failure also records one serial reference-envelope repeat.</td>
+        </tr>
         <tr>
           <td>2026-11-26</td>
           <td>overlap-dispatch-starvation (AGT-4037)</td>
@@ -3408,6 +3415,19 @@
             restores the delivery patch and verifies the build, focused classes,
             guard filters and lint. Publication and integration remain owned by
             the pipeline.</td>
+        </tr>
+        <tr>
+          <td>2026-11-26</td>
+          <td><code>AGT-4007</code><br><span class="small">rt6-guardian-integration-recovery</span></td>
+          <td>No CLI crashed. The delivery stopped at <code>merge-into-develop</code>
+            after direct merge, mechanical merge and rebase fallback conflicted.</td>
+          <td>RT-6 admitted inconclusive test-envelope receipts at the same guard
+            where RT-8 added guardian observations for other receipt statuses.</td>
+          <td>The observed terminal was an integration-conflict continuation.
+            Recovery retains guardian receipt observation and routes inconclusive
+            per-test evidence through triage in both shadow and live modes.
+            The delivery patches are restored in their original order, with
+            publication and integration left to the pipeline.</td>
         </tr>
       </tbody>
     </table>

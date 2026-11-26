@@ -457,6 +457,7 @@ public sealed record ReviewCommandEvidenceDto(
     string? CliType = null,
     SelectionResult? ModelSelection = null)
 {
+    public PostMergeEnvelopeFingerprint? Envelope { get; init; }
     public IReadOnlyList<TestQuarantineHit> QuarantinedFailures { get; init; } = [];
 }
 
@@ -592,7 +593,10 @@ public sealed record ReviewEnvironmentDto(
     string RuntimeVersion,
     IReadOnlyDictionary<string, string> Toolchain,
     IReadOnlyDictionary<string, string> Isolation,
-    ReviewWorkerProvenanceDto? Worker = null);
+    ReviewWorkerProvenanceDto? Worker = null)
+{
+    public PostMergeEnvelopeFingerprint? Envelope { get; init; }
+}
 
 /// <summary>
 /// Which agent-host build actually produced a verdict. The detached review

@@ -23,7 +23,7 @@ public sealed partial class PostMergeIncidentService
 
     public void Apply(ProjectRecord project, PostMergeRunRecord run)
     {
-        if (run.Status is not ("red" or "green"))
+        if (run.Status is not ("red" or "green" or "inconclusive"))
         {
             RecordGuardianReceipt(project, run);
             return;
@@ -244,6 +244,7 @@ public sealed partial class PostMergeIncidentService
             FingerprintMatchesReference = EnvelopeMatches(run, state.Runs.FirstOrDefault(previous =>
                 previous.Id == entry?.EvidenceRunIds.FirstOrDefault())
                 ?? state.Runs.LastOrDefault(previous => previous.Id != run.Id && previous.Status == "green")),
+            ReferenceEnvelopeRepeat = Result(test.Attempts.LastOrDefault(attempt => attempt.Phase == PostMergeRunPhases.Reference)?.Result),
             LastGreenControlResults = controls,
             BisectPoints = points,
             ProjectQuarantines = ActiveQuarantines(project).Select(item => new RedTestQuarantine(item.Test,
@@ -392,7 +393,7 @@ public sealed partial class PostMergeIncidentService
         var state = _store.Read(project.Id);
         var incident = (state.Incidents ?? []).LastOrDefault(item => item.RepairCardId == entry.Card);
         var runs = state.Runs.Concat(current is null ? [] : [current]).DistinctBy(run => run.Id)
-            .Where(run => run.FinishedAtUtc >= entry.StartedAtUtc && run.Status is "green" or "red")
+            .Where(run => run.FinishedAtUtc >= entry.StartedAtUtc && run.Status is "green" or "red" or "inconclusive")
             .OrderByDescending(run => run.FinishedAtUtc);
         var result = new List<(string, RedTestLiftRun)>();
         foreach (var run in runs)
@@ -433,10 +434,7 @@ public sealed partial class PostMergeIncidentService
     {
         if (run.FingerprintMatchesReference is { } measured) return measured;
         if (run.Envelope is not { } actual || reference?.Envelope is not { } expected) return true;
-        return actual.AllowlistDigest == expected.AllowlistDigest
-            && actual.DeclaredEnvironmentDigest == expected.DeclaredEnvironmentDigest
-            && actual.CgroupKind == expected.CgroupKind && actual.CpuMax == expected.CpuMax
-            && actual.ProcessorCount == expected.ProcessorCount && actual.SdkVersion == expected.SdkVersion;
+        return TestEnvelope.MatchesReference(actual, expected);
     }
 
     private static string Fingerprint(PostMergeRunRecord run, PostMergeTestVerdict test)

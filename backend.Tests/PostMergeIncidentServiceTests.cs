@@ -256,6 +256,36 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         Assert.Empty(service.ActiveQuarantines(project));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Inconclusive_canary_receipts_are_triaged_once_with_guardian_observation(bool live)
+    {
+        var (project, clock, scanner, mutations, states, store, service) = Setup();
+        var guardian = new AgentStudio.Personas.LineGuardianStore(Path.Combine(store.Root, "..", "line-guardian"));
+        if (live) guardian.SetLive(project.Id, true, "owner", true, clock.GetUtcNow());
+        var run = TypedRed(category: "base", test: TestEnvelope.CanaryName) with
+        {
+            Id = "canary", Status = "inconclusive", EnvelopeCanaryPassed = false,
+        };
+
+        Record(store, service, project, run);
+        service.Apply(project, run);
+
+        Assert.Equal(run.Id, store.Read(project.Id).InconclusiveRunId);
+        Assert.Null(store.Read(project.Id).LineStop);
+        Assert.Empty(service.ActiveQuarantines(project));
+        Assert.Empty(scanner.ScanAllJobs());
+        var comparison = Assert.Single(guardian.Read(project.Id).Decisions);
+        Assert.Equal(!live, comparison.Shadow);
+        Assert.Equal(RedTestClassification.Environment, comparison.Guardian.Classification);
+        Assert.Equal(RedTestClassification.Environment, comparison.Applied.Classification);
+        var log = Assert.Single(Quarantines(store).Read(project.Id).IncidentLog);
+        Assert.Equal(run.Id, log.RunId);
+        Assert.Equal(nameof(RedTestClassification.Environment), log.Class);
+        Assert.Equal(live ? AgentStudio.Personas.LineGuardianStore.Principal(project.Id) : "system:post-merge", log.Principal);
+    }
+
     [Fact]
     public void Running_and_terminal_receipts_each_have_a_guardian_observation()
     {
@@ -403,7 +433,7 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         }
         Assert.Equal("report-only", Assert.Single(service.ActiveQuarantines(project)).Kind);
         Assert.Equal("green", store.Read(project.Id).DevelopState);
-        var environment = TypedRed(test: "Environment.Fail") with { Id = "environment", EnvelopeCanaryPassed = false };
+        var environment = TypedRed(test: "Environment.Fail") with { Id = "environment", Status = "inconclusive", EnvelopeCanaryPassed = false };
         Record(store, service, project, environment);
         Assert.Equal("environment", store.Read(project.Id).InconclusiveRunId);
         Assert.Null(store.Read(project.Id).LineStop);

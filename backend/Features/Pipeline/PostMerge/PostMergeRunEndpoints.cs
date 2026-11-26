@@ -89,7 +89,7 @@ public static class PostMergeRunEndpoints
                 || run.Id.Length > 80 || run.TipSha is null || run.TipSha.Length != 40
                 || !run.TipSha.All(Uri.IsHexDigit) || run.MergeCount < 0
                 || run.Kind is not ("window" or "nightly")
-                || run.Status is not ("running" or "green" or "red" or "skipped")
+                || run.Status is not ("running" or "green" or "red" or "inconclusive" or "skipped")
                 || run.Commands is null || run.Verdicts is null
                 || run.StartOccupiedSlots < 0
                 || run.StartLoadPerCore is { } load && (!double.IsFinite(load) || load < 0)
@@ -147,15 +147,18 @@ public static class PostMergeRunEndpoints
                 || !PostMergeRunPhases.All.Contains(item.Phase ?? "") || !IsSha(item.Sha)
                 || item.Tests < 0 || item.Tests > 64 || item.DurationMs < 0)))
             return false;
-        return run.Envelope is not { } envelope
+        return ValidEnvelope(run.Envelope) && ValidEnvelope(run.ReferenceEnvelope);
+    }
+
+    private static bool ValidEnvelope(PostMergeEnvelopeFingerprint? envelope)
+        => envelope is null
             || IsDigest(envelope.AllowlistDigest) && IsDigest(envelope.DeclaredEnvironmentDigest)
-            && envelope.CgroupKind is "worker" or "daemon" or "process" or "none"
+            && envelope.CgroupKind is "worker" or "daemon" or "process" or "none" or "unavailable"
             && envelope.CpuMax is not { Length: > 64 }
             && envelope.ProcessorCount is >= 0 and <= 4096
             && envelope.SdkVersion is not { Length: > 64 }
             && envelope.ShardPlan is { Length: <= 512 }
             && ValidLoad(envelope.StartLoadPerCore) && ValidLoad(envelope.PeakLoadPerCore);
-    }
 
     private static bool ValidAttribution(PostMergeAttributionEvidence attribution)
         => (attribution.LastGreenSha is null || IsSha(attribution.LastGreenSha))

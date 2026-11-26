@@ -37,7 +37,8 @@ internal static class PostMergeTestRetry
     internal static async Task<PostMergeCommandVerdict> RepeatAsync(PostMergeCommandVerdict verdict,
         Func<IReadOnlyList<string>, IReadOnlyList<string>> blockingTests,
         Func<string, Task<(int ExitCode, bool TimedOut, string Output)>> run,
-        Action<PostMergeTestRun>? record = null, string sha = "")
+        Action<PostMergeTestRun>? record = null, string sha = "",
+        Func<string, Task<(int ExitCode, bool TimedOut, string Output)>>? referenceRun = null)
     {
         var observed = verdict.FailedTests ?? PostMergeAttributor.FailedTests(verdict.OutputTail ?? "");
         var blocking = blockingTests(observed);
@@ -53,6 +54,16 @@ internal static class PostMergeTestRetry
             return result;
         }
 
+        async Task<bool> Reference(string command, IReadOnlyList<string> tests)
+        {
+            if (referenceRun is null) return false;
+            var started = Stopwatch.GetTimestamp();
+            var result = await referenceRun(command);
+            record?.Invoke(new(PostMergeRunPhases.Reference, sha, tests, result.ExitCode, result.TimedOut,
+                result.Output, (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds));
+            return result.ExitCode == 0 && !result.TimedOut;
+        }
+
         var flaky = new List<string>();
         var failed = new List<string>();
         var timedOut = false;
@@ -66,15 +77,20 @@ internal static class PostMergeTestRetry
                 var result = await Timed(PostMergeAttributor.FocusedCommand(verdict.Command, [test])!, [test]);
                 timedOut |= result.TimedOut;
                 if (result.ExitCode == 0 && !result.TimedOut) flaky.Add(test);
-                else failed.Add(test);
+                else
+                {
+                    if (await Reference(PostMergeAttributor.FocusedCommand(verdict.Command, [test])!, [test])) flaky.Add(test);
+                    else failed.Add(test);
+                }
             }
             return verdict with { ExitCode = failed.Count == 0 ? 0 : verdict.ExitCode,
-                TimedOut = timedOut, FailedTests = failed, FlakyTests = flaky, Retried = true };
+                TimedOut = failed.Count > 0 && timedOut, FailedTests = failed, FlakyTests = flaky, Retried = true };
         }
 
         var repeated = await Timed(verdict.Command, blocking.Count > 0 ? blocking : observed);
         var passed = repeated.ExitCode == 0 && !repeated.TimedOut;
-        return verdict with { ExitCode = passed ? 0 : verdict.ExitCode, TimedOut = repeated.TimedOut,
+        if (!passed) passed = await Reference(verdict.Command, blocking.Count > 0 ? blocking : observed);
+        return verdict with { ExitCode = passed ? 0 : verdict.ExitCode, TimedOut = !passed && repeated.TimedOut,
             FlakyTests = passed ? observed : [], Retried = true };
     }
 }

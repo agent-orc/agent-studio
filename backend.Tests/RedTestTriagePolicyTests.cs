@@ -45,6 +45,30 @@ public sealed class RedTestTriagePolicyTests
     }
 
     [Fact]
+    public void Failed_canary_precedes_attribution_and_never_stops_the_line()
+    {
+        var decision = RedTestTriagePolicy.Decide(Regression with { Category = RedTestCategory.Base,
+            EnvelopeCanary = RedTestResult.Fail, EarlierSuspectRevertIntegrated = true });
+        Assert.Equal(RedTestClassification.Environment, decision.Classification);
+        Assert.Contains(decision.Decisions, item => item.Action == RedTestAction.MarkInconclusive);
+        Assert.DoesNotContain(decision.Decisions, item => item.Action == RedTestAction.LineStop);
+    }
+
+    [Theory]
+    [InlineData(RedTestCategory.Base)]
+    [InlineData(RedTestCategory.Routine)]
+    public void Matching_reference_recovery_is_flaky_and_never_stops_the_line(RedTestCategory category)
+    {
+        var facts = Regression with { Category = category, ReferenceEnvelopeRepeat = RedTestResult.Pass };
+        var decision = RedTestTriagePolicy.Decide(facts);
+        Assert.Equal(RedTestClassification.Flaky, decision.Classification);
+        Assert.Null(decision.AttributedMerge);
+        Assert.DoesNotContain(decision.Decisions, item => item.Action == RedTestAction.LineStop);
+        Assert.Equal(RedTestClassification.Environment, RedTestTriagePolicy.Classify(facts with
+            { FingerprintMatchesReference = false }));
+    }
+
+    [Fact]
     public void Regression_requires_two_green_controls_and_a_double_run_parent_boundary()
     {
         var decision = RedTestTriagePolicy.Decide(Regression);

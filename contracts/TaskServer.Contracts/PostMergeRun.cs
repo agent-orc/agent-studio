@@ -22,9 +22,10 @@ public sealed record PostMergeRunRecord(
     /// <summary>RT-3 (RT-D10 B, fingerprint part): the test envelope the run's commands saw.</summary>
     public PostMergeEnvelopeFingerprint? Envelope { get; init; }
     public ReviewSuiteSelectionDto? SuiteSelection { get; init; }
-    /// <summary>Measured envelope checks when available. Null keeps the RT-3 single-envelope assumption until RT-6.</summary>
+    /// <summary>Measured envelope checks when available. Null keeps compatibility with pre-RT-6 receipts.</summary>
     public bool? EnvelopeCanaryPassed { get; init; }
     public bool? FingerprintMatchesReference { get; init; }
+    public PostMergeEnvelopeFingerprint? ReferenceEnvelope { get; init; }
     public IReadOnlyList<string> FlakyTests => Verdicts.SelectMany(verdict => verdict.FlakyTests ?? [])
         .Distinct(StringComparer.Ordinal).ToArray();
     public int FlakyCount => FlakyTests.Count;
@@ -46,12 +47,13 @@ public static class PostMergeRunPhases
 {
     public const string Initial = "initial";
     public const string Repeat = "repeat";
+    public const string Reference = "reference";
     public const string Control = "control";
     public const string Bisect = "bisect";
     public const string ControlBuild = "control-build";
     public const string BisectBuild = "bisect-build";
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
-        { Initial, Repeat, Control, Bisect, ControlBuild, BisectBuild };
+        { Initial, Repeat, Reference, Control, Bisect, ControlBuild, BisectBuild };
 }
 
 /// <summary>Values of a test attempt result and of an attribution control or point run.</summary>
@@ -106,9 +108,9 @@ public sealed record PostMergeFocusedRun(string Phase, string Sha, int Tests, in
     long DurationMs);
 
 /// <summary>
-/// RT-3 (RT-D10 B, fingerprint part only). Digests are SHA-256 hex prefixes and
-/// carry no values. <see cref="CgroupKind"/> is <c>worker</c>, <c>daemon</c>,
-/// <c>process</c> or <c>none</c>. <see cref="PeakLoadPerCore"/> is the highest of
+/// RT-3 fields shared by the RT-6 review, gate and post-merge envelopes. Digests are SHA-256 hex prefixes and
+/// carry no values. <see cref="CgroupKind"/> is <c>worker</c>, <c>unavailable</c> or
+/// <c>none</c>; older receipts also used <c>daemon</c> and <c>process</c>. <see cref="PeakLoadPerCore"/> is the highest of
 /// the 15-second load samples taken while the commands ran.
 /// </summary>
 public sealed record PostMergeEnvelopeFingerprint(string AllowlistDigest, string DeclaredEnvironmentDigest,

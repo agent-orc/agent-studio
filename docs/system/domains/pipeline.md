@@ -461,22 +461,8 @@ The timers use a dedicated checkout and a local exclusive claim file; the
 server fences the active run ID. A second claim waits, and an abandoned server
 claim expires after four hours for windows or fourteen hours for the nightly
 suite. Prepare, build, test discovery, shards, retries, and attribution commands
-start with a cleared process environment (AGT-3981). Only tool and OS variables
-(`PATH`, `HOME`, `DOTNET_ROOT`, locale, certificate paths, temp paths, the
-`PLAYWRIGHT_BROWSERS_PATH` tool cache required by preparation, and Windows
-process plumbing) and the project's declared environment are supplied. Daemon
-`RUNNER_*`, `AGENT_HOST_*`, provider credentials, and Git credentials are not
-inherited. The worker also removes its service-token variables from declared
-values. Repository fetches keep the host's existing credential routing.
-Host-owned Linux commands also run in a fresh sibling `worker-*` cgroup for
-each command (AGT-3983), using the coding worker's CPU and task envelope under
-the role aggregate. Attachment is required before the command executes. The
-scheduler defers execution when delegation is unavailable; it never falls back
-into the daemon leaf. Completion or cancellation kills remaining cgroup
-residents and removes the command marker. The review build-server fence also
-prevents host-shared MSBuild or Roslyn servers from doing work outside that
-command's cgroup. Standalone timer invocations keep
-their independently configured service context. Real cgroup tests are
+use the shared [test envelope](#shared-test-envelope-rt-6). Repository fetches
+keep their separate credential routing. Real cgroup tests are
 `MachineBound` and require an explicitly owned transient test scope, rather
 than borrowing the daemon's delegated service subtree.
 
@@ -565,6 +551,58 @@ a static artifact, and no promotion train. Agent Studio declares no Stage
 environment (its Studio instance is its Production, AGT-3879), so it does not
 opt in.
 
+### Shared test envelope (RT-6)
+
+RT-D10 option B is implemented by `TestEnvelope` and `TestCommandEnvelope` in
+TaskServer.Contracts. Remote Review, the build-test gate and post-merge commands
+start with a cleared environment. The builder supplies tool and OS variables,
+the project's declared `environment`, and run-owned HOME and temporary roots.
+Prepare, build and tests share the writable roots for the lifetime of the run,
+so restored packages remain available. Envelope roots are short enough for the
+test bootstrap to create its own child temp root without leaving the run.
+Preparation-owned dependency cache
+bindings and review resource namespaces still apply. Daemon settings are never
+inherited; provider, Git and token credentials are also excluded from declared
+values. A declared `RUNNER_SERVER_URL` remains visible to the canary so a bad
+project declaration is diagnosed rather than silently accepted.
+
+On Linux each command receives a fresh sibling `worker-test-*` leaf under an
+already delegated service subtree. `cpu.max` is `300000 100000` by default and
+`DOTNET_PROCESSOR_COUNT` is 3. Set `TEST_ENVELOPE_CORES` consistently on all
+three execution services to configure the shared token size. Existing daemon
+processor settings do not leak into the test process. The build-server fence
+keeps compilation inside the command. Teardown kills remaining cgroup residents.
+A host without delegation records `cgroupKind: unavailable` and a null `cpuMax`
+and continues; it does not claim to have applied a worker limit.
+
+Review environment and command receipts, gate process receipts and post-merge
+receipts carry `envelope`: allowlist-name and declared-environment digests,
+cgroup kind and measured quota, processor count, SDK version, shard plan, and
+start and peak load per core (15-second samples). The allowlist digest describes
+the shared builder's variable names; run-owned path values and role-specific
+resource names do not change it. Digests never expose values. Old receipts
+remain readable. Verdict cache identities include the envelope revision and
+processor count, and reused review evidence retains its original fingerprint.
+
+`TestEnvelopeCanaryTests` belongs to `backend-base`. From inside the test host it
+checks forbidden variables, owned HOME and temp, configured processor count,
+and worker membership when delegation is available. It accepts only an explicit
+`unavailable` observation on a Linux host without delegation. A failed canary
+is environment evidence for RT-2, produces an inconclusive post-merge receipt
+and no merge attribution or line stop. Gate and review failures use their
+infrastructure path. Inconclusive receipts still enter per-test triage and the
+line guardian's shadow or live observation path. Replayed receipts retain one
+per-test decision and guardian observation; nonterminal receipts keep their
+separate receipt observation. A failure that survives the same-SHA confirmation gets one
+serial reference repeat per failed method (or one whole-command repeat when a
+focused filter is unavailable), using `reference=1` and the same token size.
+Its attempts and fingerprint are retained separately for RT-2 comparison.
+Recovery in the matching reference envelope is flaky, runs no attribution and
+never stops the line; recovery after a fingerprint mismatch remains environment
+evidence in RT-2.
+The canary adds one small process-local check to the base suite; its 600-second
+cap remains unchanged.
+
 ### Flaky tests after integration (AGT-3976)
 
 Every failed routine suite in a window or nightly run gets one same-tip repeat,
@@ -629,11 +667,10 @@ so receipts of older runners stay valid, and the run route bounds them:
   candidate order with their two results and verdict, the bisect
   classification, the stop reason and the partial build command.
 - `testVerdicts[]`: one entry per failed test with suite id and category,
-  every attempt (`initial`, `repeat`, `control`, `bisect`) with result, SHA and
+  every attempt (`initial`, `repeat`, `reference`, `control`, `bisect`) with result, SHA and
   the duration of the run that produced it, `quarantined`, and the RT-2
-  `classificationHint` from `RedTestTriagePolicy.ClassificationHint`. The hint
-  treats envelope facts the runner does not measure (canary, reference
-  fingerprint) as not contradicting; the server's triage decides.
+  `classificationHint` from `RedTestTriagePolicy.ClassificationHint`. The hint carries measured canary evidence; the server also consumes reference-repeat
+  and fingerprint evidence through RT-2.
 - `testFile`, `coveringFolders` and `coveringFallback` per test that did not
   recover. The test source file is found by class name in the test project.
   Identifiers of at least eight characters that name a tracked `.cs` type file
@@ -647,12 +684,12 @@ so receipts of older runners stay valid, and the run route bounds them:
   command verdict. The [measurement note](#focused-run-cost-measurement)
   records a local baseline and defines the first-week receipt cohort.
 - `envelope` on the running and terminal receipt of every window and nightly
-  run: digest of the allowlisted variable names passed from the host, digest of
-  the declared environment, cgroup kind (`worker`, `daemon`, `process`,
-  `none`) and `cpu.max` when readable, processor count, SDK version, shard
+  run: digest of the shared allowlist names, digest of
+  the declared environment, cgroup kind (`worker`, `unavailable`, `none`; older receipts also use
+  `daemon` and `process`) and `cpu.max` when readable, processor count, SDK version, shard
   plan, load per core at start and the peak of a 15-second load sample during
   the run. Skip receipts run nothing and carry no envelope. Comparing
-  fingerprints with a reference envelope is RT-6.
+  fingerprints uses the RT-6 reference receipt.
 
 The receipt still feeds the compatibility repair flow in the next section. Quarantine starts,
 covering-folder holds and the triage ladder are implemented by RT-4 and RT-5.

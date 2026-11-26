@@ -25,7 +25,7 @@ testSuites:
   - id: backend-base
     category: base
     expectedDurationSeconds: 90
-    command: dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter "(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard|FullyQualifiedName~TransitionDecisionBoundaryTests|FullyQualifiedName~MonolithDecisionBoundaryTests|FullyQualifiedName~LocalStateStartupTests|FullyQualifiedName~TaskListProjectFilterEndpointTests|FullyQualifiedName~IntegrationReleaseServiceTests)"
+    command: dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter "(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard|FullyQualifiedName~TransitionDecisionBoundaryTests|FullyQualifiedName~MonolithDecisionBoundaryTests|FullyQualifiedName~LocalStateStartupTests|FullyQualifiedName~TaskListProjectFilterEndpointTests|FullyQualifiedName~IntegrationReleaseServiceTests|FullyQualifiedName~TestEnvelopeCanaryTests)"
   - id: frontend-unit-base
     category: base
     expectedDurationSeconds: 210

@@ -5,14 +5,14 @@ public static class RedTestTriagePolicy
 {
     public static RedTestClassification Classify(RedTestTriageFacts facts)
     {
+        if (facts.EnvelopeCanary == RedTestResult.Fail) return RedTestClassification.Environment;
         if (facts.EarlierSuspectRevertIntegrated && ConfirmedFailure(facts)
             || facts.LaterControlContradictsAttribution)
             return RedTestClassification.WrongAttribution;
-        if (facts.EnvelopeCanary == RedTestResult.Fail
-            || facts.FingerprintMatchesReference == false && facts.ReferenceEnvelopeRepeat == RedTestResult.Pass
+        if (facts.FingerprintMatchesReference == false && facts.ReferenceEnvelopeRepeat == RedTestResult.Pass
             || facts.LastGreenControlResults.Contains(RedTestResult.Fail))
             return RedTestClassification.Environment;
-        if (facts.FirstResult == RedTestResult.Fail && facts.SameShaRepeat == RedTestResult.Pass)
+        if (facts.FirstResult == RedTestResult.Fail && (facts.SameShaRepeat == RedTestResult.Pass || facts.ReferenceEnvelopeRepeat == RedTestResult.Pass))
             return RedTestClassification.Flaky;
         var bisect = BisectVerdictPolicy.Decide(facts.LastGreenControlResults, facts.BisectPoints);
         if (bisect.Classification == RedTestClassification.Flaky) return RedTestClassification.Flaky;
@@ -51,7 +51,7 @@ public static class RedTestTriagePolicy
             ? BisectVerdictPolicy.Decide(facts.LastGreenControlResults, facts.BisectPoints).AttributedMerge : null;
         var actions = new List<RedTestDecision>();
         var lineStop = ConfirmedFailure(facts) && (facts.BuildOrPrepareFailure || facts.Category == RedTestCategory.Base)
-            && classification is not (RedTestClassification.Environment or RedTestClassification.Inconclusive);
+            && classification is not (RedTestClassification.Environment or RedTestClassification.Inconclusive or RedTestClassification.Flaky);
         if (lineStop)
         {
             actions.Add(new(RedTestAction.LineStop, "Build, prepare or a base test failed twice in the reference envelope."));

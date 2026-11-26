@@ -238,6 +238,8 @@ public sealed class PostMergeRunCommand
             }
             changed = changed.Distinct(StringComparer.Ordinal).ToList();
         }
+        using var testWorkspace = new TestEnvelopeWorkspace();
+        _testWorkspace = testWorkspace;
         var commands = PostMergeRunPlan.Build(definition, _options.Mode, changed, state.WindowSuites);
         var selection = ProjectTestSelectionPolicy.Select(definition, changed,
             _options.Mode == "nightly" || state.WindowSuites == PostMergeWindowSuiteModes.Routine);
@@ -302,7 +304,8 @@ public sealed class PostMergeRunCommand
                         DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime)).Blocking;
                     ledger.Initial(suite, initial.Command, observed, blocking, tip);
                     verdicts[index] = await PostMergeTestRetry.RepeatAsync(initial, _ => blocking,
-                        retry => RunCommand(retry, definition.Environment, ct), ledger.Record, tip);
+                        retry => RunCommand(retry, definition.Environment, ct), ledger.Record, tip,
+                        referenceRun: retry => RunReferenceCommand(retry, definition.Environment, ct));
                     if (verdicts[index].ExitCode == 0) quarantinedFailures++;
                 }
                 for (var index = verdictStart; index < verdicts.Count; index++)
@@ -312,8 +315,10 @@ public sealed class PostMergeRunCommand
         }
         var status = verdicts.All(v => v.ExitCode == 0) && verdicts.Count >= commands.Count
             ? "green" : "red";
+        if (_canaryFailed && RedTestTriagePolicy.ClassificationHint(new(TestEnvelope.CanaryName, "backend-base", RedTestCategory.Base)
+            { EnvelopeCanary = RedTestResult.Fail }) == RedTestClassification.Environment) status = "inconclusive";
         PostMergeFailureEvidence? failure = null;
-        if (status == "red")
+        if (status == "red" && !verdicts.Any(verdict => TestEnvelope.CanaryFailed(verdict.FailedTests ?? [])))
         {
             try { failure = await AttributeFailureAsync(state, definition, tip, verdicts, ledger, ct); }
             catch (Exception exception) when (exception is not OperationCanceledException)
@@ -349,7 +354,11 @@ public sealed class PostMergeRunCommand
             FinishedAtUtc = _clock.GetUtcNow(),
             TestVerdicts = ledger.HasTests ? ledger.Verdicts() : null,
             FocusedRuns = ledger.FocusedRuns(),
-            Envelope = envelope }, ct);
+            Envelope = envelope,
+            ReferenceEnvelope = _referenceEnvelope,
+            FingerprintMatchesReference = _referenceEnvelope is null ? null : _lastEnvelope is { } actual
+                && TestEnvelope.MatchesReference(actual, _referenceEnvelope),
+            EnvelopeCanaryPassed = _canaryFailed ? false : _canaryObserved ? true : null }, ct);
         _output.WriteLine($"post-merge {status} tip={tip} commands={verdicts.Count}");
         return status == "green" ? 0 : 1;
     }
@@ -586,41 +595,35 @@ public sealed class PostMergeRunCommand
 
     private Action<PostMergeTestRun>? _recordRun;
 
-    private async Task<PostMergeEnvelopeFingerprint> EnvelopeAsync(ProjectExecutionDefinition definition,
+    private Task<PostMergeEnvelopeFingerprint> EnvelopeAsync(ProjectExecutionDefinition definition,
         IReadOnlyList<string> commands, string shardPlan, double? startLoad, double? peakLoad, CancellationToken ct)
     {
-        var declared = DeclaredEnvironment(definition.Environment);
-        var (kind, cpuMax) = _hostOptions is not null && OperatingSystem.IsLinux()
-            ? (PostMergeEnvelopeProbe.WorkerKind, _workerCpuMax)
-            : PostMergeEnvelopeProbe.OwnCgroup();
-        if (_sdkVersion is null && commands.Any(command => command.Contains("dotnet ", StringComparison.Ordinal)))
-            _sdkVersion = await SdkVersionAsync(definition.Environment, ct) ?? "";
-        return new(PostMergeEnvelopeProbe.AllowlistDigest(HostAllowlist().Where(name =>
-                Environment.GetEnvironmentVariable(name) is not null)),
-            PostMergeEnvelopeProbe.DeclaredEnvironmentDigest(declared), kind, cpuMax,
-            PostMergeEnvelopeProbe.ProcessorCount(declared, cpuMax, Environment.ProcessorCount),
-            string.IsNullOrEmpty(_sdkVersion) ? null : _sdkVersion, shardPlan, startLoad, peakLoad);
+        using var fallback = new TestCommandEnvelope(definition.Environment);
+        return Task.FromResult((_lastEnvelope ?? fallback.Fingerprint(definition.Environment, shardPlan))
+            with { ShardPlan = shardPlan, SdkVersion = string.IsNullOrEmpty(_sdkVersion) ? null : _sdkVersion,
+                StartLoadPerCore = startLoad, PeakLoadPerCore = peakLoad });
     }
 
     private string? _sdkVersion;
-    private string? _workerCpuMax;
+    private PostMergeEnvelopeFingerprint? _lastEnvelope;
+    internal PostMergeEnvelopeFingerprint? LastCommandEnvelope => _lastEnvelope;
+    private bool _canaryFailed;
+    private bool _canaryObserved;
+    private TestEnvelopeWorkspace? _testWorkspace;
+    private PostMergeEnvelopeFingerprint? _referenceEnvelope;
+    private static readonly SemaphoreSlim ReferenceToken = new(1, 1);
 
-    private async Task<string?> SdkVersionAsync(IReadOnlyDictionary<string, string> environment, CancellationToken ct)
+    private async Task<(int ExitCode, bool TimedOut, string Output)> RunReferenceCommand(string command,
+        IReadOnlyDictionary<string, string> environment, CancellationToken ct)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        await ReferenceToken.WaitAsync(ct);
         try
         {
-            var result = await ProcessRunner.RunAsync("dotnet", ["--version"], _options.Checkout,
-                environment: ChildEnvironment(environment), clearEnvironment: true, ct: timeout.Token);
-            var version = result.StdOut.Trim();
-            return result.Success && version.Length is > 0 and <= 64 && !version.Contains('\n') ? version : null;
+            var result = await RunCommand(command, environment, ct, TestEnvelope.Reference);
+            _referenceEnvelope = _lastEnvelope! with { ShardPlan = TestEnvelope.ReferenceShardPlan };
+            return result;
         }
-        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or IOException
-            or OperationCanceledException && !ct.IsCancellationRequested)
-        {
-            return null;
-        }
+        finally { ReferenceToken.Release(); }
     }
 
     private FileStream? ClaimCheckout()
@@ -630,50 +633,18 @@ public sealed class PostMergeRunCommand
         catch (IOException) { return null; }
     }
 
-    /// <summary>Tool and OS variables a project command receives from the host; nothing else is inherited.</summary>
-    private static IEnumerable<string> HostAllowlist()
-    {
-        string[] common =
-        [
-            "PATH", "HOME", "DOTNET_ROOT", "DOTNET_ROOT_X64", "DOTNET_ROOT_ARM64",
-            "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP",
-            "SSL_CERT_FILE", "SSL_CERT_DIR", "PLAYWRIGHT_BROWSERS_PATH",
-        ];
-        return OperatingSystem.IsWindows()
-            ? [.. common, "SystemRoot", "windir", "SystemDrive", "ComSpec", "PATHEXT", "USERPROFILE"]
-            : common;
-    }
-
-    private static readonly string[] RemovedVariables =
-        ["RUNNER_AUTH_TOKEN", "RUNNER_AUTH_TOKEN_FILE", "POST_MERGE_TOKEN_FILE", "POST_MERGE_SERVER_URL"];
-
-    private static IReadOnlyDictionary<string, string> DeclaredEnvironment(IReadOnlyDictionary<string, string> values)
-        => values.Where(pair => !RemovedVariables.Contains(pair.Key, StringComparer.Ordinal))
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-
-    private static IReadOnlyDictionary<string, string?> ChildEnvironment(IReadOnlyDictionary<string, string> values)
-    {
-        // Like review commands, project commands receive an explicit environment.
-        // The host scheduler also holds runner, provider, and Git credentials.
-        var environment = new Dictionary<string, string?>(StringComparer.Ordinal);
-        foreach (var name in HostAllowlist())
-            if (Environment.GetEnvironmentVariable(name) is { } value) environment[name] = value;
-        foreach (var (name, value) in values) environment[name] = value;
-        foreach (var name in RemovedVariables) environment[name] = null;
-        return environment;
-    }
-
     internal async Task<(int ExitCode, bool TimedOut, string Output)> RunCommand(string command,
-        IReadOnlyDictionary<string, string> environment, CancellationToken ct)
+        IReadOnlyDictionary<string, string> environment, CancellationToken ct, TestEnvelopeDefinition? shape = null)
     {
         _output.WriteLine($"post-merge {command}");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromHours(2));
-        using var envelope = PostMergeCommandEnvelope.Prepare(_hostOptions, line => _output.WriteLine(line));
-        if (envelope is not null) _workerCpuMax ??= envelope.CpuMax;
-        var launch = envelope?.Launch("sh", ["-c", command]) ?? new WorkerLaunch("sh", ["-c", command]);
-        var childEnvironment = ChildEnvironment(environment);
-        if (envelope is not null) childEnvironment = envelope.ChildEnvironment(childEnvironment);
+        using var envelope = WorkerCgroup.PrepareTestCommand(environment, line => _output.WriteLine(line), _testWorkspace?.Home, _testWorkspace?.Temp, shape);
+        await envelope.ProbeSdkAsync(_options.Checkout, ct);
+        _lastEnvelope = envelope.Fingerprint(environment, "command=1");
+        _sdkVersion ??= _lastEnvelope.SdkVersion;
+        var launch = envelope.Launch("sh", ["-c", command]);
+        var childEnvironment = envelope.Environment;
         try
         {
             var result = await ProcessRunner.RunAsync(launch.FileName, launch.Arguments, _options.Checkout,
@@ -681,7 +652,14 @@ public sealed class PostMergeRunCommand
                 onStdOut: line => _output.WriteLine(line),
                 onStdErr: line => _output.WriteLine(line),
                 isolateProcessGroup: OperatingSystem.IsLinux(), ct: timeout.Token);
-            return (result.ExitCode, false, result.StdOut + "\n" + result.StdErr);
+            _lastEnvelope = envelope.Fingerprint(environment, "command=1");
+            var output = result.StdOut + "\n" + result.StdErr;
+            var canaryFailure = TestEnvelope.CanaryFailed(PostMergeAttributor.FailedTests(output));
+            if (result.ExitCode == 0 && command.Contains(TestEnvelope.CanaryName, StringComparison.Ordinal) || canaryFailure)
+                _canaryObserved = true;
+            if (result.ExitCode != 0 && (canaryFailure || output.Contains("test envelope attach failed", StringComparison.Ordinal)))
+                _canaryFailed = true;
+            return (result.ExitCode, false, output);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
