@@ -341,7 +341,9 @@ public sealed class RoutePermissionInventoryTests : IDisposable
         {
             var permission = RoutePermissionCatalog.Resolve(endpoint, method)?.Permission;
             Assert.NotNull(permission);
-            Assert.Equal([IamRoles.Owner], IamRoles.All.Where(role => role.Permissions.Contains(permission!)).Select(role => role.Id));
+            var holders = IamRoles.All.Where(role => role.Permissions.Contains(permission!)).Select(role => role.Id).ToArray();
+            Assert.True(holders.SequenceEqual([IamRoles.Owner]),
+                $"{method} {endpoint.RoutePattern.RawText} -> {permission} is granted to {string.Join(", ", holders)}.");
         }
     }
 

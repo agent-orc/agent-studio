@@ -143,6 +143,7 @@ public static class EndpointMapping
         app.MapPipelineHealthEndpoints();
         app.MapGateEconomicsEndpoints();
         app.MapPostMergeRunEndpoints();
+        app.MapTestQuarantineEndpoints();
         app.MapOperatorSweepEndpoints();
         app.MapPostWorkEndpoints();
         app.MapFailureInterventionEndpoints();

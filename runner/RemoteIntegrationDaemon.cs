@@ -196,6 +196,9 @@ public static class IntegrationPublisher
             if (await IsAncestorAsync(resultSha, target, directory, ct))
                 return new(IntegrationOutcomeKinds.AlreadyIntegrated, target,
                     $"{branch} at {target} already contains {resultSha}.");
+            if (!TestQuarantineLifecyclePolicy.MayIntegrateLineStop(develop?.LineStop, command.TaskId,
+                (develop?.Incidents ?? []).Where(item => item.ResolvedAtUtc is null).Select(item => item.RepairCardId).ToArray()))
+                return new(IntegrationOutcomeKinds.BlockedFailingArea, null, "Develop line stop: " + develop!.LineStop);
             var lastT3 = develop?.Runs.LastOrDefault(run => run.Status is "red" or "green");
             if (lastT3?.Status == "red")
             {

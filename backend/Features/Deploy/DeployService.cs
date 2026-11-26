@@ -53,6 +53,7 @@ public sealed class DeployService
     private readonly TaskMutationService? _mutations;
     private readonly ReleaseCardAttributionSource _attribution;
     private readonly PostMergeRunStore? _postMerge;
+    private readonly TestQuarantineStore? _postMergeQuarantines;
     private readonly ProjectRegistry? _registry;
     private readonly InstanceDeployService? _instance;
     private readonly AgentStudio.Projects.ProjectSettingsService? _projectSettings;
@@ -90,7 +91,7 @@ public sealed class DeployService
         Action<TimeSpan>? deliveryLockHoldObserved = null,
         Action? deliveryVerificationCaptured = null,
         AgentStudio.Projects.HealthCheckStore? health = null,
-        IncidentActions? incidentActions = null)
+        IncidentActions? incidentActions = null, TestQuarantineStore? postMergeQuarantines = null)
     {
         _environments = environments;
         _store = store;
@@ -101,6 +102,8 @@ public sealed class DeployService
         _mutations = mutations;
         _attribution = attribution ?? new ReleaseCardAttributionSource(scanner);
         _postMerge = postMerge;
+        _postMergeQuarantines = postMergeQuarantines ?? (postMerge is null ? null
+            : new TestQuarantineStore(Path.Combine(postMerge.Root, "..", "test-quarantines")));
         _registry = registry;
         _instance = instance;
         _projectSettings = projectSettings;
@@ -189,10 +192,14 @@ public sealed class DeployService
         {
             var develop = _postMerge.Read(projectRecord.Id);
             var lastTerminal = develop.Runs.LastOrDefault(run => run.Status is "red" or "green");
-            if (!AgentStudio.Runner.MonolithTransitionAdapter.MayCreateRelease(lastTerminal?.Status == "red"))
+            var held = _postMergeQuarantines?.Read(projectRecord.Id).Entries.Any(entry => entry.Kind == "held"
+                && AgentStudio.Runner.MonolithTransitionAdapter.QuarantineActive(entry, _clock.GetUtcNow())) == true;
+            var lineStop = develop.LineStop ?? (lastTerminal?.TestVerdicts is null && lastTerminal?.Status == "red"
+                ? "Legacy red develop receipt" : null);
+            if (!AgentStudio.Runner.MonolithTransitionAdapter.MayReleaseQuarantines(lineStop, held))
                 return DeployOutcome<Release>.Conflict(
-                    "Develop is red. A green post-merge verdict is required before creating a release candidate.",
-                    "develop-red");
+                    held ? "A held test quarantine blocks release creation." : "Develop is stopped. A green post-merge verdict is required before creating a release candidate.",
+                    held ? "test-quarantine-held" : "develop-red");
         }
         try
         {

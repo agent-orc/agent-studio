@@ -499,7 +499,7 @@ alter integration transitions.
 No automatic code path moves a repair card out of Progress, Auto Review
 (including queued or executing gates and the wait for integration), Human
 Review or Completed because of a red develop, and no review attempt is
-superseded. Both receipt processing and the periodic overdue check take the
+superseded. Legacy receipt processing and its periodic overdue check take the
 decision from `RedDevelopRepairPolicy`, whose facts carry the repair card's
 lane and the incident age.
 
@@ -704,8 +704,8 @@ the local baseline cannot establish a production incident budget.
 RT-2 (AGT-4003) adds the pure `RedTestTriagePolicy`, `BisectVerdictPolicy` and
 `HoldScopePolicy` for the recommended RT-D1, RT-D2, RT-D4, RT-D5, RT-D6,
 RT-D7 and RT-D9 option B in the [Red test isolation Dossier](../../red-test-isolation/index.html).
-This slice adds no host wiring: the current repair flow below remains in use.
-Hosts will supply per-test repeat and envelope facts, last-green controls,
+RT-4 (AGT-4005) wires these decisions into the post-merge host for per-test
+receipts. Hosts supply per-test repeat and envelope facts, last-green controls,
 explicit double-run bisect points and their parents, project quarantine entries,
 repair lanes, ages and lift runs. Environment evidence marks a run inconclusive;
 a regression requires two passing controls and a failing point with a passing
@@ -735,6 +735,75 @@ expecting Flaky, Flaky, Environment and Environment with no line stop.
 `RedDevelopRepairPolicyTests` covers compatibility, while
 `TransitionDecisionBoundaryTests` and `MonolithDecisionBoundaryTests` guard
 the separation between pure decisions and host application.
+
+#### Quarantine authority and incident ladder (RT-4)
+
+Working decisions are RT-D2 B, RT-D3 B, RT-D4 B, RT-D5 B, RT-D7 B and
+RT-D11 B (API). `TestQuarantineStore` lives in `test-quarantines/` beside the
+`post-merge/` local-state directory. Each project has one atomically replaced
+record containing entries, mutation audit and immutable incident decisions.
+Resolved entries and audit are retained. The store never writes the repository
+file or creates a platform commit.
+
+`GET /api/projects/{name}/test-quarantines` lists server entries, including
+resolved entries, and active repository-file entries. The runner state route
+`GET /api/runner/post-merge/projects/{project}` exposes their active union as
+`quarantines`. File entries are owner report-only entries. Their `expiresOn`
+remains inclusive of the entire UTC day; server entries use exact UTC expiry.
+Both that route and `/api/develop-states` expose `quarantinedCount`, `heldCount`
+and `lineStop`. Develop is green for isolated routine failures and red for a
+line stop. `inconclusiveRunId` identifies an environment or unconfirmed receipt
+without treating it as proof of a code regression. Raw run evidence is retained.
+
+The owner can `POST` to `/api/projects/{name}/test-quarantines/start`,
+`/{id}/renew` and `/{id}/lift`. A runner with the completion scope applies the
+persisted receipt as the system principal until RT-8; it cannot choose a class,
+invent lift evidence, or lift without it. Owner mutations require
+`workspace.administer`; reads require `project.read`. A start names the test,
+fix card, kind, incident fingerprint, covering folders and optionally the suite
+and evidence run. Lift evidence names the last two covering receipts. The
+server checks the actual receipts and repair integration ancestry. Only the
+owner may lift without evidence or renew report-only entries. A held entry
+lasts 24 hours, renews once while its repair is in Progress or Auto Review
+(including integration wait), and never exceeds 48 hours. Report-only lasts
+seven days. Three held and eight total active entries are the project caps,
+including curated file entries in the total.
+
+Every terminal per-test receipt runs `RedTestTriagePolicy` through the monolith
+adapter. It creates or reuses `Repair red test: <test>` first in Preparation,
+puts a waiting Ready repair first too, and selects the configured model tier
+for the decision's rung within the economy mode. Review, active coding and
+settled lanes retain their owner. Two consecutive covering passes on tips that
+contain the repair lift the entry. Unselected suites and unknown ancestry do
+not count. The runner supplies suite commands, per-command suite IDs (also for shards
+whose filters are rewritten) and optional bisect parent results so the host can verify coverage and regression evidence mechanically.
+Until RT-6 provides measured canary/reference comparisons, RT-3's run-owned
+envelope is the working standard-envelope assumption. Explicit negative
+`envelopeCanaryPassed` or `fingerprintMatchesReference` facts override it.
+
+The periodic escalation check re-evaluates open incidents even after unrelated
+green runs: one rung up at two hours for waiting repairs, one renewal at
+24 hours if the repair is in progress, and an owner choice at 48 hours. A line
+stop asks the owner at 60 minutes. Cap breaches and relapses within seven days
+also raise owner items with their options and recommendation. Each reason is
+asked once per incident. No timer changes testing strategy or moves a reviewed
+or settled repair. The remote integration executor holds every non-repair
+publication during a line stop. Covering-folder integration holds and adoption
+of the union by gate and review readers belong to RT-5. Model classification
+requests are logged for RT-8; RT-4 itself makes no model classification call.
+
+Every applied decision records the PersonaLogEntryV1 decision fields: id,
+rule/revision, frozen-facts digest, class/confidence, actions, held cards, lift
+condition and a reason capped at 280 characters. The log is retained with the
+quarantine store. Replayed receipts do not create duplicate repair cards or
+log entries. Release creation refuses either an active held quarantine or a
+line stop; report-only entries do not block releases.
+
+#### Legacy receipt compatibility
+
+The compatibility flow below applies to receipts without the RT-3 per-test
+evidence. It preserves the existing repair contract and conservatively holds
+the line for an unclassified red rather than inventing confirmation evidence.
 
 This slice implements the Dossier's recorded D2 option A (`revert-first`). A
 terminal red T3 receipt carries failing tests, a bounded log excerpt, the

@@ -1286,14 +1286,23 @@ public sealed class AccessSecurityMiddleware
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/complete", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         if (HttpMethods.IsPost(method) && path.StartsWith("/api/clients/", StringComparison.OrdinalIgnoreCase)
             && path.EndsWith("/runner-git-capability", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
+        if (IsTestQuarantineRoute(path))
+            return HttpMethods.IsGet(method) ? RunnerScopes.Claim : RunnerScopes.Completion;
         if (path.Equals("/api/runner/post-merge/projects", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/runner/post-merge/projects/", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsGet(method) ? RunnerScopes.Claim : RunnerScopes.Completion;
         return GateRunnerScope(method, path);
     }
 
+    private static bool IsTestQuarantineRoute(string path)
+    {
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 4 && parts[0] == "api" && parts[1] == "projects" && parts[3] == "test-quarantines";
+    }
+
     private static bool IsHumanSessionRead(string method, string path)
     {
+        if (IsTestQuarantineRoute(path)) return true;
         if (!HttpMethods.IsGet(method)) return false;
         if (path is "/api/system/about" or "/api/v1/projects") return true;
         if (path.StartsWith("/api/v1/failure-fingerprints", StringComparison.OrdinalIgnoreCase)

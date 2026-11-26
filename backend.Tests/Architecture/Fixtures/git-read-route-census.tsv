@@ -167,6 +167,7 @@
 /api/projects/pipeline-catalogue	reachable	frozen	Pipeline	Pipeline reads from the Git fact store
 /api/projects/settings	free	-	-	-
 /api/projects/{name}/integration-conflicts	free	-	-	-
+/api/projects/{name}/test-quarantines	free	-	-	-
 /api/projects/{projId:regex(^PROJ-\d{{3,}}$)}	free	-	-	-
 /api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/ownership-mappings/audit	free	-	-	-
 /api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/url-suggestions	free	-	-	-

@@ -853,3 +853,12 @@ reference fingerprint as not contradicting; `Classify` and `Decide` remain the
 server's decision. `HoldScopePolicy.UsesSuiteAreaFallback` is the zero or more
 than 12 covering-folder rule that `Create` applies, so the receipt's
 `coveringFallback` cannot drift from the hold scope.
+
+RT-4 (AGT-4005) adds `TestQuarantineLifecyclePolicy` for explicit quarantine
+mutation admission, UTC expiry, release holds and line-stop integration
+admission. `RedTestTriagePolicy` also resolves a line stop on covering repair
+evidence and raises a waiting repair's model rung at its two-hour re-evaluation.
+The post-merge host supplies frozen per-test receipts, union quarantine facts,
+repair lanes, clocks and covering runs through `MonolithTransitionAdapter`.
+It applies the actions, persists the quarantine audit and incident decision
+log, and projects owner options. No project-wide testing strategy changes.

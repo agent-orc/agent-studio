@@ -10,7 +10,7 @@ public static class PostMergeRunEndpoints
     public static void MapPostMergeRunEndpoints(this WebApplication app)
     {
         app.MapGet("/api/develop-states", (HttpContext context, ProjectRegistry registry,
-            PostMergeRunStore store, TimeProvider clock) =>
+            PostMergeRunStore store, TimeProvider clock, PostMergeIncidentService incidents) =>
         {
             var allowed = GateEconomicsEndpoints.AccessFilter(context, registry);
             return Results.Ok(registry.List().Where(project => !project.Archived
@@ -27,7 +27,10 @@ public static class PostMergeRunEndpoints
                             .Select(group => new PostMergeFlakyTest(group.Key,
                                 group.Select(item => item.RunId).Distinct().Count(), group.Max(item => item.AtUtc)))
                             .OrderByDescending(item => item.Runs).ThenBy(item => item.Test, StringComparer.Ordinal)
-                            .ToArray());
+                            .ToArray())
+                    {
+                        Quarantines = incidents.ActiveQuarantines(project), LineStop = state.LineStop,
+                    };
                 }).ToArray());
         });
         app.MapGet("/api/runner/post-merge/projects", (ProjectRegistry registry,
@@ -51,7 +54,7 @@ public static class PostMergeRunEndpoints
             return Results.NoContent();
         });
         app.MapGet("/api/runner/post-merge/projects/{project}", (string project,
-            ProjectRegistry registry, PostMergeRunStore store, ProjectSettingsService settings) =>
+            ProjectRegistry registry, PostMergeRunStore store, ProjectSettingsService settings, PostMergeIncidentService incidents) =>
         {
             var record = registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project);
             if (record is null) return Results.NotFound();
@@ -66,7 +69,7 @@ public static class PostMergeRunEndpoints
                     // AGT-3965: fast selects the affected routine suites, balanced every routine suite.
                     WindowSuites = TestingStrategies.WindowSuites(strategy),
                 };
-            return Results.Ok(state);
+            return Results.Ok(state with { Quarantines = incidents.ActiveQuarantines(record) });
         });
         app.MapPost("/api/runner/post-merge/projects/{project}/escalation-check", (string project,
             ProjectRegistry registry, PostMergeIncidentService incidents) =>
@@ -91,7 +94,8 @@ public static class PostMergeRunEndpoints
                 || run.StartOccupiedSlots < 0
                 || run.StartLoadPerCore is { } load && (!double.IsFinite(load) || load < 0)
                 || run.Commands.Count > 64 || run.Verdicts.Count > 64
-                || run.Verdicts.Any(verdict => verdict.OutputTail?.Length > 2000
+                || run.Verdicts.Any(verdict => verdict.SuiteId is { } suiteId && (string.IsNullOrWhiteSpace(suiteId) || suiteId.Length > 128)
+                    || verdict.OutputTail?.Length > 2000
                     || verdict.FlakyTests?.Count > 64
                     || verdict.FlakyTests?.Any(test => string.IsNullOrWhiteSpace(test) || test.Length > 256) == true
                     || verdict.FailedTests?.Count > 64
@@ -117,7 +121,7 @@ public static class PostMergeRunEndpoints
             var state = store.Record(record.Id, safe);
             if (state is not null) incidents.Apply(record, safe);
             return state is null ? Results.Conflict(new { error = "post-merge run already claimed or stale" })
-                : Results.Ok(state);
+                : Results.Ok(store.Read(record.Id) with { Quarantines = incidents.ActiveQuarantines(record) });
         });
     }
 
@@ -161,6 +165,8 @@ public static class PostMergeRunEndpoints
             && attribution.Points.All(point => point is not null && IsSha(point.Sha)
                 && point.Results is { Count: <= 2 }
                 && point.Results.All(result => PostMergeTestResults.All.Contains(result ?? ""))
+                && (point.ParentResults is null || point.ParentResults is { Count: 2 }
+                    && point.ParentResults.All(result => PostMergeTestResults.All.Contains(result ?? "")))
                 && point.Verdict is "pass" or "fail" or "mixed")
             && PostMergeClassificationHints.All.Contains(attribution.Classification ?? "")
             && attribution.StopReason is not { Length: > 256 }
@@ -173,4 +179,10 @@ public static class PostMergeRunEndpoints
 
 public sealed record DevelopStateSummary(string Project, string? DevelopState, string? LastGreenSha,
     PostMergeWindowObservation? PendingWindow = null, int FlakyCount = 0,
-    IReadOnlyList<PostMergeFlakyTest>? MostFlakyTests14Days = null);
+    IReadOnlyList<PostMergeFlakyTest>? MostFlakyTests14Days = null)
+{
+    public IReadOnlyList<ProjectTestQuarantine> Quarantines { get; init; } = [];
+    public int QuarantinedCount => Quarantines.Count;
+    public int HeldCount => Quarantines.Count(entry => entry.Kind == "held");
+    public string? LineStop { get; init; }
+}
