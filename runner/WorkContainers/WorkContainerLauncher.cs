@@ -1,9 +1,11 @@
+using System.ComponentModel;
 using System.Globalization;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Win32.SafeHandles;
 
 namespace AgentRunner.WorkContainers;
 
@@ -435,9 +437,9 @@ public static class WorkContainerLauncherCommand
             return Refused(refusal);
         try
         {
-            var executable = await ResolveRuntimeAsync(runtime, RuntimeSearchDirectories, ct);
+            using var executable = ResolveRuntime(runtime, RuntimeSearchDirectories, ct);
             return await ExecuteAdmittedAsync(arguments, stdin,
-                (call, data, token) => ProcessRunner.RunAsync(executable, call, stdin: data, ct: token), ct);
+                (call, data, token) => ProcessRunner.RunAsync(executable.ExecutionPath, call, stdin: data, ct: token), ct);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
         {
@@ -449,31 +451,37 @@ public static class WorkContainerLauncherCommand
     internal static readonly string[] RuntimeSearchDirectories =
         ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"];
 
-    internal static async Task<string> ResolveRuntimeAsync(string runtime, IEnumerable<string> directories, CancellationToken ct,
-        Func<string, CancellationToken, Task<bool>>? trusted = null)
+    internal sealed class RuntimeExecutable(SafeFileHandle handle) : IDisposable
+    {
+        // Child processes close inherited descriptors. Address the launcher's
+        // still-open descriptor instead of /proc/self/fd or a mutable filename.
+        public string ExecutionPath { get; } = $"/proc/{Environment.ProcessId}/fd/{handle.DangerousGetHandle().ToInt64()}";
+        public void Dispose() => handle.Dispose();
+    }
+
+    internal static RuntimeExecutable ResolveRuntime(string runtime, IEnumerable<string> directories, CancellationToken ct,
+        Func<string, SafeFileHandle>? openExecutable = null)
     {
         if (runtime is not ("docker" or "podman")) throw new InvalidDataException("Unsupported work runtime.");
         foreach (var directory in directories)
         {
+            ct.ThrowIfCancellationRequested();
             var candidate = Path.Combine(directory, runtime);
-            if (!File.Exists(candidate)) continue;
-            // Root installations commonly use a symlink in /usr/local/bin.
-            // Verify the alias path as well as the resolved binary's ancestors.
-            if (!await (trusted ?? TrustedRuntimeDirectory)(directory, ct))
-                throw new InvalidDataException("Runtime search directory is not root-controlled.");
-            var resolved = new FileInfo(candidate).ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? candidate;
-            if (!await (trusted ?? TrustedRuntimeFile)(resolved, ct))
-                throw new InvalidDataException("Runtime executable is not root-controlled.");
-            return resolved;
+            try
+            {
+                return new RuntimeExecutable((openExecutable ?? OpenRuntimeExecutable)(candidate));
+            }
+            catch (IOException ex) when (ex.InnerException is Win32Exception { NativeErrorCode: 2 })
+            {
+                // Only absence permits falling through to the next system
+                // directory. An untrusted earlier installation fails closed.
+            }
         }
         throw new IOException("The configured work runtime is not installed in the trusted system search path.");
     }
 
-    private static Task<bool> TrustedRuntimeDirectory(string path, CancellationToken ct)
-        => RoleImageManifest.RootControlledPathAsync(path, directory: true, ct);
-
-    private static Task<bool> TrustedRuntimeFile(string path, CancellationToken ct)
-        => RoleImageManifest.RootControlledPathAsync(path, directory: false, ct);
+    private static SafeFileHandle OpenRuntimeExecutable(string path)
+        => RoleImageManifest.OpenRootControlled(path, directory: false, executable: true);
 
     private const string SourceSnapshotRoot = "/var/lib/agent-work-launcher/sources";
 
@@ -506,7 +514,6 @@ public static class WorkContainerLauncherCommand
         var directory = Path.Combine(root, name);
         // Exclusive creation also fences concurrent requests for the same name.
         if (MakeDirectory(directory, 0x1c0) != 0) throw new IOException("Source snapshot already exists or cannot be created.");
-        var snapshot = new SourceSnapshot(directory, arguments);
         try
         {
             var target = Path.Combine(directory, "source.git");
@@ -524,7 +531,7 @@ public static class WorkContainerLauncherCommand
             }
             return new SourceSnapshot(directory, rewritten);
         }
-        catch { snapshot.Dispose(); throw; }
+        catch { Directory.Delete(directory, recursive: true); throw; }
     }
 
     [DllImport("libc", EntryPoint = "mkdir", SetLastError = true)]

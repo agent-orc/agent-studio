@@ -69,20 +69,6 @@ public sealed record RoleImageManifest(int SchemaVersion, Dictionary<string, Rol
            && !path.Any(char.IsControl)
            && !path.Split('/').Skip(1).Any(part => part is "" or "." or "..");
 
-    internal static Task<bool> RootControlledPathAsync(string path, bool directory, CancellationToken ct)
-    {
-        ct.ThrowIfCancellationRequested();
-        try
-        {
-            using var handle = OpenRootControlled(path, directory);
-            return Task.FromResult(true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            return Task.FromResult(false);
-        }
-    }
-
     internal static bool TrustedMetadata(string metadata, bool directory, int count)
     {
         var lines = metadata.Split('\n', StringSplitOptions.RemoveEmptyEntries);
@@ -136,7 +122,7 @@ public sealed record RoleImageManifest(int SchemaVersion, Dictionary<string, Rol
         return new SafeFileHandle((IntPtr)descriptor, ownsHandle: true);
     }
 
-    internal static SafeFileHandle OpenRootControlled(string path, bool directory)
+    internal static SafeFileHandle OpenRootControlled(string path, bool directory, bool executable = false)
     {
         if (!OperatingSystem.IsLinux() || !Path.IsPathFullyQualified(path) || Path.GetFullPath(path) != path
             || (path != "/" && path.Split('/').Skip(1).Any(part => part is "" or "." or "..")))
@@ -145,15 +131,45 @@ public sealed record RoleImageManifest(int SchemaVersion, Dictionary<string, Rol
         try
         {
             CheckMetadata(handle, directory: true, owner: 0);
-            var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-            for (var index = 0; index < parts.Length; index++)
+            var parts = new LinkedList<string>(path.Split('/', StringSplitOptions.RemoveEmptyEntries));
+            var links = 0;
+            while (parts.First is { } part)
             {
-                var next = OpenPath(handle.DangerousGetHandle().ToInt32(), parts[index]);
-                try { CheckMetadata(next, index < parts.Length - 1 || directory, owner: 0); }
+                parts.RemoveFirst();
+                var next = OpenPath(handle.DangerousGetHandle().ToInt32(), part.Value);
+                try
+                {
+                    // Runtime installations may use aliases, including /bin.
+                    // Read the pinned link itself, then validate every directory
+                    // traversed by its target. Source and release paths never
+                    // permit links. No pathname is reopened after validation.
+                    if (executable && StatX(next.DangerousGetHandle().ToInt32(), "", 0x1000, 0x17ff, out var type) == 0
+                        && (type.Mode & 0xf000) == 0xa000)
+                    {
+                        if (++links > 40) throw new InvalidDataException("Runtime capability has too many symbolic links.");
+                        var buffer = new byte[4096];
+                        var length = ReadLinkAt(next.DangerousGetHandle().ToInt32(), "", buffer, (nuint)buffer.Length);
+                        if (length <= 0 || length >= buffer.Length) throw new InvalidDataException("Runtime capability link is invalid.");
+                        var target = System.Text.Encoding.UTF8.GetString(buffer, 0, (int)length);
+                        if (target.StartsWith('/'))
+                        {
+                            handle.Dispose();
+                            handle = OpenPath(-100, "/", directory: true);
+                            CheckMetadata(handle, directory: true, owner: 0);
+                        }
+                        foreach (var component in target.Split('/', StringSplitOptions.RemoveEmptyEntries).Reverse())
+                            parts.AddFirst(component);
+                        next.Dispose();
+                        continue;
+                    }
+                    CheckMetadata(next, parts.Count > 0 || directory, owner: 0);
+                }
                 catch { next.Dispose(); throw; }
                 handle.Dispose();
                 handle = next;
             }
+            if (executable && (CheckMetadata(handle, directory: false, owner: 0).Mode & 0x49) == 0)
+                throw new InvalidDataException("Runtime capability must be executable.");
             return handle;
         }
         catch { handle.Dispose(); throw; }
@@ -249,6 +265,9 @@ public sealed record RoleImageManifest(int SchemaVersion, Dictionary<string, Rol
 
     [DllImport("libc", EntryPoint = "openat", SetLastError = true)]
     private static extern int OpenAt(int parent, string path, int flags);
+
+    [DllImport("libc", EntryPoint = "readlinkat", SetLastError = true)]
+    private static extern nint ReadLinkAt(int parent, string path, byte[] buffer, nuint size);
 
     [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
     private static extern int StatX(int descriptor, string path, int flags, uint mask, out LinuxMetadata metadata);

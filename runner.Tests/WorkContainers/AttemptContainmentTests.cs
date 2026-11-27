@@ -296,26 +296,98 @@ public class AttemptContainmentTests
     [InlineData("podman")]
     [Trait("Category", "MachineBound")]
     [Trait("Category", "ReviewFlaky")]
-    public async Task Runtime_lookup_supports_a_trusted_local_install_and_refuses_untrusted_shadowing(string runtime)
+    public async Task Runtime_lookup_pins_a_local_install_and_refuses_untrusted_shadowing(string runtime)
     {
+        if (!OperatingSystem.IsLinux()) return;
         using var state = new TempDir();
         var local = Directory.CreateDirectory(Path.Combine(state.Path, "local", "bin")).FullName;
         var system = Directory.CreateDirectory(Path.Combine(state.Path, "usr", "bin")).FullName;
         var binary = Path.Combine(local, runtime);
         await File.WriteAllTextAsync(binary, "fixture executable");
         var checkedPaths = new List<string>();
-        Task<bool> Trusted(string path, CancellationToken ct)
+        Microsoft.Win32.SafeHandles.SafeFileHandle Open(string path)
         {
             checkedPaths.Add(path);
-            return Task.FromResult(true);
+            return RoleImageManifest.OpenPath(-100, path);
         }
-        Assert.Equal(binary, await WorkContainerLauncherCommand.ResolveRuntimeAsync(runtime, [local, system], default, Trusted));
-        Assert.Equal(new[] { local, binary }, checkedPaths);
+        using (var executable = WorkContainerLauncherCommand.ResolveRuntime(runtime, [local, system], default, Open))
+            Assert.Equal("fixture executable", await File.ReadAllTextAsync(executable.ExecutionPath));
+        Assert.Equal(new[] { binary }, checkedPaths);
         Assert.Contains("/usr/local/bin", WorkContainerLauncherCommand.RuntimeSearchDirectories);
-        await Assert.ThrowsAsync<InvalidDataException>(() => WorkContainerLauncherCommand.ResolveRuntimeAsync(
-            runtime, [local, system], default, (_, _) => Task.FromResult(false)));
+        Assert.Throws<InvalidDataException>(() => WorkContainerLauncherCommand.ResolveRuntime(
+            runtime, [local, system], default, _ => throw new InvalidDataException("untrusted installation")));
         File.Delete(binary);
-        await Assert.ThrowsAsync<IOException>(() => WorkContainerLauncherCommand.ResolveRuntimeAsync(runtime, [local, system], default, Trusted));
+        await File.WriteAllTextAsync(Path.Combine(system, runtime), "system fixture");
+        checkedPaths.Clear();
+        using (var executable = WorkContainerLauncherCommand.ResolveRuntime(runtime, [local, system], default, Open))
+            Assert.Equal("system fixture", await File.ReadAllTextAsync(executable.ExecutionPath));
+        Assert.Equal(new[] { binary, Path.Combine(system, runtime) }, checkedPaths);
+        File.Delete(Path.Combine(system, runtime));
+        Assert.Throws<IOException>(() => WorkContainerLauncherCommand.ResolveRuntime(runtime, [local, system], default, Open));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Runtime_execution_uses_the_checked_inode_after_a_file_or_parent_name_is_replaced(bool replaceParent)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var state = new TempDir();
+        var directory = Directory.CreateDirectory(Path.Combine(state.Path, "bin")).FullName;
+        var binary = Path.Combine(directory, "docker");
+        await File.WriteAllTextAsync(binary, "#!/bin/sh\nprintf approved");
+        File.SetUnixFileMode(binary, (UnixFileMode)0x1c0);
+        using var executable = WorkContainerLauncherCommand.ResolveRuntime("docker", [directory], default,
+            path => RoleImageManifest.OpenPath(-100, path));
+        var descriptorPath = executable.ExecutionPath;
+        if (replaceParent)
+        {
+            Directory.Move(directory, directory + ".parked");
+            Directory.CreateDirectory(directory);
+        }
+        else File.Move(binary, binary + ".parked");
+        await File.WriteAllTextAsync(binary, "#!/bin/sh\nprintf substituted; exit 91");
+        File.SetUnixFileMode(binary, (UnixFileMode)0x1c0);
+        var result = await ProcessRunner.RunAsync(descriptorPath, []);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("approved", result.StdOut.Trim());
+        executable.Dispose();
+        Assert.False(File.Exists(descriptorPath));
+    }
+
+    [Theory]
+    [InlineData("/usr/bin/true")]
+    [InlineData("/bin/true")]
+    [InlineData("/bin/sh")]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Runtime_capabilities_validate_system_aliases_and_execute_the_pinned_binary(string path)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var handle = RoleImageManifest.OpenRootControlled(path, directory: false, executable: true);
+        using var executable = new WorkContainerLauncherCommand.RuntimeExecutable(handle);
+        var result = await ProcessRunner.RunAsync(executable.ExecutionPath, path.EndsWith("/sh", StringComparison.Ordinal) ? ["-c", "exit 0"] : []);
+        Assert.Equal(0, result.ExitCode);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Runtime_capabilities_refuse_caller_owned_paths_even_through_system_aliases()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var state = new TempDir();
+        var binary = Path.Combine(state.Path, "docker");
+        await File.WriteAllTextAsync(binary, "#!/bin/sh\nexit 0");
+        File.SetUnixFileMode(binary, (UnixFileMode)0x1c0);
+        File.CreateSymbolicLink(Path.Combine(state.Path, "podman"), "/usr/bin/true");
+        Assert.Throws<InvalidDataException>(() => RoleImageManifest.OpenRootControlled(binary, directory: false, executable: true));
+        Assert.Throws<InvalidDataException>(() => RoleImageManifest.OpenRootControlled(
+            Path.Combine(state.Path, "podman"), directory: false, executable: true));
+        Assert.Throws<InvalidDataException>(() => RoleImageManifest.OpenRootControlled("/usr/bin", directory: false, executable: true));
+        Assert.Throws<InvalidDataException>(() => RoleImageManifest.OpenRootControlled("/etc/hosts", directory: false, executable: true));
     }
 
     [Theory]

@@ -28,7 +28,9 @@
 # The daemon binds that private snapshot, retained until successful removal,
 # so later source replacement cannot change what start mounts. Preparation
 # accepts daemon volumes only. The runtime is resolved from this wrapper's
-# fixed system PATH and must be root-controlled. Promote
+# fixed system PATH through validated directory and file descriptors. System
+# aliases are followed through pinned links; execution uses the open binary
+# descriptor for the whole request, including volume and mount probes. Promote
 # this file through the root release process, never from the service account.
 # Missing/invalid state refuses image admission; cleanup remains available.
 # After deployment, --probe <attempt-name> prints the daemon's effective mounts.
