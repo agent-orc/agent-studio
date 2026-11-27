@@ -448,6 +448,11 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<AccessSecurityStore>();
+                services.AddSingleton(provider => LowCostPasswordHashes.Store(provider));
+            });
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {

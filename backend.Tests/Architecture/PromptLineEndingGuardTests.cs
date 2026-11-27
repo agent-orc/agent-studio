@@ -168,6 +168,9 @@ public sealed partial class PromptLineEndingGuardTests
     private static IReadOnlyList<NewlineSite> ScanSource(string relativePath, string source, IReadOnlyCollection<string> registered)
     {
         var code = CSharpSourceScanner.MaskCommentsAndLiterals(source.Replace("\r\n", "\n", StringComparison.Ordinal));
+        // A violation needs a newline token and either a named or registered builder.
+        if (!PlatformNewline().IsMatch(code)
+            || (registered.Count == 0 && !PromptBuilderName().IsMatch(code))) return [];
         var sites = new List<NewlineSite>();
         foreach (var method in CSharpSourceScanner.Methods(code))
         {

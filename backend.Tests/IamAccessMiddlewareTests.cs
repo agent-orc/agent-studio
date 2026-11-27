@@ -32,7 +32,9 @@ public sealed class IamAccessMiddlewareTests : IDisposable
             ["TaskRepository"] = _root,
             ["Security:Profile"] = "networked",
         }).Build();
-        _store = new AccessSecurityStore(_config, NullLogger<AccessSecurityStore>.Instance, _clock);
+        // These tests prove authorization; retain real verification without production hash cost.
+        _store = new AccessSecurityStore(_config, NullLogger<AccessSecurityStore>.Instance, _clock,
+            PasswordSecretHasher.VerifyPassword, LowCostPasswordHashes.Hash);
         _ownerId = _store.Bootstrap(new BootstrapRequest("first.owner", Password, null)).User.Id;
     }
 

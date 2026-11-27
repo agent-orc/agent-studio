@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Xunit;
 using TaskServerProgram = TaskServerAssembly::Program;
 using TaskServerStore = TaskServerAssembly::AgentStudio.TaskServer.TaskServerStore;
@@ -166,7 +167,8 @@ public sealed class BoardSourceIntegrationTests : IDisposable
                 read.EnsureSuccessStatusCode();
                 await worker.RunCycleAsync(deadline.Token);
                 last = snapshot();
-                await Task.Delay(500, deadline.Token);
+                if (ready(last)) return last;
+                await Task.Delay(10, deadline.Token);
             }
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
@@ -243,6 +245,12 @@ public sealed class BoardSourceIntegrationTests : IDisposable
         var index = backend.Services.GetRequiredService<TaskIndexCache>();
         await worker.RunCycleAsync(default);
 
+        using (var initialSync = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+        {
+            var initialPublication = await index.WaitForCurrentMutationPublicationAsync(initialSync.Token);
+            Assert.Contains(initialPublication.Live, task => task.Key == Key && task.State == TaskStates.Backlog);
+            Assert.True(await worker.EnsureSyncedAsync(initialPublication.Generation, TimeSpan.FromSeconds(30), initialSync.Token));
+        }
         var first = await ReadBoardAsync(client);
         Assert.Equal(BoardSourceSetting.TaskServer, first.Source);
         Assert.Contains(first.Lanes.GetProperty("backlog").EnumerateArray(), item => item.GetProperty("key").GetString() == Key);
@@ -316,13 +324,27 @@ public sealed class BoardSourceIntegrationTests : IDisposable
                 }
                 configuration.AddInMemoryCollection(settings);
             });
-            builder.ConfigureTestServices(services => services
-                .AddHttpClient(TaskServerBoardClient.ClientName)
-                .ConfigurePrimaryHttpMessageHandler(() => taskServer.Server.CreateHandler()));
+            builder.ConfigureTestServices(services =>
+            {
+                // Each test owns mirror cycles and awaits index publications explicitly.
+                TestHostFactory.RemoveBackgroundHostedServices(services);
+                services.AddHttpClient(TaskServerBoardClient.ClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => taskServer.Server.CreateHandler());
+            });
         });
 
     private sealed class TaskServerFactory(string dataDirectory) : WebApplicationFactory<TaskServerProgram>
     {
+        protected override IHost CreateHost(IHostBuilder builder)
+        {
+            var host = base.CreateHost(builder);
+            // Build routing before the board client's bounded import/read requests,
+            // as TestHostFactory does for the backend. Cold routing is fixture setup.
+            using var client = host.GetTestClient();
+            using var response = client.GetAsync(TestHostFactory.EndpointWarmUpPath).GetAwaiter().GetResult();
+            return host;
+        }
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");

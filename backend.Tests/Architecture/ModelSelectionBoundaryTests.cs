@@ -1,6 +1,7 @@
 extern alias Runner;
 extern alias TaskServerAssembly;
 
+using System.Collections.Frozen;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
@@ -47,6 +48,9 @@ public sealed class ModelSelectionBoundaryTests
     /// <summary>Starts that still decide outside the service. MS-6 moves each behind it and removes the entry.</summary>
     private static readonly IReadOnlyDictionary<string, string> PendingStarts = new Dictionary<string, string>();
 
+    // Loaded IL cannot change during a run; all checks can share the complete scan.
+    private static readonly Lazy<ScanResult> BackendScan = new(() => Scan(typeof(ModelSelectionService).Assembly));
+
     [Fact]
     public void Pending_start_allow_list_is_empty() => Assert.Empty(PendingStarts);
 
@@ -73,7 +77,7 @@ public sealed class ModelSelectionBoundaryTests
     [Fact]
     public void Cli_starts_and_router_calls_stay_on_the_allow_lists()
     {
-        var sites = Scan(typeof(ModelSelectionService).Assembly);
+        var sites = BackendScan.Value;
 
         var unlistedStarts = sites.Starts.Keys
             .Where(owner => !SelectionRoutedStarts.ContainsKey(owner) && !PendingStarts.ContainsKey(owner))
@@ -95,7 +99,7 @@ public sealed class ModelSelectionBoundaryTests
     [Fact]
     public void Allow_lists_have_no_stale_entries()
     {
-        var sites = Scan(typeof(ModelSelectionService).Assembly);
+        var sites = BackendScan.Value;
         var stale = SelectionRoutedStarts.Keys.Concat(PendingStarts.Keys)
             .Where(owner => !sites.Starts.ContainsKey(owner))
             .Concat(RouterReaders.Keys.Where(type => !sites.RouterCallers.Contains(type)))
@@ -106,7 +110,7 @@ public sealed class ModelSelectionBoundaryTests
     [Fact]
     public void Selection_routed_starts_ask_the_selection_service()
     {
-        var sites = Scan(typeof(ModelSelectionService).Assembly);
+        var sites = BackendScan.Value;
         foreach (var (owner, via) in SelectionRoutedStarts)
         {
             if (via != owner) Assert.Contains(via, sites.Calls[owner]);
@@ -134,7 +138,7 @@ public sealed class ModelSelectionBoundaryTests
     [Fact]
     public void Legacy_types_are_thin_adapters_over_the_shared_planner()
     {
-        var sites = Scan(typeof(ModelSelectionService).Assembly);
+        var sites = BackendScan.Value;
         Assert.Equal(typeof(ProviderModelFallback).Assembly, typeof(ModelSelectionPlanner).Assembly);
         Assert.Equal(typeof(ProviderModelFallback).Assembly, typeof(SelectionRequest).Assembly);
         Assert.Equal(typeof(ProviderModelFallback).Assembly, typeof(ModelRoutingTier).Assembly);
@@ -204,9 +208,10 @@ public sealed class ModelSelectionBoundaryTests
             }
         }
         return new ScanResult(
-            starts.ToDictionary(item => item.Key, item => (IReadOnlyList<string>)item.Value, StringComparer.Ordinal),
-            routerCallers,
-            calls.ToDictionary(item => item.Key, item => (IReadOnlySet<string>)item.Value, StringComparer.Ordinal));
+            starts.ToFrozenDictionary(item => item.Key, item => (IReadOnlyList<string>)item.Value.AsReadOnly(), StringComparer.Ordinal),
+            routerCallers.ToFrozenSet(StringComparer.Ordinal),
+            calls.ToFrozenDictionary(item => item.Key,
+                item => (IReadOnlySet<string>)item.Value.ToFrozenSet(StringComparer.Ordinal), StringComparer.Ordinal));
     }
 
     /// <summary>A process start through a CLI backend, or a call that skips the selection-routed one-shot registry.</summary>

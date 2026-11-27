@@ -547,12 +547,25 @@ public sealed class AccessSecurityTests : IDisposable
     [Fact]
     public void Guessed_usernames_and_addresses_keep_throttle_state_bounded()
     {
+        // Tracking bounds are the subject. Verify each distinct input pair with the real hasher once.
+        var verifiedPasswords = new Dictionary<(string Password, string Hash), bool>();
+        bool VerifyPasswordOnce(string password, string hash)
+        {
+            var key = (password, hash);
+            if (!verifiedPasswords.TryGetValue(key, out var matches))
+            {
+                matches = PasswordSecretHasher.VerifyPassword(password, hash);
+                verifiedPasswords.Add(key, matches);
+            }
+            return matches;
+        }
+
         var (store, _, clock) = NewStore(new Dictionary<string, string?>
         {
             ["Security:LoginThrottle:MaxTrackedClients"] = "8",
             ["Security:LoginThrottle:MaxTrackedUsernames"] = "8",
             ["Security:LoginThrottle:ClientMaxFailures"] = "2"
-        });
+        }, verifyPassword: VerifyPasswordOnce);
         store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
 
         for (var index = 0; index < 16; index++)
@@ -744,7 +757,8 @@ public sealed class AccessSecurityTests : IDisposable
         Assert.True(ProjectAccessAuthorization.AllowsTasks(new DefaultHttpContext(), ["PROJ-002"]));
     }
 
-    private (AccessSecurityStore Store, IConfiguration Configuration, MutableTimeProvider Clock) NewStore(Dictionary<string, string?>? overrides = null)
+    private (AccessSecurityStore Store, IConfiguration Configuration, MutableTimeProvider Clock) NewStore(
+        Dictionary<string, string?>? overrides = null, Func<string, string, bool>? verifyPassword = null)
     {
         Directory.CreateDirectory(_root);
         var values = new Dictionary<string, string?>
@@ -755,7 +769,8 @@ public sealed class AccessSecurityTests : IDisposable
         if (overrides is not null) foreach (var pair in overrides) values[pair.Key] = pair.Value;
         var config = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
         var clock = new MutableTimeProvider(DateTimeOffset.Parse("2026-07-13T12:00:00Z"));
-        return (new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, clock), config, clock);
+        return (new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, clock,
+            verifyPassword ?? PasswordSecretHasher.VerifyPassword), config, clock);
     }
 
     private static async Task<(DefaultHttpContext Context, BoolBox Called)> Invoke(
