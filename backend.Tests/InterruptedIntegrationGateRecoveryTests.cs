@@ -6,6 +6,8 @@ using AgentStudio.Registry;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -483,6 +485,113 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
         Assert.Equal(IntegrationGatePhase.RollbackRequired, IntegrationGateJournal.Read(folder)?.Phase);
     }
 
+    [Theory]
+    [InlineData("merge")]
+    [InlineData("push")]
+    public async Task StartupPublicationMustPrecedeMergeAndPushAdmission(string operation)
+    {
+        var crashed = Build(gateDies: true);
+        var oldFolder = SeedDelivery(crashed, "startup-old");
+        await crashed.Runner.RunAsync(Project, "startup-old", oldFolder, _repo, "develop", CancellationToken.None);
+        var mutations = 0;
+        var mutationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var restarted = Build(gateDies: false, mutationBoundary: _ => { Interlocked.Increment(ref mutations); mutationStarted.TrySetResult(); });
+        var next = SeedDelivery(restarted, "startup-next");
+        var scanEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseScan = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var config = new ConfigurationBuilder().Build();
+        var cache = new TaskIndexCache(restarted.Scanner, NullLogger<TaskIndexCache>.Instance, config, () =>
+        {
+            scanEntered.TrySetResult();
+            releaseScan.Task.GetAwaiter().GetResult();
+            return restarted.Scanner.ScanAllJobsRaw();
+        });
+        restarted.Scanner.SetIndexCache(cache);
+        using var hosted = new InterruptedIntegrationGateRecoveryHostedService(restarted.Scanner,
+            restarted.Recovery, NullLogger<InterruptedIntegrationGateRecoveryHostedService>.Instance);
+        await hosted.StartAsync(CancellationToken.None);
+        Task? request = null;
+        try
+        {
+            await scanEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            request = Task.Run(async () =>
+            {
+                if (operation == "merge")
+                    await restarted.Runner.RunAsync(Project, "startup-next", next, _repo, "develop", CancellationToken.None);
+                else
+                    await restarted.Runner.PushIntegrationBranchAsync(Project, "startup-old", oldFolder, _repo,
+                        "develop", approvedSha: Line());
+            });
+            await Task.WhenAny(mutationStarted.Task, request, Task.Delay(TimeSpan.FromSeconds(2)));
+            Assert.Equal(0, Volatile.Read(ref mutations));
+            Assert.False(request.IsCompleted);
+        }
+        finally
+        {
+            releaseScan.TrySetResult();
+            if (request is not null) await request.WaitAsync(TimeSpan.FromSeconds(30));
+            await hosted.StopAsync(CancellationToken.None);
+        }
+    }
+
+    /// <summary>
+    /// AGT-4239: Git-backed start-up repairs run after the host is healthy and
+    /// keep integration and push admission closed. A merge or push requested
+    /// while one runs enters no publication boundary, and proceeds once the
+    /// repair ends.
+    /// </summary>
+    [Theory]
+    [InlineData("merge")]
+    [InlineData("push")]
+    public async Task MergeOrPushRequestedDuringStartupRepair_WaitsForTheRepairAndThenProceeds(string operation)
+    {
+        var repairs = new StartupRepairAdmission(NullLogger<StartupRepairAdmission>.Instance);
+        var mutations = 0;
+        var stack = Build(gateDies: false, mutationBoundary: _ => Interlocked.Increment(ref mutations),
+            startupRepairs: repairs);
+        var folder = SeedDelivery(stack, "repair-wait");
+        if (operation == "push")
+        {
+            var merged = await stack.Runner.RunAsync(Project, "repair-wait", folder, _repo, "develop", CancellationToken.None);
+            Assert.True(merged.Outcome.IsSuccessfulIntegration(), merged.Error);
+        }
+        var before = Volatile.Read(ref mutations);
+        using var release = new ManualResetEventSlim(false);
+        var repairEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        repairs.Enqueue("CommitMetadataBackfill", StartupAdmission.Integration | StartupAdmission.Push, () =>
+        {
+            repairEntered.TrySetResult();
+            release.Wait(TimeSpan.FromSeconds(60));
+        });
+        var drain = Task.Factory.StartNew(() => repairs.Drain(null, null, CancellationToken.None),
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        await repairEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        var request = Task.Run(async () => operation == "merge"
+            ? (await stack.Runner.RunAsync(Project, "repair-wait", folder, _repo, "develop", CancellationToken.None))
+                .Outcome.IsSuccessfulIntegration()
+            : (await stack.Runner.PushIntegrationBranchAsync(Project, "repair-wait", folder, _repo, "develop",
+                approvedSha: Line())).Success);
+        try
+        {
+            await Task.WhenAny(request, Task.Delay(TimeSpan.FromSeconds(2)));
+            Assert.False(request.IsCompleted);
+            Assert.Equal(before, Volatile.Read(ref mutations));
+            Assert.Equal("startup-repair:CommitMetadataBackfill (running)",
+                repairs.WaitingReason(operation == "merge" ? StartupAdmission.Integration : StartupAdmission.Push));
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        Assert.True(await request.WaitAsync(TimeSpan.FromSeconds(60)));
+        await drain.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.True(Volatile.Read(ref mutations) > before);
+        if (operation == "push")
+            Assert.Equal(Line(), Git(_origin, "rev-parse", "develop"));
+    }
+
     // ---- helpers ------------------------------------------------------------
 
     private TaskIntegrationStatus Status(Stack stack, string id)
@@ -541,7 +650,8 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
     /// <summary>The integration line: the Studio lane the merges and rollbacks move (AGT-2996).</summary>
     private string Line() => Head(GitService.IntegrationLaneRef("develop"));
 
-    private Stack Build(bool gateDies, bool gateRed = false, bool recoverOnAdmission = true)
+    private Stack Build(bool gateDies, bool gateRed = false, bool recoverOnAdmission = true, Action<string>? mutationBoundary = null,
+        StartupRepairAdmission? startupRepairs = null)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -566,7 +676,7 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
         var integration = new TaskIntegrationStatusService(
             git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance);
         var worktrees = new IntegrationWorktreeProvider(git);
-        var leases = new RefMutationLeaseService(Path.Combine(_root, "leases"));
+        var leases = new RefMutationLeaseService(Path.Combine(_root, "leases"), mutationBoundary);
         var recovery = new InterruptedIntegrationGateRecoveryService(scanner, git, worktrees,
             pipeline, timeline, NullLogger<InterruptedIntegrationGateRecoveryService>.Instance, leases);
         var runner = new MergeIntoDevelopRunner(
@@ -576,8 +686,9 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
             projectSettings: settings,
             preDevelopBuildGate: new PreDevelopBuildGate(new DyingBuildTestGateRunner(gateDies, gateRed)),
             integrationWorktrees: worktrees, refMutationLeases: leases,
-            interruptedGateRecovery: recoverOnAdmission ? recovery : null);
-        return new Stack(scanner, git, settings, pipeline, timeline, integration, worktrees, runner);
+            interruptedGateRecovery: recoverOnAdmission ? recovery : null,
+            startupRepairs: startupRepairs);
+        return new Stack(scanner, git, settings, pipeline, timeline, integration, worktrees, runner, recovery);
     }
 
     /// <summary>
@@ -644,7 +755,8 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
         TimelineLog Timeline,
         TaskIntegrationStatusService Integration,
         IntegrationWorktreeProvider Worktrees,
-        MergeIntoDevelopRunner Runner);
+        MergeIntoDevelopRunner Runner,
+        InterruptedIntegrationGateRecoveryService Recovery);
 
     private static string Git(string cwd, params string[] args)
     {
@@ -737,5 +849,310 @@ public sealed class IntegrationGateRollbackJournalTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_folder)) Directory.Delete(_folder, recursive: true);
+    }
+}
+
+/// <summary>Controlled startup and fault boundaries; no Git processes or live hosts.</summary>
+public sealed class InterruptedIntegrationStartupAdmissionTests : IDisposable
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "integration-startup-" + Guid.NewGuid().ToString("N"));
+    private readonly List<TaskInfo> _jobs = [];
+
+    [Theory]
+    [InlineData("merge")]
+    [InlineData("push")]
+    public async Task FirstPublicationAndOldJournalRepairBothPrecedeAdmission(string operation)
+    {
+        var repo = Path.Combine(_root, "missing-checkout");
+        var folder = Journal("old", repo);
+        var scanEntered = Signal();
+        var releaseScan = Signal();
+        var repairEntered = Signal();
+        var releaseRepair = Signal();
+        var mutations = 0;
+        var graph = Build(() =>
+        {
+            scanEntered.TrySetResult();
+            releaseScan.Task.GetAwaiter().GetResult();
+            return _jobs.ToList();
+        }, stage => { if (stage == "fence-published") Interlocked.Increment(ref mutations); });
+        graph.Recovery.AfterJournalsReadForTesting = (root, lease) =>
+        {
+            Assert.Equal(repo, root);
+            Assert.True(RefMutationLeaseService.IsCurrent(lease));
+            Assert.NotNull(IntegrationGateJournal.Read(folder));
+            repairEntered.TrySetResult();
+            releaseRepair.Task.GetAwaiter().GetResult();
+            Clear(folder);
+        };
+        using var hosted = new InterruptedIntegrationGateRecoveryHostedService(graph.Scanner, graph.Recovery,
+            NullLogger<InterruptedIntegrationGateRecoveryHostedService>.Instance);
+        using var requestCancellation = new CancellationTokenSource();
+        Task? request = null;
+        await hosted.StartAsync(CancellationToken.None);
+        try
+        {
+            await scanEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            request = Request(graph.Runner, operation, repo, folder, requestCancellation.Token);
+            Assert.False(request.IsCompleted);
+            Assert.Equal(0, Volatile.Read(ref mutations));
+            Assert.Equal("waiting-for-startup-inventory", graph.Recovery.GetStartupRecoveryStatus(repo));
+            releaseScan.TrySetResult();
+            await repairEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.False(request.IsCompleted);
+            Assert.Equal("repairing", graph.Recovery.GetStartupRecoveryStatus(repo));
+            var waiting = graph.Recovery.WaitForStartupRecoveryAsync(repo, CancellationToken.None);
+            requestCancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request!);
+            Assert.False(waiting.IsCompleted);
+            releaseRepair.TrySetResult();
+            await waiting.WaitAsync(TimeSpan.FromSeconds(30));
+            await hosted.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Equal("ready", graph.Recovery.GetStartupRecoveryStatus(repo));
+            Assert.Null(IntegrationGateJournal.Read(folder));
+            // Only the repair acquired a mutation lease; cancelling one caller
+            // never opens the shared admission signal for another caller.
+            Assert.Equal(1, Volatile.Read(ref mutations));
+        }
+        finally
+        {
+            requestCancellation.Cancel();
+            releaseScan.TrySetResult();
+            releaseRepair.TrySetResult();
+            if (request is not null)
+                try { await request; } catch (OperationCanceledException) { }
+            await hosted.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task FailedRepositoryStaysHeldWhileHealthyRepositoryProceedsAndRetryRepairsOnlyHeldRepository()
+    {
+        var failedRepo = Path.Combine(_root, "failed-checkout");
+        var healthyRepo = Path.Combine(_root, "healthy-checkout");
+        var failedFolder = Journal("failed", failedRepo);
+        var healthyFolder = Journal("healthy", healthyRepo);
+        var probeHealthyAdmission = false;
+        var graph = Build(() => _jobs.ToList(), stage =>
+        {
+            if (stage == "history-created" && probeHealthyAdmission)
+                throw new InvalidOperationException("healthy caller reached the mutation lease");
+        });
+        var retryWaiting = Signal();
+        var releaseRetry = Signal();
+        var retryRepairEntered = Signal();
+        var releaseRetryRepair = Signal();
+        var failedAttempts = 0;
+        var healthyAttempts = 0;
+        graph.Recovery.AfterJournalsReadForTesting = (repo, lease) =>
+        {
+            Assert.True(RefMutationLeaseService.IsCurrent(lease));
+            if (repo == failedRepo)
+            {
+                if (Interlocked.Increment(ref failedAttempts) == 1) throw new IOException("injected repair failure");
+                retryRepairEntered.TrySetResult();
+                releaseRetryRepair.Task.GetAwaiter().GetResult();
+                Clear(failedFolder);
+            }
+            else
+            {
+                Interlocked.Increment(ref healthyAttempts);
+                Clear(healthyFolder);
+            }
+        };
+        using var hosted = new InterruptedIntegrationGateRecoveryHostedService(graph.Scanner, graph.Recovery,
+            NullLogger<InterruptedIntegrationGateRecoveryHostedService>.Instance)
+        {
+            RetryDelayAsync = ct =>
+            {
+                retryWaiting.TrySetResult();
+                return releaseRetry.Task.WaitAsync(ct);
+            },
+        };
+        await hosted.StartAsync(CancellationToken.None);
+        try
+        {
+            await retryWaiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await graph.Recovery.WaitForStartupRecoveryAsync(healthyRepo, CancellationToken.None);
+            Assert.Equal("ready", graph.Recovery.GetStartupRecoveryStatus(healthyRepo));
+            Assert.Contains("held: injected repair failure", graph.Recovery.GetStartupRecoveryStatus(failedRepo));
+            Assert.NotNull(IntegrationGateJournal.Read(failedFolder));
+            var failedAdmission = graph.Recovery.WaitForStartupRecoveryAsync(failedRepo, CancellationToken.None);
+            Assert.False(failedAdmission.IsCompleted);
+            using var cancelled = new CancellationTokenSource();
+            var merge = Request(graph.Runner, "merge", failedRepo, failedFolder, cancelled.Token);
+            var push = Request(graph.Runner, "push", failedRepo, failedFolder, cancelled.Token);
+            Assert.False(merge.IsCompleted);
+            Assert.False(push.IsCompleted);
+            probeHealthyAdmission = true;
+            var admitted = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                Request(graph.Runner, "push", healthyRepo, healthyFolder, CancellationToken.None));
+            Assert.Equal("healthy caller reached the mutation lease", admitted.Message);
+            probeHealthyAdmission = false;
+            cancelled.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => merge);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => push);
+            // A live journal opened after healthy admission belongs to its live
+            // owner. Retrying another repository must leave it alone.
+            var liveFolder = Journal("healthy", healthyRepo);
+            releaseRetry.TrySetResult();
+            await retryRepairEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.False(failedAdmission.IsCompleted);
+            Assert.NotNull(IntegrationGateJournal.Read(failedFolder));
+            releaseRetryRepair.TrySetResult();
+            await failedAdmission.WaitAsync(TimeSpan.FromSeconds(30));
+            await hosted.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Equal("ready", graph.Recovery.GetStartupRecoveryStatus(failedRepo));
+            Assert.Equal(2, failedAttempts);
+            Assert.Equal(1, healthyAttempts);
+            Assert.NotNull(IntegrationGateJournal.Read(liveFolder));
+            Assert.Null(IntegrationGateJournal.Read(failedFolder));
+        }
+        finally
+        {
+            releaseRetry.TrySetResult();
+            releaseRetryRepair.TrySetResult();
+            await hosted.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task EarlierHostedMergeCallerStillWaitsForLaterRegisteredRepairWorker()
+    {
+        var repo = Path.Combine(_root, "host-checkout");
+        var folder = Journal("host-old", repo);
+        var scanEntered = Signal();
+        var releaseScan = Signal();
+        var mutations = 0;
+        var graph = Build(() =>
+        {
+            scanEntered.TrySetResult();
+            releaseScan.Task.GetAwaiter().GetResult();
+            return _jobs.ToList();
+        }, _ => Interlocked.Increment(ref mutations));
+        graph.Recovery.AfterJournalsReadForTesting = (_, lease) =>
+        {
+            Assert.True(RefMutationLeaseService.IsCurrent(lease));
+            Clear(folder);
+        };
+        var caller = new StartupMergeCaller(graph.Runner, repo, folder);
+        using var host = new HostBuilder().ConfigureServices(services =>
+        {
+            services.AddSingleton<IHostedService>(caller);
+            services.AddSingleton<IHostedService>(_ => new InterruptedIntegrationGateRecoveryHostedService(
+                graph.Scanner, graph.Recovery, NullLogger<InterruptedIntegrationGateRecoveryHostedService>.Instance));
+        }).Build();
+        try
+        {
+            await host.StartAsync();
+            await scanEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            var request = caller.Request!;
+            Assert.NotNull(request);
+            Assert.False(request.IsCompleted);
+            Assert.Equal(0, Volatile.Read(ref mutations));
+            caller.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+            releaseScan.TrySetResult();
+            var repair = host.Services.GetServices<IHostedService>()
+                .OfType<InterruptedIntegrationGateRecoveryHostedService>().Single();
+            await repair.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Equal("ready", graph.Recovery.GetStartupRecoveryStatus(repo));
+        }
+        finally
+        {
+            caller.Cancel();
+            releaseScan.TrySetResult();
+            await host.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task EmptyInventoryReleasesRepositoriesWithoutJournals()
+    {
+        var graph = Build(() => []);
+        using var hosted = new InterruptedIntegrationGateRecoveryHostedService(graph.Scanner, graph.Recovery,
+            NullLogger<InterruptedIntegrationGateRecoveryHostedService>.Instance);
+        var admission = graph.Recovery.WaitForStartupRecoveryAsync("new-repository", CancellationToken.None);
+        Assert.False(admission.IsCompleted);
+        await hosted.StartAsync(CancellationToken.None);
+        try
+        {
+            await admission.WaitAsync(TimeSpan.FromSeconds(30));
+            await hosted.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Equal("ready", graph.Recovery.GetStartupRecoveryStatus("new-repository"));
+        }
+        finally { await hosted.StopAsync(CancellationToken.None); }
+    }
+
+    private sealed class StartupMergeCaller(MergeIntoDevelopRunner runner, string repo, string folder) : IHostedService
+    {
+        private readonly CancellationTokenSource _stop = new();
+        public Task? Request { get; private set; }
+        public void Cancel() => _stop.Cancel();
+        public Task StartAsync(CancellationToken ct)
+        {
+            Request = runner.RunAsync("Fixture", "new", folder, repo, "develop", _stop.Token);
+            return Task.CompletedTask;
+        }
+        public async Task StopAsync(CancellationToken ct)
+        {
+            _stop.Cancel();
+            if (Request is not null)
+                try { await Request; } catch (OperationCanceledException) { }
+            _stop.Dispose();
+        }
+    }
+
+    private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private static Task Request(MergeIntoDevelopRunner runner, string operation, string repo, string folder, CancellationToken ct)
+        => operation == "merge"
+            ? runner.RunAsync("Fixture", "new", folder, repo, "develop", ct)
+            : runner.PushIntegrationBranchAsync("Fixture", "new", folder, repo, "develop", ct);
+
+    private string Journal(string id, string repo)
+    {
+        var folder = Path.Combine(_root, "jobs", id);
+        IntegrationGateJournal.Open(folder, new IntegrationGateJournalEntry
+        {
+            Project = "Fixture", JobId = id, RepoRoot = repo, IntegrationBranch = "develop",
+            PreMergeTip = "anchor", GatedSha = "unverified", StartedAt = DateTimeOffset.UnixEpoch, Owner = Guid.NewGuid().ToString("N"),
+        });
+        if (_jobs.All(job => job.Id != id))
+            _jobs.Add(new TaskInfo { Id = id, TaskKey = "Fixture:" + id, FolderPath = folder, State = TaskStates.HumanReview, ProjectName = "Fixture" });
+        return folder;
+    }
+
+    private static void Clear(string folder)
+    {
+        var journal = IntegrationGateJournal.Read(folder)!;
+        IntegrationGateJournal.ClearOwned(folder, journal.Owner);
+    }
+
+    private (TaskScannerService Scanner, InterruptedIntegrationGateRecoveryService Recovery, MergeIntoDevelopRunner Runner)
+        Build(Func<List<TaskInfo>> scan, Action<string>? mutationBoundary = null)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+        }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var cache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config, scan);
+        scanner.SetIndexCache(cache);
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var leases = new RefMutationLeaseService(Path.Combine(_root, "leases"), mutationBoundary);
+        var recovery = new InterruptedIntegrationGateRecoveryService(scanner, git, new IntegrationWorktreeProvider(git),
+            pipeline, timeline, NullLogger<InterruptedIntegrationGateRecoveryService>.Instance, leases);
+        var runner = new MergeIntoDevelopRunner(git, pipeline, NullLogger<MergeIntoDevelopRunner>.Instance,
+            refMutationLeases: leases, interruptedGateRecovery: recovery);
+        return (scanner, recovery, runner);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
     }
 }

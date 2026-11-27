@@ -323,7 +323,7 @@ public sealed class ProjectUrlProcessService : IProjectUrlProcessStarter, IProje
             || snapshot?.State == ProjectUrlProcessStates.Starting
                 && seed?.Classification == ProjectUrlDiagnosisClasses.Starting)
             return Save(project.Id, url.Id, seed with { CheckedAt = DateTimeOffset.UtcNow });
-        var evidence = await ProbeTargetAsync(url.StartRule, url.Url, seed, cancellationToken);
+        var evidence = await ProbeTargetAsync(project.Id, url.Id, url.StartRule, url.Url, seed, cancellationToken);
         return Save(project.Id, url.Id, evidence);
     }
 
@@ -477,7 +477,7 @@ public sealed class ProjectUrlProcessService : IProjectUrlProcessStarter, IProje
                 if (everPortReachable)
                 {
                     var (stdoutTail, stderrTail) = OutputTails(project.Id, url.Id);
-                    var ready = await ProbeTargetAsync(rule, url.Url, Base(rule, url.Url, cwd) with
+                    var ready = await ProbeTargetAsync(project.Id, url.Id, rule, url.Url, Base(rule, url.Url, cwd) with
                     {
                         ProcessCreated = true, PortReachable = true,
                         StdoutTail = Redact(stdoutTail), StderrTail = Redact(stderrTail),
@@ -627,7 +627,8 @@ public sealed class ProjectUrlProcessService : IProjectUrlProcessStarter, IProje
         }
     }
 
-    private async Task<ProjectUrlDiagnostic> ProbeTargetAsync(ProjectUrlStartRule? rule, string url, ProjectUrlDiagnostic? seed, CancellationToken cancellationToken)
+    private async Task<ProjectUrlDiagnostic> ProbeTargetAsync(string projectId, string urlId,
+        ProjectUrlStartRule? rule, string url, ProjectUrlDiagnostic? seed, CancellationToken cancellationToken)
     {
         if (!Uri.TryCreate(rule?.HealthUrl ?? url, UriKind.Absolute, out var target) ||
             (target.Scheme != Uri.UriSchemeHttp && target.Scheme != Uri.UriSchemeHttps))
@@ -646,6 +647,7 @@ public sealed class ProjectUrlProcessService : IProjectUrlProcessStarter, IProje
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, target);
+            request.Options.Set(ProjectUrlDestinationConnector.ProjectUrlOption, (projectId, urlId));
             using var response = await _httpFactory.CreateClient("project-url-readiness")
                 .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             var status = (int)response.StatusCode;

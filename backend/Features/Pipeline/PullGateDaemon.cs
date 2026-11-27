@@ -48,10 +48,10 @@ public static class PullGateDaemon
                     serverSlots = (await registration.Content.ReadFromJsonAsync<PullGateHost>(Json, shutdown))?.Slots ?? 1;
                 }
                 active.RemoveAll(task => task.IsCompleted);
-                if (active.Count < serverSlots
+                if (active.Count < serverSlots + 1
                     && await ClaimAsync(client, shutdown) is { } claim)
                     active.Add(execute(claim, shutdown));
-                await delay(active.Count == serverSlots ? BusyInterval : IdleInterval, shutdown);
+                await delay(active.Count >= serverSlots + 1 ? BusyInterval : IdleInterval, shutdown);
             }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
             catch (Exception exception)
@@ -114,6 +114,7 @@ public static class PullGateDaemon
             if (cachePath is not null)
                 cacheLease = await GateSourceCacheRetention.LockAsync(cachePath + ".lock", lifetime.Token);
             var sourceTimer = Stopwatch.StartNew();
+            var transferTimer = new Stopwatch();
             long workerSourceReadyMs = -1;
             var cacheState = cachePath is null ? GateSourceCacheState.Missing
                 : await InspectCacheAsync(cachePath, invocation.Request.ExpectedSha!,
@@ -140,7 +141,9 @@ public static class PullGateDaemon
                 invocation = invocation with { TransferBundleSha256 = transferDigest };
                 await using var input = await response.Content.ReadAsStreamAsync(lifetime.Token);
                 await using var output = File.Create(Path.Combine(directory, "source.bundle"));
+                transferTimer.Start();
                 await input.CopyToAsync(output, lifetime.Token);
+                transferTimer.Stop();
                 sourceBytes = output.Length;
             }
             invocation = invocation with { CachePath = cachePath, SourceFromCache = warm };
@@ -185,7 +188,10 @@ public static class PullGateDaemon
             var result = JsonSerializer.Deserialize<RemoteGateResponse>(
                 await File.ReadAllTextAsync(responsePath, lifetime.Token), Json)
                 ?? throw new InvalidDataException("Gate worker produced no result.");
-            result = result with { Result = result.Result with { Reason = result.Result.Reason
+            result = result with { Result = result.Result with {
+                StageDurationsMs = new Dictionary<string, long>(result.Result.StageDurationsMs)
+                { ["bundleTransfer"] = transferTimer.ElapsedMilliseconds },
+                Reason = result.Result.Reason
                 + $" Source bundle {sourceBytes} bytes transferred in {sourceTimer.Elapsed.TotalSeconds:F1}s."
                 + (workerSourceReadyMs < 0 ? " Source ready unavailable."
                     : $" Source ready {(sourceTimer.Elapsed + TimeSpan.FromMilliseconds(workerSourceReadyMs)).TotalSeconds:F1}s.") } };

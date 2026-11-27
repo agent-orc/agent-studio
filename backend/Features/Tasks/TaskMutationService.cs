@@ -45,9 +45,8 @@ public class TaskMutationService
     private readonly Dictionary<string, int> _lastCreateOrder = new(FileSystemPathComparer.Instance);
 
     /// <summary>
-    /// Atomic-write boundary for task-key sweeps and decision-content writes.
-    /// Null in production, where <c>TaskJsonFile</c> uses its own writer; tests
-    /// pass one in to prove how these operations handle a failed write.
+    /// Atomic-write boundary for task-key, decision-content, commit-chain,
+    /// receipt and tag writes. Tests inject failures at the durable boundary.
     /// </summary>
     private readonly IAtomicJsonFileWriter? _keyFileWriter;
     private readonly bool _guardedDelivery;
@@ -81,7 +80,7 @@ public class TaskMutationService
     /// </summary>
     private bool Updated(TaskInfo info)
     {
-        _scanner.InvalidateCache();
+        _scanner.InvalidateCache(changedPath: Path.Combine(info.FolderPath, "task.json"));
         _scanner.PublishCoreFromFolder(info.FolderPath, info.WatchPath, info.ProjectName, info.State);
         _notifier.PublishUpdated(info.ProjectName, info.Id, info.WatchPath);
         return true;
@@ -98,7 +97,7 @@ public class TaskMutationService
     /// </summary>
     private bool Updated(string folderPath)
     {
-        _scanner.InvalidateCache();
+        _scanner.InvalidateCache(changedPath: Path.Combine(folderPath, "task.json"));
         _scanner.PublishCoreFromKnownFolder(folderPath);
         return true;
     }
@@ -287,8 +286,7 @@ public class TaskMutationService
     public bool SetJobCommitOnFolder(string folderPath, TaskCommitInfo commit)
     {
         if (!Directory.Exists(folderPath)) return false;
-        AppendJobCommitOnFolder(folderPath, commit);
-        return Updated(folderPath);
+        return AppendJobCommitOnFolder(folderPath, commit);
     }
 
     /// <summary>
@@ -311,54 +309,69 @@ public class TaskMutationService
     /// </summary>
     public bool AppendJobCommitOnFolder(string folderPath, TaskCommitInfo commit)
     {
-        if (!Directory.Exists(folderPath)) return false;
-        var jobJsonPath = Path.Combine(folderPath, "task.json");
-        if (!File.Exists(jobJsonPath)) return false;
-        try
+        var metadata = PrepareCommitMetadata(folderPath, [commit]);
+        lock (TaskJsonFile.SyncRoot(folderPath))
         {
-            var json = File.ReadAllText(jobJsonPath);
-            var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json, TaskJsonFile.ReadOpts)
-                      ?? new Dictionary<string, JsonElement>();
-
-            var chain = new List<TaskCommitInfo>();
-            if (doc.TryGetValue("commits", out var commitsEl) && commitsEl.ValueKind == JsonValueKind.Array)
+            if (!Directory.Exists(folderPath)) return false;
+            var jobJsonPath = Path.Combine(folderPath, "task.json");
+            if (!File.Exists(jobJsonPath)) return false;
+            try
             {
-                foreach (var item in commitsEl.EnumerateArray())
+                var json = File.ReadAllText(jobJsonPath);
+                var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json, TaskJsonFile.ReadOpts)
+                          ?? new Dictionary<string, JsonElement>();
+
+                var chain = new List<TaskCommitInfo>();
+                if (doc.TryGetValue("commits", out var commitsEl) && commitsEl.ValueKind == JsonValueKind.Array)
                 {
-                    if (item.ValueKind != JsonValueKind.Object) continue;
-                    var parsed = JsonSerializer.Deserialize<TaskCommitInfo>(item.GetRawText(), TaskJsonFile.ReadOpts);
+                    foreach (var item in commitsEl.EnumerateArray())
+                    {
+                        if (item.ValueKind != JsonValueKind.Object) continue;
+                        var parsed = JsonSerializer.Deserialize<TaskCommitInfo>(item.GetRawText(), TaskJsonFile.ReadOpts);
+                        if (parsed != null && !string.IsNullOrWhiteSpace(parsed.Sha)) chain.Add(parsed);
+                    }
+                }
+                else if (doc.TryGetValue("commit", out var legacyEl) && legacyEl.ValueKind == JsonValueKind.Object)
+                {
+                    var parsed = JsonSerializer.Deserialize<TaskCommitInfo>(legacyEl.GetRawText(), TaskJsonFile.ReadOpts);
                     if (parsed != null && !string.IsNullOrWhiteSpace(parsed.Sha)) chain.Add(parsed);
                 }
-            }
-            else if (doc.TryGetValue("commit", out var legacyEl) && legacyEl.ValueKind == JsonValueKind.Object)
-            {
-                var parsed = JsonSerializer.Deserialize<TaskCommitInfo>(legacyEl.GetRawText(), TaskJsonFile.ReadOpts);
-                if (parsed != null && !string.IsNullOrWhiteSpace(parsed.Sha)) chain.Add(parsed);
-            }
 
-            var existingIdx = chain.FindIndex(c => string.Equals(c.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase));
-            if (existingIdx >= 0)
-            {
-                chain[existingIdx] = commit with
+                var existingIdx = chain.FindIndex(c => string.Equals(c.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase));
+                if (existingIdx >= 0)
                 {
-                    DeliveryGeneration = commit.DeliveryGeneration ?? chain[existingIdx].DeliveryGeneration,
-                    DeliveryAttemptId = commit.DeliveryAttemptId ?? chain[existingIdx].DeliveryAttemptId,
-                    DeliveryRef = commit.DeliveryRef ?? chain[existingIdx].DeliveryRef,
-                    IntegrationRule = commit.IntegrationRule ?? chain[existingIdx].IntegrationRule,
-                    SupersededBySha = commit.SupersededBySha
-                        ?? chain[existingIdx].SupersededBySha,
-                    SupersededByAttempt = commit.SupersededByAttempt
-                        ?? chain[existingIdx].SupersededByAttempt,
-                };
-            }
-            else chain.Add(commit);
+                    chain[existingIdx] = commit with
+                    {
+                        Branch = chain[existingIdx].Branch ?? commit.Branch,
+                        Repository = chain[existingIdx].Repository ?? commit.Repository,
+                        RunAttemptId = chain[existingIdx].RunAttemptId ?? commit.RunAttemptId,
+                        RunnerId = chain[existingIdx].RunnerId ?? commit.RunnerId,
+                        ResultSha = chain[existingIdx].ResultSha ?? commit.ResultSha,
+                        Attribution = chain[existingIdx].Attribution ?? commit.Attribution,
+                        Confidence = chain[existingIdx].Confidence ?? commit.Confidence,
+                        PushStatus = chain[existingIdx].PushStatus,
+                        PushAttempts = chain[existingIdx].PushAttempts,
+                        PushNextRetryAtUtc = chain[existingIdx].PushNextRetryAtUtc,
+                        PushError = chain[existingIdx].PushError,
+                        DeliveryGeneration = chain[existingIdx].DeliveryGeneration ?? commit.DeliveryGeneration,
+                        DeliveryAttemptId = chain[existingIdx].DeliveryAttemptId ?? commit.DeliveryAttemptId,
+                        DeliveryRef = chain[existingIdx].DeliveryRef ?? commit.DeliveryRef,
+                        IntegrationRule = chain[existingIdx].IntegrationRule ?? commit.IntegrationRule,
+                        SupersededBySha = chain[existingIdx].SupersededBySha
+                            ?? commit.SupersededBySha,
+                        SupersededByAttempt = chain[existingIdx].SupersededByAttempt
+                            ?? commit.SupersededByAttempt,
+                    };
+                }
+                else chain.Add(commit);
 
-            return WriteCommitState(folderPath, chain);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to append commit to {Folder}", folderPath);
-            return false;
+                return WriteCommitState(folderPath, ApplyCommitMetadata(chain, metadata));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to append commit to {Folder}", folderPath);
+                return false;
+            }
         }
     }
 
@@ -374,36 +387,46 @@ public class TaskMutationService
         string folderPath,
         IReadOnlyList<TaskCommitInfo> attributed)
     {
-        if (!Directory.Exists(folderPath)) return false;
-        var persisted = ReadPersistedCommitChain(folderPath);
-        if (persisted is null) return false;
-        var producerBySha = persisted
-            .Where(commit => !string.IsNullOrWhiteSpace(commit.Sha))
-            .GroupBy(commit => commit.Sha, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
-        var ordered = attributed
-            .Where(c => !string.IsNullOrWhiteSpace(c.Sha))
-            .Select(commit =>
-            {
-                if (!producerBySha.TryGetValue(commit.Sha, out var producer)) return commit;
-                return commit with
+        var metadata = PrepareCommitMetadata(folderPath, attributed);
+        lock (TaskJsonFile.SyncRoot(folderPath))
+        {
+            if (!Directory.Exists(folderPath)) return false;
+            var persisted = ReadPersistedCommitChain(folderPath);
+            if (persisted is null) return false;
+            var producerBySha = persisted
+                .Where(commit => !string.IsNullOrWhiteSpace(commit.Sha))
+                .GroupBy(commit => commit.Sha, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+            var ordered = attributed
+                .Where(c => !string.IsNullOrWhiteSpace(c.Sha))
+                .Select(commit =>
                 {
-                    Branch = commit.Branch ?? producer.Branch,
-                    Repository = commit.Repository ?? producer.Repository,
-                    RunAttemptId = commit.RunAttemptId ?? producer.RunAttemptId,
-                    RunnerId = commit.RunnerId ?? producer.RunnerId,
-                    ResultSha = commit.ResultSha ?? producer.ResultSha,
-                    DeliveryGeneration = commit.DeliveryGeneration ?? producer.DeliveryGeneration,
-                    DeliveryAttemptId = commit.DeliveryAttemptId ?? producer.DeliveryAttemptId,
-                    DeliveryRef = commit.DeliveryRef ?? producer.DeliveryRef,
-                    IntegrationRule = commit.IntegrationRule ?? producer.IntegrationRule,
-                    SupersededBySha = commit.SupersededBySha ?? producer.SupersededBySha,
-                    SupersededByAttempt = commit.SupersededByAttempt ?? producer.SupersededByAttempt,
-                };
-            })
-            .OrderBy(c => c.At)
-            .ToList();
-        return WriteCommitState(folderPath, ordered);
+                    if (!producerBySha.TryGetValue(commit.Sha, out var producer)) return commit;
+                    return commit with
+                    {
+                        Branch = producer.Branch ?? commit.Branch,
+                        Repository = producer.Repository ?? commit.Repository,
+                        RunAttemptId = producer.RunAttemptId ?? commit.RunAttemptId,
+                        RunnerId = producer.RunnerId ?? commit.RunnerId,
+                        ResultSha = producer.ResultSha ?? commit.ResultSha,
+                        DeliveryGeneration = producer.DeliveryGeneration ?? commit.DeliveryGeneration,
+                        DeliveryAttemptId = producer.DeliveryAttemptId ?? commit.DeliveryAttemptId,
+                        DeliveryRef = producer.DeliveryRef ?? commit.DeliveryRef,
+                        Attribution = commit.Attribution ?? producer.Attribution,
+                        Confidence = commit.Confidence ?? producer.Confidence,
+                        PushStatus = producer.PushStatus,
+                        PushAttempts = producer.PushAttempts,
+                        PushNextRetryAtUtc = producer.PushNextRetryAtUtc,
+                        PushError = producer.PushError,
+                        IntegrationRule = producer.IntegrationRule ?? commit.IntegrationRule,
+                        SupersededBySha = producer.SupersededBySha ?? commit.SupersededBySha,
+                        SupersededByAttempt = producer.SupersededByAttempt ?? commit.SupersededByAttempt,
+                    };
+                })
+                .OrderBy(c => c.At)
+                .ToList();
+            return WriteCommitState(folderPath, ApplyCommitMetadata(ordered, metadata));
+        }
     }
 
     /// <summary>Temporary sibling preference; never replaces an operator's card pin.</summary>
@@ -445,90 +468,110 @@ public class TaskMutationService
         IReadOnlyList<TaskCommitInfo> attributed,
         bool replaceUnscopedLegacyAttribution = false)
     {
-        if (!Directory.Exists(folderPath)) return false;
-        if (string.IsNullOrWhiteSpace(runAttemptId)
-            || string.IsNullOrWhiteSpace(runnerId)
-            || string.IsNullOrWhiteSpace(resultSha))
+        var metadata = PrepareCommitMetadata(folderPath, attributed);
+        lock (TaskJsonFile.SyncRoot(folderPath))
         {
-            return false;
-        }
-
-        var persisted = ReadPersistedCommitChain(folderPath);
-        if (persisted is null) return false;
-        var generationNumber = persisted.FirstOrDefault(commit =>
-            string.Equals(commit.DeliveryAttemptId, runAttemptId, StringComparison.OrdinalIgnoreCase))?.DeliveryGeneration
-            ?? (persisted.Select(commit => commit.DeliveryGeneration ?? 0).DefaultIfEmpty().Max() + 1);
-        var generation = attributed
-            .Where(commit => !string.IsNullOrWhiteSpace(commit.Sha))
-            .Select(commit => commit with
+            if (!Directory.Exists(folderPath)) return false;
+            if (string.IsNullOrWhiteSpace(runAttemptId)
+                || string.IsNullOrWhiteSpace(runnerId)
+                || string.IsNullOrWhiteSpace(resultSha))
             {
-                RunAttemptId = runAttemptId,
-                RunnerId = runnerId,
-                ResultSha = resultSha,
-                DeliveryGeneration = generationNumber,
-                DeliveryAttemptId = runAttemptId,
-                DeliveryRef = commit.Branch,
-                IntegrationRule = null,
-            })
-            .ToList();
-
-        persisted = persisted.Select(commit => string.Equals(
-                commit.SupersededByAttempt,
-                TaskCommitSupersession.PendingAttempt,
-                StringComparison.Ordinal)
-            ? commit with { SupersededByAttempt = runAttemptId }
-            : commit).ToList();
-
-        var union = new List<TaskCommitInfo>();
-        foreach (var commit in persisted)
-        {
-            if (replaceUnscopedLegacyAttribution
-                && string.IsNullOrWhiteSpace(commit.RunAttemptId))
-            {
-                continue;
+                return false;
             }
-            if (string.Equals(
-                    commit.RunAttemptId,
-                    runAttemptId,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-            if (union.Any(existing => string.Equals(
-                    existing.Sha,
-                    commit.Sha,
-                    StringComparison.OrdinalIgnoreCase)))
-            {
-                continue;
-            }
-            union.Add(commit);
-        }
-        foreach (var commit in generation)
-        {
-            // Keep the first producer identity, but record that the current
-            // verified delivery includes inherited work too. It must still block
-            // if this generation has not reached the integration branch.
-            var inherited = union.FindIndex(existing => string.Equals(
-                existing.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase));
-            if (inherited >= 0)
-            {
-                union[inherited] = union[inherited] with
+
+            var persisted = ReadPersistedCommitChain(folderPath);
+            if (persisted is null) return false;
+            var generationNumber = persisted.FirstOrDefault(commit =>
+                string.Equals(commit.DeliveryAttemptId, runAttemptId, StringComparison.OrdinalIgnoreCase))?.DeliveryGeneration
+                ?? (persisted.Select(commit => commit.DeliveryGeneration ?? 0).DefaultIfEmpty().Max() + 1);
+            var generation = attributed
+                .Where(commit => !string.IsNullOrWhiteSpace(commit.Sha))
+                .Select(commit =>
                 {
-                    DeliveryGeneration = generationNumber,
-                    DeliveryAttemptId = runAttemptId,
-                    DeliveryRef = commit.Branch,
-                    IntegrationRule = null,
-                    // Verified membership in this delivery supersedes a prior
-                    // requeue or replay marker; the commit is required again.
-                    SupersededByAttempt = null,
-                    SupersededBySha = null,
-                };
-                continue;
-            }
-            union.Add(commit);
-        }
+                    var previous = persisted.FirstOrDefault(candidate => string.Equals(
+                        candidate.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase));
+                    var replay = string.Equals(previous?.DeliveryAttemptId, runAttemptId, StringComparison.OrdinalIgnoreCase);
+                    return commit with
+                    {
+                        RunAttemptId = runAttemptId,
+                        RunnerId = runnerId,
+                        ResultSha = resultSha,
+                        DeliveryGeneration = generationNumber,
+                        DeliveryAttemptId = runAttemptId,
+                        DeliveryRef = commit.Branch,
+                        Attribution = commit.Attribution ?? previous?.Attribution,
+                        Confidence = commit.Confidence ?? previous?.Confidence,
+                        IntegrationRule = replay ? previous?.IntegrationRule : null,
+                        SupersededBySha = replay ? previous?.SupersededBySha : commit.SupersededBySha,
+                        SupersededByAttempt = replay ? previous?.SupersededByAttempt : commit.SupersededByAttempt,
+                        PushStatus = previous is null ? commit.PushStatus : previous.PushStatus,
+                        PushAttempts = previous is null ? commit.PushAttempts : previous.PushAttempts,
+                        PushNextRetryAtUtc = previous is null ? commit.PushNextRetryAtUtc : previous.PushNextRetryAtUtc,
+                        PushError = previous is null ? commit.PushError : previous.PushError,
+                    };
+                })
+                .ToList();
 
-        return WriteCommitState(folderPath, union, allowEmptyReplacement: true);
+            persisted = persisted.Select(commit => string.Equals(
+                    commit.SupersededByAttempt,
+                    TaskCommitSupersession.PendingAttempt,
+                    StringComparison.Ordinal)
+                && !string.Equals(commit.DeliveryAttemptId, runAttemptId, StringComparison.OrdinalIgnoreCase)
+                ? commit with { SupersededByAttempt = runAttemptId }
+                : commit).ToList();
+
+            var union = new List<TaskCommitInfo>();
+            foreach (var commit in persisted)
+            {
+                if (replaceUnscopedLegacyAttribution
+                    && string.IsNullOrWhiteSpace(commit.RunAttemptId))
+                {
+                    continue;
+                }
+                if (string.Equals(
+                        commit.RunAttemptId,
+                        runAttemptId,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                if (union.Any(existing => string.Equals(
+                        existing.Sha,
+                        commit.Sha,
+                        StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+                union.Add(commit);
+            }
+            foreach (var commit in generation)
+            {
+                // Keep the first producer identity, but record that the current
+                // verified delivery includes inherited work too. It must still block
+                // if this generation has not reached the integration branch.
+                var inherited = union.FindIndex(existing => string.Equals(
+                    existing.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase));
+                if (inherited >= 0)
+                {
+                    var replay = string.Equals(union[inherited].DeliveryAttemptId, runAttemptId, StringComparison.OrdinalIgnoreCase);
+                    union[inherited] = union[inherited] with
+                    {
+                        DeliveryGeneration = generationNumber,
+                        DeliveryAttemptId = runAttemptId,
+                        DeliveryRef = commit.Branch,
+                        IntegrationRule = replay ? union[inherited].IntegrationRule : null,
+                        // A new verified delivery requires this commit again.
+                        // Replaying the same delivery preserves later evidence.
+                        SupersededByAttempt = replay ? union[inherited].SupersededByAttempt : null,
+                        SupersededBySha = replay ? union[inherited].SupersededBySha : null,
+                    };
+                    continue;
+                }
+                union.Add(commit);
+            }
+
+            return WriteCommitState(folderPath, ApplyCommitMetadata(union, metadata), allowEmptyReplacement: true);
+        }
     }
 
     /// <summary>
@@ -560,139 +603,157 @@ public class TaskMutationService
         string participantId,
         IReadOnlyList<TaskTokenCall> entries)
     {
-        if (!Directory.Exists(folderPath) || string.IsNullOrWhiteSpace(participantId)) return false;
-        try
+        lock (TaskJsonFile.SyncRoot(folderPath))
         {
-            TaskTokenSummary? persisted = null;
-            var taskJsonPath = Path.Combine(folderPath, "task.json");
-            using (var document = JsonDocument.Parse(File.ReadAllText(taskJsonPath)))
+            if (!Directory.Exists(folderPath) || string.IsNullOrWhiteSpace(participantId)) return false;
+            try
             {
-                if (document.RootElement.TryGetProperty("tokenSummary", out var tokenSummary)
-                    && tokenSummary.ValueKind == JsonValueKind.Object)
+                TaskTokenSummary? persisted = null;
+                var taskJsonPath = Path.Combine(folderPath, "task.json");
+                using (var document = JsonDocument.Parse(File.ReadAllText(taskJsonPath)))
                 {
-                    persisted = tokenSummary.Deserialize<TaskTokenSummary>(TaskJsonFile.ReadOpts);
+                    if (document.RootElement.TryGetProperty("tokenSummary", out var tokenSummary)
+                        && tokenSummary.ValueKind == JsonValueKind.Object)
+                    {
+                        persisted = tokenSummary.Deserialize<TaskTokenSummary>(TaskJsonFile.ReadOpts);
+                    }
                 }
-            }
 
-            var isRemoteAttempt = participantId.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix,
-                StringComparison.Ordinal);
-            var isReviewAttempt = participantId.StartsWith("support:remote-review:", StringComparison.Ordinal);
-            var retained = (persisted?.Entries ?? [])
-                .Where(entry => !string.Equals(entry.ParticipantId, participantId, StringComparison.Ordinal)
-                    && !(isRemoteAttempt &&
-                        (entry.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false))
-                    && !(isReviewAttempt &&
-                        (entry.ParticipantId?.StartsWith(participantId + ":step:", StringComparison.Ordinal) ?? false)))
-                .ToList();
-            var recorded = retained
-                .Where(entry => TokenLedgerDuplicates.UsageIdentity(entry) is not null)
-                .Select(TokenLedgerDuplicates.CallIdentityFingerprint)
-                .ToHashSet();
-            var legacy = retained
-                .Where(entry => TokenLedgerDuplicates.UsageIdentity(entry) is null
-                    && (entry.ParticipantId?.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix,
-                        StringComparison.Ordinal) ?? false))
-                .Select(entry => TokenLedgerDuplicates.CallFingerprint(entry, includeParticipant: false))
-                .ToHashSet();
-            var originalCalls = (persisted?.Entries ?? [])
-                .Where(previous => TokenLedgerDuplicates.UsageIdentity(previous) is not null)
-                .OrderBy(previous => previous.Ts)
-                .GroupBy(TokenLedgerDuplicates.CallIdentityFingerprint)
-                .ToDictionary(group => group.Key, group => group.First());
-            var attemptEntries = new List<TaskTokenCall>();
-            foreach (var source in entries)
-            {
-                // Preserve the original receipt when a source log turn is replayed
-                // after its file date or the card's model changed.
-                originalCalls.TryGetValue(TokenLedgerDuplicates.CallIdentityFingerprint(source), out var original);
-                if (original is not null && ReceiptTokenPricing.MissingCacheSplit(source.Model,
-                    source.InputTokens, source.CacheReadTokens, source.InputIncludesCached, source.UsageNormalization))
-                    original = original with
-                    {
-                        InputIncludesCached = null,
-                        UsageNormalization = null,
-                        ModelPriced = false,
-                        EstimatedApiCostUsd = 0m,
-                    };
-                else if (original is not null && !string.IsNullOrWhiteSpace(source.UsageNormalization))
-                    original = original with
-                    {
-                        InputIncludesCached = source.InputIncludesCached,
-                        UsageNormalization = source.UsageNormalization,
-                    };
-                var entry = (original ?? source) with
+                var isRemoteAttempt = participantId.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix,
+                    StringComparison.Ordinal);
+                var isReviewAttempt = participantId.StartsWith("support:remote-review:", StringComparison.Ordinal);
+                var retained = (persisted?.Entries ?? [])
+                    .Where(entry => !string.Equals(entry.ParticipantId, participantId, StringComparison.Ordinal)
+                        && !(isRemoteAttempt &&
+                            (entry.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false))
+                        && !(isReviewAttempt &&
+                            (entry.ParticipantId?.StartsWith(participantId + ":step:", StringComparison.Ordinal) ?? false)))
+                    .ToList();
+                var recorded = retained
+                    .Where(entry => TokenLedgerDuplicates.UsageIdentity(entry) is not null)
+                    .Select(TokenLedgerDuplicates.CallIdentityFingerprint)
+                    .ToHashSet();
+                var legacy = retained
+                    .Where(entry => TokenLedgerDuplicates.UsageIdentity(entry) is null
+                        && (entry.ParticipantId?.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix,
+                            StringComparison.Ordinal) ?? false))
+                    .Select(entry => TokenLedgerDuplicates.CallFingerprint(entry, includeParticipant: false))
+                    .ToHashSet();
+                var originalCalls = (persisted?.Entries ?? [])
+                    .Where(previous => TokenLedgerDuplicates.UsageIdentity(previous) is not null)
+                    .OrderBy(previous => previous.Ts)
+                    .GroupBy(TokenLedgerDuplicates.CallIdentityFingerprint)
+                    .ToDictionary(group => group.Key, group => group.First());
+                var attemptEntries = new List<TaskTokenCall>();
+                foreach (var source in entries)
                 {
-                    ParticipantId = ((isRemoteAttempt &&
-                        (source.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false))
-                        || (isReviewAttempt &&
-                        (source.ParticipantId?.StartsWith(participantId + ":step:", StringComparison.Ordinal) ?? false)))
-                        ? source.ParticipantId : participantId,
-                };
-                var identity = isRemoteAttempt ? TokenLedgerDuplicates.UsageIdentity(entry) : null;
-                if (identity is not null
-                    && (!recorded.Add(TokenLedgerDuplicates.CallIdentityFingerprint(entry))
-                        || (identity.StartsWith("scope:", StringComparison.Ordinal)
-                            && legacy.Contains(TokenLedgerDuplicates.CallFingerprint(entry, includeParticipant: false)))))
-                    continue;
-                attemptEntries.Add(entry);
-            }
-            var merged = retained.Concat(attemptEntries).OrderBy(entry => entry.Ts).ToList();
-            if (merged.Count == 0) return false;
-            if (persisted is not null && persisted.Entries.SequenceEqual(merged)) return true;
+                    // Preserve the original receipt when a source log turn is replayed
+                    // after its file date or the card's model changed.
+                    originalCalls.TryGetValue(TokenLedgerDuplicates.CallIdentityFingerprint(source), out var original);
+                    if (original is not null && ReceiptTokenPricing.MissingCacheSplit(source.Model,
+                        source.InputTokens, source.CacheReadTokens, source.InputIncludesCached, source.UsageNormalization))
+                        original = original with
+                        {
+                            InputIncludesCached = null,
+                            UsageNormalization = null,
+                            ModelPriced = false,
+                            EstimatedApiCostUsd = 0m,
+                        };
+                    else if (original is not null && !string.IsNullOrWhiteSpace(source.UsageNormalization))
+                        original = original with
+                        {
+                            InputIncludesCached = source.InputIncludesCached,
+                            UsageNormalization = source.UsageNormalization,
+                        };
+                    var entry = (original ?? source) with
+                    {
+                        ParticipantId = ((isRemoteAttempt &&
+                            (source.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false))
+                            || (isReviewAttempt &&
+                            (source.ParticipantId?.StartsWith(participantId + ":step:", StringComparison.Ordinal) ?? false)))
+                            ? source.ParticipantId : participantId,
+                    };
+                    var identity = isRemoteAttempt ? TokenLedgerDuplicates.UsageIdentity(entry) : null;
+                    if (identity is not null
+                        && (!recorded.Add(TokenLedgerDuplicates.CallIdentityFingerprint(entry))
+                            || (identity.StartsWith("scope:", StringComparison.Ordinal)
+                                && legacy.Contains(TokenLedgerDuplicates.CallFingerprint(entry, includeParticipant: false)))))
+                        continue;
+                    attemptEntries.Add(entry);
+                }
+                var merged = retained.Concat(attemptEntries).OrderBy(entry => entry.Ts).ToList();
+                if (merged.Count == 0) return false;
+                if (persisted is not null && persisted.Entries.SequenceEqual(merged)) return true;
 
-            var lastAgentEntry = merged
-                .Where(entry => TokenParticipants.IsAgent(entry.ParticipantId)
-                                && !string.IsNullOrWhiteSpace(entry.Model))
-                .OrderBy(entry => entry.Ts)
-                .LastOrDefault();
-            var summary = new TaskTokenSummary
+                var lastAgentEntry = merged
+                    .Where(entry => TokenParticipants.IsAgent(entry.ParticipantId)
+                                    && !string.IsNullOrWhiteSpace(entry.Model))
+                    .OrderBy(entry => entry.Ts)
+                    .LastOrDefault();
+                var summary = new TaskTokenSummary
+                {
+                    Calls = merged.Count,
+                    InputTokens = merged.Sum(entry => entry.InputTokens),
+                    OutputTokens = merged.Sum(entry => entry.OutputTokens),
+                    CacheReadTokens = merged.Sum(entry => entry.CacheReadTokens),
+                    CacheCreationTokens = merged.Sum(entry => entry.CacheCreationTokens),
+                    TotalTokens = merged.Sum(entry => entry.InputTokens + entry.OutputTokens
+                        + entry.CacheReadTokens + entry.CacheCreationTokens),
+                    EstimatedApiCostUsd = merged.Sum(entry => entry.EstimatedApiCostUsd),
+                    AllModelsPriced = merged.All(entry => entry.ModelPriced),
+                    LastModelId = lastAgentEntry?.Model,
+                    LastModel = lastAgentEntry is null
+                        ? null
+                        : ModelIdentity.Label(lastAgentEntry.Model) ?? lastAgentEntry.Model,
+                    LastUpdate = merged.Max(entry => entry.Ts),
+                    Entries = merged,
+                    HasModelMismatch = merged.Any(entry => entry.ModelMismatch),
+                };
+                TaskJsonFile.UpdateFieldOrThrow(folderPath, "tokenSummary", summary, _keyFileWriter);
+                return Updated(folderPath);
+            }
+            catch (Exception ex)
             {
-                Calls = merged.Count,
-                InputTokens = merged.Sum(entry => entry.InputTokens),
-                OutputTokens = merged.Sum(entry => entry.OutputTokens),
-                CacheReadTokens = merged.Sum(entry => entry.CacheReadTokens),
-                CacheCreationTokens = merged.Sum(entry => entry.CacheCreationTokens),
-                TotalTokens = merged.Sum(entry => entry.InputTokens + entry.OutputTokens
-                    + entry.CacheReadTokens + entry.CacheCreationTokens),
-                EstimatedApiCostUsd = merged.Sum(entry => entry.EstimatedApiCostUsd),
-                AllModelsPriced = merged.All(entry => entry.ModelPriced),
-                LastModelId = lastAgentEntry?.Model,
-                LastModel = lastAgentEntry is null
-                    ? null
-                    : ModelIdentity.Label(lastAgentEntry.Model) ?? lastAgentEntry.Model,
-                LastUpdate = merged.Max(entry => entry.Ts),
-                Entries = merged,
-                HasModelMismatch = merged.Any(entry => entry.ModelMismatch),
-            };
-            TaskJsonFile.UpdateFieldOrThrow(folderPath, "tokenSummary", summary);
-            return Updated(folderPath);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to persist remote token receipt in {Folder}", folderPath);
-            return false;
+                _logger.LogError(ex, "Failed to persist remote token receipt in {Folder}", folderPath);
+                return false;
+            }
         }
     }
 
     /// <summary>
     /// Replaces the durable token receipt during a versioned history repair.
-    /// The caller must provide a fully recomputed summary; this method keeps
-    /// task.json mutation and cache-generation ownership in one place.
+    /// The caller provides a fully recomputed summary and the content revision
+    /// of the source receipt. A live write invalidates that revision and makes
+    /// the repair fail without publishing a replacement.
     /// </summary>
-    public bool ReplaceTokenSummaryForMigration(string folderPath, TaskTokenSummary summary)
+    public bool ReplaceTokenSummaryForMigration(
+        string folderPath, TaskTokenSummary summary, string expectedRevision)
     {
-        if (!Directory.Exists(folderPath)) return false;
-        try
+        lock (TaskJsonFile.SyncRoot(folderPath))
         {
-            TaskJsonFile.UpdateFieldOrThrow(folderPath, "tokenSummary", summary);
-            return Updated(folderPath);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to replace migrated token receipt in {Folder}", folderPath);
-            return false;
+            if (!Directory.Exists(folderPath)) return false;
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(folderPath, "task.json")));
+                var current = document.RootElement.TryGetProperty("tokenSummary", out var field)
+                    && field.ValueKind == JsonValueKind.Object
+                    ? field.Deserialize<TaskTokenSummary>(TaskJsonFile.ReadOpts) : null;
+                if (!string.Equals(TokenReceiptRevision(current), expectedRevision, StringComparison.Ordinal)) return false;
+                TaskJsonFile.UpdateFieldOrThrow(folderPath, "tokenSummary", summary, _keyFileWriter);
+                return Updated(folderPath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to replace migrated token receipt in {Folder}", folderPath);
+                return false;
+            }
         }
     }
+
+    /// <summary>Content revision of the receipt snapshot used to plan a history repair.</summary>
+    public static string TokenReceiptRevision(TaskTokenSummary? summary) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            Encoding.UTF8.GetBytes(JsonSerializer.Serialize(summary))));
 
     /// <summary>
     /// Extends the attributed commit chain after a conflict-free platform rebase.
@@ -704,51 +765,56 @@ public class TaskMutationService
         string folderPath,
         IReadOnlyList<RebasedCommitReplacement> replacements)
     {
-        if (!Directory.Exists(folderPath) || replacements.Count == 0) return false;
-        var persisted = ReadPersistedCommitChain(folderPath);
-        if (persisted is null || persisted.Count == 0) return false;
-
-        var replacementByOriginal = replacements
-            .Where(item => !string.IsNullOrWhiteSpace(item.OriginalSha)
-                && !string.IsNullOrWhiteSpace(item.RebasedSha))
-            .GroupBy(item => item.OriginalSha, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
-        if (replacementByOriginal.Count == 0) return false;
-
-        var chain = new List<TaskCommitInfo>(persisted.Count + replacementByOriginal.Count);
-        var derived = new List<TaskCommitInfo>();
-        var derivedShas = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var matched = 0;
-        foreach (var commit in persisted)
+        var metadata = PrepareCommitMetadata(folderPath,
+            replacements.Select(item => new TaskCommitInfo { Sha = item.RebasedSha }).ToList());
+        lock (TaskJsonFile.SyncRoot(folderPath))
         {
-            if (!replacementByOriginal.TryGetValue(commit.Sha, out var replacement))
+            if (!Directory.Exists(folderPath) || replacements.Count == 0) return false;
+            var persisted = ReadPersistedCommitChain(folderPath);
+            if (persisted is null || persisted.Count == 0) return false;
+
+            var replacementByOriginal = replacements
+                .Where(item => !string.IsNullOrWhiteSpace(item.OriginalSha)
+                    && !string.IsNullOrWhiteSpace(item.RebasedSha))
+                .GroupBy(item => item.OriginalSha, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
+            if (replacementByOriginal.Count == 0) return false;
+
+            var chain = new List<TaskCommitInfo>(persisted.Count + replacementByOriginal.Count);
+            var derived = new List<TaskCommitInfo>();
+            var derivedShas = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var matched = 0;
+            foreach (var commit in persisted)
             {
-                chain.Add(commit);
-                continue;
+                if (!replacementByOriginal.TryGetValue(commit.Sha, out var replacement))
+                {
+                    chain.Add(commit);
+                    continue;
+                }
+
+                matched++;
+                chain.Add(commit with { SupersededBySha = replacement.RebasedSha });
+                if (persisted.Any(existing => string.Equals(
+                        existing.Sha,
+                        replacement.RebasedSha,
+                        StringComparison.OrdinalIgnoreCase))
+                    || !derivedShas.Add(replacement.RebasedSha))
+                {
+                    continue;
+                }
+                derived.Add(commit with
+                {
+                    Sha = replacement.RebasedSha,
+                    ShortSha = replacement.RebasedSha[..Math.Min(9, replacement.RebasedSha.Length)],
+                    SupersededBySha = null,
+                    SupersededByAttempt = null,
+                });
             }
 
-            matched++;
-            chain.Add(commit with { SupersededBySha = replacement.RebasedSha });
-            if (persisted.Any(existing => string.Equals(
-                    existing.Sha,
-                    replacement.RebasedSha,
-                    StringComparison.OrdinalIgnoreCase))
-                || !derivedShas.Add(replacement.RebasedSha))
-            {
-                continue;
-            }
-            derived.Add(commit with
-            {
-                Sha = replacement.RebasedSha,
-                ShortSha = replacement.RebasedSha[..Math.Min(9, replacement.RebasedSha.Length)],
-                SupersededBySha = null,
-                SupersededByAttempt = null,
-            });
+            if (matched == 0) return false;
+            chain.AddRange(derived);
+            return WriteCommitState(folderPath, ApplyCommitMetadata(chain, metadata));
         }
-
-        if (matched == 0) return false;
-        chain.AddRange(derived);
-        return WriteCommitState(folderPath, chain);
     }
 
     /// <summary>
@@ -761,42 +827,46 @@ public class TaskMutationService
         string folderPath,
         string supersededByAttempt)
     {
-        if (!Directory.Exists(folderPath)
-            || string.IsNullOrWhiteSpace(supersededByAttempt))
+        var metadata = PrepareCommitMetadata(folderPath, []);
+        lock (TaskJsonFile.SyncRoot(folderPath))
         {
-            return new CommitSupersessionWriteResult(false, 0);
+            if (!Directory.Exists(folderPath)
+                || string.IsNullOrWhiteSpace(supersededByAttempt))
+            {
+                return new CommitSupersessionWriteResult(false, 0);
+            }
+
+            var persisted = ReadPersistedCommitChain(folderPath);
+            if (persisted is null) return new CommitSupersessionWriteResult(false, 0);
+            if (persisted.Count == 0) return new CommitSupersessionWriteResult(true, 0);
+
+            var subject = ReviewSubjectStore.Read(folderPath);
+            var hasAttempt = !string.IsNullOrWhiteSpace(subject?.RunAttemptId);
+            var hasResult = !string.IsNullOrWhiteSpace(subject?.ResultSha);
+            var scoped = persisted.Where(commit =>
+                    !TaskCommitSupersession.IsSuperseded(commit)
+                    && (hasAttempt && string.Equals(
+                            commit.RunAttemptId,
+                            subject?.RunAttemptId,
+                            StringComparison.OrdinalIgnoreCase)
+                        || hasResult && string.Equals(
+                            commit.ResultSha,
+                            subject?.ResultSha,
+                            StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            var candidates = scoped.Count > 0
+                ? scoped.Select(commit => commit.Sha).ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : persisted.Where(commit => !TaskCommitSupersession.IsSuperseded(commit))
+                    .Select(commit => commit.Sha)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (candidates.Count == 0) return new CommitSupersessionWriteResult(true, 0);
+            var updated = persisted.Select(commit => candidates.Contains(commit.Sha)
+                ? commit with { SupersededByAttempt = supersededByAttempt.Trim() }
+                : commit).ToList();
+            var written = WriteCommitState(folderPath, ApplyCommitMetadata(updated, metadata));
+            return new CommitSupersessionWriteResult(written, written ? candidates.Count : 0);
         }
-
-        var persisted = ReadPersistedCommitChain(folderPath);
-        if (persisted is null) return new CommitSupersessionWriteResult(false, 0);
-        if (persisted.Count == 0) return new CommitSupersessionWriteResult(true, 0);
-
-        var subject = ReviewSubjectStore.Read(folderPath);
-        var hasAttempt = !string.IsNullOrWhiteSpace(subject?.RunAttemptId);
-        var hasResult = !string.IsNullOrWhiteSpace(subject?.ResultSha);
-        var scoped = persisted.Where(commit =>
-                !TaskCommitSupersession.IsSuperseded(commit)
-                && (hasAttempt && string.Equals(
-                        commit.RunAttemptId,
-                        subject?.RunAttemptId,
-                        StringComparison.OrdinalIgnoreCase)
-                    || hasResult && string.Equals(
-                        commit.ResultSha,
-                        subject?.ResultSha,
-                        StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-        var candidates = scoped.Count > 0
-            ? scoped.Select(commit => commit.Sha).ToHashSet(StringComparer.OrdinalIgnoreCase)
-            : persisted.Where(commit => !TaskCommitSupersession.IsSuperseded(commit))
-                .Select(commit => commit.Sha)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        if (candidates.Count == 0) return new CommitSupersessionWriteResult(true, 0);
-        var updated = persisted.Select(commit => candidates.Contains(commit.Sha)
-            ? commit with { SupersededByAttempt = supersededByAttempt.Trim() }
-            : commit).ToList();
-        var written = WriteCommitState(folderPath, updated);
-        return new CommitSupersessionWriteResult(written, written ? candidates.Count : 0);
     }
 
     /// <summary>
@@ -812,20 +882,24 @@ public class TaskMutationService
         string folderPath,
         Func<TaskCommitInfo, bool> isContained)
     {
-        if (!Directory.Exists(folderPath)) return new CommitSupersessionWriteResult(false, 0);
-        var persisted = ReadPersistedCommitChain(folderPath);
-        if (persisted is null) return new CommitSupersessionWriteResult(false, 0);
-
-        var cleared = 0;
-        var updated = persisted.Select(commit =>
+        var metadata = PrepareCommitMetadata(folderPath, []);
+        lock (TaskJsonFile.SyncRoot(folderPath))
         {
-            if (!TaskCommitSupersession.IsReplacementPending(commit) || !isContained(commit)) return commit;
-            cleared++;
-            return commit with { SupersededByAttempt = null };
-        }).ToList();
-        if (cleared == 0) return new CommitSupersessionWriteResult(true, 0);
-        var written = WriteCommitState(folderPath, updated);
-        return new CommitSupersessionWriteResult(written, written ? cleared : 0);
+            if (!Directory.Exists(folderPath)) return new CommitSupersessionWriteResult(false, 0);
+            var persisted = ReadPersistedCommitChain(folderPath);
+            if (persisted is null) return new CommitSupersessionWriteResult(false, 0);
+
+            var cleared = 0;
+            var updated = persisted.Select(commit =>
+            {
+                if (!TaskCommitSupersession.IsReplacementPending(commit) || !isContained(commit)) return commit;
+                cleared++;
+                return commit with { SupersededByAttempt = null };
+            }).ToList();
+            if (cleared == 0) return new CommitSupersessionWriteResult(true, 0);
+            var written = WriteCommitState(folderPath, ApplyCommitMetadata(updated, metadata));
+            return new CommitSupersessionWriteResult(written, written ? cleared : 0);
+        }
     }
 
     /// <summary>
@@ -850,26 +924,30 @@ public class TaskMutationService
         string folderPath,
         IReadOnlyDictionary<string, string> replacements)
     {
-        if (!Directory.Exists(folderPath)) return new CommitSupersessionWriteResult(false, 0);
-        if (replacements.Count == 0) return new CommitSupersessionWriteResult(true, 0);
-        var persisted = ReadPersistedCommitChain(folderPath);
-        if (persisted is null) return new CommitSupersessionWriteResult(false, 0);
-
-        var changed = 0;
-        var updated = persisted.Select(commit =>
+        var metadata = PrepareCommitMetadata(folderPath, []);
+        lock (TaskJsonFile.SyncRoot(folderPath))
         {
-            if (TaskCommitSupersession.IsSuperseded(commit)
-                || !replacements.TryGetValue(commit.Sha, out var replacement)
-                || string.IsNullOrWhiteSpace(replacement))
+            if (!Directory.Exists(folderPath)) return new CommitSupersessionWriteResult(false, 0);
+            if (replacements.Count == 0) return new CommitSupersessionWriteResult(true, 0);
+            var persisted = ReadPersistedCommitChain(folderPath);
+            if (persisted is null) return new CommitSupersessionWriteResult(false, 0);
+
+            var changed = 0;
+            var updated = persisted.Select(commit =>
             {
-                return commit;
-            }
-            changed++;
-            return commit with { SupersededByAttempt = replacement.Trim() };
-        }).ToList();
-        if (changed == 0) return new CommitSupersessionWriteResult(true, 0);
-        var written = WriteCommitState(folderPath, updated);
-        return new CommitSupersessionWriteResult(written, written ? changed : 0);
+                if (TaskCommitSupersession.IsSuperseded(commit)
+                    || !replacements.TryGetValue(commit.Sha, out var replacement)
+                    || string.IsNullOrWhiteSpace(replacement))
+                {
+                    return commit;
+                }
+                changed++;
+                return commit with { SupersededByAttempt = replacement.Trim() };
+            }).ToList();
+            if (changed == 0) return new CommitSupersessionWriteResult(true, 0);
+            var written = WriteCommitState(folderPath, ApplyCommitMetadata(updated, metadata));
+            return new CommitSupersessionWriteResult(written, written ? changed : 0);
+        }
     }
 
     /// <summary>Updates integration evidence without dropping or replacing attributed history.</summary>
@@ -878,32 +956,35 @@ public class TaskMutationService
         IReadOnlyList<TaskRepositoryCommitMembership> decisions,
         DateTime? enteredLaneAt = null)
     {
-        var persisted = ReadPersistedCommitChain(folderPath);
-        if (persisted is null) return false;
-        var changed = false;
-        var updated = persisted.Select(commit =>
+        var metadata = PrepareCommitMetadata(folderPath, []);
+        lock (TaskJsonFile.SyncRoot(folderPath))
         {
-            var repository = TaskCommitRepository.NormalizeLegacy(commit).Repository;
-            var decision = decisions.FirstOrDefault(candidate =>
-                string.Equals(candidate.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(candidate.Repository, repository, StringComparison.OrdinalIgnoreCase));
-            if (decision is null || decision.IntegrationRule == commit.IntegrationRule) return commit;
-            changed = true;
-            // Do not turn inferred equivalence into authoritative supersession:
-            // a branch reset must be able to make this commit missing again.
-            return commit with { IntegrationRule = decision.IntegrationRule };
-        }).ToList();
-        if (!changed) return true;
-        // Legacy cards derive their lane-entry instant from filesystem activity.
-        // Pin that existing instant before evidence writes so reconciliation does
-        // not reorder the lane or reopen a refused rail action.
-        if (enteredLaneAt is { } entered
-            && TaskJsonFile.TryReadStringField(folderPath, "enteredLaneAt", _logger, out var storedEntered)
-            && storedEntered is null
-            && !TaskJsonFile.UpdateField(folderPath, "enteredLaneAt", entered, _logger)) return false;
-        return TaskJsonFile.UpdateField(folderPath, "commits", updated, _logger)
-            && TaskJsonFile.UpdateField(folderPath, "commit", updated.Count > 0 ? updated[^1] : null!, _logger)
-            && Updated(folderPath);
+            var persisted = ReadPersistedCommitChain(folderPath);
+            if (persisted is null) return false;
+            var changed = false;
+            var updated = persisted.Select(commit =>
+            {
+                var repository = TaskCommitRepository.NormalizeLegacy(commit).Repository;
+                var decision = decisions.FirstOrDefault(candidate =>
+                    string.Equals(candidate.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(candidate.Repository, repository, StringComparison.OrdinalIgnoreCase));
+                if (decision is null || decision.IntegrationRule == commit.IntegrationRule) return commit;
+                changed = true;
+                // Do not turn inferred equivalence into authoritative supersession:
+                // a branch reset must be able to make this commit missing again.
+                return commit with { IntegrationRule = decision.IntegrationRule };
+            }).ToList();
+            if (!changed) return true;
+            // Legacy cards derive their lane-entry instant from filesystem activity.
+            // Pin that existing instant before evidence writes so reconciliation does
+            // not reorder the lane or reopen a refused rail action.
+            var fields = new Dictionary<string, object>();
+            if (enteredLaneAt is { } entered
+                && TaskJsonFile.TryReadStringField(folderPath, "enteredLaneAt", _logger, out var storedEntered)
+                && storedEntered is null)
+                fields["enteredLaneAt"] = entered;
+            return WriteCommitState(folderPath, ApplyCommitMetadata(updated, metadata), additionalFields: fields);
+        }
     }
 
     /// <summary>
@@ -915,26 +996,30 @@ public class TaskMutationService
         string folderPath,
         IReadOnlyDictionary<string, CommitPushOutcome> outcomes)
     {
-        if (!Directory.Exists(folderPath)) return false;
-        if (outcomes.Count == 0) return true;
-        var persisted = ReadPersistedCommitChain(folderPath);
-        if (persisted is null) return false;
-
-        var changed = 0;
-        var updated = persisted.Select(commit =>
+        var metadata = PrepareCommitMetadata(folderPath, []);
+        lock (TaskJsonFile.SyncRoot(folderPath))
         {
-            if (!outcomes.TryGetValue(commit.Sha, out var outcome)) return commit;
-            changed++;
-            return commit with
+            if (!Directory.Exists(folderPath)) return false;
+            if (outcomes.Count == 0) return true;
+            var persisted = ReadPersistedCommitChain(folderPath);
+            if (persisted is null) return false;
+
+            var changed = 0;
+            var updated = persisted.Select(commit =>
             {
-                PushStatus = outcome.PushStatus,
-                PushAttempts = outcome.PushAttempts,
-                PushNextRetryAtUtc = outcome.PushNextRetryAtUtc,
-                PushError = outcome.PushError,
-            };
-        }).ToList();
-        if (changed == 0) return true;
-        return WriteCommitState(folderPath, updated);
+                if (!outcomes.TryGetValue(commit.Sha, out var outcome)) return commit;
+                changed++;
+                return commit with
+                {
+                    PushStatus = outcome.PushStatus,
+                    PushAttempts = outcome.PushAttempts,
+                    PushNextRetryAtUtc = outcome.PushNextRetryAtUtc,
+                    PushError = outcome.PushError,
+                };
+            }).ToList();
+            if (changed == 0) return true;
+            return WriteCommitState(folderPath, ApplyCommitMetadata(updated, metadata));
+        }
     }
 
     public bool SetRunIntegrationBranchOnFolder(string folderPath, string integrationBranch)
@@ -1104,7 +1189,8 @@ public class TaskMutationService
     private bool WriteCommitState(
         string folderPath,
         List<TaskCommitInfo> chain,
-        bool allowEmptyReplacement = false)
+        bool allowEmptyReplacement = false,
+        Dictionary<string, object>? additionalFields = null)
     {
         try
         {
@@ -1123,13 +1209,19 @@ public class TaskMutationService
                 return false;
             }
 
-            chain = EnrichCommitMetadataFromGit(folderPath, chain, out _);
-
-            TaskJsonFile.UpdateField(folderPath, "commits", chain, _logger);
-            TaskJsonFile.UpdateField(folderPath, "commit", chain.Count > 0 ? chain[^1] : null, _logger);
-            // Drop the obsolete operator-override array (removed feature) so the
-            // file is not left carrying a dead field after a rewrite.
-            TaskJsonFile.RemoveField(folderPath, "excludedCommits", _logger);
+            // Every caller holds the task-file gate from its collection read.
+            // Include obsolete-field removal in this same strict replacement.
+            var path = Path.Combine(folderPath, "task.json");
+            var document = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+                File.ReadAllText(path), TaskJsonFile.ReadOpts)
+                ?? throw new JsonException("Task commit document is invalid.");
+            var fields = document.Where(field => field.Key != "excludedCommits")
+                .ToDictionary(field => field.Key, field => (object)field.Value);
+            fields["commits"] = chain;
+            fields["commit"] = chain.Count > 0 ? chain[^1] : null!;
+            foreach (var field in additionalFields ?? []) fields[field.Key] = field.Value;
+            (_keyFileWriter ?? new AtomicJsonFileWriter()).ReplaceExisting(path,
+                JsonSerializer.Serialize(fields, new JsonSerializerOptions { WriteIndented = true }));
             return Updated(folderPath);
         }
         catch (Exception ex)
@@ -1275,17 +1367,29 @@ public class TaskMutationService
         if (string.IsNullOrWhiteSpace(normalized)) return false;
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
-        var existing = (IReadOnlyList<string>?)info.Tags ?? Array.Empty<string>();
-        if (existing.Any(t => string.Equals(NormalizeTagId(t), normalized, StringComparison.OrdinalIgnoreCase)))
-            return true;
-        var merged = existing
-            .Select(NormalizeTagId)
-            .Where(s => !string.IsNullOrWhiteSpace(s))
-            .Append(normalized)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        TaskJsonFile.UpdateField(info.FolderPath, "tags", merged, _logger);
-        return Updated(info);
+        lock (TaskJsonFile.SyncRoot(info.FolderPath))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(info.FolderPath, "task.json")));
+                var existing = document.RootElement.TryGetProperty("tags", out var tags)
+                    && tags.ValueKind == JsonValueKind.Array
+                    ? tags.Deserialize<List<string>>(TaskJsonFile.ReadOpts) ?? [] : [];
+                var merged = existing.Select(NormalizeTagId)
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Append(normalized)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (existing.SequenceEqual(merged)) return true;
+                if (!TaskJsonFile.UpdateField(info.FolderPath, "tags", merged, _logger, _keyFileWriter)) return false;
+                return Updated(info);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to merge tag into {Folder}", info.FolderPath);
+                return false;
+            }
+        }
     }
 
     /// <summary>
@@ -1725,26 +1829,37 @@ public class TaskMutationService
         var migrated = 0;
         foreach (var task in _scanner.ScanAllJobsWithArchive())
         {
-            var persisted = ReadPersistedCommitChain(task.FolderPath);
-            if (persisted is null || persisted.Count == 0) continue;
-
-            var changed = false;
-            var normalized = persisted.Select(commit =>
+            // AGT-4239: Git metadata is read only for a card this migration
+            // actually rewrites. Preparing it for every card ran Git and a full
+            // task-tree walk per card on every boot, and kept a 4,000-card
+            // workspace unhealthy for longer than the deploy window.
+            if (NormalizeLegacyRepositories(ReadPersistedCommitChain(task.FolderPath)) is null) continue;
+            var metadata = PrepareCommitMetadata(task.FolderPath, [], task);
+            lock (TaskJsonFile.SyncRoot(task.FolderPath))
             {
-                var replacement = TaskCommitRepository.NormalizeLegacy(commit);
-                changed |= !string.Equals(
-                    replacement.Repository,
-                    commit.Repository,
-                    StringComparison.Ordinal);
-                return replacement;
-            }).ToList();
-            if (!changed || !WriteCommitState(task.FolderPath, normalized)) continue;
-            migrated++;
+                var normalized = NormalizeLegacyRepositories(ReadPersistedCommitChain(task.FolderPath));
+                if (normalized is null || !WriteCommitState(task.FolderPath, ApplyCommitMetadata(normalized, metadata))) continue;
+                migrated++;
+            }
         }
 
         if (migrated > 0)
             _logger.LogInformation("commit-repository-backfill migratedTasks={Tasks}", migrated);
         return migrated;
+    }
+
+    /// <summary>The normalized chain, or null when no commit carries a legacy repository prefix.</summary>
+    private static List<TaskCommitInfo>? NormalizeLegacyRepositories(List<TaskCommitInfo>? persisted)
+    {
+        if (persisted is null || persisted.Count == 0) return null;
+        var changed = false;
+        var normalized = persisted.Select(commit =>
+        {
+            var replacement = TaskCommitRepository.NormalizeLegacy(commit);
+            changed |= !string.Equals(replacement.Repository, commit.Repository, StringComparison.Ordinal);
+            return replacement;
+        }).ToList();
+        return changed ? normalized : null;
     }
 
     /// <summary>
@@ -1774,7 +1889,8 @@ public class TaskMutationService
             var enriched = EnrichCommitMetadataFromGit(
                 task.FolderPath,
                 persisted,
-                out var resolved);
+                out var resolved,
+                task);
             if (missing.Any(sha => !ShaSetContains(resolved, sha)))
             {
                 unresolvedTasks++;
@@ -1786,10 +1902,15 @@ public class TaskMutationService
                 continue;
             }
 
-            if (!WriteCommitState(task.FolderPath, enriched))
+            lock (TaskJsonFile.SyncRoot(task.FolderPath))
             {
-                unresolvedTasks++;
-                continue;
+                var current = ReadPersistedCommitChain(task.FolderPath);
+                if (current is null || !WriteCommitState(task.FolderPath,
+                        ApplyCommitMetadata(current, enriched.Where(commit => ShaSetContains(resolved, commit.Sha)).ToList())))
+                {
+                    unresolvedTasks++;
+                    continue;
+                }
             }
 
             repairedTasks++;
@@ -1809,8 +1930,27 @@ public class TaskMutationService
             unresolvedTasks);
     }
 
+    private List<TaskCommitInfo> PrepareCommitMetadata(
+        string folderPath, IReadOnlyList<TaskCommitInfo> incoming, TaskInfo? knownTask = null)
+    {
+        if (_git is null) return [];
+        var candidates = (ReadPersistedCommitChain(folderPath) ?? [])
+            .Concat(incoming).ToList();
+        var enriched = EnrichCommitMetadataFromGit(folderPath, candidates, out var resolved, knownTask);
+        return enriched.Where(commit => ShaSetContains(resolved, commit.Sha)).ToList();
+    }
+
+    private static List<TaskCommitInfo> ApplyCommitMetadata(
+        IEnumerable<TaskCommitInfo> current, IReadOnlyList<TaskCommitInfo> metadata) =>
+        current.Select(commit =>
+        {
+            var match = metadata.FirstOrDefault(candidate => string.Equals(
+                candidate.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase));
+            return match is null ? commit : commit with { FilesChanged = match.FilesChanged, Files = match.Files };
+        }).ToList();
+
     /// <summary>
-    /// Normalizes every commit object at the persistence boundary from Git
+    /// Resolves file metadata before the task-file transaction from Git
     /// truth. This keeps attribution, salvage, operator, recovery, and sweep
     /// producers from drifting according to which metadata they happened to
     /// supply. If the repository or object is unavailable, the supplied record
@@ -1819,7 +1959,8 @@ public class TaskMutationService
     private List<TaskCommitInfo> EnrichCommitMetadataFromGit(
         string folderPath,
         IReadOnlyList<TaskCommitInfo> commits,
-        out HashSet<string> resolvedShas)
+        out HashSet<string> resolvedShas,
+        TaskInfo? knownTask = null)
     {
         resolvedShas = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (_git is null || commits.Count == 0) return commits.ToList();
@@ -1827,6 +1968,9 @@ public class TaskMutationService
         try
         {
             var normalizedFolder = NormalizePath(folderPath);
+            if (knownTask is not null && string.Equals(NormalizePath(knownTask.FolderPath), normalizedFolder,
+                    StringComparison.OrdinalIgnoreCase))
+                return EnrichCommitMetadataAtRoot(knownTask, commits, resolvedShas);
             var task = _scanner.ScanAllJobsWithArchive().FirstOrDefault(candidate =>
                 string.Equals(
                     NormalizePath(candidate.FolderPath),
@@ -1866,6 +2010,38 @@ public class TaskMutationService
                 folderPath);
             return commits.ToList();
         }
+    }
+
+    /// <summary>
+    /// The same Git truth as the lookup path, for a card the sweep already
+    /// holds: one repository resolution per card and root-scoped Git reads,
+    /// with no task-index lookup per commit (AGT-4239).
+    /// </summary>
+    private List<TaskCommitInfo> EnrichCommitMetadataAtRoot(
+        TaskInfo task, IReadOnlyList<TaskCommitInfo> commits, HashSet<string> resolvedShas)
+    {
+        var configured = _git!.ResolveRepoRoot(task);
+        var root = configured is null ? null : GitService.ResolveToplevelOrNull(configured);
+        if (root is null) return commits.ToList();
+        var metadata = _git.GetCommitMetaAtRoot(root, commits.Select(commit => commit.Sha));
+        var enriched = new List<TaskCommitInfo>(commits.Count);
+        foreach (var commit in commits)
+        {
+            var resolvedSha = ResolveSha(metadata.Keys, commit.Sha);
+            if (resolvedSha is null)
+            {
+                enriched.Add(commit);
+                continue;
+            }
+            var files = _git.GetCommitFilesAtRoot(root, commit.Sha);
+            enriched.Add(commit with
+            {
+                FilesChanged = files.Count,
+                Files = files.Select(file => file.Path).ToList(),
+            });
+            resolvedShas.Add(resolvedSha);
+        }
+        return enriched;
     }
 
     private static HashSet<string> ReadMissingCommitMetadataShas(string folderPath)
@@ -2892,6 +3068,26 @@ public class TaskMutationService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to roll back pending-intent at {Stash}", stash);
+        }
+    }
+
+    public bool SetIntegrationConflictRoute(string jobId, string cli, string? model, string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info is null) return false;
+        using (AcquireRoutingLock(info.FolderPath))
+        {
+            if (!TaskJsonFile.UpdateFields(info.FolderPath, new Dictionary<string, object>
+                {
+                    ["cliType"] = cli,
+                    ["agent"] = cli,
+                    ["model"] = model ?? "",
+                    ["thinkingLevel"] = "medium",
+                    ["modelExplicit"] = true,
+                    ["thinkingLevelExplicit"] = true,
+                    ["pinMode"] = "strict",
+                }, _logger, _keyFileWriter)) return false;
+            return RoutingUpdated(info);
         }
     }
 

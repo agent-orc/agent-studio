@@ -1,3 +1,4 @@
+using Contract = AgentStudio.TaskServer.Contracts;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 using AgentStudio.Pipeline;
 using AgentStudio.OrchestrationDecisions;
@@ -9,6 +10,25 @@ namespace AgentStudio.Runner;
 /// <summary>Host boundary for the shared decision library. No transition rules belong here.</summary>
 public static class MonolithTransitionAdapter
 {
+    public static Contract.ReviewReportRequest ReviewMeasurements(
+        Contract.ReviewReportRequest request, Contract.ReviewPlanDto? plan)
+        => ReviewMeasurementPolicy.NormalizeReport(request, plan);
+
+    public static bool MayClaimMergeCheck(bool integration, int regularActive, int integrationActive, int regularSlots)
+        => MergeCheckAdmissionPolicy.MayClaim(integration, regularActive, integrationActive, regularSlots);
+    public static int MergeCheckQueuePriority(bool integration) => MergeCheckAdmissionPolicy.Priority(integration);
+    public static bool PostMergeCustodyMayWrite(string? owner, long fence, string currentOwner,
+        long currentFence, DateTimeOffset expires, DateTimeOffset now, bool acquiring, bool settling = false)
+        => PostMergeCustodyPolicy.MayWrite(owner, fence, currentOwner, currentFence, expires, now, acquiring, settling);
+    public static bool PostMergeCustodyMayRecover(string owner, long fence, string currentOwner, long currentFence)
+        => PostMergeCustodyPolicy.MayRecover(owner, fence, currentOwner, currentFence);
+    public static bool PostMergeCustodyMayReplace(DateTimeOffset started, string kind,
+        DateTimeOffset? expires, DateTimeOffset now)
+        => PostMergeCustodyPolicy.MayReplace(started, kind, expires, now);
+    public static bool PostMergeCustodyNeedsVerdict(string status) => PostMergeCustodyPolicy.NeedsVerdict(status);
+    public static bool PostMergeCustodyAdvancesWindow(string status, string kind)
+        => PostMergeCustodyPolicy.AdvancesWindow(status, kind);
+
     public static bool PostMergeDeadlineReached(DateTimeOffset? opened, int minutes, DateTimeOffset now)
         => PostMergeSchedulingPolicy.DeadlineReached(opened, minutes, now);
 
@@ -20,6 +40,14 @@ public static class MonolithTransitionAdapter
         => PostMergeSchedulingPolicy.MayShareGateLane(active, candidate);
     public static int PostMergeQueuePriority(string? kind) => PostMergeSchedulingPolicy.QueuePriority(kind);
 
+    public static MachineBlockerDisposition ResolveIntegrationBlocker(IntegrationResolutionFacts facts)
+        => IntegrationBlockerPolicy.Resolve(facts);
+
+    public static MachineBlockerDisposition ResolveVerificationBlocker(VerificationResolutionFacts facts)
+        => IntegrationBlockerPolicy.Verification(facts);
+
+    public static bool IsVerificationBlocker(string reason) => IntegrationBlockerPolicy.IsVerificationBlocker(reason);
+
     public static bool MayWaitForIntegration(IntegrationBlockerFacts facts)
         => IntegrationBlockerPolicy.MayWait(facts);
 
@@ -27,6 +55,17 @@ public static class MonolithTransitionAdapter
 
     public static string? IntegrationBlockerDependency(string category, string reason)
         => IntegrationBlockerPolicy.Dependency(category, reason);
+
+    public static IntegrationConflictAction IntegrationConflictRound(string outcome, int used, int maximum)
+        => IntegrationConflictPolicy.Round(outcome, used, maximum);
+    public static bool IntegrationConflictRetry(bool deliveryChanged, bool targetChanged, bool pathsChanged)
+        => IntegrationConflictPolicy.MayRetry(deliveryChanged, targetChanged, pathsChanged);
+    public static bool IntegrationConflictAdmission(string card, string target, DateTimeOffset at,
+        IReadOnlyList<string>? paths, IReadOnlyList<IntegrationRecoveryReservation> reservations)
+        => IntegrationConflictPolicy.MayIntegrate(card, target, at, paths, reservations);
+    public static DateTimeOffset IntegrationConflictOrder(string card, string target, DateTimeOffset at,
+        IReadOnlyList<IntegrationRecoveryReservation> reservations)
+        => IntegrationConflictPolicy.OrderAt(card, target, at, reservations);
 
     public static int DispatchWaveOrder(int requested, int allocated, string? wave)
         => DispatchWavePolicy.InitialOrder(requested, allocated, wave);

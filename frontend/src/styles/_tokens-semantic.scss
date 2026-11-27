@@ -1,1 +1,11 @@
 @forward '../../projects/studio-ui/src/styles/tokens-semantic';
+
+// Surface density belongs to the Studio app. The shared library owns the scales;
+// consumers without this app preference retain the library's compact defaults.
+@each $density in (compact, default, cozy) {
+  :root[data-studio-density='#{$density}'] {
+    @each $alias in (row-pad-block, row-pad-inline, row-gap, section-gap, row-min-h, row-min-h-interactive) {
+      --studio-#{$alias}: var(--studio-#{$alias}-#{$density});
+    }
+  }
+}

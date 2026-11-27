@@ -55,13 +55,17 @@ was interrupted.
 ## The repair
 
 [InterruptedIntegrationGateRecoveryHostedService](../../../backend/Features/Pipeline/InterruptedIntegrationGateRecoveryHostedService.cs)
-runs one pass per process start. Direct merge admission also reconciles open
-journals before touching the lane, so startup scheduling cannot let a new merge
-use an unrepaired tip. Both recovery paths hold the same fenced publication
-lease as ordinary integration, refresh the remote tracking branch, then read
+inventories interrupted journals after first index publication and retries held
+repositories every 30 seconds. Merge and push admission await an explicit
+per-repository recovery barrier before taking their ordinary gates. A failed
+repository stays held while healthy repositories proceed; only completed repair
+releases its hold. The worker logs `integration-recovery-held` with the reason
+and `integration-recovery-ready` when released. Hosted registration order does
+not establish readiness. Direct merge admission also reconciles open journals
+under the publication lease before touching the lane. Both recovery paths hold
+the same fenced publication lease as ordinary integration, refresh the remote tracking branch, then read
 lane ancestry. A failed remote refresh or an escalation retains the journal and
-refuses new direct merge admission. The
-decision itself is pure
+refuses new direct merge admission. The decision itself is pure
 ([InterruptedIntegrationGatePolicy](../../../backend/Features/Pipeline/InterruptedIntegrationGatePolicy.cs))
 and is taken **per integration branch**, not per card: rolling one card's merge
 back while a later merge sits on top of it is not a rollback, it is a rewrite of

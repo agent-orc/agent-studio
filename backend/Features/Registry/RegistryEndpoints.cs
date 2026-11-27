@@ -4,6 +4,8 @@ namespace AgentStudio.Registry;
 
 internal sealed class ProjectUrlStopException : Exception { }
 
+public sealed record ProjectDeletionRequest(string? Confirmation, string? Reason);
+
 /// <summary>
 /// F45a — read-only surface for the workspace + project registries.
 /// Lists workspaces with their embedded projects, returns project
@@ -630,46 +632,81 @@ public static class RegistryEndpoints
         // Storage is deleted first so a failure aborts before any metadata is
         // touched — never leaving an orphan folder behind a dangling pointer.
         app.MapDelete(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}",
-            (string projId, ProjectRegistry projects, ProjectUrlProcessService procs,
-                WorkspaceManagementService workspaceManagement, ILoggerFactory loggerFactory) =>
+            async (string projId, [Microsoft.AspNetCore.Mvc.FromBody] ProjectDeletionRequest? request,
+                HttpContext context, ProjectRegistry projects, ProjectUrlProcessService procs,
+                WorkspaceManagementService workspaceManagement, TaskRunnerService runner,
+                AttemptAuthorityService authority, ControlPlaneAuditLog audit, ILoggerFactory loggerFactory) =>
         {
-            var log = loggerFactory.CreateLogger("ProjectDelete");
-            var record = projects.FindById(projId);
-            if (record == null)
-                return Results.NotFound(new { error = $"Unknown projectId '{projId}'" });
+            if (!string.Equals(request?.Confirmation, projId, StringComparison.Ordinal))
+                return Results.BadRequest(new { error = "project-delete-confirmation-required",
+                    message = "Confirm deletion with the exact project id." });
+            if (string.IsNullOrWhiteSpace(request?.Reason) || request.Reason.Length > 1000)
+                return Results.BadRequest(new { error = "project-delete-reason-required",
+                    message = "A written deletion reason of at most 1000 characters is required." });
 
-            // Stop repository-owned preview children before metadata and storage
-            // disappear. The process service also repeats this at host shutdown.
-            procs.StopProject(projId);
-            var storageResult = workspaceManagement.DeleteProjectStorage(record.StorageLocation);
-            if (storageResult.Outcome == WorkspaceManagementOutcome.BadRequest)
+            // A remote coding claim cannot start between the blocker check and
+            // storage removal. Review work is also blocked while queued.
+            await LeaseEndpoints.ClaimGate.WaitAsync(context.RequestAborted);
+            try
             {
-                log.LogError(
-                    "project-delete-storage-failed id={Id} storage={Storage} error={Error}",
-                    record.Id, record.StorageLocation, storageResult.Error);
-                return Results.Problem(
-                    storageResult.Error ?? "Failed to delete project storage.",
-                    statusCode: StatusCodes.Status500InternalServerError);
+                var log = loggerFactory.CreateLogger("ProjectDelete");
+                var record = projects.FindById(projId);
+                if (record == null)
+                    return Results.NotFound(new { error = $"Unknown projectId '{projId}'" });
+
+                if (workspaceManagement.HasActiveProjectWork(record.StorageLocation, authority)
+                    || runner.GetPublishedStatus().Projects.Values.Any(status =>
+                        (string.Equals(status.ProjectName, record.DisplayName, StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(status.ProjectName, record.Id, StringComparison.OrdinalIgnoreCase))
+                        && (status.ActiveJobId is not null || status.ActiveRuns.Count > 0)))
+                    return Results.Conflict(new { error = "project-delete-active-work",
+                        message = "Drain coding and review work before deleting the project." });
+
+                var actor = AccessSecurityMiddleware.ActorId(context, "local");
+                var reason = CredentialRedactor.Redact(request.Reason.Trim());
+                void Audit(string outcome) => audit.Append(new ControlPlaneAuditRecord(
+                    ControlPlaneAuditStreams.Iam, actor, "project.delete", outcome, record.Id,
+                    Details: new { reason, storageLocation = record.StorageLocation }));
+                // Persist intent outside project storage before the first side effect.
+                Audit("requested");
+
+                // Stop repository-owned preview children before metadata and storage
+                // disappear. The process service also repeats this at host shutdown.
+                procs.StopProject(projId);
+                var storageResult = workspaceManagement.DeleteProjectStorage(record.StorageLocation);
+                if (storageResult.Outcome == WorkspaceManagementOutcome.BadRequest)
+                {
+                    Audit("storage-failed");
+                    log.LogError(
+                        "project-delete-storage-failed id={Id} storage={Storage} error={Error}",
+                        record.Id, record.StorageLocation, storageResult.Error);
+                    return Results.Problem(
+                        storageResult.Error ?? "Failed to delete project storage.",
+                        statusCode: StatusCodes.Status500InternalServerError);
+                }
+
+                try { projects.Delete(projId); }
+                catch (KeyNotFoundException __ex) { SilentCatch.Note(__ex, "RegistryEndpoints: already removed; idempotent success"); /* already removed; idempotent success */ }
+
+                try { NetworkedRepositoryCheckout.RemoveIfOwned(record); }
+                catch (IOException ex) { log.LogWarning(ex, "Managed checkout cleanup failed for {ProjectId}", projId); }
+                catch (UnauthorizedAccessException ex) { log.LogWarning(ex, "Managed checkout cleanup failed for {ProjectId}", projId); }
+
+                log.LogInformation(
+                    "project-deleted id={Id} displayName={DisplayName} storage={Storage}",
+                    record.Id, record.DisplayName, record.StorageLocation);
+
+                Audit("deleted");
+
+                return Results.Ok(new
+                {
+                    deletedId = record.Id,
+                    displayName = record.DisplayName,
+                    storageLocation = record.StorageLocation,
+                });
             }
-
-            try { projects.Delete(projId); }
-            catch (KeyNotFoundException __ex) { SilentCatch.Note(__ex, "RegistryEndpoints: already removed; idempotent success"); /* already removed; idempotent success */ }
-
-            try { NetworkedRepositoryCheckout.RemoveIfOwned(record); }
-            catch (IOException ex) { log.LogWarning(ex, "Managed checkout cleanup failed for {ProjectId}", projId); }
-            catch (UnauthorizedAccessException ex) { log.LogWarning(ex, "Managed checkout cleanup failed for {ProjectId}", projId); }
-
-            log.LogInformation(
-                "project-deleted id={Id} displayName={DisplayName} storage={Storage}",
-                record.Id, record.DisplayName, record.StorageLocation);
-
-            return Results.Ok(new
-            {
-                deletedId = record.Id,
-                displayName = record.DisplayName,
-                storageLocation = record.StorageLocation,
-            });
-        });
+            finally { LeaseEndpoints.ClaimGate.Release(); }
+        }).RequirePermission(IamPermissions.WorkspaceAdminister);
 
         // ----- Project URLs (per-project watchable dev-server / preview URLs) -----
 

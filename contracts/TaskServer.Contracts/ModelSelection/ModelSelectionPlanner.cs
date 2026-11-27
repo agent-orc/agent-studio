@@ -329,7 +329,10 @@ public static class ModelSelectionPlanner
         var waitPolicy = facts.WaitPolicy;
         var preference = facts.OperatorSwitch;
         var primarySnapshot = snapshotFor(cli);
-        var projectionWarning = SelectionQuotaMath.FindWarning(primarySnapshot, nowUtc);
+        var projectionWarning = SelectionQuotaMath.FindWarning(primarySnapshot, nowUtc, facts.PaceFor);
+        var windowPaces = primarySnapshot?.Windows.Select(w => w.Label)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(label => label, label => facts.PaceFor(cli, label), StringComparer.OrdinalIgnoreCase);
         var pinRule = string.IsNullOrWhiteSpace(requestedModel) ? SelectionRules.ConsumerDefault : SelectionRules.Pin;
 
         // Strict = already over the configured cap. Admission = strict OR
@@ -344,14 +347,14 @@ public static class ModelSelectionPlanner
             if (request.Continuation is not null
                 || SelectionWorkClasses.UsesReserve(request.WorkClass ?? SelectionWorkClasses.ForConsumer(request.Consumer)))
                 return CapEvaluation.NotBlocked;
-            return SelectionQuotaMath.EvaluateProjectedBreach(snapshot, caps, nowUtc)
+            return SelectionQuotaMath.EvaluateProjectedBreach(snapshot, caps, nowUtc, facts.PaceFor)
                    ?? CapEvaluation.NotBlocked;
         }
         CapEvaluation Admission(string? c) => ModelAdmission(c,
             string.Equals(c, cli, StringComparison.OrdinalIgnoreCase)
                 ? requestedModel ?? facts.Routing?.Profile(cli)?.PrimaryModel
                 : facts.Routing?.Profile(c ?? "")?.PrimaryModel);
-        QuotaProjection? Worst(QuotaSnapshot? snapshot) => SelectionQuotaMath.WorstProjection(snapshot, caps, nowUtc);
+        QuotaProjection? Worst(QuotaSnapshot? snapshot) => SelectionQuotaMath.WorstProjection(snapshot, caps, nowUtc, facts.PaceFor);
         SelectionResult Decided(
             SelectionOutcome outcome, string? model, string? thinking, string rule, string reason,
             DateTime? retryAt, QuotaProjection? projection, bool nearby = false)
@@ -365,7 +368,7 @@ public static class ModelSelectionPlanner
                 Rule = rule,
                 Reason = reason,
                 RetryAt = retryAt,
-                Quota = new SelectionQuota(null, null, projection, projectionWarning),
+                Quota = new SelectionQuota(null, null, projection, projectionWarning, windowPaces),
                 NearbyResetWait = nearby,
             };
         }
@@ -536,7 +539,7 @@ public static class ModelSelectionPlanner
                     : AppendReset(BuildSwitchReason(cli, route), primaryReset)
                       + (fallbackReason == "short-step-reserve" ? $"; preserving {reserve} percentage points for short steps" : ""),
                 ReturnToPrimaryAt = facts.ActiveSwitch?.ReturnToPrimaryAt ?? primaryReset?.ResetAt,
-                Quota = new SelectionQuota(usedWindow, usedPct, Worst(snapshotFor(cli)), projectionWarning),
+                Quota = new SelectionQuota(usedWindow, usedPct, route.PrimaryCap.PaceProjection is { Pace.Mode: "useBy" } pacedPrimary ? pacedPrimary : Worst(snapshotFor(cli)), projectionWarning, windowPaces),
                 Equivalence = new SelectionEquivalence(
                     route.CapabilityClass,
                     route.CatalogueVersion,
@@ -582,6 +585,8 @@ public static class ModelSelectionPlanner
                 ?? SelectionQuotaMath.EarliestReset(snapshotFor(route?.CliType ?? cli), nowUtc, caps, blockedOnly: true)
                 ?? SelectionQuotaMath.EarliestReset(snapshotFor(cli), nowUtc, caps, blockedOnly: false);
             var detail = !string.IsNullOrWhiteSpace(route?.Reason) ? route!.Reason : strictPrimary.DescribeReason();
+            if (strictPrimary.WindowLabel is { } blockedWindow && facts.PaceFor(cli, blockedWindow) is { Mode: not "steady" } pace)
+                detail += $"; pace: {pace.Label}";
             detail += "; no usable equivalent for the requested model and reasoning level";
             return Decided(SelectionOutcome.Wait, model, thinking, SelectionRules.QuotaCap,
                 AppendReset($"waiting: all quotas exhausted ({detail})", blockedReset),
@@ -595,6 +600,9 @@ public static class ModelSelectionPlanner
         {
             var proj = Worst(snapshotFor(cli));
             var reset = SelectionQuotaMath.EarliestReset(snapshotFor(cli), nowUtc, caps, blockedOnly: false);
+            if (admissionPrimary.PaceProjection is { Pace.Mode: "useBy" } paced)
+                return Decided(SelectionOutcome.Wait, model, thinking, SelectionRules.QuotaCap,
+                    $"waiting: {admissionPrimary.DescribeReason()}", paced.FreeAt, paced);
             if (route?.TargetQuotaBlocked == true)
                 return Decided(SelectionOutcome.Wait, model, thinking, SelectionRules.QuotaCap,
                     AppendReset($"waiting: fallback target would cross its quota cap ({route.Reason})", reset),
@@ -665,7 +673,7 @@ public static class ModelSelectionPlanner
         if (active?.Rule != SelectionRules.QuotaCap || active.From.CliType != cli) return false;
         if (snapshot is null || snapshot.Suspicious || !string.IsNullOrWhiteSpace(snapshot.Error)) return true;
         if (SelectionQuotaMath.EvaluateCap(snapshot, facts.Caps).Blocked) return true;
-        if (SelectionQuotaMath.EvaluateProjectedBreach(snapshot, facts.Caps, facts.NowUtc)?.Blocked == true) return true;
+        if (SelectionQuotaMath.EvaluateProjectedBreach(snapshot, facts.Caps, facts.NowUtc, facts.PaceFor)?.Blocked == true) return true;
         if (active.ReturnToPrimaryAt is { } reset && facts.NowUtc >= reset)
             return snapshot.FetchedAt < reset;
         if (facts.NowUtc - active.At < TimeSpan.FromMinutes(facts.MinDwellMinutes)) return true;
@@ -685,7 +693,7 @@ public static class ModelSelectionPlanner
             Route = result.Primary,
             Rule = SelectionRules.Pin,
             Reason = $"waiting: {why} keeps {result.Primary.CliType}/{result.Primary.Model ?? "<default>"} ({result.Reason})",
-            RetryAt = result.ReturnToPrimaryAt,
+            RetryAt = result.Quota?.Projection?.FreeAt ?? result.ReturnToPrimaryAt,
             ReturnToPrimaryAt = null,
             Equivalence = null,
             Fallback = null,
@@ -694,7 +702,7 @@ public static class ModelSelectionPlanner
 
     private sealed class ReservedCaps(IQuotaCapTable caps, int reserve) : IQuotaCapTable
     {
-        public int GetCap(string cliType, string windowLabel) => Math.Max(1, caps.GetCap(cliType, windowLabel) - reserve);
+        public int GetCap(string cliType, string windowLabel) => SelectionQuotaMath.EffectiveCap(caps.GetCap(cliType, windowLabel), reserve);
     }
 
     private static SelectionRoute PrimaryRoute(

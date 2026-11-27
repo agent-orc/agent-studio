@@ -21,10 +21,10 @@ public sealed class AttemptCredentialCompletionSweep(
                 // The issuer is a typed HTTP client; resolve a fresh one per sweep.
                 await using var scope = scopes.CreateAsyncScope();
                 var issuer = scope.ServiceProvider.GetRequiredService<IRepositoryTokenIssuer>();
-                var revoked = await store.RevokeFinishedAttemptCredentialsAsync(issuer, roots, stoppingToken);
-                if (revoked > 0) logger.LogInformation("Revoked {Count} attempt credentials of finished attempts.", revoked);
+                var completed = await store.RevokeFinishedAttemptCredentialsAsync(issuer, roots, stoppingToken);
+                if (completed > 0) logger.LogInformation("Completed cleanup for {Count} attempt credentials.", completed);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
             {
                 logger.LogWarning(ex, "Attempt credential completion sweep failed; retrying next sweep.");
             }

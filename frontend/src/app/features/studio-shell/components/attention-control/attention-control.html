@@ -1,9 +1,14 @@
 <button #trigger type="button" class="attention-control__trigger" data-testid="studio-attention-trigger"
-        aria-haspopup="dialog" [class.attention-control__trigger--active]="count() > 0"
+        aria-haspopup="dialog" [class.attention-control__trigger--active]="count() > 0 || !attention.complete()"
         [attr.aria-label]="accessibleName()" [appTooltip]="triggerLabel()" (click)="toggle()">
   <app-studio-icon name="bell" [size]="14" />
   <span class="attention-control__label">Needs you </span>
   <strong class="attention-control__count" data-testid="studio-attention-count">{{ count() }}</strong>
+  @if (!attention.complete()) {
+    <app-status-indicator [tone]="attention.coverageLabel() === 'Partial coverage' ? 'warning' : 'running'"
+                          [label]="attention.coverageLabel() === 'Partial coverage' ? 'Partial' : 'Checking'"
+                          [compact]="true" testId="attention-trigger-coverage" />
+  }
   @if (reviewHostDrift()) { <span class="attention-control__drift" data-testid="review-host-drift-cue">Review host</span> }
 </button>
 
@@ -14,9 +19,12 @@
       @if (overlapError()) {
         <p class="attention-list__reason" role="alert" data-testid="attention-overlap-error">{{ overlapError() }}</p>
       }
-      @if (attention.error() && count() === 0) {
-        <p class="attention-list__empty" data-testid="attention-list-error">The attention list could not be read. It retries every 15 seconds.</p>
-      } @else if (attention.loaded() && count() === 0) {
+      @if (!attention.complete()) {
+        <p class="attention-list__empty" role="status" data-testid="attention-list-coverage">
+          <strong>{{ attention.coverageLabel() }}.</strong> {{ attention.coverageDetail() }}.
+          Last successful facts are kept; missing sources may have more items. Reads retry automatically.
+        </p>
+      } @else if (count() === 0) {
         <p class="attention-list__empty" data-testid="attention-list-empty">Nothing needs you right now.</p>
       }
       @for (group of groups(); track group.spec.key) {
@@ -44,7 +52,7 @@
                     @if (card(item); as key) { <span class="attention-list__key" data-testid="attention-row-card">{{ key }}</span> }
                     @if (item.title) { <span class="attention-list__title" data-testid="attention-row-title">{{ item.title }}</span> }
                     @if (item.project) { <span class="attention-list__project">{{ item.project }}</span> }
-                    <span class="attention-list__age">{{ age(item) }}</span>
+                    <span class="attention-list__age" data-testid="attention-row-age">{{ age(item) }}</span>
                   </div>
                   @if (item.type === 'environment.incident-open') {
                     <app-status-indicator tone="danger" label="Incident open" [compact]="true" testId="attention-incident-status" />

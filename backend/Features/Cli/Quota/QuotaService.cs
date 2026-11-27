@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Cli;
 
@@ -139,17 +140,36 @@ public sealed class QuotaService
     {
         if (string.IsNullOrWhiteSpace(cliType)) return null;
         if (_pinnedDemo) return PinnedDemoFor(cliType);
-        if (_networked)
-        {
-            var hosted = _cache.Where(entry => entry.Key.StartsWith(cliType + ":", StringComparison.OrdinalIgnoreCase))
-                .Select(entry => entry.Value)
-                .Where(snapshot => _clock.GetUtcNow().UtcDateTime - snapshot.FetchedAt <= _ttl
-                    && snapshot.Error is null).ToArray();
-            // The existing admission contract has no subscription selector. With
-            // multiple accounts, no provider-wide percentage is authoritative.
-            return hosted.Length == 1 ? hosted[0] : null;
-        }
+        if (_networked) return GetRoutingEvidence(cliType).Snapshot;
         return _cache.TryGetValue(cliType, out var s) ? s : null;
+    }
+
+    /// <summary>
+    /// Routing reads current successful account observations, never display errors.
+    /// Multiple accounts have no authoritative provider-wide quota percentage.
+    /// </summary>
+    public QuotaRoutingEvidence GetRoutingEvidence(string cliType)
+    {
+        if (!_networked || _pinnedDemo)
+            return new(QuotaRoutingEvidenceKind.Unscoped, GetCachedFor(cliType), []);
+        if (!string.Equals(cliType, CliTypes.Claude, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(cliType, CliTypes.Codex, StringComparison.OrdinalIgnoreCase))
+            return new(QuotaRoutingEvidenceKind.Unscoped, null, []);
+        var now = _clock.GetUtcNow().UtcDateTime;
+        lock (_hostIngestGate)
+        {
+            var accounts = _cache.Values.Where(snapshot =>
+                    string.Equals(snapshot.CliType, cliType, StringComparison.OrdinalIgnoreCase)
+                    && snapshot.SubscriptionKey is { Length: > 0 }
+                    && HostQuotaCoordinator.IsFreshForAdmission(snapshot.FetchedAt, snapshot.Error, now, _ttl))
+                .OrderBy(snapshot => snapshot.SubscriptionKey, StringComparer.Ordinal).ToArray();
+            return accounts.Length switch
+            {
+                0 => new(QuotaRoutingEvidenceKind.Missing, null, accounts),
+                1 => new(QuotaRoutingEvidenceKind.CurrentAccount, accounts[0], accounts),
+                _ => new(QuotaRoutingEvidenceKind.MultipleAccounts, null, accounts),
+            };
+        }
     }
 
     /// <summary>Accept a parsed host reading through the same cache, gate and history path.</summary>
@@ -490,3 +510,18 @@ public sealed class QuotaService
         catch (Exception ex) { _logger.LogDebug(ex, "Quota cache persist failed"); }
     }
 }
+
+/// <summary>Distinguishes absent evidence from healthy accounts without a subscription selector.</summary>
+public enum QuotaRoutingEvidenceKind
+{
+    Unscoped,
+    Missing,
+    CurrentAccount,
+    MultipleAccounts,
+}
+
+/// <summary>Account-scoped admission facts, separate from the historical quota report.</summary>
+public sealed record QuotaRoutingEvidence(
+    QuotaRoutingEvidenceKind Kind,
+    QuotaSnapshot? Snapshot,
+    IReadOnlyList<QuotaSnapshot> Accounts);

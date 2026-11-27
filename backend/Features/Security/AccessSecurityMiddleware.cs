@@ -164,6 +164,8 @@ public sealed class AccessSecurityMiddleware
         // Authorization header is one well-formed bearer; any other shape falls
         // through to local authentication. Studio's own API-token and
         // service-account bearers (api.*, sat.*) never take the skip.
+        // This path establishes no local authorization: the proxy must preserve
+        // the caller's bearer and must not attach the Studio edge credential or proof.
         var presentedBearer = ReadBearer(context.Request.Headers.Authorization.FirstOrDefault());
         if (IsProxiedTaskServerPlane(context, path)
             && IsWellFormedBearer(context.Request.Headers.Authorization)
@@ -286,7 +288,9 @@ public sealed class AccessSecurityMiddleware
             var status = faulted ? StatusCodes.Status500InternalServerError : context.Response.StatusCode;
             _store.AppendServiceAccountAudit(serviceAccount, context.Request.Method, path, status,
                 AuditTarget(context, path), parameterDigest.Value, context.Items[OperatorPolicyItem] as OperatorPolicyDecision,
-                context.Items[OperatorRequestClassifier.OverrideReasonItem] as string);
+                context.Items[OperatorRequestClassifier.OverrideReasonItem] as string
+                    ?? StatedReason(context.Request.Headers[OperatorApprovalHeaders.Reason].ToString()),
+                OperatorInstructionSources.Normalize(context.Request.Headers[OperatorApprovalHeaders.InstructionSource].ToString()));
             if (breakGlass is not null)
                 _store.AppendBreakGlassRequestAudit(breakGlass, serviceAccount.ActorId,
                     context.Request.Method + " " + path, status < 400 ? "ok" : "refused",
@@ -430,6 +434,21 @@ public sealed class AccessSecurityMiddleware
                 await Reject(context, 403, "runner-card-not-leased", "A runner may read a card only while it holds that card's lease.");
                 return;
             }
+            if (IsIntegrationLeaseWrite(context.Request.Method, path))
+            {
+                var runnerId = await BodyStringFieldAsync(context.Request, "runnerId");
+                if (!string.Equals(runner.RunnerId, runnerId, StringComparison.Ordinal))
+                {
+                    await Reject(context, 403, "runner-identity-denied", "A Runner may use only its enrolled identity.");
+                    return;
+                }
+                var project = await BodyStringFieldAsync(context.Request, "projectName");
+                if (!RunnerProjectBinding.Allows(runner, project, _projects))
+                {
+                    await Reject(context, 403, "runner-project-denied", "The Runner credential is not bound to this project.");
+                    return;
+                }
+            }
             await _next(context);
             return;
         }
@@ -519,7 +538,8 @@ public sealed class AccessSecurityMiddleware
         }
         if (IamPermissions.IsUnbound(required.Permission))
         {
-            if (!safeMethod && !_store.ValidateCsrf(human.Session, context.Request.Headers["X-CSRF-Token"].FirstOrDefault()))
+            if ((!safeMethod || IsProjectionPost(context.Request.Method, path))
+                && !_store.ValidateCsrf(human.Session, context.Request.Headers["X-CSRF-Token"].FirstOrDefault()))
             {
                 await Reject(context, 403, "csrf-invalid", "A valid CSRF token is required for browser mutations.");
                 return;
@@ -551,7 +571,8 @@ public sealed class AccessSecurityMiddleware
             await Reject(context, 403, "role-denied", "Viewer role is read-only.");
             return;
         }
-        if (!safeMethod && !_store.ValidateCsrf(human.Session, context.Request.Headers["X-CSRF-Token"].FirstOrDefault()))
+        if ((!safeMethod || IsProjectionPost(context.Request.Method, path))
+            && !_store.ValidateCsrf(human.Session, context.Request.Headers["X-CSRF-Token"].FirstOrDefault()))
         {
             if (IsDeployApprovalRequest(path, context.Request.Method))
                 await Reject(context, 401, "Sign in again to approve.", "Sign in again to approve.",
@@ -689,6 +710,16 @@ public sealed class AccessSecurityMiddleware
         // the floors and bindings admitted it; a T2 request the route floor
         // refuses to every operator session (access administration, the Task
         // Server plane) ends here and never becomes an approval request.
+        // Hard refusals precede every grant, approval, break-glass and elevated class.
+        if (account.Operator is not null && (IsTokenDeniedRoute(path)
+            || context.GetEndpoint() is { } hardEndpoint
+                && RoutePermissionCatalog.Resolve(hardEndpoint, context.Request.Method) is { } hardPermission
+                && OperatorDeniedPermission(hardPermission.Permission)))
+        {
+            await Reject(context, 403, IsTokenDeniedRoute(path) ? "token-route-denied" : "operator-route-denied",
+                "Operator sessions cannot reach this reserved operation.");
+            return;
+        }
         OperatorOperation? operation = null;
         var breakGlass = account.Operator is { } emergencyActor
             ? _store.ActiveBreakGlassWindow(emergencyActor.SessionId) : null;
@@ -697,6 +728,11 @@ public sealed class AccessSecurityMiddleware
             operation = await OperatorRequestClassifier.ClassifyAsync(context, IsSafe(context.Request.Method, path),
                 context.RequestServices?.GetService<IOperatorGateEvidence>(), OperatorEnvironmentKind,
                 key => RouteValue(context, path, context.GetEndpoint(), key));
+            if (operation is not null && OperatorHardRefusals.Operations.Contains(operation.Id))
+            {
+                await Reject(context, 403, "operator-route-denied", "Operator sessions cannot reach this reserved operation.");
+                return;
+            }
             if (operation is not null && OperatorOperationIds.PersonaAll.Contains(operation.Id)
                 && account.Origin != ServiceAccountOrigins.Persona)
             {
@@ -888,8 +924,23 @@ public sealed class AccessSecurityMiddleware
                 return;
             }
         }
-        if (breakGlass is null && operation is { Tier: OperatorTier.T2 }
-            && !await AdmitOperatorApprovalAsync(context, account, operation, path)) return;
+        if (breakGlass is null && operation is { Tier: OperatorTier.T2 })
+        {
+            var elevated = _store.AdmitOperatorElevation(account.AccountId, account.Operator!.SessionId, operation,
+                target.Projects is [{ Length: > 0 } elevationProject]
+                    ? (_projects?.FindByIdOrDisplayName(elevationProject) ?? _projects?.FindByShortCode(elevationProject))?.Id ?? elevationProject : null,
+                StatedReason(context.Request.Headers[OperatorApprovalHeaders.Reason].ToString()));
+            if (elevated is not null)
+            {
+                context.Items[OperatorPolicyItem] = elevated;
+                if (!elevated.Admitted)
+                {
+                    await Reject(context, 403, elevated.Reason!, elevated.Message, policy: elevated);
+                    return;
+                }
+            }
+            else if (!await AdmitOperatorApprovalAsync(context, account, operation, path)) return;
+        }
         // ES-2 (ES-D8 A): the Owner's approval of an override acceptance or an
         // archive override adds project.cards.override to this one request of
         // the operator session; no other operation or principal gains it.
@@ -996,9 +1047,10 @@ public sealed class AccessSecurityMiddleware
     private string? OperatorEnvironmentKind(string project, string environmentId)
         => ResolveEnvironmentKey(ProjectRouteAddress.Addressed(project), environmentId);
 
-    private static bool OperatorDeniedPermission(string permission)
+    public static bool OperatorDeniedPermission(string permission)
         => permission is IamPermissions.AccessRead or IamPermissions.AccessManage or IamPermissions.WorkspaceAdminister
-            or IamPermissions.SecretsResolve;
+            or IamPermissions.SecretsResolve or IamPermissions.SecretsRead or IamPermissions.SecretsWrite
+            or IamPermissions.EnvironmentProductionDeploy or IamPermissions.EnvironmentProductionDeployApprove;
 
     /// <summary>
     /// What a bearer request addressed, for its audit entry: the task a
@@ -1081,13 +1133,13 @@ public sealed class AccessSecurityMiddleware
         var environmentId = required.EnvironmentRouteValue is { } key
             ? RouteValue(context, path, endpoint, key)
             : required.EnvironmentBodyField is { } field
-                ? await BodyEnvironmentIdAsync(context.Request, field)
+                ? await BodyStringFieldAsync(context.Request, field)
                 : null;
         var environment = required.Environment ?? ResolveEnvironmentKey(address, environmentId);
         return new PermissionTarget(scope, address.Projects, environment, context.Request.Query["project"].FirstOrDefault());
     }
 
-    private static async Task<string?> BodyEnvironmentIdAsync(HttpRequest request, string field)
+    private static async Task<string?> BodyStringFieldAsync(HttpRequest request, string field)
     {
         request.EnableBuffering();
         try
@@ -1095,7 +1147,8 @@ public sealed class AccessSecurityMiddleware
             using var document = await System.Text.Json.JsonDocument.ParseAsync(request.Body,
                 cancellationToken: request.HttpContext.RequestAborted);
             if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
-            foreach (var property in document.RootElement.EnumerateObject())
+            // Match the endpoint JSON binder: the last case-insensitive field wins.
+            foreach (var property in document.RootElement.EnumerateObject().Reverse())
                 if (string.Equals(property.Name, field, StringComparison.OrdinalIgnoreCase))
                     return property.Value.ValueKind == System.Text.Json.JsonValueKind.String
                         ? property.Value.GetString() : null;
@@ -1103,7 +1156,7 @@ public sealed class AccessSecurityMiddleware
         }
         catch (System.Text.Json.JsonException exception)
         {
-            SilentCatch.Note(exception, "AccessSecurityMiddleware: invalid environment request body");
+            SilentCatch.Note(exception, "AccessSecurityMiddleware: invalid JSON request body");
             return null;
         }
         finally
@@ -1186,8 +1239,15 @@ public sealed class AccessSecurityMiddleware
     private bool SameProject(string bound, string requested)
         => ProjectAccessAuthorization.SameProject(bound, requested, _projects);
 
+    private static bool IsIntegrationLeaseWrite(string method, string path)
+        => HttpMethods.IsPost(method)
+           && (path.Equals("/api/runner/integration-lease/acquire", StringComparison.OrdinalIgnoreCase)
+               || path.Equals("/api/runner/integration-lease/heartbeat", StringComparison.OrdinalIgnoreCase)
+               || path.Equals("/api/runner/integration-lease/release", StringComparison.OrdinalIgnoreCase));
+
     private static string? RequiredRunnerScope(string method, string path)
     {
+        if (IsIntegrationLeaseWrite(method, path)) return RunnerScopes.Lease;
         if (HttpMethods.IsPost(method) && path.Equals("/api/deploy/gate-releases", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Release;
         if ((HttpMethods.IsGet(method) && path.StartsWith("/api/runner/release-candidates/", StringComparison.OrdinalIgnoreCase))
@@ -1406,7 +1466,24 @@ public sealed class AccessSecurityMiddleware
            && (path.Equals("/api/tasks/reference-status", StringComparison.OrdinalIgnoreCase)
                // AGT-3753: a dry run of the completion checks; it changes nothing.
                || path.Equals("/api/tasks/acceptance-readiness", StringComparison.OrdinalIgnoreCase)
-               || path.Equals("/api/operator/deploy/plan", StringComparison.OrdinalIgnoreCase));
+               || path.Equals("/api/operator/deploy/plan", StringComparison.OrdinalIgnoreCase)
+               || IsProjectionPost(method, path));
+
+    // Keep this list narrow: a declared read permission alone never makes a
+    // POST safe. These helpers project existing facts without executing work.
+    private static bool IsProjectionPost(string method, string path)
+    {
+        if (!HttpMethods.IsPost(method)) return false;
+        if (path.Equals("/api/token-pricing/calculate", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/api/token-pricing/what-if", StringComparison.OrdinalIgnoreCase)) return true;
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 4
+               && parts[0].Equals("api", StringComparison.OrdinalIgnoreCase)
+               && parts[1].Equals("projects", StringComparison.OrdinalIgnoreCase)
+               && (parts.Length == 4 && parts[3].Equals("execution-readiness-probe", StringComparison.OrdinalIgnoreCase)
+                   || parts.Length == 5 && parts[3].Equals("deployment", StringComparison.OrdinalIgnoreCase)
+                       && parts[4].Equals("compile", StringComparison.OrdinalIgnoreCase));
+    }
 
     /// <summary>
     /// The card input a host reads for its run: <c>prompt.md</c> and the
@@ -1535,11 +1612,32 @@ public sealed class AccessSecurityMiddleware
         }
         if (path.StartsWith("/api/runner/", StringComparison.OrdinalIgnoreCase))
         {
-            var candidate = path["/api/runner/".Length..].Split('/', 2)[0];
-            return candidate is "status" or "orchestrator-feed" or "token-summary-aggregate"
-                or "claim" or "lease" or "logs" or "events" or "artifacts" or "completion"
-                ? ProjectRouteAddress.Unaddressed
-                : ProjectRouteAddress.Addressed(Uri.UnescapeDataString(ContextRouteProject(path, candidate)));
+            // These existing collections filter projects in their handlers.
+            if (path.Equals("/api/runner/status", StringComparison.OrdinalIgnoreCase)
+                || path.Equals("/api/runner/orchestrator-feed", StringComparison.OrdinalIgnoreCase)
+                || path.Equals("/api/runner/token-summary-aggregate", StringComparison.OrdinalIgnoreCase)
+                || path.Equals("/api/runner/token-summary-aggregate/cached", StringComparison.OrdinalIgnoreCase))
+                return ProjectRouteAddress.DeferredToHandler;
+            if (path.Equals("/api/runner/project-chat/status", StringComparison.OrdinalIgnoreCase))
+                return ProjectRouteAddress.Addressed(request.Query["projectName"].ToString());
+            if (IsIntegrationLeaseWrite(request.Method, path))
+                return ProjectRouteAddress.Addressed(await BodyStringFieldAsync(request, "projectName"));
+            if (path.StartsWith("/api/runner/integration-lease/", StringComparison.OrdinalIgnoreCase)
+                && IsParameterSegment(endpoint, 3))
+                return ProjectRouteAddress.Addressed(RouteValue(context, path, endpoint, "projectName"));
+            // Unrouted requests keep the legacy path-based scope check used
+            // by direct middleware callers. Once routing selected an endpoint,
+            // only a matched project/context parameter may name a project.
+            // Fleet collections and future literal routes require workspace
+            // access until an explicit filtered-collection contract exists.
+            if (endpoint is null || endpoint is RouteEndpoint route && route.RoutePattern.PathSegments.Count > 2
+                && route.RoutePattern.PathSegments[2].Parts.OfType<RoutePatternParameterPart>()
+                    .Any(part => !part.IsCatchAll && (part.Name is "projectName" or "projectId" or "project")))
+            {
+                var candidate = path["/api/runner/".Length..].Split('/', 2)[0];
+                return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(ContextRouteProject(path, candidate)));
+            }
+            return ProjectRouteAddress.WorkspaceWide;
         }
         if (path.StartsWith("/api/orchestrator/", StringComparison.OrdinalIgnoreCase))
         {

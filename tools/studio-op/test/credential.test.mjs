@@ -87,10 +87,10 @@ test('the token error messages never contain the token', { skip: !posix }, () =>
   catch (error) { assert.ok(!error.message.includes(token)); }
 });
 
-test('refuses the retired environment variable and any token-shaped environment value', () => {
+test('permits named credential variables and refuses other token-shaped environment values', () => {
   const retired = ['AGENT', 'STUDIO', 'API', 'TOKEN'].join('_');
-  assert.throws(() => refuseTokenCarriers({ env: { [retired]: 'x' }, argv: [] }),
-    error => error.code === 'token-environment-refused');
+  assert.doesNotThrow(() => refuseTokenCarriers({ env: { [retired]: fakeToken() }, argv: [] }));
+  assert.doesNotThrow(() => refuseTokenCarriers({ env: { STUDIO_OP_TOKEN: fakeToken() }, argv: [] }));
   assert.throws(() => refuseTokenCarriers({ env: { SOME_VARIABLE: fakeToken() }, argv: [] }),
     error => error.code === 'token-environment-refused' && /SOME_VARIABLE/.test(error.message));
   assert.doesNotThrow(() => refuseTokenCarriers({ env: { HOME: '/home/demo' }, argv: ['triage'] }));

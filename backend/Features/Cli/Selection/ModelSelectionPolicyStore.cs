@@ -51,6 +51,13 @@ public sealed record ConsumerModelPolicy(
 public sealed record ModelSelectionHysteresis(int ReturnBelowCapPoints = 10, int MinDwellMinutes = 30);
 public sealed record ModelSelectionMigration(int InheritedSteps, int ExplicitSteps, int Projects, bool Applied);
 
+public sealed record WindowPaceSetting(string CliType, string WindowLabel, QuotaPace Pace)
+{
+    public bool Matches(string cli, string window) =>
+        string.Equals(CliType, cli, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(WindowLabel, window, StringComparison.OrdinalIgnoreCase);
+}
+
 public sealed record ModelSelectionPolicy
 {
     public int Version { get; init; } = 1;
@@ -60,6 +67,9 @@ public sealed record ModelSelectionPolicy
         ["claude"] = new(StringComparer.OrdinalIgnoreCase) { ["weekly"] = 95, ["5h"] = 95 },
         ["codex"] = new(StringComparer.OrdinalIgnoreCase) { ["weekly"] = 95 },
     };
+    public IReadOnlyList<WindowPaceSetting> WindowPaces { get; init; } = [];
+    public QuotaPace PaceFor(string cli, string window) =>
+        WindowPaces.FirstOrDefault(entry => entry.Matches(cli, window))?.Pace ?? QuotaPace.Steady;
     public double CostGuardFactor { get; init; } = 2.0;
     public int ShortStepReservePoints { get; init; } = 10;
     public ModelSelectionHysteresis Hysteresis { get; init; } = new();
@@ -193,6 +203,20 @@ public sealed class ModelSelectionPolicyStore(
             _cached = current with { Caps = caps };
             Persist(_cached);
             return _cached;
+        }
+    }
+
+    public ModelSelectionPolicy SetPace(WindowPaceSetting setting)
+    {
+        lock (_lock)
+        {
+            var current = Get();
+            var updated = current with
+            {
+                WindowPaces = [.. current.WindowPaces.Where(entry => !entry.Matches(setting.CliType, setting.WindowLabel)), setting],
+            };
+            Persist(updated);
+            return _cached = updated;
         }
     }
 

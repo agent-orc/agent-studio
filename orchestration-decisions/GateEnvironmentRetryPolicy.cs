@@ -116,7 +116,8 @@ public sealed record GateEnvironmentRetryFacts(
     DateTimeOffset? LastAttemptAt,
     DateTimeOffset? FailedAt,
     DateTimeOffset Now,
-    bool TransportFailure = false);
+    bool TransportFailure = false,
+    bool IntegrationBeforeFreshReview = false);
 
 /// <summary>The AI Operator facts: the ladder plus the one continuation after parking.</summary>
 public sealed record GateEnvironmentRetryOperatorFacts(
@@ -188,7 +189,8 @@ public static class GateEnvironmentRetryPolicy
         if (!facts.RequiresIntegration) return GateEnvironmentRetryReasons.NoCodeDelivery;
         if (facts.AcceptanceIntegrationInFlight) return GateEnvironmentRetryReasons.AcceptanceIntegrationInFlight;
         if (!facts.IsGateEnvironmentFailure) return GateEnvironmentRetryReasons.NotAGateEnvironmentFailure;
-        if (!facts.ReviewPassed) return GateEnvironmentRetryReasons.NoPassedReview;
+        if (!facts.ReviewPassed && !facts.IntegrationBeforeFreshReview)
+            return GateEnvironmentRetryReasons.NoPassedReview;
         return null;
     }
 

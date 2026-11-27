@@ -45,8 +45,10 @@ public sealed class RemoteGateDaemon
                 {
                     if (postMergeFlight?.IsCompleted == true)
                     {
-                        await postMergeFlight;
+                        var completedFlight = postMergeFlight;
+                        // A fault must leave the next poll free to recover the durable claim.
                         postMergeFlight = null;
+                        await completedFlight;
                     }
                     if (File.Exists(ClaimFile))
                         await RecoverPreviousClaimAsync(shutdown);
@@ -63,7 +65,7 @@ public sealed class RemoteGateDaemon
                     if (disk.Level == HostDiskPressureLevel.Critical)
                     {
                         _log($"gate claim paused on {_options.Hostname}: {disk.Reason}");
-                        await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown);
+                        await DelayPollAsync(shutdown);
                         continue;
                     }
                     var claim = await _client.ClaimGateAsync(new GateClaimRequest(
@@ -84,7 +86,7 @@ public sealed class RemoteGateDaemon
                         }
                     }
                     else
-                        await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown);
+                        await DelayPollAsync(shutdown);
                 }
                 catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
                 {
@@ -93,25 +95,43 @@ public sealed class RemoteGateDaemon
                 catch (Exception exception)
                 {
                     _log($"gate poll failed: {exception.GetType().Name}: {exception.Message}");
-                    try { await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown); }
+                    try { await DelayPollAsync(shutdown); }
                     catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
                 }
             }
         }
         finally
         {
-            if (postMergeFlight is not null) await postMergeFlight;
+            if (postMergeFlight is not null)
+            {
+                try { await postMergeFlight; }
+                catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+                {
+                    // The persisted claim remains available for restart recovery.
+                }
+                catch (Exception exception)
+                {
+                    _log($"gate post-merge flight failed during shutdown: {exception.GetType().Name}: {exception.Message}");
+                }
+            }
         }
     }
 
     private async Task ExecutePostMergeAsync(GateClaimResponse claim, CancellationToken ct)
     {
-        if (await ExecuteAsync(claim.Subject!, claim.Attempt!, claim.Lease!, ct))
+        if (await (PostMergeExecutor?.Invoke(claim, ct)
+            ?? ExecuteAsync(claim.Subject!, claim.Attempt!, claim.Lease!, ct)))
             File.Delete(PostMergeClaimFile);
     }
 
     private string PostMergeClaimFile => Path.Combine(_options.StateDir, "gate-post-merge-claim.json");
     private string ClaimFile => Path.Combine(_options.StateDir, "gate-claim.json");
+
+    internal Func<GateClaimResponse, CancellationToken, Task<bool>>? PostMergeExecutor { get; init; }
+    internal Func<CancellationToken, Task>? PollDelay { get; init; }
+
+    private Task DelayPollAsync(CancellationToken ct) => PollDelay?.Invoke(ct)
+        ?? Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), ct);
 
     internal Func<HttpClient>? PostMergeClientFactory { get; init; }
     internal string? PostMergeGateLockPrefix { get; init; }

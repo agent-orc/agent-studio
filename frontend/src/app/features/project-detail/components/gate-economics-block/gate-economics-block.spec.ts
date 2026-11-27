@@ -70,3 +70,23 @@ it('renders the delivery-target baseline with unknown inputs and an aggregate eq
   expect(board.querySelector('[data-handler="tasks/list"]')!.textContent).toContain('Unknown / Unknown');
   fixture.destroy();
 });
+
+it('renders measured stage percentiles and preserves unknown legacy measurements', () => {
+  TestBed.configureTestingModule({ imports: [GateEconomicsBlockComponent],
+    providers: [provideHttpClient(), provideHttpClientTesting()] });
+  const fixture = TestBed.createComponent(GateEconomicsBlockComponent);
+  TestBed.inject(HttpTestingController).expectOne('/api/gate-economics?window=7d').flush({
+    window: '7d', rows: [{ project: 'All projects', integrationStages: [
+      { stage: 'build', medianMs: 12000, p90Ms: 32000, samples: 50 },
+      { stage: 'restore', medianMs: null, p90Ms: null, samples: 0 },
+      { stage: 'frontendBuild', medianMs: 0, p90Ms: 0, samples: 50 },
+    ] }],
+  });
+  fixture.detectChanges();
+  const table = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="integration-stage-metrics"]')!;
+  expect(table.querySelector('[data-stage="build"]')!.textContent).toContain('12 s');
+  expect(table.querySelector('[data-stage="build"]')!.textContent).toContain('32 s');
+  expect(table.querySelector('[data-stage="restore"]')!.textContent).toContain('Unknown');
+  expect(table.querySelector('[data-stage="frontendBuild"]')!.textContent).toContain('0 s');
+  fixture.destroy();
+});

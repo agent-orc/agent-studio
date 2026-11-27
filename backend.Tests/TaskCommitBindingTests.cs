@@ -722,6 +722,241 @@ public class TaskCommitBindingTests : IDisposable
         Assert.Null(info.Commit);
     }
 
+    [Theory]
+    [InlineData("membership")]
+    [InlineData("supersession")]
+    [InlineData("push")]
+    [InlineData("rebase")]
+    [InlineData("remote-attribution")]
+    public void AppendAgainstConcurrentEvidence_PreservesBothEffects(string mutation)
+    {
+        var (_, mutations) = Build();
+        var first = MakeCommit("first", "first", 1, "2026-05-09T10:00:00Z") with
+        {
+            RunAttemptId = "original-attempt", Repository = "studio",
+        };
+        var next = MakeCommit("second", "second", 2, "2026-05-09T11:00:00Z");
+        var folder = SeedJobFolder("race", "3-progress", null);
+        Assert.True(mutations.AppendJobCommitOnFolder(folder, first));
+        bool Evidence() => mutation switch
+        {
+            "membership" => mutations.RecordCommitIntegrationOnFolder(folder,
+                [new() { Sha = first.Sha, Repository = "studio", IntegrationRule = CommitIntegrationRules.Ancestor }]),
+            "supersession" => mutations.MarkCommitsSupersededOnFolder(folder,
+                new Dictionary<string, string> { [first.Sha] = "replacement-attempt" }).Succeeded,
+            "push" => mutations.MarkCommitPushOutcomesOnFolder(folder,
+                new Dictionary<string, CommitPushOutcome> { [first.Sha] = CommitPushOutcome.Rejected(3, "rejected") }),
+            "rebase" => mutations.RecordMechanicalRebaseOnFolder(folder, [new(first.Sha, Pad("rebased"))]),
+            _ => mutations.SetRemoteCommitAttributionOnFolder(folder, "new-attempt", "runner", next.Sha,
+                [MakeCommit("third", "third", 1, "2026-05-09T12:00:00Z")]),
+        };
+        TaskMutationRace.AtFileGate(folder,
+            () => mutations.AppendJobCommitOnFolder(folder, next), Evidence);
+        var chain = ReadChainAndAssertLegacyMirror(folder);
+        Assert.Contains(chain, commit => commit.Sha == next.Sha);
+        var original = Assert.Single(chain, commit => commit.Sha == first.Sha);
+        Assert.Equal("original-attempt", original.RunAttemptId);
+        switch (mutation)
+        {
+            case "membership": Assert.Equal(CommitIntegrationRules.Ancestor, original.IntegrationRule); break;
+            case "supersession": Assert.Equal("replacement-attempt", original.SupersededByAttempt); break;
+            case "push": Assert.Equal(3, original.PushAttempts); Assert.Equal("rejected", original.PushError); break;
+            case "rebase": Assert.Equal(Pad("rebased"), original.SupersededBySha); break;
+            default: Assert.Contains(chain, commit => commit.RunAttemptId == "new-attempt"); break;
+        }
+    }
+
+    [Fact]
+    public void CommitState_EveryAtomicReplacementContainsBothFields()
+    {
+        var writer = new CommitWriteObserver();
+        var (_, mutations) = Build(writer: writer);
+        var folder = SeedJobFolder("atomic", "3-progress", null);
+        Assert.True(TaskJsonFile.UpdateField(folder, "excludedCommits", new[] { "obsolete" },
+            NullLogger<TaskMutationService>.Instance));
+        Assert.True(mutations.AppendJobCommitOnFolder(folder,
+            MakeCommit("first", "first", 1, "2026-05-09T10:00:00Z")));
+        TaskMutationRace.AtFileGate(folder,
+            () => mutations.AppendJobCommitOnFolder(folder,
+                MakeCommit("second", "second", 1, "2026-05-09T11:00:00Z")),
+            () => mutations.AppendJobCommitOnFolder(folder,
+                MakeCommit("third", "third", 1, "2026-05-09T12:00:00Z")));
+        Assert.Equal(3, writer.Writes);
+        Assert.Equal(3, ReadChainAndAssertLegacyMirror(folder).Count);
+    }
+
+    [Theory]
+    [InlineData("append")]
+    [InlineData("set")]
+    [InlineData("membership")]
+    [InlineData("supersession")]
+    [InlineData("push")]
+    [InlineData("remote-attribution")]
+    public void CommitState_WriteFailure_IsNotPublished(string mutation)
+    {
+        var writer = new ControllableAtomicJsonFileWriter { ShouldFail = (_, _) => true };
+        var (scanner, mutations) = Build(writer: writer);
+        var commit = MakeCommit("first", "first", 1, "2026-05-09T10:00:00Z");
+        var folder = SeedJobFolder("failure", "3-progress", commit);
+        // Read the resident publication counter synchronously.
+        var index = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, BuildConfig());
+        scanner.SetIndexCache(index);
+        index.GetSnapshot();
+        var before = File.ReadAllText(Path.Combine(folder, "task.json"));
+        var generation = scanner.SnapshotGeneration;
+        Assert.True(generation > 0);
+        var written = mutation switch
+        {
+            "set" => mutations.SetJobCommitOnFolder(folder, commit),
+            "membership" => mutations.RecordCommitIntegrationOnFolder(folder,
+                [new() { Sha = commit.Sha, IntegrationRule = CommitIntegrationRules.Ancestor }], commit.At),
+            "supersession" => mutations.MarkCommitsSupersededOnFolder(folder,
+                new Dictionary<string, string> { [commit.Sha] = "successor" }).Succeeded,
+            "push" => mutations.MarkCommitPushOutcomesOnFolder(folder,
+                new Dictionary<string, CommitPushOutcome> { [commit.Sha] = CommitPushOutcome.Rejected(3, "rejected") }),
+            "remote-attribution" => mutations.SetRemoteCommitAttributionOnFolder(folder,
+                "attempt", "runner", commit.Sha, [commit]),
+            _ => mutations.AppendJobCommitOnFolder(folder, commit),
+        };
+        Assert.False(written);
+        Assert.Equal(before, File.ReadAllText(Path.Combine(folder, "task.json")));
+        Assert.Equal(generation, scanner.SnapshotGeneration);
+    }
+
+    [Fact]
+    public void RestampingCommit_PreservesCurrentAttributionSupersessionAndPushReceipt()
+    {
+        var (_, mutations) = Build();
+        var folder = SeedJobFolder("restamp", "3-progress", null);
+        var first = MakeCommit("first", "first", 1, "2026-05-09T10:00:00Z") with
+        {
+            RunAttemptId = "attempt", RunnerId = "runner", ResultSha = "result",
+            Attribution = "attributed", Confidence = 0.9, IntegrationRule = CommitIntegrationRules.Ancestor,
+            SupersededByAttempt = "successor", PushAttempts = 3, PushStatus = "rejected", PushError = "receipt",
+        };
+        Assert.True(mutations.AppendJobCommitOnFolder(folder, first));
+        Assert.True(mutations.AppendJobCommitOnFolder(folder,
+            MakeCommit("first", "refreshed", 2, "2026-05-09T10:00:00Z")));
+        var actual = Assert.Single(ReadChainAndAssertLegacyMirror(folder));
+        Assert.Equal(first with { Message = "refreshed", FilesChanged = 2, Files = actual.Files }, actual);
+    }
+
+    [Theory]
+    [InlineData(false, "push")]
+    [InlineData(true, "push")]
+    [InlineData(false, "membership")]
+    [InlineData(true, "membership")]
+    [InlineData(false, "supersession")]
+    [InlineData(true, "supersession")]
+    [InlineData(false, "pending")]
+    [InlineData(true, "pending")]
+    public void RemoteAttributionReplayAgainstEvidence_PreservesReceiptAndDelivery(bool inherited, string evidence)
+    {
+        var (_, mutations) = Build();
+        var folder = SeedJobFolder("replay-evidence", "3-progress", null);
+        var commit = MakeCommit("first", "first", 1, "2026-05-09T10:00:00Z");
+        if (inherited)
+            Assert.True(mutations.SetRemoteCommitAttributionOnFolder(folder, "original", "runner", commit.Sha, [commit]));
+        Assert.True(mutations.SetRemoteCommitAttributionOnFolder(folder, "attempt", "runner", commit.Sha, [commit]));
+        bool UpdateEvidence() => evidence switch
+        {
+            "membership" => mutations.RecordCommitIntegrationOnFolder(folder,
+                [new() { Sha = commit.Sha, IntegrationRule = CommitIntegrationRules.Ancestor }]),
+            "supersession" or "pending" => mutations.MarkCommitsSupersededOnFolder(folder,
+                new Dictionary<string, string> { [commit.Sha] = evidence == "pending"
+                    ? TaskCommitSupersession.PendingAttempt : "successor" }).Succeeded,
+            _ => mutations.MarkCommitPushOutcomesOnFolder(folder,
+                new Dictionary<string, CommitPushOutcome> { [commit.Sha] = CommitPushOutcome.Rejected(3, "receipt") }),
+        };
+        TaskMutationRace.AtFileGate(folder,
+            () => mutations.SetRemoteCommitAttributionOnFolder(folder, "attempt", "runner", commit.Sha, [commit]),
+            UpdateEvidence);
+        var actual = Assert.Single(ReadChainAndAssertLegacyMirror(folder));
+        Assert.Equal("attempt", actual.DeliveryAttemptId);
+        Assert.Equal(inherited ? "original" : "attempt", actual.RunAttemptId);
+        switch (evidence)
+        {
+            case "membership": Assert.Equal(CommitIntegrationRules.Ancestor, actual.IntegrationRule); break;
+            case "supersession": Assert.Equal("successor", actual.SupersededByAttempt); break;
+            case "pending": Assert.Equal(TaskCommitSupersession.PendingAttempt, actual.SupersededByAttempt); break;
+            default: Assert.Equal(3, actual.PushAttempts); Assert.Equal("receipt", actual.PushError); break;
+        }
+    }
+
+    [Theory]
+    [InlineData("membership")]
+    [InlineData("push")]
+    [InlineData("supersession")]
+    [InlineData("resolve-pending")]
+    [InlineData("mark-current")]
+    [InlineData("repository-backfill")]
+    [Trait("Category", "MachineBound")]
+    public void CommitEvidenceWrites_RefreshReachableGitFileMetadata(string mutation)
+    {
+        var sha = SeedGitCommit("metadata.txt", "changed");
+        var (_, mutations) = Build(withGit: true);
+        var commit = MakeCommit(sha, "[studio] fixture", 99, "2026-05-09T10:00:00Z");
+        if (mutation == "resolve-pending")
+            commit = commit with { SupersededByAttempt = TaskCommitSupersession.PendingAttempt };
+        var folder = SeedJobFolder("metadata-refresh", "3-progress", null);
+        // Simulate legacy or external stale file dimensions while preserving
+        // the immutable SHA. Every chain writer must re-derive these from Git.
+        Assert.True(TaskJsonFile.UpdateFields(folder, new Dictionary<string, object>
+        {
+            ["commits"] = new[] { commit }, ["commit"] = commit,
+        }, NullLogger<TaskMutationService>.Instance));
+        var written = mutation switch
+        {
+            "membership" => mutations.RecordCommitIntegrationOnFolder(folder,
+                [new() { Sha = sha, Repository = "studio", IntegrationRule = CommitIntegrationRules.Ancestor }]),
+            "push" => mutations.MarkCommitPushOutcomesOnFolder(folder,
+                new Dictionary<string, CommitPushOutcome> { [sha] = CommitPushOutcome.Rejected(3, "receipt") }),
+            "supersession" => mutations.MarkCommitsSupersededOnFolder(folder,
+                new Dictionary<string, string> { [sha] = "successor" }).Succeeded,
+            "resolve-pending" => mutations.ResolvePendingSupersessionOnFolder(folder, _ => true).Succeeded,
+            "mark-current" => mutations.SupersedeCurrentDeliveryOnFolder(folder, "successor").Succeeded,
+            _ => mutations.BackfillLegacyCommitRepositories() == 1,
+        };
+        Assert.True(written);
+        var actual = Assert.Single(ReadChainAndAssertLegacyMirror(folder));
+        Assert.Equal(1, actual.FilesChanged);
+        Assert.Equal(["metadata.txt"], actual.Files);
+    }
+
+    private static List<TaskCommitInfo> ReadChainAndAssertLegacyMirror(string folder)
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "task.json")));
+        AssertMirror(document.RootElement);
+        return Property(document.RootElement, "commits").Deserialize<List<TaskCommitInfo>>(TaskJsonFile.ReadOpts)!;
+    }
+
+    private static void AssertMirror(JsonElement root)
+    {
+        var chain = Property(root, "commits");
+        Assert.Equal(chain.GetArrayLength() == 0 ? "null" : JsonSerializer.Serialize(chain[chain.GetArrayLength() - 1]),
+            JsonSerializer.Serialize(Property(root, "commit")));
+    }
+
+    private sealed class CommitWriteObserver : IAtomicJsonFileWriter
+    {
+        private readonly AtomicJsonFileWriter _inner = new();
+        public int Writes { get; private set; }
+        public void Write(string path, string content) => ReplaceExisting(path, content);
+        public void ReplaceExisting(string path, string content)
+        {
+            using var incoming = JsonDocument.Parse(content);
+            AssertMirror(incoming.RootElement);
+            Assert.False(incoming.RootElement.TryGetProperty("excludedCommits", out _));
+            if (Writes > 0)
+            {
+                using var previous = JsonDocument.Parse(File.ReadAllText(path));
+                AssertMirror(previous.RootElement);
+            }
+            _inner.ReplaceExisting(path, content);
+            Writes++;
+        }
+    }
+
     private string SeedJobFolder(string id, string lane, TaskCommitInfo? legacyCommit)
     {
         var laneDir = Path.Combine(_watchPath, lane);
@@ -776,13 +1011,13 @@ public class TaskCommitBindingTests : IDisposable
 
     private static string Pad(string s) => s.Length >= 40 ? s : s + new string('0', 40 - s.Length);
 
-    private (TaskScannerService scanner, TaskMutationService mutations) Build(bool withGit = false)
+    private (TaskScannerService scanner, TaskMutationService mutations) Build(bool withGit = false, IAtomicJsonFileWriter? writer = null)
     {
         var config = BuildConfig();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var git = withGit ? new GitService(NullLogger<GitService>.Instance, scanner, config) : null;
-        var mutations = new TaskMutationService(scanner, new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance), new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance), new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance), NullLogger<TaskMutationService>.Instance, git: git);
+        var mutations = new TaskMutationService(scanner, new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance), new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance), new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance), NullLogger<TaskMutationService>.Instance, git: git, fileWriter: writer);
         return (scanner, mutations);
     }
 

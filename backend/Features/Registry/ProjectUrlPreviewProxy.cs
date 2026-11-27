@@ -69,13 +69,14 @@ public static class ProjectUrlPreviewProxy
         // origin opaque there, independently of the iframe's sandbox attribute.
         context.Response.Headers.ContentSecurityPolicy = "sandbox allow-scripts; form-action 'none'; frame-ancestors 'self'";
         using var request = new HttpRequestMessage(HttpMethod.Get, target);
+        request.Options.Set(ProjectUrlDestinationConnector.ProjectUrlOption, (projId, urlId));
         request.Headers.TryAddWithoutValidation("Accept", context.Request.Headers.Accept.ToString());
         try
         {
             using var response = await clients.CreateClient("project-url-preview")
                 .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, context.RequestAborted);
             if (response.StatusCode is HttpStatusCode.MovedPermanently or HttpStatusCode.Redirect
-                or HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect)
+                or HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect or HttpStatusCode.SeeOther)
             {
                 var location = response.Headers.Location;
                 if (location is null) return Results.StatusCode(StatusCodes.Status502BadGateway);

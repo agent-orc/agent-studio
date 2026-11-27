@@ -4,10 +4,10 @@
   "title": "Pipeline simulator: a world to watch and play with",
   "summary": "Owner wish of 24 November 2026: simulate and show card throughput per phase and token usage, to understand bottlenecks, development and costs, in the spirit of an interactive simulation site (a world you watch move, then play with). Proposal: a project hub section Pipeline world next to Throughput \u0026 cycle time. A live isometric world fed by lane, step, token and quota events; a what-if fork from the current state with selectable strategies (strict, fast as built, fast as intended, dispatcher) and editable parameters; seven charts (cards per hour, queue per phase, bottleneck band, raw tokens and USD first pass and rework, lead time, weekly window); following one card; comparing two runs. A per-card discrete-event engine in the backend calls the decision library\u0027s policies, so simulated rules are the shipped ones; dated parameter sets are measured nightly and checked by replaying 17, 18 and 23 November. No model tokens. A first wave model of the 57-card wave puts the bottleneck at integration under strict (3.3 cards/h, median gate wait 167 min) and at coding under fast as intended (6.6 cards/h); about one weekly point per card; it misses the measured 40 % rework share (12.5 %). Twelve decisions, nine slices in a backend and a frontend lane.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-24T00:32:10Z",
+  "updatedAt": "2026-11-27T22:55:18Z",
   "sourceTaskKeys": [
     "AGT-4028"
   ],
@@ -368,5 +368,6 @@
       "promptMarkdown": "# SIM-9 \u00B7 Links from neighbouring surfaces\n\nSource: \u0060docs/pipeline-simulator/index.html\u0060 (AGT-4028) and its pages \u0060model.html\u0060, \u0060world.html\u0060, \u0060surfaces.html\u0060, plus \u0060workbench.json\u0060. Dependencies: SIM-8.\n\n**Area:** frontend: cycle-time, usage cockpit detail, token analysis, batch gate, integration conflicts, environment flow\n\n## Why\nDossier page Charts and placement (Neighbouring surfaces).\n\n## Deliver\n1. Throughput \u0026 cycle time: \u0022Replay this day\u0022 on a day row.\n2. Usage detail surface: \u0022What does the plan use?\u0022 opens a what-if from now on the window chart.\n3. Token analysis drill-down and the ribbon link to each other.\n4. Batch gate report: \u0022Replay with another batch size\u0022.\n5. Integration conflicts: a conflict opens the card in the world with its partner named.\n6. Environment flow overlay: the project row opens the Pipeline world.\n\n## Acceptance\n- Each link opens the section with the right mode, day, card or layer (Playwright per link, mocked APIs); no surface gains its own numbers.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/quality/design/style-guide-hard-rules.md first. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented in the Dossier\u0027s Implementation section. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification."
     }
   ],
-  "key": "AGT-W3467"
+  "key": "AGT-W3467",
+  "editedBy": "AGT-4028"
 }

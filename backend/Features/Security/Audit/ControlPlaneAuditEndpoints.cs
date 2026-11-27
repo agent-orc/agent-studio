@@ -30,7 +30,7 @@ public static class ControlPlaneAuditEndpoints
         }));
 
         audit.MapGet("/operator-activity", (HttpContext context, AccessSecurityStore store, ControlPlaneAuditMonitor monitor,
-            string? operatorAgentId, string? sessionId, int? limit) => AccessSecurityEndpoints.Execute(() =>
+            string? operatorAgentId, string? sessionId, int? limit, bool? elevatedOnly) => AccessSecurityEndpoints.Execute(() =>
             {
                 IamEndpoints.Require(context, store, IamPermissions.AccessRead);
                 var agents = store.ListOperatorAgents()
@@ -41,7 +41,8 @@ public static class ControlPlaneAuditEndpoints
                     : AgentStudio.Shared.TimelineActors.OperatorAgentPrefix + operatorAgentId + "/";
                 var entries = store.ControlPlaneAudit.ReadNewest(entry =>
                         entry.Actor.StartsWith(prefix, StringComparison.Ordinal)
-                        && (sessionId is null || entry.Session == sessionId),
+                        && (sessionId is null || entry.Session == sessionId)
+                        && (elevatedOnly != true || entry.Details is { } d && d.TryGetProperty("elevationClass", out var c) && c.ValueKind == System.Text.Json.JsonValueKind.String),
                     Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit));
                 context.Response.Headers.CacheControl = "no-store";
                 return Results.Ok(new OperatorActivityResponse(agents, entries.Select(View).ToList(),
@@ -87,5 +88,5 @@ public static class ControlPlaneAuditEndpoints
 
     public static ControlPlaneAuditEntryView View(ControlPlaneAuditEntry entry) => new(
         entry.Sequence, entry.At, entry.Stream, entry.Actor, entry.Session, entry.DelegatedBy, entry.Operation,
-        entry.Target, entry.ParameterDigest, entry.Outcome, entry.Hash, entry.PreviousHash);
+        entry.Target, entry.ParameterDigest, entry.Outcome, entry.Hash, entry.PreviousHash, entry.Details);
 }

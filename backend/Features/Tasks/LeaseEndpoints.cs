@@ -28,6 +28,59 @@ namespace AgentStudio.Tasks;
 public static class LeaseEndpoints
 {
     internal static readonly SemaphoreSlim ClaimGate = new(1, 1);
+
+    // ClaimGate is one gate for every card of every project in the process.
+    // A per-card admission mark lets a card-scoped writer, such as draft
+    // deletion, order itself against the admission of this card only.
+    private static readonly object CardAdmissionLock = new();
+    private static readonly Dictionary<string, string> CardAdmissionHolders = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Marks the card as being admitted (or deleted) by <paramref name="holder"/>
+    /// without waiting. Returns null and the current holder when another writer
+    /// already holds the mark for this card. Dispose the result to release it.
+    /// </summary>
+    internal static IDisposable? TryEnterCardAdmission(TaskInfo card, string holder, out string? currentHolder)
+    {
+        var keys = CardAdmissionKeys(card);
+        lock (CardAdmissionLock)
+        {
+            foreach (var key in keys)
+            {
+                if (CardAdmissionHolders.TryGetValue(key, out var held))
+                {
+                    currentHolder = held;
+                    return null;
+                }
+            }
+            foreach (var key in keys) CardAdmissionHolders[key] = holder;
+        }
+        currentHolder = null;
+        return new CardAdmissionMark(keys);
+    }
+
+    private static string[] CardAdmissionKeys(TaskInfo card)
+    {
+        // Card ids and keys repeat across projects; scope them by watch path.
+        var scope = AgentStudio.Shared.WatchPathComparison.Normalize(card.WatchPath);
+        return new[] { card.Id, card.Key, card.TaskKey }
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Select(key => scope + "|" + key!.Trim().ToUpperInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private sealed class CardAdmissionMark(string[] keys) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            lock (CardAdmissionLock)
+                foreach (var key in keys) CardAdmissionHolders.Remove(key);
+        }
+    }
     private static readonly AgentStudio.Shared.RemoteRequeueLogLimiter DeferredLeaseLogs = new();
 
     internal static RunnerClaimResponse DiskFullClaim(string host) => new(
@@ -143,6 +196,12 @@ public static class LeaseEndpoints
                 var task = FindTask(scanner, req.TaskKey);
                 if (task is null)
                     return Results.NotFound(new RunLeaseResponse("TaskNotFound", false, null, $"No task '{req.TaskKey}'."));
+                // Draft deletion holds this card's mark while it removes the
+                // folder; the folder check covers a deletion that just finished.
+                using var cardAdmission = TryEnterCardAdmission(task, "lease-acquire", out _);
+                if (cardAdmission is null || !Directory.Exists(task.FolderPath))
+                    return Results.NotFound(new RunLeaseResponse("TaskNotFound", false, null,
+                        $"Task '{req.TaskKey}' is being deleted."));
                 if (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is RunnerPrincipal principal)
                 {
                     var settingsProject = settings.Get(task.ProjectName);
@@ -1422,6 +1481,13 @@ public static class LeaseEndpoints
 
                 var taskKey = candidate.Key ?? candidate.TaskKey;
                 if (string.IsNullOrWhiteSpace(taskKey)) taskKey = candidate.Id;
+                // From here the claim writes into the candidate's folder and
+                // moves it to Progress. Hold this card's admission mark until the
+                // claim ends so a draft deletion of this card refuses at once.
+                using var cardAdmission = TryEnterCardAdmission(candidate, $"remote claim by {req.RunnerName.Trim()}", out _);
+                if (cardAdmission is null || !Directory.Exists(candidate.FolderPath))
+                    return Results.Ok(WithCapacity(new RunnerClaimResponse(RunnerClaimStatus.Empty,
+                        Message: "The selected card is being deleted; retry the claim.")));
                 var runSpec = BuildRunSpec(candidate, settings, prompts, dossierMaintenance,
                     candidateQuotaPlan, decisionReceipts, orchestratorDefaults);
                 runSpec = AgentStudio.Runner.MechanicalFreshRunRoutePolicy.Qualify(

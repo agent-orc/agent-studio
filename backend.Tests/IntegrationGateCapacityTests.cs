@@ -38,6 +38,9 @@ public sealed class IntegrationGateCapacityTests
             ["backend/source.cs"], null, TimeSpan.FromMinutes(1), CancellationToken.None,
             postMergeLevel: TestExecutionLevels.CompileOnly);
         Assert.Equal(expected, runner.Requests.Count);
+        Assert.Equal(expected, result.GateAttempts);
+        Assert.Equal(expected - 1, result.GateRetryReasons.Count);
+        Assert.Equal(expected * 10L, result.StageDurationsMs["gateQueueWait"]);
         Assert.Equal(failures < 3 ? BuildTestGateVerdict.Ok : BuildTestGateVerdict.Fail, result.Verdict);
         Assert.All(runner.Requests, request =>
         {
@@ -68,6 +71,7 @@ public sealed class IntegrationGateCapacityTests
             return Task.FromResult(new BuildTestGateResult(failed ? BuildTestGateVerdict.Fail : BuildTestGateVerdict.Ok,
                 null, 0, "", "queue", false, false)
             {
+                StageDurationsMs = new Dictionary<string, long> { ["gateQueueWait"] = 10 }, StageTimingsVersion = 1,
                 FailureKind = failed ? BuildTestGateFailureKind.Timeout : BuildTestGateFailureKind.None,
                 ViolatedBudget = failed ? new("machine-gate-queue", 120000, 120006, "queue") : null,
             });

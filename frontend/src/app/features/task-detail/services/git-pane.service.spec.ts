@@ -6,6 +6,7 @@ import { provideRouter } from '@angular/router';
 import { effect, provideZonelessChangeDetection, signal } from '@angular/core';
 import { GitPaneService, PROVENANCE_WAIT_MS } from './git-pane.service';
 import { TaskState, type TaskInfo } from '../../../models/task.model';
+import { GIT_FACTS_WARMING_RETRY_DELAYS_MS } from '../../../utils/git-facts-warming';
 
 describe('GitPaneService hidden pane loading', () => {
   it('resolves provenance for a Human Review action while Overview is visible', async () => {
@@ -269,6 +270,257 @@ describe('GitPaneService.loadCodeReviews (defensive shape guard)', () => {
 
     expect(service.codeReviews()).toHaveLength(1);
     expect(service.commitReview()?.verdict).toBe('pass');
+  });
+});
+
+describe('GitPaneService commit file request ownership', () => {
+  let service: GitPaneService;
+  let http: HttpTestingController;
+  const commits = ['a', 'b'].map(letter => ({
+    sha: letter.repeat(40), shortSha: letter.repeat(7), message: `Commit ${letter}`,
+    filesChanged: 1, files: [`${letter}.ts`], at: '2026-11-27T00:00:00Z',
+  }));
+  const job = { id: 'files-job', watchPath: '/wp', commits, commit: commits[1] } as TaskInfo;
+  const files = (name: string) => [{ status: 'M', path: `${name}.ts`, added: 1, removed: 0 }];
+  const aggregate = () => http.expectOne(r => r.url.endsWith('/commits/files'));
+  const perSha = (index: number) => http.expectOne(r => r.url.endsWith(`/commits/${commits[index].sha}/files`));
+  const drainMetadata = () => {
+    http.expectOne(r => r.url.endsWith('/provenance')).flush(null);
+    http.expectOne(r => r.url.endsWith('/code-review/list')).flush({ entries: [] });
+  };
+  const drainDiff = () => http.expectOne(r => r.url.endsWith('/diff')).flush({ diff: 'selected diff' });
+  const expectB = () => {
+    expect(service.selectedCommitSha()).toBe(commits[1].sha);
+    expect(service.commitDetail()?.commit).toEqual(commits[1]);
+    expect(service.commitFiles()).toEqual(files('b'));
+    expect(service.selectedDiffPath()).toBe('b.ts');
+  };
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({ providers: [GitPaneService,
+      provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+      provideRouter([])] }).compileComponents();
+    service = TestBed.inject(GitPaneService);
+    http = TestBed.inject(HttpTestingController);
+    service.setJob(job);
+    drainMetadata();
+    aggregate().flush({ files: [] });
+  });
+
+  afterEach(() => {
+    try { http.verify(); }
+    finally { vi.useRealTimers(); TestBed.resetTestingModule(); }
+  });
+
+  for (const outcome of ['success', 'failure']) {
+    it(`keeps B's header, SHA, files and path when A returns last with ${outcome}`, () => {
+      service.selectChainCommit(commits[0].sha);
+      const a = perSha(0);
+      service.selectChainCommit(commits[1].sha);
+      perSha(1).flush({ files: files('b') });
+      drainDiff();
+      expectB();
+      if (outcome === 'success') a.flush({ files: files('a') });
+      else a.flush('failed', { status: 500, statusText: 'Failed' });
+      expectB();
+    });
+  }
+  for (const mode of ['aggregate', 'commit', 'snapshot'] as const) {
+    const start = () => {
+      if (mode === 'snapshot') {
+        service.setJob({ ...job, commits: [commits[0]], commit: commits[0] });
+        drainMetadata();
+        return http.expectOne(r => r.url.endsWith('/commit'));
+      }
+      service.selectChainCommit(commits[0].sha);
+      if (mode === 'commit') return perSha(0);
+      perSha(0).flush({ files: [] });
+      service.selectAllCommits();
+      return aggregate();
+    };
+
+    for (const populated of [false, true]) {
+      it(`distinguishes loading from a confirmed ${populated ? 'populated' : 'empty'} ${mode} list`, () => {
+        const pending = start();
+        expect(service.commitFilesState()).toBe('loading');
+        expect(service.commitFiles()).toEqual([]);
+        expect(service.selectedDiffPath()).toBeNull();
+        if (mode !== 'aggregate') expect(service.commitDetail()?.commit).toEqual(commits[0]);
+        pending.flush({ commit: commits[0], files: populated ? files('a') : [] });
+        expect(service.commitFilesState()).toBe('loaded');
+        expect(service.commitFiles()).toEqual(populated ? files('a') : []);
+        expect(service.selectedDiffPath()).toBe(populated ? 'a.ts' : null);
+        if (populated) drainDiff();
+      });
+    }
+
+    it(`retries only the selected ${mode} after a failure and retains its known header`, () => {
+      start().flush('failed', { status: 500, statusText: 'Failed' });
+      expect(service.commitFilesState()).toBe('error');
+      expect(service.commitFiles()).toEqual([]);
+      expect(service.selectedDiffPath()).toBeNull();
+      if (mode !== 'aggregate') expect(service.commitDetail()?.commit).toEqual(commits[0]);
+      service.retryCommitFiles();
+      const retry = mode === 'aggregate' ? aggregate() : perSha(0);
+      expect(retry.request.params.get('watchPath')).toBe('/wp');
+      expect(service.commitFilesState()).toBe('loading');
+      if (mode !== 'aggregate') expect(service.commitDetail()?.commit).toEqual(commits[0]);
+      // Double clicks cannot enqueue overlapping retries.
+      service.retryCommitFiles();
+      http.expectNone(r => r.url.endsWith('/files'));
+      retry.flush({ files: files('a') });
+      drainDiff();
+      expect(service.commitFilesState()).toBe('loaded');
+      expect(service.selectedDiffPath()).toBe('a.ts');
+    });
+
+    it(`does not call an unavailable ${mode} file payload confirmed empty`, () => {
+      vi.useFakeTimers();
+      let pending = start();
+      for (const delay of GIT_FACTS_WARMING_RETRY_DELAYS_MS) {
+        pending.flush({ state: 'warming', files: [] });
+        expect(service.commitFilesState()).toBe('loading');
+        vi.advanceTimersByTime(delay);
+        pending = mode === 'aggregate' ? aggregate()
+          : mode === 'snapshot' ? http.expectOne(r => r.url.endsWith('/commit')) : perSha(0);
+      }
+      pending.flush({ state: 'warming', files: [] });
+      expect(service.commitFilesState()).toBe('error');
+      expect(service.selectedDiffPath()).toBeNull();
+    });
+  }
+
+  for (const outcome of ['success', 'failure']) {
+    it(`discards an aggregate ${outcome} after selecting a commit`, () => {
+      service.selectChainCommit(commits[0].sha);
+      perSha(0).flush({ files: [] });
+      service.selectAllCommits();
+      const stale = aggregate();
+      service.selectChainCommit(commits[1].sha);
+      perSha(1).flush({ files: files('b') });
+      drainDiff();
+      if (outcome === 'success') stale.flush({ files: files('a') });
+      else stale.flush('failed', { status: 500, statusText: 'Failed' });
+      expectB();
+      expect(service.aggregateFiles()).toEqual([]);
+      expect(service.commitFilesState()).toBe('loaded');
+    });
+
+    it(`discards a per-SHA ${outcome} after selecting aggregate mode`, () => {
+      service.selectChainCommit(commits[0].sha);
+      const stale = perSha(0);
+      service.selectAllCommits();
+      aggregate().flush({ files: files('all') });
+      drainDiff();
+      if (outcome === 'success') stale.flush({ files: files('a') });
+      else stale.flush('failed', { status: 500, statusText: 'Failed' });
+      expect(service.selectedCommitSha()).toBeNull();
+      expect(service.commitDetail()).toBeNull();
+      expect(service.commitFiles()).toEqual(files('all'));
+      expect(service.selectedDiffPath()).toBe('all.ts');
+      expect(service.commitFilesState()).toBe('loaded');
+    });
+
+    for (const identity of ['id', 'watchPath'] as const) {
+      it(`ignores a per-SHA ${outcome} after switching task ${identity}, even with the same SHA`, () => {
+        service.selectChainCommit(commits[1].sha);
+        const stale = perSha(1);
+        service.setJob({ ...job, [identity]: 'other' });
+        drainMetadata();
+        aggregate().flush({ files: [] });
+        service.selectChainCommit(commits[1].sha);
+        perSha(1).flush({ files: files('new-task') });
+        drainDiff();
+        if (outcome === 'success') stale.flush({ files: files('old-task') });
+        else stale.flush('failed', { status: 500, statusText: 'Failed' });
+        expect(service.selectedCommitSha()).toBe(commits[1].sha);
+        expect(service.commitDetail()?.commit).toEqual(commits[1]);
+        expect(service.commitFiles()).toEqual(files('new-task'));
+        expect(service.selectedDiffPath()).toBe('new-task.ts');
+        expect(service.commitFilesState()).toBe('loaded');
+      });
+    }
+
+    for (const mode of ['aggregate', 'snapshot'] as const) {
+      it(`ignores a ${mode} ${outcome} after leaving and reopening the same task`, () => {
+        let stale;
+        let reopened = job;
+        if (mode === 'snapshot') {
+          reopened = { ...job, commits: [commits[0]], commit: commits[0] };
+          service.setJob(reopened);
+          drainMetadata();
+          stale = http.expectOne(r => r.url.endsWith('/commit'));
+        } else {
+          service.selectChainCommit(commits[0].sha);
+          perSha(0).flush({ files: [] });
+          service.selectAllCommits();
+          stale = aggregate();
+        }
+        service.setJob(null);
+        service.setJob(reopened);
+        drainMetadata();
+        const current = mode === 'snapshot' ? http.expectOne(r => r.url.endsWith('/commit')) : aggregate();
+        current.flush({ commit: commits[0], files: files('current') });
+        drainDiff();
+        if (outcome === 'success') stale.flush({ commit: commits[0], files: files('stale') });
+        else stale.flush('failed', { status: 500, statusText: 'Failed' });
+        expect(service.selectedCommitSha()).toBe(mode === 'snapshot' ? commits[0].sha : null);
+        expect(service.commitDetail()?.commit ?? null).toEqual(mode === 'snapshot' ? commits[0] : null);
+        expect(service.commitFiles()).toEqual(files('current'));
+        expect(service.selectedDiffPath()).toBe('current.ts');
+        expect(service.commitFilesState()).toBe('loaded');
+      });
+    }
+  }
+
+  it('rejects an older request when the same SHA is selected again', () => {
+    service.selectChainCommit(commits[0].sha);
+    const oldA = perSha(0);
+    service.selectChainCommit(commits[1].sha);
+    const b = perSha(1);
+    service.selectChainCommit(commits[0].sha);
+    perSha(0).flush({ files: files('current-a') });
+    drainDiff();
+    oldA.flush({ files: files('stale-a') });
+    b.flush('failed', { status: 500, statusText: 'Failed' });
+    expect(service.commitFiles()).toEqual(files('current-a'));
+    expect(service.selectedDiffPath()).toBe('current-a.ts');
+    expect(service.commitFilesState()).toBe('loaded');
+  });
+
+  it('keeps the current read pending when a superseded read fails', () => {
+    service.selectChainCommit(commits[0].sha);
+    const a = perSha(0);
+    service.selectChainCommit(commits[1].sha);
+    const b = perSha(1);
+    a.flush('failed', { status: 500, statusText: 'Failed' });
+    expect(service.commitDetail()?.commit).toEqual(commits[1]);
+    expect(service.commitFilesState()).toBe('loading');
+    b.flush({ files: [] });
+    expect(service.commitFilesState()).toBe('loaded');
+  });
+
+  it('invalidates an in-flight read when a chain changes while hidden', () => {
+    service.selectChainCommit(commits[0].sha);
+    const stale = perSha(0);
+    service.setJob({ ...job, commits: [commits[1]] }, false);
+    stale.flush({ files: files('stale') });
+    expect(service.commitFiles()).toEqual([]);
+    expect(service.selectedDiffPath()).toBeNull();
+    service.setJob({ ...job, commits: [commits[1]] }, true);
+    drainMetadata();
+    http.expectOne(r => r.url.endsWith('/commit')).flush({ commit: commits[1], files: [] });
+    expect(service.commitDetail()?.commit).toEqual(commits[1]);
+    expect(service.commitFilesState()).toBe('loaded');
+  });
+
+  it('invalidates pending file reads on disposal', () => {
+    service.selectChainCommit(commits[0].sha);
+    const pending = perSha(0);
+    service.ngOnDestroy();
+    pending.flush({ files: files('stale') });
+    expect(service.commitFiles()).toEqual([]);
+    expect(service.selectedDiffPath()).toBeNull();
   });
 });
 

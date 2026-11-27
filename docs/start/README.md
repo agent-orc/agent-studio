@@ -93,7 +93,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Stale-branch sweep: all-namespace classification, reports, report-only vs reclaim, operator reclamation (AGT-2794) | [concepts/task-integration-and-merge-workflow.md#stale-branch-sweep-agt-2794](../concepts/task-integration-and-merge-workflow.md#stale-branch-sweep-agt-2794) |
 | Tasks | [domains/tasks.md](../system/domains/tasks.md) |
 | Decision cards: lifecycle, fields, decider, apply step, reminders, API, and migration | [operations/decision-cards.md](../operations/decision-cards.md) |
-| Conditional board reads: ETag/304 on `/api/tasks/grouped` and `/api/tasks/`, what the validator has to cover, and the client-derived run-activity backoff (AGT-2703); board reads serve a pinned published snapshot with per-client read-your-writes (AGT-3088) | [domains/tasks.md#conditional-board-reads-agt-2703](../system/domains/tasks.md#conditional-board-reads-agt-2703) |
+| Large-board benchmark and opt-in completed summaries (AGT-4068), conditional board reads: ETag/304 on `/api/tasks/grouped` and `/api/tasks/`, what the validator has to cover, and the client-derived run-activity backoff (AGT-2703); board reads serve a pinned published snapshot during writes (AGT-3088) | [domains/tasks.md#conditional-board-reads-agt-2703](../system/domains/tasks.md#conditional-board-reads-agt-2703) |
 | Frontend | [domains/frontend.md](../system/domains/frontend.md) |
 | Stable view URL contract | [contracts/stable-view-urls.md](../system/contracts/stable-view-urls.md) |
 | Global search palette and API | [domains/frontend.md#global-search](../system/domains/frontend.md#global-search) |
@@ -242,7 +242,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Operator agent: own Studio identity and sessions, own OS user without the Owner's SSH keys, off-host audit sink (security model SM-1) | [operations/setup/operator-agent.md](../operations/setup/operator-agent.md) |
 | Operator agent level Dossier (OP-1 to OP-9 delivered, AGT-3481 to AGT-3489; OP-10 website page in progress) | [decision Dossier](../operator-agent-level/index.html) |
 | Operator API reference: routes for the operator agent, cross-project batch triage and next safe member operation (AGT-3462 OP-4) | [operations/operator-api.md](../operations/operator-api.md) |
-| studio-op operator CLI: installation, Owner token file setup, commands and their routes, watcher lock and lease, accept check, stable exit codes (AGT-3462 OP-8) | [operations/setup/studio-op.md](../operations/setup/studio-op.md) |
+| studio-op operator CLI: connection files and environment, board commands, bulk creation, why and watch, three worked examples, watcher lease, acceptance and exit codes (AGT-3462 OP-8, AGT-4066) | [operations/setup/studio-op.md](../operations/setup/studio-op.md) |
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
 | Structure view: observed hosts without a manifest, placement file apart from connectivity, facts per node and link, live deltas (AGT-3954) | [operations/setup/structure-placement.md](../operations/setup/structure-placement.md) |
 | Live structure view: the prototype the owner chose on 24 November 2026, kept as a reference copy for the product view (AGT-4024) | [live-structure-canvas/reference/owner-choice-2026-11-24/README.md](../live-structure-canvas/reference/owner-choice-2026-11-24/README.md) |

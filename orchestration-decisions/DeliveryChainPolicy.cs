@@ -17,11 +17,16 @@ public sealed record DeliveryChainOperatorFacts(
     bool RequiresEscalation,
     bool AcceptedDeliveryStale,
     bool CompletedReopenLimitReached,
-    bool RecoverableConflict = false);
+    bool RecoverableConflict = false,
+    bool ReviewVerdictStale = false,
+    StaleVerdictRecoveryFacts? Recovery = null);
 
 public enum DeliveryChainAction
 {
     Leave,
+    RequestFreshReview,
+    RouteGateFailure,
+    WaitCapacity,
 
     /// <summary>The integrated delivery is ready for the human verdict.</summary>
     PromoteToHumanReview,
@@ -65,6 +70,32 @@ public static class DeliveryChainPolicy
     public static DeliveryChainVerdict Decide(DeliveryChainOperatorFacts facts)
     {
         ArgumentNullException.ThrowIfNull(facts);
+        if (facts.Recovery is { } recovery)
+        {
+            if (recovery.Recalling)
+                return facts.State == TaskStates.Escalated
+                    && StaleVerdictRecoveryPolicy.Recall(recovery.SystemOwned, recovery.StalePark,
+                    recovery.IntegratedVerified, recovery.RetryOwnerAvailable)
+                    ? new(DeliveryChainAction.ReturnToAutoReview, DeliveryChainReasons.VerdictStale,
+                        "The obsolete machine stale-verdict park returns to automatic recovery.")
+                    : new(DeliveryChainAction.Leave, DeliveryChainReasons.IntegrationPending,
+                        "The current park remains in force.");
+            if (facts.State != TaskStates.AutoReview)
+                return new(DeliveryChainAction.Leave, DeliveryChainReasons.OutsideChain,
+                    "The card left stale-verdict recovery.");
+            return StaleVerdictRecoveryPolicy.AfterIntegration(recovery.IntegratedVerified,
+                recovery.Successful, recovery.Conflict, recovery.GateOwned, recovery.Capacity) switch
+            {
+                StaleVerdictRecoveryAction.Review => new(DeliveryChainAction.RequestFreshReview,
+                    DeliveryChainReasons.VerdictStale, "Request fresh review of the integrated delivery."),
+                StaleVerdictRecoveryAction.RouteGateFailure => new(DeliveryChainAction.RouteGateFailure,
+                    DeliveryChainReasons.IntegrationPending, "The gate failure router owns recovery."),
+                StaleVerdictRecoveryAction.WaitCapacity => new(DeliveryChainAction.WaitCapacity,
+                    DeliveryChainReasons.IntegrationPending, "Wait for integration capacity."),
+                StaleVerdictRecoveryAction.MergeRound => MergeRound(),
+                _ => Escalate(),
+            };
+        }
         if (facts.State == TaskStates.AutoReview && facts.Integrating)
         {
             if (facts.Integrated)
@@ -76,6 +107,9 @@ public static class DeliveryChainPolicy
                 : new(DeliveryChainAction.Leave, DeliveryChainReasons.IntegrationPending,
                     "The integration is still running.");
         }
+        if (facts.State == TaskStates.HumanReview && facts.Integrated && facts.ReviewVerdictStale)
+            return new(DeliveryChainAction.ReturnToAutoReview, DeliveryChainReasons.VerdictStale,
+                "Request fresh review of the integrated current delivery.");
         if (facts.State == TaskStates.HumanReview && !facts.Integrated)
             return facts.RecoverableConflict
                 ? MergeRound()
@@ -106,3 +140,29 @@ public static class DeliveryChainPolicy
         => new(DeliveryChainAction.QueueMergeRound, DeliveryChainReasons.MergeRoundQueued,
             "Queue a merge round against develop, then review the new delivery.");
 }
+
+/// <summary>Recovery ownership after one stale delivery integration attempt.</summary>
+public enum StaleVerdictRecoveryAction { Review, RouteGateFailure, WaitCapacity, MergeRound, Escalate }
+
+public static class StaleVerdictRecoveryPolicy
+{
+    public static StaleVerdictRecoveryAction AfterIntegration(bool integratedVerified,
+        bool successful, bool conflict, bool gateOwned, bool capacity)
+        => integratedVerified ? StaleVerdictRecoveryAction.Review
+            : conflict ? StaleVerdictRecoveryAction.MergeRound
+            : capacity ? StaleVerdictRecoveryAction.WaitCapacity
+            : gateOwned ? StaleVerdictRecoveryAction.RouteGateFailure
+            : successful ? StaleVerdictRecoveryAction.Review
+            : StaleVerdictRecoveryAction.Escalate;
+
+    public static bool Recall(bool systemOwned, bool staleRecoveryPark, bool integratedVerified,
+        bool retryOwnerAvailable = false)
+        => systemOwned && staleRecoveryPark && (integratedVerified || retryOwnerAvailable);
+}
+
+/// <summary>Frozen recovery result, or the ownership proof for recalling a machine park.</summary>
+public sealed record StaleVerdictRecoveryFacts(bool IntegratedVerified, bool Successful = false,
+    bool Conflict = false, bool GateOwned = false, bool Capacity = false,
+    bool Recalling = false, bool SystemOwned = false, bool StalePark = false,
+    bool RetryOwnerAvailable = false, string? DeliveryIdentity = null,
+    string? VerdictIdentity = null, long LaneEnteredTicks = 0);

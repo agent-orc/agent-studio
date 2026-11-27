@@ -36,7 +36,7 @@ public sealed class DispatchWaveService(TaskScannerService scanner, ProjectSetti
             throw new InvalidOperationException("A source-wave card has already started.");
         if (mode == "off") return new(wave, "off", null, []);
         // Do not plan with empty stand-ins while the shared forecast worker catches up.
-        if (cards.Any(c => store.Read(project, c.TaskKey) is null))
+        if (cards.Any(c => store.Read(project, c.TaskKey) is not { RepositoryStatus: "available" }))
             return new(wave, "awaiting-forecasts", null, []);
         dispatcher.RefreshLease(project, wave);
         var lease = store.ReadLease(project);
@@ -52,7 +52,7 @@ public sealed class DispatchWaveService(TaskScannerService scanner, ProjectSetti
             cards = scanner.ScanAllJobsWithArchive().Where(c => c.ProjectName == project && c.WaveId == wave
                 && c.State is TaskStates.Backlog or TaskStates.Ready).ToArray();
         }
-        if (cards.Length == 0 || cards.Any(c => store.Read(project, c.TaskKey) is null))
+        if (cards.Length == 0 || cards.Any(c => store.Read(project, c.TaskKey) is not { RepositoryStatus: "available" }))
             return new(wave, "awaiting-forecasts", null, []);
         var record = dispatcher.RecordPick(cards[0], [], [], "source-wave", planningWave: wave);
         if (mode == "shadow") return new(wave, "shadow", null, []);

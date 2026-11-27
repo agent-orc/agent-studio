@@ -448,6 +448,11 @@ step that timed out, ran out of budget, crashed or exited before a test failed
 reads `guard step failed without a failing guard test (<cause>), full suite not
 run`, and `GuardViolation` stays false.
 
+The engine's decision-plane routing contract is tagged `Category=Guard`, so
+the declared engine guard step runs a boundary check and produces completed
+test evidence. A filter that selects no tests cannot supply that evidence
+merely by exiting zero.
+
 ### Per-project integration test placement (AGT-3314)
 
 `testing.mode` is derived from `testing.strategy` (AGT-3965): `strict` is
@@ -514,9 +519,45 @@ exact-tip rule, using AGT-3232 class partitions across free local host slots.
 T3 treats a suite without `shards` as `auto`; a declared shard count still
 controls that suite. T1's opt-in sharding policy is unchanged.
 The timers use a dedicated checkout and a local exclusive claim file; the
-server fences the active run ID. A second claim waits, and an abandoned server
-claim expires after four hours for windows or fourteen hours for the nightly
-suite. Prepare, build, test discovery, shards, retries, and attribution commands
+server fences the active run ID. A second claim waits. AGT-4117 adds durable
+host custody in `.post-merge-journal.json` in that dedicated checkout. The host
+flushes the identity before admission, each completed command result before
+continuing, and the exact terminal receipt before delivery. The exclusive
+checkout claim covers recovery and outbox replay as well as execution. A pending
+outbox is delivered before fetching or admitting a successor, including after
+all three HTTP attempts failed or the receipt acknowledgement was lost.
+
+New hosts send `X-Post-Merge-Owner` and `X-Post-Merge-Fence` on run receipts.
+The authority atomically stores custody alongside project state and returns the
+fence on admission. The owner renews a two-minute lease every thirty seconds
+through the existing `/runs` route with `X-Post-Merge-Operation: renew`;
+renewal failure cancels command execution. Recovery uses the same route with
+`X-Post-Merge-Operation: recover` and `X-Post-Merge-Recovery-Id`. Recovery presents
+the persisted owner, fence and recovery request ID, advances the fence, and
+retries the same recovery request idempotently if its acknowledgement was lost.
+If that replayed lease has expired, the host obtains fresh custody before
+executing a command. Older owners and unfenced receipts cannot settle a fenced active run. An exact
+terminal replay remains acceptable after lease expiry while its run is still
+current, and after successful settlement. It does not require waiting four or
+fourteen hours. A changed terminal receipt cannot replace recorded evidence.
+
+Recovery reconstructs the original plan and per-test ledger from saved raw
+command results. It reuses completed commands only when the saved workspace
+content digest (including ignored outputs and detached HEAD) and command inputs
+(command text, source SHA, declared environment and test-envelope fingerprint) still match.
+An incomplete command or changed workspace settles as `inconclusive`, retaining
+finished evidence, rather than attributing a product regression. Such a receipt
+does not advance the completed-window tip. Raw inconclusive evidence remains
+under `.post-merge-evidence/`; accepted delivery removes the isolated command
+home and temp files. Linux recovery reaps orphan command
+groups in the dedicated checkout before settling an incomplete command. Other
+hosts retain the journal and refuse automatic recovery of an incomplete command. No real restart drill is part of the routine
+tests; reconstructed-service fault injection covers this boundary.
+
+The legacy four-hour window and fourteen-hour nightly takeover bounds remain
+fallback policy for absent host evidence. A renewed lease prevents takeover even
+after that bound. Expired fallback evidence is `inconclusive`, with the existing
+expiry reason. Prepare, build, test discovery, shards, retries, and attribution commands
 use the shared [test envelope](#shared-test-envelope-rt-6). Repository fetches
 keep their separate credential routing. Real cgroup tests are
 `MachineBound` and require an explicitly owned transient test scope, rather
@@ -590,7 +631,7 @@ Agent Studio's base suite (measured on 22 November 2026 on agent-runner-01, 376 
 |---|---|---|
 | `backend-base` | Backend tests filtered to `.Architecture.`, `Category=Guard`, `TransitionDecisionBoundaryTests`, `MonolithDecisionBoundaryTests`, `LocalStateStartupTests`, `TaskListProjectFilterEndpointTests` and `IntegrationReleaseServiceTests` (265 tests) | 55 s |
 | `frontend-unit-base` | `test:ci` with `--include` for the app, the studio shell, the task service, the core routes and task detail (5 files, 100 tests) | 198 s |
-| `product-start` | `scripts/base-product-start.sh`: publishes the Debug build without rebuilding, starts backend and frontend on isolated ports, and runs `e2e/system/base-product-start.spec.ts` (health, create a card through the API, the board shows it) | 123 s (78 s of it a frontend rebuild that a clean post-merge checkout skips) |
+| `product-start` | `scripts/base-product-start.sh`: first `scripts/product-start-fixture-check.sh` starts the Debug build with the production start path (Production environment, networked profile, hosted services and repair sweeps on) on the production-shaped workspace of `scripts/startup-fixture.sh` (2,000 cards with commits, an interrupted integration journal, conflict receipts, an applying orchestration occurrence) and fails with the stuck start-up phase when `/healthz` does not answer within 90 s (AGT-4239); then it publishes the Debug build without rebuilding, starts backend and frontend on isolated ports, and runs `e2e/system/base-product-start.spec.ts` (health, create a card through the API, the board shows it) | 123 s (78 s of it a frontend rebuild that a clean post-merge checkout skips) plus about 25 s for the fixture start |
 
 #### Stage deploy after a green window
 
@@ -798,7 +839,10 @@ the local baseline cannot establish a production incident budget.
 
 AGT-4051: automatic repair creation lands first in Ready, resolving the
 project's coding model at creation with medium reasoning. The RT model ladder
-can still raise a later repair rung. Compatibility receipts reuse an open repair
+can still raise a later repair rung. Periodic typed-incident checks also recover
+existing repairs from Preparation into Ready, including after a restart without
+a new receipt. Progress, review and settled lanes remain unchanged.
+Compatibility receipts reuse an open repair
 when the failing-test sets overlap by a majority of the smaller set, including
 supersets; they refresh the tests, tip and suspects without resetting the first
 red clock. RT receipts retain their per-test incident and quarantine identity
@@ -3001,6 +3045,9 @@ comparison before Quality Studio's verdict contract can decide a review.
   barrel collision probes. Broad frontend suite commands stay outside the
   candidate inventory and configured continuous set, so impact rules, history,
   cannot silently turn this boundary into the promotion full suite.
+  Focused Angular slices prefer the declared `test:ci` script, including the
+  report-validating `node scripts/run-unit-tests.mjs` wrapper. This preserves
+  the completed-test report check instead of falling back to raw `ng test`.
 - `backend/Services/Pipeline/PipelineStepConditionEvaluator.cs`: per-step
   condition evaluation.
 - `backend/Services/Pipeline/ProjectPipelineOrder.cs`: project-level step order
@@ -3358,9 +3405,24 @@ move-error dialog.
   with the exact rollback anchor, completes it with the merge result, and clears
   it on every path that reaches a verdict, including the rollback. An entry that
   survives into the next process is therefore by construction an interrupted run.
-  `InterruptedIntegrationGateRecoveryHostedService` performs one pass per process
-  start, before the merge gate opens for new work, and decides per integration
-  branch: resume when a durable receipt matches the exact merge result, otherwise
+  `InterruptedIntegrationGateRecoveryHostedService` inventories open journals after
+  the first task-index publication. Explicit repository admission (AGT-4115)
+  holds merge and push entry points until that inventory is known and every
+  interrupted branch in the repository has been repaired. The repair worker
+  closes admission during hosted-service construction, before startup callbacks
+  run. Standalone repair graphs without a hosted worker retain direct `RunOnce`
+  behavior. Waiting happens before merge, push, and batch-reservation gates;
+  hosted-service order and `Task.Yield`
+  provide no readiness guarantee. Repositories without journals proceed after
+  inventory, and each repaired repository proceeds independently. Failed repairs
+  retain their journals and admission hold, emit `integration-recovery-held` with
+  the repository and reason, and retry every 30 seconds until repaired or the host
+  stops. Success emits `integration-recovery-ready`. Retries visit only held
+  repositories, so a new live journal on a released repository remains with its
+  owner. Journal re-reads, Git facts, the existing interrupted-gate policy, reset,
+  and custody completion remain inside the shared fenced ref mutation lease.
+  Recovery decides per integration branch: resume when a durable receipt matches
+  the exact merge result, otherwise
   roll the branch back to the OLDEST unverified pre-merge tip and re-queue every
   affected card. It escalates instead of guessing when the anchor is no longer on
   the branch or no longer contains `origin/<branch>`. The repaired cards carry the
@@ -4002,9 +4064,17 @@ operator changes cause the step to fail before its writer runs.
   intent, supersedes the current delivery generation, moves the card to the
   front of Ready, and writes `Automatically started a new agent round to
   preserve unambiguous delivery SHA attribution.` to the timeline. This loop is
-  limited to one automatic round per fenced delivery chain. Re-reviewing one
-  delivery shares the budget across review epochs; a newly published delivery
-  starts a fresh budget. Repetition reaches Human Review with the failed step
+  limited to two automatic rounds per card and integration target. New
+  delivery SHAs and review epochs do not reset the budget. After exhaustion,
+  the source retains its reviewed immutable result and the prior conflict history.
+  `integration-delivery-quarantine.json` records the exact subject, target, files,
+  result and repair identity. One repair card per source card/target is created
+  through the task mutation boundary, pinned to that immutable delivery, then
+  queued in Ready. Replays and new SHAs reuse that repair identity; its own
+  exhaustion cannot create a recursive repair chain. Existing review holds and
+  settled repairs are retained. Individual integration retains
+  collision receipts across restarts and reserves shared files for the recovery;
+  see [integration conflict recovery](../contracts/integration-conflicts.md#automatic-individual-integration-recovery-agt-4048). Repetition reaches Human Review with the failed step
   and conflicted files visible. Every
   failed attempt leaves the integration working tree clean. Once
   merge/gate/rollback starts, host cancellation
@@ -4865,7 +4935,10 @@ Its `/role` subroute exposes the charter and rights catalogue.
 `PUT /api/projects/{name}/line-guardian/mode` accepts `{ "live": true }` or
 `{ "live": false }` from the owner only. `POST /api/projects/{name}/line-guardian/requests` takes
 `runId`, `test`, and `operation`; it collects policy facts from a persisted
-receipt. Owner items also appear through the existing post-merge Needs you
+receipt. Requests reuse the recorded per-test incident's stored fingerprint even
+when later diagnostic logs change their fingerprint, so their authority facts
+and owner item retain the same quarantine identity.
+Owner items also appear through the existing post-merge Needs you
 fact source. One closed-incident feed observation is emitted on an evidence
 or owner lift. The weekly criteria projection and switch UI remain RT-9.
 
@@ -4958,3 +5031,135 @@ Legacy workspace HEAD catch-up and Task Server export exclusions retain their
 existing behavior. This contract adds no orchestration transition, integration
 permission, force push or branch-tip approval. Pre-upgrade commits without an
 outbox receipt or marker cannot be inferred safely from arbitrary local history.
+
+
+### Integration preparation handoff (AGT-4097)
+
+An integration recovery saves `continuation-base.json` before superseding the
+review subject or making the task claimable. Its reason is
+`continue-round-result`, with the exact immutable delivery ref, SHA and source
+attempt. An older `review-fix-round` base cannot accidentally suppress the
+integration preparation. Explicit manual integration recovery uses the same pin
+and recovers missing conflict facts from the durable individual-conflict receipt;
+an unreadable or mismatched receipt refuses the handoff without removing it.
+
+The runner merges the exact fetched target object into the pinned delivery.
+`ContinuationMergePreparation` records `AlreadyContainsTarget`, `Merged`,
+`Conflicted`, `Aborted` or `AbortFailed`, both input SHAs, actual checkout HEAD,
+and every unresolved path. The runner writes the record and its exact agent
+instructions to worktree Git metadata at the path returned by
+`git rev-parse --git-path agent-studio-integration-preparation.json`, outside the
+product tree. Clean preparation leaves a merge commit; a true conflict leaves
+an active merge with its unresolved index and file markers. The agent edits files
+and preserves both sides. Staging, the merge commit, publication, refs and workspace
+lifecycle remain platform-owned. Teardown refuses untouched text conflict markers.
+An operational merge error is aborted and recorded; abort failure retains evidence
+and never becomes a runnable handoff on an older tree.
+
+The existing decision library still bounds automatic rounds at two per card and
+target. `Used` includes charged rounds plus reserved capacity. New automatic
+handoffs record the exact saved prompt digest and save timestamp. The existing
+attempt-fenced `follow_up_consumed` receipt, emitted only when the worker starts
+with that prompt after preparation, charges the reservation. A different save or
+an empty run identity cannot charge it. Superseding an unstarted follow-up releases
+its reservation; superseding a consumed one never refunds real work. Legacy rows
+without this proof key remain conservatively charged. Pending reservations still
+occupy the bounded capacity, so failures cannot create an unlimited queue.
+A failed base pin or failed Ready transition reserves no round. A successful
+Ready move remains a valid reservation if a runner already claimed the card before
+the service reads it back. Six independent successful direct-conflict recoveries do
+not imply six automatic rounds on one card. The audit's three manual-round causes
+remain unknown without their historical claim/base records; synthetic fixtures
+exercise both base reasons without attributing those production incidents.
+
+
+Legacy lane-folder workspaces retain a versioned quarantine plus the full repair
+creation request with `state: deferred-storage-migration`. Creating the first flat
+card there would hide the existing lane folders from discovery. Recovery therefore
+leaves those cards and their immutable results in place, requires the storage
+boundary's explicit migration, and does not perform an implicit migration. The
+Ready repair guarantee applies to the current flat task store. The manual recovery
+response keeps its legacy display ref; the worktree pin, prompt and session delta
+use the immutable ref and exact SHA.
+
+## Integration stage timings and warm compile checks (AGT-4141)
+
+The integration lane persists measured stage durations with its existing
+`integration-lane-events.jsonl` record. Gate receipts also include
+`stage-durations-ms.json`. `GET /api/gate-economics` returns
+`recentIntegrations` (last 50 terminal attempts per project) and
+`integrationStages` (median and p90 using the page's existing linear-interpolation convention, with measured sample counts).
+The existing Gate economics block shows these stages. Missing legacy
+measurements stay null. Review-to-push requires a matching passed review
+attempt timestamp; delivery completion is not substituted for review pass.
+Stage times include queue, dispatch and slot waits, bundle preparation and
+transfer, source lock and objects, checkout, restore, each build command,
+verdict hand-back, merge and push. Build-command durations are summed within
+an attempt; a second publication cycle records its reason. They do not infer
+CPU consumption or host load from elapsed time.
+
+The SSH transport reports checkout readiness when it receives the worker
+progress line. Previously the checkout-ready log was emitted only after the
+whole worker completed. Its old timestamp cannot identify a ten-minute
+checkout or queue wait. The short/long gate class describes slot occupancy,
+not source transport or checkout. Existing dedicated machine integration
+admission stays in place. Pull admission now reserves one merge alongside
+regular lanes, prioritizes queued merges, and continues polling with regular
+lanes full. Healthy pull discovery takes at most the five-second busy poll
+interval plus HTTP time; the machine slot polls every 100 ms. Review work
+cannot occupy the reserved merge slot or integration source-cache lock.
+These are admission bounds, not CPU or end-to-end latency guarantees.
+
+SSH and pull merge workers keep a project-specific private bare repository
+and a detached integration worktree. A process-held file lease spans source
+import, reset, commands and cleanup. Every candidate resets tracked files to
+its exact SHA and removes non-ignored residue. Successful commands must leave
+tracked content and HEAD unchanged. Ignored packages, bin/obj and compiler
+caches survive a green run. Failed runs discard the worktree. Interrupted
+locks release with the process; the next candidate resets the worktree before
+using it. The rollback journal, publication fence and startup barrier retain
+their existing ownership. No warm workspace can authorize publication.
+
+The root project definition deliberately omits `integrationBuild` until the
+reader support has been deployed to every run host (AGT-4173). For this
+repository's exact three build commands and owned preparation entry points,
+`IntegrationCompilePlan` supplies the same frontend/backend map by default.
+Other layouts and unknown/shared paths keep the full build. The explicit map
+is exercised through `testdata/project-integration-build.project.yml`.
+
+An optional repository `integrationBuild` map selects build-command indices
+and preparation shell commands for compile-only integration checks. This does
+not change review plans or post-merge checks. Each row has inline `paths`,
+`build` (zero-based indices of `commands.build`) and `prepare` lists. Every
+changed path must match; unmatched paths, malformed maps, profile overrides
+and missing path evidence retain the full declared build and preparation.
+Agent Studio declares frontend and .NET scopes. Backend changes build the
+solution and the Release backend/runner/task-server checks incrementally;
+frontend changes run its declared Angular build. Package installation is
+reused only with matching package and tool inputs and an existing installation.
+Restore still validates .NET lockfiles and project references. Shared pipeline
+and build-script changes retain the complete build because they can alter
+both build contracts. Cold workers and invalidated package/tool inputs also
+require preparation. Promotion retains its full verification.
+
+A green Remote Review for the exact integration tree can supply the build
+verdict without another command. Under a compile-only strategy, changed commit
+ancestry or mechanical replay alone does not invalidate identical tree proof.
+A changed or missing tree still requires one check on the final candidate.
+A push rejected by a moved origin may require another cycle; its old green
+build is reused only if the replay also reproduces the exact tested tree.
+
+The SSH merge bundle freezes its ref in a temporary shared local clone, using
+Git alternates only while writing the self-contained transfer bundle. This
+avoids copying the complete local object history before producing an
+incremental transfer. The remote warm mirror owns its objects and never uses
+that alternate. Warm mirrors are limited to eight recently used projects and
+24 hours of inactivity; eviction takes the worker's own lease.
+
+Transport and capacity-admission retries persist their actual attempt count and
+reason, even when the caller issued one gate request. Measured stage times are
+summed across attempts. When a failed transport lost an attempt's measurements,
+the record marks `hasIncompleteGateTimings` and the phase totals remain unknown
+in the percentile input, rather than presenting the final attempt as the whole
+integration. Initial admission and held re-entry waits are summed. The standard
+median averages the two middle values for an even sample count.

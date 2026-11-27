@@ -49,10 +49,10 @@ public static class IntegrationContinuationPrompt
                 $"{item.Stage}: {item.Outcome}, {item.ConflictedFileCount} conflicted files"
                 + (item.StoppedCommitSha is null ? "" : $", stopped at {item.StoppedCommitSha}")))
             : stage;
-        var files = conflict?.ConflictedFiles.Count > 0
-            ? string.Join(", ", conflict.ConflictedFiles)
-            : conflictedFiles?.Count > 0
-                ? string.Join(", ", conflictedFiles)
+        var files = conflictedFiles?.Count > 0
+            ? string.Join(", ", conflictedFiles)
+            : conflict?.ConflictedFiles.Count > 0
+                ? string.Join(", ", conflict.ConflictedFiles)
             : "none recorded";
         var isReview = stage.Contains("review", StringComparison.OrdinalIgnoreCase)
             || stage.Contains("quality", StringComparison.OrdinalIgnoreCase);
@@ -62,14 +62,19 @@ public static class IntegrationContinuationPrompt
         var taskDirection = isReview
             ? "Resolve the recorded review findings on this same task. " + VerificationScope
               + "Then publish the corrected delivery. "
-            : isConflict && runnerMergesIntegration
-                ? "Continue on the existing delivery branch. Do not merge develop yourself; the runner merges current develop at the start of the round. "
-                  + "Retain a one-to-one delivery commit mapping: do not squash, split, drop, or combine delivery commits. "
-                  + VerificationScope + "Then publish a new delivery. "
             : isConflict
-                ? $"Continue on the existing delivery branch, merging the latest integration branch by merging 'origin/{integrationBranch}' into it when needed. "
+                ? $"Continue on the pinned delivery branch {deliveryRef ?? "of this task"}. "
+                  + $"The runner fetches {integrationBranch} and brings 'origin/{integrationBranch}' in with a merge commit only during platform preparation; never rebase. "
+                  + "Read the platform preparation record at the path returned by "
+                  + "`git rev-parse --git-path agent-studio-integration-preparation.json`. "
+                  + "It records the actual delivery SHA, target SHA, checkout HEAD, unresolved files and exact instructions. "
+                  + "For Conflicted, the platform left an active merge: resolve the listed files and keep both sides, including integration changes. "
+                  + "For Merged or AlreadyContainsTarget, the checkout contains the recorded target. "
+                  + "An Aborted or AbortFailed preparation is not a valid handoff; retain the evidence and report the preparation failure. "
+                  + "Do not run Git mutations (merge, abort, reset, add, commit, rebase, push or branch changes). "
+                  + "The platform stages and commits your file edits and publishes the delivery. "
                   + "Retain a one-to-one delivery commit mapping: do not squash, split, drop, or combine delivery commits. "
-                  + VerificationScope + "Then publish a new delivery. "
+                  + VerificationScope + "Then finish the delivery report. "
                 : "Resolve the recorded failure on this same task. " + VerificationScope
                   + "Then publish the corrected delivery. ";
         return "## CONTINUATION\n\n"
@@ -89,7 +94,9 @@ public static class IntegrationContinuationPrompt
             + (string.IsNullOrWhiteSpace(gateEvidence) ? ""
                 : gateEvidence.Contains('\n') ? $"Failed gate output:\n{gateEvidence.TrimEnd()}\n"
                 : $"Failed gate output: {gateEvidence}.\n")
-            + "Preserve the card's model, CLI, and reasoning pins. "
+            + (runnerMergesIntegration
+                ? "Use the delivery run's CLI and model with medium reasoning. "
+                : "Preserve the card's model, CLI, and reasoning pins. ")
             + (string.IsNullOrWhiteSpace(gateEvidence) && stage != PipelineCatalogue.BuildTestGateStepId
                 ? "" : RerunFailingCommandFirst)
             + taskDirection

@@ -1,7 +1,7 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { liveSourcesFixture, liveStructureFixture } from '../../src/app/features/structure/live/live-structure.fixtures';
+import { liveSourcesFixture, liveStructureFixture, projectedCapacityFixture } from '../../src/app/features/structure/live/live-structure.fixtures';
 
 // AGT-4024: the live structure view in Operations, Structure. Mocked; role-named fixtures only.
 const results = process.env['JOB_RESULTS_DIR'] ?? path.join(process.cwd(), 'test-results');
@@ -617,4 +617,40 @@ test.describe('phone', () => {
     expect(await overflow()).toBeLessThanOrEqual(0);
     expect(errors).toEqual([]);
   });
+});
+
+// Uses facts emitted by ObservedStructureProjection, including capacity on the role children.
+test('live structure: unique capacity agrees across layers, installation details and process facts', async ({ page }) => {
+  test.setTimeout(120_000);
+  fs.mkdirSync(results, { recursive: true });
+  const errors = watchErrors(page);
+  await mockApi(page, {}, { structure: projectedCapacityFixture });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/#/workspace/operations/structure');
+  const view = page.getByTestId('live-structure');
+  await expect(view).toBeVisible({ timeout: 30_000 });
+  await box(view, 'machine:shared-host');
+  await expect(view.getByTestId('live-layer-fact-perf')).toHaveText('5 of 10 slots busy');
+  const details = view.getByTestId('live-details');
+  await expect(details.getByTestId('live-details-kpis').getByText('Slots in use', { exact: true }).locator('..')).toContainText('5 of 10');
+  await expect(details.getByTestId('live-details-kpis').getByText('Hosts reporting', { exact: true }).locator('..')).toContainText('2');
+  await expect(details.locator('[data-fact="slots"]')).toContainText('5 of 10');
+  await expect(details.locator('[data-fact="reporting"]')).toContainText('2');
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await shot(page, `live-structure-unique-capacity-${theme}`);
+  }
+  for (const [id, slots, cards] of [
+    ['machine:shared-host', '3 of 6 in use', 'AGT-3, AGT-4, AGT-5'],
+    ['component:shared-host:shared-coding', '2 of 4 in use', 'AGT-3, AGT-4'],
+    ['component:shared-host:shared-review', '1 of 2 in use', 'AGT-5'],
+    ['component:coding-host:coding-runner', '2 of 4 in use', 'AGT-1, AGT-2'],
+  ]) {
+    await view.locator(`[data-outline-id="${id}"]`).click();
+    await expect(details).toHaveAttribute('data-node-id', id);
+    await expect(details.locator('[data-fact="slots"]')).toContainText(slots);
+    await expect(details.locator('[data-fact="job"]')).toContainText(cards);
+    await expect(view.getByTestId('live-layer-fact-perf')).toHaveText('5 of 10 slots busy');
+  }
+  expect(errors).toEqual([]);
 });

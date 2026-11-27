@@ -656,7 +656,9 @@ public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperator
         // Open the durable resume point before exposing the card in Auto Review.
         // Keep the failed verdict so a refused move can restore it.
         var previousSettlement = RemoteDeliverySettlementStore.Read(job.FolderPath);
-        if (!RemoteDeliverySettlementStore.RequeueInfrastructure(job.FolderPath))
+        var reopenedSettlement = previousSettlement is null ? null
+            : RemoteDeliverySettlementStore.RequeueInfrastructure(job.FolderPath, previousSettlement);
+        if (reopenedSettlement is null)
         {
             _logger.LogWarning("acceptance-rail-infrastructure-settlement-reset-failed project={Project} job={JobId}",
                 job.ProjectName, job.Id);
@@ -701,7 +703,8 @@ public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperator
                     if (current?.State == TaskStates.HumanReview
                         && Directory.Exists(current.FolderPath))
                     {
-                        RemoteDeliverySettlementStore.Write(current.FolderPath, previousSettlement);
+                        RemoteDeliverySettlementStore.TryWrite(
+                            current.FolderPath, reopenedSettlement, previousSettlement);
                     }
                     else if (current?.State != TaskStates.AutoReview)
                     {

@@ -16,7 +16,8 @@ import { ChangeDetectionStrategy, Component, ViewEncapsulation, input } from '@a
  *   </app-row>
  *
  * `variant`:
- *   - compact (default) — operator surfaces (Overview, Explorer, Activity)
+ *   - omitted           - inherit the root or containing surface density
+ *   - compact           - explicit compact override
  *   - default           — mid-density panels
  *   - cozy              — empty states, Welcome cards
  *
@@ -38,6 +39,6 @@ import { ChangeDetectionStrategy, Component, ViewEncapsulation, input } from '@a
   },
 })
 export class RowComponent {
-  readonly variant = input<'compact' | 'default' | 'cozy'>('compact');
+  readonly variant = input<'compact' | 'default' | 'cozy'>();
   readonly interactive = input(false);
 }

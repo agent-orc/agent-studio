@@ -126,6 +126,7 @@ public record OrchestratorLogEntry
 
     /// <summary>Optional longer prose, rendered when the entry is expanded.</summary>
     public string? Reasoning { get; init; }
+    public long? TestingUndoSequence { get; init; }
 
     /// <summary>Typed operational finding or resolution when this entry concerns a stall.</summary>
     public OperationalStallEvent? Stall { get; init; }

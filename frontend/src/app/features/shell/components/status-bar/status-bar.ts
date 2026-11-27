@@ -19,6 +19,7 @@ import {
 } from '../../../../utils/visible-interval';
 import { UsageCockpitService, UsageAlarmStatusComponent, buildCliChipView, buildCostChipView, formatUsedPct } from '../../../usage-cockpit';
 import type { UsageCli } from '../../../usage-cockpit';
+import { usageCliKey, usageCliName } from '../../../usage-cockpit/usage-detail.util';
 import { ProviderAuthStatusService } from '../../../remote-hosts/services/provider-auth-status.service';
 import {
   claimLoadGateLabel,
@@ -77,8 +78,10 @@ export class StatusBarComponent implements OnInit, OnDestroy {
   readonly visibleUsageClis = computed(() => (this.usage.snapshot()?.clis ?? []).filter(cli =>
     cli.subscriptionKey || cli.probeFailedAt || cli.windows.some(window => window.usedPct !== null)
     || (this.usage.snapshot()?.runs ?? []).some(run => run.effectiveCli === cli.cliId)));
+  readonly usageKey = usageCliKey;
   usageView(cli: UsageCli) {
-    return buildCliChipView(cli.cliId, cli, browserTimeZone(), this.usageClock(), [], [], this.usage.readFailed());
+    const view = buildCliChipView(cli.cliId, cli, browserTimeZone(), this.usageClock(), [], [], this.usage.readFailed());
+    return { ...view, name: usageCliName(cli, this.usage.snapshot()?.clis ?? []) };
   }
   footerWindows(cli: UsageCli) {
     return cli.windows.filter(window => window.usedPct !== null).map(window => {
@@ -113,7 +116,7 @@ export class StatusBarComponent implements OnInit, OnDestroy {
   }
   usageTooltip(cli: UsageCli): string {
     const view = this.usageView(cli);
-    return `${view.detail}\n${this.footerWindows(cli).map(w => `${w.text}: ${w.reset}`).join('\n')}\n${view.state === 'stale' ? 'Refresh the usage source or check the provider connection in Execution Hosts.' : 'Open usage detail.'}`;
+    return `${view.name}\n${view.detail}\n${this.footerWindows(cli).map(w => `${w.text}: ${w.reset}`).join('\n')}\n${view.state === 'stale' ? 'Refresh the usage source or check the provider connection in Execution Hosts.' : 'Open provider settings.'}`;
   }
   readonly hostProblems = computed(() => {
     const problems = new Map<string, string[]>();

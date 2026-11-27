@@ -28,6 +28,7 @@ public static class CliEndpoints
 
         app.MapGet("/api/model-selection/drill", (string? project, string? pipelineType, ModelRoutingDrill drill) =>
             Results.Ok(drill.Run(project, pipelineType)));
+        app.MapQuotaPaceEndpoints();
         app.MapPut("/api/model-selection/policy/reserve", (ReserveSetting setting, ModelSelectionPolicyStore policy) =>
             setting.Points is < 0 or > 50 ? Results.BadRequest(new { error = "Reserve must be between 0 and 50 percentage points." })
                 : Results.Ok(policy.SetReserve(setting.Points)));
@@ -126,7 +127,8 @@ public static class CliEndpoints
                     new { error = ex.Message, cliType },
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
-        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+        }).WithMetadata(new LocalOperationEffectMetadata())
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
         cliGroup.MapGet("/model-routing/policy", (
             ModelRoutingPolicyRegistry registry,
@@ -188,7 +190,8 @@ public static class CliEndpoints
                     new { error = ex.Message, cliType, taskType },
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
-        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+        }).WithMetadata(new LocalOperationEffectMetadata())
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
         cliGroup.MapGet("/usage", (CliRouter router, SessionRegistry sessions, TaskRunnerService runners) =>
         {
@@ -215,7 +218,8 @@ public static class CliEndpoints
             return Results.Ok(scoped
                 ? ScopedQuotaProjection.Redact(report)
                 : report);
-        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+        }).WithMetadata(new LocalOperationEffectMetadata())
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
         // AGT-3001: recorded series per window plus the burn rate over the last
         // three hours and the forecast time of 100 %. Reads the store only; it
@@ -465,7 +469,8 @@ public static class CliEndpoints
                 {
                     return Results.Problem(detail: ex.Message, title: "Probe failed");
                 }
-            }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+            }).WithMetadata(new LocalOperationEffectMetadata())
+                .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
         }
     }
 

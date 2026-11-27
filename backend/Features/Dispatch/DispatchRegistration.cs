@@ -87,6 +87,8 @@ public static class DispatchRegistration
             if (entry is null) return Results.NotFound();
             if (!ProjectAccessAuthorization.AllowsTasks(context, [entry.Name], IamPermissions.ProjectRead, projects))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
+            context.Response.Headers["X-Dispatch-Repository-Status"] = store.ReadRepositoryState(entry.Name) is { Available: false }
+                ? "no repository" : "available";
             var requested = cards?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var result = new Dictionary<string, TouchForecastV1?>();
             if (requested is null)

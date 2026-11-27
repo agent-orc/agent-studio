@@ -75,6 +75,47 @@ public static class EvidenceGate
     // A change touching one of these can be proven with a screenshot.
     private static readonly string[] UiTemplateOrStyleExtensions = [".html", ".scss", ".css"];
 
+    /// <summary>Capability facts come from live platform advertisements, never from an agent's success claim.</summary>
+    internal static IReadOnlyList<string> CapableVerificationHosts(
+        AgentStudio.TaskServer.Contracts.ReviewPlanDto plan,
+        IReadOnlyList<AgentStudio.TaskServer.Contracts.RunnerCapabilitySnapshotDto> hosts,
+        DateTime now, string? codingHost = null)
+    {
+        var required = VerificationCapabilities(plan);
+        return hosts.Where(host => host.Status == "active"
+                && host.LastSeenAt > now.AddMinutes(-2)
+                && host.HostAdmission.AdmissionState == "open"
+                && host.HostAdmission.OperatorDrainAt is null
+                && host.HostAdmission.AutomaticDrainAt is null
+                && (!plan.RequireDifferentHostFailureDomain || !string.Equals(host.HostId, codingHost, StringComparison.Ordinal)))
+            .Where(host =>
+            {
+                var admitted = host.Capabilities.Where(capability => capability.IsFresh
+                        && capability.FreshUntil > now && capability.AdvertisedStatus == "ready"
+                        && capability.HealthState == "healthy")
+                    .Select(capability => capability.Key).ToHashSet(StringComparer.Ordinal);
+                return admitted.Contains(AgentStudio.TaskServer.Contracts.ReviewCapabilities.ReviewExecutor)
+                    && required.All(admitted.Contains);
+            })
+            .Select(host => host.HostId).Distinct(StringComparer.Ordinal).ToArray();
+    }
+
+    // Provider readiness, model routing and quota have their own recovery authority.
+    // They cannot establish that the fleet lacks verification hardware or tools.
+    private static IReadOnlyList<string> VerificationCapabilities(AgentStudio.TaskServer.Contracts.ReviewPlanDto plan)
+        => AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy.ExecutionCapabilities(plan)
+            .Where(key => !key.StartsWith("provider-auth:", StringComparison.Ordinal)
+                && !key.StartsWith("cli-execution:", StringComparison.Ordinal)
+                && !key.StartsWith("model-acceptance:", StringComparison.Ordinal)).ToArray();
+
+    internal static bool HasOwnerHeldVerificationHost(
+        AgentStudio.TaskServer.Contracts.ReviewPlanDto plan,
+        IReadOnlyList<AgentStudio.TaskServer.Contracts.RunnerCapabilitySnapshotDto> hosts, string? codingHost = null)
+        => hosts.Any(host => (host.HostAdmission.AdmissionState == "operator-drain" || host.HostAdmission.OperatorDrainAt is not null)
+            && (!plan.RequireDifferentHostFailureDomain || !string.Equals(host.HostId, codingHost, StringComparison.Ordinal))
+            && host.Capabilities.Any(capability => capability.Key == AgentStudio.TaskServer.Contracts.ReviewCapabilities.ReviewExecutor)
+            && VerificationCapabilities(plan).All(key => host.Capabilities.Any(capability => capability.Key == key)));
+
     public enum EvidenceGateAction
     {
         Pass,

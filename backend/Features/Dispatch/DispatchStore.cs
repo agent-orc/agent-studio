@@ -22,7 +22,30 @@ public sealed partial class DispatchStore
     private static string Key(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     private string Project(string project) => Path.Combine(_root, Key(project.ToUpperInvariant()));
     private string Card(string project, string card) => Path.Combine(Project(project), "cards", Key(card) + ".json");
-    public TouchForecastV1? Read(string project, string card) => Read<TouchForecastV1>(Card(project, card));
+    public DispatchRepositoryState? ReadRepositoryState(string project)
+    {
+        try
+        {
+            var state = Read<DispatchRepositoryState>(Path.Combine(Project(project), "repository.json"));
+            // Status is optional collection metadata. Incomplete or damaged state must
+            // neither hide a stored forecast nor postpone the probe that can repair it.
+            return state is { Failures: >= 0 and <= DispatchRepositoryState.MaxFailures } ? state : null;
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            AgentStudio.Diagnostics.SilentCatch.Note(ex, "Dispatch repository state is unreadable; status is unknown and probing remains enabled");
+            return null;
+        }
+    }
+    public void WriteRepositoryState(string project, DispatchRepositoryState state) => Write(Path.Combine(Project(project), "repository.json"), state);
+    public TouchForecastV1? Read(string project, string card)
+    {
+        var forecast = Read<TouchForecastV1>(Card(project, card));
+        return ReadRepositoryState(project) is { Available: false }
+            ? (forecast ?? new TouchForecastV1([], [], [], [], "none", "")) with
+                { RepositoryStatus = "no repository", CitedFiles = [], ForecastFiles = [], Modules = [], Confidence = "none" }
+            : forecast;
+    }
     public void Write(string project, string card, TouchForecastV1 forecast) => Write(Card(project, card), forecast);
     public CoChangeIndex? IndexAsOf(string project, DateTimeOffset at)
     {

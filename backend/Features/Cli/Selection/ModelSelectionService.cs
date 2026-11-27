@@ -200,15 +200,28 @@ public sealed class ModelSelectionService : IModelSelectionService
                     && pair.ToThinkingLevel == candidate.ThinkingLevel) == true).ToArray();
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var active = _ledger?.GetActive(request);
+        // Freeze account evidence once per provider for this decision. Display
+        // rows can contain old probe errors and are never routing facts.
+        var quotaEvidence = new Dictionary<string, QuotaRoutingEvidence>(StringComparer.OrdinalIgnoreCase);
+        QuotaRoutingEvidence EvidenceFor(string cli)
+        {
+            if (!quotaEvidence.TryGetValue(cli, out var evidence))
+                quotaEvidence[cli] = evidence = _quota.GetRoutingEvidence(cli);
+            return evidence;
+        }
+        string RecoveryAction(string cli)
+            => $"No current {cli} account quota evidence. On an execution host, sign in to the current account and refresh quota";
+        string? Unavailable(string cli) => _health?.UnavailableReason(cli)
+            ?? (call.SnapshotOverride is null && EvidenceFor(cli).Kind == QuotaRoutingEvidenceKind.Missing
+                ? RecoveryAction(cli) : null);
         var facts = new SelectionFacts
         {
             NowUtc = now,
             Caps = _caps,
+            PaceFor = (cli, window) => workspacePolicy?.PaceFor(cli, window) ?? QuotaPace.Steady,
             ShortStepReservePoints = workspacePolicy?.ShortStepReservePoints ?? 10,
-            ProviderUnavailable = cli => _health?.UnavailableReason(cli),
-            SnapshotFor = call.SnapshotOverride ?? (cli => string.IsNullOrWhiteSpace(cli) ? null : _quota.GetCachedFor(cli)
-                ?? _quota.GetCached().Snapshots.Where(snapshot => snapshot.CliType == cli && snapshot.Error is not null)
-                    .FirstOrDefault()),
+            ProviderUnavailable = Unavailable,
+            SnapshotFor = call.SnapshotOverride ?? (cli => string.IsNullOrWhiteSpace(cli) ? null : EvidenceFor(cli).Snapshot),
             Routing = routing,
             ConfiguredFallbacks = configuredFallback,
             OccupiedSlots = call.OccupiedSlots,
@@ -230,6 +243,19 @@ public sealed class ModelSelectionService : IModelSelectionService
         };
 
         var result = ModelSelectionPlanner.Plan(request, facts);
+        // Missing account evidence has an explicit recovery action. It must not
+        // renew a provider-unavailable wait on every pickup tick. The planner
+        // still chooses any usable equivalent before this recovery is surfaced.
+        if (call.SnapshotOverride is null && result.Outcome == SelectionOutcome.Wait
+            && result.Rule is SelectionRules.Capacity or SelectionRules.Pin
+            && EvidenceFor(result.Primary.CliType).Kind == QuotaRoutingEvidenceKind.Missing
+            && _health?.UnavailableReason(result.Primary.CliType) is null)
+            result = result with
+            {
+                Outcome = SelectionOutcome.Refused,
+                Reason = $"Recovery required: {RecoveryAction(result.Primary.CliType)}; then retry selection. No permitted equivalent is available.",
+                RetryAt = null,
+            };
         result = result with { EquivalentRoutes = routing.Equivalence?.Routes.Where(pair =>
             pair.FromCliType == result.Primary.CliType && pair.FromModel == result.Primary.Model
             && pair.FromThinkingLevel == result.Primary.ThinkingLevel
@@ -280,7 +306,8 @@ public sealed class ModelSelectionService : IModelSelectionService
                     // Preflight and dispatch can select the same remote claim twice.
                     var key = string.Join("|", call.ExecutionPath, call.DecisionKey,
                         request.Project, request.TaskKey, request.Host?.HostId,
-                        result.Outcome, result.Rule, result.Primary, result.Route);
+                        result.Outcome, result.Rule, result.Primary, result.Route,
+                        System.Text.Json.JsonSerializer.Serialize(result.Quota?.WindowPaces));
                     lock (_receiptSync)
                     {
                         if (!_receiptIds.TryGetValue(key, out var id))

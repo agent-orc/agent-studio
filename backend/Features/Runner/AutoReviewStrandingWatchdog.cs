@@ -260,14 +260,18 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         return new DateTime((parkAt.Ticks + minute - 1) / minute * minute, parkAt.Kind);
     }
 
-    /// <summary>Integrates the current run before exposing it to Remote Review.</summary>
-    public async Task<MergeIntoIntegrationResult?> IntegrateCurrentDeliveryAsync(TaskInfo card)
+    /// <summary>Refreshes the immutable subject before checking current delivery reachability.</summary>
+    internal bool PrepareCurrentDelivery(TaskInfo card)
     {
-        if (card.State != TaskStates.AutoReview || _integration is null) return null;
         var run = _authority.GetTaskProjection(CardKey(card)).CurrentRunAttempt;
         if (run is not { State: AttemptLifecycleState.Completed, ResultEnvelope: not null, ResultSha: not null })
-            return null;
+            return false;
         var previous = ReviewSubjectStore.Read(card.FolderPath);
+        if (previous?.RunAttemptId == run.AttemptId
+            && previous.TaskKey == CardKey(card)
+            && previous.ImmutableResultRef == run.ResultEnvelope.ImmutableRemoteRef
+            && previous.ResultRef == run.ResultEnvelope.ImmutableRemoteRef
+            && string.Equals(previous.ResultSha, run.ResultSha, StringComparison.OrdinalIgnoreCase)) return true;
         ReviewSubjectStore.Write(card.FolderPath, new ReviewSubjectRecord
         {
             TaskKey = CardKey(card), RunAttemptId = run.AttemptId,
@@ -281,6 +285,15 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             IntegrationBranch = previous?.IntegrationBranch,
             CompletedAtUtc = run.TerminalAt ?? DateTimeOffset.UtcNow,
         });
+        _scanner.InvalidateCache();
+        return true;
+    }
+
+    public async Task<MergeIntoIntegrationResult?> IntegrateCurrentDeliveryAsync(TaskInfo card)
+    {
+        if (card.State != TaskStates.AutoReview || _integration is null
+            || !PrepareCurrentDelivery(card)) return null;
+        var run = _authority.GetTaskProjection(CardKey(card)).CurrentRunAttempt!;
         var project = _settings.Get(card.ProjectName);
         return await _integration.EnqueueAsync(new RemoteDeliveryIntegrationRequest(
             card.ProjectName, card.Id, card.FolderPath, card.WatchPath,
@@ -290,11 +303,46 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             ReviewedResultSha: run.ResultSha), discardCompletedReplay: true);
     }
 
+    internal string? CurrentDeliveryIdentity(TaskInfo card)
+    {
+        var run = _authority.GetTaskProjection(CardKey(card)).CurrentRunAttempt;
+        return run is { State: AttemptLifecycleState.Completed, ResultSha: not null }
+            ? $"{run.AttemptId}:{run.ResultSha}" : null;
+    }
+
+    internal string CurrentVerdictIdentity(TaskInfo card)
+    {
+        var review = _authority.GetTaskProjection(CardKey(card)).CurrentReviewAttempt;
+        return review is null ? "unavailable"
+            : $"{review.AttemptId}:{review.Outcome}:{review.TestedResultSha ?? review.Subject.ExpectedResultSha}";
+    }
+
+    internal bool HasSupersededVerdict(TaskInfo card)
+    {
+        var projection = _authority.GetTaskProjection(CardKey(card));
+        return projection.CurrentRunAttempt is { State: AttemptLifecycleState.Completed, ResultSha: not null } run
+            && projection.CurrentReviewAttempt is
+                { State: AttemptLifecycleState.Completed or AttemptLifecycleState.Superseded } review
+            && (review.State == AttemptLifecycleState.Superseded
+                || ReviewForCurrentDelivery(review, run) is null);
+    }
+
     /// <summary>Requests review after the current delivery has integrated.</summary>
-    public bool RequestFreshReview(TaskInfo card)
+    public bool RequestFreshReview(TaskInfo card) => RequestFreshReview(card, null);
+
+    internal bool RequestFreshReview(TaskInfo card, string? expectedDeliveryIdentity)
     {
         if (card.State != TaskStates.AutoReview) return false;
         var projection = _authority.GetTaskProjection(CardKey(card));
+        if (expectedDeliveryIdentity is not null
+            && (projection.CurrentRunAttempt is not { } run
+                || expectedDeliveryIdentity != $"{run.AttemptId}:{run.ResultSha}")) return false;
+        if (ReviewForCurrentDelivery(projection.CurrentReviewAttempt, projection.CurrentRunAttempt) is
+            { State: AttemptLifecycleState.Pending or AttemptLifecycleState.Leased })
+        {
+            MarkAwaitingReview(card);
+            return true;
+        }
         return CreateReview(card, projection.CurrentReviewAttempt, projection.CurrentRunAttempt,
             "delivery-verdict-stale");
     }
@@ -596,10 +644,15 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             ResultRef: run.ResultEnvelope.ImmutableRemoteRef,
             Plan: sameDelivery && !replan ? subject!.Plan : null));
         if (!result.Accepted) return false;
+        MarkAwaitingReview(card);
+        return true;
+    }
+
+    private void MarkAwaitingReview(TaskInfo card)
+    {
         TaskJsonFile.UpdateField(card.FolderPath, "phase", LifecyclePhases.AwaitingReview, _logger);
         _scanner.InvalidateCache();
         _scanner.PublishCoreFromKnownFolder(card.FolderPath);
-        return true;
     }
 
     internal static bool IsBatchMember(BatchGateStore batches, string project, string taskKey,

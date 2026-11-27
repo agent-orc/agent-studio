@@ -8,7 +8,7 @@ export interface StudioCardLiveState { state: string; revision: string | null; s
 export interface StudioReleasesView {
   project: string; runningRevision: string; computedAtUtc: string; detail: string | null;
   pending: StudioReleaseCard[];
-  releases: { revision: string; atUtc: string; observed: boolean; timeBasis?: string | null; running: boolean; cards: StudioReleaseCard[] }[];
+  releases: { occurrenceId: string; revision: string; atUtc: string; observed: boolean; timeBasis?: string | null; running: boolean; cards: StudioReleaseCard[] }[];
 }
 @Injectable({ providedIn: 'root' })
 export class StudioReleasesService {

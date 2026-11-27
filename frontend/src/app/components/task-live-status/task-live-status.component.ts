@@ -26,6 +26,24 @@ type LiveTone = 'active' | 'waiting' | 'idle' | 'stalled';
 const LIVE_TONE_INDICATOR: Readonly<Record<LiveTone, StatusTone>> = { active: 'running', waiting: 'info', idle: 'neutral', stalled: 'warning' };
 export function liveIndicatorTone(tone: string | null | undefined): StatusTone { return LIVE_TONE_INDICATOR[tone as LiveTone] ?? 'neutral'; }
 
+/** Host presented in the active-step detail or remote-run headline, if either exists. */
+export function taskLiveStatusHost(task: TaskInfo, aliases: Pick<HostAliasService, 'display'>): string | null {
+  if (!task.liveStatus || task.state === TaskState.Escalated) return null;
+  let id: string | null | undefined;
+  let name: string | null | undefined;
+  if (task.liveStatus.activeStep) {
+    id = task.executionLocation?.runnerId ?? task.runner?.runnerId;
+    name = task.executionLocation?.hostDisplayName || task.runner?.runnerName || task.runner?.hostname;
+  } else {
+    const run = deriveActiveTaskRun(task);
+    if (run?.kind !== 'remote') return null;
+    id = run.runnerId;
+    name = run.hostDisplayName;
+    if (!id && !name) return 'remote host';
+  }
+  return id || name ? aliases.display(id || name, name).label : null;
+}
+
 interface LiveStatusView {
   tone: LiveTone;
   headline: string;
@@ -135,8 +153,7 @@ export class TaskLiveStatusComponent {
       const startClock = startedAt === null
         ? null
         : new Date(startedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-      const host = this.hostLabel(task.executionLocation?.runnerId ?? task.runner?.runnerId,
-        task.executionLocation?.hostDisplayName || task.runner?.runnerName || task.runner?.hostname);
+      const host = taskLiveStatusHost(task, this.aliases);
       const runtime = [
         startClock ? `started ${startClock}` : null,
         duration ? `running ${duration}` : null,
@@ -157,7 +174,7 @@ export class TaskLiveStatusComponent {
     if (activeRun?.kind === 'remote') {
       const startedAt = timestamp(activeRun.startedAt);
       const duration = startedAt === null ? null : elapsed(this.now() - startedAt);
-      const host = this.hostLabel(activeRun.runnerId, activeRun.hostDisplayName) ?? 'remote host';
+      const host = taskLiveStatusHost(task, this.aliases);
       return {
         tone: 'active',
         headline: `Running remote on ${host}`,

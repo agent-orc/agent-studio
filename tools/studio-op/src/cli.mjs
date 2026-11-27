@@ -2,16 +2,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs, usage } from './args.mjs';
-import { COMMANDS } from './commands.mjs';
+import { COMMANDS as EXISTING_COMMANDS } from './commands.mjs';
+import { workingSetCommands } from './working-set.mjs';
 import { CredentialError, configDirectory, readCredential, refuseTokenCarriers } from './credential.mjs';
 import { EXIT } from './exit-codes.mjs';
 import { Output } from './output.mjs';
 import { OperationError, StudioClient } from './studio.mjs';
 
+const COMMANDS = { ...EXISTING_COMMANDS, ...workingSetCommands(EXISTING_COMMANDS) };
+
 export const VERSION = '1.0.0';
 export const CONFIG_FILE = 'studio-op.json';
 export const DEFAULT_URL = 'http://127.0.0.1:5031';
-const CONFIG_KEYS = new Set(['url', 'credential', 'clientId', 'hardwareDeviceKeys']);
+const CONFIG_KEYS = new Set(['url', 'credential', 'clientId', 'hardwareDeviceKeys', 'tokenFile']);
 const GROUPS = { auth: ['status'], deploy: ['plan'], host: ['drain', 'status', 'resume'], log: ['append'], magazine: ['publish'], routing: ['set-step'] };
 // These groups also run without a subcommand: `log` reads, `routing` shows.
 const BARE_GROUPS = new Set(['log', 'routing']);
@@ -28,12 +31,12 @@ function commandOf(argv) {
   return { name: first, rest: argv.slice(1) };
 }
 
-function readConfig(directory) {
-  const file = path.join(directory, CONFIG_FILE);
+function readConfig(directory, explicitFile) {
+  const file = explicitFile ?? path.join(directory, CONFIG_FILE);
   let text;
   try { text = fs.readFileSync(file, 'utf8'); }
   catch (error) {
-    if (error.code === 'ENOENT') return {};
+    if (error.code === 'ENOENT' && !explicitFile) return {};
     throw usage('config-unreadable', `Cannot read ${file} (${error.code}).`);
   }
   let config;
@@ -42,6 +45,10 @@ function readConfig(directory) {
   const unknown = Object.keys(config).filter(key => !CONFIG_KEYS.has(key));
   if (unknown.length > 0)
     throw usage('config-invalid', `${file} has unknown keys: ${unknown.join(', ')}. Allowed: ${[...CONFIG_KEYS].join(', ')}. A token never goes into this file.`);
+  for (const key of ['url', 'credential', 'clientId', 'tokenFile'])
+    if (config[key] !== undefined && (typeof config[key] !== 'string' || !config[key].trim()))
+      throw usage('config-invalid', `The config key ${key} must be a nonempty string.`);
+  if (config.tokenFile) config.tokenFile = path.resolve(path.dirname(file), config.tokenFile);
   return config;
 }
 
@@ -54,10 +61,10 @@ export function helpText() {
     '',
     ...Object.entries(COMMANDS).map(([name, command]) => `  studio-op ${name.padEnd(width)}  ${command.summary}`),
     '',
-    'The token is read only from ~/.config/agent-studio/operator-token (chmod 600),',
+    'Token: STUDIO_OP_TOKEN, AGENT_STUDIO_API_TOKEN, --token-file <path>, or the default owner-only file.',
     'or operator-session when studio-op.json sets "credential": "operator-session".',
     'studio-op login writes operator-session after the Owner confirms the sign-in in Studio.',
-    'There is no token option and no token environment variable.',
+    'Origin: --url, STUDIO_OP_URL, or --config <path> with url and tokenFile.',
     'Exit codes and setup: docs/operations/setup/studio-op.md',
   ].join('\n');
 }
@@ -69,9 +76,10 @@ export function helpText() {
 export async function main(argv, { env = process.env, home = os.homedir(), stdout = process.stdout,
   stderr = process.stderr } = {}) {
   const output = new Output({ stdout, stderr, json: argv.includes('--json') });
+  for (const token of [env.STUDIO_OP_TOKEN, env.AGENT_STUDIO_API_TOKEN]) if (token) output.protect(token);
   const { name, rest } = commandOf(argv);
   try {
-    // Before anything else: a token never arrives by environment or argument.
+    // Reject secret arguments and unexpected credential carriers before making requests.
     refuseTokenCarriers({ env, argv });
     if (argv.includes('--version')) { stdout.write(`${VERSION}\n`); return EXIT.OK; }
     if (!name || name === 'help' || (argv.includes('--help') && !COMMANDS[name])) {
@@ -84,10 +92,17 @@ export async function main(argv, { env = process.env, home = os.homedir(), stdou
     if (options.help) { stdout.write(`studio-op ${name}: ${command.summary}\n`); return EXIT.OK; }
 
     const configDir = configDirectory(home);
-    const config = readConfig(configDir);
+    const config = { ...readConfig(configDir, options.config ?? env.STUDIO_OP_CONFIG),
+      ...(options.tokenFile ? { tokenFile: path.resolve(options.tokenFile) } : {}) };
     const url = options.url ?? env.STUDIO_OP_URL ?? config.url ?? DEFAULT_URL;
     // `login` signs in without a credential; it never reads or sends the token file.
-    const credential = command.anonymous ? null : readCredential({ home, config });
+    const envToken = env.STUDIO_OP_TOKEN ?? env.AGENT_STUDIO_API_TOKEN;
+    if (envToken) output.protect(envToken);
+    if (envToken !== undefined && (!envToken.trim() || /\s/.test(envToken.trim())))
+      throw new CredentialError('token-environment-invalid', 'The token environment variable must hold one nonempty token.');
+    const credential = command.anonymous ? null : options.tokenFile
+      ? readCredential({ home, config })
+      : envToken ? { token: envToken.trim(), kind: 'api-token', name: 'environment' } : readCredential({ home, config });
     if (credential) output.protect(credential.token);
     let client = null;
     let clientError = null;
@@ -101,6 +116,7 @@ export async function main(argv, { env = process.env, home = os.homedir(), stdou
     }
     const ctx = { client, clientError, output, home, configDir, config, url, credential };
     const result = await command.run(ctx, positionals, options);
+    if (result.streamed) return result.exitCode ?? EXIT.OK;
     output.result(name, result.data ?? {}, result.text, result.ok ?? true);
     return result.exitCode ?? EXIT.OK;
   } catch (error) {
@@ -109,7 +125,14 @@ export async function main(argv, { env = process.env, home = os.homedir(), stdou
       return EXIT.CREDENTIAL;
     }
     if (error instanceof OperationError) {
+      const protocol = COMMANDS[name]?.taskProtocol && !(name === 'watch' && ['--decisions', '--session', '--from-start', '--after', '--take-over'].some(flag => argv.includes(flag)));
+      if (protocol && (error.status || error.code === 'accept-refused' || error.exitCode === EXIT.NOT_FOUND))
+        error.exitCode = error.status === 404 || error.exitCode === EXIT.NOT_FOUND ? 3 : 4;
       const extra = error.status ? { status: error.status, answer: error.body } : (error.body ?? {});
+      if (COMMANDS[name]?.taskProtocol) {
+        const detail = error.body?.detailText ?? [error.body?.message, error.body?.error, error.body?.reason, error.body ? JSON.stringify(error.body) : error.message].filter(Boolean).join('\n');
+        output.note(detail);
+      }
       output.error(name, error, extra);
       return error.exitCode;
     }

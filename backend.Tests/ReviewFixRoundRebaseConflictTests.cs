@@ -1,6 +1,7 @@
 extern alias Runner;
 
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using AgentStudio.Pipeline;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -120,7 +121,15 @@ public sealed class ReviewFixRoundRebaseConflictTests : IDisposable
             TaskKey, delivered.ImmutableResultRef, deliverySha, "develop", "merge-into-develop",
             AcceptedIntegrationFailureCodes.For(result)!, report);
         Assert.Contains("resolve the integration dead end", prompt, StringComparison.Ordinal);
-        Assert.Contains("Continue on the existing delivery branch", prompt, StringComparison.Ordinal);
+        // The four instructions an integration-conflict round needs, by meaning:
+        // which branch it continues on,
+        Assert.Matches($@"Continue on the pinned delivery branch {Regex.Escape(delivered.ImmutableResultRef!)}\b", prompt);
+        // that develop is fetched and origin/develop comes in with a merge commit,
+        Assert.Matches(@"fetches develop and brings 'origin/develop' in with a merge commit", prompt);
+        // that nobody rebases,
+        Assert.Matches(@"never rebase|Do not run Git mutations \([^)]*\brebase\b", prompt);
+        // and that delivery commits stay one to one.
+        Assert.Contains("Retain a one-to-one delivery commit mapping", prompt, StringComparison.Ordinal);
         // develop was never moved by the refused integration.
         Assert.Equal(developTip, Git(_origin, "rev-parse", "refs/heads/develop"));
     }

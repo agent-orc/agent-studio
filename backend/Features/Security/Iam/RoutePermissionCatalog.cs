@@ -386,12 +386,13 @@ public static class RoutePermissionCatalog
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/workspaces/{}/systems/{}");
         Add("POST", IamPermissions.WorkspaceAdminister, "/api/projects/path-import");
         Add("POST", IamPermissions.WorkspaceSettingsWrite, "/api/projects");
+        Add("R", IamPermissions.WorkspaceSettingsWrite, "/api/model-selection/policy/pace");
         Add("W", IamPermissions.WorkspaceSettingsWrite,
             "/api/workspaces/**", "/api/watch-paths/**", "/api/tags/**", "/api/admin/**",
             "/api/cli/quota/caps", "/api/cli/quota/fallback-preference", "/api/cli/quota/model-routes",
             "/api/cli/quota/wait-policy", "/api/cli/maintenance-model", "/api/cli/model-routing/**",
             "/api/model-selection/policy/consumers/{}",
-            "/api/model-selection/policy/reserve",
+            "/api/model-selection/policy/reserve", "/api/model-selection/policy/pace/{}/{}",
             "/api/clients/{}/defaults", "/api/clients/{}/runner-capacity", "/api/git/branch-sweep/settings",
             "/api/orchestration/rollout/**");
         Add("POST", IamPermissions.WorkspaceRead, "/api/token-pricing/calculate", "/api/token-pricing/what-if", "/api/component-routing/resolve");

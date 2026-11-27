@@ -334,6 +334,106 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
             result with { TokenUsage = new OrchestratorTokenUsage() }, "local", null));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ConcurrentParticipants_AndReplay_PreserveExactDurableTotals(bool replay)
+    {
+        WriteReceipt();
+        var folder = ReceiptFolder;
+        var (_, mutations) = BuildMutations();
+        var coding = Call("agent:remote-runner:coding", "gpt-6-sol", "runner", "codex",
+            100, 20, 30, 40, _now) with { EstimatedApiCostUsd = 0.25m, ModelPriced = true };
+        var review = Call("support:remote-review:review", "gpt-6-sol", "runner", "codex",
+            200, 50, 60, 70, _now.AddMinutes(1)) with { EstimatedApiCostUsd = 0.75m, ModelPriced = true };
+        if (replay) Assert.True(mutations.SetTokenReceiptEntriesOnFolder(folder, coding.ParticipantId!, [coding]));
+        TaskMutationRace.AtFileGate(folder,
+            () => mutations.SetTokenReceiptEntriesOnFolder(folder, coding.ParticipantId!, [coding]),
+            () => mutations.SetTokenReceiptEntriesOnFolder(folder, review.ParticipantId!, [review]));
+        // A new reader has no process-local receipt cache to hide a lost write.
+        var summary = new ProjectTokenReceiptReader().Read(_watchPath).Summaries[TaskId];
+        Assert.Equal(2, summary.Calls);
+        Assert.Equal(300, summary.InputTokens);
+        Assert.Equal(70, summary.OutputTokens);
+        Assert.Equal(90, summary.CacheReadTokens);
+        Assert.Equal(110, summary.CacheCreationTokens);
+        Assert.Equal(570, summary.TotalTokens);
+        Assert.Equal(1m, summary.EstimatedApiCostUsd);
+        Assert.Equal([coding.ParticipantId, review.ParticipantId], summary.Entries.Select(row => row.ParticipantId));
+    }
+
+    [Fact]
+    public void ReceiptMigration_RejectsRevisionChangedByLiveParticipant()
+    {
+        WriteReceipt();
+        var (_, mutations) = BuildMutations();
+        var snapshot = ReadSummary();
+        var expectedRevision = TaskMutationService.TokenReceiptRevision(snapshot);
+        var live = Call("support:remote-review:live", "gpt-6-sol", "runner", "codex", 200, 50, 0, 0, _now);
+        string? liveDocument = null;
+        TaskMutationRace.AfterGateWrite(ReceiptFolder,
+            () => !mutations.ReplaceTokenSummaryForMigration(ReceiptFolder, snapshot, expectedRevision),
+            () =>
+            {
+                var written = mutations.SetTokenReceiptEntriesOnFolder(ReceiptFolder, live.ParticipantId!, [live]);
+                liveDocument = File.ReadAllText(Path.Combine(ReceiptFolder, "task.json"));
+                return written;
+            });
+        Assert.Equal(liveDocument, File.ReadAllText(Path.Combine(ReceiptFolder, "task.json")));
+        var current = ReadSummary();
+        Assert.True(mutations.ReplaceTokenSummaryForMigration(ReceiptFolder, current,
+            TaskMutationService.TokenReceiptRevision(current)));
+        Assert.Single(new ProjectTokenReceiptReader().Read(_watchPath).Summaries[TaskId].Entries);
+    }
+
+    [Fact]
+    public void ReceiptWriteFailure_DoesNotPublishOrAdvanceRevision()
+    {
+        WriteReceipt();
+        var writer = new ControllableAtomicJsonFileWriter { ShouldFail = (_, _) => true };
+        var (scanner, mutations) = BuildMutations(writer);
+        var before = File.ReadAllText(Path.Combine(ReceiptFolder, "task.json"));
+        var revision = TaskMutationService.TokenReceiptRevision(ReadSummary());
+        var generation = scanner.SnapshotGeneration;
+        var call = Call("support:remote-review:live", "gpt-6-sol", "runner", "codex", 200, 50, 0, 0, _now);
+        Assert.False(mutations.SetTokenReceiptEntriesOnFolder(ReceiptFolder, call.ParticipantId!, [call]));
+        Assert.False(mutations.ReplaceTokenSummaryForMigration(ReceiptFolder,
+            new TaskTokenSummary { Entries = [call] }, revision));
+        Assert.Equal(before, File.ReadAllText(Path.Combine(ReceiptFolder, "task.json")));
+        Assert.Equal(revision, TaskMutationService.TokenReceiptRevision(ReadSummary()));
+        Assert.Equal(generation, scanner.SnapshotGeneration);
+    }
+
+    private string ReceiptFolder => Path.Combine(_watchPath, "tasks", "000", TaskId);
+
+    private TaskTokenSummary ReadSummary()
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(ReceiptFolder, "task.json")));
+        return document.RootElement.GetProperty("tokenSummary").Deserialize<TaskTokenSummary>(TaskJsonFile.ReadOpts)!;
+    }
+
+    private (TaskScannerService Scanner, TaskMutationService Mutations) BuildMutations(IAtomicJsonFileWriter? writer = null)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _workspace,
+            ["WatchPaths:0:Name"] = Project,
+            ["WatchPaths:0:Path"] = _watchPath,
+        }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var index = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config,
+            timeProvider: new Microsoft.Extensions.Time.Testing.FakeTimeProvider());
+        scanner.SetIndexCache(index);
+        index.GetSnapshot();
+        Assert.NotNull(scanner.FindJob(TaskId, _watchPath));
+        return (scanner, new TaskMutationService(scanner,
+            new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
+            new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
+            new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
+            NullLogger<TaskMutationService>.Instance, fileWriter: writer));
+    }
+
     private (AgentMessageBusBridge Bridge, AgentMessageBusStore Store, TokenAggregationService Ledger) BuildStack()
     {
         var config = new ConfigurationBuilder()
@@ -370,7 +470,7 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
         };
         File.WriteAllText(
             Path.Combine(folder, "task.json"),
-            JsonSerializer.Serialize(new { id = TaskId, title = "Remote task", tokenSummary = summary }));
+            JsonSerializer.Serialize(new { id = TaskId, title = "Remote task", state = TaskStates.Ready, tokenSummary = summary }));
     }
 
     private static TaskTokenCall Call(

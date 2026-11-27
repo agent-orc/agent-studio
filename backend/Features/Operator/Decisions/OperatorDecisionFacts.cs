@@ -42,7 +42,8 @@ public static class OperatorDecisionFacts
         {
             var card = CardKey(task);
             var evidence = new[] { new OperatorEvidenceLink("card", TaskHref(task)) };
-            if (task.State == TaskStates.Escalated)
+            if (task.State == TaskStates.Escalated
+                && !AgentStudio.Tasks.ParkedBlockerCatalog.IsMachineOwnedQuarantine(task.ParkedBlocker?.BlockerType))
                 facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.EscalationOpened,
                     Key(OperatorDecisionTypes.EscalationOpened, task.ProjectName, card, Stamp(task.EnteredLaneAt)),
                     task.ProjectName, card,

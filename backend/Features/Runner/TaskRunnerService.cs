@@ -1460,9 +1460,16 @@ public class TaskRunnerService : BackgroundService
         AgentStudio.Shared.TaskInfo job,
         AgentStudio.Shared.CliExecution? execution,
         AgentStudio.Shared.TaskRunActivity? activity)
+        => ResolveExecutionLocation(job, execution, activity, _projectSettings.Get(job.ProjectName).ExecutionRunner);
+
+    /// <summary>Board reads resolve the configured runner once per project.</summary>
+    internal AgentStudio.Shared.TaskExecutionLocation ResolveExecutionLocation(
+        AgentStudio.Shared.TaskInfo job,
+        AgentStudio.Shared.CliExecution? execution,
+        AgentStudio.Shared.TaskRunActivity? activity,
+        string? configured)
     {
         var inspection = InspectRunLease(_runLeases, job);
-        var configured = _projectSettings.Get(job.ProjectName).ExecutionRunner;
         var identityStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         var client = inspection.Lease is null ? null : _clients?.FindPublished(inspection.Lease.ClientId ?? inspection.Lease.RunnerId);
         if (AgentStudio.Tasks.TaskSwitchTrace.IsComposing)

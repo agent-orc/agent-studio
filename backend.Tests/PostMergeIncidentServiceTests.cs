@@ -569,6 +569,48 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         Assert.Empty(source.Collect(Now.AddMinutes(13).UtcDateTime));
     }
 
+    [Theory]
+    [InlineData(TaskStates.Preparation)]
+    [InlineData(TaskStates.Ready)]
+    [InlineData(TaskStates.Progress)]
+    [InlineData(TaskStates.AutoReview)]
+    [InlineData(TaskStates.HumanReview)]
+    [InlineData(TaskStates.Completed)]
+    [InlineData(TaskStates.Archive)]
+    public void Typed_overdue_poll_recovers_only_queued_repairs_without_another_receipt(string lane)
+    {
+        var (project, _, scanner, mutations, _, store, service) = Setup();
+        var id = mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+            { Project = project.Id, Title = "Old typed repair", TargetState = lane })!;
+        store.UpdateIncidents(project.Id, _ => [new("fingerprint", id, "FixForward", Now, null, null,
+            ["Demo.Tests.Fails"], []) { TestId = "Demo.Tests.Fails", SuiteId = "backend-routine" }]);
+        var red = TypedRed();
+        Assert.NotNull(store.Record(project.Id, red with { Status = "running", FinishedAtUtc = null }));
+        Assert.NotNull(store.Record(project.Id, red));
+        service.AskOwnerWhenOverdue(project);
+        service.AskOwnerWhenOverdue(project);
+        Assert.Equal(lane == TaskStates.Preparation ? TaskStates.Ready : lane,
+            scanner.FindJob(id, project.StorageLocation)!.State);
+        Assert.Single(scanner.ScanAllJobs());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Guardian_request_uses_the_recorded_incident_identity_after_the_log_fingerprint_changes(bool newerReceipt)
+    {
+        var (project, _, _, _, _, store, service) = Setup();
+        Record(store, service, project, TypedRed());
+        var next = TypedRed() with { Id = "next", Failure = Red().Failure! with { Fingerprint = "changed" } };
+        Record(store, service, project, next);
+        if (newerReceipt)
+            Record(store, service, project, next with { Id = "latest",
+                Failure = next.Failure! with { Fingerprint = "changed-again" } });
+        var incident = Assert.Single(store.Read(project.Id).Incidents!);
+        var item = service.RequestGuardianOperation(project, next.Id, "Demo.Tests.Fails", "quarantine.lift");
+        Assert.Equal("Demo.Tests.Fails:" + incident.Fingerprint + ":" + incident.FirstRedAtUtc.ToString("O"), item!.Incident);
+    }
+
     private static TestQuarantineStore Quarantines(PostMergeRunStore store)
         => new(Path.Combine(store.Root, "..", "test-quarantines"));
     private static void Record(PostMergeRunStore store, PostMergeIncidentService service, ProjectRecord project, PostMergeRunRecord run)

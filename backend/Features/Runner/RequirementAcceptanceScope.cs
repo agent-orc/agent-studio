@@ -22,6 +22,9 @@ public static class RequirementAcceptanceScope
     ];
 
     public static string Describe(TaskAcceptanceScope? structured, string? taskBody)
+        => Describe(structured, DeclaresBoundedLegacyScope(taskBody));
+
+    public static string Describe(TaskAcceptanceScope? structured, bool declaresBoundedLegacyScope)
     {
         var normalized = TaskAcceptanceScopes.Normalize(structured);
         if (normalized?.DeliveryMode == TaskAcceptanceDeliveryModes.BoundedSlice)
@@ -36,7 +39,7 @@ public static class RequirementAcceptanceScope
             return sb.ToString().TrimEnd();
         }
 
-        if (DeclaresBoundedLegacyScope(taskBody))
+        if (normalized is null && declaresBoundedLegacyScope)
         {
             return "Acceptance mode: bounded slice (inferred from the card's explicit one-slice/partial-delivery declaration).\n" +
                    "Judge only the single slice claimed by the status summary and evidenced by the diff/results. " +

@@ -1,5 +1,7 @@
 # Security overview
 
+<!-- append-only:security-overview:start -->
+
 > **Status note (2026-07-07).** ADR-0059 promotes **remote execution** (Linux
 > runner hosts + a central task-server URL) from explicit non-goal to a major
 > goal. The "local-only" situation below still describes the **current,
@@ -41,6 +43,28 @@ SSH tunnels should set an [operator port](../setup/github-app.md#keep-the-tunnel
 so those hosts cannot reach the routes that decide who may reach what. In the `networked` profile every
 management request requires a human owner or operator session; anonymous
 requests return `401` with the Studio login entry.
+
+Local operations that start a process or change local state carry explicit effect
+metadata even when exposed as GET. With `Security:OperatorListenerPort` set,
+the CLI probe, model discovery, model recommendations, quota reads that can
+refresh probes, and fixture scans require that listener. Foreign Origins are
+refused even on the operator port or without a configured split. Cached quota
+history remains a read on the ordinary listener.
+
+Stable updates use `POST /api/devtools/update-stable` on the operator listener
+with a registered `X-Client-Id`. The POST returns `202` with `operationId` and
+`streamUrl`; an update already running returns `409`. The existing
+`GET /api/devtools/update-stable/stream` only subscribes to the latest authorized
+operation, or to that operation with `?operationId=<id>`. Without an operation
+it returns `404`; it never starts a process. Read subscribers may use the
+ordinary listener without a client identity. Both routes still require
+`DevTools:UpdateStableEnabled=true`. Disconnecting a subscriber does not cancel
+the updater. Only the latest operation is retained in memory, with up to 2,048
+output events of at most 16,384 characters each; a backend restart clears it.
+The current update console's GET subscribes only; callers starting an update
+must migrate to the POST before opening the returned stream URL. These local
+routes remain absent from networked hosts. Existing Owner and token floors
+are unchanged.
 
 In the networked profile, checkout sync and runner-host provider authentication
 and sign-in are Owner-only. URL start rules run with a minimal child environment
@@ -157,6 +181,23 @@ that is already allowed to edit that project's checkout.
 - The standalone Task Server Studio session uses the same 10-failure client
   lockout, 20-failure username budget, 15-minute window, 8-hour idle expiry,
   and 7-day absolute expiry as the networked monolith defaults.
+- Runner chat status uses the `projectName` query as its project address;
+  integration lease status uses the project in its path. Runner chat usage,
+  queue-health collections and recommendations require a workspace binding. Status, the orchestrator feed and token aggregates retain
+  their existing handler filtering for project-scoped readers. New runner
+  literal routes default to workspace scope.
+  Legacy integration lease acquire, heartbeat and release require
+  `runner.lease`, the enrolled Runner ID in the request, and a Runner binding
+  covering the requested project. The existing branch, lease ID and fencing
+  token checks still decide which lease may be renewed or released.
+- Viewer sessions, service accounts and API tokens may call the read-only
+  POST helpers `execution-readiness-probe`, `deployment/compile`,
+  `token-pricing/calculate` and `token-pricing/what-if` with the declared read
+  permission and appropriate project or workspace scope. Browser sessions
+  still require a valid CSRF token and trusted origin for these helpers.
+  Declaring a read permission on another POST does not admit Viewer mutations.
+  Existing acceptance-readiness admission, Owner requirements and API token
+  mutation floors remain unchanged.
 - Roles are intentionally small: owner manages identities and all projects,
   operator reads and mutates allowed projects, contributor (shown as Product)
   reads assigned projects, creates wishes and cards, edits Backlog and Ready
@@ -332,6 +373,19 @@ Every role reads the magazines it can see (`magazine.read`); Owner, Admin,
 Developer and Operator agent also publish (`magazine.write`). The
 installation and workspace magazines take writes only through a workspace
 binding ([magazine domain](../../system/domains/magazine.md#access)).
+
+Destructive project removal (`DELETE /api/projects/{projId}`) requires
+`workspace.administer`. Routine project settings updates continue to require
+`project.settings.write`; a project Admin cannot delete project storage.
+The DELETE request must carry a JSON body with `confirmation` equal to the
+exact project id and a nonblank `reason` of at most 1000 characters. Missing
+or incorrect confirmation returns 400. Active coding or review work returns
+409 `project-delete-active-work` before previews, storage, WatchPaths or the
+registry are changed. Drain that work before retrying. Accepted deletion
+permanently removes the project's tasks, logs and results; retain any needed
+evidence first. The control-plane audit records the authenticated actor,
+project id, written reason and deletion outcome outside project storage.
+Existing API-token scope limits and Owner-only floors remain in force.
 
 For human users, factor enrollment follows effective permissions from direct
 and group bindings. Any role granting `project.runs.operate`,
@@ -1879,8 +1933,8 @@ SM-5 approval for the exact strategy request. After the Owner approves with
 step-up, repeat the same request with `X-Operator-Approval`; it runs once.
 Send `X-Operator-Reason` with the stated reason, percent-encoded when needed.
 The operator-agent role does not hold `project.settings.write`; this narrow
-approval path does not grant that permission to other requests. The named
-`project.testing` elevated class remains future ES-7 work.
+approval path does not grant that permission to other requests. The armed
+`project.testing` elevated class can also admit this request; see ES-7 below.
 
 Each strategy change writes one `project.testing.set` control plane audit
 entry with actor, project, old and new strategy, and the stated reason for an
@@ -1943,7 +1997,7 @@ End all elevated sessions take authority away without step-up or a confirmation
 dialog. End elevation keeps T0 and T1. New-address renewal marks the row and
 shows a quiet notice. The address history retains the latest 256 distinct
 addresses. Live operator streams recheck at most every 15 seconds. Class
-admission, rate limits and direct-action re-arming remain ES-7 work.
+admission, rate limits and direct-action re-arming are implemented in ES-7 below.
 
 After 30 days the installation security view shows “Elevated session running
 30 days” with Keep and End. Keep postpones the next review notice by 30 days
@@ -1954,3 +2008,62 @@ Existing bound sessions without a recorded key certification end no later
 than 60 minutes after confirmation and require a new terminal sign-in.
 The kill switch also denies pending and confirmed sign-ins that have not yet
 been collected, so a code from before the switch cannot issue later.
+
+## Elevated action classes and arming (ES-7)
+
+Decisions ES-D6 A, ES-D9 A and ES-D16 A are implemented. The code-owned
+`ElevatedActionClasses` catalogue sits beside `OperatorOperationCatalog`.
+Changing that catalogue is a T2 code change. No role gains permissions.
+The Owner's terminal confirmation records `elevation.classes`, the confirming
+Owner and persisted uses. Existing records without arming do not gain direct
+authority on upgrade.
+
+| Class | Mode | Limit | Availability |
+|---|---|---|---|
+| `cards.accept-override` | batch | 30 items/hour | Session lifetime; ES-8 supplies batch confirmation |
+| `cards.archive-override` | batch | 10 items/hour | Session lifetime; ES-8 supplies batch confirmation |
+| `project.testing` | direct-action | 6 requests/project/hour | 24 hours per arming, capped at session end |
+
+An armed `project.testing` admits `project.testing.set` after project scope
+checks, with a nonempty `X-Operator-Reason`. Without the class, or once its
+arming lapses, the normal `approval-required` path applies. Batch classes do
+not admit individual override calls; those keep the exact-request approval
+path until ES-8. Rate admission is conservative: an admitted request uses a
+slot even if its handler later refuses invalid parameters. Rates survive
+restart and re-arming. The seventh request in the rolling hour returns
+`elevation-rate-exceeded`. Three rate refusals within ten minutes remove all
+classes, keep the ordinary session, and raise a persisted Needs you row.
+End elevation acknowledges that row; a new sign-in is needed to regain classes.
+
+Only an active human Owner with a fresh, single-use step-up can POST
+`/api/auth/iam/operator-agents/{id}/sessions/{sessionId}/rearm` with
+`{"classId":"project.testing"}`. This starts another 24 hours, capped at
+session end. The agent cannot add classes or re-arm. There is no 60-minute
+elevation window. Hourly device key certification remains a separate clock.
+End elevation removes authority without step-up; End session and the kill
+switch clear elevation as well as ending access.
+
+Hard refusals precede classes, grants, approvals and break-glass: access,
+grants, sessions, kill switch, break-glass management, secrets (including
+metadata), production deployment and approval, catalogue, audit and
+`workspace.administer`. The catalogue inventory checks that class operations
+cannot name these surfaces.
+
+Every elevated testing change writes old/new values, class, confirming Owner,
+stated reason and instruction source, device thumbprint and arming id in the
+hash-chained audit and a project operator feed entry with Undo. Undo is an
+Owner-only POST to `/api/projects/{project}/testing/undo/{auditSequence}`;
+it restores the previous strategy from that immutable record, replans queued
+reviews, and writes an Owner audit entry referring to the original sequence.
+It can be used once. Operator sessions cannot invoke Undo.
+
+The Studio header shows live elevation and opens the same controls as
+Settings > Access > Elevated sessions, including Re-arm with step-up, End
+elevation and End session. The list shows classes, rolling uses by project
+and arming time. The header's list link focuses that section after loading.
+A quiet notice appears in the last hour before lapse.
+On phones, authority and More navigation sit above the existing header actions
+so the elevated controls remain reachable without overlap.
+Operator activity can filter by agent, session and elevated actions, with
+reason, stated source, device and arming details.
+<!-- append-only:security-overview:end -->

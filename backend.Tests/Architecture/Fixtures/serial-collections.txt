@@ -60,3 +60,6 @@ member PersistedBoardRestartCollection PersistedBoardReadTests
 
 collection OperationsTelemetryApiCollection its HTTP test temporarily uses the production Git read warning mode for Deploy's existing declaration reader, which changes a process-wide guard setting.
 member OperationsTelemetryApiCollection OperationsTelemetryApiTests
+
+collection ProductStartupFixtureCollection its test measures the wall-clock start of the production start path on a 1500-card fixture against a baseline taken in the same run; under hundreds of parallel test hosts on the gate host the fixed start missed its 60s deadline though it starts in 12 to 18s alone (AGT-4244).
+member ProductStartupFixtureCollection ProductStartupFixtureTests

@@ -27,6 +27,7 @@ public static class ControlPlaneAuditServices
             TimeProvider.System, sp.GetRequiredService<IControlPlaneAuditAlertChannel>(),
             sp.GetService<ILogger<ControlPlaneAuditMonitor>>()));
         services.AddSingleton<AgentStudio.Operator.IOperatorDecisionFactSource, ControlPlaneAuditAlertFactSource>();
+        services.AddSingleton<AgentStudio.Operator.IOperatorDecisionFactSource, OperatorElevationFactSource>();
         services.AddSingleton(sp => new AuditSinkForwarder(
             sp.GetRequiredService<ControlPlaneAuditLog>(), sp.GetRequiredService<ControlPlaneAuditMonitor>(),
             sp.GetRequiredService<ControlPlaneAuditSinkHolder>().Sink, TimeProvider.System,

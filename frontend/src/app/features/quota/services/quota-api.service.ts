@@ -3,6 +3,21 @@ import { Injectable, inject } from '@angular/core';
 import type { QuotaReport, QuotaSnapshot } from '../models/quota.model';
 import type { QuotaHistoryResponse } from '../models/quota-history.model';
 
+export interface QuotaPace {
+  mode: 'steady' | 'useBy' | 'unpaced';
+  useBy?: string | null;
+}
+
+export interface WindowPaceStatus {
+  cliType: string;
+  windowLabel: string;
+  pace: QuotaPace;
+  at: string;
+  allowedPct: number;
+  usedPct: number | null;
+  suspicious: boolean;
+}
+
 export interface CliModelRouteProfile {
   cliType: string;
   primaryModel: string | null;
@@ -189,6 +204,15 @@ export class QuotaApiService {
    * Per-CLI usage-cap configuration (admin panel). The map shape is
    * `{ defaultCapPct, caps: { [cliType]: { [windowKey]: capPct } } }`.
    */
+  getQuotaPaces() {
+    return this.http.get<WindowPaceStatus[]>(`${this.baseUrl}/model-selection/policy/pace`);
+  }
+
+  setQuotaPace(cli: string, window: string, pace: QuotaPace) {
+    return this.http.put<WindowPaceStatus>(
+      `${this.baseUrl}/model-selection/policy/pace/${encodeURIComponent(cli)}/${encodeURIComponent(window)}`, pace);
+  }
+
   getQuotaCaps() {
     return this.http.get<{
       defaultCapPct: number;

@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AgentStudio.Persistence;
 
 namespace AgentStudio.Pipeline;
 
@@ -44,6 +46,9 @@ public sealed record RemoteDeliverySettlementRecord
 {
     public int Version { get; init; } = 1;
 
+    /// <summary>Compare-and-swap revision. Legacy sidecars start at zero.</summary>
+    public long Revision { get; init; }
+
     public string TaskKey { get; init; } = "";
 
     /// <summary>ReviewAttempt whose settlement opened this delivery sequence.</summary>
@@ -85,11 +90,36 @@ public sealed record RemoteDeliverySettlementRecord
     public bool DiscardCompletedReplay { get; init; }
 
     public DateTimeOffset RecordedAtUtc { get; init; }
+
+    // A rollback restores the same delivery content with a newer persistence
+    // revision. Keep value equality about that content; concurrency checks must
+    // explicitly compare Revision through MatchesRevision below.
+    public bool Equals(RemoteDeliverySettlementRecord? other)
+        => other is not null
+           && Version == other.Version
+           && TaskKey == other.TaskKey
+           && ReviewAttemptId == other.ReviewAttemptId
+           && JournalRequired == other.JournalRequired
+           && Outcome == other.Outcome
+           && ShouldIntegrate == other.ShouldIntegrate
+           && BuildTestGate == other.BuildTestGate
+           && GateReason == other.GateReason
+           && IntegrationBranch == other.IntegrationBranch
+           && IntegrationStrategy == other.IntegrationStrategy
+           && PipelineType == other.PipelineType
+           && DeliveredAtUtc == other.DeliveredAtUtc
+           && Stage == other.Stage
+           && IntegrationOutcome == other.IntegrationOutcome
+           && IntegrationDetail == other.IntegrationDetail
+           && DiscardCompletedReplay == other.DiscardCompletedReplay
+           && RecordedAtUtc == other.RecordedAtUtc;
+
+    public override int GetHashCode() => HashCode.Combine(Version, TaskKey, ReviewAttemptId);
 }
 
 /// <summary>
 /// Reads and writes <see cref="RemoteDeliverySettlementRecord"/> beside the task
-/// folder. Every write is atomic (temp file plus move). The settled
+/// folder. Every write flushes the file and supported rename metadata. The settled
 /// ReviewAttempt stays authoritative; new report workflows also journal the
 /// delivery decision so a missing sidecar can be reconstructed safely.
 /// </summary>
@@ -105,143 +135,178 @@ public static class RemoteDeliverySettlementStore
     public static string PathFor(string taskFolder)
         => Path.Combine(TaskPaths.LogsDir(taskFolder), FileName);
 
+    private static readonly ConcurrentDictionary<string, object> Gates = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
+    private static object Gate(string taskFolder)
+        => Gates.GetOrAdd(Path.TrimEndingDirectorySeparator(Path.GetFullPath(taskFolder)), _ => new object());
+
+    // Bootstrap/reconstruction boundary. Delayed completions must use the
+    // snapshot overloads below, never install a record through this method.
     public static void Write(string taskFolder, RemoteDeliverySettlementRecord record)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(taskFolder);
         ArgumentNullException.ThrowIfNull(record);
+        lock (Gate(taskFolder))
+        {
+            var current = Read(taskFolder);
+            if (current == record)
+            {
+                Persist(taskFolder, current);
+                return;
+            }
+            if (MatchesAttempt(current, record.ReviewAttemptId))
+                record = record with { Stage = current!.Stage > record.Stage ? current.Stage : record.Stage };
+            Persist(taskFolder, record with { Revision = current is null ? 0 : checked(current.Revision + 1) });
+        }
+    }
 
-        var path = PathFor(taskFolder);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
-        try
+    /// <summary>Installs a delivery only if the snapshot read before preparation still owns the file.</summary>
+    public static RemoteDeliverySettlementRecord? TryWrite(string taskFolder,
+        RemoteDeliverySettlementRecord? expected, RemoteDeliverySettlementRecord record)
+    {
+        lock (Gate(taskFolder))
         {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(record, Json));
-            File.Move(temporary, path, overwrite: true);
+            var current = Read(taskFolder);
+            if (expected is null ? current is not null : !MatchesRevision(current, expected)) return null;
+            if (MatchesAttempt(current, record.ReviewAttemptId) && current!.Stage > record.Stage)
+                return null; // Only an explicit reopen may rewind this generation.
+            var next = record with { Revision = current is null ? 0 : checked(current.Revision + 1) };
+            Persist(taskFolder, next, replaceExisting: current is not null);
+            return next;
         }
-        finally
-        {
-            try
-            {
-                if (File.Exists(temporary)) File.Delete(temporary);
-            }
-            catch (Exception ex)
-            {
-                SilentCatch.Note(ex, "RemoteDeliverySettlementStore: temporary file cleanup");
-            }
-        }
+    }
+
+    private static void Persist(string taskFolder, RemoteDeliverySettlementRecord record, bool replaceExisting = false)
+    {
+        var writer = new AtomicJsonFileWriter();
+        var json = JsonSerializer.Serialize(record, Json);
+        if (replaceExisting) writer.ReplaceExisting(PathFor(taskFolder), json);
+        else writer.Write(PathFor(taskFolder), json);
     }
 
     public static RemoteDeliverySettlementRecord? Read(string taskFolder)
     {
         if (string.IsNullOrWhiteSpace(taskFolder)) return null;
-        var path = PathFor(taskFolder);
-        if (!File.Exists(path)) return null;
-        try
+        lock (Gate(taskFolder))
         {
-            var record = JsonSerializer.Deserialize<RemoteDeliverySettlementRecord>(
-                File.ReadAllText(path), Json);
-            return record is not null && !string.IsNullOrWhiteSpace(record.ReviewAttemptId)
-                ? record
-                : null;
-        }
-        catch (Exception ex)
-        {
-            SilentCatch.Note(ex, "RemoteDeliverySettlementStore: malformed or unreadable settlement record");
-            return null;
+            var path = PathFor(taskFolder);
+            if (!File.Exists(path)) return null;
+            try
+            {
+                var record = JsonSerializer.Deserialize<RemoteDeliverySettlementRecord>(File.ReadAllText(path), Json);
+                return record is not null && !string.IsNullOrWhiteSpace(record.ReviewAttemptId) ? record : null;
+            }
+            catch (Exception ex)
+            {
+                SilentCatch.Note(ex, "RemoteDeliverySettlementStore: malformed or unreadable settlement record");
+                return null;
+            }
         }
     }
 
-    /// <summary>
-    /// Moves the record forward one stage. Idempotent and monotonic: replaying
-    /// an earlier stage never rewinds a record another pass already advanced,
-    /// so a resumed sequence and the original request cannot fight over it.
-    /// Returns false when there is no record for this folder.
-    /// </summary>
-    public static bool Advance(
-        string taskFolder,
-        RemoteDeliverySettlementStage stage,
-        string? integrationOutcome = null,
-        string? integrationDetail = null)
-    {
-        var current = Read(taskFolder);
-        if (current is null) return false;
-        if (current.Stage >= stage && integrationOutcome is null) return true;
+    private static bool MatchesRevision(RemoteDeliverySettlementRecord? current,
+        RemoteDeliverySettlementRecord expected)
+        => MatchesAttempt(current, expected.ReviewAttemptId) && current!.Revision == expected.Revision;
 
-        Write(taskFolder, current with
+    private static RemoteDeliverySettlementRecord? Update(string taskFolder,
+        RemoteDeliverySettlementRecord expected,
+        Func<RemoteDeliverySettlementRecord, RemoteDeliverySettlementRecord?> update)
+    {
+        lock (Gate(taskFolder))
         {
-            Stage = current.Stage >= stage ? current.Stage : stage,
-            IntegrationOutcome = integrationOutcome ?? current.IntegrationOutcome,
-            IntegrationDetail = integrationDetail ?? current.IntegrationDetail,
-            RecordedAtUtc = DateTimeOffset.UtcNow,
-        });
-        return true;
+            var current = Read(taskFolder);
+            if (!MatchesRevision(current, expected)) return null;
+            var next = update(current!);
+            if (next is null) return null;
+            // An idempotent replay still reconfirms directory durability, but
+            // does not invalidate another completion's unchanged snapshot.
+            if (next != current || next.Revision != current!.Revision)
+                next = next with { Revision = checked(current!.Revision + 1) };
+            Persist(taskFolder, next, replaceExisting: true);
+            return next;
+        }
     }
 
-    /// <summary>
-    /// Records the result of an integration run that this pass actually
-    /// executed. Unlike <see cref="Advance"/> it replaces the outcome and the
-    /// detail outright, so a re-run after an operator moved the card out of its
-    /// park never keeps the stale verdict's detail beside the fresh outcome
-    /// (AGT-2995). The stage still never rewinds.
-    /// </summary>
-    public static bool RecordIntegration(
-        string taskFolder,
-        string integrationOutcome,
-        string? integrationDetail)
-    {
-        var current = Read(taskFolder);
-        if (current is null) return false;
-        Write(taskFolder, current with
+    /// <summary>Atomically advances the expected attempt and revision. A stale completion returns null.</summary>
+    public static RemoteDeliverySettlementRecord? Advance(string taskFolder,
+        RemoteDeliverySettlementRecord expected, RemoteDeliverySettlementStage stage,
+        string? integrationOutcome = null, string? integrationDetail = null)
+        => Update(taskFolder, expected, current =>
+            current.Stage >= stage && integrationOutcome is null ? current : current with
+            {
+                Stage = current.Stage >= stage ? current.Stage : stage,
+                IntegrationOutcome = integrationOutcome ?? current.IntegrationOutcome,
+                IntegrationDetail = integrationDetail ?? current.IntegrationDetail,
+                RecordedAtUtc = DateTimeOffset.UtcNow,
+            });
+
+    /// <summary>Replaces integration detail, including clearing an earlier park reason, within the same revision gate.</summary>
+    public static RemoteDeliverySettlementRecord? RecordIntegration(string taskFolder,
+        RemoteDeliverySettlementRecord expected, string integrationOutcome, string? integrationDetail)
+        => Update(taskFolder, expected, current => current with
         {
             Stage = current.Stage >= RemoteDeliverySettlementStage.IntegrationSettled
-                ? current.Stage
-                : RemoteDeliverySettlementStage.IntegrationSettled,
+                ? current.Stage : RemoteDeliverySettlementStage.IntegrationSettled,
             IntegrationOutcome = integrationOutcome,
             IntegrationDetail = integrationDetail,
             DiscardCompletedReplay = false,
             RecordedAtUtc = DateTimeOffset.UtcNow,
         });
-        return true;
-    }
 
-    /// <summary>Reopens the same passed review after an infrastructure integration fault.</summary>
-    public static bool RequeueInfrastructure(string taskFolder)
-    {
-        var current = Read(taskFolder);
-        if (current is null || !current.ShouldIntegrate
-            || current.Stage is not (RemoteDeliverySettlementStage.LaneSettled
-                or RemoteDeliverySettlementStage.IntegrationPending))
-            return false;
-        Write(taskFolder, current with
+    /// <summary>Explicitly reopens a generation for infrastructure recovery, invalidating outstanding completions.</summary>
+    public static RemoteDeliverySettlementRecord? RequeueInfrastructure(string taskFolder,
+        RemoteDeliverySettlementRecord expected)
+        => Update(taskFolder, expected, current => current.ShouldIntegrate
+            && current.Stage is RemoteDeliverySettlementStage.LaneSettled or RemoteDeliverySettlementStage.IntegrationPending
+                ? Reopened(current) : null);
+
+    /// <summary>Explicit operator/engine retry of the same passed review. No other update may rewind stages.</summary>
+    public static RemoteDeliverySettlementRecord? ReopenForRetry(string taskFolder,
+        RemoteDeliverySettlementRecord expected)
+        => Update(taskFolder, expected, current => current.ShouldIntegrate ? Reopened(current) : null);
+
+    private static RemoteDeliverySettlementRecord Reopened(RemoteDeliverySettlementRecord current)
+        => current with
         {
             Stage = RemoteDeliverySettlementStage.IntegrationPending,
             IntegrationOutcome = null,
             IntegrationDetail = null,
             DiscardCompletedReplay = true,
             RecordedAtUtc = DateTimeOffset.UtcNow,
-        });
-        return true;
+            // Even an already pending retry must fence an in-flight completion.
+            Revision = checked(current.Revision + 1),
+        };
+
+    // Immediate operations retained for existing bootstrap/recovery consumers.
+    // The read and the mutation share the gate; callers spanning an await use
+    // the snapshot overloads so the earlier attempt AND revision are required.
+    internal static bool Advance(string taskFolder, RemoteDeliverySettlementStage stage,
+        string? integrationOutcome = null, string? integrationDetail = null)
+    {
+        lock (Gate(taskFolder))
+            return Read(taskFolder) is { } current
+                && Advance(taskFolder, current, stage, integrationOutcome, integrationDetail) is not null;
     }
 
-    /// <summary>
-    /// AGT-3883: reopens a settled integration of the same passed review that
-    /// may retry without a new review, so the engine decision that the
-    /// stranding watchdog asks for integrates again instead of moving the card
-    /// on the old failed verdict.
-    /// </summary>
+    internal static bool RecordIntegration(string taskFolder, string integrationOutcome, string? integrationDetail)
+    {
+        lock (Gate(taskFolder))
+            return Read(taskFolder) is { } current
+                && RecordIntegration(taskFolder, current, integrationOutcome, integrationDetail) is not null;
+    }
+
+    internal static bool RequeueInfrastructure(string taskFolder)
+    {
+        lock (Gate(taskFolder))
+            return Read(taskFolder) is { } current && RequeueInfrastructure(taskFolder, current) is not null;
+    }
+
     public static bool ReopenForRetry(string taskFolder, string reviewAttemptId)
     {
-        var current = Read(taskFolder);
-        if (!MatchesAttempt(current, reviewAttemptId) || !current!.ShouldIntegrate) return false;
-        Write(taskFolder, current with
-        {
-            Stage = RemoteDeliverySettlementStage.IntegrationPending,
-            IntegrationOutcome = null,
-            IntegrationDetail = null,
-            DiscardCompletedReplay = true,
-            RecordedAtUtc = DateTimeOffset.UtcNow,
-        });
-        return true;
+        lock (Gate(taskFolder))
+            return Read(taskFolder) is { } current && MatchesAttempt(current, reviewAttemptId)
+                && ReopenForRetry(taskFolder, current) is not null;
     }
 
     /// <summary>

@@ -6,6 +6,33 @@ namespace AgentRunner.Tests;
 
 public sealed class ReviewTestReportPolicyTests
 {
+    [Theory]
+    [InlineData("FullyQualifiedName~.Architecture.|Category=Guard")]
+    [InlineData("(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard)")]
+    public void Explicit_empty_guard_selection_is_valid_even_when_delivery_adds_tests(string filter)
+    {
+        var command = new ReviewCommandDto("verify-8", "build-tests", "sh",
+            ["-lc", $"dotnet test engine.Tests.csproj --no-build --filter \"{filter}\""], CompareToBaseline: true);
+        var result = new ProcessResult(0,
+            $"No test matches the given testcase filter `{filter}` in engine.Tests.dll", string.Empty);
+        Assert.False(ReviewTestReportPolicy.Missing(command, result, setupChanged: true));
+        Assert.False(ReviewTestReportPolicy.NeedsSetupCheck(command, result));
+        Assert.True(ReviewTestReportPolicy.Missing(command, result with { ExitCode = 1 }));
+        Assert.True(ReviewTestReportPolicy.Missing(command, result with { StdOut = string.Empty }));
+    }
+
+    [Theory]
+    [InlineData("Category!=MachineBound")]
+    [InlineData("FullyQualifiedName~MachineBlockerPolicyTests")]
+    [InlineData("FullyQualifiedName~.Architecture.|Category=Guard|Category=Acceptance")]
+    public void Empty_ordinary_or_broadened_selection_still_requires_a_completed_test(string filter)
+    {
+        var command = new ReviewCommandDto("verify-9", "build-tests", "dotnet",
+            ["test", "engine.Tests.csproj", "--no-build", "--filter", filter], CompareToBaseline: true);
+        Assert.True(ReviewTestReportPolicy.Missing(command, new ProcessResult(0,
+            $"No test matches the given testcase filter `{filter}` in engine.Tests.dll", string.Empty), setupChanged: true));
+    }
+
     [Fact]
     public void Vitest_test_files_summary_is_a_parseable_report()
     {
@@ -49,6 +76,20 @@ public sealed class ReviewTestReportPolicyTests
         Assert.True(ReviewTestReportPolicy.NeedsSetupCheck(command, result));
         Assert.False(ReviewTestReportPolicy.Missing(command, result));
         Assert.True(ReviewTestReportPolicy.Missing(command, result, setupChanged: true));
+    }
+
+    [Fact]
+    public void Playwright_summary_is_a_parseable_report_when_the_spec_file_list_changed()
+    {
+        // AGT-4239: the product-start base suite ends with a Playwright run.
+        var command = new ReviewCommandDto("verify-8", "build-tests", "sh",
+            ["-lc", "bash scripts/base-product-start.sh"], CompareToBaseline: true);
+        var passed = new ProcessResult(0, "Running 1 test using 1 worker\n\n  1 passed (24.1s)\n", string.Empty);
+        Assert.False(ReviewTestReportPolicy.Missing(command, passed, setupChanged: true));
+        Assert.False(ReviewTestReportPolicy.Missing(command, new ProcessResult(0,
+            "\u001b[32m  1 passed\u001b[39m\u001b[2m (24.1s)\u001b[22m\n", string.Empty), setupChanged: true));
+        Assert.True(ReviewTestReportPolicy.Missing(command,
+            new ProcessResult(0, "  0 passed (0.1s)\n", string.Empty), setupChanged: true));
     }
 
     [Fact]

@@ -386,6 +386,21 @@
         </tr>
       </thead>
       <tbody>
+        <!-- append-only:drive-to-conclusion:start -->
+        <tr id="case-conflict-receipt-preparation-retry">
+          <td>2026-11-27</td>
+          <td><code>AGT-4140</code><br><span class="small">conflict-receipt-preparation-retry</span></td>
+          <td>No CLI crashed. A failed recovery receipt write prevented a later automatic conflict round for the same delivery and integration tip.</td>
+          <td>The preparation failure used the handled-conflict deduplication key even though no round had started and no delivery had been superseded.</td>
+          <td>Preparation failures remain visible and deduplicated but permit another preparation attempt after filesystem repair. The regression fixture reaches Ready once with its saved recovery delta; queued rounds and terminal refusals retain their guards.</td>
+        </tr>
+        <tr id="case-agt-4140-integration-replay">
+          <td>2026-11-27</td>
+          <td><code>AGT-4140</code><br><span class="small">integration-replay</span></td>
+          <td>No CLI crashed. Direct merge, mechanical merge and rebase fallback failed at <code>merge-into-develop</code> for delivery <code>a2470a2a231e</code> against <code>ac7809b6c9db</code>.</td>
+          <td>The recovery service and this case log shared edit locations with the newer integration handoff contract.</td>
+          <td>The replay preserves preparation retries together with the integration branch's reserved-capacity accounting, pinned delivery base, exhausted-budget repair and append-only case markers. The build, 179 focused tests and lint pass; the guard run identifies an existing history-hotspot failure in two unchanged files. The new delivery returns to pipeline-owned integration.</td>
+        </tr>
         <tr id="case-rt6-legacy-canary-red-develop">
           <td>2026-11-27</td>
           <td><code>AGT-4046</code><br><span class="small">rt6-legacy-canary-red-develop</span></td>
@@ -3449,6 +3464,162 @@
             integration blockers return to Ready under the same dependency hold;
             current-delivery integration releases pickup without a human round.
             Unknown or ambiguous blockers retain escalation.</td>
+        </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4049</code><br><span class="small">stale-verdict-recovery-custody</span></td>
+          <td>No CLI crash is established. Stale-verdict recovery parked retryable
+            gate failures; later integration did not clear the machine escalation.</td>
+          <td>The recovery branch combined unsuccessful integration and failed
+            review handoff into a generic escalation and did not scan Escalated.</td>
+          <td>Recovery persists immutable delivery identity and phase, routes typed
+            gate failures to their owner, waits for capacity, and requests fresh
+            review after verified integration. Obsolete matching machine parks
+            return to Auto Review with timeline evidence; human holds remain.</td>
+        </tr>
+        <tr>
+          <td>2026-11-26</td>
+          <td><code>AGT-4048</code><br><span class="small">integration-conflict-rounds</span></td>
+          <td>No CLI crash was reproduced. Net-change replay returned a conflict
+            without its target tip or structured conflict report.</td>
+          <td>Individual integration forgot completed outcomes after 15 minutes;
+            recovery allowed one round and later shared-file deliveries could pass it.</td>
+          <td>Two automatic rounds keep the source CLI and model at medium reasoning.
+            Durable collision receipts suppress unchanged retries, and later overlapping
+            individual deliveries wait through recovery and review. The third conflict
+            reaches Human Review with history. Historical AGT-4011 timings remain unverified.</td>
+        </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4048</code><br><span class="small">integration-conflict-receipt-and-lock-repair</span></td>
+          <td>No CLI crashed. An invalid or locked conflict receipt could throw
+            before the project drain's error boundary.</td>
+          <td>Receipt reads were unguarded, and retry and changed-path Git facts
+            were collected under the coordinator's shared queue lock.</td>
+          <td>Unreadable receipts produce an explicit integration error for the
+            affected delivery without attempting another merge; other cards drain.
+            Fact reads run outside the lock, with replay identity and queue revision
+            checks before applying their results.</td>
+        </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4048</code><br><span class="small">integration-conflict-board-lock-repair</span></td>
+          <td>No CLI crashed. A blocked reservation scan during board publication
+            blocked enqueue and integration for other projects.</td>
+          <td>Board ordering still scanned task folders and conflict receipts
+            under the shared queue lock after Git fact reads had moved outside it.</td>
+          <td>Board snapshots collect reservation facts outside the lock and
+            recheck queue identity and revision before publication, including
+            activity changes. Deterministic regressions verify independent project
+            progress and repaired-delivery order during a concurrent enqueue.
+            The terminal remains the queued recovery or completed integration.</td>
+        </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4048</code><br><span class="small">integration-conflict-receipt-write-repair</span></td>
+          <td>No CLI crashed. Receipt replacement or cleanup could throw inside
+            the individual integration drain after its merge result was known.</td>
+          <td>Receipt writes and deletion had no filesystem error guard.
+            Recovery preparation also wrote after superseding the delivery.</td>
+          <td>Failed conflict persistence returns an explicit integration error
+            for that delivery, and the queue continues. Recovery preparation
+            persists its receipt before changing the reviewed delivery. Cleanup
+            failure preserves a successful publication and branch reclamation.</td>
+        </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4048</code><br><span class="small">integration-conflict-continuation</span></td>
+          <td>No CLI crashed. Direct merge, mechanical merge and rebase fallback
+            stopped at <code>merge-into-develop</code> in the shared adapter and case log.</td>
+          <td>Recovery methods and incident rows shared insertion points with
+            integration-blocker and post-merge scheduling additions on develop.</td>
+          <td>The continuation retains both adapter method sets and all case rows,
+            restores the reviewed delivery on the assigned base and verifies focused
+            tests, guards and lint. The terminal is a new delivery for pipeline-owned
+            integration and publication.</td>
+        </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4117</code><br><span class="small">post-merge-restart-custody</span></td>
+          <td>A host restart lost in-memory post-merge command evidence and an undelivered terminal receipt left develop running.</td>
+          <td>Post-merge execution had no host journal or recoverable renewable owner; replacement waited for the fixed four/fourteen-hour bound.</td>
+          <td>Flushed command checkpoints reconstruct the same run; a durable terminal outbox replays before a successor. Invalid or incomplete work settles inconclusive with retained evidence, and a new fence rejects the previous owner.</td>
+        </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4098</code><br><span class="small">machine-blocker-facts</span></td>
+          <td>No CLI crash. Agent integration prerequisites could bypass the existing dependency hold and enter human intake. The hardware incident remains suspected without its source finding and host snapshot.</td>
+          <td>Direct legacy BLOCKED and NEEDS_INPUT handlers skipped platform integration and verification feasibility facts.</td>
+          <td>Typed deadline receipts requeue integrated prerequisites, recheck pending facts and end missing, failed or expired conditions in a deduplicated repair and machine quarantine. Mandatory evidence remains unsatisfied.</td>
+        </tr>
+        <tr id="case-agt-4098-integration-recovery">
+          <td>2026-11-27</td>
+          <td><code>AGT-4098</code><br><span class="small">machine-blocker-integration-recovery</span></td>
+          <td>No CLI crash. Direct merge, mechanical merge and rebase fallback stopped at <code>merge-into-develop</code> in this case log.</td>
+          <td>The delivery appended an incident beside the integration branch's new append-only boundary markers.</td>
+          <td>The continuation retains the markers, all integrated incident rows and the machine-blocker implementation. Focused checks precede a new delivery for platform-owned integration and publication.</td>
+        </tr>
+        <tr id="case-agt-4098-empty-review-guard">
+          <td>2026-11-27</td>
+          <td><code>AGT-4098</code><br><span class="small">empty-review-guard-report</span></td>
+          <td>No CLI crash. Review reported <code>verify-8</code> exiting zero without a completed-test report and attributed it to a new blocker test file.</td>
+          <td>The engine project had no matching guards. The guard planner allows an empty selection, but the report policy required a positive completed-test count. The historical review stdout was unavailable; the empty engine guard and policy rejection were reproduced independently.</td>
+          <td>The existing engine plane-authority contract test now runs as a guard, including on older review hosts. The report policy accepts only an explicit successful VSTest empty result for the canonical guard filter. Ordinary tests still require reports and guard failures retain baseline comparison. The continuation returns a new delivery to platform-owned integration.</td>
+        </tr>
+        <tr id="case-agt-4098-review-contract-integration-recovery">
+          <td>2026-11-27</td>
+          <td><code>AGT-4098</code><br><span class="small">review-contract-integration-recovery</span></td>
+          <td>No CLI crash. Direct merge, mechanical merge and rebase fallback stopped at <code>merge-into-develop</code> in <code>docs/system/domains/review.md</code>, delivery <code>4e6b90d9c2a4</code>, integration tip <code>5d439ded458d</code>.</td>
+          <td>AGT-4049's stale-verdict recovery contract and AGT-4098's capability disposition contract appended different sections at the same location.</td>
+          <td>Retained both contract sections and the three prior delivery changes, including the report-policy and code-quality fixes. The already-integrated engine guard trait is retained. Focused checks return the combined tree to platform-owned delivery and integration.</td>
+        </tr>
+        <!-- append-only:drive-to-conclusion:end -->
+        <tr id="case-stale-red-review-baseline">
+          <td>2026-11-27</td>
+          <td><code>AGT-4099</code><br><span class="small">stale-red-review-baseline</span></td>
+          <td>Reported: lint stayed red on delivery and its stale base after develop
+            was repaired, while reviews repeatedly ended as ReviewInfra. Frozen
+            incident plans and verdicts were not recovered locally.</td>
+          <td>Fixtures reproduce inconsistent environment grading and cached retry
+            measurements. Shared dispositions retain branch debt, remeasure a
+            repaired target merge and require fresh infrastructure retry evidence.</td>
+          <td>A passing measured merge continues delivery; a confirmed product finding
+            reaches its fix round. Incomplete proof retains bounded infrastructure recovery.</td>
+        </tr>
+        <tr id="case-review-measurement-integration-continuation">
+          <td>2026-11-27</td>
+          <td><code>AGT-4099</code><br><span class="small">review-measurement-integration-continuation</span></td>
+          <td>No CLI crash is established. Delivery <code>c610f0c13d79</code>
+            stopped at <code>merge-into-develop</code> after all three integration
+            strategies conflicted in this case log against <code>4d6a2dbd8613</code>.</td>
+          <td>The review measurement incident and newer integration recovery
+            incidents shared the append location.</td>
+          <td>The continuation restores the delivery on the assigned current base,
+            retains every integration-side incident and verifies focused classes,
+            guards and lint. The terminal is a delivery for platform-owned publication.</td>
+        </tr>
+        <tr id="case-review-measurement-adapter-continuation">
+          <td>2026-11-27</td>
+          <td><code>AGT-4099</code><br><span class="small">review-measurement-adapter-continuation</span></td>
+          <td>No CLI crash is established. Delivery <code>9247343a35e1</code>
+            stopped at <code>merge-into-develop</code> against <code>dfc9f16398ee</code>.
+            Direct merge, mechanical merge and rebase fallback conflicted in
+            <code>MonolithTransitionAdapter.cs</code>.</td>
+          <td>The shared adapter insertion point received merge-check admission
+            methods on develop and review measurement normalization in the delivery.</td>
+          <td>The continuation retains both method sets and the complete delivery
+            patch on the assigned target base. Focused classes, boundary guards
+            and lint verify a replacement delivery for platform-owned publication.</td>
+        </tr>
+        <tr id="case-review-measurement-case-log-continuation">
+          <td>2026-11-27</td>
+          <td><code>AGT-4099</code><br><span class="small">review-measurement-case-log-continuation</span></td>
+          <td>No CLI crash is established. Delivery <code>6815c4201103</code>
+            stopped at <code>merge-into-develop</code> against <code>2f41493f5801</code>
+            in this case log.</td>
+          <td>AGT-4117 and AGT-4098 incident rows shared the append location.</td>
+          <td>The continuation retains every integration-side row and the delivery patch;
+            focused classes, guards and lint verify a replacement delivery.</td>
         </tr>
       </tbody>
     </table>

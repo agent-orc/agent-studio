@@ -185,7 +185,7 @@ public static class TaskCrudEndpoints
                 ?? BoardReadValidator.Bytes(ctx, body.ETag, body.Bytes);
         });
 
-        group.MapGet("/grouped", async (bool? includeFixtures, bool? includeLegacyReviewLane, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, TaskListGitProjectionCache gitProjection, AgentStudio.Registry.ProjectRegistry projects, BoardCardProjector cards, BoardReadSignatureSource boardSignature, BoardReadConcurrencyGate boardReads, BoardSourceSettings boardSource, BoardShadowWorker boardShadow, TaskServerBoardSource taskServerBoard, RestoredBoard restoredBoard, ILoggerFactory loggerFactory) =>
+        group.MapGet("/grouped", async (bool? includeFixtures, bool? includeLegacyReviewLane, bool? completedSummary, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, TaskListGitProjectionCache gitProjection, AgentStudio.Registry.ProjectRegistry projects, BoardCardProjector cards, BoardReadSignatureSource boardSignature, BoardReadConcurrencyGate boardReads, BoardSourceSettings boardSource, BoardShadowWorker boardShadow, TaskServerBoardSource taskServerBoard, RestoredBoard restoredBoard, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/grouped",
@@ -208,7 +208,8 @@ public static class TaskCrudEndpoints
                 {
                     if (restoredBoard.Grouped(context, ProjectVisible(context, projects), includeFixtures == true,
                             legacyReviewLane,
-                            $"tasks/grouped?fixtures={includeFixtures == true}&legacyReviewLane={legacyReviewLane}")
+                            $"tasks/grouped?fixtures={includeFixtures == true}&legacyReviewLane={legacyReviewLane}&completedSummary={completedSummary == true}",
+                            completedSummary == true)
                         is { } restored)
                     {
                         context.Response.Headers["X-Board-Source"] = BoardSourceSetting.Format(boardSource.Mode);
@@ -265,7 +266,7 @@ public static class TaskCrudEndpoints
             // lookups, the per-lane sort and the serialisation below run once
             // per signature, and a rebuilt body that matches the client's copy
             // still answers 304 because its tag is derived from its bytes.
-            var variant = $"fixtures={includeFixtures == true}&legacyReviewLane={legacyReviewLane}{sourceVariant}";
+            var variant = $"fixtures={includeFixtures == true}&legacyReviewLane={legacyReviewLane}&completedSummary={completedSummary == true}{sourceVariant}";
             string signature;
             using (TaskSwitchTrace.Span("compose"))
                 signature = BoardReadValidator.FormatETag(boardSignature.Compose(
@@ -274,19 +275,25 @@ public static class TaskCrudEndpoints
                     raw,
                     gitFreshness,
                     router,
-                    runners));
+                    runners,
+                    completedSummary == true));
 
             byte[] BuildPayload()
             {
-                var jobs = cards.Project(raw);
+                var jobs = TaskSwitchTrace.Run("body.project", () => completedSummary == true
+                    ? cards.Project(raw.Where(job => job.State != TaskStates.Completed).ToList(), eligibleWaiters: raw)
+                        .Concat(raw.Where(job => job.State == TaskStates.Completed)).ToList()
+                    : cards.Project(raw));
                 // The lane names, their order, the legacy Review alias and the
                 // always-empty Archive key are BoardCardSummary.GroupedLanes,
                 // shared with the persisted board. GitStateAt is the oldest
                 // index timestamp among the repositories represented on the
                 // board (AGT-2726); Stale is true while at least one of them has
                 // never been indexed yet or is mid-refresh.
-                var lanes = BoardCardSummary.GroupedLanes(cards.LaneSorter(jobs), legacyReviewLane);
-                return BoardCardSummary.SerializeGrouped(lanes, gitFreshness.GitStateAt, gitFreshness.Stale);
+                var lanes = TaskSwitchTrace.Run("body.sort", () => BoardCardSummary.GroupedLanes(cards.LaneSorter(jobs), legacyReviewLane));
+                return TaskSwitchTrace.Run("body.serialize", () => BoardCardSummary.SerializeGrouped(lanes, gitFreshness.GitStateAt, gitFreshness.Stale,
+                    job => completedSummary == true && job.State == TaskStates.Completed
+                        ? BoardCardSummary.SerializeCompleted(job) : BoardCardSummary.Serialize(job)));
             }
             BoardReadBody body;
             using (TaskSwitchTrace.Span("body"))
@@ -1015,15 +1022,21 @@ public static class TaskCrudEndpoints
             AgentStudio.Registry.ProjectRegistry projects, ILoggerFactory loggers) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var success = states.DeleteJob(jobId, watchPath);
-            // AGT-3624: deleting a card with unintegrated work carries the
-            // operator's written reason; the folder is gone, so the log keeps it.
-            if (success && !string.IsNullOrWhiteSpace(reason))
+            var outcome = states.DeleteJobChecked(jobId, watchPath);
+            // Draft deletion notes remain in the log. Protected work uses the
+            // archive route's authority, reason and retained evidence instead.
+            if (outcome.Status == DeleteJobStatus.Success && !string.IsNullOrWhiteSpace(reason))
                 loggers.CreateLogger("AgentStudio.Tasks.TaskDelete").LogWarning(
                     "task-deleted-with-reason job={JobId} watchPath={WatchPath} reason={Reason}",
                     jobId, watchPath, reason.Trim());
-            return success ? Results.Ok() : Results.NotFound();
-        });
+            return outcome.Status switch
+            {
+                DeleteJobStatus.Success => Results.Ok(),
+                DeleteJobStatus.NotFound => Results.NotFound(),
+                DeleteJobStatus.Conflict => Results.Conflict(new { error = outcome.Code, message = outcome.Message }),
+                _ => Results.Problem(outcome.Message),
+            };
+        }).WithDescription("Deletes an unstarted draft. Execution or delivery evidence returns 409 and must be retained through the guarded archive move. A DELETE reason does not bypass that protection.");
 
         async Task<IResult> CreateTask(
             CreateTaskRequest req,

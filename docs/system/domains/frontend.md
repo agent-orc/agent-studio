@@ -60,9 +60,21 @@ rejects growth against the checked-in baseline.
 `ThemeService` owns two independent choices. `atp.studio.theme` remains the
 `light` / `dark` / `system` preference. The typed registry in
 `frontend/src/app/features/studio-shell/services/theme-token-sets.ts` supplies
-palette families with both light and dark variants. The only shipped family is
+palette families with both light and dark variants. The default family is
 `studio-default`: its two empty override maps use the existing library CSS
-unchanged. Appearance and the titlebar keep their existing controls.
+unchanged. Appearance also offers three opt-in preview families from AGT-4070,
+AGT-4071 and AGT-4072: `preview-1` (calm and dense), `preview-2` (editorial),
+and `preview-3` (workbench). Each has a description and both themes. Only roles
+with current token consumers are mapped; page structure stays unchanged.
+This checkout has no hosted font assets, so previews use the supplied system
+fallbacks rather than fetching fonts. Contrast corrections live in the preview
+maps and their text/surface matrix is covered by unit and browser tests.
+
+A normal URL query, for example `/?tokenSet=preview-3#/board`, overrides the
+family for that visit without changing the saved browser choice. Unknown query
+ids leave the saved choice active. An explicit selection in Appearance saves
+the choice and removes the query override, preserving other query parameters
+and the hash route. Theme and System changes preserve the visit override.
 
 `atp.studio.tokenSet` stores `{ "version": 1, "id": "studio-default" }`.
 Only a registered id at the supported version restores. Missing, malformed,
@@ -77,7 +89,8 @@ saved choice; the media-query listener is removed on service destruction.
 lowercase id, label, and both mode maps. `setTokenSet(id)` selects it without a
 build; `tokenSets`, `tokenSetId` and `tokenSet` expose the registry, selected
 family and resolved variant as signals. Prototype maps override central
-`--studio-*` aliases only, on the document root. Switching family or mode restores
+`--studio-*`, `--font-*`, `--elevation-*`, `--model-family-*` and `--lane-*`
+aliases on the document root. Switching family or mode restores
 previous inline values and removes overrides absent from the next variant.
 Primitives and the library bridge keep their names and definitions. This is an
 application configuration API, not an arbitrary CSS import facility. It validates
@@ -132,6 +145,52 @@ default appearance in both themes. Its appearance-evidence test also works on
 the pre-change build for baseline capture. The audit instruction prohibited
 builds and test execution, so browser verification and before/after screenshot
 comparison remain pending; source checks do not substitute for those checks.
+
+## Surface density
+
+After the F01 token-set foundation, `UiPreferencesService.surfaceDensity` owns
+an independent browser-local `compact | default | cozy` preference.
+Appearance > Layout > Surface density writes `atp.studio.surfaceDensity.v1`;
+reload restores it, and sibling-tab storage writes, removal and clear update
+both the signal and `<html data-studio-density>`. Missing or invalid values
+select compact. The retired `compactCards` key is still removed on boot and
+never participates in this preference. Density changes spacing, not row data.
+
+The app token entry `frontend/src/styles/_tokens-semantic.scss` maps six active
+aliases onto the library's existing scales, independently of light/dark theme:
+
+| Active alias suffix (`--studio-`) | Compact (initial) | Default | Cozy |
+|---|---:|---:|---:|
+| `row-pad-block` | 3 px | 6 px | 10 px |
+| `row-pad-inline` | 6 px | 10 px | 14 px |
+| `row-gap` | 3 px | 6 px | 10 px |
+| `section-gap` | 10 px | 16 px | 24 px |
+| `row-min-h` | 20 px | 24 px | 32 px |
+| `row-min-h-interactive` | 32 px | 36 px | 40 px |
+
+Precedence is CSS inheritance: the root supplies aliases; a surface may override
+aliases locally; a shared row with an explicit `variant="compact|default|cozy"`
+remaps them on its own host and wins over inherited values. Omitting `variant`
+(or binding `undefined`) inherits the containing surface/root. Direct declarations
+on a descendant still take precedence over inherited aliases. Current Diff rows
+explicitly select compact and Access detail rows explicitly select default;
+these choices are retained. Unrelated surface-specific geometry remains local.
+
+The shared row keeps flush inline padding and its existing compact gap floors
+(8 px between slots, 6 px within values, 4 px within trailing content), using
+existing tokens. Gaps expand when the selected row-gap exceeds those floors.
+Thus the initial compact geometry is unchanged. `interactive` continues to
+select the separate 32/36/40 px minimum-height floor; projected native controls
+retain their keyboard behavior and static rows add no Tab stop.
+
+The historical app row path re-exports the current implementation under
+`frontend/projects/studio-ui/src/components/row/`. Focused coverage lives in
+`ui-preferences.service.spec.ts`, `appearance-settings.component.spec.ts`, both
+row test paths and `frontend/e2e/restyle-base/surface-density.spec.ts`. Browser
+checks cover exact compact aliases, both themes, 1280/390 px, keyboard choice,
+reload, real sibling-tab preference events, local overrides and unchanged row
+content. The row CSS test changes host attributes on a fixture-backed Access
+row; Angular input reflection is verified separately by the unit tests.
 
 ## Phone navigation and theme
 
@@ -1081,6 +1140,33 @@ occur. It is not a claim about tunnel transfer time.
   without a Studio session cookie. Only those capability-bearing asset
   responses allow CORS for `Origin: null`; they never allow credentials. Other
   opaque-origin requests to Studio APIs are rejected before session authentication.
+  Preview and readiness HTTP clients share a connection-time destination policy
+  in `ProjectUrlProbePolicy.cs`. Each connection resolves DNS once and connects
+  only to an IP checked by the shared health address policy. Private networks,
+  link-local and metadata endpoints are refused; registering a URL does not
+  grant access to them. This transport rule applies in both security profiles.
+  Loopback is allowed only for the matching project URL's active process started
+  by Studio, with the same start command and a declared loopback origin at the
+  configured port (or the registered port when no port is configured). The
+  declared health URL can supply that origin for readiness. A manually started
+  localhost service therefore fails closed: use the URL's Start action with its
+  start rule to let Studio own the process, or open the URL directly on the
+  machine serving it. Stopping the process removes its local permission on the
+  next request. An unapproved preview returns HTTP 502; networked readiness can
+  report `local-only` before making a request, or `offline` when the transport
+  refuses a resolved address.
+  Automatic upstream redirects, proxies, cookies and connection reuse are
+  disabled. Preview redirects within the registered origin and path are
+  rewritten through the preview route, where destination checks run again;
+  off-origin redirects return HTTP 502. Readiness does not follow redirects.
+  The preview forwards only the caller's `Accept` header, never Studio
+  authorization, cookies or arbitrary request headers. Normal authenticated
+  preview and readiness GETs remain `ProjectRead` and operator T0 `Observe`;
+  URL writes remain operator T2 `ExposureChange`. Capability-bearing asset GETs
+  still require HTTPS in the networked profile and bypass principal
+  authentication for their project URL scope and 30 minute lifetime. The
+  operator kill switch does not revoke those capabilities; the destination
+  policy and local process permission still apply to each asset request.
 - `frontend/src/app/features/project-detail/components/workbench-viewer/` is the
   isolated Dossier host. The workspace-wide `#/workbenches` overview and
   project-scoped `#/projects/<project>/workbenches` overview share one ordered

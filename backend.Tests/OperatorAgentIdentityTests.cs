@@ -187,10 +187,9 @@ public sealed class OperatorAgentIdentityTests : IDisposable
             await Run("GET", "/api/v1/{**path}", "/api/v1/runners", token),
         };
         Assert.All(refused, outcome => Assert.Equal((403, false), (outcome.Status, outcome.Called)));
-        // SM-4: access changes are T2 and the path import is not catalogued, so the
-        // policy step refuses both before the access floor; reads still meet the floor.
-        Assert.Equal(OperatorPolicyReasons.ApprovalRequired, refused[1].Error);
-        Assert.Equal(OperatorPolicyReasons.NotCatalogued, refused[7].Error);
+        // ES-7: access and installation administration are hard refusals before the tier gate.
+        Assert.Equal("token-route-denied", refused[1].Error);
+        Assert.Equal("operator-route-denied", refused[7].Error);
         Assert.Equal("token-route-denied", refused[0].Error);
         Assert.True((await Run("GET", "/api/tags", "/api/tags", token)).Called);
     }

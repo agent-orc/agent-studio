@@ -480,6 +480,43 @@ internal static class BoardCardSummary
             location.Historical ? true : null, location.LastRejection, location.LastRunnerEvent);
     }
 
+    private static readonly string[] CompletedFields =
+    [
+        "id", "key", "title", "state", "order", "createdAt", "watchPath", "projectName", "enteredLaneAt", "tags",
+    ];
+
+    /// <summary>
+    /// Opt-in completed-card identity and ordering. Full metadata remains on
+    /// task detail. These fields depend only on the pinned resident task facts.
+    /// </summary>
+    public static byte[] SerializeCompleted(TaskInfo job)
+        => JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            job.Id, job.Key, job.Title, job.State, job.Order,
+            createdAt = WholeSeconds(job.CreatedAt), job.WatchPath, job.ProjectName,
+            job.EnteredLaneAt, job.Tags, summary = true,
+        }, Json);
+
+    /// <summary>The identical summary shape from a restored, already serialized card.</summary>
+    public static byte[] SerializeCompleted(byte[] card)
+    {
+        using var document = JsonDocument.Parse(card);
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            foreach (var name in CompletedFields)
+                if (document.RootElement.TryGetProperty(name, out var value))
+                {
+                    writer.WritePropertyName(name);
+                    value.WriteTo(writer);
+                }
+            writer.WriteBoolean("summary", true);
+            writer.WriteEndObject();
+        }
+        return stream.ToArray();
+    }
+
     public static JsonElement AsJsonElement(TaskInfo job)
         => JsonSerializer.Deserialize<JsonElement>(Serialize(job, includeTaskKey: true));
 

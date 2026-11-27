@@ -11,6 +11,11 @@ namespace AgentStudio.Persistence;
 /// </summary>
 public interface IAtomicJsonFileWriter
 {
+    /// <summary>
+    /// Returns only after file contents and supported directory metadata flushes
+    /// complete. A DirectoryDurabilityException means a namespace update may
+    /// already be visible: recover from disk before retrying, never acknowledge it.
+    /// </summary>
     void Write(string path, string content);
 
     /// <summary>
@@ -60,6 +65,24 @@ public static class AtomicJsonFileWriterBackups
 public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
 {
     private static readonly AsyncLocal<bool> DiskFlushSuspended = new();
+    private static readonly AsyncLocal<DirectoryOperations?> DirectoryOperationsOverride = new();
+
+    private sealed record DirectoryOperations(
+        Func<string, int> Open, Func<int, int> Sync, Action<int> Close);
+
+    private sealed class DirectoryOperationsScope(Action restore) : IDisposable
+    {
+        public void Dispose() => restore();
+    }
+
+    // Flow-local injection exercises syscall failures without changing other writers.
+    internal static IDisposable OverrideDirectoryOperationsForTests(
+        Func<string, int> openDirectory, Func<int, int> syncDirectory, Action<int> closeDirectory)
+    {
+        var previous = DirectoryOperationsOverride.Value;
+        DirectoryOperationsOverride.Value = new(openDirectory, syncDirectory, closeDirectory);
+        return new DirectoryOperationsScope(() => DirectoryOperationsOverride.Value = previous);
+    }
 
     private readonly bool _keepLastGoodBackup;
 
@@ -240,16 +263,30 @@ public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
         }
     }
 
-    /// <summary>Persist rename metadata on Unix. Windows does not support opening
-    /// a directory through FileStream; the flushed files remain recoverable via .bak.</summary>
+    /// <summary>
+    /// Persist namespace metadata on Unix. Failure after a rename is an uncertain
+    /// commit, not a durable success. Windows retains its existing file-flush-only
+    /// policy because this directory flushing contract is not supported there.
+    /// </summary>
     internal static void FlushDirectory(string path)
     {
         if (OperatingSystem.IsWindows() || !FlushesToDisk) return;
         var directory = Path.GetDirectoryName(Path.GetFullPath(path))!;
-        var descriptor = open(directory, 0);
-        if (descriptor < 0) return;
-        try { _ = fsync(descriptor); }
-        finally { _ = close(descriptor); }
+        var operations = DirectoryOperationsOverride.Value;
+        var descriptor = operations is null ? open(directory, 0) : operations.Open(directory);
+        if (descriptor < 0)
+            throw new DirectoryDurabilityException(path, directory, "open", Marshal.GetLastPInvokeError());
+        try
+        {
+            var result = operations is null ? fsync(descriptor) : operations.Sync(descriptor);
+            if (result < 0)
+                throw new DirectoryDurabilityException(path, directory, "fsync", Marshal.GetLastPInvokeError());
+        }
+        finally
+        {
+            if (operations is null) _ = close(descriptor);
+            else operations.Close(descriptor);
+        }
     }
 
     [DllImport("libc", SetLastError = true)] private static extern int open(string path, int flags);
@@ -307,5 +344,29 @@ public sealed class ProjectPersistenceException : IOException
     public ProjectPersistenceException(string message, Exception innerException)
         : base(message, innerException)
     {
+    }
+}
+
+/// <summary>
+/// A directory namespace update may be visible but its durability is unconfirmed.
+/// Callers must reload disk state before retrying and must not acknowledge success.
+/// </summary>
+public sealed class DirectoryDurabilityException : IOException
+{
+    public string FilePath { get; }
+    public string DirectoryPath { get; }
+    public string Operation { get; }
+    public int Errno { get; }
+    public bool CommitUncertain => true;
+
+    public DirectoryDurabilityException(string path, string directory, string operation, int errno)
+        : base($"Directory durability {operation} failed: errno={errno}, directory='{directory}', "
+            + $"path='{path}'. Commit is uncertain; recover from disk before retrying.",
+            new System.ComponentModel.Win32Exception(errno))
+    {
+        FilePath = path;
+        DirectoryPath = directory;
+        Operation = operation;
+        Errno = errno;
     }
 }

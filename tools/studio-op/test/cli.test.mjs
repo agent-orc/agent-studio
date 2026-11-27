@@ -185,17 +185,17 @@ test('security lists ranked entries and narrows to what needs action soon', asyn
 test('accept refuses red and missing evidence and accepts a green card', async () => {
   const home = makeHome();
   const red = await run(['accept', 'DEMO-2', '--json'], { home });
-  assert.equal(red.code, 7);
+  assert.equal(red.code, 4);
   assert.equal(red.json.error, 'accept-refused');
   assert.deepEqual(red.json.reasons.map(reason => reason.code), ['evidence-red']);
   const missing = await run(['accept', 'DEMO-3'], { home });
-  assert.equal(missing.code, 7);
+  assert.equal(missing.code, 4);
   assert.match(missing.stderr, /evidence-missing/);
   assert.ok(!studio.requests.some(request => /DEMO-(2|3)\/move$/.test(request.path)), 'a refused accept moves nothing');
 
   // Studio's own completion check refuses a card without a current content verdict.
   const gap = await run(['accept', 'DEMO-5', '--json'], { home });
-  assert.equal(gap.code, 7);
+  assert.equal(gap.code, 4);
   assert.deepEqual(gap.json.reasons.map(reason => reason.code), ['evidence-missing']);
   assert.match(gap.json.reasons[0].detail, /content verdict/);
 
@@ -230,14 +230,14 @@ test('preflight names its blockers and exits with the preflight code', async () 
 
 test('two concurrent watchers: the second exits with the watcher-active code', { timeout: 30_000 }, async () => {
   const homeA = makeHome();
-  const first = start(['watch', '--session', 'first', '--json'], { home: homeA });
+  const first = start(['watch', '--decisions', '--session', 'first', '--json'], { home: homeA });
   let next;
   try {
     await until(() => /watching/i.test(first.stderr()), 'the first watcher to connect');
     assert.equal(studio.lease?.session, 'first');
 
     // Another machine: the server lease refuses it.
-    const remote = await run(['watch', '--session', 'second', '--json'], { home: makeHome() });
+    const remote = await run(['watch', '--decisions', '--session', 'second', '--json'], { home: makeHome() });
     assert.equal(remote.code, 9, remote.stdout + remote.stderr);
     assert.equal(remote.json.error, 'watcher-active');
     assert.equal(remote.json.session, 'first');
@@ -246,7 +246,7 @@ test('two concurrent watchers: the second exits with the watcher-active code', {
     const foregroundRequests = () => studio.requests.filter(request =>
       !/^\/api\/operator\/watcher\/lease\/[^/]+\/heartbeat$/.test(request.path)).length;
     const requestsBefore = foregroundRequests();
-    const local = await run(['watch', '--json'], { home: homeA });
+    const local = await run(['watch', '--decisions', '--json'], { home: homeA });
     assert.equal(local.code, 9);
     assert.equal(local.json.error, 'watcher-active');
     assert.equal(local.json.scope, 'local-lock');
@@ -263,7 +263,7 @@ test('two concurrent watchers: the second exits with the watcher-active code', {
     assert.ok(!fs.existsSync(path.join(homeA, '.config', 'agent-studio', 'studio-op-watch.lock')));
 
     // The next watch resumes after the saved cursor and wakes on the next event.
-    next = start(['watch', '--json'], { home: homeA });
+    next = start(['watch', '--decisions', '--json'], { home: homeA });
     await until(() => /watching/i.test(next.stderr()), 'the resumed watcher');
     studio.publish('batch.red', { cardKey: null });
     const resumed = await next.done;
@@ -281,26 +281,27 @@ test('watch with a stale local lock of a dead process takes the lock', { timeout
   const home = makeHome();
   const lock = path.join(home, '.config', 'agent-studio', 'studio-op-watch.lock');
   fs.writeFileSync(lock, JSON.stringify({ pid: 2 ** 22 + 17, startedAt: '2026-11-05T09:00:00Z' }), { mode: 0o600 });
-  const watcher = start(['watch', '--timeout', '1', '--json'], { home });
+  const watcher = start(['watch', '--decisions', '--timeout', '1', '--json'], { home });
   const result = await watcher.done;
   assert.equal(result.code, 0, result.stdout + result.stderr);
   assert.equal(result.json.event, null);
   assert.equal(result.json.reason, 'timeout');
 });
 
-test('refuses every token carrier other than the file, before any request', async () => {
+test('accepts the named environment token and refuses secret arguments before requests', async () => {
   const retired = ['AGENT', 'STUDIO', 'API', 'TOKEN'].join('_');
   const before = studio.requests.length;
   const environmentToken = await run(['triage', '--json'], { home: makeHome(null), env: { [retired]: token } });
-  assert.equal(environmentToken.code, 3);
-  assert.equal(environmentToken.json.error, 'token-environment-refused');
+  assert.equal(environmentToken.code, 0);
+  const afterEnvironment = studio.requests.length;
+  assert.ok(afterEnvironment > before);
   const option = await run(['triage', '--token', 'x', '--json'], { home: makeHome() });
   assert.equal(option.code, 3);
   assert.equal(option.json.error, 'token-argument-refused');
   const argument = await run(['log', 'append', '--project', 'Demo App', '--text', token, '--json'], { home: makeHome() });
   assert.equal(argument.code, 3);
   assert.equal(argument.json.error, 'token-argument-refused');
-  assert.equal(studio.requests.length, before);
+  assert.equal(studio.requests.length, afterEnvironment);
 });
 
 test('refuses a token file readable by others', { skip: !posix }, async () => {

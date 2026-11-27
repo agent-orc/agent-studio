@@ -33,7 +33,8 @@ export class ThemeService {
   private readonly _preference = signal<ThemePreference>(this.savedPreference());
   readonly preference = this._preference.asReadonly();
   private readonly _tokenSetId = signal(DEFAULT_THEME_TOKEN_SET.id);
-  readonly tokenSetId = this._tokenSetId.asReadonly();
+  private readonly visitTokenSetId = signal<string | null>(null);
+  readonly tokenSetId = computed(() => this.visitTokenSetId() ?? this._tokenSetId());
 
   /** Resolved theme used by the titlebar and design tokens. */
   readonly theme = computed<ThemeMode>(() => {
@@ -42,7 +43,7 @@ export class ThemeService {
   });
 
   readonly tokenSet = computed<ResolvedThemeTokenSet>(() => {
-    const set = this._tokenSets().find(set => set.id === this._tokenSetId()) ?? DEFAULT_THEME_TOKEN_SET;
+    const set = this._tokenSets().find(set => set.id === this.tokenSetId()) ?? DEFAULT_THEME_TOKEN_SET;
     const theme = this.theme();
     return { id: `${set.id}.${theme}`, setId: set.id, theme, tokens: set[theme] };
   });
@@ -52,6 +53,8 @@ export class ThemeService {
     try {
       this._tokenSetId.set(restoreTokenSetId(localStorage.getItem(TOKEN_SET_STORAGE_KEY), this._tokenSets()));
     } catch { /* Storage blocked: keep the default set. */ }
+    const visitId = new URLSearchParams(window.location.search).get('tokenSet');
+    if (this._tokenSets().some(set => set.id === visitId)) this.visitTokenSetId.set(visitId);
     const onSystemChange = (event: MediaQueryListEvent) => this.systemDark.set(event.matches);
     this.mediaQuery?.addEventListener('change', onSystemChange);
     this.destroyRef.onDestroy(() => this.mediaQuery?.removeEventListener('change', onSystemChange));
@@ -74,7 +77,7 @@ export class ThemeService {
       });
       try { localStorage.setItem(THEME_KEY, this._preference()); } catch { /* storage blocked */ }
       try {
-        localStorage.setItem(TOKEN_SET_STORAGE_KEY, JSON.stringify({ version: TOKEN_SET_STORAGE_VERSION, id: resolved.setId }));
+        localStorage.setItem(TOKEN_SET_STORAGE_KEY, JSON.stringify({ version: TOKEN_SET_STORAGE_VERSION, id: this._tokenSetId() }));
       } catch { /* storage blocked */ }
     });
   }
@@ -89,6 +92,12 @@ export class ThemeService {
   }
 
   setTokenSet(id: string): void {
+    this.visitTokenSetId.set(null);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('tokenSet')) {
+      url.searchParams.delete('tokenSet');
+      window.history.replaceState(window.history.state, '', url);
+    }
     this._tokenSetId.set(this._tokenSets().some(set => set.id === id) ? id : DEFAULT_THEME_TOKEN_SET.id);
   }
 

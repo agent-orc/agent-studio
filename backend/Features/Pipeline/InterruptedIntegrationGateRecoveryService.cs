@@ -42,6 +42,12 @@ public sealed class InterruptedIntegrationGateRecoveryService
 {
     private readonly RefMutationLeaseService _refMutationLeases;
     internal Action? AfterRollbackForTesting { get; set; }
+    internal Action<string, RefMutationLeaseService.Lease>? AfterJournalsReadForTesting { get; set; }
+    private readonly object _admissionLock = new();
+    private readonly TaskCompletionSource _startupInventory = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Dictionary<string, RepositoryRecovery> _startupRepositories = new(StringComparer.OrdinalIgnoreCase);
+    private int _startupRecoveryRequired;
+
     private readonly TaskScannerService _scanner;
     private readonly GitService _git;
     private readonly IntegrationWorktreeProvider _worktrees;
@@ -67,46 +73,135 @@ public sealed class InterruptedIntegrationGateRecoveryService
         _logger = logger;
     }
 
+    private sealed class RepositoryRecovery
+    {
+        public TaskCompletionSource Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public string Status { get; set; } = "repairing";
+    }
+
+    // The hosted repair constructor closes admission before hosted services
+    // start. Standalone repair tools can still run a pass without a host.
+    internal InterruptedIntegrationGateRecoveryService RequireStartupRecovery()
+    {
+        Volatile.Write(ref _startupRecoveryRequired, 1);
+        return this;
+    }
+
+    /// <summary>Await startup custody without cancelling other repository waiters.</summary>
+    public async Task WaitForStartupRecoveryAsync(string? repoRoot, CancellationToken ct)
+    {
+        if (Volatile.Read(ref _startupRecoveryRequired) == 0) return;
+        await _startupInventory.Task.WaitAsync(ct).ConfigureAwait(false);
+        Task ready;
+        lock (_admissionLock)
+            ready = repoRoot is not null && _startupRepositories.TryGetValue(repoRoot, out var repository)
+                ? repository.Ready.Task : Task.CompletedTask;
+        await ready.WaitAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Repository admission state and the latest repair failure, when held.</summary>
+    public string GetStartupRecoveryStatus(string repoRoot)
+    {
+        lock (_admissionLock)
+        {
+            if (Volatile.Read(ref _startupRecoveryRequired) != 0 && !_startupInventory.Task.IsCompleted)
+                return "waiting-for-startup-inventory";
+            return _startupRepositories.TryGetValue(repoRoot, out var repository) ? repository.Status : "ready";
+        }
+    }
+
+    internal bool HasPendingStartupRecovery
+    {
+        get
+        {
+            lock (_admissionLock)
+                return !_startupInventory.Task.IsCompleted
+                    || _startupRepositories.Values.Any(repository => !repository.Ready.Task.IsCompleted);
+        }
+    }
+
+    private void InitializeStartupInventory(List<OpenJournal> journals)
+    {
+        if (Volatile.Read(ref _startupRecoveryRequired) == 0) return;
+        lock (_admissionLock)
+        {
+            if (_startupInventory.Task.IsCompleted) return;
+            foreach (var item in journals)
+                _startupRepositories.TryAdd(item.Journal.RepoRoot, new RepositoryRecovery());
+            _startupInventory.TrySetResult();
+        }
+    }
+
+    private void CompleteStartupRepository(string repoRoot, string? failure)
+    {
+        lock (_admissionLock)
+        {
+            if (!_startupRepositories.TryGetValue(repoRoot, out var repository)) return;
+            repository.Status = failure is null ? "ready" : "held: " + failure;
+            if (failure is null) repository.Ready.TrySetResult();
+        }
+        if (failure is null)
+            _logger.LogInformation("integration-recovery-ready repo={RepoRoot}", repoRoot);
+        else
+            _logger.LogError("integration-recovery-held repo={RepoRoot} reason={Reason}; repair will retry", repoRoot, failure);
+    }
+
     /// <summary>
-    /// One recovery pass over every card that left an in-flight gate record
-    /// behind. Never throws: one unrepairable branch must not stop the others.
+    /// One pass over interrupted journals. Hosted startup retries visit only
+    /// held repositories; admitted repositories retain their live custody.
+    /// One unrepairable branch must not stop repairs of the others.
     /// </summary>
     public InterruptedIntegrationGateRecoveryReport RunOnce(CancellationToken ct = default)
     {
         var open = ReadOpenJournals();
-        if (open.Count == 0)
-            return new InterruptedIntegrationGateRecoveryReport(0, 0, 0, 0);
+        InitializeStartupInventory(open);
+        List<string> repositories;
+        lock (_admissionLock)
+            repositories = Volatile.Read(ref _startupRecoveryRequired) != 0
+                ? _startupRepositories.Where(item => !item.Value.Ready.Task.IsCompleted).Select(item => item.Key).ToList()
+                : open.Select(item => item.Journal.RepoRoot).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
         var branches = 0;
         var rolledBack = 0;
         var requeued = 0;
         var escalated = 0;
-        foreach (var group in open.GroupBy(
-                     item => (item.Journal.RepoRoot, item.Journal.IntegrationBranch),
-                     TupleComparer))
+        foreach (var repoRoot in repositories)
         {
-            ct.ThrowIfCancellationRequested();
-            branches++;
-            try
+            string? failure = null;
+            foreach (var group in open.Where(item => string.Equals(item.Journal.RepoRoot, repoRoot, StringComparison.OrdinalIgnoreCase))
+                         .GroupBy(item => (item.Journal.RepoRoot, item.Journal.IntegrationBranch), TupleComparer))
             {
-                var outcome = RecoverBranch(group.First().Journal.Project, group.Key.RepoRoot, group.Key.IntegrationBranch, ct);
-                if (outcome.Action == InterruptedGateRecoveryAction.RollBack) rolledBack++;
-                if (outcome.Action == InterruptedGateRecoveryAction.Escalate) escalated++;
-                requeued += outcome.Requeued;
+                ct.ThrowIfCancellationRequested();
+                branches++;
+                try
+                {
+                    var outcome = RecoverBranch(group.First().Journal.Project, repoRoot, group.Key.IntegrationBranch, ct);
+                    if (outcome.Action == InterruptedGateRecoveryAction.RollBack) rolledBack++;
+                    if (outcome.Action == InterruptedGateRecoveryAction.Escalate)
+                    {
+                        escalated++;
+                        failure = "Interrupted integration gate requires repair.";
+                    }
+                    requeued += outcome.Requeued;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    escalated++;
+                    failure = ex.Message;
+                    _logger.LogError(ex,
+                        "interrupted-integration-gate recovery failed for repo={RepoRoot} branch={Branch}",
+                        repoRoot, group.Key.IntegrationBranch);
+                }
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                escalated++;
-                _logger.LogError(
-                    ex,
-                    "interrupted-integration-gate recovery failed for repo={RepoRoot} branch={Branch}",
-                    group.Key.RepoRoot,
-                    group.Key.IntegrationBranch);
-            }
+
+            // All branches of a repository must be settled before either a
+            // merge or a push enters. Retrying another repository must never
+            // reinterpret a newly opened live journal on a released repository.
+            CompleteStartupRepository(repoRoot, failure);
         }
 
         _logger.LogInformation(
@@ -123,7 +218,11 @@ public sealed class InterruptedIntegrationGateRecoveryService
     {
         using var lease = _refMutationLeases.AcquireAsync(project, repoRoot, integrationBranch, ct)
             .GetAwaiter().GetResult();
-        return RecoverBranchUnderLease(repoRoot, integrationBranch, lease, ct);
+        var outcome = RecoverBranchUnderLease(repoRoot, integrationBranch, lease, ct);
+        if (outcome.Action != InterruptedGateRecoveryAction.Escalate
+            && ReadBranchJournals(repoRoot, integrationBranch).Count != 0)
+            throw new IOException("Unsettled integration gate custody requires repair before admission.");
+        return outcome;
     }
 
     /// <summary>Called by merge admission while it holds the ordinary publication lease.</summary>
@@ -148,6 +247,11 @@ public sealed class InterruptedIntegrationGateRecoveryService
         // Re-read after admission to the publication boundary: a prior pass may
         // have settled these journals or another invocation may own them now.
         var journals = ReadBranchJournals(repoRoot, integrationBranch);
+        if (AfterJournalsReadForTesting is not null)
+        {
+            AfterJournalsReadForTesting(repoRoot, lease);
+            journals = ReadBranchJournals(repoRoot, integrationBranch);
+        }
         if (journals.Count == 0) return (InterruptedGateRecoveryAction.None, 0);
         if (!RefMutationLeaseService.IsCurrent(lease))
             throw new IOException("Integration gate recovery lost its publication fence.");

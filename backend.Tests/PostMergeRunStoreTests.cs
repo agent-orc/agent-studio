@@ -1,4 +1,14 @@
+using System.Net;
+using System.Net.Http.Json;
 using AgentStudio.Pipeline;
+using AgentStudio.Clients;
+using AgentStudio.Registry;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
 using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
@@ -111,6 +121,143 @@ public sealed class PostMergeRunStoreTests : IDisposable
         store.Record(Project, next with { Status = "green", FinishedAtUtc = Now.AddDays(15),
             Verdicts = [new("dotnet test", 0, false)] });
         Assert.Empty(store.Read(Project).FlakyHistory!);
+    }
+
+    [Fact]
+    public void InterruptedBeforeFirstCommandCanSettleWithoutInventingAProductFailure()
+    {
+        var store = new PostMergeRunStore(_root);
+        var run = Run("interrupted", First, "window");
+        store.Record(Project, run);
+        var settled = new PostMergeRunStore(_root).Record(Project, run with
+        {
+            Status = "inconclusive", FinishedAtUtc = Now.AddMinutes(1),
+            Reason = "host interrupted before a command checkpoint",
+        });
+        Assert.NotNull(settled);
+        Assert.Null(settled.ActiveRun);
+        Assert.Equal("inconclusive", settled.DevelopState);
+        Assert.Null(settled.LastGreenSha);
+        Assert.Null(settled.LastWindowTipSha);
+    }
+
+    [Fact]
+    public void RenewableCustodySurvivesRestartAndRejectsStaleOwnersAndUnfencedReceipts()
+    {
+        var owner = Guid.NewGuid().ToString("N");
+        var store = new PostMergeRunStore(_root);
+        var run = Run("owned", First, "window");
+        Assert.NotNull(store.Record(Project, run, owner, 0, Now));
+        Assert.Equal(1, store.ReadCustody(Project)!.Fence);
+        var restarted = new PostMergeRunStore(_root);
+        Assert.Null(restarted.Record(Project, run));
+        Assert.Null(restarted.RenewCustody(Project, run.Id, "wrong", 1, Now, true));
+        Assert.Null(restarted.RenewCustody(Project, run.Id, owner, 2, Now, true));
+        Assert.NotNull(restarted.RenewCustody(Project, run.Id, owner, 1, Now.AddMinutes(1), false));
+        var recovered = restarted.RenewCustody(Project, run.Id, owner, 1, Now.AddMinutes(10), true)!;
+        Assert.Equal(2, recovered.Fence);
+        var receipt = run with { Status = "green", FinishedAtUtc = Now.AddMinutes(11),
+            Verdicts = [new("dotnet test", 0, false)] };
+        Assert.Null(restarted.Record(Project, receipt, owner, 1, Now.AddMinutes(11)));
+        Assert.Null(restarted.Record(Project, Run("successor", Second, "window"), observedAt: Now.AddMinutes(11)));
+        var accepted = restarted.Record(Project, receipt, owner, 2, Now.AddHours(1))!;
+        Assert.Null(accepted.ActiveRun);
+        Assert.Equal(First, accepted.LastGreenSha);
+        Assert.NotNull(new PostMergeRunStore(_root).Record(Project, receipt, owner, 2, Now.AddHours(2)));
+        Assert.Null(restarted.Record(Project, receipt with { Reason = "changed evidence" }, owner, 2, Now.AddHours(2)));
+    }
+
+    [Theory]
+    [InlineData("window", 5)]
+    [InlineData("nightly", 15)]
+    public void RenewedLeasePreventsLegacyTakeoverAndExpiredFallbackIsInfrastructure(string kind, int hours)
+    {
+        var owner = Guid.NewGuid().ToString("N");
+        var store = new PostMergeRunStore(_root);
+        var run = Run("owned", First, kind);
+        store.Record(Project, run, owner, 0, Now);
+        // A returning owner explicitly recovers the fence before renewing work.
+        store.RenewCustody(Project, run.Id, owner, 1, Now.AddHours(hours), true);
+        var successor = Run("successor", Second, kind) with { StartedAtUtc = Now.AddHours(hours) };
+        Assert.Null(store.Record(Project, successor, observedAt: Now.AddHours(hours)));
+        var replaced = store.Record(Project, successor with { StartedAtUtc = Now.AddHours(hours).AddMinutes(3) },
+            observedAt: Now.AddHours(hours).AddMinutes(3))!;
+        Assert.Equal("inconclusive", Assert.Single(replaced.Runs).Status);
+        Assert.Equal("successor", replaced.ActiveRun!.Id);
+        Assert.Null(store.Record(Project, run with { Status = "inconclusive", FinishedAtUtc = Now.AddHours(hours) },
+            owner, 2, Now.AddHours(hours).AddMinutes(3)));
+    }
+
+    [Fact]
+    public void RecoverAcknowledgementCanBeLostWithoutLosingTheNewFence()
+    {
+        var owner = Guid.NewGuid().ToString("N");
+        var recovery = Guid.NewGuid().ToString("N");
+        var store = new PostMergeRunStore(_root);
+        var run = Run("owned", First, "window");
+        store.Record(Project, run, owner, 0, Now);
+        var first = store.RenewCustody(Project, run.Id, owner, 1, Now.AddMinutes(1), true, recovery)!;
+        var replay = new PostMergeRunStore(_root).RenewCustody(Project, run.Id, owner, 1,
+            Now.AddMinutes(1), true, recovery)!;
+        Assert.Equal(first, replay);
+        Assert.Equal(2, replay.Fence);
+        Assert.Null(store.RenewCustody(Project, run.Id, owner, 1, Now.AddMinutes(1), true, "another-request"));
+        Assert.NotNull(store.Record(Project, run, owner, 0, Now.AddHours(1)));
+        Assert.Equal(2, store.ReadCustody(Project)!.Fence);
+    }
+
+    [Fact]
+    public async Task ExistingRunRouteAdmitsRecoversFencesAndSettlesAnInterruptedOwner()
+    {
+        var clock = new FakeTimeProvider(Now);
+        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            { ["TaskRepository"] = _root, ["Security:Profile"] = "local", ["AllowedHosts"] = "*" }));
+            builder.ConfigureTestServices(services =>
+            {
+                TestHostFactory.RemoveBackgroundHostedServices(services);
+                services.Replace(ServiceDescriptor.Singleton(new PostMergeRunStore(Path.Combine(_root, "state"))));
+                services.Replace(ServiceDescriptor.Singleton<TimeProvider>(clock));
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var projectPath = Path.Combine(_root, "demo");
+        Directory.CreateDirectory(projectPath);
+        var project = factory.Services.GetRequiredService<ProjectRegistry>()
+            .EnsureProjectForStorage(projectPath, "demo", DefaultWorkspace.Id, clock);
+        var run = Run("wire", First, "window") with { Project = "demo" };
+        var owner = Guid.NewGuid().ToString("N");
+        async Task<HttpResponseMessage> Send(PostMergeRunRecord receipt, long fence, string? operation = null)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/runner/post-merge/projects/demo/runs")
+                { Content = JsonContent.Create(receipt) };
+            request.Headers.Add("X-Post-Merge-Owner", owner);
+            request.Headers.Add("X-Post-Merge-Fence", fence.ToString());
+            if (operation is not null)
+            {
+                request.Headers.Add("X-Post-Merge-Operation", operation);
+                request.Headers.Add("X-Post-Merge-Recovery-Id", Guid.NewGuid().ToString("N"));
+            }
+            return await client.SendAsync(request);
+        }
+        using var admitted = await Send(run, 0);
+        admitted.EnsureSuccessStatusCode();
+        Assert.Equal("1", Assert.Single(admitted.Headers.GetValues("X-Post-Merge-Fence")));
+        using var recovered = await Send(run, 1, "recover");
+        recovered.EnsureSuccessStatusCode();
+        Assert.Equal(2, (await recovered.Content.ReadFromJsonAsync<PostMergeCustody>())!.Fence);
+        var interrupted = run with { Status = "inconclusive", FinishedAtUtc = Now, Reason = "host interrupted" };
+        using var stale = await Send(interrupted, 1);
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        using var settled = await Send(interrupted, 2);
+        settled.EnsureSuccessStatusCode();
+        var state = await settled.Content.ReadFromJsonAsync<PostMergeProjectState>();
+        Assert.Null(state!.ActiveRun);
+        Assert.Equal("inconclusive", state.DevelopState);
+        Assert.Null(new PostMergeRunStore(Path.Combine(_root, "state")).Read(project.Id).ActiveRun);
     }
 
     private static PostMergeRunRecord Run(string id, string tip, string kind) =>

@@ -22,6 +22,20 @@
   .cockpit-header__nav { min-height: var(--studio-header-phone-h); padding-inline: var(--studio-spacing-2); }
   .cockpit-header__wordmark { display: inline; }
   :host ::ng-deep [data-nav-inline-from='tablet'] { display: none !important; }
+  // Keep elevated authority and the existing actions reachable on a phone.
+  :host:has([data-testid='studio-elevation-trigger']) {
+    .cockpit-header__nav { flex-wrap: wrap; padding-block: var(--studio-spacing-1); }
+    .cockpit-header__wordmark { display: none; }
+    .cockpit-header__nav-content { flex: 1 1 calc(100% - var(--studio-target-coarse-min) - var(--studio-spacing-2)); }
+    ::ng-deep .studio-titlebar__actions {
+      display: flex;
+      flex: 1 0 100%;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--studio-spacing-1);
+      min-width: 0;
+    }
+  }
 }
 @media (max-width: 360px) {
   :host ::ng-deep app-develop-state-indicator { display: none; }

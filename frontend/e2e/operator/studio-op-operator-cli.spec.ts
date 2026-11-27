@@ -194,12 +194,12 @@ test('studio-op runs the operator working set against the prebuilt stack', async
         events.some(event => event.type === 'human-review.ready' && event.cardKey === key));
     }, 'the Human Review events of the fixture cards');
 
-    const first = start(['watch', '--session', 'e2e-first', '--timeout', '120', '--json'], home);
+    const first = start(['watch', '--decisions', '--session', 'e2e-first', '--timeout', '120', '--json'], home);
     await until(() => /Watching the decision stream/.test(first.stderr()), 'the first watcher');
     const remote = await studioOp(otherMachine, 'watch', '--session', 'e2e-second', '--timeout', '30');
     expect(remote.code, remote.stdout + remote.stderr).toBe(9);
     expect(remote.json).toMatchObject({ error: 'watcher-active', scope: 'server-lease', session: 'e2e-first' });
-    const local = await studioOp(home, 'watch', '--timeout', '30');
+    const local = await studioOp(home, 'watch', '--decisions', '--timeout', '30');
     expect(local.code).toBe(9);
     expect(local.json).toMatchObject({ error: 'watcher-active', scope: 'local-lock' });
 
@@ -213,11 +213,11 @@ test('studio-op runs the operator working set against the prebuilt stack', async
 
   await test.step('accept refuses red and missing evidence and accepts the green card', async () => {
     const refusedRed = await studioOp(home, 'accept', red.key);
-    expect(refusedRed.code, refusedRed.stdout).toBe(7);
+    expect(refusedRed.code, refusedRed.stdout).toBe(4);
     // Studio may also park a red card for an operator decision; the evidence reason must be named either way.
     expect(refusedRed.json.reasons.map((reason: any) => reason.code), refusedRed.stdout).toContain('evidence-red');
     const refusedMissing = await studioOp(home, 'accept', missing.key);
-    expect(refusedMissing.code, refusedMissing.stdout).toBe(7);
+    expect(refusedMissing.code, refusedMissing.stdout).toBe(4);
     expect(refusedMissing.json.reasons.map((reason: any) => reason.code), refusedMissing.stdout).toContain('evidence-missing');
     expect((await ownerRead(red)).state).toBe('5-human-review');
     expect((await ownerRead(missing)).state).toBe('5-human-review');
@@ -258,9 +258,10 @@ test('studio-op runs the operator working set against the prebuilt stack', async
     expect(refused.json.error).toBe('use-accept');
 
     const ejected = await studioOp(home, 'eject', key, '--project', project);
-    // The card is in no batch flight: the batch gate route answers that it is not a member.
-    expect(ejected.code, ejected.stdout).toBe(5);
-    expect(ejected.json.status).toBe(404);
+    // The existing project has no pending member to eject, so the server refuses the operation.
+    expect(ejected.code, ejected.stdout).toBe(6);
+    expect(ejected.json.status).toBe(409);
+    expect(ejected.json.answer.error).toContain('is no longer pending');
   });
 
   await test.step('triage, capacity and routing reads', async () => {

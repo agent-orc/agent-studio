@@ -143,6 +143,7 @@ public static class QuotaAdmissionPlanner
         {
             NowUtc = nowUtc,
             Caps = caps,
+            PaceFor = caps.GetPace,
             SnapshotFor = snapshotFor,
             Routing = fallback?.RoutingFacts(),
             OccupiedSlots = occupiedSlots,

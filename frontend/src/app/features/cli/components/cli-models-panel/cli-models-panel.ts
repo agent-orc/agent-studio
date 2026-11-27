@@ -1,3 +1,4 @@
+import { FormsModule } from '@angular/forms';
 import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
 import { UsageCockpitService } from '../../../usage-cockpit/services/usage-cockpit.service';
 import { ChangeDetectionStrategy, Component, OnInit, computed, forwardRef, inject, signal } from '@angular/core';
@@ -16,9 +17,7 @@ import { scrollCliModelsTable } from './cli-models-table-keyboard';
 import { EconomyRoutingPreviewComponent } from '../economy-routing-preview/economy-routing-preview.component';
 import { RoutingCostService, type PricedRouteModel } from '../../services/routing-cost.service';
 import { TaskService } from '../../../../services/task.service';
-import {
-  WorkspaceOrchestratorSettingsService,
-} from '../../../../services/workspace-orchestrator-settings.service';
+import { WorkspaceOrchestratorSettingsService } from '../../../../services/workspace-orchestrator-settings.service';
 
 interface CliModelGroup {
   cliType: CliType;
@@ -39,20 +38,12 @@ export function fallbackStateTone(state: string | null | undefined): StatusTone 
   return FALLBACK_STATE_TONES[state as CliFallbackState['state']] ?? 'neutral';
 }
 
-/**
- * CLI Management rows show each CLI's primary model and fallback route, then
- * expand to the route editor and discovered models. Data comes from the live
- * `/api/cli/{type}/models` catalog through {@link CliCatalogStore}; the page
- * reuses the boot-time hydration instead of issuing its own per-CLI requests.
- * The refresh button forces a re-probe of one CLI's catalog (bypasses the store
- * TTL).
- */
+/** Cached CLI catalog and optimistic routing edits, serialized independently per CLI. */
 @Component({
   selector: 'app-cli-models-panel',
   standalone: true,
-  // The badge reads the migration store through the CLI barrel. Defer it so
-  // file-order-dependent barrel evaluation cannot leave Angular an undefined dependency.
-  imports: [EconomyRoutingPreviewComponent, forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent, ConsumerModelPolicyComponent, StatusIndicatorComponent],
+  // Defer the migration badge to avoid its CLI barrel evaluation cycle.
+  imports: [FormsModule, EconomyRoutingPreviewComponent, forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent, ConsumerModelPolicyComponent, StatusIndicatorComponent],
   templateUrl: './cli-models-panel.html',
   styleUrl: './cli-models-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -64,7 +55,7 @@ export class CliModelsPanelComponent implements OnInit {
   private readonly jobs = inject(TaskService);
   private readonly workspaceOrchestrator = inject(WorkspaceOrchestratorSettingsService);
   readonly migrations = inject(ModelMigrationCatalogStore);
-  readonly routes = signal<Record<string, CliModelRouteProfile>>({});
+  readonly routes = signal<Partial<Record<CliType, CliModelRouteProfile>>>({});
   readonly fallbackRoutes = signal<CliModelFallbackRoute[]>([]);
   readonly fallbackStates = signal<Record<string, CliFallbackState>>({});
   readonly effectiveRoutes = signal<EffectiveModelSelection[]>([]);
@@ -72,24 +63,22 @@ export class CliModelsPanelComponent implements OnInit {
   readonly catalogueVersion = signal<string | null>(null);
   readonly callersCannotReroute = signal<{ caller: string; cliType: string; reason: string }[]>([]);
   readonly preferenceSaving = signal<string | null>(null);
-  readonly savingCli = signal<string | null>(null);
+  readonly savingClis = signal<ReadonlySet<string>>(new Set());
+  readonly routeErrors = signal<Partial<Record<CliType, Partial<CliModelRouteProfile>>>>({});
+  private readonly queuedChanges = new Map<CliType, Partial<CliModelRouteProfile>>();
   private readonly costs = inject(RoutingCostService);
   readonly pricedModels = signal<PricedRouteModel[]>([]);
   readonly policy = signal<ModelRoutingPolicyView | null>(null);
   readonly savingEconomyMode = signal(false);
   readonly cliTypes = CLI_TYPES;
 
-  /** AGT-2716 — workspace that owns the auto-apply-model-migrations toggle.
-   *  Studio operates effectively one workspace at a time; this page has no
-   *  project/route context, so it resolves the registry's default workspace
-   *  the same way the sidebar does. */
+  /** Default workspace owns automatic model migrations (AGT-2716). */
   readonly workspaceId = signal<string | null>(null);
   /** null while loading; always concrete once the settings GET resolves. */
   readonly autoApplyModelMigrations = signal<boolean | null>(null);
   readonly autoApplySaving = signal(false);
 
-  /** CLIs whose per-row details (route editor + full model list) are expanded.
-   *  Collapsed rows still answer "what's present" via the summary line. */
+  /** Expanded CLI route editors and model lists. */
   readonly expanded = signal<Set<string>>(new Set());
 
   /** One group per known CLI. Recomputes when the store's catalog map updates. */
@@ -137,9 +126,7 @@ export class CliModelsPanelComponent implements OnInit {
     this.loadWorkspaceAutoApply();
   }
 
-
-  /** AGT-2716 — resolve the registry's default workspace, then load its
-   *  auto-apply-model-migrations toggle. */
+  /** Resolve the default workspace and load its migration setting. */
   private loadWorkspaceAutoApply(): void {
     this.jobs.getRegistryWorkspaces({ includeArchived: true }).subscribe({
       next: (workspaces) => {
@@ -155,7 +142,7 @@ export class CliModelsPanelComponent implements OnInit {
     });
   }
 
-  /** AGT-2716 — persist the workspace-wide automatic model-migration switch. */
+  /** Save the workspace automatic-migration setting. */
   setAutoApplyMigrations(enabled: boolean): void {
     const id = this.workspaceId();
     if (!id || this.autoApplySaving()) return;
@@ -173,11 +160,9 @@ export class CliModelsPanelComponent implements OnInit {
       },
     });
   }
-
   refresh(cliType: CliType): void {
     this.catalog.refresh(cliType).subscribe({ error: () => void 0 });
   }
-
   toggle(cliType: CliType): void {
     const next = new Set(this.expanded());
     if (next.has(cliType)) next.delete(cliType);
@@ -186,32 +171,24 @@ export class CliModelsPanelComponent implements OnInit {
   }
 
   readonly onTableScrollKeydown = scrollCliModelsTable;
-
   isExpanded(cliType: CliType): boolean {
     return this.expanded().has(cliType);
   }
-
   thinkingSummary(m: CliModelInfo): string {
     return m.thinkingLevels?.length ? m.thinkingLevels.join(' · ') : '';
   }
-
   primaryModel(cliType: CliType): string {
     return this.routes()[cliType]?.primaryModel
       ?? this.catalog.modelsFor(cliType).find((m) => m.isDefault)?.id
       ?? '';
   }
-
   /** Human label of the resolved primary model, for the collapsed summary. */
   primaryModelLabel(cliType: CliType): string {
     const id = this.primaryModel(cliType);
     if (!id) return 'no catalog';
     return this.catalog.modelsFor(cliType).find((m) => m.id === id)?.label ?? id;
   }
-
-  /** One-line fallback-route summary for the collapsed row, e.g.
-   *  "→ Codex · gpt-5" or "→ Claude · Claude Opus 5 (auto)" or "no fallback".
-   *  "(auto)" marks a route the equivalence catalogue derived (AGT-2751)
-   *  because the operator saved no explicit fallback for this CLI. */
+  /** Collapsed fallback summary; catalogue-derived defaults are marked automatic. */
   fallbackSummary(cliType: CliType): string {
     const route = this.routes()[cliType];
     const model = route?.fallbackModel;
@@ -221,37 +198,29 @@ export class CliModelsPanelComponent implements OnInit {
     const suffix = route?.isFallbackDerived ? ' (auto)' : '';
     return `→ ${cliTypeLabel(targetCli)} · ${label}${suffix}`;
   }
-
   hasFallback(cliType: CliType): boolean {
     return !!this.routes()[cliType]?.fallbackModel;
   }
-
   fallbackCli(cliType: CliType): CliType {
     return (this.routes()[cliType]?.fallbackCliType as CliType | null) ?? cliType;
   }
-
   fallbackModels(cliType: CliType): readonly CliModelInfo[] {
     return this.catalog.modelsFor(this.fallbackCli(cliType));
   }
-
   setPrimary(cliType: CliType, primaryModel: string): void {
     this.save(cliType, { primaryModel: primaryModel || null });
   }
-
   setFallbackCli(cliType: CliType, fallbackCliType: string): void {
     const target = fallbackCliType as CliType;
     this.catalog.ensure(target).subscribe({ error: () => void 0 });
     this.save(cliType, { fallbackCliType: target, fallbackModel: null, fallbackThinkingLevel: null });
   }
-
   setFallbackModel(cliType: CliType, fallbackModel: string): void {
-    this.save(cliType, { fallbackModel: fallbackModel || null });
+    this.save(cliType, { fallbackCliType: this.fallbackCli(cliType), fallbackModel: fallbackModel || null, fallbackThinkingLevel: null });
   }
-
   setFallbackThinking(cliType: CliType, fallbackThinkingLevel: string): void {
-    this.save(cliType, { fallbackThinkingLevel: fallbackThinkingLevel || null });
+    this.save(cliType, { fallbackCliType: this.fallbackCli(cliType), fallbackModel: this.routes()[cliType]?.fallbackModel ?? null, fallbackThinkingLevel: fallbackThinkingLevel || null });
   }
-
   fallbackThinkingLevels(cliType: CliType): readonly string[] {
     const selected = this.routes()[cliType]?.fallbackModel;
     return this.fallbackModels(cliType).find((m) => m.id === selected)?.thinkingLevels ?? [];
@@ -281,12 +250,10 @@ export class CliModelsPanelComponent implements OnInit {
       error: () => this.preferenceSaving.set(null),
     });
   }
-
   modelPriceLabel(cli: string, model: CliModelInfo): string {
     const price = this.pricedModels().find(option => option.cli === cli && option.model === model.id)?.price;
     return `${model.label} · ${price ? `$${price.inputPerMillion} in / $${price.outputPerMillion} out per MTok` : 'price unknown'}`;
   }
-
   effectiveFor(cliType: CliType): EffectiveModelSelection[] {
     const seen = new Set<string>();
     return this.effectiveRoutes().filter(route => {
@@ -303,15 +270,12 @@ export class CliModelsPanelComponent implements OnInit {
       error: () => this.effectiveRoutes.set([]),
     });
   }
-
   routeLabel(model: string, thinking: string | null): string {
     return thinking ? `${model} ${thinking}` : model;
   }
-
   routeSource(route: CliModelFallbackRoute): string {
     return route.source === 'override' ? 'override' : route.catalogueVersion ?? 'catalogue';
   }
-
   price(input: number | null, output: number | null): string {
     if (input === null || output === null) return 'price unavailable';
     return `$${input.toFixed(2)} in / $${output.toFixed(2)} out`;
@@ -353,32 +317,60 @@ export class CliModelsPanelComponent implements OnInit {
       },
     });
   }
+  isSaving(cliType: string): boolean { return this.savingClis().has(cliType); }
+  retryRoute(cliType: CliType): void {
+    const changes = this.routeErrors()[cliType];
+    if (changes && !this.isSaving(cliType)) this.save(cliType, changes);
+  }
+  private finishSaving(cliType: CliType): void {
+    this.savingClis.update(saving => new Set([...saving].filter(cli => cli !== cliType)));
+  }
 
   private save(cliType: CliType, changes: Partial<CliModelRouteProfile>): void {
-    const existing = this.routes()[cliType];
-    // A catalogue-derived fallback (AGT-2751) is a display-only default, not
-    // an operator choice: carrying it into an unrelated save (e.g. changing
-    // just the primary model) would silently freeze it into
-    // cli-model-routing.json as if the operator had picked it. Only an
-    // explicit fallback edit (present in `changes`) may persist a fallback.
-    const persistedFallback = existing?.isFallbackDerived ? undefined : existing;
-    const profile: CliModelRouteProfile = {
-      cliType,
-      primaryModel: existing?.primaryModel ?? (this.primaryModel(cliType) || null),
-      primaryThinkingLevel: existing?.primaryThinkingLevel ?? null,
-      fallbackCliType: persistedFallback?.fallbackCliType ?? cliType,
-      fallbackModel: persistedFallback?.fallbackModel ?? null,
-      fallbackThinkingLevel: persistedFallback?.fallbackThinkingLevel ?? null,
-      ...changes,
+    // Retain this snapshot for rollback if the edit starts a request.
+    const acknowledged = this.routes()[cliType];
+    const editsFallback = ['fallbackCliType', 'fallbackModel', 'fallbackThinkingLevel']
+      .some(key => Object.hasOwn(changes, key));
+    const display: CliModelRouteProfile = {
+      ...acknowledged, cliType,
+      primaryModel: acknowledged?.primaryModel ?? (this.primaryModel(cliType) || null),
+      primaryThinkingLevel: acknowledged?.primaryThinkingLevel ?? null,
+      fallbackCliType: acknowledged?.fallbackCliType ?? cliType,
+      fallbackModel: acknowledged?.fallbackModel ?? null,
+      fallbackThinkingLevel: acknowledged?.fallbackThinkingLevel ?? null,
+      ...changes, ...(editsFallback ? { isFallbackDerived: false } : {}),
     };
-    this.routes.update((all) => ({ ...all, [cliType]: profile }));
-    this.savingCli.set(cliType);
+    this.routes.update(all => ({ ...all, [cliType]: display }));
+    this.routeErrors.update(errors => ({ ...errors, [cliType]: undefined }));
+    if (this.isSaving(cliType)) {
+      this.queuedChanges.set(cliType, { ...this.queuedChanges.get(cliType), ...changes });
+      return;
+    }
+    // Catalogue defaults are display-only until an explicit fallback edit (AGT-2751).
+    const fallback = display.isFallbackDerived ? undefined : display;
+    const profile: CliModelRouteProfile = {
+      cliType, primaryModel: display.primaryModel, primaryThinkingLevel: display.primaryThinkingLevel,
+      fallbackCliType: fallback?.fallbackCliType ?? cliType,
+      fallbackModel: fallback?.fallbackModel ?? null,
+      fallbackThinkingLevel: fallback?.fallbackThinkingLevel ?? null,
+    };
+    this.savingClis.update(saving => new Set([...saving, cliType]));
     this.routesApi.setModelRoute(profile).subscribe({
-      next: (saved) => {
-        this.routes.update((all) => ({ ...all, [cliType]: saved }));
-        this.savingCli.set(null);
+      next: saved => {
+        this.routes.update(all => ({ ...all, [cliType]: saved }));
+        this.finishSaving(cliType);
+        const queued = this.queuedChanges.get(cliType);
+        this.queuedChanges.delete(cliType);
+        if (queued) this.save(cliType, queued);
       },
-      error: () => this.savingCli.set(null),
+      error: () => {
+        // Reject the optimistic chain, but retain its complete intent for explicit retry.
+        const retry = { ...changes, ...this.queuedChanges.get(cliType) };
+        this.queuedChanges.delete(cliType);
+        this.routes.update(all => ({ ...all, [cliType]: acknowledged }));
+        this.routeErrors.update(errors => ({ ...errors, [cliType]: retry }));
+        this.finishSaving(cliType);
+      },
     });
   }
 }

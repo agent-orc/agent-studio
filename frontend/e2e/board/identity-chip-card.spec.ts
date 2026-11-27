@@ -81,7 +81,7 @@ function runningCard(id: string, owner: string, key: string) {
 
 function grouped() {
   return {
-    backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [runningCard('sa', SA_ID, 'AGT-4034'), runningCard('human', HUMAN_ID, 'AGT-4035')],
+    backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [runningCard('sa', SA_ID, 'AGT-4034'), { ...runningCard('human', HUMAN_ID, 'AGT-4035'), liveStatus: null }],
     failedPickup: [], codeNotComplete: [], review: [], autoReview: [], humanReview: [], escalated: [],
     completed: [], archive: [],
   };
@@ -150,7 +150,7 @@ async function openBoard(page: Page): Promise<void> {
     }));
   });
   await installRoutes(page);
-  await page.goto('/#/board');
+  await page.goto('/#/board', { waitUntil: 'domcontentloaded' });
   await page.addStyleTag({
     content: 'app-error-dialog, app-offline-banner, [data-testid="offline-banner"], [data-testid="error-dialog-overlay"] { display: none !important; }',
   });
@@ -162,7 +162,7 @@ async function openBoard(page: Page): Promise<void> {
 /** At 390 px the shell hides the Explorer and the activity rail (AGT-3836), so the board gets the full width. */
 async function toPhone(page: Page): Promise<void> {
   await page.setViewportSize(PHONE);
-  await page.waitForTimeout(300);
+  await expect(page.getByLabel('Board lane')).toBeVisible();
 }
 
 async function shot(page: Page, name: string, target?: import('@playwright/test').Locator): Promise<void> {
@@ -172,12 +172,33 @@ async function shot(page: Page, name: string, target?: import('@playwright/test'
 }
 
 test.describe('Identity chip and host alias on the board card (AGT-4034)', () => {
-  test.beforeAll(() => mkdirSync(RESULTS_DIR, { recursive: true }));
-  test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: 'ignoreErrors' }); });
+  // These cases only read the same board. Keep its boot inside this worker,
+  // and reset presentation before each case instead of booting the shell again.
+  test.describe.configure({ mode: 'default' });
+  let page: Page;
+  let bootMs = 0;
+  let reportBoot = true;
+  test.beforeAll(async ({ browser, baseURL }) => {
+    const started = performance.now();
+    mkdirSync(RESULTS_DIR, { recursive: true });
+    page = await browser.newPage({ baseURL, serviceWorkers: 'block' });
+    page.setDefaultTimeout(10_000);
+    page.setDefaultNavigationTimeout(15_000);
+    await openBoard(page);
+    bootMs = performance.now() - started;
+    reportBoot = true;
+  });
+  test.beforeEach(async () => {
+    // Charge the shared boot once in timing reports, rather than hiding its cost.
+    if (reportBoot) test.info().annotations.push({ type: 'shared-setup-ms', description: String(bootMs) });
+    reportBoot = false;
+    await page.setViewportSize(DESKTOP);
+    await setTheme(page, 'light');
+  });
+  test.afterAll(async () => { await page?.close(); });
 
   for (const kind of ['sa', 'human'] as const) {
-    test(`key stays whole, no raw ids (${kind} creator)`, async ({ page }) => {
-      await openBoard(page);
+    test(`key stays whole, no raw ids (${kind} creator)`, async () => {
       const card = page.getByTestId('task-card').filter({ has: page.locator(`[data-testid="task-card-key"]`) })
         .nth(kind === 'sa' ? 0 : 1);
       await expect(card).toBeVisible();
@@ -185,6 +206,10 @@ test.describe('Identity chip and host alias on the board card (AGT-4034)', () =>
       for (const theme of ['light', 'dark'] as const) {
         await setTheme(page, theme);
         await page.mouse.move(DESKTOP.width - 10, DESKTOP.height / 2);
+        expect((await card.innerText()).match(/agent-runner-01/g)).toHaveLength(1);
+        const badge = card.getByTestId('execution-location-badge');
+        await expect(badge).toContainText(kind === 'sa' ? 'Host' : 'Host · agent-runner-01');
+        if (kind === 'sa') await expect(badge).not.toContainText('agent-runner-01');
         await shot(page, `${label}-${kind}-normal-${theme}`, card);
       }
       await toPhone(page);
@@ -198,6 +223,7 @@ test.describe('Identity chip and host alias on the board card (AGT-4034)', () =>
       }
       const text = await page.getByTestId('lane-3-progress').innerText();
       if (label === 'after') {
+        expect((await card.innerText()).match(/agent-runner-01/g)).toHaveLength(1);
         expect(text).not.toMatch(/runner_[0-9a-f]{8,}/);
         expect(text).not.toMatch(/sa_[0-9a-f]{8,}/);
         const keyBox = await card.getByTestId('task-card-key').boundingBox();

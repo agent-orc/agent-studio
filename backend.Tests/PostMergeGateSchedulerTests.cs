@@ -1,3 +1,5 @@
+extern alias TaskServerAssembly;
+
 using AgentStudio.Pipeline;
 using AgentStudio.Registry;
 using AgentStudio.Runner;
@@ -7,6 +9,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
+using Microsoft.Extensions.Options;
+using TaskGateStore = TaskServerAssembly::AgentStudio.TaskServer.TaskServerStore;
+using TaskGateConflict = TaskServerAssembly::AgentStudio.TaskServer.TaskServerConflictException;
+using TaskGateOptions = TaskServerAssembly::AgentStudio.TaskServer.TaskServerOptions;
 
 namespace AgentStudio.Tests;
 
@@ -96,6 +102,143 @@ public sealed class PostMergeGateSchedulerTests : IDisposable
         Assert.Equal(batch.Subject.SubjectId, legacy.Claim(new("gate", "instance")).Subject!.SubjectId);
     }
 
+    // One matrix exercises both authorities through their real admission paths.
+    public static IEnumerable<object[]> QueueScanCases()
+    {
+        foreach (var authority in new[] { "monolith", "task-server" })
+        foreach (var kind in new[] { GateSubjectKinds.Merge, GateSubjectKinds.PostMerge })
+        foreach (var prefix in new[] { 0, 31, 32, 64 })
+        foreach (var eligible in new[] { true, false })
+            yield return [authority, kind, prefix, eligible];
+    }
+
+    [Theory]
+    [MemberData(nameof(QueueScanCases))]
+    public async Task ClaimScansPastIneligiblePages(string authority, string kind, int prefix, bool eligible)
+    {
+        var (create, claim, status) = await QueueFixture(authority);
+        var blocked = new List<string>();
+        for (var i = 0; i < prefix; i++)
+            blocked.Add((await create(QueueRequest(kind, "blocked-" + i, ["fixture:missing"]))).Subject.SubjectId);
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        var selected = await create(QueueRequest(kind, "selected", eligible ? [] : ["fixture:missing"]));
+        // Equal prefix creation times exercise paging across timestamp ties.
+        var response = await claim(new("gate", "instance"));
+        Assert.Equal(eligible ? "claimed" : "empty", response.Status);
+        if (eligible)
+        {
+            Assert.Equal(selected.Subject.SubjectId, response.Subject!.SubjectId);
+            Assert.Equal(1, response.Lease!.Fence);
+            Assert.Equal("empty", (await claim(new("gate", "instance"))).Status);
+        }
+        foreach (var id in blocked)
+            Assert.Equal(GateStates.Queued, (await status(id))!.Phase);
+    }
+
+    [Theory]
+    [InlineData("monolith")]
+    [InlineData("task-server")]
+    public async Task PagedClaimRetainsIdentityExclusionAndSubjectConflictChecks(string authority)
+    {
+        var (create, claim, status) = await QueueFixture(authority);
+        var request = QueueRequest(GateSubjectKinds.PostMerge, "selected", []);
+        var selected = await create(request);
+        var conflict = await Record.ExceptionAsync(() => create(request with { PolicyHash = "changed" }));
+        Assert.Equal("gate-subject-conflict", authority == "monolith"
+            ? Assert.IsType<GateConflictException>(conflict).Code : Assert.IsType<TaskGateConflict>(conflict).Code);
+        var stale = await Record.ExceptionAsync(() => claim(new("gate", "stale")));
+        if (authority == "monolith") Assert.Equal("gate-executor-not-registered", Assert.IsType<GateConflictException>(stale).Code);
+        else Assert.Equal("runner-instance-stale", Assert.IsType<TaskGateConflict>(stale).Code);
+        Assert.Equal("empty", (await claim(new("gate", "instance", AvailableGateSlots: 0))).Status);
+        Assert.Equal("empty", (await claim(new("gate", "instance", ExcludePostMerge: true))).Status);
+        Assert.Equal(GateStates.Queued, (await status(selected.Subject.SubjectId))!.Phase);
+        Assert.Equal(selected.Subject.SubjectId, (await claim(new("gate", "instance"))).Subject!.SubjectId);
+    }
+
+    [Theory]
+    [InlineData("monolith")]
+    [InlineData("task-server")]
+    public async Task ClaimScansPastLaneConflictsWithoutClaimingThem(string authority)
+    {
+        var (create, claim, status) = await QueueFixture(authority);
+        await create(QueueRequest(GateSubjectKinds.Merge, "active", []));
+        Assert.Equal("claimed", (await claim(new("gate", "instance"))).Status);
+        var blocked = new List<string>();
+        for (var i = 0; i < 32; i++)
+            blocked.Add((await create(QueueRequest(GateSubjectKinds.Merge, "blocked-" + i, []))).Subject.SubjectId);
+        var selected = await create(QueueRequest(GateSubjectKinds.PostMerge, "selected", []));
+        var response = await claim(new("gate", "instance"));
+        Assert.Equal("claimed", response.Status);
+        Assert.Equal(selected.Subject.SubjectId, response.Subject!.SubjectId);
+        foreach (var id in blocked)
+            Assert.Equal(GateStates.Queued, (await status(id))!.Phase);
+        Assert.Equal("empty", (await claim(new("gate", "instance"))).Status);
+    }
+
+    [Theory]
+    [InlineData("monolith")]
+    [InlineData("task-server")]
+    public async Task ClaimPreservesArrivalOrderWhenCreationTimesTie(string authority)
+    {
+        var (create, claim, _) = await QueueFixture(authority);
+        var first = await create(QueueRequest(GateSubjectKinds.Merge, "first", []));
+        await create(QueueRequest(GateSubjectKinds.Merge, "second", []));
+        Assert.Equal(first.Subject.SubjectId, (await claim(new("gate", "instance"))).Subject!.SubjectId);
+    }
+
+    [Fact]
+    public void MonolithClaimStillRequiresCompletePassingEvidence()
+    {
+        var gates = new MonolithGateStore((string?)null, _clock, new GateHosts());
+        gates.Create(QueueRequest(GateSubjectKinds.Merge, "evidence", []));
+        var claim = gates.Claim(new("gate", "instance"));
+        var lease = claim.Lease!;
+        var authority = new GateAuthority(lease.ExecutorId, lease.InstanceId, lease.LeaseId, lease.Fence, lease.AuthorityEpoch);
+        foreach (var phase in new[] { GateStates.Materializing, GateStates.Running, GateStates.Reporting, GateStates.Cleaning })
+            gates.Advance(claim.Attempt!.AttemptId, new(authority, phase));
+        var report = new GateReport(GateStates.Passed, null, claim.Subject!.ExpectedSha, new string('b', 40),
+            false, false, [], "host", "toolchain", [], [], "clean",
+            new(claim.Subject.PlanHash, claim.Subject.PolicyHash, claim.Subject.ExpectedSha, null, null));
+        var error = Assert.Throws<GateConflictException>(() => gates.Report(claim.Attempt!.AttemptId, new(authority, report)));
+        Assert.Equal("gate-report-invalid", error.Code);
+        Assert.Equal(GateStates.Cleaning, gates.GetStatus(claim.Subject.SubjectId)!.Phase);
+    }
+
+    private CreateGateSubjectRequest QueueRequest(string kind, string source, string[] capabilities)
+    {
+        var plan = new GatePlan("post-build-test-gate", 1, [new("verify", "sh", ["-c", "true"], 60)],
+            "", 300, capabilities, 4096, "always",
+            PostMerge: kind == GateSubjectKinds.PostMerge ? new("fixture", "develop", "window") : null);
+        var tip = new string('a', 40);
+        return new("fixture", source, "repository", "https://example.invalid/product.git", tip, tip, null, null,
+            GateRules.PlanHash(plan), "policy", "1", new string('a', 64), plan,
+            _clock.GetUtcNow().UtcDateTime.AddMinutes(15), Kind: kind);
+    }
+
+    private async Task<(Func<CreateGateSubjectRequest, Task<GateStatus>> Create,
+        Func<GateClaimRequest, Task<GateClaimResponse>> Claim, Func<string, Task<GateStatus?>> Status)>
+        QueueFixture(string authority)
+    {
+        if (authority == "monolith")
+        {
+            var store = new MonolithGateStore((string?)null, _clock, new GateHosts());
+            return (request => Task.FromResult(store.Create(request)),
+                request => Task.FromResult(store.Claim(request)), id => Task.FromResult(store.GetStatus(id)));
+        }
+        var remote = new TaskGateStore(Options.Create(new TaskGateOptions { DataDirectory = _root }), _clock);
+        await remote.InitializeAsync();
+        string[] keys = [GateCapabilities.Executor, GateCapabilities.PostMerge, GateCapabilities.GitMaterialization,
+            CapabilityProtocol.GitFetch, CapabilityProtocol.RepositoryAccess,
+            CapabilityProtocol.TaskServerConnectivity, CapabilityProtocol.Disk];
+        await remote.RegisterRunnerAsync("gate", new RegisterRunnerRequest("gate", "host", "instance", "1",
+            TaskServerProtocol.Current, keys), "gate", default);
+        await remote.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest("gate", "instance",
+            CapabilityProtocol.CurrentSchemaVersion, _clock.GetUtcNow().UtcDateTime, 300, 1,
+            keys.Select(key => new AdvertisedCapabilityDto(key, key.Split(':')[0])).ToArray()), "gate", default);
+        return (request => remote.CreateGateSubjectAsync(request, "fixture", default),
+            request => remote.ClaimGateAsync(request, "gate", default), id => remote.GetGateStatusAsync(id, default));
+    }
+
     private sealed class GateHosts : IGateExecutorDirectory
     {
         public bool TryGetGateExecutor(string runnerId, string instanceId, out string hostId, out IReadOnlySet<string> capabilities)
@@ -103,7 +246,7 @@ public sealed class PostMergeGateSchedulerTests : IDisposable
             hostId = "host";
             capabilities = new HashSet<string> { GateCapabilities.Executor, GateCapabilities.GitMaterialization,
                 CapabilityProtocol.RepositoryAccess, CapabilityProtocol.GitFetch };
-            return true;
+            return runnerId == "gate" && instanceId == "instance";
         }
     }
 
