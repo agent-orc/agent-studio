@@ -4918,3 +4918,43 @@ create new escape events. Archiving a waiting card ends its measured wait.
 Observed metrics are shared with an identical shadow plan only when every
 incident in the selected cohort has a matching guardian observation. A partial
 first shadow week never borrows unobserved baseline outcomes.
+
+
+## Managed project artifact push custody
+
+`ManagedRepositoryMutationService` hands managed project document and decision
+commits to `WorkspaceArtifactPushQueue`. For an enabled project push, it flushes
+an application-owned intent before creating the commit and places the intent's
+unique `Agent-Studio-Push-Intent` marker in the commit body. Failure to persist
+the intent refuses the commit and restores the bounded write. After commit it
+flushes one outbox receipt per repository, target branch and approved SHA before
+signalling the in-memory channel or reporting `PushQueued = true`. A failed
+SHA hand-off reports the local commit without claiming mutation success; the
+intent remains recoverable. Network work stays off the mutation path.
+
+The default outbox is below
+`LocalStateRoot/agentstudio/workspace-artifact-push-outbox/<TaskRepository hash>`.
+`WorkspaceArtifacts:PushOutboxPath` can select an absolute persistent directory.
+Keep that path (or the default TaskRepository identity and local-state volume)
+stable across restarts. Receipts use flushed temporary files and atomic rename;
+acknowledgement removes only the exact tuple. Prepared intents survive ambiguous
+Git failures. Recovery resolves their unique marker from Git history and reflogs
+to one full SHA; absent or ambiguous evidence stays retained and never authorizes
+a push of the current branch tip.
+
+`WorkspaceArtifactPushWorker` replays the outbox at startup and every 60 seconds
+(`WorkspaceArtifacts:PushOutboxSweepSeconds`, bounded to 1 through 3600 seconds),
+without needing another mutation. It queries origin for the recorded branch.
+An equal remote tip or fetched remote descendant proves containment and clears
+the receipt, covering a crash after push but before acknowledgement. Local
+tracking-ref ahead counts cannot clear exact-SHA obligations. Otherwise the
+worker pushes only the approved SHA with a non-force refspec, retaining the
+existing repository gate, three-attempt backoff, timeout escalation and typed
+`managed-repo-push-failed` event / `workspace-repository-push-failed` advisory.
+A spent retry budget retains the receipt for a later sweep. Duplicate channel
+notifications do not restart that budget within a sweep interval.
+
+Legacy workspace HEAD catch-up and Task Server export exclusions retain their
+existing behavior. This contract adds no orchestration transition, integration
+permission, force push or branch-tip approval. Pre-upgrade commits without an
+outbox receipt or marker cannot be inferred safely from arbitrary local history.
