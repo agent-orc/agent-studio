@@ -32,7 +32,7 @@ public sealed class HostQuotaCoordinator
         lock (_gate)
         {
             var state = Get(request.Provider, request.SubscriptionKey);
-            if (state.Reading is { } reading && nowUtc - reading.ObservedAt < _ttl && reading.Error is null)
+            if (state.Reading is { } reading && IsFreshForAdmission(reading.ObservedAt, reading.Error, nowUtc, _ttl))
                 return new(false, null, reading.ObservedAt + _ttl, "Subscription reading is fresh.");
             if (state.FailedHosts.TryGetValue(runnerId, out var failedUntil) && failedUntil > nowUtc)
                 return new(false, null, failedUntil, "This host's last probe failed; another healthy host may take over.");
@@ -82,6 +82,14 @@ public sealed class HostQuotaCoordinator
         }
     }
 
+    /// <summary>
+    /// Admission authority expires at the observation's TTL. A claim, sync or
+    /// failed retry cannot extend it. Historical readings remain observable.
+    /// </summary>
+    public static bool IsFreshForAdmission(DateTime observedAt, string? error, DateTime nowUtc, TimeSpan ttl)
+        => error is null && observedAt <= nowUtc.AddMinutes(1) && nowUtc - observedAt < ttl;
+
+    /// <summary>Retained observations for display and history, including abandoned subscriptions.</summary>
     public IReadOnlyList<HostQuotaReadingDto> Readings()
     {
         lock (_gate) return _subscriptions.Values.Where(s => s.Reading is not null)
