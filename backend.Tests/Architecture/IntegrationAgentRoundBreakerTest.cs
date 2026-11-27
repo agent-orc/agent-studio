@@ -5,23 +5,23 @@ namespace AgentStudio.Tests;
 /// <summary>
 /// Architecture breaker for loop-inventory entry
 /// <c>integration.attribution-agent-round</c>. An ambiguous mechanical rebase
-/// may open one automatic steer round, but a repeat after that budget for the
+/// may open two automatic steer rounds, but a repeat after that budget for the
 /// same card and integration target terminates in Human Review. AGT-3968: a
 /// new delivery does not restart the budget; every round publishes one.
 /// </summary>
 public sealed class IntegrationAgentRoundBreakerTest
 {
     [Fact]
-    public void Budget_AllowsExactlyOneAutomaticRound()
+    public void Budget_AllowsTwoAutomaticRoundsAndEscalatesTheThird()
     {
-        Assert.Equal(1, RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds);
+        Assert.Equal(2, RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds);
         Assert.Equal(
             RemoteIntegrationContinuationAction.StartAgentRound,
             RemoteIntegrationContinuationPolicy.Decide(
                 MergeIntoIntegrationOutcome.AgentRoundRequired,
                 automaticAgentRoundsUsed: 0));
         Assert.Equal(
-            RemoteIntegrationContinuationAction.LeaveForHumanReview,
+            RemoteIntegrationContinuationAction.StartAgentRound,
             RemoteIntegrationContinuationPolicy.Decide(
                 MergeIntoIntegrationOutcome.AgentRoundRequired,
                 automaticAgentRoundsUsed: 1));
@@ -34,7 +34,7 @@ public sealed class IntegrationAgentRoundBreakerTest
             RemoteIntegrationContinuationAction.LeaveForHumanReview,
             RemoteIntegrationContinuationPolicy.Decide(
                 MergeIntoIntegrationOutcome.Conflict,
-                automaticAgentRoundsUsed: 1,
+                automaticAgentRoundsUsed: 2,
                 maximumAgentRounds: 3));
     }
 
@@ -86,7 +86,7 @@ public sealed class IntegrationAgentRoundBreakerTest
 
         Assert.Equal(1, usage.Used);
         Assert.Equal(
-            RemoteIntegrationContinuationAction.LeaveForHumanReview,
+            RemoteIntegrationContinuationAction.StartAgentRound,
             RemoteIntegrationContinuationPolicy.Decide(
                 MergeIntoIntegrationOutcome.Conflict,
                 usage.Used));
