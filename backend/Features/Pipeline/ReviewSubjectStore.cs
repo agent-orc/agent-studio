@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.Persistence;
 
 namespace AgentStudio.Pipeline;
 
@@ -89,25 +90,7 @@ public static class ReviewSubjectStore
             throw new ArgumentException("AttemptChainId is required.", nameof(subject));
 
         var path = PathFor(taskFolder);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
-        try
-        {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(subject, Json));
-            File.Move(temporary, path, overwrite: true);
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(temporary)) File.Delete(temporary);
-            }
-            catch (Exception ex)
-            {
-                SilentCatch.Note(ex, "ReviewSubjectStore: temporary file cleanup");
-                // Best effort cleanup of a file that was never authoritative.
-            }
-        }
+        new AtomicJsonFileWriter().Write(path, JsonSerializer.Serialize(subject, Json));
     }
 
     /// <summary>

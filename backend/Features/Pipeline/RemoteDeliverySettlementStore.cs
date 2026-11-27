@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AgentStudio.Persistence;
 
 namespace AgentStudio.Pipeline;
 
@@ -89,7 +90,7 @@ public sealed record RemoteDeliverySettlementRecord
 
 /// <summary>
 /// Reads and writes <see cref="RemoteDeliverySettlementRecord"/> beside the task
-/// folder. Every write is atomic (temp file plus move). The settled
+/// folder. Every write flushes the file and supported rename metadata. The settled
 /// ReviewAttempt stays authoritative; new report workflows also journal the
 /// delivery decision so a missing sidecar can be reconstructed safely.
 /// </summary>
@@ -111,24 +112,7 @@ public static class RemoteDeliverySettlementStore
         ArgumentNullException.ThrowIfNull(record);
 
         var path = PathFor(taskFolder);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
-        try
-        {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(record, Json));
-            File.Move(temporary, path, overwrite: true);
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(temporary)) File.Delete(temporary);
-            }
-            catch (Exception ex)
-            {
-                SilentCatch.Note(ex, "RemoteDeliverySettlementStore: temporary file cleanup");
-            }
-        }
+        new AtomicJsonFileWriter().Write(path, JsonSerializer.Serialize(record, Json));
     }
 
     public static RemoteDeliverySettlementRecord? Read(string taskFolder)
@@ -165,7 +149,13 @@ public static class RemoteDeliverySettlementStore
     {
         var current = Read(taskFolder);
         if (current is null) return false;
-        if (current.Stage >= stage && integrationOutcome is null) return true;
+        if (current.Stage >= stage && integrationOutcome is null)
+        {
+            // The visible stage may follow a failed directory flush. Reconfirm
+            // its durability before acknowledging an otherwise idempotent retry.
+            Write(taskFolder, current);
+            return true;
+        }
 
         Write(taskFolder, current with
         {
