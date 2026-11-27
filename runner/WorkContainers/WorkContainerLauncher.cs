@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -434,8 +435,9 @@ public static class WorkContainerLauncherCommand
             return Refused(refusal);
         try
         {
+            var executable = await ResolveRuntimeAsync(runtime, RuntimeSearchDirectories, ct);
             return await ExecuteAdmittedAsync(arguments, stdin,
-                (call, data, token) => ProcessRunner.RunAsync("/usr/bin/" + runtime, call, stdin: data, ct: token), ct);
+                (call, data, token) => ProcessRunner.RunAsync(executable, call, stdin: data, ct: token), ct);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
         {
@@ -443,23 +445,117 @@ public static class WorkContainerLauncherCommand
         }
     }
 
+    // Match the root wrapper's sanitized PATH. Never search a caller's PATH.
+    internal static readonly string[] RuntimeSearchDirectories =
+        ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"];
+
+    internal static async Task<string> ResolveRuntimeAsync(string runtime, IEnumerable<string> directories, CancellationToken ct,
+        Func<string, CancellationToken, Task<bool>>? trusted = null)
+    {
+        if (runtime is not ("docker" or "podman")) throw new InvalidDataException("Unsupported work runtime.");
+        foreach (var directory in directories)
+        {
+            var candidate = Path.Combine(directory, runtime);
+            if (!File.Exists(candidate)) continue;
+            // Root installations commonly use a symlink in /usr/local/bin.
+            // Verify the alias path as well as the resolved binary's ancestors.
+            if (!await (trusted ?? TrustedRuntimeDirectory)(directory, ct))
+                throw new InvalidDataException("Runtime search directory is not root-controlled.");
+            var resolved = new FileInfo(candidate).ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? candidate;
+            if (!await (trusted ?? TrustedRuntimeFile)(resolved, ct))
+                throw new InvalidDataException("Runtime executable is not root-controlled.");
+            return resolved;
+        }
+        throw new IOException("The configured work runtime is not installed in the trusted system search path.");
+    }
+
+    private static Task<bool> TrustedRuntimeDirectory(string path, CancellationToken ct)
+        => RoleImageManifest.RootControlledPathAsync(path, directory: true, ct);
+
+    private static Task<bool> TrustedRuntimeFile(string path, CancellationToken ct)
+        => RoleImageManifest.RootControlledPathAsync(path, directory: false, ct);
+
+    private const string SourceSnapshotRoot = "/var/lib/agent-work-launcher/sources";
+
+    private sealed class SourceSnapshot(string directory, IReadOnlyList<string> arguments) : IDisposable
+    {
+        public IReadOnlyList<string> Arguments { get; } = arguments;
+        public bool Retained { get; set; }
+        public void Dispose()
+        {
+            if (!Retained) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static async Task<SourceSnapshot?> SnapshotSourceAsync(IReadOnlyList<string> arguments, string root, CancellationToken ct)
+    {
+        var bind = WorkContainerLauncherPolicy.Values(arguments, "--mount")
+            .Select(WorkContainerLauncherPolicy.ParseMount).SingleOrDefault(mount => mount?.Type == "bind");
+        if (bind is null) return null;
+        if (!RoleImageManifest.CanonicalSource(bind.Source)) throw new InvalidDataException("Noncanonical source capability.");
+        using var source = RoleImageManifest.OpenRootControlled(bind.Source, directory: true);
+        if (!OperatingSystem.IsLinux()) throw new InvalidDataException("Source capabilities require Linux.");
+        // Creation is under an already trusted ancestor. Existing directories
+        // must pass the same ownership check before they can hold snapshots.
+        var ancestor = root;
+        while (!Directory.Exists(ancestor)) ancestor = Path.GetDirectoryName(ancestor)!;
+        using (RoleImageManifest.OpenRootControlled(ancestor, directory: true)) { }
+        Directory.CreateDirectory(root, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        using (RoleImageManifest.OpenRootControlled(root, directory: true)) { }
+        var name = WorkContainerLauncherPolicy.Values(arguments, "--name").Single();
+        var directory = Path.Combine(root, name);
+        // Exclusive creation also fences concurrent requests for the same name.
+        if (MakeDirectory(directory, 0x1c0) != 0) throw new IOException("Source snapshot already exists or cannot be created.");
+        var snapshot = new SourceSnapshot(directory, arguments);
+        try
+        {
+            var target = Path.Combine(directory, "source.git");
+            Directory.CreateDirectory(target);
+            await RoleImageManifest.WalkSourceAsync(source, target, owner: 0, ct);
+            var specification = $"type=bind,source={target},target={bind.Target},readonly";
+            var rewritten = arguments.ToArray();
+            // Rewrite runtime options only, never the work command's data.
+            for (var index = 1; index < rewritten.Length && rewritten[index].StartsWith('-'); index++)
+            {
+                if (rewritten[index] is "--rm" or "--read-only") continue;
+                if (rewritten[index] == "--mount" && WorkContainerLauncherPolicy.ParseMount(rewritten[index + 1])?.Type == "bind")
+                    rewritten[index + 1] = specification;
+                index++;
+            }
+            return new SourceSnapshot(directory, rewritten);
+        }
+        catch { snapshot.Dispose(); throw; }
+    }
+
+    [DllImport("libc", EntryPoint = "mkdir", SetLastError = true)]
+    private static extern int MakeDirectory(string path, uint mode);
+
     private static WorkContainerLauncherResponse Refused(string reason)
         => new(RefusedExitCode, "", "agent-work-launcher refused: " + reason);
 
     internal static async Task<WorkContainerLauncherResponse> ExecuteAdmittedAsync(
         IReadOnlyList<string> arguments, string? stdin,
-        Func<IReadOnlyList<string>, string?, CancellationToken, Task<ProcessResult>> run, CancellationToken ct)
+        Func<IReadOnlyList<string>, string?, CancellationToken, Task<ProcessResult>> run, CancellationToken ct,
+        string sourceSnapshotRoot = SourceSnapshotRoot)
     {
         if (arguments[0] is not ("create" or "run"))
         {
             var direct = await run(arguments, stdin, ct);
+            if (direct.ExitCode == 0 && arguments is ["rm", "--force", "--volumes", var removed])
+            {
+                var directory = Path.Combine(sourceSnapshotRoot, removed);
+                if (Directory.Exists(directory))
+                {
+                    using (RoleImageManifest.OpenRootControlled(directory, directory: true)) { }
+                    Directory.Delete(directory, recursive: true);
+                }
+            }
             return new(direct.ExitCode, direct.StdOut, direct.StdErr);
         }
+        using var snapshot = await SnapshotSourceAsync(arguments, sourceSnapshotRoot, ct);
+        arguments = snapshot?.Arguments ?? arguments;
         var mounts = WorkContainerLauncherPolicy.Values(arguments, "--mount")
             .Select(WorkContainerLauncherPolicy.ParseMount).OfType<WorkContainerMount>().ToArray();
-        foreach (var mount in mounts.Where(mount => mount.Type == "bind"))
-            if (!await RoleImageManifest.LauncherSourceReadyAsync(mount.Source, ct))
-                return Refused("source-capability-unavailable: bind source must be an immutable root-controlled bare repository without links, sockets or nested mounts.");
         var volumePaths = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var mount in mounts.Where(mount => mount.Type == "volume"))
         {
@@ -494,6 +590,9 @@ public static class WorkContainerLauncherCommand
             if (!preparation)
             {
                 keep = true;
+                // Docker resolves bind paths at start, which is a later socket
+                // call. Retain the private snapshot until successful removal.
+                if (snapshot is not null) snapshot.Retained = true;
                 return new(result.ExitCode, result.StdOut, result.StdErr);
             }
             // Inspect the root preparation container before it can execute, too.

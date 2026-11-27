@@ -292,6 +292,131 @@ public class AttemptContainmentTests
     }
 
     [Theory]
+    [InlineData("docker")]
+    [InlineData("podman")]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Runtime_lookup_supports_a_trusted_local_install_and_refuses_untrusted_shadowing(string runtime)
+    {
+        using var state = new TempDir();
+        var local = Directory.CreateDirectory(Path.Combine(state.Path, "local", "bin")).FullName;
+        var system = Directory.CreateDirectory(Path.Combine(state.Path, "usr", "bin")).FullName;
+        var binary = Path.Combine(local, runtime);
+        await File.WriteAllTextAsync(binary, "fixture executable");
+        var checkedPaths = new List<string>();
+        Task<bool> Trusted(string path, CancellationToken ct)
+        {
+            checkedPaths.Add(path);
+            return Task.FromResult(true);
+        }
+        Assert.Equal(binary, await WorkContainerLauncherCommand.ResolveRuntimeAsync(runtime, [local, system], default, Trusted));
+        Assert.Equal(new[] { local, binary }, checkedPaths);
+        Assert.Contains("/usr/local/bin", WorkContainerLauncherCommand.RuntimeSearchDirectories);
+        await Assert.ThrowsAsync<InvalidDataException>(() => WorkContainerLauncherCommand.ResolveRuntimeAsync(
+            runtime, [local, system], default, (_, _) => Task.FromResult(false)));
+        File.Delete(binary);
+        await Assert.ThrowsAsync<IOException>(() => WorkContainerLauncherCommand.ResolveRuntimeAsync(runtime, [local, system], default, Trusted));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Snapshot_copy_uses_the_checked_inode_when_a_source_name_is_swapped_for_a_link(bool swapDirectory)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var state = new TempDir();
+        var source = Directory.CreateDirectory(Path.Combine(state.Path, "source.git")).FullName;
+        var objects = Directory.CreateDirectory(Path.Combine(source, "objects")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(source, "HEAD"), "ref: refs/heads/main");
+        await File.WriteAllTextAsync(Path.Combine(objects, "payload"), "approved repository data");
+        var forbidden = Directory.CreateDirectory(Path.Combine(state.Path, "credentials")).FullName;
+        // Build disposable credential-shaped content at runtime only.
+        var secret = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        await File.WriteAllTextAsync(Path.Combine(forbidden, "payload"), secret);
+        var destination = Directory.CreateDirectory(Path.Combine(state.Path, "snapshot")).FullName;
+        var uid = await ProcessRunner.RunAsync("/usr/bin/id", ["-u"]);
+        Assert.Equal(0, uid.ExitCode);
+        var owner = uint.Parse(uid.StdOut.Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        using var handle = RoleImageManifest.OpenPath(-100, source, directory: true);
+        var swapped = false;
+        void Swap(string name)
+        {
+            if (swapped || name != (swapDirectory ? "objects" : "payload")) return;
+            swapped = true;
+            if (swapDirectory)
+            {
+                Directory.Move(objects, Path.Combine(state.Path, "parked-objects"));
+                Directory.CreateSymbolicLink(objects, forbidden);
+            }
+            else
+            {
+                File.Move(Path.Combine(objects, "payload"), Path.Combine(state.Path, "parked-payload"));
+                File.CreateSymbolicLink(Path.Combine(objects, "payload"), Path.Combine(forbidden, "payload"));
+            }
+        }
+        var copy = RoleImageManifest.WalkSourceAsync(handle, destination, owner, default, Swap);
+        if (swapDirectory) await Assert.ThrowsAsync<InvalidDataException>(() => copy);
+        else await copy;
+        Assert.True(swapped);
+        Assert.Equal("approved repository data", await File.ReadAllTextAsync(Path.Combine(destination, "objects", "payload")));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Snapshot_copy_refuses_links_and_sockets_before_reading_them(bool socketEntry)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var state = new TempDir();
+        var source = Directory.CreateDirectory(Path.Combine(state.Path, "source.git")).FullName;
+        Directory.CreateDirectory(Path.Combine(source, "objects"));
+        await File.WriteAllTextAsync(Path.Combine(source, "HEAD"), "ref: refs/heads/main");
+        var forbidden = Path.Combine(source, "forbidden");
+        using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        if (socketEntry) socket.Bind(new UnixDomainSocketEndPoint(forbidden));
+        else File.CreateSymbolicLink(forbidden, Path.Combine(state.Path, "missing-fixture"));
+        var uid = await ProcessRunner.RunAsync("/usr/bin/id", ["-u"]);
+        Assert.Equal(0, uid.ExitCode);
+        using var handle = RoleImageManifest.OpenPath(-100, source, directory: true);
+        await Assert.ThrowsAsync<InvalidDataException>(() => RoleImageManifest.WalkSourceAsync(handle, null,
+            uint.Parse(uid.StdOut.Trim(), System.Globalization.CultureInfo.InvariantCulture), default));
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Snapshot_copy_preserves_restricted_file_and_directory_read_permissions()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var state = new TempDir();
+        var source = Directory.CreateDirectory(Path.Combine(state.Path, "source.git")).FullName;
+        var objects = Directory.CreateDirectory(Path.Combine(source, "objects")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(source, "HEAD"), "ref: refs/heads/main");
+        await File.WriteAllTextAsync(Path.Combine(objects, "restricted"), "fixture data");
+        File.SetUnixFileMode(source, (UnixFileMode)0x1e8); // 0750
+        File.SetUnixFileMode(objects, (UnixFileMode)0x1c0); // 0700
+        File.SetUnixFileMode(Path.Combine(source, "HEAD"), (UnixFileMode)0x1a0); // 0640
+        File.SetUnixFileMode(Path.Combine(objects, "restricted"), (UnixFileMode)0x180); // 0600
+        var destination = Directory.CreateDirectory(Path.Combine(state.Path, "snapshot")).FullName;
+        var uid = await ProcessRunner.RunAsync("/usr/bin/id", ["-u"]);
+        Assert.Equal(0, uid.ExitCode);
+        using var handle = RoleImageManifest.OpenPath(-100, source, directory: true);
+        await RoleImageManifest.WalkSourceAsync(handle, destination,
+            uint.Parse(uid.StdOut.Trim(), System.Globalization.CultureInfo.InvariantCulture), default);
+        foreach (var relative in new[] { "", "objects", "HEAD", "objects/restricted" })
+            Assert.Equal(File.GetUnixFileMode(Path.Combine(source, relative)), File.GetUnixFileMode(Path.Combine(destination, relative)));
+        var originalGroup = await ProcessRunner.RunAsync("/usr/bin/stat", ["--format=%g", Path.Combine(source, "HEAD")]);
+        var snapshotGroup = await ProcessRunner.RunAsync("/usr/bin/stat", ["--format=%g", Path.Combine(destination, "HEAD")]);
+        Assert.Equal(0, originalGroup.ExitCode);
+        Assert.Equal(0, snapshotGroup.ExitCode);
+        Assert.Equal(originalGroup.StdOut, snapshotGroup.StdOut);
+    }
+
+    [Theory]
     [InlineData("0:600:socket")]
     [InlineData("0:600:fifo")]
     [InlineData("0:600:character special file")]
@@ -488,13 +613,20 @@ public class AttemptContainmentTests
             foreach (var args in new[] { plan.PrepareArguments, plan.CreateArguments })
             {
                 Assert.Null(WorkContainerLauncherPolicy.Refusal(args, context));
-                var result = await WorkContainerLauncherCommand.ExecuteAdmittedAsync(args, null, Runtime, ct);
+                var result = await WorkContainerLauncherCommand.ExecuteAdmittedAsync(args, null, Runtime, ct, Path.Combine(root, "snapshots"));
                 Assert.True(result.ExitCode == 0, result.StdErr);
             }
+            var snapshot = Path.Combine(root, "snapshots", plan.ContainerName, "source.git");
+            Assert.True(Directory.Exists(snapshot));
+            // Swap the originally admitted source before the later start call.
+            // The daemon must consume only the private validated snapshot.
+            Directory.Move(source, Path.Combine(root, "parked-source.git"));
+            Directory.CreateSymbolicLink(source, Path.GetDirectoryName(credentials)!);
             await CheckedRuntime("start", plan.ContainerName);
             var waited = await CheckedRuntime("wait", plan.ContainerName);
             Assert.Equal("0", waited.StdOut.Trim());
             var effective = await CheckedRuntime("inspect", "--format", "{{json .Mounts}}", plan.ContainerName);
+            Assert.Contains(snapshot, effective.StdOut, StringComparison.Ordinal);
             Assert.DoesNotContain(credentials, effective.StdOut, StringComparison.Ordinal);
             Assert.DoesNotContain(socketPath, effective.StdOut, StringComparison.Ordinal);
             var resultDirectory = Environment.GetEnvironmentVariable("JOB_RESULTS_DIR");
@@ -505,7 +637,10 @@ public class AttemptContainmentTests
         {
             if (plan is not null)
             {
-                await Runtime(["rm", "--force", "--volumes", plan.ContainerName, plan.PrepareContainerName], null, default);
+                await WorkContainerLauncherCommand.ExecuteAdmittedAsync(["rm", "--force", "--volumes", plan.ContainerName],
+                    null, Runtime, default, Path.Combine(root, "snapshots"));
+                Assert.False(Directory.Exists(Path.Combine(root, "snapshots", plan.ContainerName)));
+                await Runtime(["rm", "--force", "--volumes", plan.PrepareContainerName], null, default);
                 foreach (var volume in volumes) await Runtime(["volume", "rm", "--force", volume], null, default);
             }
             if (image.Length > 0) await Runtime(["image", "rm", "--force", image], null, default);

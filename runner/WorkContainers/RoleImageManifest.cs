@@ -1,3 +1,6 @@
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -55,9 +58,9 @@ public sealed record RoleImageManifest(int SchemaVersion, Dictionary<string, Rol
 
     public static async Task<RoleImageManifest> LoadLauncherReleaseAsync(string path, CancellationToken ct)
     {
-        if (!await RootControlledPathAsync(path, directory: false, ct))
-            throw new InvalidDataException("Launcher release state and every ancestor must be root-owned, without links or group/other write access.");
-        return Parse(await File.ReadAllTextAsync(path, ct));
+        using var handle = OpenRootControlled(path, directory: false);
+        using var reader = new StreamReader(DescriptorPath(handle));
+        return Parse(await reader.ReadToEndAsync(ct));
     }
 
     internal static bool CanonicalSource(string path)
@@ -66,16 +69,18 @@ public sealed record RoleImageManifest(int SchemaVersion, Dictionary<string, Rol
            && !path.Any(char.IsControl)
            && !path.Split('/').Skip(1).Any(part => part is "" or "." or "..");
 
-    internal static async Task<bool> RootControlledPathAsync(string path, bool directory, CancellationToken ct)
+    internal static Task<bool> RootControlledPathAsync(string path, bool directory, CancellationToken ct)
     {
-        if (!OperatingSystem.IsLinux() || !Path.IsPathFullyQualified(path)
-            || Path.GetFullPath(path) != path || path.Split('/').Any(part => part is "." or "..")) return false;
-        var paths = new List<string> { path };
-        for (var parent = Path.GetDirectoryName(path); parent is not null; parent = Path.GetDirectoryName(parent))
-            paths.Add(parent);
-        // stat does not dereference links. Check all ancestors as well as the leaf.
-        var result = await ProcessRunner.RunAsync("/usr/bin/stat", ["--format=%u:%a:%F", "--", .. paths], environment: new Dictionary<string, string?> { ["LC_ALL"] = "C" }, ct: ct);
-        return result.ExitCode == 0 && TrustedMetadata(result.StdOut, directory, paths.Count);
+        ct.ThrowIfCancellationRequested();
+        try
+        {
+            using var handle = OpenRootControlled(path, directory);
+            return Task.FromResult(true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return Task.FromResult(false);
+        }
     }
 
     internal static bool TrustedMetadata(string metadata, bool directory, int count)
@@ -101,42 +106,152 @@ public sealed record RoleImageManifest(int SchemaVersion, Dictionary<string, Rol
 
     internal static async Task<bool> LauncherSourceReadyAsync(string path, CancellationToken ct)
     {
-        if (!CanonicalSource(path) || !await RootControlledPathAsync(path, directory: true, ct)) return false;
-        // A nested mount could expose a socket/credential tree despite the outer
-        // directory's ownership. Reject it before asking the runtime to bind.
-        foreach (var line in await File.ReadAllLinesAsync("/proc/self/mountinfo", ct))
+        try
         {
-            var fields = line.Split(' ');
-            if (fields.Length < 5) return false;
-            var mount = fields[4].Replace("\\040", " ", StringComparison.Ordinal)
-                .Replace("\\011", "\t", StringComparison.Ordinal).Replace("\\134", "\\", StringComparison.Ordinal);
-            if (mount.StartsWith(path + "/", StringComparison.Ordinal)) return false;
+            using var source = OpenRootControlled(path, directory: true);
+            if (!CanonicalSource(path)) return false;
+            await WalkSourceAsync(source, destination: null, owner: 0, ct);
+            return true;
         }
-        // Approved sources are immutable to the socket group. Walk without
-        // following links, and admit only root-owned directories/regular files.
-        var pending = new Queue<string>();
-        pending.Enqueue(path);
-        var entries = 0;
-        while (pending.TryDequeue(out var parent))
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
-            foreach (var batch in Directory.EnumerateFileSystemEntries(parent).Chunk(256))
+            return false;
+        }
+    }
+
+    // Linux O_PATH pins an inode without opening a device or blocking on a FIFO.
+    // Every lookup is relative to an already checked directory descriptor.
+    private const int PathOnly = 0x200000;
+    private const int NoFollow = 0x20000;
+    private const int CloseOnExec = 0x80000;
+    private const int DirectoryOnly = 0x10000;
+
+    internal static string DescriptorPath(SafeFileHandle handle)
+        => "/proc/self/fd/" + handle.DangerousGetHandle().ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    internal static SafeFileHandle OpenPath(int parent, string name, bool directory = false)
+    {
+        var descriptor = OpenAt(parent, name, PathOnly | NoFollow | CloseOnExec | (directory ? DirectoryOnly : 0));
+        if (descriptor < 0) throw new IOException("Source capability lookup failed.", new Win32Exception(Marshal.GetLastPInvokeError()));
+        return new SafeFileHandle((IntPtr)descriptor, ownsHandle: true);
+    }
+
+    internal static SafeFileHandle OpenRootControlled(string path, bool directory)
+    {
+        if (!OperatingSystem.IsLinux() || !Path.IsPathFullyQualified(path) || Path.GetFullPath(path) != path
+            || (path != "/" && path.Split('/').Skip(1).Any(part => part is "" or "." or "..")))
+            throw new InvalidDataException("A canonical Linux capability path is required.");
+        var handle = OpenPath(-100, "/", directory: true);
+        try
+        {
+            CheckMetadata(handle, directory: true, owner: 0);
+            var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            for (var index = 0; index < parts.Length; index++)
             {
-                entries += batch.Length;
-                if (entries > 100_000) return false;
-                var metadata = await ProcessRunner.RunAsync("/usr/bin/stat", ["--format=%u:%a:%F", "--", .. batch],
-                    environment: new Dictionary<string, string?> { ["LC_ALL"] = "C" }, ct: ct);
-                var lines = metadata.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-                if (metadata.ExitCode != 0 || lines.Length != batch.Length) return false;
-                for (var index = 0; index < batch.Length; index++)
+                var next = OpenPath(handle.DangerousGetHandle().ToInt32(), parts[index]);
+                try { CheckMetadata(next, index < parts.Length - 1 || directory, owner: 0); }
+                catch { next.Dispose(); throw; }
+                handle.Dispose();
+                handle = next;
+            }
+            return handle;
+        }
+        catch { handle.Dispose(); throw; }
+    }
+
+    private static LinuxMetadata CheckMetadata(SafeFileHandle handle, bool directory, uint owner)
+    {
+        // statx with AT_EMPTY_PATH describes the pinned object, never its name.
+        if (StatX(handle.DangerousGetHandle().ToInt32(), "", 0x1000, 0x17ff, out var metadata) != 0
+            || (metadata.Mask & 0x101b) != 0x101b || metadata.Owner != owner
+            || (metadata.Mode & 0x12) != 0 || (metadata.Mode & 0xf000) != (directory ? 0x4000 : 0x8000))
+            throw new InvalidDataException("Source capability must contain only trusted, non-writable directories and regular files on one mount.");
+        return metadata;
+    }
+
+    /// <summary>Copy only the validated inodes into a private snapshot, never the caller's paths.</summary>
+    internal static async Task WalkSourceAsync(SafeFileHandle source, string? destination, uint owner,
+        CancellationToken ct, Action<string>? opened = null)
+    {
+        if (!OperatingSystem.IsLinux()) throw new InvalidDataException("Source capabilities require Linux.");
+        var rootMetadata = CheckMetadata(source, directory: true, owner);
+        var entries = 0;
+        async Task Walk(SafeFileHandle parent, string? target, int depth)
+        {
+            if (depth > 128) throw new InvalidDataException("Source capability exceeds the directory depth limit.");
+            foreach (var entry in Directory.EnumerateFileSystemEntries(DescriptorPath(parent)))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (++entries > 100_000) throw new InvalidDataException("Source capability exceeds the entry limit.");
+                var name = Path.GetFileName(entry);
+                using var child = OpenPath(parent.DangerousGetHandle().ToInt32(), name);
+                opened?.Invoke(name);
+                // Determine the type from this descriptor, then validate it. No
+                // path-based type check may run between opening and copying.
+                if (StatX(child.DangerousGetHandle().ToInt32(), "", 0x1000, 0x17ff, out var type) != 0)
+                    throw new IOException("Source capability inspection failed.");
+                var directory = (type.Mode & 0xf000) == 0x4000;
+                var metadata = CheckMetadata(child, directory, owner);
+                if (metadata.MountId != rootMetadata.MountId)
+                    throw new InvalidDataException("Nested source mounts are refused.");
+                var childTarget = target is null ? null : Path.Combine(target, name);
+                if (directory)
                 {
-                    var directory = lines[index].EndsWith(":directory", StringComparison.Ordinal);
-                    if (!TrustedMetadata(lines[index], directory, 1)) return false;
-                    if (directory) pending.Enqueue(batch[index]);
+                    if (childTarget is not null)
+                    {
+                        Directory.CreateDirectory(childTarget);
+                    }
+                    await Walk(child, childTarget, depth + 1);
+                    if (childTarget is not null) PreserveSnapshotPermissions(childTarget, metadata);
+                }
+                else if (childTarget is not null)
+                {
+                    await using var input = File.OpenRead(DescriptorPath(child));
+                    await using var output = new FileStream(childTarget, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                    await input.CopyToAsync(output, ct);
+                    PreserveSnapshotPermissions(childTarget, metadata);
                 }
             }
         }
-        return File.Exists(Path.Combine(path, "HEAD")) && Directory.Exists(Path.Combine(path, "objects"));
+        await Walk(source, destination, 0);
+        if (destination is not null) PreserveSnapshotPermissions(destination, rootMetadata);
+        // These are checked through descriptors too. A regular directory with
+        // a .git suffix is not enough to grant a repository capability.
+        using var head = OpenPath(source.DangerousGetHandle().ToInt32(), "HEAD");
+        CheckMetadata(head, directory: false, owner);
+        using var objects = OpenPath(source.DangerousGetHandle().ToInt32(), "objects");
+        CheckMetadata(objects, directory: true, owner);
     }
+
+    private static void PreserveSnapshotPermissions(string path, LinuxMetadata metadata)
+    {
+        if (!OperatingSystem.IsLinux()) throw new InvalidDataException("Source capabilities require Linux.");
+        // Preserve DAC read/traverse restrictions, including the source group.
+        // The private snapshot parent stays 0700 throughout copying. Privilege
+        // bits are never carried into the container's read-only source tree.
+        if (ChangeOwner(path, -1, metadata.Group) != 0)
+            throw new IOException("Source snapshot group could not be preserved.");
+        File.SetUnixFileMode(path, (UnixFileMode)(metadata.Mode & 0x1ff));
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 256)]
+    private struct LinuxMetadata
+    {
+        [FieldOffset(0)] public uint Mask;
+        [FieldOffset(20)] public uint Owner;
+        [FieldOffset(24)] public uint Group;
+        [FieldOffset(28)] public ushort Mode;
+        [FieldOffset(144)] public ulong MountId;
+    }
+
+    [DllImport("libc", EntryPoint = "chown", SetLastError = true)]
+    private static extern int ChangeOwner(string path, int owner, uint group);
+
+    [DllImport("libc", EntryPoint = "openat", SetLastError = true)]
+    private static extern int OpenAt(int parent, string path, int flags);
+
+    [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
+    private static extern int StatX(int descriptor, string path, int flags, uint mask, out LinuxMetadata metadata);
 
     public string Serialize() => JsonSerializer.Serialize(this, Json);
 
