@@ -19,9 +19,9 @@ public static class CodeReviewGradeReuse
     private const string ReplyHeading = "## Reviewer reply";
 
     /// <summary>
-    /// SHA-256 over every request field that reaches the grade prompt or picks
-    /// its reviewer. Each field is length-prefixed and null stays distinct from
-    /// empty, so no two field combinations can collide by concatenation.
+    /// Legacy request fingerprint retained for callers that supply report keys.
+    /// Automatic grade reuse uses the rendered-prompt overload. Each field is
+    /// length-prefixed and null stays distinct from empty.
     /// </summary>
     public static string ComputeInputKey(CodeReviewStepRequest request)
     {
@@ -32,6 +32,33 @@ public static class CodeReviewGradeReuse
         AppendField(hash, request.TaskBody);
         AppendField(hash, request.ResultsInventory);
         AppendField(hash, request.CardMode);
+        AppendField(hash, request.CliType);
+        AppendField(hash, request.Model);
+        AppendField(hash, request.ThinkingLevel);
+        return InputKeyPrefix + Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Version of the grade execution and reply-parsing contract. Bump when a
+    /// non-prompt behavior changes which judgement a completed grade represents.
+    /// </summary>
+    public const string ExecutionContractVersion = "code-review-grade:v2";
+
+    /// <summary>
+    /// Authoritative reuse key: final rendered prompt bytes, reviewer identity,
+    /// and execution contract. Request-only legacy keys deliberately differ.
+    /// </summary>
+    public static string ComputeInputKey(
+        CodeReviewStepRequest request,
+        string renderedPrompt,
+        string executionContractVersion = ExecutionContractVersion)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(renderedPrompt);
+        ArgumentException.ThrowIfNullOrWhiteSpace(executionContractVersion);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        AppendField(hash, executionContractVersion);
+        AppendField(hash, renderedPrompt);
         AppendField(hash, request.CliType);
         AppendField(hash, request.Model);
         AppendField(hash, request.ThinkingLevel);
