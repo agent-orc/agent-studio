@@ -39,6 +39,14 @@ public static class AddAddUnionResolution
     private enum Section { Outside, Ours, Base, Theirs }
 
     public static AddAddUnionResult Resolve(string path, string diff3Text)
+        => ResolveCore(path, diff3Text, null);
+
+    public static AddAddUnionResult ResolveWithin(
+        string path, string diff3Text, string startMarker, string endMarker)
+        => ResolveCore(path, diff3Text, (startMarker, endMarker));
+
+    private static AddAddUnionResult ResolveCore(
+        string path, string diff3Text, (string Start, string End)? region)
     {
         ArgumentNullException.ThrowIfNull(diff3Text);
         var output = new StringBuilder(diff3Text.Length);
@@ -48,18 +56,41 @@ public static class AddAddUnionResolution
         var baseLines = 0;
         var outputLine = 1;
         var section = Section.Outside;
+        var insideRegion = false;
+        var regionsStarted = 0;
+        var regionsEnded = 0;
         foreach (var line in Lines(diff3Text))
         {
             var text = line.TrimEnd('\r', '\n');
+            if (region is { } registered && section != Section.Outside
+                && (text.Trim() == registered.Start || text.Trim() == registered.End))
+                return Refuse(path, outputLine, "an append-only marker is part of the conflict");
             switch (section)
             {
                 case Section.Outside when IsMarker(text, Start):
+                    if (region is not null && !insideRegion)
+                        return Refuse(path, outputLine, "the addition is outside the registered append-only section");
                     section = Section.Ours;
                     ours.Clear();
                     theirs.Clear();
                     baseLines = 0;
                     continue;
                 case Section.Outside:
+                    if (region is { } bounds)
+                    {
+                        if (text.Trim() == bounds.Start)
+                        {
+                            if (++regionsStarted != 1 || regionsEnded != 0)
+                                return Refuse(path, outputLine, "duplicate append-only start marker");
+                            insideRegion = true;
+                        }
+                        if (text.Trim() == bounds.End)
+                        {
+                            if (!insideRegion || ++regionsEnded != 1)
+                                return Refuse(path, outputLine, "misplaced append-only end marker");
+                            insideRegion = false;
+                        }
+                    }
                     output.Append(line);
                     if (line.EndsWith('\n')) outputLine++;
                     continue;
@@ -99,6 +130,8 @@ public static class AddAddUnionResolution
         }
         if (section != Section.Outside)
             return Refuse(path, outputLine, "a conflict marker is not closed");
+        if (region is not null && (regionsStarted != 1 || regionsEnded != 1))
+            return Refuse(path, outputLine, "the registered append-only markers are missing or unclosed");
         if (hunks.Count == 0)
             return Refuse(path, 1, "the file has no conflict hunk");
         return new AddAddUnionResult(true, output.ToString(), hunks, null);

@@ -2162,3 +2162,79 @@ mode. An absent artifact does not become a pass. The durable outbox sends a
 present document to Quality Studio's versioned `PUT .../change-reviews` route,
 replays the same key across restarts, and emits an operator-feed event after
 seven days without delivery.
+
+### Stale delivery verdict recovery
+
+`DeliveryChainReconciler` compares the completed verdict's immutable result with
+current delivery content, including deliveries already integrated into the target.
+A matching current-source result keeps its verdict. A superseded result or
+review attempt requests fresh review. A new source run also requests review,
+even for an unchanged SHA, preserving the existing authority contract.
+The task-local `logs/stale-verdict-recovery.json` records the delivery identity,
+previous verdict, recovery phase and pending decision facts across restarts.
+Recovery and recall facts use the existing `delivery-chain` AI Operator gateway;
+Engine receipts revalidate the immutable delivery and current proof before acting.
+An integration result awaiting a decision is not integrated a second time.
+Legacy cards persist their existing lane entry before the first recovery log
+write, so activity timestamps cannot invalidate their own Engine receipt.
+Recovery submissions use the reconciler's 30-second period: a completed Engine
+receipt with unchanged facts cannot consume the next retry's wake. Held recall
+facts create no occurrence. Review creation uses the existing lane-entry
+idempotency key; recording the handoff can be replayed safely. An already pending
+or leased review for the current immutable source satisfies the request.
+
+Conflict outcomes retain the bounded integration round owner. Typed gate faults
+pass through `GateFailureRouter` and the environment replay ladder; capacity
+refusals wait for another integration attempt. Neither path supplies a green gate.
+A conclusive integrated and verified status from another worker completes recovery
+without rerunning integration. Failure to create a review keeps recovery pending.
+Other terminal integration failures identify the delivery, verdict, failure and
+Continue action in the escalation reason. Generic integration failures cannot
+all use the gate-environment Retry integration endpoint.
+
+The periodic reconciler also returns obsolete machine stale-verdict escalations
+to Auto Review when the current delivery is integrated and verified, or an
+automatic retry owner is available (including capacity waits). The current park marker and last system lane receipt must agree. A later human hold stays in
+place, including a typed operator-decision hold written through a system proxy.
+A retry owner that ends with a different failure returns to recovery routing;
+its earlier environment error does not replace the new failure reason. The recall
+records a lane timeline entry and requests fresh review.
+
+## Feasible verification before human intake (AGT-4098)
+
+A pending canonical review's sealed requirements and live host capability
+advertisements are authoritative for verification placement. With a standalone
+Task Server, the configured authority supplies the inventory; the local registry
+is not an empty-fleet fallback. A failed inventory read records unknown
+feasibility under the same deadline. A matching review
+host claims the same immutable result through the existing review admission;
+this preflight never grants a lease or manufactures verification evidence.
+Expired advertisements, stale heartbeats and drained or unhealthy capabilities
+do not establish feasibility. Provider authentication, CLI routing and model quota
+retain their existing recovery authority and do not count as absent verification
+hardware. An explicit operator drain of a known matching verification host keeps
+its human hold; the capability preflight does not replace it with quarantine.
+Capability waits carry a fixed 15-minute deadline
+in `logs/machine-blocker.json`, with the requirement source and host observations.
+An unavailable capability creates a deduplicated repair. Mandatory unsatisfied
+proof ends in `machine-blocker-quarantine` with acceptance still unsatisfied.
+Only explicitly optional commands in a still-pending authoritative plan may be
+removed and recorded as unavailable, without recording a pass. Preparation and
+mandatory commands are retained.
+
+An agent's hardware assertion alone cannot establish an acceptance requirement.
+An explicit unavailable hardware verification report without its authoritative
+source is quarantined with a repair to reconstruct that finding. Product and
+scope questions keep their human decision path. F07 from AGT-4077 remains a
+suspected incident: neither its original finding nor its host capability snapshot
+was supplied to AGT-4098. Current plans do not define a general hardware acceptance
+requirement field; synthetic hardware policy fixtures prove the conservative
+boundary, not the occurrence of that incident.
+
+Remote Review's inserted .NET guard commands may legitimately select no tests
+in a project without Architecture or Guard tests. A successful VSTest report
+that explicitly names the canonical guard filter and says it matched no tests
+is a completed empty guard selection, even when the delivery adds test files.
+It records no passing tests. Silent commands, nonzero exits and empty ordinary
+or acceptance test selections still require a completed-test report. Guard
+failures retain the existing failure-name comparison against the baseline.

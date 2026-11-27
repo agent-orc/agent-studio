@@ -437,6 +437,34 @@ public sealed class GateVerificationAuthorityTests
             "monolith", default, onlyBeforeRunning: true)).Phase);
     }
 
+    [Fact]
+    public async Task Cancelled_claim_leaves_work_beyond_a_capability_prefix_queued()
+    {
+        using var temp = new TempDirectory();
+        var clock = Clock();
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await RegisterGateAsync(store, clock, "gate-a", "instance-a", "host-a");
+        GateStatus? selected = null;
+        for (var i = 0; i <= 32; i++)
+        {
+            var plan = Plan() with { RequiredCapabilities = i < 32 ? ["fixture:missing"] : [] };
+            selected = await store.CreateGateSubjectAsync(new("product", "paged:" + i, Repository,
+                "https://example.invalid/product.git", Sha, Sha, null, null, GateRules.PlanHash(plan),
+                "policy", "1", new string('a', 64), plan, clock.GetUtcNow().UtcDateTime.AddMinutes(15),
+                Kind: GateSubjectKinds.Merge), "monolith", default);
+            clock.Advance(TimeSpan.FromMilliseconds(1));
+        }
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => store.ClaimGateAsync(
+            new("gate-a", "instance-a"), "gate-a", cancellation.Token));
+        Assert.Equal(GateStates.Queued, (await store.GetGateStatusAsync(selected!.Subject.SubjectId, default))!.Phase);
+        var claim = await store.ClaimGateAsync(new("gate-a", "instance-a"), "gate-a", default);
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal(selected.Subject.SubjectId, claim.Subject!.SubjectId);
+    }
+
     private static async Task<(GateClaimResponse Claim, byte[] Content)> ClaimMergeAsync(
         TaskServerStore store, ManualTimeProvider clock, string runner, string host)
     {

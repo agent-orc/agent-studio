@@ -1,4 +1,7 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using AgentStudio.Runner;
+using AgentStudio.OrchestrationDecisions;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
@@ -88,28 +91,35 @@ public sealed class PostMergeRunStore
         }
     }
 
-    public PostMergeProjectState? Record(string projectId, PostMergeRunRecord run)
+    public PostMergeProjectState? Record(string projectId, PostMergeRunRecord run,
+        string? owner = null, long fence = 0, DateTimeOffset? observedAt = null)
     {
         lock (_gate)
         {
             var state = ReadLocked(projectId);
             if (state.Runs.FirstOrDefault(item => item.Id == run.Id) is { } recorded)
-                return recorded.TipSha == run.TipSha && recorded.Kind == run.Kind
-                    && recorded.Status == run.Status ? state : null;
+                return JsonSerializer.Serialize(recorded, Json) == JsonSerializer.Serialize(run, Json) ? state : null;
             var active = state.ActiveRun;
+            var custody = ReadCustodyLocked(projectId);
+            var now = observedAt ?? run.StartedAtUtc;
+            if (active?.Id == run.Id && custody?.RunId == run.Id
+                && !MonolithTransitionAdapter.PostMergeCustodyMayWrite(owner, fence, custody.Owner,
+                    custody.Fence, custody.ExpiresAtUtc, now, run.Status == "running", run.Status != "running")) return null;
+            if (active?.Id == run.Id && custody is null && owner is not null) return null;
             if (run.Status == "running")
             {
                 if (active?.Id == run.Id)
                     return active.TipSha == run.TipSha && active.Kind == run.Kind ? state : null;
-                if (active is not null && active.StartedAtUtc.AddHours(
-                        active.Kind == "nightly" ? 14 : 4) > run.StartedAtUtc)
+                if (active is not null && !MonolithTransitionAdapter.PostMergeCustodyMayReplace(
+                        active.StartedAtUtc, active.Kind, custody?.ExpiresAtUtc, now))
                     return null;
                 if (active is not null)
                     state = state with { Runs = [.. state.Runs.TakeLast(510), active with
                     {
-                        Status = "red", FinishedAtUtc = run.StartedAtUtc,
+                        Status = "inconclusive", FinishedAtUtc = now,
                         Reason = "runner claim expired before a terminal receipt",
                     }] };
+                custody = owner is null ? null : new(run.Id, owner, 1, now + PostMergeCustodyPolicy.LeaseDuration);
                 state = state with { DevelopState = state.LineStop is null ? "running" : "red", ActiveRun = run, PendingWindow = state.PendingWindow?.TipSha == run.TipSha ? null : state.PendingWindow };
             }
             else if (run.Status == "skipped")
@@ -125,7 +135,7 @@ public sealed class PostMergeRunStore
                 if (active is null || active.Id != run.Id || active.TipSha != run.TipSha
                     || active.Kind != run.Kind || run.FinishedAtUtc is null
                     || run.FinishedAtUtc < run.StartedAtUtc
-                    || run.Verdicts.Count == 0
+                    || run.Verdicts.Count == 0 && MonolithTransitionAdapter.PostMergeCustodyNeedsVerdict(run.Status)
                     || run.Status == "green" && (run.Verdicts.Count < run.Commands.Count
                         || run.Verdicts.Any(verdict => verdict.ExitCode != 0)
                         && run.Failure?.AllFailuresQuarantined != true))
@@ -136,7 +146,7 @@ public sealed class PostMergeRunStore
                     AttributionEscalatedTaskId = run.Status == "green"
                         ? null : state.AttributionEscalatedTaskId,
                     LastGreenSha = run.Status == "green" ? run.TipSha : state.LastGreenSha,
-                    LastWindowTipSha = run.Kind == "window" || run.Status == "green"
+                    LastWindowTipSha = MonolithTransitionAdapter.PostMergeCustodyAdvancesWindow(run.Status, run.Kind)
                         ? run.TipSha : state.LastWindowTipSha,
                     ActiveRun = null,
                     FlakyHistory = [.. (state.FlakyHistory ?? [])
@@ -147,10 +157,41 @@ public sealed class PostMergeRunStore
                 };
             }
             else return null;
-            WriteLocked(projectId, state);
+            WriteLocked(projectId, state, custody, replaceCustody: true);
             return state;
         }
     }
+
+    public PostMergeCustody? RenewCustody(string projectId, string runId, string owner, long fence,
+        DateTimeOffset now, bool recover, string? recoveryId = null)
+    {
+        lock (_gate)
+        {
+            var state = ReadLocked(projectId);
+            var current = ReadCustodyLocked(projectId);
+            if (recover && recoveryId is not null && current?.RecoveryId == recoveryId
+                && state.ActiveRun?.Id == runId && current.Owner == owner
+                && (fence == current.Fence || fence == current.Fence - 1)) return current;
+            if (state.ActiveRun?.Id != runId || current?.RunId != runId
+                || !MonolithTransitionAdapter.PostMergeCustodyMayRecover(owner, fence, current.Owner, current.Fence)
+                || !recover && !MonolithTransitionAdapter.PostMergeCustodyMayWrite(owner, fence, current.Owner,
+                    current.Fence, current.ExpiresAtUtc, now, false)) return null;
+            var renewed = current with { Fence = recover ? checked(current.Fence + 1) : current.Fence,
+                ExpiresAtUtc = now + PostMergeCustodyPolicy.LeaseDuration,
+                RecoveryId = recover ? recoveryId : current.RecoveryId };
+            WriteLocked(projectId, state, renewed, replaceCustody: true);
+            return renewed;
+        }
+    }
+
+    public PostMergeCustody? ReadCustody(string projectId)
+    {
+        lock (_gate) return ReadCustodyLocked(projectId);
+    }
+
+    private PostMergeCustody? ReadCustodyLocked(string projectId)
+        => File.Exists(PathFor(projectId))
+            ? JsonNode.Parse(File.ReadAllText(PathFor(projectId)))?["custody"]?.Deserialize<PostMergeCustody>(Json) : null;
 
     /// <summary>Records the repair card after its own escalation move succeeds; evidence only, never a placement input.</summary>
     public void RecordAttributionEscalation(string projectId, string taskId)
@@ -172,12 +213,19 @@ public sealed class PostMergeRunStore
             ?? throw new IOException($"Post-merge state for {projectId} is empty.");
     }
 
-    private void WriteLocked(string projectId, PostMergeProjectState state)
+    private void WriteLocked(string projectId, PostMergeProjectState state,
+        PostMergeCustody? custody = null, bool replaceCustody = false)
     {
         var path = PathFor(projectId);
         Directory.CreateDirectory(_root);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(state, Json));
+        var document = JsonSerializer.SerializeToNode(state, Json)!;
+        document["custody"] = JsonSerializer.SerializeToNode(replaceCustody ? custody : ReadCustodyLocked(projectId), Json);
+        using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            JsonSerializer.Serialize(stream, document, Json);
+            stream.Flush(flushToDisk: true);
+        }
         File.Move(temp, path, overwrite: true);
     }
 
@@ -188,3 +236,5 @@ public sealed class PostMergeRunStore
         return Path.Combine(_root, projectId + ".json");
     }
 }
+
+public sealed record PostMergeCustody(string RunId, string Owner, long Fence, DateTimeOffset ExpiresAtUtc, string? RecoveryId = null);

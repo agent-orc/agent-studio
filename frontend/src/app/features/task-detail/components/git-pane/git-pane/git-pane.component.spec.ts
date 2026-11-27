@@ -76,6 +76,8 @@ function makeGitPaneMock(options?: {
   const previewLoading = signal(false);
   const previewError = signal<string | null>(null);
 
+  // Require every public member while retaining writable fixture signals.
+  // New service state must be supplied here before the spec can compile.
   return {
     previewContent,
     previewIsBinary,
@@ -90,6 +92,7 @@ function makeGitPaneMock(options?: {
     },
     viewMode: signal<'commit' | 'worktree'>(options?.viewMode ?? 'commit'),
     commitChain,
+    activeCommitChain: computed(() => commitChain()),
     selectedCommitSha,
     selectedDiffPath: signal<string | null>(options?.selectedDiffPath ?? 'src/one.ts'),
     diffText: signal(''),
@@ -100,6 +103,10 @@ function makeGitPaneMock(options?: {
     // landed-status skeleton over their expectations; a dedicated case flips
     // it to false to assert the loading placeholder.
     provenanceLoaded: signal<boolean>(true),
+    provenanceLoading: signal(false),
+    aggregateFiles: signal<GitFileChange[]>(files),
+    // These fixtures already have file data, so the read has completed.
+    commitFilesState: signal<ReturnType<GitPaneService['commitFilesState']>>('loaded'),
     commitFiles,
     commitDetail,
     codeReviews,
@@ -122,8 +129,23 @@ function makeGitPaneMock(options?: {
       commitDetail.set(entry ? { commit: entry, files } : null);
     },
     selectDiffPath: () => undefined,
+    retryCommitFiles: () => undefined,
     refresh: () => undefined,
-  };
+    commitMessage: signal(''),
+    committing: signal(false),
+    generatingMsg: signal(false),
+    startAutoRefresh: () => undefined,
+    stopAutoRefresh: () => undefined,
+    ngOnDestroy: () => undefined,
+    setJob: () => undefined,
+    loadCodeReviews: () => undefined,
+    loadProvenance: () => undefined,
+    ensureProvenance: () => undefined,
+    loadCommitDetail: () => undefined,
+    generateCommitMessage: () => undefined,
+    commit: () => undefined,
+    openInVsCode: () => undefined,
+  } satisfies Pick<GitPaneService, keyof GitPaneService>;
 }
 
 function makeReview(overrides?: Partial<CodeReviewListEntry>): CodeReviewListEntry {

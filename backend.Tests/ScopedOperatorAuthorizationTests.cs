@@ -136,6 +136,7 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
     [InlineData("POST", "/api/runner/task:{project}/{task}/orchestrator-chat")]
     [InlineData("GET", "/api/orchestrator/context/workbench:{project}/DOS-1")]
     [InlineData("GET", "/api/runner/workbench:{project}/DOS-1/orchestrator-chat")]
+    [InlineData("POST", "/api/runner/workbench:{project}/DOS-1/orchestrator-chat")]
     public async Task Context_routes_authorize_the_project_id_before_the_task_or_workbench_key(
         string method, string pathTemplate)
     {

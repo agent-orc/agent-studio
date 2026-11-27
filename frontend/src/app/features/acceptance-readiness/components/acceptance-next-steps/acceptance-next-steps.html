@@ -1,11 +1,14 @@
 @if (show()) {
   <section class="next-steps" data-testid="acceptance-next-steps" role="status"
-           [attr.data-readiness]="item()?.readiness ?? (briefGap() === 'changed' ? 'verdict-stale' : briefGap() ? 'brief-unrecorded' : 'review-concerns')"
+           [attr.data-readiness]="fallback() ? 'unverified' : item()?.readiness ?? (briefGap() === 'changed' ? 'verdict-stale' : briefGap() ? 'brief-unrecorded' : 'review-concerns')"
            aria-label="Acceptance next steps">
     <strong class="next-steps__title">Acceptance next steps</strong>
+    @if (fallback(); as message) {
+      <p data-testid="acceptance-readiness-fallback">{{ message }}</p>
+    }
     @if (item(); as item) {
       <app-status-indicator [tone]="tone()" [label]="item.headline" [compact]="true" testId="acceptance-next-steps-status" />
-      <p data-testid="acceptance-next-steps-reason">Accept will be refused. {{ item.reason }}</p>
+      <p data-testid="acceptance-next-steps-reason">{{ fallback() ? 'Last readiness result:' : 'Accept will be refused.' }} {{ item.reason }}</p>
       @if (item.missing) { <p class="next-steps__missing" data-testid="acceptance-next-steps-missing">Missing: {{ item.missing }}</p> }
       @if (primary(); as primary) {
         <p data-testid="acceptance-primary-next-step">Next step: {{ primary.nextStep }}</p>
@@ -16,25 +19,25 @@
         </ul>
       }
     } @else if (contentGap(); as review) {
-      <p data-testid="content-verdict-acceptance">Accept will be refused. The {{ review.requiredAspect }} review of the current brief {{ briefLabel(review.currentBriefVersion) }} returned {{ review.contentStatus }}. {{ review.contentSummary }}</p>
+      <p data-testid="content-verdict-acceptance">The displayed {{ review.requiredAspect }} review of brief {{ briefLabel(review.currentBriefVersion) }} returned {{ review.contentStatus }}. {{ review.contentSummary }}</p>
     }
     @if (verdictConflict()) {
-      <p data-testid="acceptance-verdict-conflict">Review decision: accept; {{ item()?.aspect || contentReview()?.requiredAspect }}: {{ reviewSource()?.contentStatus }}. Acceptance needs a round or a written reason.</p>
+      <p data-testid="acceptance-verdict-conflict">Review decision: accept; {{ item()?.aspect || contentGap()?.requiredAspect }}: {{ reviewSource()?.contentStatus }}. Acceptance needs a round or a written reason.</p>
     }
     @if (reviewSource(); as source) {
       @if (source.reviewAttemptId || source.reviewedAtUtc || source.reportRef) {
         <p data-testid="acceptance-review-source">Review {{ source.reviewAttemptId || 'local' }} · <time [attr.datetime]="source.reviewedAtUtc">{{ source.reviewedAtUtc || 'date not recorded' }}</time></p>
       }
     }
-    @if (briefLeads() && contentReview(); as review) {
+    @if (briefLeads() && briefReview(); as review) {
       @if (briefGap() === 'unrecorded') {
         <p data-testid="stale-brief-acceptance" data-brief-gap="unrecorded"><strong>No brief version was recorded.</strong> No brief version was recorded for {{ unrecordedBriefSubject(review) }}, so it cannot show which brief it was built or reviewed against. The current brief is {{ briefLabel(review.currentBriefVersion) }}. Review the delivery against the current brief before deciding whether to accept it.</p>
       } @else {
-        <p data-testid="stale-brief-acceptance" data-brief-gap="changed"><strong>Acceptance is blocked by a changed brief.</strong> This delivery used brief {{ briefLabel(review.deliveryBriefVersion) }} and its content verdict checked brief {{ briefLabel(review.reviewBriefVersion) }}. The current brief is {{ briefLabel(review.currentBriefVersion) }}. Review the change before deciding whether to accept this delivery.</p>
+        <p data-testid="stale-brief-acceptance" data-brief-gap="changed"><strong>{{ fallback() ? 'The displayed review used an earlier brief.' : 'Acceptance is blocked by a changed brief.' }}</strong> This delivery used brief {{ briefLabel(review.deliveryBriefVersion) }} and its content verdict checked brief {{ briefLabel(review.reviewBriefVersion) }}. The current brief is {{ briefLabel(review.currentBriefVersion) }}. Review the change before deciding whether to accept this delivery.</p>
       }
     }
     <div class="next-steps__actions">
-      @if (item()?.round) {
+      @if (!fallback() && item()?.round) {
         <button type="button" class="next-steps__primary" data-testid="acceptance-next-steps-send-round"
                 [disabled]="busy()" (click)="openRound()">Send a round to close the gap</button>
       }

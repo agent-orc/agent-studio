@@ -12,6 +12,7 @@ namespace AgentStudio.Tasks;
 public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffect
 {
     internal const int MaxCompletedReopensPerPass = 20;
+    private static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(30);
     private readonly GitService? _git;
     private readonly TaskScannerService _scanner;
     private readonly TaskIntegrationStatusService _statuses;
@@ -60,6 +61,7 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
     public async Task<int> RunOnceAsync(CancellationToken ct = default)
     {
         if (!_configuration.GetValue("DeliveryChain:Guarded", true)) return 0;
+        var recalled = await RecallObsoleteStaleParksAsync(ct);
         var cards = _scanner.ScanAllAutomationJobs()
             .Where(card => card.State is TaskStates.AutoReview or TaskStates.HumanReview or TaskStates.Completed)
             .ToArray();
@@ -74,7 +76,7 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
             .Select(card =>
             {
                 statuses.TryGetValue(card.TaskKey, out var status);
-                return (Card: card, Status: status, Facts: Facts(card, status, completedReopenLimitReached: false));
+                return (Card: card, Status: status, Facts: CurrentFacts(card, status, completedReopenLimitReached: false));
             })
             .ToArray();
         // The per-pass bound counts every stale Delivered acceptance. Crossing
@@ -84,7 +86,7 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
         var completedAlarm = completedReopens > MaxCompletedReopensPerPass;
         var planned = 0;
         var waiting = 0;
-        var moved = 0;
+        var moved = recalled;
         var failed = 0;
         foreach (var (card, status, unbounded) in candidates)
         {
@@ -134,16 +136,147 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
             string.Equals(item.Name, application.ProjectId, StringComparison.Ordinal));
         var card = entry is null ? null : _scanner.FindJob(application.TaskId, entry.Path);
         if (card is null || card.State != application.ExpectedSourceState) return;
+        if (frozen.Recovery is { } recoveryFacts)
+        {
+            if (_stranding is null || card.PendingIntent is not null) return;
+            if (recoveryFacts.Recalling)
+                await RecallStaleParkAsync(card, ct, application);
+            else if (StaleVerdictRecovery.Read(card) is { Phase: "awaiting-decision" } receipt
+                && receipt.Delivery == RecoveryDeliveryIdentity(card)
+                && (receipt.LaneEnteredTicks == 0 || receipt.LaneEnteredTicks == card.EnteredLaneAt.Ticks))
+            {
+                _statuses.BuildLookup([card]).TryGetValue(card.TaskKey, out var currentStatus);
+                var facts = RecoveryFacts(card, currentStatus, receipt);
+                if (SubjectKey(card, facts) == application.Payload.SubjectKey)
+                    await ApplyRecoveryDecisionAsync(card, receipt, application.Decision, ct);
+            }
+            return;
+        }
         if (NeedsStaleVerdictRecovery(card))
         {
             QueueStaleVerdictRecovery(card);
             return;
         }
         _statuses.BuildLookup([card]).TryGetValue(card.TaskKey, out var status);
-        if (SubjectKey(card, Facts(card, status, frozen.CompletedReopenLimitReached))
+        if (SubjectKey(card, CurrentFacts(card, status, frozen.CompletedReopenLimitReached))
             != application.Payload.SubjectKey) return;
         if (await ApplyDecisionAsync(card, status, application.Decision, ct) == Applied.Failed)
             throw new InvalidOperationException($"delivery-chain-reconcile-failed task={card.TaskKey}");
+    }
+
+    private DeliveryChainOperatorFacts CurrentFacts(TaskInfo card, TaskIntegrationStatus? status,
+        bool completedReopenLimitReached)
+        => Facts(card, status, completedReopenLimitReached) with
+        { ReviewVerdictStale = _stranding?.HasSupersededVerdict(card) == true };
+
+    private static bool Verified(TaskIntegrationStatus? status)
+        => status?.Status == IntegrationStatuses.Integrated
+            && status.Verification is { State: IntegrationVerificationStates.Verified, GateFailed: false };
+
+    private async Task<int> RecallObsoleteStaleParksAsync(CancellationToken ct)
+    {
+        if (_stranding is null || _timeline is null) return 0;
+        var count = 0;
+        foreach (var card in _scanner.ScanAllAutomationJobs().Where(c => c.State == TaskStates.Escalated
+                     && c.PendingIntent is null))
+            count += await RecallStaleParkAsync(card, ct);
+        return count;
+    }
+
+    private async Task<int> RecallStaleParkAsync(TaskInfo card, CancellationToken ct,
+        AiOperatorApplication? application = null)
+    {
+        if (_stranding is null || _timeline is null || card.State != TaskStates.Escalated
+            || card.PendingIntent is not null) return 0;
+        var taskWriteTicks = File.GetLastWriteTimeUtc(Path.Combine(card.FolderPath, "task.json")).Ticks;
+        var park = ParkedBlockerMarker.TryRead(card.FolderPath, _logger);
+        if (park?.CauseDetail == "operator-decision") return 0;
+        var lastMove = _timeline.ReadAll(card.FolderPath)
+            .LastOrDefault(e => e.Kind == TimelineEventKinds.LaneChanged);
+        // Match both the current marker and its machine-owned lane receipt.
+        // A later human hold, even with copied prose, must stay in place.
+        var machineOwned = park?.Cause == LaneChangeCauses.Escalated
+            && lastMove?.Actor == TimelineActors.System
+            && lastMove.Details?.GetValueOrDefault(LaneChangeCauses.DetailQualifierKey) == park.CauseDetail;
+        var recovery = StaleVerdictRecovery.Read(card);
+        var recoveryOwned = recovery is { Phase: not "reviewed" };
+        var stalePark = recoveryOwned
+            || park?.CauseDetail is StaleVerdictCategory or AcceptedIntegrationFailureCodes.GateCapacity
+                && park.Reason.StartsWith("The delivery verdict became stale,", StringComparison.Ordinal);
+        if (!machineOwned || !stalePark) return 0;
+        if (!_stranding.PrepareCurrentDelivery(card)) return 0;
+        _statuses.BuildLookup([card]).TryGetValue(card.TaskKey, out var status);
+        var retryOwned = park!.CauseDetail == AcceptedIntegrationFailureCodes.GateCapacity
+            || recoveryOwned && recovery!.Delivery != RecoveryDeliveryIdentity(card);
+        if (!Verified(status) && GateFailureRouter.Handles(status) && _gateFailures is not null)
+            retryOwned = !(await _gateFailures.RouteAsync(card, status!, ct)).Parks;
+        var facts = CurrentFacts(card, status, false) with
+        { Recovery = new StaleVerdictRecoveryFacts(Verified(status), Recalling: true,
+            SystemOwned: machineOwned, StalePark: stalePark, RetryOwnerAvailable: retryOwned,
+                DeliveryIdentity: RecoveryDeliveryIdentity(card), VerdictIdentity: _stranding.CurrentVerdictIdentity(card),
+                LaneEnteredTicks: card.EnteredLaneAt.Ticks) };
+        var decision = application?.Decision;
+        if (application is not null && SubjectKey(card, facts) != application.Payload.SubjectKey) return 0;
+        if (decision is null)
+        {
+            var submission = SubmitRecovery(card, facts);
+            if (submission.WaitsForEngine) return 0;
+            decision = submission.MonolithDecision!;
+        }
+        if (decision.Effect != AiOperatorEffects.ReturnToAutoReview) return 0;
+        var moved = await _transitions.MoveAsync(card.Id, TaskStates.AutoReview, card.WatchPath, ct,
+            cause: TimelineActors.System,
+            reason: Verified(status)
+                ? "The machine stale-verdict park is obsolete: the current delivery is integrated and verified. Fresh review was queued."
+                : "The machine stale-verdict park is obsolete: automatic integration recovery owns the retry. Fresh review will follow integration.",
+            expectedSourceState: card.State, expectedSourceEnteredLaneAt: card.EnteredLaneAt,
+            expectedSourceTaskJsonWriteTicks: taskWriteTicks,
+            suppressProductExecution: true,
+            transitionCause: LaneChangeCauses.AcceptanceIntegrationFailed,
+            transitionDetail: StaleVerdictCategory);
+        if (moved.Status != MoveJobStatus.Success) return 0;
+
+        if (_scanner.FindJob(card.Id, card.WatchPath) is { } current)
+        {
+            TaskJsonFile.UpdateField(current.FolderPath, "phase", LifecyclePhases.Integrating, _logger);
+            _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(current.FolderPath);
+            BeginRecovery(current);
+            QueueStaleVerdictRecovery(current);
+        }
+        return 1;
+    }
+
+    private string RecoveryDeliveryIdentity(TaskInfo card)
+        => _stranding?.CurrentDeliveryIdentity(card)
+            ?? ReviewSubjectStore.Read(card.FolderPath)?.ResultSha ?? "unavailable";
+
+    internal StaleVerdictRecovery BeginRecovery(TaskInfo card)
+    {
+        // Legacy cards use changing activity time as their lane-entry fallback.
+        // Freeze that entry before a new log file can change the scanner value.
+        lock (TaskJsonFile.SyncRoot(card.FolderPath))
+        {
+            using var json = System.Text.Json.JsonDocument.Parse(
+                File.ReadAllText(Path.Combine(card.FolderPath, "task.json")));
+            if (!json.RootElement.TryGetProperty("enteredLaneAt", out var entered)
+                || entered.ValueKind != System.Text.Json.JsonValueKind.String
+                || !entered.TryGetDateTime(out _))
+            {
+                TaskJsonFile.UpdateFieldOrThrow(card.FolderPath, "enteredLaneAt", card.EnteredLaneAt);
+                _scanner.InvalidateCache();
+            }
+        }
+        var delivery = RecoveryDeliveryIdentity(card);
+        var existing = StaleVerdictRecovery.Read(card);
+        if (existing is not null && existing.Delivery == delivery
+            && (existing.LaneEnteredTicks == 0 || existing.LaneEnteredTicks == card.EnteredLaneAt.Ticks)
+            && existing.Phase is not ("reviewed" or "escalated")) return existing;
+        var recovery = new StaleVerdictRecovery(delivery,
+            _stranding?.CurrentVerdictIdentity(card) ?? "unavailable", "integrating",
+            LaneEnteredTicks: card.EnteredLaneAt.Ticks);
+        recovery.Write(card);
+        return recovery;
     }
 
     internal static DeliveryChainOperatorFacts Facts(TaskInfo card, TaskIntegrationStatus? status,
@@ -185,8 +318,10 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
 
     private bool NeedsStaleVerdictRecovery(TaskInfo card)
     {
-        if (card.State != TaskStates.AutoReview || _timeline is null || _stranding is null)
-            return false;
+        if (card.State != TaskStates.AutoReview) return false;
+        if (StaleVerdictRecovery.Read(card) is { Phase: not ("reviewed" or "escalated") }) return true;
+        if (_timeline is null || _stranding is null) return false;
+        if (_stranding.HasSupersededVerdict(card)) return true;
         var events = _timeline.ReadAll(card.FolderPath).ToArray();
         var lastMove = Array.FindLastIndex(events, entry => entry.Kind == TimelineEventKinds.LaneChanged);
         return lastMove >= 0
@@ -198,6 +333,7 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
     private void QueueStaleVerdictRecovery(TaskInfo card)
     {
         if (_stranding is null || card.PendingIntent is not null) return;
+        BeginRecovery(card);
         var key = $"{card.TaskKey}:{card.EnteredLaneAt.Ticks}";
         lock (_staleRecoveryGate)
         {
@@ -219,14 +355,98 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
 
     private async Task CompleteStaleVerdictRecoveryAsync(TaskInfo card)
     {
-        var integration = await _stranding!.IntegrateCurrentDeliveryAsync(card);
+        var live = _scanner.FindJob(card.Id, card.WatchPath);
+        if (live is null || live.State != TaskStates.AutoReview
+            || live.EnteredLaneAt != card.EnteredLaneAt || live.PendingIntent is not null) return;
+        card = live;
+        var receipt = BeginRecovery(card);
+        _stranding!.PrepareCurrentDelivery(card);
+        _statuses.BuildLookup([card]).TryGetValue(card.TaskKey, out var before);
+        if (!Verified(before) && GateFailureRouter.Handles(before) && _gateFailures is not null)
+        {
+            var route = await _gateFailures.RouteAsync(card, before!);
+            var routed = _scanner.FindJob(card.Id, card.WatchPath);
+            if (routed is null || routed.State != TaskStates.AutoReview
+                || routed.EnteredLaneAt != card.EnteredLaneAt || routed.PendingIntent is not null
+                || receipt.Delivery != RecoveryDeliveryIdentity(routed)) return;
+            _statuses.BuildLookup([routed]).TryGetValue(routed.TaskKey, out var afterRoute);
+            if (Verified(afterRoute))
+            {
+                receipt = receipt with { Phase = "awaiting-decision",
+                    DecisionFacts = new StaleVerdictRecoveryFacts(true) };
+                receipt.Write(routed);
+                var recovered = SubmitRecovery(routed, RecoveryFacts(routed, afterRoute, receipt));
+                if (!recovered.WaitsForEngine)
+                    await ApplyRecoveryDecisionAsync(routed, receipt, recovered.MonolithDecision!, CancellationToken.None);
+                return;
+            }
+            card = routed;
+            if (route.Parks)
+            {
+                (receipt with { Phase = "escalated" }).Write(card);
+                await EscalateRecoveryFailureAsync(card, receipt.Failure(route.ParkReason ?? route.Route.Reason),
+                    route.Route.Category ?? StaleVerdictCategory, CancellationToken.None);
+            }
+            else (receipt with { Phase = "waiting-retry" }).Write(card);
+            return;
+        }
+        // The environment ladder owns replay. Never spend its budget by
+        // running another gate from the stale-verdict sweep.
+        if (!Verified(before) && receipt.Phase == "waiting-retry"
+            && (GateFailureRouter.Handles(before) || before?.ReachUnavailable == true
+                || IntegrationGateJournal.Read(card.FolderPath) is not null)) return;
+        var integration = Verified(before) || receipt.Phase is "awaiting-decision" or "requesting-review"
+            ? null : await _stranding!.IntegrateCurrentDeliveryAsync(card);
         var current = _scanner.FindJob(card.Id, card.WatchPath);
         if (current is null || current.State != TaskStates.AutoReview
             || current.EnteredLaneAt != card.EnteredLaneAt
             || current.PendingIntent is not null
-            || !NeedsStaleVerdictRecovery(current)) return;
-        if (integration?.Outcome is MergeIntoIntegrationOutcome.Conflict
-            or MergeIntoIntegrationOutcome.AgentRoundRequired)
+            || !NeedsStaleVerdictRecovery(current)
+            || receipt.Delivery != RecoveryDeliveryIdentity(current)) return;
+        _statuses.BuildLookup([current]).TryGetValue(current.TaskKey, out var fresh);
+        var awaitingDecision = receipt.Phase is "awaiting-decision" or "requesting-review";
+        var decisionFacts = (awaitingDecision ? receipt.DecisionFacts : null) ?? new StaleVerdictRecoveryFacts(false,
+            Successful: integration?.Outcome.IsSuccessfulIntegration() == true,
+            Conflict: integration?.Outcome is MergeIntoIntegrationOutcome.Conflict or MergeIntoIntegrationOutcome.AgentRoundRequired,
+            GateOwned: GateFailureRouter.Handles(fresh),
+            Capacity: integration?.FailureCode == AcceptedIntegrationFailureCodes.GateCapacity);
+        receipt = receipt with { Phase = "awaiting-decision", DecisionFacts = decisionFacts,
+            Error = integration?.Error ?? integration?.Outcome.ToString()
+                ?? (awaitingDecision ? receipt.Error : null) ?? fresh?.Failure?.Reason
+                ?? "integration service or settled delivery unavailable" };
+        receipt.Write(current);
+        var submission = SubmitRecovery(current, RecoveryFacts(current, fresh, receipt));
+        if (submission.WaitsForEngine) return;
+        await ApplyRecoveryDecisionAsync(current, receipt, submission.MonolithDecision!, CancellationToken.None);
+    }
+
+    private DeliveryChainOperatorFacts RecoveryFacts(TaskInfo card, TaskIntegrationStatus? status,
+        StaleVerdictRecovery receipt)
+        => CurrentFacts(card, status, false) with
+        { Recovery = receipt.DecisionFacts! with { IntegratedVerified = Verified(status),
+            DeliveryIdentity = receipt.Delivery, VerdictIdentity = receipt.Verdict,
+            LaneEnteredTicks = card.EnteredLaneAt.Ticks } };
+
+    private AiOperatorSubmission SubmitRecovery(TaskInfo card, DeliveryChainOperatorFacts facts)
+    {
+        var payload = new AiOperatorDecisionPayload(Decider, SubjectKey(card, facts), DeliveryChain: facts);
+        var preview = _decisions.Preview(payload);
+        if (preview.Disposition == AiOperatorDisposition.Hold) return new(null, preview);
+        // A completed receipt with unchanged facts owns no future wake. Recovery
+        // retries need a new bounded occurrence after the next sweep interval.
+        return _decisions.Submit(new AiOperatorDecisionRequest(card.ProjectName, card.Id, card.State,
+            payload, Period: ReconcileInterval));
+    }
+
+    private async Task ApplyRecoveryDecisionAsync(TaskInfo current, StaleVerdictRecovery receipt,
+        AiOperatorDecision decision, CancellationToken ct)
+    {
+        if (decision.Effect == AiOperatorEffects.RequestFreshDeliveryReview)
+        {
+            await RequestRecoveredReviewAsync(current, receipt);
+            return;
+        }
+        if (decision.Effect == AiOperatorEffects.QueueMergeRound)
         {
             // The coordinator normally starts the round. Persist the fallback
             // when its handoff left this delivery in Auto Review.
@@ -238,27 +458,48 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
                     && _recovery.Queue(current, freshStatus, DeliveryChainReasons.MergeRoundQueued,
                         TaskIntegrationRecoveryService.AcceptanceRailSource).Queued;
                 if (!queued)
+                {
+                    (receipt with { Phase = "escalated" }).Write(current);
                     await EscalateRecoveryFailureAsync(current,
-                        "The current delivery conflicts with develop, but a merge round could not be queued.",
+                        receipt.Failure("the current delivery conflicts with the target branch, but a merge round could not be queued"),
                         DeliveryChainReasons.MergeRoundQueued, CancellationToken.None);
+                }
             }
             return;
         }
-        if (integration?.Outcome.IsSuccessfulIntegration() != true
-            || !_stranding.RequestFreshReview(current))
+        if (decision.Effect == AiOperatorEffects.WaitDeliveryCapacity)
         {
-            await EscalateRecoveryFailureAsync(current,
-                "The delivery verdict became stale, but the current delivery could not be integrated and sent for review: "
-                    + (integration?.Error ?? integration?.Outcome.ToString() ?? "integration unavailable"),
-                integration?.FailureCode == AcceptedIntegrationFailureCodes.GateCapacity
-                    ? AcceptedIntegrationFailureCodes.GateCapacity : DeliveryChainReasons.VerdictStale,
-                CancellationToken.None);
+            (receipt with { Phase = "waiting-capacity" }).Write(current);
             return;
         }
-        _timeline?.Append(current.FolderPath,
-            TimelineEventKinds.DeliveryReviewRequested, TimelineActors.System,
-            "The current delivery was integrated after the stale verdict; a fresh review was requested.",
-            details: new Dictionary<string, string> { ["reason"] = StaleVerdictCategory });
+        if (decision.Effect == AiOperatorEffects.RouteDeliveryGateFailure)
+        {
+            // The next pass routes the recorded typed failure through its owner.
+            (receipt with { Phase = "waiting-retry" }).Write(current);
+            return;
+        }
+        if (decision.Effect != AiOperatorEffects.Escalate) return;
+        (receipt with { Phase = "escalated" }).Write(current);
+        await EscalateRecoveryFailureAsync(current,
+            receipt.Failure(receipt.Error ?? decision.Detail),
+            StaleVerdictCategory, CancellationToken.None);
+    }
+
+    private Task RequestRecoveredReviewAsync(TaskInfo card, StaleVerdictRecovery receipt)
+    {
+        (receipt with { Phase = "requesting-review" }).Write(card);
+        if (!_stranding!.RequestFreshReview(card, receipt.Delivery)) return Task.CompletedTask;
+        if (_timeline is not null && !_timeline.ReadAll(card.FolderPath).Any(entry =>
+                entry.Kind == TimelineEventKinds.DeliveryReviewRequested
+                && entry.Details?.GetValueOrDefault("delivery") == receipt.Delivery
+                && entry.Details?.GetValueOrDefault("verdict") == receipt.Verdict))
+            _timeline.Append(card.FolderPath,
+                TimelineEventKinds.DeliveryReviewRequested, TimelineActors.System,
+                $"Delivery {receipt.Delivery} is integrated; fresh review replaces verdict {receipt.Verdict}.",
+                details: new Dictionary<string, string> { ["reason"] = StaleVerdictCategory,
+                    ["delivery"] = receipt.Delivery, ["verdict"] = receipt.Verdict });
+        (receipt with { Phase = "reviewed" }).Write(card);
+        return Task.CompletedTask;
     }
 
     private async Task<Applied> ApplyDecisionAsync(TaskInfo card, TaskIntegrationStatus? status,
@@ -349,8 +590,16 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
                 {
                     if (_stranding is null)
                     {
+                        var receipt = BeginRecovery(returned);
+                        _statuses.BuildLookup([returned]).TryGetValue(returned.TaskKey, out var integrated);
+                        if (Verified(integrated))
+                        {
+                            (receipt with { Phase = "requesting-review" }).Write(returned);
+                            return Applied.Moved;
+                        }
+                        (receipt with { Phase = "escalated" }).Write(returned);
                         var parked = await EscalateRecoveryFailureAsync(returned,
-                            "The delivery verdict became stale, but the current delivery could not be integrated and sent for review: integration unavailable",
+                            receipt.Failure("integration service unavailable"),
                             DeliveryChainReasons.VerdictStale, ct);
                         return parked.Status == MoveJobStatus.Success ? Applied.Moved : Applied.Failed;
                     }
@@ -390,7 +639,7 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        using var timer = new PeriodicTimer(ReconcileInterval);
         while (!stoppingToken.IsCancellationRequested)
         {
             try { await RunOnceAsync(stoppingToken); }

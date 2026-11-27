@@ -1,12 +1,34 @@
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { describe, expect, it } from 'vitest';
+import { AuthService } from '../../../../services/auth.service';
 import { OrchestratorFeedEntryComponent } from './orchestrator-feed-entry';
 
 describe('OrchestratorFeedEntryComponent', () => {
+  it('restores an elevated strategy as the signed-in Owner from the immutable sequence', async () => {
+    await TestBed.configureTestingModule({ imports: [OrchestratorFeedEntryComponent], providers: [
+      provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([]),
+      { provide: AuthService, useValue: { status: signal({ user: { role: 'owner' } }) } },
+    ] }).compileComponents();
+    const fixture = TestBed.createComponent(OrchestratorFeedEntryComponent);
+    fixture.componentRef.setInput('entry', { ts: '2026-11-27T10:00:00Z', kind: 'action', topic: 'operator-elevated-action',
+      summary: 'Testing strategy: fast to strict', project: 'Website', testingUndoSequence: 42 });
+    fixture.detectChanges();
+    const button = [...fixture.nativeElement.querySelectorAll('button')].find((item: unknown) => (item as HTMLButtonElement).textContent?.trim() === 'Undo') as HTMLButtonElement;
+    expect(button).toBeTruthy();
+    button.click();
+    const http = TestBed.inject(HttpTestingController);
+    const undo = http.expectOne('/api/projects/Website/testing/undo/42');
+    expect(undo.request.body).toEqual({});
+    undo.flush({ strategy: 'fast' });
+    await fixture.whenStable();
+    expect(button.textContent).toContain('Restored');
+    expect(button.disabled).toBe(true);
+    http.verify(); fixture.destroy();
+  });
   it('renders project identity and emits project filtering without selecting the row', async () => {
     await TestBed.configureTestingModule({
       imports: [OrchestratorFeedEntryComponent],

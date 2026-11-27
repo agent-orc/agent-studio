@@ -288,7 +288,9 @@ public sealed class AccessSecurityMiddleware
             var status = faulted ? StatusCodes.Status500InternalServerError : context.Response.StatusCode;
             _store.AppendServiceAccountAudit(serviceAccount, context.Request.Method, path, status,
                 AuditTarget(context, path), parameterDigest.Value, context.Items[OperatorPolicyItem] as OperatorPolicyDecision,
-                context.Items[OperatorRequestClassifier.OverrideReasonItem] as string);
+                context.Items[OperatorRequestClassifier.OverrideReasonItem] as string
+                    ?? StatedReason(context.Request.Headers[OperatorApprovalHeaders.Reason].ToString()),
+                OperatorInstructionSources.Normalize(context.Request.Headers[OperatorApprovalHeaders.InstructionSource].ToString()));
             if (breakGlass is not null)
                 _store.AppendBreakGlassRequestAudit(breakGlass, serviceAccount.ActorId,
                     context.Request.Method + " " + path, status < 400 ? "ok" : "refused",
@@ -708,6 +710,16 @@ public sealed class AccessSecurityMiddleware
         // the floors and bindings admitted it; a T2 request the route floor
         // refuses to every operator session (access administration, the Task
         // Server plane) ends here and never becomes an approval request.
+        // Hard refusals precede every grant, approval, break-glass and elevated class.
+        if (account.Operator is not null && (IsTokenDeniedRoute(path)
+            || context.GetEndpoint() is { } hardEndpoint
+                && RoutePermissionCatalog.Resolve(hardEndpoint, context.Request.Method) is { } hardPermission
+                && OperatorDeniedPermission(hardPermission.Permission)))
+        {
+            await Reject(context, 403, IsTokenDeniedRoute(path) ? "token-route-denied" : "operator-route-denied",
+                "Operator sessions cannot reach this reserved operation.");
+            return;
+        }
         OperatorOperation? operation = null;
         var breakGlass = account.Operator is { } emergencyActor
             ? _store.ActiveBreakGlassWindow(emergencyActor.SessionId) : null;
@@ -716,6 +728,11 @@ public sealed class AccessSecurityMiddleware
             operation = await OperatorRequestClassifier.ClassifyAsync(context, IsSafe(context.Request.Method, path),
                 context.RequestServices?.GetService<IOperatorGateEvidence>(), OperatorEnvironmentKind,
                 key => RouteValue(context, path, context.GetEndpoint(), key));
+            if (operation is not null && OperatorHardRefusals.Operations.Contains(operation.Id))
+            {
+                await Reject(context, 403, "operator-route-denied", "Operator sessions cannot reach this reserved operation.");
+                return;
+            }
             if (operation is not null && OperatorOperationIds.PersonaAll.Contains(operation.Id)
                 && account.Origin != ServiceAccountOrigins.Persona)
             {
@@ -907,8 +924,23 @@ public sealed class AccessSecurityMiddleware
                 return;
             }
         }
-        if (breakGlass is null && operation is { Tier: OperatorTier.T2 }
-            && !await AdmitOperatorApprovalAsync(context, account, operation, path)) return;
+        if (breakGlass is null && operation is { Tier: OperatorTier.T2 })
+        {
+            var elevated = _store.AdmitOperatorElevation(account.AccountId, account.Operator!.SessionId, operation,
+                target.Projects is [{ Length: > 0 } elevationProject]
+                    ? (_projects?.FindByIdOrDisplayName(elevationProject) ?? _projects?.FindByShortCode(elevationProject))?.Id ?? elevationProject : null,
+                StatedReason(context.Request.Headers[OperatorApprovalHeaders.Reason].ToString()));
+            if (elevated is not null)
+            {
+                context.Items[OperatorPolicyItem] = elevated;
+                if (!elevated.Admitted)
+                {
+                    await Reject(context, 403, elevated.Reason!, elevated.Message, policy: elevated);
+                    return;
+                }
+            }
+            else if (!await AdmitOperatorApprovalAsync(context, account, operation, path)) return;
+        }
         // ES-2 (ES-D8 A): the Owner's approval of an override acceptance or an
         // archive override adds project.cards.override to this one request of
         // the operator session; no other operation or principal gains it.
@@ -1015,9 +1047,10 @@ public sealed class AccessSecurityMiddleware
     private string? OperatorEnvironmentKind(string project, string environmentId)
         => ResolveEnvironmentKey(ProjectRouteAddress.Addressed(project), environmentId);
 
-    private static bool OperatorDeniedPermission(string permission)
+    public static bool OperatorDeniedPermission(string permission)
         => permission is IamPermissions.AccessRead or IamPermissions.AccessManage or IamPermissions.WorkspaceAdminister
-            or IamPermissions.SecretsResolve;
+            or IamPermissions.SecretsResolve or IamPermissions.SecretsRead or IamPermissions.SecretsWrite
+            or IamPermissions.EnvironmentProductionDeploy or IamPermissions.EnvironmentProductionDeployApprove;
 
     /// <summary>
     /// What a bearer request addressed, for its audit entry: the task a
@@ -1592,10 +1625,12 @@ public sealed class AccessSecurityMiddleware
             if (path.StartsWith("/api/runner/integration-lease/", StringComparison.OrdinalIgnoreCase)
                 && IsParameterSegment(endpoint, 3))
                 return ProjectRouteAddress.Addressed(RouteValue(context, path, endpoint, "projectName"));
-            // Only a matched project/context parameter may name a project.
+            // Unrouted requests keep the legacy path-based scope check used
+            // by direct middleware callers. Once routing selected an endpoint,
+            // only a matched project/context parameter may name a project.
             // Fleet collections and future literal routes require workspace
             // access until an explicit filtered-collection contract exists.
-            if (endpoint is RouteEndpoint route && route.RoutePattern.PathSegments.Count > 2
+            if (endpoint is null || endpoint is RouteEndpoint route && route.RoutePattern.PathSegments.Count > 2
                 && route.RoutePattern.PathSegments[2].Parts.OfType<RoutePatternParameterPart>()
                     .Any(part => !part.IsCatchAll && (part.Name is "projectName" or "projectId" or "project")))
             {

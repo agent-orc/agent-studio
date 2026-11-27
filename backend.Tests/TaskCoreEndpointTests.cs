@@ -127,7 +127,10 @@ public sealed class TaskCoreEndpointTests : IDisposable
     {
         Seed("AGT-edit", TaskStates.Ready);
         Seed("AGT-move", TaskStates.Backlog);
-        Seed("AGT-delete", TaskStates.Ready);
+        // A draft has task metadata, a prompt and timeline notes, but no run or result evidence.
+        Seed("AGT-delete", TaskStates.Ready, includeStatusEvidence: false);
+        // The original delete fixture included status.md, which must be retained.
+        Seed("AGT-delete-protected", TaskStates.Ready);
         Seed("AGT-primary", TaskStates.Ready);
         Seed("AGT-secondary", TaskStates.Ready);
         Seed("AGT-archive", TaskStates.Completed, requiresIntegration: false);
@@ -163,9 +166,25 @@ public sealed class TaskCoreEndpointTests : IDisposable
         }
 
         using (var delete = await client.DeleteAsync($"/api/tasks/AGT-delete?project={project.Id}"))
-            delete.EnsureSuccessStatusCode();
+            Assert.Equal(HttpStatusCode.OK, delete.StatusCode);
         using (var detail = await client.GetAsync($"/api/tasks/AGT-delete?project={project.Id}"))
             Assert.Equal(HttpStatusCode.NotFound, detail.StatusCode);
+
+        var evidencePath = Path.Combine(Jobs, TaskStates.Ready, "AGT-delete-protected", "status.md");
+        var evidence = File.ReadAllText(evidencePath);
+        using (var delete = await client.DeleteAsync($"/api/tasks/AGT-delete-protected?project={project.Id}"))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, delete.StatusCode);
+            using var body = JsonDocument.Parse(await delete.Content.ReadAsStringAsync());
+            Assert.Equal("card-delete-protected", body.RootElement.GetProperty("error").GetString());
+            var message = body.RootElement.GetProperty("message").GetString()!;
+            Assert.Contains("Evidence: status.md.", message);
+            Assert.Contains("POST /api/tasks/AGT-delete-protected/move", message);
+            Assert.Contains($"targetState={TaskStates.Archive}", message);
+        }
+        using (var detail = await client.GetAsync($"/api/tasks/AGT-delete-protected?project={project.Id}"))
+            detail.EnsureSuccessStatusCode();
+        Assert.Equal(evidence, File.ReadAllText(evidencePath));
 
         string restoreToken;
         using (var merge = await client.PostAsJsonAsync(
@@ -1092,7 +1111,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         });
 
     private void Seed(string id, string state, string? gatedTarget = null, string? key = null,
-        bool? requiresIntegration = null)
+        bool? requiresIntegration = null, bool includeStatusEvidence = true)
     {
         var folder = Path.Combine(Jobs, state, id);
         Directory.CreateDirectory(Path.Combine(folder, "logs"));
@@ -1110,7 +1129,8 @@ public sealed class TaskCoreEndpointTests : IDisposable
             },
         }));
         File.WriteAllText(Path.Combine(folder, "prompt.md"), string.Concat(Enumerable.Repeat("🧭", 900)));
-        File.WriteAllText(Path.Combine(folder, "status.md"), string.Concat(Enumerable.Repeat("é", 700)));
+        if (includeStatusEvidence)
+            File.WriteAllText(Path.Combine(folder, "status.md"), string.Concat(Enumerable.Repeat("é", 700)));
         File.WriteAllText(Path.Combine(folder, "logs", "timeline.jsonl"),
             string.Join('\n', Enumerable.Range(1, 9).Select(i => JsonSerializer.Serialize(new
             { ts = DateTime.UtcNow, kind = "note", actor = "system", summary = $"Event {i}" }))) + "\n", Encoding.UTF8);

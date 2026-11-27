@@ -13,7 +13,7 @@ function lookup(overrides: Partial<TerminalSignInLookup> = {}): TerminalSignInLo
     keyThumbprint: 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs', knownForAgentIds: [], requestedAgent: 'ops console',
     requestedAgentId: 'opa_ops', requestedClasses: [
       { id: 'cards.accept-override', title: 'Accept with override', mode: 'batch' },
-      { id: 'project.testing', title: 'Set the testing strategy', mode: 'direct' },
+      { id: 'project.testing', title: 'Set the testing strategy', mode: 'direct-action' },
     ],
     requestedAddress: '198.51.100.7', browserAddress: '203.0.113.20', addressMatches: false,
     createdAt: '2026-11-23T09:00:00Z', expiresAt: '2026-11-23T09:10:00Z', lifetimeHours: [1, 2, 3, 4, 5, 6, 7, 8],

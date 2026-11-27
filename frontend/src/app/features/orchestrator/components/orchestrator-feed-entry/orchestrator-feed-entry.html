@@ -42,6 +42,12 @@
         <span>{{ item.topic }}</span>
       }
     </span>
-    <span class="feed-entry__disclosure" data-testid="orchestrator-entry-disclosure" aria-hidden="true">›</span>
+    <span class="feed-entry__actions">
+      @if (item.testingUndoSequence && auth.status()?.user?.role === 'owner') {
+        <button type="button" class="btn" [disabled]="undone()" [appPendingButton]="undoBusy()" pendingLabel="Undoing…" (click)="undo($event)">{{ undone() ? 'Restored' : 'Undo' }}</button>
+      }
+      <span class="feed-entry__disclosure" data-testid="orchestrator-entry-disclosure" aria-hidden="true">›</span>
+    </span>
+    @if (undoError()) { <span class="feed-entry__undo-error" role="alert">{{ undoError() }}</span> }
   </article>
 }

@@ -1,6 +1,8 @@
 import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
 import { firstValueFrom, type Observable } from 'rxjs';
+import { AuthService } from '../../../services/auth.service';
+import { getPasskey } from '../../../services/webauthn';
 import type {
   AuditIntegrity,
   OneTimeOperatorSession,
@@ -29,6 +31,11 @@ type LoadState = 'idle' | 'loading' | 'ready' | 'denied' | 'error';
 export class OperatorAgentsService {
   private readonly http = inject(HttpClient);
   private activityRequest = 0;
+  private readonly auth = inject(AuthService);
+  readonly agentFilter = signal<string | null>(null);
+  readonly elevatedOnly = signal(false);
+  /** Consumed by Access after its section and data have rendered. */
+  readonly focusElevatedList = signal(false);
 
   readonly agents = signal<readonly OperatorAgent[]>([]);
   readonly state = signal<LoadState>('idle');
@@ -68,6 +75,8 @@ export class OperatorAgentsService {
     const sessionId = this.sessionFilter();
     let params = new HttpParams().set('limit', OPERATOR_ACTIVITY_LIMIT);
     if (sessionId) params = params.set('sessionId', sessionId);
+    if (this.agentFilter()) params = params.set('operatorAgentId', this.agentFilter()!);
+    if (this.elevatedOnly()) params = params.set('elevatedOnly', true);
     this.activityState.set('loading');
     this.activityError.set(null);
     try {
@@ -85,6 +94,23 @@ export class OperatorAgentsService {
   filterSession(sessionId: string | null): Promise<void> {
     this.sessionFilter.set(sessionId);
     return this.loadActivity();
+  }
+
+  async rearm(agentId: string, sessionId: string, classId: string, factor: string): Promise<boolean> {
+    this.busy.set(true); this.error.set(null);
+    try {
+      if (factor.trim()) await firstValueFrom(this.auth.stepUp(factor.trim()));
+      else {
+        const options = await firstValueFrom(this.auth.passkeyStepUpOptions());
+        await firstValueFrom(this.auth.stepUp(undefined, await getPasskey(options)));
+      }
+      await firstValueFrom(this.http.post(`${OPERATORS}/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/rearm`, { classId }));
+      await this.load();
+      return true;
+    } catch (failure: unknown) {
+      this.error.set(message(failure, 'The class could not be re-armed.'));
+      return false;
+    } finally { this.busy.set(false); }
   }
 
   /** Re-walks the hash chain on the server and shows the fresh result. */

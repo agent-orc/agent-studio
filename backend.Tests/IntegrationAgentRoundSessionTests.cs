@@ -18,7 +18,11 @@ public sealed class IntegrationAgentRoundSessionTests : IDisposable
     [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 1, false)]
     [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 2, false)]
     [InlineData(MergeIntoIntegrationOutcome.Conflict, 0, true)]
+    [InlineData(MergeIntoIntegrationOutcome.Conflict, 1, true)]
+    [InlineData(MergeIntoIntegrationOutcome.Conflict, 2, true)]
     [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 0, true)]
+    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 1, true)]
+    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 2, true)]
     public async Task Follow_up_is_claimable_only_after_its_session_delta_and_reasoning_route_are_saved(
         MergeIntoIntegrationOutcome outcome, int used, bool receiptWriteFailure)
     {
@@ -92,10 +96,19 @@ public sealed class IntegrationAgentRoundSessionTests : IDisposable
             ["label.cs"], [], new string('b', 40));
 
         if (receiptWriteFailure)
+        {
             Directory.CreateDirectory(Path.Combine(folder, "integration-conflict-recovery.json"));
+            if (used >= 1)
+                timeline.Append(folder, TimelineEventKinds.IntegrationFailed, TimelineActors.System,
+                    "integration-conflict-receipt-write-failed: previous preparation failed.", details: new()
+                    {
+                        ["conflictId"] = IntegrationConflictLedger.Hash($"develop\n{subject.ResultSha}\n{result.PreviousIntegrationSha}"),
+                        ["stage"] = "pre-human-review",
+                    });
+        }
 
         var started = await service.TryStartAsync(request, result, ["AGT-4001"]);
-        if (receiptWriteFailure)
+        if (receiptWriteFailure && used < 2)
         {
             Assert.False(started.Started);
             Assert.Contains("integration-conflict-receipt-write-failed", started.Reason);
@@ -106,9 +119,17 @@ public sealed class IntegrationAgentRoundSessionTests : IDisposable
             Assert.Null(SessionContinuationLedgerStore.PeekDelta(folder));
             Assert.Equal("high", unchanged.ThinkingLevel);
             Assert.Single(timeline.ReadAll(folder), row => row.Kind == TimelineEventKinds.IntegrationFailed);
-            Assert.DoesNotContain(timeline.ReadAll(folder), row => row.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+            Assert.Equal(used,
+                timeline.ReadAll(folder).Count(row => row.Kind == TimelineEventKinds.IntegrationRecoveryQueued));
             Assert.Empty(Directory.GetFiles(folder, "*.tmp"));
-            return;
+            var repeated = await service.TryStartAsync(request, result, ["AGT-4001"]);
+            Assert.False(repeated.Started);
+            Assert.Contains("integration-conflict-receipt-write-failed", repeated.Reason);
+            Assert.Single(timeline.ReadAll(folder), row => row.Kind == TimelineEventKinds.IntegrationFailed);
+            Assert.Equal(used, IntegrationRecoveryBudget.Count(timeline.ReadAll(folder), subject).Used);
+
+            Directory.Delete(Path.Combine(folder, "integration-conflict-recovery.json"));
+            started = await service.TryStartAsync(request, result, ["AGT-4001"]);
         }
         if (used == 2)
         {
@@ -122,7 +143,8 @@ public sealed class IntegrationAgentRoundSessionTests : IDisposable
             var duplicate = await service.TryStartAsync(request, result, ["AGT-4001"]);
             Assert.True(duplicate.BudgetExhausted);
             Assert.Equal(started.Reason, duplicate.Reason);
-            Assert.Single(timeline.ReadAll(folder), row => row.Kind == TimelineEventKinds.IntegrationFailed);
+            Assert.Equal(receiptWriteFailure ? 2 : 1,
+                timeline.ReadAll(folder).Count(row => row.Kind == TimelineEventKinds.IntegrationFailed));
             return;
         }
 
@@ -140,11 +162,13 @@ public sealed class IntegrationAgentRoundSessionTests : IDisposable
         Assert.Equal("gpt-6-sol", queued.Model);
         Assert.Contains("keep both sides", queued.PendingIntent!.Prompt);
         Assert.Contains("AGT-4001", queued.PendingIntent.Prompt);
-        Assert.DoesNotContain(timeline.ReadAll(queued.FolderPath), row => row.Kind == TimelineEventKinds.IntegrationFailed);
+        Assert.Equal(receiptWriteFailure ? 1 : 0,
+            timeline.ReadAll(queued.FolderPath).Count(row => row.Kind == TimelineEventKinds.IntegrationFailed));
         Assert.Equal(used + 1, IntegrationRecoveryBudget.Count(timeline.ReadAll(queued.FolderPath), subject).Used);
         await service.TryStartAsync(request, result, ["AGT-4001"]);
         Assert.Equal(used + 1, IntegrationRecoveryBudget.Count(timeline.ReadAll(queued.FolderPath), subject).Used);
-        Assert.DoesNotContain(timeline.ReadAll(queued.FolderPath), row => row.Kind == TimelineEventKinds.IntegrationFailed);
+        Assert.Equal(receiptWriteFailure ? 1 : 0,
+            timeline.ReadAll(queued.FolderPath).Count(row => row.Kind == TimelineEventKinds.IntegrationFailed));
         Assert.NotNull(SessionContinuationLedgerStore.ConsumeDelta(queued.FolderPath));
         Assert.Null(SessionContinuationLedgerStore.ConsumeDelta(queued.FolderPath));
     }

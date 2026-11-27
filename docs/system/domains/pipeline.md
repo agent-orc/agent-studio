@@ -448,6 +448,11 @@ step that timed out, ran out of budget, crashed or exited before a test failed
 reads `guard step failed without a failing guard test (<cause>), full suite not
 run`, and `GuardViolation` stays false.
 
+The engine's decision-plane routing contract is tagged `Category=Guard`, so
+the declared engine guard step runs a boundary check and produces completed
+test evidence. A filter that selects no tests cannot supply that evidence
+merely by exiting zero.
+
 ### Per-project integration test placement (AGT-3314)
 
 `testing.mode` is derived from `testing.strategy` (AGT-3965): `strict` is
@@ -514,9 +519,45 @@ exact-tip rule, using AGT-3232 class partitions across free local host slots.
 T3 treats a suite without `shards` as `auto`; a declared shard count still
 controls that suite. T1's opt-in sharding policy is unchanged.
 The timers use a dedicated checkout and a local exclusive claim file; the
-server fences the active run ID. A second claim waits, and an abandoned server
-claim expires after four hours for windows or fourteen hours for the nightly
-suite. Prepare, build, test discovery, shards, retries, and attribution commands
+server fences the active run ID. A second claim waits. AGT-4117 adds durable
+host custody in `.post-merge-journal.json` in that dedicated checkout. The host
+flushes the identity before admission, each completed command result before
+continuing, and the exact terminal receipt before delivery. The exclusive
+checkout claim covers recovery and outbox replay as well as execution. A pending
+outbox is delivered before fetching or admitting a successor, including after
+all three HTTP attempts failed or the receipt acknowledgement was lost.
+
+New hosts send `X-Post-Merge-Owner` and `X-Post-Merge-Fence` on run receipts.
+The authority atomically stores custody alongside project state and returns the
+fence on admission. The owner renews a two-minute lease every thirty seconds
+through the existing `/runs` route with `X-Post-Merge-Operation: renew`;
+renewal failure cancels command execution. Recovery uses the same route with
+`X-Post-Merge-Operation: recover` and `X-Post-Merge-Recovery-Id`. Recovery presents
+the persisted owner, fence and recovery request ID, advances the fence, and
+retries the same recovery request idempotently if its acknowledgement was lost.
+If that replayed lease has expired, the host obtains fresh custody before
+executing a command. Older owners and unfenced receipts cannot settle a fenced active run. An exact
+terminal replay remains acceptable after lease expiry while its run is still
+current, and after successful settlement. It does not require waiting four or
+fourteen hours. A changed terminal receipt cannot replace recorded evidence.
+
+Recovery reconstructs the original plan and per-test ledger from saved raw
+command results. It reuses completed commands only when the saved workspace
+content digest (including ignored outputs and detached HEAD) and command inputs
+(command text, source SHA, declared environment and test-envelope fingerprint) still match.
+An incomplete command or changed workspace settles as `inconclusive`, retaining
+finished evidence, rather than attributing a product regression. Such a receipt
+does not advance the completed-window tip. Raw inconclusive evidence remains
+under `.post-merge-evidence/`; accepted delivery removes the isolated command
+home and temp files. Linux recovery reaps orphan command
+groups in the dedicated checkout before settling an incomplete command. Other
+hosts retain the journal and refuse automatic recovery of an incomplete command. No real restart drill is part of the routine
+tests; reconstructed-service fault injection covers this boundary.
+
+The legacy four-hour window and fourteen-hour nightly takeover bounds remain
+fallback policy for absent host evidence. A renewed lease prevents takeover even
+after that bound. Expired fallback evidence is `inconclusive`, with the existing
+expiry reason. Prepare, build, test discovery, shards, retries, and attribution commands
 use the shared [test envelope](#shared-test-envelope-rt-6). Repository fetches
 keep their separate credential routing. Real cgroup tests are
 `MachineBound` and require an explicitly owned transient test scope, rather
@@ -798,7 +839,10 @@ the local baseline cannot establish a production incident budget.
 
 AGT-4051: automatic repair creation lands first in Ready, resolving the
 project's coding model at creation with medium reasoning. The RT model ladder
-can still raise a later repair rung. Compatibility receipts reuse an open repair
+can still raise a later repair rung. Periodic typed-incident checks also recover
+existing repairs from Preparation into Ready, including after a restart without
+a new receipt. Progress, review and settled lanes remain unchanged.
+Compatibility receipts reuse an open repair
 when the failing-test sets overlap by a majority of the smaller set, including
 supersets; they refresh the tests, tip and suspects without resetting the first
 red clock. RT receipts retain their per-test incident and quarantine identity
@@ -3001,6 +3045,9 @@ comparison before Quality Studio's verdict contract can decide a review.
   barrel collision probes. Broad frontend suite commands stay outside the
   candidate inventory and configured continuous set, so impact rules, history,
   cannot silently turn this boundary into the promotion full suite.
+  Focused Angular slices prefer the declared `test:ci` script, including the
+  report-validating `node scripts/run-unit-tests.mjs` wrapper. This preserves
+  the completed-test report check instead of falling back to raw `ng test`.
 - `backend/Services/Pipeline/PipelineStepConditionEvaluator.cs`: per-step
   condition evaluation.
 - `backend/Services/Pipeline/ProjectPipelineOrder.cs`: project-level step order
@@ -4888,7 +4935,10 @@ Its `/role` subroute exposes the charter and rights catalogue.
 `PUT /api/projects/{name}/line-guardian/mode` accepts `{ "live": true }` or
 `{ "live": false }` from the owner only. `POST /api/projects/{name}/line-guardian/requests` takes
 `runId`, `test`, and `operation`; it collects policy facts from a persisted
-receipt. Owner items also appear through the existing post-merge Needs you
+receipt. Requests reuse the recorded per-test incident's stored fingerprint even
+when later diagnostic logs change their fingerprint, so their authority facts
+and owner item retain the same quarantine identity.
+Owner items also appear through the existing post-merge Needs you
 fact source. One closed-incident feed observation is emitted on an evidence
 or owner lift. The weekly criteria projection and switch UI remain RT-9.
 

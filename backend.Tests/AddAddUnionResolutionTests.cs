@@ -97,4 +97,29 @@ public sealed class AddAddUnionResolutionTests
         Assert.False(AddAddUnionResolution.Resolve("f", "plain\n").Resolved);
         Assert.False(AddAddUnionResolution.Resolve("f", Start + "\nx\n" + Base + "\n").Resolved);
     }
+
+    [Theory]
+    [InlineData("missing-end")]
+    [InlineData("outside")]
+    [InlineData("duplicate-start")]
+    [InlineData("changed-base")]
+    public void Bounded_union_refuses_incomplete_regions_and_non_additions(string kind)
+    {
+        const string open = "<!-- append:start -->";
+        const string close = "<!-- append:end -->";
+        var hunk = string.Join('\n', Start, "one", Base,
+            kind == "changed-base" ? "base paragraph" : "", Separator, "two", End, "");
+        if (kind != "changed-base") hunk = hunk.Replace(Base + "\n\n", Base + "\n");
+        var text = kind switch
+        {
+            "missing-end" => open + "\n" + hunk,
+            "outside" => hunk + open + "\n" + close + "\n",
+            "duplicate-start" => open + "\n" + open + "\n" + hunk + close + "\n",
+            _ => open + "\n" + hunk + close + "\n",
+        };
+        var result = AddAddUnionResolution.ResolveWithin("page.md", text, open, close);
+        Assert.False(result.Resolved);
+        Assert.Null(result.Content);
+        Assert.Empty(result.Hunks);
+    }
 }

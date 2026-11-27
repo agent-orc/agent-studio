@@ -1,5 +1,7 @@
 # Security overview
 
+<!-- append-only:security-overview:start -->
+
 > **Status note (2026-07-07).** ADR-0059 promotes **remote execution** (Linux
 > runner hosts + a central task-server URL) from explicit non-goal to a major
 > goal. The "local-only" situation below still describes the **current,
@@ -1931,8 +1933,8 @@ SM-5 approval for the exact strategy request. After the Owner approves with
 step-up, repeat the same request with `X-Operator-Approval`; it runs once.
 Send `X-Operator-Reason` with the stated reason, percent-encoded when needed.
 The operator-agent role does not hold `project.settings.write`; this narrow
-approval path does not grant that permission to other requests. The named
-`project.testing` elevated class remains future ES-7 work.
+approval path does not grant that permission to other requests. The armed
+`project.testing` elevated class can also admit this request; see ES-7 below.
 
 Each strategy change writes one `project.testing.set` control plane audit
 entry with actor, project, old and new strategy, and the stated reason for an
@@ -1995,7 +1997,7 @@ End all elevated sessions take authority away without step-up or a confirmation
 dialog. End elevation keeps T0 and T1. New-address renewal marks the row and
 shows a quiet notice. The address history retains the latest 256 distinct
 addresses. Live operator streams recheck at most every 15 seconds. Class
-admission, rate limits and direct-action re-arming remain ES-7 work.
+admission, rate limits and direct-action re-arming are implemented in ES-7 below.
 
 After 30 days the installation security view shows “Elevated session running
 30 days” with Keep and End. Keep postpones the next review notice by 30 days
@@ -2006,3 +2008,62 @@ Existing bound sessions without a recorded key certification end no later
 than 60 minutes after confirmation and require a new terminal sign-in.
 The kill switch also denies pending and confirmed sign-ins that have not yet
 been collected, so a code from before the switch cannot issue later.
+
+## Elevated action classes and arming (ES-7)
+
+Decisions ES-D6 A, ES-D9 A and ES-D16 A are implemented. The code-owned
+`ElevatedActionClasses` catalogue sits beside `OperatorOperationCatalog`.
+Changing that catalogue is a T2 code change. No role gains permissions.
+The Owner's terminal confirmation records `elevation.classes`, the confirming
+Owner and persisted uses. Existing records without arming do not gain direct
+authority on upgrade.
+
+| Class | Mode | Limit | Availability |
+|---|---|---|---|
+| `cards.accept-override` | batch | 30 items/hour | Session lifetime; ES-8 supplies batch confirmation |
+| `cards.archive-override` | batch | 10 items/hour | Session lifetime; ES-8 supplies batch confirmation |
+| `project.testing` | direct-action | 6 requests/project/hour | 24 hours per arming, capped at session end |
+
+An armed `project.testing` admits `project.testing.set` after project scope
+checks, with a nonempty `X-Operator-Reason`. Without the class, or once its
+arming lapses, the normal `approval-required` path applies. Batch classes do
+not admit individual override calls; those keep the exact-request approval
+path until ES-8. Rate admission is conservative: an admitted request uses a
+slot even if its handler later refuses invalid parameters. Rates survive
+restart and re-arming. The seventh request in the rolling hour returns
+`elevation-rate-exceeded`. Three rate refusals within ten minutes remove all
+classes, keep the ordinary session, and raise a persisted Needs you row.
+End elevation acknowledges that row; a new sign-in is needed to regain classes.
+
+Only an active human Owner with a fresh, single-use step-up can POST
+`/api/auth/iam/operator-agents/{id}/sessions/{sessionId}/rearm` with
+`{"classId":"project.testing"}`. This starts another 24 hours, capped at
+session end. The agent cannot add classes or re-arm. There is no 60-minute
+elevation window. Hourly device key certification remains a separate clock.
+End elevation removes authority without step-up; End session and the kill
+switch clear elevation as well as ending access.
+
+Hard refusals precede classes, grants, approvals and break-glass: access,
+grants, sessions, kill switch, break-glass management, secrets (including
+metadata), production deployment and approval, catalogue, audit and
+`workspace.administer`. The catalogue inventory checks that class operations
+cannot name these surfaces.
+
+Every elevated testing change writes old/new values, class, confirming Owner,
+stated reason and instruction source, device thumbprint and arming id in the
+hash-chained audit and a project operator feed entry with Undo. Undo is an
+Owner-only POST to `/api/projects/{project}/testing/undo/{auditSequence}`;
+it restores the previous strategy from that immutable record, replans queued
+reviews, and writes an Owner audit entry referring to the original sequence.
+It can be used once. Operator sessions cannot invoke Undo.
+
+The Studio header shows live elevation and opens the same controls as
+Settings > Access > Elevated sessions, including Re-arm with step-up, End
+elevation and End session. The list shows classes, rolling uses by project
+and arming time. The header's list link focuses that section after loading.
+A quiet notice appears in the last hour before lapse.
+On phones, authority and More navigation sit above the existing header actions
+so the elevated controls remain reachable without overlap.
+Operator activity can filter by agent, session and elevated actions, with
+reason, stated source, device and arming details.
+<!-- append-only:security-overview:end -->

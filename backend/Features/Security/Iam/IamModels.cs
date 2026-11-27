@@ -175,8 +175,10 @@ public sealed record OperatorAgentSession
     /// until then.
     /// </summary>
     public OperatorSessionDevice? Device { get; init; }
-    /// <summary>The elevated action classes the Owner kept at confirmation; ES-7 admits their operations.</summary>
+    /// <summary>The classes the Owner kept at confirmation; direct authority requires the corresponding Elevation arming.</summary>
     public List<string>? Classes { get; init; }
+    public OperatorElevation? Elevation { get; init; }
+    public DateTime? ElevationRateEndedAt { get; init; }
     public int? ChosenLifetimeHours { get; init; }
     public DateTime? ChosenEnd { get; init; }
     public DateTime? KeyExpiresAt { get; init; }
@@ -270,7 +272,7 @@ public sealed record OperatorSessionResponse(
     OperatorSessionDeviceResponse? Device = null, IReadOnlyList<string>? Classes = null,
     int? ChosenLifetimeHours = null, DateTime? ChosenEnd = null, DateTime? IdleEnd = null,
     DateTime? KeyExpiresAt = null, string? LastAddress = null, DateTime? NewAddressAt = null,
-    DateTime? ReviewedAt = null, bool ReviewDue = false);
+    DateTime? ReviewedAt = null, bool ReviewDue = false, OperatorElevation? Elevation = null, DateTime? ElevationRateEndedAt = null);
 public sealed record OperatorAgentResponse(
     string Id, string Name, string? Description, DateTime CreatedAt, string? CreatedBy, DateTime? DisabledAt,
     IReadOnlyList<OperatorSessionResponse> Sessions, IReadOnlyList<OperatorDeviceResponse>? Devices = null, int? LifetimeLimitHours = null);

@@ -580,6 +580,22 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             options,
             now,
             inFlight);
+        // Stale-verdict recovery integrates before requesting its fresh review.
+        // Its durable custody must match the authority's exact settled delivery;
+        // it grants retry ownership, never a passed review or a green gate.
+        var staleRecovery = StaleVerdictRecovery.Read(job);
+        if (job.State == TaskStates.AutoReview && subject is not null
+            && staleRecovery is { Phase: "waiting-retry" or "integrating" }
+            && staleRecovery.Delivery == $"{subject.RunAttemptId}:{deliverySha}")
+        {
+            var run = _authority.GetTaskProjection(job.Key ?? job.TaskKey).CurrentRunAttempt;
+            withoutReview = withoutReview with
+            {
+                IntegrationBeforeFreshReview = run is { State: AttemptLifecycleState.Completed }
+                    && run.AttemptId == subject.RunAttemptId
+                    && string.Equals(run.ResultSha, deliverySha, StringComparison.OrdinalIgnoreCase),
+            };
+        }
         // Load review archives only when every other eligibility fact holds.
         // Most cards in these lanes have no gate failure to retry.
         var reviewLookup = MonolithTransitionAdapter.GateEnvironmentRetryPolicyOperatorReplayRefusal(withoutReview)

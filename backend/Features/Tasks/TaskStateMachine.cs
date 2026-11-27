@@ -821,18 +821,23 @@ public class TaskStateMachine
         var info = _scanner.FindJob(jobId, watchPath);
         if (info is null) return new(DeleteJobStatus.NotFound);
 
-        // Remote claims resolve the card while holding this gate. A local
-        // pickup first moves to Progress under the lane mutex. Taking the gate
-        // before the lane lock orders deletion against both admission paths.
-        if (!LeaseEndpoints.ClaimGate.Wait(TimeSpan.FromSeconds(30)))
-            return new(DeleteJobStatus.Conflict, "card-delete-busy", "Run admission is busy. Retry deletion later.");
+        // Deletion orders itself against the admission of this card only, not
+        // behind the process-wide ClaimGate that every claim, completion and
+        // operator move of every project holds. A local pickup moves to
+        // Progress under the lane mutex. A remote claim or lease acquire holds
+        // the card's admission mark from its selection until the card is in
+        // Progress; the attempt authority below then shows the run.
         try
         {
-            using var lane = _laneMutex.TryAcquireStrict(info.WatchPath);
+            using var lane = _laneMutex.TryAcquireStrict(info.WatchPath, DeleteLaneWait);
             if (lane is null)
                 return new(DeleteJobStatus.Conflict, "card-delete-busy", "The card's lane is busy. Retry deletion later.");
             lock (TaskJsonFile.SyncRoot(info.FolderPath))
             {
+                using var admission = LeaseEndpoints.TryEnterCardAdmission(info, "deletion", out var admittedBy);
+                if (admission is null)
+                    return new(DeleteJobStatus.Conflict, "card-delete-busy",
+                        $"Run admission of this card is in progress ({admittedBy}). Retry deletion later.");
                 var recheck = FindJobForLaneMutation(jobId, watchPath);
                 if (recheck is null) return new(DeleteJobStatus.NotFound);
                 if (!WatchPathComparison.PathsEqual(recheck.FolderPath, info.FolderPath))
@@ -849,10 +854,13 @@ public class TaskStateMachine
                     || recheck.TaskJsonWriteTicks != info.TaskJsonWriteTicks)
                     return new(DeleteJobStatus.Conflict, "card-delete-changed", "The card changed. Reload it before deleting.");
 
-                if (HasDeletionProtection(recheck))
+                var evidence = GetDeletionProtectionEvidence(recheck);
+                if (evidence is not null)
                     return new(DeleteJobStatus.Conflict, "card-delete-protected",
-                        "Hard deletion is limited to unstarted drafts. Stop active runs and wait for active batches. "
-                        + "Retain work through the guarded archive move; discarding unintegrated work requires "
+                        $"Hard deletion is limited to unstarted drafts. Evidence: {evidence}. "
+                        + "Stop active runs and wait for active batches. Retain work through the guarded archive move: "
+                        + $"POST /api/tasks/{Uri.EscapeDataString(jobId)}/move with targetState={TaskStates.Archive}; "
+                        + "discarding unintegrated work requires "
                         + "project.cards.override and a usable written reason.");
 
                 Directory.Delete(recheck.FolderPath, true);
@@ -870,38 +878,45 @@ public class TaskStateMachine
             _logger.LogError(ex, "Failed to delete job {JobId}", jobId);
             return new(DeleteJobStatus.Failure, Message: "Card deletion failed.");
         }
-        finally
-        {
-            LeaseEndpoints.ClaimGate.Release();
-        }
     }
 
-    private bool HasDeletionProtection(TaskInfo card)
+    // Lane writes are short file moves; a longer wait means a wedged writer.
+    private static readonly TimeSpan DeleteLaneWait = TimeSpan.FromSeconds(5);
+
+    private string? GetDeletionProtectionEvidence(TaskInfo card)
     {
         if (card.State is not (TaskStates.Backlog or TaskStates.Preparation or TaskStates.Ready))
-            return true;
+            return $"lane {card.State}";
         if (_cliRouter?.All.Any(cli => cli.GetExecution(card.TaskKey) is not null) == true)
-            return true;
+            return "local CLI execution";
         // Both local and remote authority have used these identities. A past
         // attempt is evidence too, including an attempt compacted to history.
         if (_attemptAuthority is not null && new[] { card.Key, card.TaskKey, card.Id }
             .Where(key => !string.IsNullOrWhiteSpace(key)).Distinct(StringComparer.OrdinalIgnoreCase)
             .Any(key => !_attemptAuthority.GetTaskProjection(key!).LegacyTask))
-            return true;
+            return "run attempt";
         // Deletion ends membership regardless of the card's current lane, so
         // inspect even a member whose lane was changed outside the batch path.
         if (_batchStore is not null && new AgentStudio.Pipeline.ActiveBatchMemberGuard(_batchStore)
             .Find(card with { State = TaskStates.AutoReview }, TaskStates.Archive) is not null)
-            return true;
-        return card.Commit is not null || card.Commits.Count > 0 || card.CompletionClaim is not null
-            || card.LastUsage is not null || !string.IsNullOrWhiteSpace(card.SessionName) || card.SessionChain.Count > 0
-            || File.Exists(Path.Combine(card.FolderPath, AgentStudio.Runner.PickupLockFile.LockFileName))
-            || File.Exists(AgentStudio.Pipeline.ReviewSubjectStore.PathFor(card.FolderPath))
-            || AgentStudio.Pipeline.BatchGateOwnershipStore.Read(card.FolderPath) is not null
-            || File.Exists(TaskPaths.CliOutputLog(card.FolderPath))
-            || File.Exists(TaskPaths.SessionEventsLog(card.FolderPath))
-            || File.Exists(Path.Combine(card.FolderPath, "status.md"))
-            || TaskPaths.ResultArtifacts(card.FolderPath).Any();
+            return "active batch membership";
+        if (card.Commit is not null) return "task.json commit";
+        if (card.Commits.Count > 0) return "task.json commits";
+        if (card.CompletionClaim is not null) return "task.json completionClaim";
+        if (card.LastUsage is not null) return "task.json lastUsage";
+        if (!string.IsNullOrWhiteSpace(card.SessionName)) return "task.json sessionName";
+        if (card.SessionChain.Count > 0) return "task.json sessionChain";
+        var pickupLock = Path.Combine(card.FolderPath, AgentStudio.Runner.PickupLockFile.LockFileName);
+        if (File.Exists(pickupLock)) return Path.GetRelativePath(card.FolderPath, pickupLock);
+        var reviewSubject = AgentStudio.Pipeline.ReviewSubjectStore.PathFor(card.FolderPath);
+        if (File.Exists(reviewSubject)) return Path.GetRelativePath(card.FolderPath, reviewSubject);
+        if (AgentStudio.Pipeline.BatchGateOwnershipStore.Read(card.FolderPath) is not null)
+            return "batch gate ownership";
+        if (File.Exists(TaskPaths.CliOutputLog(card.FolderPath))) return "logs/cli-output.log";
+        if (File.Exists(TaskPaths.SessionEventsLog(card.FolderPath))) return "logs/session-events.jsonl";
+        if (File.Exists(Path.Combine(card.FolderPath, "status.md"))) return "status.md";
+        var result = TaskPaths.ResultArtifacts(card.FolderPath).FirstOrDefault();
+        return result is null ? null : Path.GetRelativePath(card.FolderPath, result);
     }
 
     /// <summary>
