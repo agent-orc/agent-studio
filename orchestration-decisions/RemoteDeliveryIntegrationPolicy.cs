@@ -281,13 +281,21 @@ public static class ReviewMeasurementPolicy
                     ? normalized.FailureClassification ?? "ReviewFinding"
                     : Contract.DeliveryFailureDiagnosis.Product,
                 Summary = Summary(plan, normalized.Verdicts) };
-        if (normalized.Outcome is "Pass" or "IntegrationBranchDefect")
+        // Settlement shares the deterministic build/test dispositions with
+        // delivery admission. Semantic aspects keep their grading path: a
+        // reviewer concern or an omitted aspect verdict is not an incomplete
+        // measurement, so an actionable concern still reaches its fix round
+        // and the settled attempt is recorded as a delivered round (AGT-4243).
+        var gates = Measurements(plan, normalized.Verdicts)
+            .Where(item => IsBuildTestAspect(item.Aspect)).ToArray();
+        if (normalized.Outcome is "Pass" or "IntegrationBranchDefect" && gates.Length > 0)
         {
-            var outcome = Outcome(plan, normalized.Verdicts);
+            var outcome = gates.Any(item => item.Disposition == ReviewMeasurementDisposition.ProductFailure)
+                ? "ProductFailure" : gates.Any(item => !item.Admits) ? "ReviewInfra" : "Pass";
             return normalized with { Outcome = outcome == "Pass" ? normalized.Outcome : outcome,
                 FailureClassification = outcome == "ReviewInfra" ? "MeasurementIncomplete"
                     : IsInfrastructureClassification(normalized.FailureClassification) ? null : normalized.FailureClassification,
-                Summary = Summary(plan, normalized.Verdicts) };
+                Summary = string.Join(" ", gates.Select(item => item.Summary)) };
         }
         return normalized;
     }
