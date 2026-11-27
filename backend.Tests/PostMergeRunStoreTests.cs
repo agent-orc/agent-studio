@@ -1,3 +1,5 @@
+extern alias Runner;
+
 using System.Net;
 using System.Net.Http.Json;
 using AgentStudio.Pipeline;
@@ -61,6 +63,132 @@ public sealed class PostMergeRunStoreTests : IDisposable
         Assert.Equal(3, final.Runs.Count);
         Assert.Equal("skipped", final.Runs[^1].Status);
         Assert.Equal("green", store.Read(Project).DevelopState);
+    }
+
+    [Theory]
+    [InlineData("omitted")]
+    [InlineData("duplicate")]
+    public void GreenRequiresTheStartedPlanAndDistinctCommandCoverage(string invalid)
+    {
+        var store = new PostMergeRunStore(_root);
+        var run = Run("coverage", First, "window") with { Commands = ["build", "test"] };
+        Assert.NotNull(store.Record(Project, run));
+        var terminal = run with { Status = "green", FinishedAtUtc = Now,
+            Verdicts = [new("build", 0, false), new("test", 0, false)] };
+        var bad = invalid == "omitted"
+            ? terminal with { Commands = ["build"], Verdicts = [terminal.Verdicts[0]] }
+            : terminal with { Verdicts = [terminal.Verdicts[0], terminal.Verdicts[0]] };
+        Assert.Null(store.Record(Project, bad));
+        Assert.Null(store.Read(Project).LastGreenSha);
+        Assert.Equal(run.Commands, store.Read(Project).ActiveRun!.Commands);
+        Assert.NotNull(store.Record(Project, terminal));
+        Assert.Equal(First, store.Read(Project).LastGreenSha);
+        Assert.NotNull(new PostMergeRunStore(_root).Record(Project, terminal));
+        Assert.Null(store.Record(Project, terminal with { Reason = "conflicting replay" }));
+    }
+
+    [Theory]
+    [InlineData("substituted")]
+    [InlineData("incomplete")]
+    [InlineData("extra")]
+    [InlineData("kind")]
+    [InlineData("id")]
+    [InlineData("tip")]
+    [InlineData("timeout")]
+    public void InvalidEvidenceCannotAdvanceOrReplaceTheActiveRun(string invalid)
+    {
+        var store = new PostMergeRunStore(_root);
+        var run = Run("coverage", First, "window") with { Commands = ["build", "test"] };
+        Assert.NotNull(store.Record(Project, run));
+        var receipt = run with { Status = "green", FinishedAtUtc = Now,
+            Verdicts = [new("build", 0, false), new("test", 0, false)] };
+        var bad = invalid switch
+        {
+            "substituted" => receipt with { Verdicts = [new("build", 0, false), new("other", 0, false)] },
+            "incomplete" => receipt with { Verdicts = [receipt.Verdicts[0]] },
+            "extra" => receipt with { Verdicts = [.. receipt.Verdicts, new("other", 0, false)] },
+            "kind" => receipt with { Kind = "nightly" },
+            "id" => receipt with { Id = "stale" },
+            "tip" => receipt with { TipSha = Second },
+            _ => receipt with { Verdicts = [receipt.Verdicts[0], new("test", 0, true)] },
+        };
+        Assert.Null(store.Record(Project, bad));
+        Assert.Null(store.Read(Project).LastGreenSha);
+        Assert.Null(store.Read(Project).LastWindowTipSha);
+        Assert.Empty(store.Read(Project).Runs);
+        Assert.Null(store.Record(Project, run with { Commands = ["build"] }));
+        Assert.NotNull(store.Record(Project, receipt));
+    }
+
+    [Theory]
+    [InlineData("red")]
+    [InlineData("inconclusive")]
+    public void PartialTerminalEvidenceStillUsesTheStartedCommands(string status)
+    {
+        var store = new PostMergeRunStore(_root);
+        var run = Run("partial", First, "window") with { Commands = ["build", "test"] };
+        store.Record(Project, run);
+        var receipt = run with { Status = status, FinishedAtUtc = Now, Verdicts = [new("build", 1, false)] };
+        Assert.Null(store.Record(Project, receipt with { Commands = ["build"] }));
+        Assert.Null(store.Record(Project, receipt with { Verdicts = [new("other", 1, false)] }));
+        Assert.NotNull(store.Record(Project, receipt));
+        Assert.Null(store.Read(Project).LastGreenSha);
+    }
+
+    [Theory]
+    [InlineData("valid")]
+    [InlineData("fixed-valid")]
+    [InlineData("fixed-missing")]
+    [InlineData("missing")]
+    [InlineData("duplicate")]
+    [InlineData("unplanned")]
+    [InlineData("wrong-suite")]
+    [InlineData("mixed")]
+    [InlineData("same-index")]
+    [InlineData("wrong-command")]
+    [InlineData("no-metadata")]
+    public void ExplicitShardsCoverTheirOriginalCommandExactlyOnce(string evidence)
+    {
+        const string command = "dotnet test tests.csproj --no-build --filter Category!=MachineBound";
+        var envelope = new PostMergeEnvelopeFingerprint("a", "b", "worker", null, 2, null, "tests=auto", null, null);
+        var run = Run("shards", First, "nightly") with { Commands = ["build", command], Envelope = envelope };
+        if (evidence == "unplanned") run = run with { Envelope = envelope with { ShardPlan = "tests=1" } };
+        if (evidence.StartsWith("fixed-", StringComparison.Ordinal)) run = run with { Envelope = envelope with { ShardPlan = "tests=2" } };
+        var store = new PostMergeRunStore(_root);
+        store.Record(Project, run);
+        var shardCommands = Runner::AgentRunner.PostMergeShards.Commands(command, ["Tests.One", "Tests.Two"], 2,
+            Path.Combine(_root, "post-merge-shards"));
+        Assert.Equal(2, shardCommands.Count);
+        var shard = new PostMergeCommandVerdict(shardCommands[0], 0, false) { SuiteId = "tests" };
+        var second = shard with { Command = shardCommands[1] };
+        var receipt = run with { Status = "green", FinishedAtUtc = Now,
+            Verdicts = [new("build", 0, false), shard, second],
+            Envelope = envelope with { ShardPlan = "tests=2" },
+            SuiteSelection = new(["tests"], [], []) { SuiteCommands = new Dictionary<string, string> { ["tests"] = command } } };
+        receipt = evidence switch
+        {
+            "fixed-missing" => receipt with { Envelope = envelope with { ShardPlan = "tests=1" },
+                Verdicts = [receipt.Verdicts[0], shard] },
+            "missing" => receipt with { Verdicts = [receipt.Verdicts[0], shard] },
+            "duplicate" => receipt with { Verdicts = [receipt.Verdicts[0], shard, shard] },
+            "wrong-suite" => receipt with { Verdicts = [receipt.Verdicts[0], shard, second with { SuiteId = "other" }] },
+            "mixed" => receipt with { Verdicts = [.. receipt.Verdicts, new(command, 0, false)] },
+            "same-index" => receipt with { Verdicts = [receipt.Verdicts[0], shard, shard with
+                { Command = shard.Command.Replace(_root, Path.Combine(_root, "other"), StringComparison.Ordinal) }] },
+            "wrong-command" => receipt with { Verdicts = [receipt.Verdicts[0], shard, second with
+                { Command = second.Command.Replace("tests.csproj", "other.csproj", StringComparison.Ordinal) }] },
+            "no-metadata" => receipt with { Envelope = null },
+            _ => receipt,
+        };
+        if (evidence is not ("valid" or "fixed-valid"))
+        {
+            Assert.Null(store.Record(Project, receipt));
+            Assert.Null(store.Read(Project).LastGreenSha);
+            return;
+        }
+        Assert.NotNull(store.Record(Project, receipt));
+        Assert.Equal(First, store.Read(Project).LastGreenSha);
+        Assert.NotNull(new PostMergeRunStore(_root).Record(Project, receipt));
     }
 
     [Fact]

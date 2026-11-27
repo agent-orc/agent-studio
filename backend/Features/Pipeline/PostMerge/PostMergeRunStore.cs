@@ -96,6 +96,10 @@ public sealed class PostMergeRunStore
     {
         lock (_gate)
         {
+            if (run.Commands is null || run.Verdicts is null
+                || run.Commands.Any(string.IsNullOrWhiteSpace)
+                || run.Commands.Distinct(StringComparer.Ordinal).Count() != run.Commands.Count)
+                return null;
             var state = ReadLocked(projectId);
             if (state.Runs.FirstOrDefault(item => item.Id == run.Id) is { } recorded)
                 return JsonSerializer.Serialize(recorded, Json) == JsonSerializer.Serialize(run, Json) ? state : null;
@@ -109,7 +113,9 @@ public sealed class PostMergeRunStore
             if (run.Status == "running")
             {
                 if (active?.Id == run.Id)
-                    return active.TipSha == run.TipSha && active.Kind == run.Kind ? state : null;
+                    return active.TipSha == run.TipSha && active.Kind == run.Kind
+                        && active.Project == run.Project && active.StartedAtUtc == run.StartedAtUtc
+                        && active.Commands.SequenceEqual(run.Commands, StringComparer.Ordinal) ? state : null;
                 if (active is not null && !MonolithTransitionAdapter.PostMergeCustodyMayReplace(
                         active.StartedAtUtc, active.Kind, custody?.ExpiresAtUtc, now))
                     return null;
@@ -133,10 +139,11 @@ public sealed class PostMergeRunStore
             else if (run.Status is "green" or "red" or "inconclusive")
             {
                 if (active is null || active.Id != run.Id || active.TipSha != run.TipSha
-                    || active.Kind != run.Kind || run.FinishedAtUtc is null
+                    || active.Kind != run.Kind || active.Project != run.Project || active.StartedAtUtc != run.StartedAtUtc
+                    || !ValidCommandCoverage(active, run) || run.FinishedAtUtc is null
                     || run.FinishedAtUtc < run.StartedAtUtc
                     || run.Verdicts.Count == 0 && MonolithTransitionAdapter.PostMergeCustodyNeedsVerdict(run.Status)
-                    || run.Status == "green" && (run.Verdicts.Count < run.Commands.Count
+                    || run.Status == "green" && (run.Verdicts.Any(verdict => verdict.TimedOut)
                         || run.Verdicts.Any(verdict => verdict.ExitCode != 0)
                         && run.Failure?.AllFailuresQuarantined != true))
                     return null;
@@ -160,6 +167,85 @@ public sealed class PostMergeRunStore
             WriteLocked(projectId, state, custody, replaceCustody: true);
             return state;
         }
+    }
+
+    // Receipt integrity belongs at the persistence boundary. Custody and state
+    // transitions remain decisions of the orchestration adapter above.
+    private static bool ValidCommandCoverage(PostMergeRunRecord active, PostMergeRunRecord run)
+    {
+        if (!active.Commands.SequenceEqual(run.Commands, StringComparer.Ordinal)) return false;
+        var coverage = active.Commands.ToDictionary(command => command,
+            _ => new List<PostMergeCommandVerdict>(), StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var shardIds = new HashSet<(string Command, int Index)>();
+        foreach (var verdict in run.Verdicts)
+        {
+            if (verdict is null || string.IsNullOrWhiteSpace(verdict.Command) || !seen.Add(verdict.Command))
+                return false;
+            if (coverage.TryGetValue(verdict.Command, out var exact))
+            {
+                exact.Add(verdict);
+                continue;
+            }
+            // The host represents shards with a suite ID, an explicit terminal
+            // shard count, and generated settings commands. Only a suite that
+            // opted into sharding at start may replace its original command.
+            var suite = verdict.SuiteId;
+            if (suite is null || !ShardCount(active.Envelope?.ShardPlan, suite, out var planned)
+                || !ShardCount(run.Envelope?.ShardPlan, suite, out var completed)
+                || planned != "auto" && planned != completed
+                || !int.TryParse(completed, out var count) || count < 1 || count > ProjectTestSuite.MaxShards
+                || run.SuiteSelection is not { } selection
+                || !selection.SuiteCommands.TryGetValue(suite, out var original)
+                || original is null || !coverage.ContainsKey(original)
+                || active.SuiteSelection?.SuiteCommands is { Count: > 0 } frozen
+                    && (!frozen.TryGetValue(suite, out var frozenCommand) || frozenCommand != original)
+                || !original.Contains("dotnet test ", StringComparison.Ordinal)
+                || !original.Contains("--no-build", StringComparison.Ordinal)) return false;
+            var bare = System.Text.RegularExpressions.Regex.Replace(original,
+                "\\s--filter(?:\\s+|=)(?:\"[^\"]*\"|'[^']*'|\\S+)", "").Trim();
+            var prefix = bare + " --settings '";
+            if (!verdict.Command.StartsWith(prefix, StringComparison.Ordinal)
+                || !verdict.Command.EndsWith("'", StringComparison.Ordinal)) return false;
+            var settings = verdict.Command[prefix.Length..^1].Replace('\\', '/');
+            var marker = "/post-merge-" + active.Id + "/shard-";
+            var markerIndex = settings.LastIndexOf(marker, StringComparison.Ordinal);
+            if (markerIndex < 0 || !settings.EndsWith(".runsettings", StringComparison.Ordinal)
+                || !int.TryParse(settings[(markerIndex + marker.Length)..^12], out var index)
+                || index < 0 || index >= ProjectTestSuite.MaxShards
+                || !shardIds.Add((original, index))) return false;
+            coverage[original].Add(verdict);
+        }
+        foreach (var (command, verdicts) in coverage)
+        {
+            if (verdicts.Count == 0)
+            {
+                if (run.Status == "green") return false;
+                continue; // Red and interrupted runs may stop before the next command.
+            }
+            if (verdicts.Any(verdict => verdict.Command == command))
+            {
+                if (verdicts.Count != 1) return false;
+                continue;
+            }
+            var suite = verdicts[0].SuiteId!;
+            if (verdicts.Any(verdict => verdict.SuiteId != suite)
+                || !ShardCount(run.Envelope?.ShardPlan, suite, out var completed)
+                || !int.TryParse(completed, out var count)
+                || (run.Status == "green" ? verdicts.Count != count : verdicts.Count > count)) return false;
+            // Paths are shard identities, even if a command uses different separators.
+            var paths = verdicts.Select(verdict => verdict.Command.Replace('\\', '/')).ToArray();
+            if (paths.Select(path => path[..path.LastIndexOf('/')]).Distinct(StringComparer.Ordinal).Count() != 1)
+                return false;
+        }
+        return run.Status != "green" || active.Commands.Count > 0;
+    }
+
+    private static bool ShardCount(string? plan, string suite, out string count)
+    {
+        var entries = (plan ?? "").Split(',').Where(entry => entry.StartsWith(suite + "=", StringComparison.Ordinal)).ToArray();
+        count = entries.Length == 1 ? entries[0][(suite.Length + 1)..] : "";
+        return entries.Length == 1;
     }
 
     public PostMergeCustody? RenewCustody(string projectId, string runId, string owner, long fence,
