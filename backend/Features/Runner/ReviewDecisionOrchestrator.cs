@@ -635,9 +635,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                             continue;
                         }
 
-                        if (!RateLimitOk(maxPerHour)
-                            && MonolithTransitionAdapter.IntegrationBlockerDependency("needs-human-input", pending.Reason ?? "") is null
-                            && !MonolithTransitionAdapter.IsVerificationBlocker(pending.Reason ?? "")) return;
                         await ProcessNeedsInputAsync(workspace, entry, pending, cliBinary, model, ct);
                     }
                     catch (Exception ex)
@@ -1001,11 +998,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     await ProcessConceptAsync(workspace, entry, pending, ct);
                     return PostProcessingCardResult.Decided("concept");
                 }
-                if (!RateLimitOk(maxPerHour)
-                    && MonolithTransitionAdapter.IntegrationBlockerDependency("needs-human-input", pending.Reason ?? "") is null
-                    && !MonolithTransitionAdapter.IsVerificationBlocker(pending.Reason ?? ""))
+                if (!await ProcessNeedsInputAsync(workspace, entry, pending, cliBinary, model, ct))
                     return PostProcessingCardResult.Deferred("rate-limit-reached");
-                await ProcessNeedsInputAsync(workspace, entry, pending, cliBinary, model, ct);
                 return _scanner.FindJob(pending.Job.Id, entry.Path)?.State == TaskStates.AutoReview
                     ? PostProcessingCardResult.Deferred("needs-input-wait")
                     : PostProcessingCardResult.Decided("needs-input");
@@ -1453,7 +1447,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         return configured;
     }
 
-    private async Task ProcessNeedsInputAsync(
+    // False means the model budget deferred processing; machine facts are resolved before that budget is checked.
+    private async Task<bool> ProcessNeedsInputAsync(
         string workspace,
         WatchPathEntry entry,
         PendingDecision pending,
@@ -1462,7 +1457,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         CancellationToken ct)
     {
         if (await TryResolveMachineBlockerAsync(workspace, entry, pending, pending.Reason ?? string.Empty, ct))
-            return;
+            return true;
         if (_reviewInputDecisions?.EngineDecides == true)
         {
             var logPath = TaskPaths.CliOutputLog(pending.Job.FolderPath);
@@ -1476,10 +1471,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 evidence.Omissions.Select(reason => new GroundsOmissionV1("cli-log", reason)).ToArray(),
                 pending.Job.Id));
             EngineDecisionWaitMarker.Write(pending.Job.FolderPath, run.RunId);
-            return;
+            return true;
         }
         if (!RateLimitOk(_configuration.GetValue("ReviewDecisionOrchestrator:CallsPerHour", DefaultCallsPerHour)))
-            return;
+            return false;
         var prompt = BuildPrompt(entry, pending, workspace);
         string response = string.Empty;
         StepModelUsage? decisionUsage = null;
@@ -1520,7 +1515,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             await EscalatePostProcessingFailureAsync(workspace, entry, pending.Job,
                 "review-decision-model-threw:" + ex.GetType().Name + ": " + ex.Message,
                 CancellationToken.None);
-            return;
+            return true;
         }
 
         // Everything recorded while carrying out this verdict (the decision
@@ -1536,7 +1531,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 "ReviewDecisionOrchestrator: no decision sentinel parsed for {Project}/{JobId}; escalating to 5e-escalated",
                 entry.Name, pending.Job.Id);
             await HandleEscalateAsync(workspace, entry, pending, prompt, response, fallback, cliBinary, ct);
-            return;
+            return true;
         }
 
         switch (verdict.Action)
@@ -1551,6 +1546,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 HandleAcceptAsDone(workspace, entry, pending, prompt, response, verdict, cliBinary);
                 break;
         }
+        return true;
     }
 
     /// <summary>
@@ -2257,7 +2253,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             var replanned = _attemptAuthority!.ReplanPendingReview(review.AttemptId,
                 RemoteReviewPlanBuilder.WithoutUnavailableOptionalCommands(optionalPlan, disposition.Reason));
-            if (replanned.Status != AttemptWriteStatus.Accepted) return true;
+            if (replanned.Status != AttemptWriteStatus.Accepted)
+                _logger.LogInformation("Machine blocker optional verification replan deferred for {AttemptId}: {Status} {Message}",
+                    review.AttemptId, replanned.Status, replanned.Message);
             return true;
         }
         var quarantineReason = HumanReviewEscalation.FormatReason(IntegrationBlockerPolicy.QuarantineCategory,
@@ -2282,8 +2280,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 || !_attemptAuthority.TryApplyForCurrentReviewedDelivery(review.AttemptId, ApplyQuarantine)) return true;
         }
         else ApplyQuarantine();
-        if (move is null) return true;
-        if (move.Status != MoveJobStatus.Success) return true;
+        if (move is null || move.Status != MoveJobStatus.Success) return true;
         var quarantined = current with { FolderPath = move.NewFolderPath ?? current.FolderPath, State = TaskStates.Escalated };
         WriteMachineBlocker(quarantined, receipt);
         AppendReviewDecision(workspace, new ReviewDecisionRecord(now.UtcDateTime, current.Id, entry.Name,
@@ -2347,8 +2344,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             FollowUp: decisionCard is null ? string.Empty : $"decision card {decisionCard.Key}"),
             current.FolderPath,
             move.NewFolderPath);
-
-        return;
     }
 
     /// <summary>
@@ -8316,8 +8311,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             FollowUp: string.Empty),
             current.FolderPath,
             movedFolderPath);
-
-        return;
     }
 
     private void HandleAcceptAsDone(
