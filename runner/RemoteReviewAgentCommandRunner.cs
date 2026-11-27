@@ -198,74 +198,142 @@ internal sealed class RemoteReviewAgentCommandRunner : IReviewAgentCommandRunner
 
     internal static RemoteAgentUsage ParseUsage(string stdout, string model, string cliType)
     {
-        var result = new RemoteAgentUsage(model, 0, 0, 0, 0, null);
-        var messages = new Dictionary<string, RemoteAgentUsage>(StringComparer.Ordinal);
-        var terminalSeen = false;
+        var messages = new Dictionary<string, IReadOnlyList<ReviewModelUsageDto>>(StringComparer.Ordinal);
+        var results = new Dictionary<string, IReadOnlyList<ReviewModelUsageDto>>(StringComparer.Ordinal);
         var messageIndex = 0;
+        var codex = string.Equals(cliType, CliSelection.CodexCli, StringComparison.OrdinalIgnoreCase);
         foreach (var line in stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
             try
             {
                 using var document = JsonDocument.Parse(line);
                 var root = document.RootElement;
-                var assistant = TryJsonProperty(root, "type", out var type) && type.ValueKind == JsonValueKind.String && type.GetString() == "assistant";
+                var assistant = JsonString(root, "type") == "assistant";
+                if (assistant && results.Count > 0) continue;
                 var envelope = assistant && TryJsonProperty(root, "message", out var message) ? message : root;
-                if (!TryJsonProperty(envelope, "usage", out var usage)
-                    || usage.ValueKind != JsonValueKind.Object)
-                    continue;
-                if (assistant && terminalSeen) continue;
-                var cached = Math.Max(JsonLong(usage, "cached_input_tokens"),
-                    JsonLong(usage, "cache_read_input_tokens"));
-                if (string.Equals(cliType, CliSelection.CodexCli, StringComparison.OrdinalIgnoreCase))
+                var rows = ParseModelUsage(envelope, model, codex);
+                if (rows.Count == 0) continue;
+                if (assistant)
                 {
-                    var normalized = ProviderUsageNormalization.OpenAi(
-                        JsonLong(usage, "input_tokens"), cached);
-                    result = new RemoteAgentUsage(
-                        model,
-                        normalized.InputTokens,
-                        JsonLong(usage, "output_tokens"),
-                        normalized.CacheReadTokens,
-                        JsonLong(usage, "cache_creation_input_tokens"),
-                        normalized.InputIncludesCached);
+                    var key = JsonString(envelope, "id") ?? "frame:" + messageIndex++;
+                    messages[key] = rows;
                 }
                 else
                 {
-                    result = new RemoteAgentUsage(
-                        model,
-                        JsonLong(usage, "input_tokens"),
-                        JsonLong(usage, "output_tokens"),
-                        cached,
-                        JsonLong(usage, "cache_creation_input_tokens"),
-                        false);
+                    // Like ClaudeUsageParser.ParseAll, modelUsage is a running
+                    // per-session snapshot. A repeated result replaces its scope.
+                    // A legacy result without a session id remains the command's
+                    // final snapshot, preserving the existing remote contract.
+                    var session = JsonString(root, "session_id");
+                    var scope = string.IsNullOrWhiteSpace(session) ? "command" : "session:" + session.Trim();
+                    results[scope] = rows;
                 }
-                if (assistant)
-                {
-                    // A non-string id (number, object, null) is not a message identity;
-                    // GetString would throw InvalidOperationException, which the
-                    // JsonException handler below does not catch.
-                    var key = TryJsonProperty(envelope, "id", out var id) && id.ValueKind == JsonValueKind.String
-                        ? id.GetString()
-                        : null;
-                    messages[key ?? "frame:" + messageIndex++] = result;
-                }
-                else terminalSeen = true;
             }
             catch (JsonException)
             {
                 // Non-protocol output remains review evidence but has no token facts.
             }
         }
-        if (!terminalSeen && messages.Count > 0)
-            result = new RemoteAgentUsage(model, messages.Values.Sum(x => x.InputTokens),
-                messages.Values.Sum(x => x.OutputTokens), messages.Values.Sum(x => x.CacheReadTokens),
-                messages.Values.Sum(x => x.CacheCreationTokens), false);
-        return result;
+        var snapshots = results.Count > 0 ? results.Values : messages.Values;
+        var perModel = snapshots.SelectMany(rows => rows)
+            .GroupBy(row => new { row.Model, row.ModelSource, row.InputIncludesCached })
+            .Select(group => group.First() with
+            {
+                InputTokens = group.Sum(row => row.InputTokens),
+                OutputTokens = group.Sum(row => row.OutputTokens),
+                CacheReadTokens = group.Sum(row => row.CacheReadTokens),
+                CacheCreationTokens = group.Sum(row => row.CacheCreationTokens),
+            })
+            .ToArray();
+        var models = perModel.Select(row => row.Model).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var sources = perModel.Select(row => row.ModelSource).Distinct(StringComparer.Ordinal).ToArray();
+        return new RemoteAgentUsage(models.Length == 1 ? models[0] : null,
+            perModel.Sum(row => row.InputTokens), perModel.Sum(row => row.OutputTokens),
+            perModel.Sum(row => row.CacheReadTokens), perModel.Sum(row => row.CacheCreationTokens),
+            perModel.Length > 0 && perModel.All(row => row.InputIncludesCached == perModel[0].InputIncludesCached)
+                ? perModel[0].InputIncludesCached : null)
+        {
+            PinnedModel = model,
+            ModelMismatch = perModel.Any(row => row.ModelMismatch),
+            ModelSource = sources.Length == 1 && models.Length == 1 ? sources[0]
+                : perModel.Length > 1 ? "per-model" : "requested-fallback",
+            ModelUsage = perModel,
+        };
     }
 
-    private static long JsonLong(JsonElement element, string name)
-        => TryJsonProperty(element, name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var parsed)
-            ? Math.Max(0, parsed)
-            : 0;
+    private static IReadOnlyList<ReviewModelUsageDto> ParseModelUsage(JsonElement frame, string pinnedModel, bool codex)
+    {
+        var observedModel = JsonString(frame, "model");
+        // Mirror the canonical Claude ParseAll semantics: modelUsage takes
+        // precedence over aggregate usage, including its camel/snake aliases.
+        if (!codex && TryJsonProperty(frame, "modelUsage", out var models) && models.ValueKind == JsonValueKind.Object)
+        {
+            var rows = new List<ReviewModelUsageDto>();
+            foreach (var property in models.EnumerateObject())
+            {
+                if (property.Value.ValueKind != JsonValueKind.Object) continue;
+                var usage = property.Value;
+                var row = ModelRow(property.Name.Trim(), pinnedModel,
+                    JsonLongEither(usage, "inputTokens", "input_tokens"),
+                    JsonLongEither(usage, "outputTokens", "output_tokens"),
+                    JsonLongEither(usage, "cacheReadInputTokens", "cache_read_input_tokens"),
+                    JsonLongEither(usage, "cacheCreationInputTokens", "cache_creation_input_tokens"), false);
+                if (row.InputTokens + row.OutputTokens + row.CacheReadTokens + row.CacheCreationTokens > 0)
+                    rows.Add(row);
+            }
+            if (rows.Count > 0) return rows;
+            var names = models.EnumerateObject().Select(property => property.Name.Trim())
+                .Where(name => name.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (names.Length == 1) observedModel = names[0];
+        }
+        if (!TryJsonProperty(frame, "usage", out var counters) || counters.ValueKind != JsonValueKind.Object) return [];
+        var input = JsonLong(counters, "input_tokens");
+        var cache = Math.Max(JsonLong(counters, "cached_input_tokens"), JsonLong(counters, "cache_read_input_tokens"));
+        bool? inputIncludesCached = false;
+        if (codex)
+        {
+            // A numeric zero is evidence. Missing, invalid, or impossible cache
+            // counts leave the provider total intact and its split unknown.
+            var reportedCache = JsonNumber(counters, "cached_input_tokens");
+            if (reportedCache is { } knownCache && knownCache <= input)
+            {
+                var normalized = ProviderUsageNormalization.OpenAi(input, knownCache);
+                input = normalized.InputTokens;
+                cache = normalized.CacheReadTokens;
+                inputIncludesCached = normalized.InputIncludesCached;
+            }
+            else
+            {
+                cache = 0;
+                inputIncludesCached = null;
+            }
+        }
+        return [ModelRow(observedModel, pinnedModel, input,
+            JsonLong(counters, "output_tokens"), cache,
+            JsonLong(counters, "cache_creation_input_tokens"), inputIncludesCached)];
+    }
+
+    private static ReviewModelUsageDto ModelRow(string? observed, string pinned, long input, long output,
+        long cacheRead, long cacheWrite, bool? inputIncludesCached)
+    {
+        var model = string.IsNullOrWhiteSpace(observed) ? null : observed.Trim();
+        return new ReviewModelUsageDto(model, input, output, cacheRead, cacheWrite, inputIncludesCached,
+            pinned, model is not null && !ExecutionModelIdentity.Equivalent(pinned, model),
+            model is null ? "requested-fallback" : "observed");
+    }
+
+    private static string? JsonString(JsonElement element, string name)
+        => TryJsonProperty(element, name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() : null;
+
+    private static long? JsonNumber(JsonElement element, string name)
+        => TryJsonProperty(element, name, out var value) && value.ValueKind == JsonValueKind.Number
+           && value.TryGetInt64(out var parsed) && parsed >= 0 ? parsed : null;
+
+    private static long JsonLong(JsonElement element, string name) => JsonNumber(element, name) ?? 0;
+
+    private static long JsonLongEither(JsonElement element, string first, string second)
+        => JsonLong(element, first) is var value && value > 0 ? value : JsonLong(element, second);
 
     private static bool TryJsonProperty(JsonElement element, string name, out JsonElement value)
     {
