@@ -179,6 +179,23 @@ that is already allowed to edit that project's checkout.
 - The standalone Task Server Studio session uses the same 10-failure client
   lockout, 20-failure username budget, 15-minute window, 8-hour idle expiry,
   and 7-day absolute expiry as the networked monolith defaults.
+- Runner chat status uses the `projectName` query as its project address;
+  integration lease status uses the project in its path. Runner chat usage,
+  queue-health collections and recommendations require a workspace binding. Status, the orchestrator feed and token aggregates retain
+  their existing handler filtering for project-scoped readers. New runner
+  literal routes default to workspace scope.
+  Legacy integration lease acquire, heartbeat and release require
+  `runner.lease`, the enrolled Runner ID in the request, and a Runner binding
+  covering the requested project. The existing branch, lease ID and fencing
+  token checks still decide which lease may be renewed or released.
+- Viewer sessions, service accounts and API tokens may call the read-only
+  POST helpers `execution-readiness-probe`, `deployment/compile`,
+  `token-pricing/calculate` and `token-pricing/what-if` with the declared read
+  permission and appropriate project or workspace scope. Browser sessions
+  still require a valid CSRF token and trusted origin for these helpers.
+  Declaring a read permission on another POST does not admit Viewer mutations.
+  Existing acceptance-readiness admission, Owner requirements and API token
+  mutation floors remain unchanged.
 - Roles are intentionally small: owner manages identities and all projects,
   operator reads and mutates allowed projects, contributor (shown as Product)
   reads assigned projects, creates wishes and cards, edits Backlog and Ready
