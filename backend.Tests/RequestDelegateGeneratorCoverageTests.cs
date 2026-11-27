@@ -16,6 +16,7 @@ namespace AgentStudio.Tests;
 /// host start build each route twice. A handler shape the generator cannot
 /// intercept silently falls back to the runtime path; this test names it.
 /// </summary>
+[Trait("Category", "Guard")]
 public sealed class RequestDelegateGeneratorCoverageTests : IDisposable
 {
     private const string GeneratorTool = "Microsoft.AspNetCore.Http.RequestDelegateGenerator";
