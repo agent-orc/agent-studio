@@ -3512,6 +3512,20 @@
             tests, guards and lint. The terminal is a new delivery for pipeline-owned
             integration and publication.</td>
         </tr>
+        <tr id="case-conflict-receipt-preparation-retry">
+          <td>2026-11-27</td>
+          <td><code>AGT-4140</code><br><span class="small">conflict-receipt-preparation-retry</span></td>
+          <td>No CLI crashed. A failed recovery receipt write prevented a later automatic conflict round for the same delivery and integration tip.</td>
+          <td>The preparation failure used the handled-conflict deduplication key even though no round had started and no delivery had been superseded.</td>
+          <td>Preparation failures remain visible and deduplicated but permit another preparation attempt after filesystem repair. The regression fixture reaches Ready once with its saved recovery delta; queued rounds and terminal refusals retain their guards.</td>
+        </tr>
+        <tr id="case-receipt-preparation-integration-recovery">
+          <td>2026-11-27</td>
+          <td><code>AGT-4140</code><br><span class="small">receipt-preparation-integration-recovery</span></td>
+          <td>No CLI crashed. The delivery stopped at <code>merge-into-develop</code> after direct merge, mechanical merge and rebase fallback conflicted in the recovery service and this case log.</td>
+          <td>The retryable preparation classifier shared an insertion point with the target's repair and quarantine helpers. The case row shared an insertion point with the new append-only registry marker.</td>
+          <td>The recovery preserves both helper sets, reserved and charged round accounting, pinned continuation bases, quarantine repair disposition and all case rows inside the registry markers. It returns a new delivery for pipeline-owned review and integration.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
       </tbody>
     </table>
