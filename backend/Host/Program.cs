@@ -560,19 +560,22 @@ builder.Services.AddSingleton<AgentStudio.Registry.IProjectUrlProcessStopper>(pr
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlReadinessService>();
 // AGT-2180: bounded HTTP client shared by the readiness probe and the URL
 // diagnostics (an unconfigured named client would wait 100 s per probe).
+builder.Services.AddSingleton<ProjectUrlDestinationConnector>();
 builder.Services.AddHttpClient("project-url-readiness", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(3);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("AgentStudio-URLPreview/1.0");
-});
+}).ConfigurePrimaryHttpMessageHandler(services =>
+    services.GetRequiredService<ProjectUrlDestinationConnector>().CreateHandler(request =>
+        ProjectUrlDestinationConnector.ResolvePermission(services.GetRequiredService<ProjectRegistry>(),
+            services.GetRequiredService<ProjectUrlProcessService>(), request)));
 builder.Services.AddHttpClient("project-url-preview", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(30);
-}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-{
-    AllowAutoRedirect = false,
-    UseCookies = false,
-});
+}).ConfigurePrimaryHttpMessageHandler(services =>
+    services.GetRequiredService<ProjectUrlDestinationConnector>().CreateHandler(request =>
+        ProjectUrlDestinationConnector.ResolvePermission(services.GetRequiredService<ProjectRegistry>(),
+            services.GetRequiredService<ProjectUrlProcessService>(), request)));
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlPreviewAccess>();
 builder.Services.AddSingleton<AgentStudio.Tasks.TaskKeyResolver>();
 builder.Services.AddSingleton<ScreenshotIndexService>();
