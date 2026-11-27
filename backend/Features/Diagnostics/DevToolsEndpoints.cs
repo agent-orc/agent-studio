@@ -8,7 +8,7 @@ namespace AgentStudio.Diagnostics;
 /// in <c>appsettings.Local.json</c>:
 ///
 /// <list type="bullet">
-///   <item><c>DevTools:UpdateStableEnabled</c> -> SSE stream of
+///   <item><c>DevTools:UpdateStableEnabled</c> -> POST startup and SSE output of
 ///   <c>update-stable.sh</c>. Only meaningful in the dev checkout, since
 ///   the script restarts stable.</item>
 ///   <item><c>DevTools:DeleteE2EJobsEnabled</c> -> list and bulk-delete
@@ -26,11 +26,29 @@ public static class DevToolsEndpoints
     {
         var group = app.MapGroup("/api/devtools");
 
+        // Keep only the latest operation in this application's lifetime. GET never
+        // creates one; reconnects and multiple readers share the same process.
+        var updates = new UpdateStableOperations();
+        var runner = app.Services.GetService<IUpdateStableProcessRunner>() ?? new UpdateStableProcessRunner();
+        var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DevTools.UpdateStable");
+
+        group.MapPost("/update-stable", (IConfiguration config) =>
+        {
+            if (!config.GetValue<bool>("DevTools:UpdateStableEnabled"))
+                return Results.Text("DevTools:UpdateStableEnabled is false", statusCode: StatusCodes.Status403Forbidden);
+            var scriptPath = ResolveUpdateStableScript(config);
+            if (scriptPath is null)
+                return Results.Problem("update-stable.sh not found. Set DevTools:UpdateStableScriptPath or use scripts/update-stable.sh from the dev checkout.");
+
+            var operation = updates.Start(scriptPath, runner, logger);
+            if (operation is null)
+                return Results.Conflict(new { error = "update-stable-running" });
+            var streamUrl = $"/api/devtools/update-stable/stream?operationId={operation.Id}";
+            return Results.Accepted(streamUrl, new { operationId = operation.Id, streamUrl });
+        }).WithMetadata(new LocalOperationEffectMetadata());
+
         group.MapGet("/update-stable/stream", async (
-            HttpContext http,
-            IConfiguration config,
-            ILoggerFactory loggerFactory,
-            CancellationToken ct) =>
+            HttpContext http, IConfiguration config, Guid? operationId, CancellationToken ct) =>
         {
             if (!config.GetValue<bool>("DevTools:UpdateStableEnabled"))
             {
@@ -38,21 +56,23 @@ public static class DevToolsEndpoints
                 await http.Response.WriteAsync("DevTools:UpdateStableEnabled is false", ct);
                 return;
             }
-
-            var logger = loggerFactory.CreateLogger("DevTools.UpdateStable");
-            var scriptPath = ResolveUpdateStableScript(config);
-            if (scriptPath is null)
+            var operation = updates.Find(operationId);
+            if (operation is null)
             {
-                http.Response.StatusCode = StatusCodes.Status500InternalServerError;
-                await http.Response.WriteAsync("update-stable.sh not found. Set DevTools:UpdateStableScriptPath or use scripts/update-stable.sh from the dev checkout.", ct);
+                http.Response.StatusCode = StatusCodes.Status404NotFound;
+                await http.Response.WriteAsJsonAsync(new { error = "update-stable-not-started" }, ct);
                 return;
             }
-
             http.Response.Headers.ContentType = "text/event-stream";
             http.Response.Headers.CacheControl = "no-cache";
             http.Response.Headers["X-Accel-Buffering"] = "no";
-
-            await StreamProcessAsync(http, scriptPath, logger, ct);
+            try { await operation.StreamAsync(http, ct); }
+            catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
+            {
+                // A subscriber disconnects without cancelling the updater. It may
+                // itself be restarting this backend; never kill its process tree.
+                logger.LogDebug(ex, "Update stream subscriber disconnected");
+            }
         });
 
         group.MapGet("/e2e-jobs", (IConfiguration config, TaskScannerService scanner) =>
@@ -93,7 +113,7 @@ public static class DevToolsEndpoints
 
             var report = migration.Scan(apply == true);
             return Results.Ok(report);
-        });
+        }).WithMetadata(new LocalOperationEffectMetadata());
 
         group.MapPost("/e2e-jobs/delete", (
             IConfiguration config,
@@ -163,61 +183,124 @@ public static class DevToolsEndpoints
         return null;
     }
 
-    private static async Task StreamProcessAsync(HttpContext http, string scriptPath, ILogger logger, CancellationToken ct)
+    private sealed class UpdateStableProcessRunner : IUpdateStableProcessRunner
     {
-        var bash = ResolveBashExecutable();
-        var workingDir = Path.GetDirectoryName(scriptPath) ?? Directory.GetCurrentDirectory();
-
-        var psi = new ProcessStartInfo
+        public async Task<int> RunAsync(string scriptPath, Action<string, string> output)
         {
-            FileName = bash,
-            WorkingDirectory = workingDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8
-        };
-        psi.ArgumentList.Add(ToBashPath(scriptPath));
-
-        await WriteSseAsync(http, "log", $"$ {bash} {string.Join(' ', psi.ArgumentList)}", ct);
-
-        using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        var pumpTasks = new List<Task>();
-
-        try
-        {
-            if (!proc.Start())
+            var bash = ResolveBashExecutable();
+            var psi = new ProcessStartInfo
             {
-                await WriteSseAsync(http, "error", "Failed to start update-stable.sh", ct);
-                return;
+                FileName = bash,
+                WorkingDirectory = Path.GetDirectoryName(scriptPath) ?? Directory.GetCurrentDirectory(),
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            };
+            psi.ArgumentList.Add(ToBashPath(scriptPath));
+            output("log", $"$ {bash} {string.Join(' ', psi.ArgumentList)}");
+            using var proc = new Process { StartInfo = psi };
+            if (!proc.Start()) throw new InvalidOperationException("Failed to start update-stable.sh");
+            var stdout = PumpStreamAsync(proc.StandardOutput, "stdout", output);
+            var stderr = PumpStreamAsync(proc.StandardError, "stderr", output);
+            // Request cancellation must not stop the updater or its output drains.
+            await proc.WaitForExitAsync();
+            await Task.WhenAll(stdout, stderr);
+            return proc.ExitCode;
+        }
+    }
+
+    private sealed class UpdateStableOperations
+    {
+        private readonly object _gate = new();
+        private UpdateStableOperation? _latest;
+
+        public UpdateStableOperation? Start(string script, IUpdateStableProcessRunner runner, ILogger logger)
+        {
+            lock (_gate)
+            {
+                if (_latest is { Completed: false }) return null;
+                var operation = new UpdateStableOperation();
+                _latest = operation;
+                _ = operation.RunAsync(script, runner, logger);
+                return operation;
             }
         }
-        catch (Exception ex)
+
+        public UpdateStableOperation? Find(Guid? id)
         {
-            logger.LogError(ex, "Failed to launch update-stable.sh");
-            await WriteSseAsync(http, "error", $"Failed to launch: {ex.Message}", ct);
-            return;
+            lock (_gate) return id is null || _latest?.Id == id ? _latest : null;
+        }
+    }
+
+    private sealed class UpdateStableOperation
+    {
+        private readonly object _gate = new();
+        private readonly Queue<(long Sequence, string Kind, string Data)> _events = new();
+        private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private long _sequence;
+        private bool _completed;
+        public Guid Id { get; } = Guid.NewGuid();
+        public bool Completed { get { lock (_gate) return _completed; } }
+
+        private void Publish(string kind, string data)
+        {
+            lock (_gate)
+            {
+                // Bound replay memory, including output from noisy scripts.
+                _events.Enqueue((++_sequence, kind, data.Length > 16384 ? data[..16384] : data));
+                if (_events.Count > 2048) _events.Dequeue();
+                _changed.TrySetResult();
+                _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
         }
 
-        pumpTasks.Add(PumpStreamAsync(proc.StandardOutput, "stdout", http, ct));
-        pumpTasks.Add(PumpStreamAsync(proc.StandardError, "stderr", http, ct));
-
-        try
+        public async Task RunAsync(string script, IUpdateStableProcessRunner runner, ILogger logger)
         {
-            await proc.WaitForExitAsync(ct);
-            await Task.WhenAll(pumpTasks);
-            await WriteSseAsync(http, "done", $"exit code {proc.ExitCode}", ct);
+            try
+            {
+                var exitCode = await runner.RunAsync(script, Publish);
+                Publish("done", $"exit code {exitCode}");
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to run update-stable.sh");
+                Publish("error", $"Failed to run: {ex.Message}");
+            }
+            finally
+            {
+                lock (_gate)
+                {
+                    _completed = true;
+                    _changed.TrySetResult();
+                }
+            }
         }
-        catch (OperationCanceledException __ex)
+
+        public async Task StreamAsync(HttpContext http, CancellationToken ct)
         {
-            SilentCatch.Note(__ex, "DevToolsEndpoints: Do NOT kill the child. The most common cancellation cause here is");
-            // Do NOT kill the child. The most common cancellation cause here is
-            // the script restarting THIS backend (when run from the same
-            // checkout that the script targets). Killing the tree would kill
-            // the in-flight stop/start chain and leave the instance down.
-            // Best to let it run to completion; the user reloads the page.
+            long after = 0;
+            while (true)
+            {
+                (long Sequence, string Kind, string Data)[] batch;
+                Task changed;
+                bool completed;
+                lock (_gate)
+                {
+                    batch = _events.Where(item => item.Sequence > after).ToArray();
+                    completed = _completed;
+                    changed = _changed.Task;
+                }
+                foreach (var item in batch)
+                {
+                    await WriteSseAsync(http, item.Kind, item.Data, ct);
+                    after = item.Sequence;
+                }
+                if (completed) return;
+                await changed.WaitAsync(ct);
+            }
         }
     }
 
@@ -237,17 +320,10 @@ public static class DevToolsEndpoints
         return path;
     }
 
-    private static async Task PumpStreamAsync(StreamReader reader, string kind, HttpContext http, CancellationToken ct)
+    private static async Task PumpStreamAsync(StreamReader reader, string kind, Action<string, string> output)
     {
-        try
-        {
-            string? line;
-            while ((line = await reader.ReadLineAsync(ct)) != null)
-            {
-                await WriteSseAsync(http, kind, line, ct);
-            }
-        }
-        catch (OperationCanceledException __ex) { SilentCatch.Note(__ex, "DevToolsEndpoints:260"); }
+        string? line;
+        while ((line = await reader.ReadLineAsync()) != null) output(kind, line);
     }
 
     private static async Task WriteSseAsync(HttpContext http, string evt, string data, CancellationToken ct)
@@ -255,7 +331,7 @@ public static class DevToolsEndpoints
         // SSE wire format: each "data:" line is one piece of the event payload.
         // We send single-line payloads only, which keeps parsing on the client
         // trivial (one event = one log line).
-        var sanitized = data.Replace("\r", "");
+        var sanitized = data.Replace("\r", "").Replace("\n", "\ndata: ");
         var payload = $"event: {evt}\ndata: {sanitized}\n\n";
         var bytes = Encoding.UTF8.GetBytes(payload);
         await http.Response.Body.WriteAsync(bytes, ct);
@@ -266,4 +342,10 @@ public static class DevToolsEndpoints
 public sealed class DeleteE2EJobsRequest
 {
     public List<string>? TaskKeys { get; set; }
+}
+
+/// <summary>An updater runs independently of the HTTP trigger and its subscribers.</summary>
+internal interface IUpdateStableProcessRunner
+{
+    Task<int> RunAsync(string scriptPath, Action<string, string> output);
 }
