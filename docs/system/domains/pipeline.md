@@ -1765,6 +1765,30 @@ is `logs/batch-gate-ownership.json`. Native member records carry the gate
 identity and evidence; the integration-record endpoint only records integration
 bookkeeping.
 
+Ref mutation fence restart contract (AGT-4116): the project/repository OS lock
+covers reading, reserving and publishing each generation across all branches.
+`fence.history` is a versioned, SHA-256 checked record containing the previous
+high-water value and its next reserved generation. The service writes and
+flushes a same-directory `.prepared` file, then atomically renames it over the
+history before preparing, flushing and atomically replacing the plain `fence`.
+Only then does acquisition return a grant. The authority is never truncated.
+Prepared files are not grants and are overwritten under the lock after restart.
+An interrupted attempt may consume a generation; subsequent grants strictly
+increase beyond both the validated reservation and any valid authoritative value.
+The bounded history survives an empty, partial, invalid or missing authority.
+A valid positive legacy plain fence migrates without resetting the sequence.
+An invalid legacy authority without history, an invalid history record, or an
+exhausted sequence raises `RefMutationLeaseService.RepositoryHoldException`
+with code `ref-mutation-fence-hold`, project, repository and evidence path. No
+lease is issued, the lock is released, and other custody keys remain available.
+Preserve the evidence for repair; deleting state or resetting to zero is unsafe.
+This is a custody failure, not a new orchestration transition. The guarantee
+covers process interruption on a filesystem supporting atomic same-directory
+replacement and file flush; it does not claim recovery after loss of the state
+volume or storage that fails to honor those operations. Concurrent older
+writers must be drained before adopting this format because they truncate the
+plain authority and do not maintain reservation history.
+
 Each pilot tick retries formed manifests from the store. The oldest formed
 manifest takes the next available project gate slot, so later larger batches
 cannot indefinitely pass it. The state response includes every recoverable
