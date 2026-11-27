@@ -21,7 +21,7 @@
 .team-card { padding: var(--studio-compat-space-17); }
 .team-card--critical, .team-item--critical { background: color-mix(in srgb, var(--studio-error, var(--studio-compat-surface-26)) 10%, var(--studio-card-muted-bg, var(--studio-compat-surface-24))); }
 .team-card-heading { display: flex; justify-content: space-between; gap: var(--studio-spacing-2); align-items: start; }
-.team-card-title { padding: 0; border: 0; background: transparent; color: inherit; font: 700 var(--studio-compat-type-31) inherit; text-align: left; cursor: pointer; }
+.team-card-title { padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .team-card-title:hover, .team-link:hover { text-decoration: underline; }
 .team-state { border-radius: var(--studio-compat-radius-2); padding: var(--studio-compat-space-1) var(--studio-spacing-2); background: var(--studio-bg-editor, var(--studio-compat-surface-24)); font-size: var(--studio-compat-type-6); text-transform: capitalize; }
 .team-card .team-role { margin: var(--studio-spacing-1) 0 var(--studio-spacing-4); }

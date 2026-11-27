@@ -175,6 +175,36 @@ const openPersona = async (page: Page) => {
 };
 const openTab = (page: Page, name: string) => page.getByTestId('persona-tabs').getByRole('button', { name }).click();
 
+// The literal pre-token shorthand was invalid and left the browser button font intact.
+// Assert each title directly: its regression occupied less than 0.1% of a viewport.
+for (const width of [1440, 390]) {
+  for (const theme of ['light', 'dark'] as const) {
+    test(`Team title typography preserves browser baseline ${theme} ${width}`, async ({ page, browser }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await setup(page);
+      await setTheme(page, theme);
+      await page.evaluate(() => document.fonts.ready);
+      mkdirSync(resultDir, { recursive: true });
+      const measurements: Record<string, unknown> = { browser: browser.version(), width, theme };
+      for (const [id, name] of [['mira', 'Mira'], ['aster', 'Aster']]) {
+        const title = page.getByTestId(`team-card-${id}`).getByRole('button', { name, exact: true });
+        const actual = await title.evaluate(element => {
+          const style = getComputedStyle(element);
+          return { fontSize: style.fontSize, lineHeight: style.lineHeight,
+            fontWeight: style.fontWeight, fontFamily: style.fontFamily,
+            compatibilitySize: style.getPropertyValue('--studio-compat-type-31').trim() };
+        });
+        measurements[id] = actual;
+        await title.screenshot({ path: join(resultDir, `team-title-${id}-${width}-${theme}.png`) });
+        // AGT-4142 Chromium baseline. Keep the shared token at 16px, independent of the button font.
+        expect.soft(actual, `${name} title`).toEqual({ fontSize: '13.3333px', lineHeight: 'normal',
+          fontWeight: '400', fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif', compatibilitySize: '16px' });
+      }
+      writeFileSync(join(resultDir, `team-title-${width}-${theme}.json`), JSON.stringify(measurements, null, 2));
+    });
+  }
+}
+
 test('pool totals equal the visible cards; Stop all paints at once and rolls back on failure', async ({ page }) => {
   const fixture = await setup(page, { failStop: true });
   await expect(page.getByTestId('team-used')).toHaveText('80');
