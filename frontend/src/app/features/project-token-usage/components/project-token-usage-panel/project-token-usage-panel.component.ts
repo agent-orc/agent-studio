@@ -6,10 +6,14 @@ import {
   inject,
   input,
   signal,
+  untracked,
 } from '@angular/core';
-import { HttpErrorResponse } from '@angular/common/http';
+import { NgTemplateOutlet } from '@angular/common';
+import { Observable, Subscription } from 'rxjs';
+import { LoadingSurfaceComponent } from '@studio/ui';
+import { formatCompactTokens } from '../../../tokens/token-number-format.util';
 import { TaskService } from '../../../../services/task.service';
-import type { ProjectExpensiveJob, ProjectExpensiveJobsResponse, ProjectJobTokenDetail, ProjectPipelineCostTimeline, ProjectTokenCategory, ProjectTokenDataFreshness, ProjectTokenHeatmap, ProjectTokenHeatmapJob, ProjectTokenUsageSummary } from '../../../../features/project-token-usage';
+import type { ProjectExpensiveJob, ProjectJobTokenDetail, ProjectPipelineCostTimeline, ProjectTokenCategory, ProjectTokenDataFreshness, ProjectTokenHeatmap, ProjectTokenHeatmapJob, ProjectTokenUsageSummary } from '../../../../features/project-token-usage';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { ProjectPipelineCostTrendComponent } from '../project-pipeline-cost-trend/project-pipeline-cost-trend.component';
 import { ReviewObservationTableComponent } from '../review-observation-table/review-observation-table.component';
@@ -25,6 +29,10 @@ const FRESHNESS_TONES: Readonly<Record<ProjectTokenDataFreshness['status'], Stat
 export function tokenFreshnessTone(status: string | null | undefined): StatusTone {
   return FRESHNESS_TONES[status as ProjectTokenDataFreshness['status']] ?? 'neutral';
 }
+type ReadSection = 'summary' | 'heatmap' | 'expensive' | 'pipeline-cost';
+type ReadState = 'loading' | 'ready' | 'error';
+const READ_SECTIONS: ReadSection[] = ['summary', 'heatmap', 'expensive', 'pipeline-cost'];
+
 interface CardSpec {
   testid: string;
   label: string;
@@ -61,7 +69,7 @@ interface TimelineBucket {
 @Component({
   selector: 'app-project-token-usage-panel',
   standalone: true,
-  imports: [TooltipDirective, ProjectPipelineCostTrendComponent, ReviewObservationTableComponent, StatusIndicatorComponent],
+  imports: [NgTemplateOutlet, LoadingSurfaceComponent, TooltipDirective, ProjectPipelineCostTrendComponent, ReviewObservationTableComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-token-usage-panel.component.html',
   styleUrl: './project-token-usage-panel.component.scss',
@@ -71,8 +79,12 @@ export class ProjectTokenUsagePanelComponent {
 
   readonly projectName = input.required<string>();
 
-  readonly loading = signal<boolean>(false);
-  readonly loadError = signal<string | null>(null);
+  readonly readState = signal<Record<ReadSection, ReadState>>({
+    summary: 'loading', heatmap: 'loading', expensive: 'loading', 'pipeline-cost': 'loading',
+  });
+  readonly loading = computed(() => Object.values(this.readState()).includes('loading'));
+  private readonly requests = new Map<ReadSection, Subscription>();
+  private readonly drilldownAttempt = signal(0);
   readonly summary = signal<ProjectTokenUsageSummary | null>(null);
   readonly heatmap = signal<ProjectTokenHeatmap | null>(null);
   readonly expensive = signal<ProjectExpensiveJob[]>([]);
@@ -174,63 +186,84 @@ export class ProjectTokenUsagePanelComponent {
   });
 
   constructor() {
-    effect(() => {
+    effect(onCleanup => {
       const name = this.projectName();
-      if (name) this.refresh(name);
+      untracked(() => {
+        this.summary.set(null);
+        this.heatmap.set(null);
+        this.expensive.set([]);
+        this.pipelineCost.set(null);
+        this.selectedJobId.set(null);
+        if (name) for (const section of READ_SECTIONS) this.retrySection(section);
+      });
+      onCleanup(() => {
+        for (const request of this.requests.values()) request.unsubscribe();
+        this.requests.clear();
+      });
     });
 
-    effect(() => {
+    effect(onCleanup => {
       const jobId = this.selectedJobId();
       const name = this.projectName();
-      if (!jobId || !name) {
-        this.drilldown.set(null);
-        this.drilldownError.set(null);
-        return;
-      }
+      this.drilldownAttempt();
       this.drilldown.set(null);
       this.drilldownError.set(null);
-      this.jobs.getProjectJobTokenDetail(name, jobId).subscribe({
-        next: (d: ProjectJobTokenDetail) => this.drilldown.set(d),
-        error: (err: HttpErrorResponse) => {
-          this.drilldown.set(null);
-          this.drilldownError.set(err?.error?.error ?? err.message ?? 'failed to load drill-down');
-        },
+      if (!jobId || !name) return;
+      let active = true;
+      const current = () => active && this.projectName() === name && this.selectedJobId() === jobId;
+      const request = this.jobs.getProjectJobTokenDetail(name, jobId).subscribe({
+        next: detail => { if (current()) this.drilldown.set(detail); },
+        error: () => { if (current()) this.drilldownError.set('Could not load task token usage.'); },
       });
+      onCleanup(() => { active = false; request.unsubscribe(); });
     });
   }
 
-  private refresh(name: string): void {
-    this.loading.set(true);
-    this.loadError.set(null);
-    this.summary.set(null);
-    this.heatmap.set(null);
-    this.expensive.set([]);
-    this.pipelineCost.set(null);
-    this.selectedJobId.set(null);
+  retryDrilldown(): void {
+    this.drilldownAttempt.update(attempt => attempt + 1);
+  }
 
-    let pending = 4;
-    const done = () => { pending--; if (pending <= 0) this.loading.set(false); };
-    const fail = (err: HttpErrorResponse) => {
-      this.loadError.set(this.loadError() ?? err?.message ?? 'unknown');
-      done();
-    };
+  sectionState(section: ReadSection): ReadState {
+    return this.readState()[section];
+  }
 
-    this.jobs.getProjectTokenUsageSummary(name).subscribe({
-      next: (s: ProjectTokenUsageSummary) => { this.summary.set(s); done(); },
-      error: fail,
+  retrySection(section: ReadSection): void {
+    const name = this.projectName();
+    switch (section) {
+      case 'summary':
+        this.read(section, name, this.jobs.getProjectTokenUsageSummary(name), value => this.summary.set(value));
+        break;
+      case 'heatmap':
+        this.read(section, name, this.jobs.getProjectTokenUsageHeatmap(name, 30), value => this.heatmap.set(value));
+        break;
+      case 'expensive':
+        this.read(section, name, this.jobs.getProjectExpensiveJobs(name, 10), value => this.expensive.set(value.jobs));
+        break;
+      case 'pipeline-cost':
+        this.read(section, name, this.jobs.getProjectPipelineCost(name, 30), value => this.pipelineCost.set(value));
+        break;
+    }
+  }
+
+  private read<T>(section: ReadSection, project: string, source: Observable<T>, apply: (value: T) => void): void {
+    this.requests.get(section)?.unsubscribe();
+    this.setReadState(section, 'loading');
+    let active = true;
+    const current = () => active && this.projectName() === project;
+    const request = source.subscribe({
+      next: value => {
+        if (!current()) return;
+        apply(value);
+        this.setReadState(section, 'ready');
+      },
+      error: () => { if (current()) this.setReadState(section, 'error'); },
     });
-    this.jobs.getProjectTokenUsageHeatmap(name, 30).subscribe({
-      next: (h: ProjectTokenHeatmap) => { this.heatmap.set(h); done(); },
-      error: fail,
-    });
-    this.jobs.getProjectExpensiveJobs(name, 10).subscribe({
-      next: (r: ProjectExpensiveJobsResponse) => { this.expensive.set(r.jobs); done(); },
-      error: fail,
-    });
-    this.jobs.getProjectPipelineCost(name, 30).subscribe({
-      next: (t: ProjectPipelineCostTimeline) => { this.pipelineCost.set(t); done(); },
-      error: fail,
-    });
+    request.add(() => { active = false; });
+    this.requests.set(section, request);
+  }
+
+  private setReadState(section: ReadSection, state: ReadState): void {
+    this.readState.update(value => ({ ...value, [section]: state }));
   }
 
   onSelectJob(jobId: string): void {
@@ -270,18 +303,16 @@ export class ProjectTokenUsagePanelComponent {
   }
 
   formatTokens(n: number | null | undefined): string {
-    const v = n ?? 0;
-    const sign = v < 0 ? '-' : '';
-    const abs = Math.abs(v);
-    if (abs >= 1_000_000_000) return `${sign}${(abs / 1_000_000_000).toFixed(1)}B`;
-    if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)}M`;
-    if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(1)}k`;
-    return `${sign}${abs}`;
+    return formatCompactTokens(n ?? 0);
+  }
+
+  fullTokens(n: number | null | undefined): string {
+    return `${(n ?? 0).toLocaleString('en-US')} tokens`;
   }
 
   formatTs(iso: string): string {
     if (!iso) return '';
-    // Trim seconds + timezone for a tighter row.
+    // Use UTC consistently for freshness and per-run timestamps.
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
     const yyyy = d.getUTCFullYear();
@@ -289,7 +320,7 @@ export class ProjectTokenUsagePanelComponent {
     const dd = String(d.getUTCDate()).padStart(2, '0');
     const hh = String(d.getUTCHours()).padStart(2, '0');
     const mi = String(d.getUTCMinutes()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+    return `${yyyy}-${mm}-${dd} ${hh}:${mi} UTC`;
   }
 
   shortDay(day: string): string {
@@ -300,7 +331,7 @@ export class ProjectTokenUsagePanelComponent {
 
   timelineTooltip(bucket: TimelineBucket): string {
     const callsLabel = bucket.calls === 1 ? 'call' : 'calls';
-    return `${bucket.day}: ${this.formatTokens(bucket.total)} tokens (${bucket.calls} ${callsLabel})`;
+    return `${bucket.day}: ${this.fullTokens(bucket.total)} (${bucket.calls} ${callsLabel})`;
   }
 
   catGlyph(category: ProjectTokenCategory): string {
