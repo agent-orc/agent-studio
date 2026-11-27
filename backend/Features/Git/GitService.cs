@@ -6857,6 +6857,18 @@ public partial class GitService
         TryCaptureIntegrationConflict(repoRoot, conflicted);
         if (conflicted.Count > 0)
         {
+            // Per-feature registrations bound the individual merge fallback.
+            // Reuse the batch resolver's proof that no base line was changed.
+            var union = TryResolveAddAddConflicts(repoRoot, conflicted, registeredOnly: true);
+            if (union.Resolved)
+            {
+                var (_, unionError, unionCode) = mergeSubject is null
+                    ? RunGitArgs(repoRoot, "commit", "--no-edit")
+                    : RunGitArgs(repoRoot, "commit", "-m", mergeSubject);
+                if (unionCode == 0)
+                    return MechanicalMergeAttempt.Applied(ReadHeadShaAt(repoRoot)!);
+                mergeError = unionError;
+            }
             RunGitArgs(repoRoot, "merge", "--abort");
             return MechanicalMergeAttempt.Conflict(
                 conflicted,
