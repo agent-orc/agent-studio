@@ -1,0 +1,157 @@
+import type { ThemeTokenSet, ThemeTokenValues } from './theme-token-sets';
+
+/** AGT-4070/4071/4072: only roles with existing consumers are shipped.
+ * No prototype geometry, unused display type, or compatibility-token rewrites.
+ * This checkout has no hosted font assets, so use the prototypes' system fallbacks.
+ */
+const shared: ThemeTokenValues = {
+  '--font-ui': '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+  '--font-mono': '"SF Mono", Menlo, Consolas, monospace',
+  '--studio-spacing-1': '4px', '--studio-spacing-2': '8px', '--studio-spacing-3': '12px',
+  '--studio-spacing-4': '16px', '--studio-spacing-5': '24px', '--studio-spacing-6': '32px',
+  '--studio-spacing-7': '48px',
+  '--studio-font-size-sm': '12px', '--studio-font-size-md': '13px', '--studio-font-size-lg': '14px',
+  '--studio-font-size-xl': '18px', '--studio-font-size-2xl': '20px',
+  '--studio-bg-titlebar': 'var(--studio-bg-sidebar)',
+  '--studio-bg-activitybar': 'var(--studio-bg-sidebar)',
+  '--studio-bg-tab-active': 'var(--studio-bg-editor)',
+  '--studio-bg-tab-inactive': 'var(--studio-bg-sidebar)',
+  '--studio-text-primary': 'var(--studio-fg-strong)',
+  '--studio-text-secondary': 'var(--studio-fg)', '--studio-text-muted': 'var(--studio-fg-dim)',
+  '--studio-surface': 'var(--studio-bg-surface)',
+  '--studio-surface-muted': 'var(--studio-bg-sidebar)',
+  '--studio-card-bg': 'var(--studio-bg-surface)',
+  '--studio-card-border': 'var(--studio-border)',
+  '--studio-accent': '#2c50d0', '--studio-on-accent': '#ffffff',
+  '--studio-accent-3': 'var(--studio-status-running)',
+  '--studio-accent-3-strong': 'var(--studio-status-running)',
+  '--studio-accent-success': 'var(--studio-status-success)',
+  '--studio-accent-success-strong': 'var(--studio-status-success)',
+  '--studio-accent-warn': 'var(--studio-status-warning)',
+  '--studio-accent-warn-strong': 'var(--studio-status-warning)',
+  '--studio-accent-6': 'var(--studio-status-danger)',
+  '--studio-accent-6-strong': 'var(--studio-status-danger)',
+  '--studio-accent-teal': 'var(--studio-status-info)',
+  '--studio-status-neutral': 'var(--studio-fg-muted)',
+  '--studio-status-compact-success': 'var(--studio-status-success)',
+  '--studio-status-compact-warning': 'var(--studio-status-warning)',
+  '--studio-status-compact-info': 'var(--studio-status-info)',
+  '--studio-status-compact-danger': 'var(--studio-status-danger)',
+  '--studio-nav-active-fg': 'var(--studio-accent-strong)',
+  '--studio-nav-active-bar': 'var(--studio-accent-strong)',
+  '--studio-nav-active-bg-hover': 'var(--studio-nav-active-bg)',
+  '--lane-human-review': 'var(--studio-accent-4-strong)',
+  '--studio-tooltip-bg': 'var(--studio-fg-strong)',
+  '--studio-tooltip-fg': 'var(--studio-bg-surface)',
+  '--studio-tooltip-fg-strong': 'var(--studio-bg-surface)',
+  '--studio-tooltip-fg-dim': 'var(--studio-bg-surface)',
+  '--studio-tooltip-link': 'var(--studio-bg-surface)',
+};
+
+const light: ThemeTokenValues = {
+  '--studio-bg-surface': '#ffffff', '--studio-bg-sidebar': '#f8f8f8',
+  '--studio-bg-editor': '#ffffff', '--studio-bg-elevated': '#ffffff',
+  '--studio-bg-hover': '#f3f3f3', '--studio-bg-selected': '#ececec',
+  '--studio-fg-strong': '#1a1a1a', '--studio-fg': '#333333',
+  '--studio-fg-dim': '#555555', '--studio-fg-muted': '#626262',
+  '--studio-border': '#e1e1e1', '--studio-border-muted': '#e1e1e1', '--studio-border-strong': '#888888',
+  '--studio-accent-strong': '#2c50d0', '--studio-nav-active-bg': '#e9eefc',
+  '--studio-status-running': '#2c50d0', '--studio-status-success': '#166534',
+  '--studio-status-warning': '#965009', '--studio-status-danger': '#b91c1c', '--studio-status-info': '#0f766e',
+  '--studio-accent-4-strong': '#6d28d9',
+  '--model-family-codex': '#0369a1', '--model-family-claude': '#bd3d09', '--model-family-gemini': '#6d28d9',
+  '--model-family-openai': '#0f766e',
+  '--studio-scrim': 'rgba(15, 15, 26, 0.38)',
+  '--elevation-popover': '0 8px 28px rgba(15, 15, 26, 0.13)',
+};
+const dark: ThemeTokenValues = {
+  '--studio-bg-surface': '#1e1e2e', '--studio-bg-sidebar': '#181825', '--studio-bg-editor': '#181825',
+  '--studio-bg-elevated': '#252537', '--studio-bg-hover': '#313244', '--studio-bg-selected': '#45475a',
+  '--studio-fg-strong': '#f8fafc', '--studio-fg': '#cdd6f4', '--studio-fg-dim': '#bac2de',
+  // AGT-4070 muted ink was 4.10:1 on selected. Correct it to 4.68:1.
+  '--studio-fg-muted': '#b2b9d4',
+  '--studio-border': '#45475a', '--studio-border-muted': '#45475a', '--studio-border-strong': '#7f849c',
+  '--studio-accent': '#a9bcff', '--studio-on-accent': '#181825',
+  '--studio-accent-strong': '#a9bcff', '--studio-nav-active-bg': '#282e49',
+  '--studio-status-running': '#a9bcff', '--studio-status-success': '#a6e3a1',
+  '--studio-status-warning': '#f9e2af', '--studio-status-danger': '#fda4af', '--studio-status-info': '#94e2d5',
+  '--studio-accent-4-strong': '#cdb0f8',
+  '--model-family-codex': '#93baff', '--model-family-claude': '#fab387', '--model-family-gemini': '#cdb0f8',
+  '--model-family-openai': '#94e2d5',
+  '--studio-scrim': 'rgba(0, 0, 0, 0.65)', '--elevation-popover': '0 8px 28px rgba(0, 0, 0, 0.4)',
+};
+
+const calm: ThemeTokenValues = {
+  '--studio-radius-sm': '4px', '--studio-card-radius': '8px', '--studio-card-compact-radius': '8px',
+  '--studio-action-radius-sm': '999px', '--studio-card-pill-radius': '999px', '--studio-count-radius': '999px',
+  '--studio-card-title-size': '13px', '--studio-card-title-weight': '650', '--studio-card-title-lh': '1.38',
+  '--studio-row-pad-block-default': '6px', '--studio-row-min-h-interactive-default': '36px',
+  '--studio-row-min-h-interactive-compact': '32px', '--studio-action-height-sm': '28px',
+  '--studio-card-padding': 'var(--studio-spacing-3)',
+  '--studio-header-nav-h': '54px', '--studio-header-phone-h': '48px',
+};
+const editorial: ThemeTokenValues = {
+  '--studio-card-radius': '12px', '--studio-action-radius-sm': '6px',
+  '--studio-count-radius': '999px', '--studio-card-pill-radius': '999px',
+  '--studio-card-title-size': 'clamp(17px, 1.3vw, 20px)',
+  '--studio-card-title-weight': '650', '--studio-card-title-lh': '1.22',
+  '--studio-lane-header-secondary-size': '11px', '--studio-header-nav-h': '60px',
+  '--studio-action-height-sm': '36px',
+  '--studio-nav-active-bg': 'color-mix(in srgb, var(--studio-status-running) 8%, var(--studio-bg-surface))',
+};
+const editorialLight: ThemeTokenValues = {
+  '--studio-bg-hover': '#ececec', '--studio-surface-muted': '#f8fafc', '--studio-border': '#d4d4d4',
+  '--studio-status-running': '#1d4ed8', '--studio-status-success': '#147638', '--studio-status-warning': '#7b3d08',
+  '--studio-scrim': 'rgba(0, 0, 0, 0.4)', '--elevation-popover': '0 4px 14px rgba(0, 0, 0, 0.1)',
+  '--elevation-modal': '0 12px 32px rgba(0, 0, 0, 0.16)',
+};
+const editorialDark: ThemeTokenValues = {
+  '--studio-bg-editor': '#0f0f1a', '--studio-bg-surface': '#181825', '--studio-bg-sidebar': '#181825',
+  '--studio-bg-elevated': '#1e1e2e', '--studio-surface-muted': '#1e1e2e',
+  '--studio-fg': '#e2e8f0',
+  // AGT-4071 dim/muted inks failed on selected. Both now clear 4.5:1.
+  '--studio-fg-dim': '#b2b9d4', '--studio-fg-muted': '#b2b9d4',
+  '--studio-accent': '#93c5fd', '--studio-on-accent': '#181825',
+  '--studio-accent-strong': '#93c5fd', '--studio-status-running': '#93c5fd', '--studio-status-success': '#86efac',
+  '--studio-status-warning': '#fcd34d', '--studio-status-danger': '#fda4af', '--studio-accent-4-strong': '#c4b5fd',
+  '--studio-scrim': 'rgba(2, 6, 23, 0.65)', '--elevation-popover': '0 2px 6px rgba(0, 0, 0, 0.3)',
+  '--elevation-modal': '0 12px 32px rgba(0, 0, 0, 0.32)',
+};
+const workbench: ThemeTokenValues = {
+  '--studio-card-radius': '8px', '--studio-card-compact-radius': '8px', '--studio-action-radius-sm': '6px',
+  '--studio-card-pill-radius': '999px', '--studio-card-meta-size': '11px', '--studio-card-title-size': '15px',
+  '--studio-nav-active-bg': 'var(--studio-bg-selected)',
+  '--studio-card-title-weight': '600', '--studio-card-title-lh': '1.3', '--studio-card-list-gap': '12px',
+  '--studio-header-nav-h': '56px', '--studio-header-phone-h': '50px', '--studio-action-height-sm': '34px',
+};
+
+export const PREVIEW_TOKEN_SETS: readonly ThemeTokenSet[] = [
+  {
+    id: 'preview-1', label: 'Preview 1 - calm and dense', preview: true,
+    description: 'Quiet surfaces, compact card type and rounded actions. Existing page layouts stay in place.',
+    light: { ...shared, ...light, ...calm }, dark: { ...shared, ...dark, ...calm },
+  },
+  {
+    id: 'preview-2', label: 'Preview 2 - editorial', preview: true,
+    description: 'Larger card headings and a stronger type hierarchy. Page order and outlines stay in place.',
+    light: { ...shared, ...light, ...editorial, ...editorialLight },
+    dark: { ...shared, ...dark, ...editorial, ...editorialDark },
+  },
+  {
+    id: 'preview-3', label: 'Preview 3 - workbench', preview: true,
+    description: 'Deeper dark surfaces and tighter card shapes. Inspector and execution map need component work.',
+    light: { ...shared, ...light, ...workbench,
+      '--studio-bg-selected': '#f1f5f9', '--studio-border-strong': '#d4d4d4',
+      '--studio-status-success': '#116432', '--studio-status-warning': '#7b3d08', '--studio-status-running': '#1d4ed8',
+      '--studio-scrim': 'rgba(2, 6, 23, 0.5)',
+      '--elevation-popover': '0 8px 32px rgba(2, 6, 23, 0.15)', '--elevation-modal': '0 8px 32px rgba(2, 6, 23, 0.15)',
+    },
+    dark: { ...shared, ...dark, ...workbench, ...editorialDark,
+      '--studio-bg-surface': '#0f0f1a', '--studio-card-bg': '#1e1e2e',
+      '--studio-bg-selected': '#252537', '--studio-bg-hover': '#252537',
+      '--studio-fg-dim': '#94a3b8', '--studio-fg-muted': '#a6adc8', '--studio-border': '#313244', '--studio-border-strong': '#45475a',
+      '--model-family-codex': '#89dceb', '--model-family-gemini': '#cba6f7', '--studio-scrim': 'rgba(2, 6, 23, 0.7)',
+      '--elevation-popover': '0 8px 32px rgba(0, 0, 0, 0.45)', '--elevation-modal': '0 8px 32px rgba(0, 0, 0, 0.45)',
+    },
+  },
+];
