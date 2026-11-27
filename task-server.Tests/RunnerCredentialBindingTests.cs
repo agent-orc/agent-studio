@@ -394,6 +394,110 @@ public sealed class RunnerCredentialBindingTests
         Assert.Equal(HttpStatusCode.NoContent, none.StatusCode);
     }
 
+    [Theory]
+    [InlineData(GateSubjectKinds.Run, false)]
+    [InlineData(GateSubjectKinds.Batch, false)]
+    [InlineData(GateSubjectKinds.Merge, false)]
+    [InlineData(GateSubjectKinds.Promotion, false)]
+    [InlineData(GateSubjectKinds.PostMerge, false)]
+    [InlineData(GateSubjectKinds.Run, true)]
+    [InlineData(GateSubjectKinds.Batch, true)]
+    [InlineData(GateSubjectKinds.Merge, true)]
+    [InlineData(GateSubjectKinds.Promotion, true)]
+    [InlineData(GateSubjectKinds.PostMerge, true)]
+    public async Task A_gate_claim_discloses_only_subjects_in_the_host_project_scope(string kind, bool missingPolicy)
+    {
+        using var temp = new TempDirectory();
+        await using var server = new BoundServer(temp.Path);
+        var (alpha, beta) = await server.SeedProjectsAsync();
+        await server.SetPolicyAsync("coding-host", alpha.ProjectId, beta.ProjectId);
+        var betaSubject = await server.SeedGateSubjectAsync(beta, kind, "beta");
+        var alphaSubject = await server.SeedGateSubjectAsync(alpha, kind, "alpha");
+        if (!missingPolicy) await server.SetPolicyAsync("gate-host", alpha.ProjectId);
+        var credential = await server.CreateRunnerAsync("gate", role: null);
+        using var runner = server.Client(credential.Credential);
+        await RegisterGateAsync(server, runner, "gate", "gate-host");
+
+        var claim = await GateClaimAsync(runner, "gate");
+        if (missingPolicy)
+        {
+            Assert.Equal("empty", claim.Status);
+            Assert.Null(claim.Subject);
+            Assert.Null(claim.Attempt);
+            Assert.Null(claim.Lease);
+            await server.SetPolicyAsync("gate-host", alpha.ProjectId);
+            claim = await GateClaimAsync(runner, "gate");
+        }
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal(alphaSubject.Subject.SubjectId, claim.Subject!.SubjectId);
+        Assert.Equal(alpha.ProjectId, claim.Subject.ProjectId);
+        Assert.Equal(GateStates.Queued,
+            (await server.Store.GetGateStatusAsync(betaSubject.Subject.SubjectId, default))!.Phase);
+        await AssertRefusedAsync(await runner.GetAsync($"/api/v1/gates/subjects/{betaSubject.Subject.SubjectId}"),
+            "runner-not-claimant");
+
+        var lease = claim.Lease!;
+        var authority = new GateAuthority("gate", "gate:1", lease.LeaseId, lease.Fence, lease.AuthorityEpoch);
+        var path = $"/api/v1/gates/attempts/{claim.Attempt!.AttemptId}";
+        foreach (var phase in new[] { GateStates.Materializing, GateStates.Running, GateStates.Reporting, GateStates.Cleaning })
+            (await runner.PostAsJsonAsync(path + "/phase", new GatePhaseRequest(authority, phase))).EnsureSuccessStatusCode();
+        var report = new GateReport(GateStates.Passed, null, ResultSha, new string('b', 40), false, false,
+            [new GateCommandEvidence("verify", 0, false, new string('c', 64), "ok", Start.UtcDateTime, Start.UtcDateTime)],
+            "host", "toolchain", [], [], "clean",
+            GateSubjectKinds.IsVerification(kind) ? new(claim.Subject.PlanHash, claim.Subject.PolicyHash, ResultSha) : null);
+        var request = new SubmitGateReportRequest(authority, report);
+        var intruderCredential = await server.CreateRunnerAsync("intruder", role: null);
+        using var intruder = server.Client(intruderCredential.Credential);
+        await AssertRefusedAsync(await intruder.PostAsJsonAsync(path + "/report", request), "runner-identity-mismatch");
+        Assert.Equal(HttpStatusCode.Conflict, (await runner.PostAsJsonAsync(path + "/report",
+            request with { Authority = authority with { Fence = authority.Fence + 1 } })).StatusCode);
+        var otherPath = $"/api/v1/gates/attempts/{betaSubject.Attempts.Single().AttemptId}/report";
+        Assert.Equal(HttpStatusCode.Conflict, (await runner.PostAsJsonAsync(otherPath, request)).StatusCode);
+        var accepted = await runner.PostAsJsonAsync(path + "/report", request);
+        accepted.EnsureSuccessStatusCode();
+        Assert.Equal(GateStates.Passed, (await accepted.Content.ReadFromJsonAsync<GateStatus>())!.Phase);
+        (await runner.PostAsJsonAsync(path + "/report", request)).EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Conflict, (await runner.PostAsJsonAsync(path + "/report",
+            request with { Report = report with { EnvironmentIdentity = "changed" } })).StatusCode);
+        Assert.Equal("empty", (await GateClaimAsync(runner, "gate")).Status);
+        // Trusted orchestration retains its direct global queue API.
+        var trusted = await server.Store.ClaimGateAsync(new("gate", "gate:1"), "orchestrator", default);
+        Assert.Equal(betaSubject.Subject.SubjectId, trusted.Subject!.SubjectId);
+    }
+
+    [Fact]
+    public async Task A_gate_claim_requires_the_runner_credential_to_name_its_executor()
+    {
+        using var temp = new TempDirectory();
+        await using var server = new BoundServer(temp.Path);
+        var credential = "unbound-" + RandomNumberGenerator.GetHexString(48).ToLowerInvariant();
+        await server.Store.EnsureBootstrapPrincipalAsync("runner:unbound", TaskServerPrincipalKinds.Runner,
+            credential, null, default);
+        using var runner = server.Client(credential);
+        await AssertRefusedAsync(await runner.PostAsJsonAsync("/api/v1/gates/claims",
+            new GateClaimRequest("another-executor", "instance")), "runner-identity-mismatch");
+    }
+
+    private static async Task RegisterGateAsync(BoundServer server, HttpClient client, string id, string host)
+    {
+        string[] keys = [GateCapabilities.Executor, GateCapabilities.PostMerge, GateCapabilities.GitMaterialization,
+            CapabilityProtocol.GitFetch, CapabilityProtocol.RepositoryAccess,
+            CapabilityProtocol.TaskServerConnectivity, CapabilityProtocol.Disk];
+        await RegisterAsync(client, new(id, host, id + ":1", "1", TaskServerProtocol.Current, keys));
+        var advertisement = await client.PutAsJsonAsync($"/api/v1/runners/{id}/capabilities",
+            new CapabilityAdvertisementRequest(id, id + ":1", CapabilityProtocol.CurrentSchemaVersion,
+                server.Clock.GetUtcNow().UtcDateTime, 300, 1,
+                keys.Select(key => new AdvertisedCapabilityDto(key, key.Split(':')[0])).ToArray()));
+        advertisement.EnsureSuccessStatusCode();
+    }
+
+    private static async Task<GateClaimResponse> GateClaimAsync(HttpClient client, string id)
+    {
+        var response = await client.PostAsJsonAsync("/api/v1/gates/claims", new GateClaimRequest(id, id + ":1"));
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        return (await response.Content.ReadFromJsonAsync<GateClaimResponse>())!;
+    }
+
     private static string CardPath(TaskDto task) => $"/api/v1/projects/{task.ProjectId}/tasks/{task.TaskKey}";
 
     private static RegisterRunnerRequest Coding(string id, string host)
@@ -518,6 +622,45 @@ public sealed class RunnerCredentialBindingTests
             var current = await Store.GetHostProjectPolicyAsync(hostId, default);
             await Store.UpdateHostProjectPolicyAsync(hostId,
                 new UpdateHostProjectPolicyRequest(false, projectIds, current?.Version ?? 0), "owner", default);
+        }
+
+        public async Task<GateStatus> SeedGateSubjectAsync(ProjectDto project, string kind, string name)
+        {
+            var plan = new GatePlan("post-build-test-gate", 1,
+                [new GateCommand("verify", "bash", ["-lc", "true"], 30)], "", 300, [], 4096, "always",
+                SubjectBindingDigest: kind == GateSubjectKinds.Batch ? new string('d', 64) : null,
+                PostMerge: kind == GateSubjectKinds.PostMerge ? new(project.ProjectId, "develop", "window") : null);
+            CreateGateSubjectRequest request;
+            if (kind == GateSubjectKinds.Run)
+            {
+                var source = await SeedReviewSubjectAsync(project.ProjectId, name);
+                request = new(source.TaskId, source.SourceRunId, source.RepositoryId, source.RepositoryUrl,
+                    ResultSha, source.ResultRef, null, null, GateRules.PlanHash(plan), "policy", "1", "audit", plan,
+                    Clock.GetUtcNow().UtcDateTime.AddMinutes(15));
+            }
+            else
+            {
+                await RegisterRepositoryProjectAsync(project.WorkspaceId, project.ProjectId, project.Name,
+                    name == "alpha" ? "ALP" : "BET", $"https://example.invalid/{name}.git");
+                var repository = await Store.GetProjectRepositoryAsync(project.ProjectId, default);
+                // This identity is owned by the monolith and is deliberately not a Task Server card row.
+                request = new(project.ProjectId, kind + ":" + name, repository!.RepositoryId, repository.RepositoryUrl,
+                    ResultSha, ResultSha, null, null, GateRules.PlanHash(plan), "policy", "1", "audit", plan,
+                    Clock.GetUtcNow().UtcDateTime.AddMinutes(15), Kind: kind);
+            }
+            if (kind == GateSubjectKinds.Batch)
+            {
+                var batch = new string(name == "alpha" ? 'a' : 'b', 32);
+                request = request with
+                {
+                    BatchId = batch, MembershipDigest = plan.SubjectBindingDigest, BaseSha = new string('1', 40),
+                    MemberRunIds = [request.SourceRunId],
+                    ResultRef = $"refs/agent-studio/batch-candidates/{batch}/{plan.SubjectBindingDigest}/1",
+                };
+            }
+            var status = await Store.CreateGateSubjectAsync(request, "orchestrator", default);
+            Clock.Advance(TimeSpan.FromSeconds(1));
+            return status;
         }
 
         /// <summary>A finished coding run of a new card in <paramref name="projectId"/>, queued for review.</summary>

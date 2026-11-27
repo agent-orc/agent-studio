@@ -153,6 +153,10 @@ public sealed partial class TaskServerStore
         GateStatus? result = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
+            request = request with
+            {
+                ProjectId = await ResolveGateProjectAsync(connection, transaction, request, ct),
+            };
             var existing = await ReadGateSubjectByKeyAsync(connection, transaction,
                 request.SourceRunId, request.Plan.GateId, request.PlanHash, ct);
             if (existing is not null)
@@ -200,7 +204,7 @@ public sealed partial class TaskServerStore
                 request.PolicyHash, request.PipelineDefinitionVersion, request.TestSelectionAuditDigest,
                 request.Plan, now, request.DispatchDeadline.ToUniversalTime(), request.MaxAttempts,
                 request.BatchId, request.MembershipDigest, request.BaseSha, request.MemberRunIds,
-                verification ? request.Kind : null, request.Bundle);
+                verification ? request.Kind : null, request.Bundle, request.ProjectId);
             var attemptId = $"gat_{Guid.NewGuid():N}";
             await ExecuteAsync(connection, """
                 INSERT INTO gate_subjects(id, task_id, source_run_id, gate_id, plan_hash, policy_hash,
@@ -289,9 +293,13 @@ public sealed partial class TaskServerStore
         return statuses;
     }
 
-    public async Task<GateClaimResponse> ClaimGateAsync(GateClaimRequest request, string actorId, CancellationToken ct)
+    /// <summary>Null scope is reserved for trusted orchestration; runner routes always supply their host scope.</summary>
+    public async Task<GateClaimResponse> ClaimGateAsync(
+        GateClaimRequest request, string actorId, CancellationToken ct, RunnerProjectScope? runnerProjects = null)
     {
         RequireAdmission();
+        if (runnerProjects is { IsEmpty: true })
+            return new GateClaimResponse("empty", Message: HostProjectPolicyMissingReason);
         GateClaimResponse? response = null;
         if (request.AvailableGateSlots > 0) await StartWorkspaceQuotaRefreshAsync(QuotaClaimKind.Gate, actorId, ct);
         await InWriteTransactionAsync(async (connection, transaction) =>
@@ -355,18 +363,32 @@ public sealed partial class TaskServerStore
                 await using (var command = Command(connection, """
                     WITH queued AS (
                         SELECT a.id, s.subject_json, a.attempt_number, p.name, a.created_at, a.rowid AS queue_order,
+                               CASE WHEN s.subject_kind = 'run' THEN t.project_id
+                                   ELSE COALESCE(json_extract(s.subject_json, '$.projectId'), r.project_id) END AS project_id,
                                CASE s.subject_kind WHEN 'merge' THEN $mergePriority
                                    WHEN 'post-merge' THEN $postMergePriority ELSE $otherPriority END AS priority
                           FROM gate_attempts a JOIN gate_subjects s ON s.id = a.subject_id
                           LEFT JOIN tasks t ON t.id = s.task_id
-                          LEFT JOIN projects p ON p.id = t.project_id
+                          LEFT JOIN (
+                              SELECT identity, min(project_id) AS project_id FROM (
+                                  SELECT repository_id AS identity, project_id FROM project_repositories
+                                  UNION SELECT project_id AS identity, project_id FROM project_repositories
+                              ) GROUP BY identity HAVING count(*) = 1
+                          ) r ON r.identity = json_extract(s.subject_json, '$.repositoryId')
+                          LEFT JOIN projects p ON p.id = CASE WHEN s.subject_kind = 'run' THEN t.project_id
+                              ELSE COALESCE(json_extract(s.subject_json, '$.projectId'), r.project_id) END
                          WHERE a.state = 'queued'
                     )
-                    SELECT id, subject_json, attempt_number, name, priority, created_at, queue_order FROM queued
-                     WHERE $afterOrder IS NULL
-                        OR (priority, created_at, queue_order) > ($afterPriority, $afterCreated, $afterOrder)
+                    SELECT id, subject_json, attempt_number, name, priority, created_at, queue_order, project_id FROM queued
+                     WHERE ($trusted = 1 OR project_id IS NOT NULL AND ($allProjects = 1
+                         OR project_id IN (SELECT value FROM json_each($projects))))
+                       AND ($afterOrder IS NULL
+                        OR (priority, created_at, queue_order) > ($afterPriority, $afterCreated, $afterOrder))
                      ORDER BY priority, created_at, queue_order LIMIT $pageSize;
                     """, transaction,
+                    ("$trusted", runnerProjects is null ? 1 : 0),
+                    ("$allProjects", runnerProjects?.AllProjects == true ? 1 : 0),
+                    ("$projects", JsonSerializer.Serialize(runnerProjects?.ProjectIds.ToArray() ?? [], GateJson)),
                     ("$mergePriority", AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.QueuePriority(GateSubjectKinds.Merge)),
                     ("$postMergePriority", AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.QueuePriority(GateSubjectKinds.PostMerge)),
                     ("$otherPriority", AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.QueuePriority(null)),
@@ -374,7 +396,8 @@ public sealed partial class TaskServerStore
                     ("$afterCreated", after?.CreatedAt), ("$pageSize", pageSize)))
                 await using (var reader = await command.ExecuteReaderAsync(ct))
                     while (await reader.ReadAsync(ct))
-                        candidates.Add((reader.GetString(0), JsonSerializer.Deserialize<GateSubject>(reader.GetString(1), GateJson)!,
+                        candidates.Add((reader.GetString(0), JsonSerializer.Deserialize<GateSubject>(reader.GetString(1), GateJson)! with
+                            { ProjectId = reader.IsDBNull(7) ? null : reader.GetString(7) },
                             reader.GetInt32(2), reader.IsDBNull(3) ? null : reader.GetString(3),
                             reader.GetInt32(4), reader.GetString(5), reader.GetInt64(6)));
                 foreach (var candidate in candidates)
@@ -771,7 +794,31 @@ public sealed partial class TaskServerStore
         => GateRules.ValidateSubject(request);
 
     private static bool SameGateSubject(GateSubject existing, CreateGateSubjectRequest request)
-        => GateRules.SameSubject(existing, request);
+        => GateRules.SameSubject(existing, request)
+            && (existing.ProjectId is null || existing.ProjectId == request.ProjectId);
+
+    private static async Task<string?> ResolveGateProjectAsync(
+        SqliteConnection connection, SqliteTransaction transaction, CreateGateSubjectRequest request, CancellationToken ct)
+    {
+        // Verification task IDs are opaque monolith references. Never join them
+        // to Task Server cards, even if the same string happens to exist there.
+        var sql = GateSubjectKinds.IsVerification(request.Kind)
+            ? "SELECT project_id FROM project_repositories WHERE repository_id = $identity OR project_id = $identity;"
+            : "SELECT project_id FROM tasks WHERE id = $identity;";
+        var identity = GateSubjectKinds.IsVerification(request.Kind) ? request.RepositoryId : request.TaskId;
+        var projects = new HashSet<string>(StringComparer.Ordinal);
+        await using (var command = Command(connection, sql, transaction, ("$identity", identity)))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct)) projects.Add(reader.GetString(0));
+        if (projects.Count > 1 || request.ProjectId is not null && projects.Count == 1 && !projects.Contains(request.ProjectId))
+            throw new TaskServerConflictException("gate-project-mismatch", "Gate project differs from its authoritative source.");
+        if (request.ProjectId is { } explicitProject && await ScalarAsync(connection,
+                "SELECT 1 FROM projects WHERE id = $project;", ct, transaction, ("$project", explicitProject)) is null)
+            throw new TaskServerConflictException("gate-project-mismatch", "Gate project is not a canonical project identity.");
+        // Older trusted callers can queue an unresolved subject. Runner claims
+        // fail closed until its repository is registered to a project.
+        return projects.SingleOrDefault() ?? request.ProjectId;
+    }
 
     private static async Task ValidateBatchMembersAsync(
         SqliteConnection connection, SqliteTransaction transaction,
