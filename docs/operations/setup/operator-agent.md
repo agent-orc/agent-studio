@@ -1,5 +1,7 @@
 # Operator agent
 
+<!-- append-only:operator-agent:start -->
+
 The operator agent is the interactive coding agent session you run on your own
 machine to operate Studio. It gets its own identity in Studio and its own OS
 user on your machine, so its actions are never recorded as yours and it cannot
@@ -652,3 +654,4 @@ the next request and live operator connections recheck within 15 seconds.
 After upgrading from a bound session without hourly certification, run a new
 `studio-op login`: Studio accepts that old key for at most 60 minutes from
 its confirmation. The kill switch also invalidates uncollected sign-in codes.
+<!-- append-only:operator-agent:end -->
