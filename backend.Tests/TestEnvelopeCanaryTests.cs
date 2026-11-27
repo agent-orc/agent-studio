@@ -1,7 +1,7 @@
 using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
-namespace OrchestratorApi.Tests;
+namespace AgentStudio.Tests;
 
 /// <summary>Base-suite boundary check. This test must run inside the test command envelope.</summary>
 public sealed class TestEnvelopeCanaryTests
