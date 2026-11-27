@@ -39,7 +39,7 @@ export class Output {
     if (this.json) {
       this.stdout.write(this.clean(`${JSON.stringify({
         ok: false, command, error: error.code ?? 'failure', message: error.message, exitCode: error.exitCode, ...extra,
-      }, null, 2)}\n`));
+      }, null, this.jsonLines ? undefined : 2)}\n`));
     } else {
       this.stderr.write(this.clean(`studio-op ${command ?? ''}: ${error.code ?? 'failure'}: ${error.message}\n`));
       if (detailText) this.stderr.write(this.clean(`${detailText}\n`));

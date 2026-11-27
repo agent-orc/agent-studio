@@ -2,7 +2,7 @@ import { EXIT } from './exit-codes.mjs';
 import { OperationError } from './studio.mjs';
 
 /** Options every command accepts. */
-export const GLOBAL_OPTIONS = Object.freeze({ json: 'boolean', url: 'string', help: 'boolean' });
+export const GLOBAL_OPTIONS = Object.freeze({ json: 'boolean', url: 'string', config: 'string', tokenFile: 'string', help: 'boolean' });
 
 /**
  * Parses `argv` against an option spec ({ name: 'string' | 'boolean' |
