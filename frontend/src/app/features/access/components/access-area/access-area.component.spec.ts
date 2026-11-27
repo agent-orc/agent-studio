@@ -1,6 +1,7 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { PageOutlineComponent } from '../../../../components/page-outline/page-outline.component';
 import { AccessService } from '../../services/access.service';
 import { AccessSelectionService } from '../../services/access-selection.service';
 import { BackupActivityService } from '../../services/backup-activity.service';
@@ -49,6 +50,22 @@ describe('AccessAreaComponent', () => {
     fixtureRef.detectChanges();
   };
   const outline = (element: HTMLElement) => [...element.querySelectorAll('[data-testid^="access-outline-"]')].map(node => node.textContent!.replace(/\s+/g, ' ').trim());
+
+  it('waits for Access data before focusing the list requested by the global header', async () => {
+    const access = fakeAccessService(null);
+    const operators = fakeOperatorAgentsService();
+    operators.focusElevatedList.set(true);
+    const jump = vi.spyOn(PageOutlineComponent.prototype, 'jump').mockImplementation(() => undefined);
+    try {
+      await render(access, operators);
+      expect(operators.focusElevatedList()).toBe(true);
+      expect(jump).not.toHaveBeenCalled();
+      access.overview.set(accessOverview());
+      await settle();
+      expect(jump).toHaveBeenCalledExactlyOnceWith('access-elevated-sessions');
+      expect(operators.focusElevatedList()).toBe(false);
+    } finally { jump.mockRestore(); fixtureRef.destroy(); }
+  });
 
   it('loads once and shows every section with its grid, in one outline with counts', async () => {
     const access = fakeAccessService();

@@ -277,6 +277,7 @@ public sealed partial class AccessSecurityStore
             {
                 Id = Guid.NewGuid().ToString("N"), Name = signIn.DeviceLabel, SecretHash = string.Empty, CreatedAt = now,
                 CreatedBy = owner.User.Id, ExpiresAt = chosenEnd ?? DateTime.MaxValue, Classes = classes,
+                Elevation = OperatorElevation.Confirm(classes, owner.User.Id, now, chosenEnd ?? DateTime.MaxValue),
                 ChosenEnd = chosenEnd, ChosenLifetimeHours = hours, KeyExpiresAt = now.AddMinutes(60),
                 LimitsAtConfirmation = next.OperatorSessionLimits, ConfirmingRole = IamRoles.Owner, AgentLifetimeLimitHoursAtConfirmation = agent.OperatorLifetimeLimitHours, EffectiveLimitHoursAtConfirmation = EffectiveSessionLimit(next, agent, signIn.BindingKind),
                 LastAddress = signIn.RequestedAddress, UsedAddresses = signIn.RequestedAddress is { } address ? [address] : [],

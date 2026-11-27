@@ -53,6 +53,8 @@ export interface OperatorSession {
   /** Null for a session started in Settings > Access. */
   device?: OperatorSessionDevice | null;
   classes?: readonly string[] | null;
+  elevation?: { classes: readonly ElevationClass[] } | null;
+  elevationRateEndedAt?: string | null;
   chosenLifetimeHours?: number | null;
   chosenEnd?: string | null;
   idleEnd?: string | null;
@@ -61,6 +63,23 @@ export interface OperatorSession {
   newAddressAt?: string | null;
   reviewedAt?: string | null;
   reviewDue?: boolean;
+}
+
+export interface ElevationClass {
+  id: string;
+  confirmedBy: string;
+  mode: 'batch' | 'direct-action';
+  armingId: string | null;
+  armedAt: string | null;
+  armedUntil: string | null;
+  ratePerHour: number;
+  uses: readonly { at: string; project: string | null }[];
+}
+
+export function armingRemaining(until: string | null, now = Date.now()): string {
+  if (!until) return 'Session lifetime';
+  const minutes = Math.max(0, Math.ceil((Date.parse(until) - now) / 60_000));
+  return minutes === 0 ? 'Lapsed' : minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
 }
 
 export interface OperatorAgent {
@@ -98,6 +117,7 @@ export interface AuditEntry {
   outcome: string;
   hash: string;
   previousHash: string;
+  details?: { elevationClass?: string; reason?: string; instructionSource?: string; deviceThumbprint?: string; armingId?: string; approvedBy?: string; confirmingOwner?: string } | null;
 }
 
 export interface AuditIntegrity {

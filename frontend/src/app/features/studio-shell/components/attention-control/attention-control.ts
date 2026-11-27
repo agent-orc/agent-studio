@@ -145,6 +145,9 @@ export class AttentionControlComponent {
         this.references.openReferenceOrNotify(attentionCard(item)!,
           { focusDecision: item.type !== 'environment.incident-open' });
         return;
+      case 'access':
+        this.openSettings('access');
+        break;
       case 'operations':
         this.openOperations(item);
         return;

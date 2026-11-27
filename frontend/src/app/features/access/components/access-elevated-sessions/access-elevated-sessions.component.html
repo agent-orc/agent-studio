@@ -3,9 +3,20 @@
     <button type="button" class="btn btn--danger" [disabled]="!rows().length" [appPendingButton]="pendingAction() === 'end-all'" pendingLabel="Ending sessions…" (click)="act(null, 'end-all')">End all elevated sessions</button>
   </div>
   @if (error()) { <p role="alert">{{ error() }}</p> }
+  @if (operators.error()) { <p role="alert">{{ operators.error() }}</p> }
+  @if (rearming(); as choice) {
+    <form class="access-form__row" (submit)="$event.preventDefault(); rearm()">
+      <label class="access-field">Authenticator or recovery code for {{ choice.classId }}
+        <input type="password" autocomplete="one-time-code" placeholder="Leave empty to use a passkey" [value]="factor()" (input)="factor.set($any($event.target).value)" />
+      </label>
+      <button type="submit" class="btn btn--primary" [appPendingButton]="operators.busy()" pendingLabel="Re-arming…">Confirm Re-arm</button>
+      <button type="button" class="btn btn--ghost" (click)="rearming.set(null); factor.set('')">Cancel</button>
+    </form>
+  }
   <app-data-grid label="Elevated sessions" [columns]="columns" [rows]="rows()" [rowId]="rowId" [stackActionsOnNarrow]="true">
     <ng-template appGridCell="identity" [appGridCellOf]="rows()" let-row>
       <div class="elevated__facts"><strong>{{ row.agent }}</strong><span>{{ row.session.device?.label ?? row.session.name }}</span><span class="access-hint">{{ row.session.device ? binding(row.session.device.bindingKind) : 'Unbound' }}</span>
+        @if (row.session.elevationRateEndedAt) { <app-status-indicator tone="neutral" label="Elevation ended after rate refusals" [compact]="true" /><span class="access-hint">Review Operator activity, then End elevation to acknowledge.</span> }
         @if (row.session.newAddressAt) { <app-status-indicator tone="neutral" label="New renewal address" [compact]="true" /> }
       </div>
     </ng-template>
@@ -17,10 +28,23 @@
       <div class="elevated__facts elevated__numeric"><span>Last use: {{ row.session.lastUsedAt ? time(row.session.lastUsedAt) : 'No requests yet' }}</span><span>Address: {{ row.session.lastAddress ?? 'Unknown' }}</span><span>Idle end: {{ row.session.idleEnd ? time(row.session.idleEnd) : 'None' }}</span><span>Renewal: {{ row.session.renewedAt ? time(row.session.renewedAt) : 'Not renewed' }}</span></div>
       @if (row.session.newAddressAt) { <p class="access-hint">{{ row.session.device?.label }} renewed from an address this session had not used before.</p> }
     </ng-template>
+    <ng-template appGridCell="classes" [appGridCellOf]="rows()" let-row>
+      <div class="elevated__facts elevated__numeric">
+        @for (entry of row.session.elevation?.classes ?? []; track entry.id) {
+          <strong>{{ entry.id }}</strong>
+          <span>{{ uses(entry) }}</span>
+          <span>{{ remaining(entry.armedUntil) }}</span>
+          @if (lapsing(entry.armedUntil)) { <span role="status" class="access-hint">Lapses within one hour</span> }
+          @if (entry.mode === 'direct-action') {
+            <button type="button" class="btn btn--secondary" [attr.aria-label]="'Re-arm ' + entry.id" [disabled]="operators.busy()" (click)="factor.set(''); rearming.set({ row, classId: entry.id })">Re-arm</button>
+          }
+        } @empty { <span>{{ row.session.classes?.join(', ') || 'No classes' }}</span> }
+      </div>
+    </ng-template>
     <ng-template appGridCell="actions" [appGridCellOf]="rows()" let-row>
       <div class="access-form__actions">
         <button type="button" class="btn btn--danger" [disabled]="busy()" [appPendingButton]="pendingAction() === row.id + ':end'" pendingLabel="Ending…" (click)="act(row, 'end')">End session</button>
-        <button type="button" class="btn btn--secondary" [disabled]="busy() || !row.session.classes?.length" [appPendingButton]="pendingAction() === row.id + ':end-elevation'" pendingLabel="Ending elevation…" (click)="act(row, 'end-elevation')">End elevation</button>
+        <button type="button" class="btn btn--secondary" [disabled]="busy() || (!row.session.classes?.length && !row.session.elevationRateEndedAt)" [appPendingButton]="pendingAction() === row.id + ':end-elevation'" pendingLabel="Ending elevation…" (click)="act(row, 'end-elevation')">End elevation</button>
         @if (row.session.device) { <button type="button" class="btn btn--danger" [disabled]="busy()" [appPendingButton]="pendingAction() === row.id + ':forget'" pendingLabel="Forgetting…" (click)="act(row, 'forget')">Forget device</button> }
       </div>
     </ng-template>

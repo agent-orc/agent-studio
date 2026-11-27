@@ -1,5 +1,14 @@
 <div class="activity" data-testid="access-operator-activity">
   @if (operators.activityError(); as message) { <p class="access-error" role="alert" data-testid="access-operator-activity-error">{{ message }}</p> }
+  <div class="activity__filters">
+    <label>Operator agent
+      <select [value]="operators.agentFilter() ?? ''" (change)="operators.agentFilter.set($any($event.target).value || null); operators.sessionFilter.set(null); operators.loadActivity()">
+        <option value="">Every agent</option>
+        @for (agent of agentOptions(); track agent.id) { <option [value]="agent.id">{{ agent.name }}</option> }
+      </select>
+    </label>
+    <label><input type="checkbox" [checked]="operators.elevatedOnly()" (change)="operators.elevatedOnly.set($any($event.target).checked); operators.loadActivity()" /> Elevated actions only</label>
+  </div>
   @if (activity(); as data) {
     <div class="activity__status" data-testid="access-audit-status">
       <p class="activity__line" data-testid="access-audit-integrity" [attr.data-state]="data.integrity.state" [attr.data-tone]="data.integrity.alert ? 'alert' : null" [attr.role]="data.integrity.alert ? 'alert' : null">
@@ -60,7 +69,13 @@
                   <td><code class="activity__code">{{ entry.actor }}</code></td>
                   <td>@if (entry.session) { <code class="activity__code">{{ entry.session }}</code> } @else { <span class="activity__none">–</span> }</td>
                   <td>@if (entry.delegatedBy) { {{ entry.delegatedBy }} } @else { <span class="activity__none">–</span> }</td>
-                  <td>{{ entry.operation }}</td>
+                  <td>{{ entry.operation }}
+                    @if (entry.details?.elevationClass) {
+                      <div>{{ entry.details?.elevationClass }} · {{ entry.details?.reason }}</div>
+                      <div class="access-hint">Stated source: {{ entry.details?.instructionSource }} · Owner: {{ entry.details?.approvedBy || entry.details?.confirmingOwner }}</div>
+                      <div class="access-hint">Device: {{ entry.details?.deviceThumbprint }} · Arming: {{ entry.details?.armingId }}</div>
+                    }
+                  </td>
                   <td>@if (entry.target) { {{ entry.target }} } @else { <span class="activity__none">–</span> }</td>
                   <td>{{ entry.outcome }}</td>
                   <td>

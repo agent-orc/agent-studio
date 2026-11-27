@@ -29,6 +29,7 @@ import { OperatorAgentsService } from '../../services/operator-agents.service';
 export class AccessOperatorActivityComponent implements OnInit {
   readonly operators = inject(OperatorAgentsService);
   readonly activity = this.operators.activity;
+  readonly agentOptions = this.operators.agents;
   readonly selected = this.operators.sessionFilter;
   readonly agents = computed(() => this.activity()?.operatorAgents ?? []);
   readonly selectedSession = computed(() => {
