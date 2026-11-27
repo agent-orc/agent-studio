@@ -16,6 +16,18 @@
 # Install as /usr/local/sbin/agent-work-launcher, owner root:root, mode 0755,
 # with /etc/agent-host/work-container-launcher.env (see the example next to
 # this file). scripts/harden-agent-runner-host.sh --apply installs both.
+# Release admission is independent of the worker's mutable image manifest.
+# Install /etc/agent-host/work-container-release.json as root:root 0644 with
+# root-owned, non-writable ancestors. It uses RoleImageManifest schema 1:
+# {"schemaVersion":1,"roles":{"coding":{"current":"registry/image@sha256:<digest>"}},
+#  "sources":["/srv/approved/project.git"]}
+# Only current role images are admitted, including pull and inspect. Sources
+# are exact immutable root-owned bare repositories; links, special files and
+# nested mounts are refused. Preparation accepts daemon volumes only. Promote
+# this file through the root release process, never from the service account.
+# Missing/invalid state refuses image admission; cleanup remains available.
+# After deployment, --probe <attempt-name> prints the daemon's effective mounts.
+# Launch admission inspects these mounts before preparation or execution starts.
 set -euo pipefail
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -61,4 +73,8 @@ done < "$config"
 environment=(PATH="$PATH" HOME=/root DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
   RUNNER_WORK_CONTAINER_RUNTIME="$runtime" RUNNER_ZONE_POLICY_STATE="$zone_state")
 [[ -z "$dotnet_root" ]] || environment+=(DOTNET_ROOT="$dotnet_root" DOTNET_ROOT_X64="$dotnet_root")
+if [[ "${1:-}" == --probe ]]; then
+  (( $# == 2 )) || die "usage: agent-work-launcher --probe <attempt-name>"
+  set -- inspect --format '{{json .Mounts}}' "$2"
+fi
 exec env -i "${environment[@]}" "$resolved" work-container launch "$@"

@@ -7,7 +7,12 @@ using System.Text.RegularExpressions;
 namespace AgentRunner.WorkContainers;
 
 /// <summary>What the root-side launcher trusts: the networks of the applied, verified work zone.</summary>
-public sealed record WorkContainerLauncherContext(IReadOnlySet<string> WorkZoneNetworks);
+public sealed record WorkContainerLauncherContext(IReadOnlySet<string> WorkZoneNetworks)
+{
+    public RoleImageManifest ApprovedImages { get; init; } = RoleImageManifest.Empty();
+    public IReadOnlySet<string> BindSources { get; init; } = new HashSet<string>(StringComparer.Ordinal);
+    public IReadOnlySet<string> Volumes { get; init; } = new HashSet<string>(StringComparer.Ordinal);
+}
 
 /// <summary>
 /// SM-11 narrow launcher. The host service user is not in the
@@ -27,7 +32,7 @@ public static class WorkContainerLauncherPolicy
     private static readonly HashSet<string> CreateValueFlags = new(StringComparer.Ordinal)
     {
         "--name", "--user", "--cap-drop", "--security-opt", "--restart", "--cpus", "--memory", "--memory-swap",
-        "--pids-limit", "--network", "--tmpfs", "--workdir", "--label", "--mount", "--env",
+        "--entrypoint", "--pids-limit", "--network", "--tmpfs", "--workdir", "--label", "--mount", "--env",
     };
 
     public static string? Refusal(IReadOnlyList<string> args, WorkContainerLauncherContext context)
@@ -37,28 +42,47 @@ public static class WorkContainerLauncherPolicy
         return a switch
         {
             ["version", "--format", "{{.Server.Version}}"] => null,
-            ["image", "inspect", "--format", "{{.Id}}", var image] => Pinned(image),
-            ["pull", "--quiet", var image] => Pinned(image),
-            ["start" or "wait", var name] => Attempt(name),
+            ["image", "inspect", "--format", "{{.Id}}", var image] => Approved(image, context),
+            ["pull", "--quiet", var image] => Approved(image, context),
+            ["start", var name] => Attempt(name) ?? ExecutionOnly(name),
+            ["wait", var name] => Attempt(name),
             ["logs", "--timestamps", var name] => Attempt(name),
+            ["inspect", "--format", "{{json .Mounts}}", var name] => Attempt(name),
             ["rm", "--force", "--volumes", var name] => Attempt(name),
             ["volume", "rm", "--force", var name] => Attempt(name),
             ["volume", "create", .. var rest] => VolumeCreate(rest),
             ["volume", "ls", .. var rest] => Listing(rest),
             ["ps", "--all", "--no-trunc", .. var rest] => Listing(rest),
             ["exec", "--interactive", var name, "/bin/sh", "-c", var script] =>
-                Attempt(name) ?? (script == WorkContainerLaunchPlanner.InjectTokenScript ? null : "exec-command: only the attempt secret injection may run in a container."),
+                Attempt(name) ?? ExecutionOnly(name) ?? (script == WorkContainerLaunchPlanner.InjectTokenScript ? null : "exec-command: only the attempt secret injection may run in a container."),
             ["create", .. var rest] => Create(rest, context),
-            ["run", .. var rest] => Prepare(rest),
+            ["run", .. var rest] => Prepare(rest, context),
             _ => $"verb-refused: '{a[0]}' is not a work-container executor call.",
         };
     }
 
-    private static string? Pinned(string image)
-        => RoleImageManifest.IsPinned(image) ? null : "image-unpinned: work container images must be digest pinned.";
+    private static string? Approved(string image, WorkContainerLauncherContext context, string? role = null)
+    {
+        if (!RoleImageManifest.IsPinned(image)) return "image-unpinned: work container images must be digest pinned.";
+        return (role is null
+            ? context.ApprovedImages.Roles.Values.Any(pin => pin.Current == image)
+            : context.ApprovedImages.Resolve(role) == image)
+            ? null : "image-unapproved: the root-controlled release does not authorize this role image.";
+    }
+
+    private static string? RoleImage(string image, IEnumerable<string> labels, WorkContainerLauncherContext context)
+    {
+        var roles = labels.Where(label => label.StartsWith(WorkContainerLaunchPlanner.RoleLabel + "=", StringComparison.Ordinal)).ToArray();
+        if (roles.Length != 1) return "role-required: exactly one approved role capability is required.";
+        return Approved(image, context, roles[0][(WorkContainerLaunchPlanner.RoleLabel.Length + 1)..]);
+    }
 
     private static string? Attempt(string name)
         => AttemptName.IsMatch(name) ? null : $"name-refused: '{name}' is not an agent-work attempt resource.";
+
+    private static string? ExecutionOnly(string name)
+        => name.EndsWith("-prepare", StringComparison.Ordinal)
+            ? "prepare-control-refused: only the privileged launcher may start or exec in preparation containers." : null;
 
     private static string? VolumeCreate(string[] rest)
     {
@@ -96,6 +120,7 @@ public static class WorkContainerLauncherPolicy
         }
         string? Single(string flag) => values.TryGetValue(flag, out var list) && list.Count == 1 ? list[0] : null;
 
+        if (Single("--entrypoint") != "/usr/bin/env") return "entrypoint-refused: the trusted entrypoint must be explicit.";
         if (!readOnly) return "read-only-required: the container root must be read-only.";
         if (Single("--name") is not { } name || Attempt(name) is { } badName) return "name-refused: an agent-work attempt name is required.";
         if (Single("--user") is not { } user || !AttemptUser(user)) return "user-refused: the container must run as an attempt UID.";
@@ -109,16 +134,19 @@ public static class WorkContainerLauncherPolicy
         foreach (var flag in new[] { "--cpus", "--memory", "--memory-swap", "--pids-limit" })
             if (Single(flag) is not { } limit || !decimal.TryParse(limit, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed) || parsed <= 0)
                 return $"limit-refused: {flag} must be one positive value.";
-        foreach (var tmpfs in values.GetValueOrDefault("--tmpfs") ?? [])
-            if (!(tmpfs.StartsWith("/tmp:", StringComparison.Ordinal) || tmpfs.StartsWith(WorkContainerLaunchPlanner.SecretDirectory + ":", StringComparison.Ordinal))
-                || !tmpfs.Contains("nosuid", StringComparison.Ordinal) || !tmpfs.Contains("nodev", StringComparison.Ordinal))
-                return "tmpfs-refused: only /tmp and the attempt secret directory, nosuid and nodev.";
+        var expectedTmpfs = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "/tmp:rw,nosuid,nodev,size=1g",
+            $"{WorkContainerLaunchPlanner.SecretDirectory}:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid={user.Split(':')[0]},gid={WorkContainerIdentity.GroupId}",
+        };
+        var tmpfs = values.GetValueOrDefault("--tmpfs") ?? [];
+        if (tmpfs.Count != expectedTmpfs.Count || !expectedTmpfs.SetEquals(tmpfs))
+            return "tmpfs-refused: only the fixed scratch and attempt secret tmpfs capabilities are admitted.";
         foreach (var label in values.GetValueOrDefault("--label") ?? [])
             if (!LabelPair.IsMatch(label)) return "label-refused: only agent-studio labels are admitted.";
-        foreach (var mount in values.GetValueOrDefault("--mount") ?? [])
-            if (Mount(mount, name) is { } refusal) return refusal;
+        if (MountSet(values.GetValueOrDefault("--mount") ?? [], name, context, preparation: false) is { } badMount) return badMount;
         if (index >= rest.Length) return "image-missing.";
-        if (Pinned(rest[index]) is { } unpinned) return unpinned;
+        if (RoleImage(rest[index], values.GetValueOrDefault("--label") ?? [], context) is { } badImage) return badImage;
         var command = rest[(index + 1)..];
         return command is ["/bin/sh", "-c", var script, "agent-work", ..] && script == WorkContainerLaunchPlanner.EntryScript
             ? null
@@ -134,42 +162,107 @@ public static class WorkContainerLauncherPolicy
             && parts[1] == WorkContainerIdentity.GroupId.ToString(CultureInfo.InvariantCulture);
     }
 
-    private static string? Mount(string specification, string container)
+    internal static WorkContainerMount? ParseMount(string specification)
     {
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);
         var readOnly = false;
         foreach (var part in specification.Split(','))
         {
-            if (part == "readonly") { readOnly = true; continue; }
+            if (part == "readonly" && !readOnly) { readOnly = true; continue; }
             var equal = part.IndexOf('=');
-            if (equal <= 0) return $"mount-refused: '{specification}'.";
+            if (equal <= 0) return null;
             var key = part[..equal];
-            if (key is not ("type" or "source" or "target") || !fields.TryAdd(key, part[(equal + 1)..]))
-                return $"mount-refused: option '{key}' is not admitted.";
+            if (key is not ("type" or "source" or "target") || !fields.TryAdd(key, part[(equal + 1)..])) return null;
         }
-        if (!fields.TryGetValue("type", out var type) || !fields.TryGetValue("source", out var source)
-            || !fields.TryGetValue("target", out var target))
-            return "mount-refused: type, source and target are required.";
-        if (type == "volume")
+        return fields.Count == 3 ? new(fields["type"], fields["source"], fields["target"], readOnly) : null;
+    }
+
+    internal static IEnumerable<string> Values(IReadOnlyList<string> args, string flag)
+    {
+        // Stop at the image. Work-command arguments are caller data, not
+        // runtime flags, and can themselves contain names such as --mount.
+        for (var index = 1; index < args.Count && args[index].StartsWith('-'); index++)
         {
-            if (source != container && !CacheName.IsMatch(source))
-                return $"mount-refused: volume '{source}' is neither this attempt's volume nor a repository cache.";
+            if (args[index] is "--rm" or "--read-only") continue;
+            if (index + 1 >= args.Count) yield break;
+            if (args[index] == flag) yield return args[index + 1];
+            index++;
         }
-        else if (type != "bind" || !readOnly)
-            return "mount-refused: only volumes and read-only bind mounts are admitted.";
+    }
+
+    private static string? MountSet(IEnumerable<string> specifications, string container,
+        WorkContainerLauncherContext context, bool preparation)
+    {
+        var targets = new HashSet<string>(StringComparer.Ordinal);
+        string? cacheSet = null;
+        foreach (var specification in specifications)
+        {
+            var mount = ParseMount(specification);
+            if (mount is null || !targets.Add(mount.Target)) return "mount-refused: malformed or duplicate target.";
+            try { WorkContainerLaunchPlanner.ValidateMount(mount); }
+            catch (ArgumentException ex) { return "mount-refused: " + ex.Message; }
+            if (mount.Type == "bind")
+            {
+                if (preparation || !context.BindSources.Contains(mount.Source))
+                    return "mount-refused: no root-controlled source capability for this bind.";
+            }
+            else
+            {
+                if (!context.Volumes.Contains(mount.Source)) return "mount-refused: volume has no daemon capability.";
+                if (mount.Target == "/work")
+                {
+                    if (mount.Source != container) return "mount-refused: only this attempt's volume may target /work.";
+                }
+                else
+                {
+                    var prefix = "agent-cache-" + mount.Target["/cache/".Length..] + "-";
+                    if (!CacheName.IsMatch(mount.Source) || !mount.Source.StartsWith(prefix, StringComparison.Ordinal))
+                        return "mount-refused: cache volume must match its fixed target.";
+                    var suffix = mount.Source[prefix.Length..];
+                    cacheSet ??= suffix;
+                    if (cacheSet != suffix) return "mount-refused: caches must belong to one repository and version.";
+                }
+            }
+        }
+        return new[] { "/work", "/cache/npm", "/cache/nuget", "/cache/repo" }.All(targets.Contains)
+            ? null : "mount-refused: the complete attempt and cache volume set is required.";
+    }
+
+    /// <summary>Inspect the daemon's effective mounts before any helper starts, including image VOLUME metadata.</summary>
+    internal static string? EffectiveMountsRefusal(string json, IReadOnlyList<string> arguments,
+        IReadOnlyDictionary<string, string> volumePaths)
+    {
         try
         {
-            WorkContainerLaunchPlanner.ValidateMount(new WorkContainerMount(type, source, target, readOnly));
+            var expected = Values(arguments, "--mount").Select(ParseMount).ToDictionary(mount => mount!.Target, mount => mount!, StringComparer.Ordinal);
+            var tmpfs = Values(arguments, "--tmpfs").Select(value => value.Split(':')[0]).ToHashSet(StringComparer.Ordinal);
+            using var document = JsonDocument.Parse(json);
+            foreach (var item in document.RootElement.EnumerateArray())
+            {
+                var target = item.GetProperty("Destination").GetString()!;
+                var type = item.GetProperty("Type").GetString();
+                if (type == "tmpfs" && tmpfs.Remove(target)) continue;
+                if (!expected.Remove(target, out var mount) || type != mount.Type
+                    || item.GetProperty("RW").GetBoolean() == mount.ReadOnly) return "effective-mount-refused: unexpected target, type or write access.";
+                if (type == "bind" && item.GetProperty("Source").GetString() != mount.Source)
+                    return "effective-mount-refused: bind source differs from the capability.";
+                if (type == "volume" && (item.GetProperty("Name").GetString() != mount.Source
+                    || !volumePaths.TryGetValue(mount.Source, out var path) || item.GetProperty("Source").GetString() != path))
+                    return "effective-mount-refused: volume differs from the daemon capability.";
+            }
+            // Docker stores legacy --tmpfs mounts in HostConfig.Tmpfs and
+            // omits them from .Mounts. Every host-backed mount is mandatory;
+            // any tmpfs entry a runtime does report must match the request.
+            return expected.Count == 0 ? null : "effective-mount-refused: required mounts are missing.";
         }
-        catch (ArgumentException ex)
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException or ArgumentException)
         {
-            return "mount-refused: " + ex.Message;
+            return "effective-mount-refused: invalid runtime inspection.";
         }
-        return null;
     }
 
     /// <summary>The one-shot ownership step: root without network, CHOWN and FOWNER only, the fixed script.</summary>
-    private static string? Prepare(string[] rest)
+    private static string? Prepare(string[] rest, WorkContainerLauncherContext context)
     {
         var expected = new[]
         {
@@ -183,26 +276,37 @@ public static class WorkContainerLauncherPolicy
             return "run-refused: the ownership step needs its agent-work prepare name.";
         var container = rest[index + 1][..^"-prepare".Length];
         index += 2;
+        var mounts = new List<string>();
+        var labels = new List<string>();
+        var entrypoints = new List<string>();
         for (; index < rest.Length && rest[index].StartsWith('-'); index += 2)
         {
             if (index + 1 >= rest.Length) return "run-refused: dangling option.";
             var value = rest[index + 1];
             var refusal = rest[index] switch
             {
-                "--label" => LabelPair.IsMatch(value) ? null : "label-refused.",
-                "--mount" => Mount(value, container),
+                "--label" => Collect(labels, value, LabelPair.IsMatch(value)),
+                "--mount" => Collect(mounts, value, true),
+                "--entrypoint" => Collect(entrypoints, value, value == "/usr/bin/env"),
                 _ => $"run-refused: option '{rest[index]}' is not admitted.",
             };
             if (refusal is not null) return refusal;
         }
         if (index >= rest.Length) return "image-missing.";
-        if (Pinned(rest[index]) is { } unpinned) return unpinned;
+        if (entrypoints.Count != 1) return "entrypoint-refused: the trusted entrypoint must be explicit.";
+        if (MountSet(mounts, container, context, preparation: true) is { } badMount) return badMount;
+        if (RoleImage(rest[index], labels, context) is { } badImage) return badImage;
         return rest[(index + 1)..] is ["/bin/sh", "-c", var script, "agent-prepare", var uid]
                && script == WorkContainerLaunchPlanner.PrepareScript
                && int.TryParse(uid, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed)
                && WorkContainerIdentity.IsAttemptUid(parsed)
             ? null
             : "run-refused: the ownership step runs only its fixed script for an attempt UID.";
+    }
+    private static string? Collect(List<string> values, string value, bool valid)
+    {
+        values.Add(value);
+        return valid ? null : "run-option-refused.";
     }
 }
 
@@ -308,9 +412,119 @@ public static class WorkContainerLauncherCommand
         var networks = zone is { Status: "ready" }
             ? AttemptContainmentHost.WorkZoneNetworks(zonePath)
             : new HashSet<string>(StringComparer.Ordinal);
-        if (WorkContainerLauncherPolicy.Refusal(arguments, new WorkContainerLauncherContext(networks)) is { } refusal)
-            return new(RefusedExitCode, "", $"agent-work-launcher refused: {refusal}");
-        var result = await ProcessRunner.RunAsync(runtime, arguments, stdin: stdin, ct: ct);
-        return new(result.ExitCode, result.StdOut, result.StdErr);
+        RoleImageManifest release;
+        try { release = await RoleImageManifest.LoadLauncherReleaseAsync(RoleImageManifest.LauncherReleasePath, ct); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+        {
+            // Cleanup, wait and inventory stay available when release admission
+            // fails. Image operations still fail closed against an empty release.
+            release = RoleImageManifest.Empty();
+        }
+        var context = new WorkContainerLauncherContext(networks)
+        {
+            ApprovedImages = release,
+            BindSources = (release.Sources ?? []).ToHashSet(StringComparer.Ordinal),
+            // Candidate names, not runtime authority. ExecuteAdmittedAsync must
+            // resolve these to safe daemon-created volumes before any launch.
+            Volumes = WorkContainerLauncherPolicy.Values(arguments, "--mount")
+                .Select(WorkContainerLauncherPolicy.ParseMount).OfType<WorkContainerMount>()
+                .Where(mount => mount.Type == "volume").Select(mount => mount.Source).ToHashSet(StringComparer.Ordinal),
+        };
+        if (WorkContainerLauncherPolicy.Refusal(arguments, context) is { } refusal)
+            return Refused(refusal);
+        try
+        {
+            return await ExecuteAdmittedAsync(arguments, stdin,
+                (call, data, token) => ProcessRunner.RunAsync("/usr/bin/" + runtime, call, stdin: data, ct: token), ct);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+        {
+            return Refused("capability-unavailable: " + ex.Message);
+        }
+    }
+
+    private static WorkContainerLauncherResponse Refused(string reason)
+        => new(RefusedExitCode, "", "agent-work-launcher refused: " + reason);
+
+    internal static async Task<WorkContainerLauncherResponse> ExecuteAdmittedAsync(
+        IReadOnlyList<string> arguments, string? stdin,
+        Func<IReadOnlyList<string>, string?, CancellationToken, Task<ProcessResult>> run, CancellationToken ct)
+    {
+        if (arguments[0] is not ("create" or "run"))
+        {
+            var direct = await run(arguments, stdin, ct);
+            return new(direct.ExitCode, direct.StdOut, direct.StdErr);
+        }
+        var mounts = WorkContainerLauncherPolicy.Values(arguments, "--mount")
+            .Select(WorkContainerLauncherPolicy.ParseMount).OfType<WorkContainerMount>().ToArray();
+        foreach (var mount in mounts.Where(mount => mount.Type == "bind"))
+            if (!await RoleImageManifest.LauncherSourceReadyAsync(mount.Source, ct))
+                return Refused("source-capability-unavailable: bind source must be an immutable root-controlled bare repository without links, sockets or nested mounts.");
+        var volumePaths = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var mount in mounts.Where(mount => mount.Type == "volume"))
+        {
+            async Task<ProcessResult> Inspect() => await run(["volume", "inspect", "--format", "{{json .}}", mount.Source], null, ct);
+            var inspection = await Inspect();
+            if (inspection.ExitCode != 0)
+            {
+                // Never use implicit creation or caller-provided driver options.
+                var created = await run(["volume", "create", "--driver", "local", "--label",
+                    WorkContainerLaunchPlanner.ManagedLabel + "=1", mount.Source], null, ct);
+                if (created.ExitCode != 0) return Refused("volume-capability-unavailable: daemon volume creation failed.");
+                inspection = await Inspect();
+            }
+            if (inspection.ExitCode != 0 || VolumeCapabilityRefusal(inspection.StdOut, mount.Source, out var path) is { })
+                return Refused("volume-capability-unavailable: only local daemon volumes without driver options are admitted.");
+            volumePaths.Add(mount.Source, path!);
+        }
+        var preparation = arguments[0] == "run";
+        var name = WorkContainerLauncherPolicy.Values(arguments, "--name").Single();
+        IReadOnlyList<string> create = preparation
+            ? new[] { "create" }.Concat(arguments.Skip(1).Where(value => value != "--rm")).ToArray()
+            : arguments;
+        var result = await run(create, null, ct);
+        if (result.ExitCode != 0) return new(result.ExitCode, result.StdOut, result.StdErr);
+        var keep = false;
+        try
+        {
+            var inspection = await run(["inspect", "--format", "{{json .Mounts}}", name], null, ct);
+            if (inspection.ExitCode != 0) return Refused("effective-mount-refused: runtime inspection failed.");
+            if (WorkContainerLauncherPolicy.EffectiveMountsRefusal(inspection.StdOut, arguments, volumePaths) is { } badMount)
+                return Refused(badMount);
+            if (!preparation)
+            {
+                keep = true;
+                return new(result.ExitCode, result.StdOut, result.StdErr);
+            }
+            // Inspect the root preparation container before it can execute, too.
+            result = await run(["start", "--attach", name], null, ct);
+            return new(result.ExitCode, result.StdOut, result.StdErr);
+        }
+        finally
+        {
+            if (!keep) await run(["rm", "--force", "--volumes", name], null, CancellationToken.None);
+        }
+    }
+
+    internal static string? VolumeCapabilityRefusal(string json, string name, out string? path)
+    {
+        path = null;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var volume = document.RootElement;
+            if (volume.GetProperty("Name").GetString() != name || volume.GetProperty("Driver").GetString() != "local"
+                || volume.GetProperty("Scope").GetString() != "local") return "volume-driver-refused.";
+            if (!volume.TryGetProperty("Options", out var options)
+                || (options.ValueKind != JsonValueKind.Null && (options.ValueKind != JsonValueKind.Object || options.EnumerateObject().Any())))
+                return "volume-options-refused.";
+            path = volume.GetProperty("Mountpoint").GetString();
+            return path is { Length: > 1 } && Path.IsPathFullyQualified(path) && Path.GetFullPath(path) == path
+                ? null : "volume-path-refused.";
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException or ArgumentException)
+        {
+            return "volume-inspection-invalid.";
+        }
     }
 }
