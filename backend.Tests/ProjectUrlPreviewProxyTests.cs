@@ -308,6 +308,88 @@ public sealed class ProjectUrlPreviewProxyTests
     }
 
     [Fact]
+    public void Local_permission_never_borrows_another_projects_process_for_missing_or_partial_owners()
+    {
+        var url = new ProjectUrlRecord
+        {
+            Id = "site", Url = "http://localhost:4200/app",
+            StartRule = new() { Command = "fixture-server", Port = 4200 },
+        };
+        var other = Project with { Id = "PROJ-002", Urls = [url] };
+        var otherProcess = OwnedProcess(other, url);
+        Assert.NotNull(ProjectUrlDestinationConnector.LocalPermission(other, url, otherProcess, new Uri(url.Url)));
+        foreach (var owner in new (string ProjectId, string UrlId)?[]
+                 { null, (null!, url.Id), (other.Id, null!), ("", url.Id), (other.Id, " ") })
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, url.Url);
+            if (owner is { } tag) request.Options.Set(ProjectUrlDestinationConnector.ProjectUrlOption, tag);
+            var permission = ProjectUrlDestinationConnector.ResolvePermission(request,
+                _ => throw new InvalidOperationException("An incomplete owner must not search projects."),
+                (_, _) => throw new InvalidOperationException("An incomplete owner must not search processes."));
+            Assert.Null(permission);
+        }
+    }
+
+    [Fact]
+    public void Local_permission_resolves_only_the_tagged_project_and_url_and_rechecks_its_process()
+    {
+        var url = new ProjectUrlRecord
+        {
+            Id = "site", Url = "http://localhost:4200/app",
+            StartRule = new() { Command = "fixture-server", Port = 4200 },
+        };
+        var project = Project with { Urls = [url] };
+        var other = project with { Id = "PROJ-002" };
+        var process = OwnedProcess(other, url);
+        using var request = new HttpRequestMessage(HttpMethod.Get, url.Url);
+        request.Options.Set(ProjectUrlDestinationConnector.ProjectUrlOption, (project.Id, url.Id));
+        Assert.Null(Resolve());
+        request.Options.Set(ProjectUrlDestinationConnector.ProjectUrlOption, (other.Id, "missing"));
+        Assert.Null(Resolve());
+        request.Options.Set(ProjectUrlDestinationConnector.ProjectUrlOption, ("PROJ-999", url.Id));
+        Assert.Null(Resolve());
+        request.Options.Set(ProjectUrlDestinationConnector.ProjectUrlOption, (other.Id, url.Id));
+        Assert.Equal(other.Id, Resolve()?.ProjectId);
+        Assert.Equal(url.Id, Resolve()?.UrlId);
+        process = process with { State = "stopped" };
+        Assert.Null(Resolve());
+
+        ProjectUrlLocalPreviewPermission? Resolve() => ProjectUrlDestinationConnector.ResolvePermission(request,
+            id => new[] { project, other }.SingleOrDefault(row => row.Id == id),
+            (projectId, urlId) => process.ProjectId == projectId && process.UrlId == urlId ? process : null);
+    }
+
+    [Fact]
+    public async Task Readiness_requests_carry_the_project_url_owner()
+    {
+        using var handler = new OwnerCheckingHandler(Project.Id, "site");
+        using var client = new HttpClient(handler);
+        var readiness = new ProjectUrlReadinessService(new SingleClientFactory(client),
+            NullLogger<ProjectUrlReadinessService>.Instance);
+        var result = await readiness.ProbeAsync(Project, Project.Urls.Single(), null, CancellationToken.None);
+        Assert.Equal("healthy", result.Kind);
+        Assert.Equal(1, handler.Requests);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Diagnostic_requests_carry_the_project_url_owner()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var url = Project.Urls.Single() with { Url = $"http://127.0.0.1:{port}/app" };
+        using var handler = new OwnerCheckingHandler(Project.Id, url.Id);
+        using var client = new HttpClient(handler);
+        using var processes = new ProjectUrlProcessService(NullLogger<ProjectUrlProcessService>.Instance,
+            new SingleClientFactory(client));
+        var result = await processes.ProbeAsync(Project, url, timeout.Token);
+        Assert.Equal(ProjectUrlDiagnosisClasses.Running, result.Classification);
+        Assert.Equal(1, handler.Requests);
+    }
+
+    [Fact]
     [Trait("Category", "MachineBound")]
     public async Task Approved_loopback_preview_works_with_real_socket_and_forwards_only_accept()
     {
@@ -452,6 +534,22 @@ public sealed class ProjectUrlPreviewProxyTests
     private sealed class SingleClientFactory(HttpClient client) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => client;
+    }
+
+    private sealed class OwnerCheckingHandler(string projectId, string urlId) : HttpMessageHandler
+    {
+        internal int Requests { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests++;
+            Assert.True(request.Options.TryGetValue(ProjectUrlDestinationConnector.ProjectUrlOption, out var owner));
+            Assert.Equal((projectId, urlId), owner);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("<main>ready</main>", Encoding.UTF8, "text/html"),
+            });
+        }
     }
 
     private sealed class RedirectHandler(HttpStatusCode code) : HttpMessageHandler

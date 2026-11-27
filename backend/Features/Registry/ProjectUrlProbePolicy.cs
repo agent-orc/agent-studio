@@ -115,20 +115,20 @@ internal sealed class ProjectUrlDestinationConnector
 
     internal static ProjectUrlLocalPreviewPermission? ResolvePermission(ProjectRegistry projects,
         ProjectUrlProcessService processes, HttpRequestMessage request)
+        => ResolvePermission(request, projects.FindById, processes.Get);
+
+    internal static ProjectUrlLocalPreviewPermission? ResolvePermission(HttpRequestMessage request,
+        Func<string, ProjectRecord?> findProject, Func<string, string, ProjectUrlProcessSnapshot?> getProcess)
     {
-        var target = request.RequestUri!;
-        request.Options.TryGetValue(ProjectUrlOption, out var owner);
-        foreach (var project in projects.List())
-        {
-            if (owner.ProjectId is not null && owner.ProjectId != project.Id) continue;
-            foreach (var url in project.Urls)
-            {
-                if (owner.UrlId is not null && owner.UrlId != url.Id) continue;
-                var permission = LocalPermission(project, url, processes.Get(project.Id, url.Id), target);
-                if (permission is not null) return permission;
-            }
-        }
-        return null;
+        // An untagged or partially tagged request has no local permission.
+        // Never infer ownership by finding another project's matching origin.
+        if (!request.Options.TryGetValue(ProjectUrlOption, out var owner)
+            || string.IsNullOrWhiteSpace(owner.ProjectId) || string.IsNullOrWhiteSpace(owner.UrlId)
+            || request.RequestUri is not { } target) return null;
+        var project = findProject(owner.ProjectId);
+        var url = project?.Urls.FirstOrDefault(row => row.Id == owner.UrlId);
+        return project is null || url is null ? null
+            : LocalPermission(project, url, getProcess(owner.ProjectId, owner.UrlId), target);
     }
 
     internal async Task<Stream> ConnectAsync(Uri target, ProjectUrlLocalPreviewPermission? permission,

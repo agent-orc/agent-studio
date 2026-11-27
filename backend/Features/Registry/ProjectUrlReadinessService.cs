@@ -51,6 +51,7 @@ public sealed class ProjectUrlReadinessService
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, target);
+            request.Options.Set(ProjectUrlDestinationConnector.ProjectUrlOption, (project.Id, url.Id));
             request.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,*/*;q=0.8");
             using var response = await _httpClientFactory.CreateClient("project-url-readiness")
                 .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
