@@ -4003,8 +4003,14 @@ operator changes cause the step to fail before its writer runs.
   front of Ready, and writes `Automatically started a new agent round to
   preserve unambiguous delivery SHA attribution.` to the timeline. This loop is
   limited to two automatic rounds per card and integration target. New
-  delivery SHAs and review epochs do not reset the budget. The third conflict
-  escalates with the prior conflict history. Individual integration retains
+  delivery SHAs and review epochs do not reset the budget. After exhaustion,
+  the source retains its reviewed immutable result and the prior conflict history.
+  `integration-delivery-quarantine.json` records the exact subject, target, files,
+  result and repair identity. One repair card per source card/target is created
+  through the task mutation boundary, pinned to that immutable delivery, then
+  queued in Ready. Replays and new SHAs reuse that repair identity; its own
+  exhaustion cannot create a recursive repair chain. Existing review holds and
+  settled repairs are retained. Individual integration retains
   collision receipts across restarts and reserves shared files for the recovery;
   see [integration conflict recovery](../contracts/integration-conflicts.md#automatic-individual-integration-recovery-agt-4048). Repetition reaches Human Review with the failed step
   and conflicted files visible. Every
@@ -4960,3 +4966,53 @@ Legacy workspace HEAD catch-up and Task Server export exclusions retain their
 existing behavior. This contract adds no orchestration transition, integration
 permission, force push or branch-tip approval. Pre-upgrade commits without an
 outbox receipt or marker cannot be inferred safely from arbitrary local history.
+
+
+### Integration preparation handoff (AGT-4097)
+
+An integration recovery saves `continuation-base.json` before superseding the
+review subject or making the task claimable. Its reason is
+`continue-round-result`, with the exact immutable delivery ref, SHA and source
+attempt. An older `review-fix-round` base cannot accidentally suppress the
+integration preparation. Explicit manual integration recovery uses the same pin
+and recovers missing conflict facts from the durable individual-conflict receipt;
+an unreadable or mismatched receipt refuses the handoff without removing it.
+
+The runner merges the exact fetched target object into the pinned delivery.
+`ContinuationMergePreparation` records `AlreadyContainsTarget`, `Merged`,
+`Conflicted`, `Aborted` or `AbortFailed`, both input SHAs, actual checkout HEAD,
+and every unresolved path. The runner writes the record and its exact agent
+instructions to worktree Git metadata at the path returned by
+`git rev-parse --git-path agent-studio-integration-preparation.json`, outside the
+product tree. Clean preparation leaves a merge commit; a true conflict leaves
+an active merge with its unresolved index and file markers. The agent edits files
+and preserves both sides. Staging, the merge commit, publication, refs and workspace
+lifecycle remain platform-owned. Teardown refuses untouched text conflict markers.
+An operational merge error is aborted and recorded; abort failure retains evidence
+and never becomes a runnable handoff on an older tree.
+
+The existing decision library still bounds automatic rounds at two per card and
+target. `Used` includes charged rounds plus reserved capacity. New automatic
+handoffs record the exact saved prompt digest and save timestamp. The existing
+attempt-fenced `follow_up_consumed` receipt, emitted only when the worker starts
+with that prompt after preparation, charges the reservation. A different save or
+an empty run identity cannot charge it. Superseding an unstarted follow-up releases
+its reservation; superseding a consumed one never refunds real work. Legacy rows
+without this proof key remain conservatively charged. Pending reservations still
+occupy the bounded capacity, so failures cannot create an unlimited queue.
+A failed base pin or failed Ready transition reserves no round. A successful
+Ready move remains a valid reservation if a runner already claimed the card before
+the service reads it back. Six independent successful direct-conflict recoveries do
+not imply six automatic rounds on one card. The audit's three manual-round causes
+remain unknown without their historical claim/base records; synthetic fixtures
+exercise both base reasons without attributing those production incidents.
+
+
+Legacy lane-folder workspaces retain a versioned quarantine plus the full repair
+creation request with `state: deferred-storage-migration`. Creating the first flat
+card there would hide the existing lane folders from discovery. Recovery therefore
+leaves those cards and their immutable results in place, requires the storage
+boundary's explicit migration, and does not perform an implicit migration. The
+Ready repair guarantee applies to the current flat task store. The manual recovery
+response keeps its legacy display ref; the worktree pin, prompt and session delta
+use the immutable ref and exact SHA.

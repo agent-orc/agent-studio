@@ -62,15 +62,18 @@ public static class IntegrationContinuationPrompt
         var taskDirection = isReview
             ? "Resolve the recorded review findings on this same task. " + VerificationScope
               + "Then publish the corrected delivery. "
-            : isConflict && runnerMergesIntegration
-                ? "Continue on the existing delivery branch. Do not merge develop yourself; the runner merges current develop at the start of the round. "
-                  + "Resolve the conflicts and keep both sides, including the changes on the integration branch. "
-                  + "Retain a one-to-one delivery commit mapping: do not squash, split, drop, or combine delivery commits. "
-                  + VerificationScope + "Then publish a new delivery. "
             : isConflict
-                ? $"Continue on the existing delivery branch, merging the latest integration branch by merging 'origin/{integrationBranch}' into it when needed. "
+                ? $"Continue on the pinned delivery. The runner merges current {integrationBranch} only during platform preparation. "
+                  + "Read the platform preparation record at the path returned by "
+                  + "`git rev-parse --git-path agent-studio-integration-preparation.json`. "
+                  + "It records the actual delivery SHA, target SHA, checkout HEAD, unresolved files and exact instructions. "
+                  + "For Conflicted, the platform left an active merge: resolve the listed files and keep both sides, including integration changes. "
+                  + "For Merged or AlreadyContainsTarget, the checkout contains the recorded target. "
+                  + "An Aborted or AbortFailed preparation is not a valid handoff; retain the evidence and report the preparation failure. "
+                  + "Do not run Git mutations (merge, abort, reset, add, commit, rebase, push or branch changes). "
+                  + "The platform stages and commits your file edits and publishes the delivery. "
                   + "Retain a one-to-one delivery commit mapping: do not squash, split, drop, or combine delivery commits. "
-                  + VerificationScope + "Then publish a new delivery. "
+                  + VerificationScope + "Then finish the delivery report. "
                 : "Resolve the recorded failure on this same task. " + VerificationScope
                   + "Then publish the corrected delivery. ";
         return "## CONTINUATION\n\n"
