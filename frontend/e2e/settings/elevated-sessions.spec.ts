@@ -7,10 +7,10 @@ import { stubPilotOwner, json } from './access-pilot.fixture';
 
 const results = join(process.env.JOB_RESULTS_DIR ?? 'test-results', 'elevated-sessions');
 
-const round = 'round3';
+const round = process.env.ES7_CAPTURE_ROUND ?? 'es7-round1';
 
-test('round3: lifetime limits and elevated sessions at desktop and phone widths', async ({ page }) => {
-  test.setTimeout(180_000);
+test('classes, re-arm, header, activity filters and session actions at desktop and phone widths', async ({ page }) => {
+  test.setTimeout(360_000);
   await installOrchestratorChatBootstrap(page);
   await stubPilotOwner(page);
   await page.clock.setFixedTime(new Date('2026-11-26T10:00:00Z'));
@@ -22,6 +22,7 @@ test('round3: lifetime limits and elevated sessions at desktop and phone widths'
   await page.route('**/api/runner/orchestrator-feed**', route => json(route, { entries: [], cursor: null }));
   await page.route('**/api/workspaces/*/quota/admission', route => json(route, { workspaceId: 'ws_main', workspace: { codingAllowed: true, hostingAllowed: true, limited: false, status: 'ok', message: null }, projects: [] }));
   await page.route('**/api/watcher/stalls', route => json(route, []));
+  await page.route('**/api/v1/management/credential-inventory', route => json(route, { items: [] }));
   await page.route('**/api/v1/studio/runner/status', route => json(route, { projects: {} }));
   await page.route('**/api/deploy/run-hosts', route => json(route, []));
   await page.route('**/api/watch-paths', route => json(route, []));
@@ -43,10 +44,15 @@ test('round3: lifetime limits and elevated sessions at desktop and phone widths'
     delegatedBy: 'human:usr_owner', createdAt: '2026-10-20T09:00:00Z', createdBy: 'usr_owner', expiresAt: '9999-12-31T23:59:59Z',
     chosenEnd: null, chosenLifetimeHours: 0, idleEnd: '2026-11-27T09:00:00Z', state: 'active', revokedAt: null,
     lastUsedAt: '2026-11-26T09:00:00Z', lastAddress: '198.51.100.24', renewedAt: '2026-11-26T09:45:00Z',
-    newAddressAt: '2026-11-26T09:45:00Z', reviewDue: true, classes: ['project.testing'],
+    newAddressAt: '2026-11-26T09:45:00Z', reviewDue: true, classes: ['project.testing', 'cards.accept-override'],
+    elevation: { classes: [
+      { id: 'project.testing', mode: 'direct-action', confirmedBy: 'usr_owner', armingId: 'arm_console', armedAt: '2026-11-25T10:30:00Z', armedUntil: '2026-11-26T10:30:00Z', ratePerHour: 6, uses: [{ at: '2026-11-26T09:30:00Z', project: 'PROJ-001' }] },
+      { id: 'cards.accept-override', mode: 'batch', confirmedBy: 'usr_owner', armingId: null, armedAt: null, armedUntil: null, ratePerHour: 30, uses: [] },
+    ] },
     device: { deviceId: 'dev_workstation', label: 'ops@workstation', bindingKind: 'tpm', keyThumbprint: 'public-thumbprint', requestedAddress: '198.51.100.7' } });
-  let sessions = [session('ses_console'), { ...session('ses_memory'), chosenLifetimeHours: 24, chosenEnd: '2026-11-27T08:00:00Z',
+  const resetSessions = () => [session('ses_console'), { ...session('ses_memory'), chosenLifetimeHours: 24, chosenEnd: '2026-11-27T08:00:00Z',
     expiresAt: '2026-11-27T08:00:00Z', reviewDue: false, newAddressAt: null, device: { ...session('').device, bindingKind: 'memory', label: 'ops@server', deviceId: 'dev_server' } }];
+  let sessions = resetSessions();
   const agents = () => [{ id: 'opa_console', name: 'Ops console', description: 'Installation operator', createdAt: '2026-10-20T09:00:00Z', createdBy: 'usr_owner',
     disabledAt: null, sessions, devices: [] }];
   let limits = { defaultLifetimeHours: 168, ownerLifetimeHours: null, adminLifetimeHours: 168, idleHours: 24 };
@@ -56,7 +62,11 @@ test('round3: lifetime limits and elevated sessions at desktop and phone widths'
     calls.push(action);
     if (action === 'end') sessions = sessions.filter(item => !route.request().url().includes(item.id));
     if (action === 'keep') sessions = sessions.map(item => ({ ...item, reviewDue: false }));
-    if (action === 'end-elevation') sessions = sessions.map(item => ({ ...item, classes: [] }));
+    if (action === 'end-elevation') sessions = sessions.map(item => ({ ...item, classes: [], elevation: { classes: [] }, elevationRateEndedAt: null }));
+    if (action === 'rearm') {
+      expect(calls.at(-2)).toBe('step-up');
+      expect(route.request().postDataJSON()).toEqual({ classId: 'project.testing' });
+    }
     if (route.request().method() === 'DELETE') sessions = [];
     return route.fulfill({ status: 204 });
   });
@@ -65,7 +75,7 @@ test('round3: lifetime limits and elevated sessions at desktop and phone widths'
     kills: [], drills: [], nextDrillAt: null, drillIntervalHours: 720, operationsServerConfigured: false, outOfBandRequestPending: false,
   }));
   await page.route('**/api/auth/audit/operator-activity**', route => json(route, {
-    operatorAgents: agents(), entries: [],
+    operatorAgents: agents(), entries: [{ sequence: 99, at: '2026-11-26T09:30:00Z', stream: 'operator-agent', actor: 'operator-agent:opa_console/session:ses_console', session: 'ses_console', delegatedBy: 'usr_owner', operation: 'PUT /api/projects/Website/testing', target: 'Website', outcome: '200', parameterDigest: null, hash: 'hash', previousHash: 'previous', details: { elevationClass: 'project.testing', reason: 'Owner requested strict testing', instructionSource: 'owner-chat', armingId: 'arm_console', deviceThumbprint: 'public-thumbprint', approvedBy: 'usr_owner' } }],
     integrity: { state: 'verified', checkedAt: '2026-11-26T09:00:00Z', verifiedThrough: 0, message: null, alert: false },
     forwarding: { sinkKind: 'none', configured: false, headSequence: 0, forwardedSequence: 0, pending: 0,
       lastForwardedAt: null, oldestPendingAt: null, lastError: null, alert: false },
@@ -81,28 +91,59 @@ test('round3: lifetime limits and elevated sessions at desktop and phone widths'
   await expect(elevated.getByText('ops@workstation', { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(elevated.getByText('New renewal address').first()).toBeVisible();
   await expect(elevated.getByText('Elevated session running 30 days')).toBeVisible();
-  for (const width of [1280, 390]) {
-    await page.setViewportSize({ width, height: width === 390 ? 1500 : 1000 });
+  for (const width of [390, 1024, 1280]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     for (const theme of ['light', 'dark'] as const) {
+      if (!sessions[0]?.classes.length) {
+        sessions = resetSessions();
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
+      }
       await setTheme(page, theme);
-      await elevated.scrollIntoViewIfNeeded();
+      const chip = page.getByTestId('studio-elevation-trigger');
+      await expect(chip).toBeVisible();
+      await elevated.getByText('ops@workstation', { exact: true }).scrollIntoViewIfNeeded();
+      mkdirSync(results, { recursive: true });
+      if (width !== 1024) await page.screenshot({ path: join(results, `${round}-header-${width}-${theme}--mocked.png`), animations: 'disabled' });
+      await chip.click();
+      const dialog = page.getByTestId('studio-elevation-dialog');
+      await expect(dialog.getByText('A direct-action class lapses within one hour.', { exact: false })).toBeVisible();
+      await expect(dialog.getByText('project.testing', { exact: true }).first()).toBeVisible();
+      await dialog.getByRole('button', { name: 'Re-arm project.testing', exact: true }).first().click();
+      await dialog.getByLabel('Authenticator or recovery code for project.testing').fill('123456');
+      if (width !== 1024) await dialog.screenshot({ path: join(results, `${round}-rearm-${width}-${theme}--mocked.png`), animations: 'disabled' });
+      await dialog.getByRole('button', { name: 'Confirm Re-arm', exact: true }).click();
+      await expect(dialog.getByLabel('Authenticator or recovery code for project.testing')).toHaveCount(0);
+      await dialog.getByRole('button', { name: 'Open Elevated sessions in Settings', exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(page.locator('#access-elevated-sessions-title')).toBeFocused();
+      await page.getByTestId('access-area').getByRole('button', { name: 'Elevated sessions', exact: true }).click();
+      await elevated.getByText('ops@workstation', { exact: true }).scrollIntoViewIfNeeded();
       mkdirSync(results, { recursive: true });
       await expect(page.getByTestId('error-dialog')).toHaveCount(0);
-      await elevated.screenshot({ path: join(results, `${round}-${width}-${theme}--mocked.png`), animations: 'disabled' });
-      await page.getByTestId('access-session-limits').evaluate(element => element.scrollIntoView({ block: 'center' }));
-      await page.getByTestId('access-session-limits').screenshot({ path: join(results, `${round}-limits-${width}-${theme}--mocked.png`), animations: 'disabled' });
+      if (width !== 1024) await page.screenshot({ path: join(results, `${round}-${width}-${theme}--mocked.png`), animations: 'disabled' });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+      const activity = page.getByTestId('access-operator-activity');
+      await page.getByTestId('access-area').getByRole('button', { name: 'Operator activity', exact: true }).click();
+      await activity.scrollIntoViewIfNeeded();
+      await activity.getByRole('combobox', { name: 'Operator agent', exact: true }).selectOption('opa_console');
+      const filterRequest = page.waitForRequest(request => request.url().includes('/operator-activity') && request.url().includes('elevatedOnly=true') && request.url().includes('operatorAgentId=opa_console'));
+      await activity.getByLabel('Elevated actions only').check();
+      await filterRequest;
+      await activity.getByTestId('access-activity-session-ses_console').click();
+      await expect(activity.getByText('Owner requested strict testing', { exact: false }).first()).toBeVisible();
+      await activity.getByText('Owner requested strict testing', { exact: false }).first().scrollIntoViewIfNeeded();
+      if (width !== 1024) await page.screenshot({ path: join(results, `${round}-activity-${width}-${theme}--mocked.png`), animations: 'disabled' });
+      await elevated.getByRole('button', { name: 'End elevation', exact: true }).first().click();
+      await expect(page.getByTestId('studio-elevation-trigger')).toHaveCount(0);
     }
   }
   await elevated.getByRole('button', { name: 'Keep', exact: true }).click();
   await expect(elevated.getByText('Elevated session running 30 days')).toHaveCount(0);
-  await elevated.getByRole('button', { name: 'End elevation', exact: true }).first().click();
-  await expect.poll(() => calls.includes('end-elevation')).toBeTruthy();
   await elevated.getByRole('button', { name: 'End session', exact: true }).first().click();
   await expect(elevated.getByText('ops@workstation', { exact: true })).toHaveCount(0);
   await elevated.getByRole('button', { name: 'Forget device', exact: true }).click();
   await expect(elevated.getByText('No live sessions with classes or a lifetime longer than 8 hours.')).toBeVisible();
-  expect(calls).not.toContain('step-up');
+  expect(calls.filter(action => action === 'rearm')).toHaveLength(6);
   sessions = [session('ses_console')];
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
   await elevated.getByRole('button', { name: 'End all elevated sessions', exact: true }).click();
@@ -114,8 +155,34 @@ test('round3: lifetime limits and elevated sessions at desktop and phone widths'
   await expect(form.getByText('Session limits saved and audited.')).toBeVisible();
   expect(limits.idleHours).toBe(12);
   expect(calls.slice(-2)).toEqual(['step-up', 'limits']);
+  await page.route('**/api/runner/orchestrator-feed**', route => json(route, { entries: [{
+    ts: '2026-11-26T10:00:00Z', kind: 'action', topic: 'operator-elevated-action',
+    summary: 'Testing strategy: fast to strict. Owner requested strict testing',
+    project: 'Website', testingUndoSequence: 99,
+  }], generatedAtUtc: '2026-11-26T10:00:00Z' }));
+  await page.route('**/api/projects/Website/testing/undo/99', async route => {
+    expect(route.request().method()).toBe('POST');
+    expect(route.request().postDataJSON()).toEqual({});
+    calls.push('undo');
+    return json(route, { strategy: 'fast' });
+  });
+  await page.goto('/#/feed', { waitUntil: 'domcontentloaded' });
+  const change = page.getByTestId('orchestrator-feed-entry').filter({ hasText: 'Testing strategy: fast to strict' });
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await expect(change.getByRole('button', { name: 'Undo', exact: true })).toBeVisible();
+      if (width === 390) expect((await change.getByRole('button', { name: 'Undo', exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+      await page.screenshot({ path: join(results, `${round}-undo-${width}-${theme}--mocked.png`), animations: 'disabled' });
+    }
+  }
+  await change.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(change.getByRole('button', { name: 'Restored', exact: true })).toBeDisabled();
+  expect(calls.filter(action => action === 'undo')).toHaveLength(1);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
   await expect(page.getByTestId('error-dialog')).toHaveCount(0);
-  writeFileSync(join(results, `${round}-capture-report.json`), JSON.stringify({ viewports: [1280, 390], themes: ['light', 'dark'], pageErrors, consoleErrors, overflow: false, actions: calls }, null, 2));
+  writeFileSync(join(results, `${round}-capture-report.json`), JSON.stringify({ viewports: [1280, 1024, 390], themes: ['light', 'dark'], pageErrors, consoleErrors, overflow: false, actions: calls }, null, 2));
 });

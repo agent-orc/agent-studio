@@ -1,4 +1,8 @@
-import { ChangeDetectionStrategy, Component, inject, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, input, output, signal } from '@angular/core';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { firstValueFrom } from 'rxjs';
+import { AuthService } from '../../../../services/auth.service';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/pending-button.directive';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import type { OrchestratorLogEntry } from '../../models/orchestrator.model';
@@ -7,12 +11,29 @@ import type { OrchestratorLogEntry } from '../../models/orchestrator.model';
 @Component({
   selector: 'app-orchestrator-feed-entry',
   standalone: true,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, PendingButtonDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './orchestrator-feed-entry.html',
   styleUrl: './orchestrator-feed-entry.scss',
 })
 export class OrchestratorFeedEntryComponent {
+  private readonly http = inject(HttpClient);
+  readonly auth = inject(AuthService);
+  readonly undoBusy = signal(false);
+  readonly undone = signal(false);
+  readonly undoError = signal<string | null>(null);
+  async undo(event: Event): Promise<void> {
+    event.stopPropagation();
+    if (this.undoBusy()) return;
+    this.undoBusy.set(true); this.undoError.set(null);
+    try {
+      await firstValueFrom(this.http.post(`/api/projects/${encodeURIComponent(this.entry().project || this.projectFallback())}/testing/undo/${this.entry().testingUndoSequence}`, {}));
+      this.undone.set(true);
+    } catch (failure: unknown) {
+      this.undoError.set(failure instanceof HttpErrorResponse && typeof failure.error?.message === 'string'
+        ? failure.error.message : 'Undo failed. Try again.');
+    } finally { this.undoBusy.set(false); }
+  }
   private readonly projectLookup = inject(ProjectLookupService);
 
   readonly entry = input.required<OrchestratorLogEntry>();

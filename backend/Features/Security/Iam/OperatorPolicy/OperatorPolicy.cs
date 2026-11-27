@@ -26,6 +26,9 @@ public sealed record OperatorPolicyDecision(
     bool Admitted, string? Reason, OperatorOperation? Operation, string? GrantId, string Message)
 {
     public string? ApprovalId { get; init; }
+    public string? ElevationClass { get; init; }
+    public string? ArmingId { get; init; }
+    public string? DeviceThumbprint { get; init; }
 
     /// <summary>The Owner (user id) whose approval admitted this request (ES-2); set only on an admitted approval.</summary>
     public string? ApprovedBy { get; init; }

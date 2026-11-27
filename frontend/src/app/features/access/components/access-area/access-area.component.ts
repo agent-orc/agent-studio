@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, OnInit, afterNextRender, computed, effect, inject, signal, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, OnInit, afterNextRender, afterRenderEffect, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { DataGridComponent, type GridColumn } from '../../../../components/data-grid';
@@ -85,6 +85,7 @@ export class AccessAreaComponent implements OnInit {
   private readonly http = inject(HttpClient);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly pageOutline = viewChild(PageOutlineComponent);
   readonly factorEvents = signal<readonly FactorEvent[]>([]);
   readonly localOwner = inject(LocalOwnerSessionService);
   readonly operators = inject(OperatorAgentsService);
@@ -180,6 +181,13 @@ export class AccessAreaComponent implements OnInit {
   });
 
   constructor() {
+    afterRenderEffect(() => {
+      if (!this.operators.focusElevatedList() || !this.overview() || !this.operators.available()) return;
+      const outline = this.pageOutline();
+      if (!outline) return;
+      outline.jump('access-elevated-sessions');
+      this.operators.focusElevatedList.set(false);
+    });
     // A selection whose row is gone (deleted, or access refused) closes instead of pointing at nothing.
     effect(() => {
       if (this.selection.selection() && !this.detail()) untracked(() => this.selection.close());

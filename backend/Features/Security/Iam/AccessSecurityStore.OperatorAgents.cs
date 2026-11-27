@@ -123,7 +123,7 @@ public sealed partial class AccessSecurityStore
             next.ServiceAccounts[next.ServiceAccounts.IndexOf(agent)] = agent with
             {
                 Sessions = agent.Sessions!.Select(session => session.Id == sessionId && session.RevokedAt is null
-                    ? session with { RevokedAt = now, RevokedBy = ownerId } : session).ToList(),
+                    ? session with { RevokedAt = now, RevokedBy = ownerId, Classes = [], Elevation = null } : session).ToList(),
             };
             var cancelled = CancelOpenApprovalsLocked(next, approval => approval.PrincipalId == agentId && approval.SessionId == sessionId,
                 now, "operator session revoked");
@@ -233,7 +233,8 @@ public sealed partial class AccessSecurityStore
             session.Classes, session.ChosenLifetimeHours, session.Device is null ? session.ExpiresAt : session.ChosenEnd,
             OperatorIdleEnd(StateLocked(), session), session.KeyExpiresAt,
             session.LastAddress, session.NewAddressAt, session.ReviewedAt,
-            IsElevatedSession(session) && now >= (session.ReviewedAt ?? session.CreatedAt).AddDays(30));
+            IsElevatedSession(session) && now >= (session.ReviewedAt ?? session.CreatedAt).AddDays(30),
+            session.Elevation?.View(now), session.ElevationRateEndedAt);
     }
 
     private static bool IsOperatorAgent(ServiceAccount account) => account.Origin == ServiceAccountOrigins.OperatorAgent;
@@ -245,7 +246,7 @@ public sealed partial class AccessSecurityStore
         DisabledAt = account.DisabledAt ?? now,
         Tokens = account.Tokens.Select(token => token with { RevokedAt = token.RevokedAt ?? now }).ToList(),
         Sessions = account.Sessions?.Select(session => session.RevokedAt is null
-            ? session with { RevokedAt = now, RevokedBy = actingUserId } : session).ToList(),
+            ? session with { RevokedAt = now, RevokedBy = actingUserId, Classes = [], Elevation = null } : session).ToList(),
     };
 
     private static ServiceAccount ActiveOperatorAgentLocked(SecurityState state, string agentId)

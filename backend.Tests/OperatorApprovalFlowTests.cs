@@ -25,7 +25,7 @@ namespace AgentStudio.Tests;
 /// against the approval. The approving actor is the authenticated session,
 /// never a client header.
 /// </summary>
-public sealed class OperatorApprovalFlowTests : IDisposable
+public sealed partial class OperatorApprovalFlowTests : IDisposable
 {
     private const string Password = "correct horse battery staple!";
     private const string ApprovalHeader = "X-Operator-Approval";

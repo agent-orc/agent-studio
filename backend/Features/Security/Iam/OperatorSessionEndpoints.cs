@@ -35,6 +35,12 @@ public static class OperatorSessionEndpoints
 
     public static void MapOperatorSessionOwnerEndpoints(this RouteGroupBuilder iam)
     {
+        iam.MapPost("/operator-agents/{id}/sessions/{sessionId}/rearm", (string id, string sessionId, OperatorRearmRequest request,
+            HttpContext context, AccessSecurityStore store) => AccessSecurityEndpoints.Execute(() =>
+        {
+            store.RearmOperatorClass(id, sessionId, request.ClassId, AccessSecurityEndpoints.RequireHuman(context, store));
+            return Results.NoContent();
+        })).RequirePermission(IamPermissions.AccessManage);
         iam.MapGet("/session-limits", (HttpContext context, AccessSecurityStore store) => AccessSecurityEndpoints.Execute(() =>
         {
             IamEndpoints.Require(context, store, IamPermissions.AccessManage);

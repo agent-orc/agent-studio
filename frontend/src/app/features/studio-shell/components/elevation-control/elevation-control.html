@@ -1,0 +1,16 @@
+@if (sessions().length) {
+  <button type="button" class="elevation-control" data-testid="studio-elevation-trigger" aria-haspopup="dialog" [attr.title]="label()" [attr.aria-label]="label()" (click)="open.set(true)">
+    <app-status-indicator tone="neutral" label="Elevated" [compact]="true" />
+    <span class="elevation-control__agent">{{ sessions()[0].agent }}</span>
+    @if (armingSummary()) { <span class="elevation-control__time">{{ armingSummary() }}</span> }
+    <span class="elevation-control__end" [attr.title]="sessionEnd() === '∞' ? 'Until revoked' : 'Session end'">{{ sessionEnd() }}</span>
+    @if (lapsing()) { <span class="elevation-control__notice" role="status">Lapses within one hour</span> }
+  </button>
+}
+@if (open()) {
+  <app-dialog title="Elevated sessions" widthTier="lg" testid="studio-elevation-dialog" (closeRequest)="open.set(false)" (backdropClick)="open.set(false)">
+    @if (lapsing()) { <p role="status">A direct-action class lapses within one hour. Re-arm with a second factor to continue.</p> }
+    @defer (when open()) { <app-access-elevated-sessions /> }
+    <button type="button" class="btn btn--ghost" (click)="list()">Open Elevated sessions in Settings</button>
+  </app-dialog>
+}
