@@ -8,12 +8,12 @@
   }
 
   <nav class="usage-detail__jump" aria-label="Usage sections">
-    @for (cli of v.clis; track cli.cliId) {
+    @for (cli of v.clis; track cli.key) {
       <a class="usage-detail__jump-link"
-         [href]="'#' + sectionId(cliFocus(cli.cliId))"
-         [attr.aria-current]="isSelected(cliFocus(cli.cliId)) ? 'location' : null"
+         [href]="'#' + sectionId(cliFocus(cli))"
+         [attr.aria-current]="isSelected(cliFocus(cli)) ? 'location' : null"
          [attr.data-testid]="'usage-detail-jump-' + cli.cliId"
-         (click)="$event.preventDefault(); jumpTo(cliFocus(cli.cliId))">{{ cli.name }}</a>
+         (click)="$event.preventDefault(); jumpTo(cliFocus(cli))">{{ cli.name }}</a>
     }
     <a class="usage-detail__jump-link"
        [href]="'#' + sectionId(capacityFocus)"
@@ -46,12 +46,12 @@
     }
   </section>
 
-  @for (cli of v.clis; track cli.cliId) {
+  @for (cli of v.clis; track cli.key) {
     <section class="usage-detail__section"
-             [id]="sectionId(cliFocus(cli.cliId))"
+             [id]="sectionId(cliFocus(cli))"
              [attr.data-testid]="'usage-detail-cli-' + cli.cliId"
-             [attr.aria-labelledby]="sectionId(cliFocus(cli.cliId)) + '-title'">
-      <h3 class="usage-detail__title" tabindex="-1" [id]="sectionId(cliFocus(cli.cliId)) + '-title'">
+             [attr.aria-labelledby]="sectionId(cliFocus(cli)) + '-title'">
+      <h3 class="usage-detail__title" tabindex="-1" [id]="sectionId(cliFocus(cli)) + '-title'">
         {{ cli.name }}@if (cli.plan) {<span class="usage-detail__muted"> ({{ cli.plan }})</span>}
       </h3>
       <p class="usage-detail__meta">
@@ -68,11 +68,13 @@
         @if (cli.source) { <span class="usage-detail__muted">Source {{ cli.source }}</span> }
       </p>
 
-      @if (routingUsage(cli.cliId); as routing) {
+      @if (cli.showProviderRuns) {
+        @if (routingUsage(cli.cliId); as routing) {
         <p class="usage-detail__meta" [attr.data-testid]="'routing-usage-' + cli.cliId">
           This week: <span class="usage-detail__num">{{ routing.switchExecutions }}</span> of
           <span class="usage-detail__num">{{ routing.executions }}</span> model calls used a provider switch.
         </p>
+        }
       }
 
       <table class="usage-detail__table" [attr.data-testid]="'usage-detail-windows-' + cli.cliId">
@@ -116,42 +118,47 @@
         </tbody>
       </table>
 
-      <h4 class="usage-detail__subtitle">Models in active runs</h4>
-      @if (cli.modelGroups.length === 0) {
-        <p class="usage-detail__muted">No active runs on {{ cli.name }}.</p>
+      @if (cli.showProviderRuns) {
+        <h4 class="usage-detail__subtitle">Models in active runs across {{ cli.providerName }}</h4>
+        <p class="usage-detail__muted" [attr.data-testid]="'usage-detail-provider-runs-' + cli.cliId">Provider-wide runs, unallocated to subscriptions. Receipts do not identify a subscription.</p>
+        @if (cli.modelGroups.length === 0) {
+          <p class="usage-detail__muted">No active runs on {{ cli.providerName }}.</p>
+        } @else {
+          <ul class="usage-detail__groups" [attr.data-testid]="'usage-detail-models-' + cli.cliId">
+            @for (g of cli.modelGroups; track g.key) {
+              <li class="usage-detail__group" data-testid="usage-detail-model-group">
+                <p class="usage-detail__group-head">
+                  <span [class.usage-detail__muted]="!g.modelKnown" data-testid="usage-detail-model">{{ g.model }}</span>
+                  <span class="usage-detail__muted">reasoning</span>
+                  <span [class.usage-detail__muted]="!g.reasoningKnown" data-testid="usage-detail-reasoning">{{ g.reasoning }}</span>
+                  <span class="usage-detail__muted">{{ g.runs.length }} {{ g.runs.length === 1 ? 'run' : 'runs' }}</span>
+                </p>
+                <ul class="usage-detail__runs">
+                  @for (r of g.runs; track r.id) {
+                    <li [attr.data-run-id]="r.id">
+                      <span class="usage-detail__key">{{ r.taskKey }}</span>
+                      <span class="usage-detail__muted">{{ r.projectName }}</span>
+                      @if (r.configuredDifference) {
+                        <span class="usage-detail__route" data-testid="usage-detail-route-diff">{{ r.configuredDifference }}</span>
+                      }
+                      @if (r.fallbackReason) {
+                        <span class="usage-detail__muted">{{ r.fallbackReason }}</span>
+                      }
+                    </li>
+                  }
+                </ul>
+              </li>
+            }
+          </ul>
+        }
       } @else {
-        <ul class="usage-detail__groups" [attr.data-testid]="'usage-detail-models-' + cli.cliId">
-          @for (g of cli.modelGroups; track g.key) {
-            <li class="usage-detail__group" data-testid="usage-detail-model-group">
-              <p class="usage-detail__group-head">
-                <span [class.usage-detail__muted]="!g.modelKnown" data-testid="usage-detail-model">{{ g.model }}</span>
-                <span class="usage-detail__muted">reasoning</span>
-                <span [class.usage-detail__muted]="!g.reasoningKnown" data-testid="usage-detail-reasoning">{{ g.reasoning }}</span>
-                <span class="usage-detail__muted">{{ g.runs.length }} {{ g.runs.length === 1 ? 'run' : 'runs' }}</span>
-              </p>
-              <ul class="usage-detail__runs">
-                @for (r of g.runs; track r.id) {
-                  <li [attr.data-run-id]="r.id">
-                    <span class="usage-detail__key">{{ r.taskKey }}</span>
-                    <span class="usage-detail__muted">{{ r.projectName }}</span>
-                    @if (r.configuredDifference) {
-                      <span class="usage-detail__route" data-testid="usage-detail-route-diff">{{ r.configuredDifference }}</span>
-                    }
-                    @if (r.fallbackReason) {
-                      <span class="usage-detail__muted">{{ r.fallbackReason }}</span>
-                    }
-                  </li>
-                }
-              </ul>
-            </li>
-          }
-        </ul>
+        <p class="usage-detail__muted">Active runs are listed once for {{ cli.providerName }} and are unallocated to subscriptions.</p>
       }
       <p class="usage-detail__muted">Quota is reported per CLI account. It is not divided between models.</p>
 
       <p class="usage-detail__links">
         @if (cli.accountHref) {
-          <a [href]="cli.accountHref" [attr.data-testid]="'usage-detail-cli-account-' + cli.cliId">Open {{ cli.name }} quota windows</a>
+          <a [href]="cli.accountHref" [attr.data-testid]="'usage-detail-cli-account-' + cli.cliId">Open {{ cli.providerName }} quota windows</a>
         }
         <a [href]="cliManagementHref" data-testid="usage-detail-manage-clis">Manage CLIs</a>
       </p>
