@@ -13,6 +13,7 @@ commands:
     - dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound
     - dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound
     - dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound
+    - dotnet test orchestrator-engine.Tests/OrchestratorEngine.Tests.csproj --no-build --filter Category!=MachineBound
     - bash scripts/npm-frontend.sh run test:ci
   lint:
     - bash scripts/npm-frontend.sh run lint
@@ -48,6 +49,10 @@ testSuites:
     category: routine
     expectedDurationSeconds: 150
     command: dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound
+  - id: orchestrator-engine-routine
+    category: routine
+    expectedDurationSeconds: 10
+    command: dotnet test orchestrator-engine.Tests/OrchestratorEngine.Tests.csproj --no-build --filter Category!=MachineBound
   # Coverage runs outside review gates (Dossier test-acceleration B11): the
   # collector made the same backend tests 1.7-2.5x slower on agent-runner-01.
   - id: backend-coverage
