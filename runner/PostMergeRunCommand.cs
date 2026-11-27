@@ -12,6 +12,10 @@ public sealed record PostMergeRunOptions(string Project, string Checkout, string
 {
     public string? RepositoryUrl { get; init; }
     public bool RecordSkips { get; init; } = true;
+    public bool UseGateCapacity { get; init; }
+    public bool GateExecution { get; init; }
+    public string? PinnedTipSha { get; init; }
+    public string? RunId { get; init; }
 
     public static PostMergeRunOptions Parse(IReadOnlyList<string> args,
         IReadOnlyDictionary<string, string?> environment)
@@ -50,7 +54,7 @@ public sealed record PostMergeRunOptions(string Project, string Checkout, string
             Positive(Get("--free-slots", "POST_MERGE_FREE_SLOTS"), 1, "free-slots"),
             (Get("--state-dirs", "POST_MERGE_STATE_DIRS")
                 ?? environment.GetValueOrDefault("COVERAGE_RUN_STATE_DIRS") ?? "")
-                .Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), dryRun);
+                .Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), dryRun) { UseGateCapacity = true };
     }
 }
 
@@ -64,7 +68,9 @@ public sealed class PostMergeRunCommand
     private readonly HttpClient _http;
     private readonly Func<CoverageHostLoad> _probeHost;
     private readonly RunnerOptions? _hostOptions;
+    internal Func<CancellationToken, Task>? BeforeTests { get; init; }
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private const string NoTestDefinition = "no valid test definition at the fetched tip";
 
     public PostMergeRunCommand(PostMergeRunOptions options, TextWriter output, TimeProvider clock,
         HttpClient http, Func<CoverageHostLoad>? probeHost = null, RunnerOptions? hostOptions = null)
@@ -163,16 +169,24 @@ public sealed class PostMergeRunCommand
         // update this separate ref and Git's object database, never its worktree.
         const string observationRef = "refs/agent-studio/post-merge-observed";
         var fetchedRef = readOnlyObservation ? observationRef : "FETCH_HEAD";
+        // The gate transport already authenticated and materialized the pinned commit.
         var fetch = readOnlyObservation
             ? await Git(ct, "fetch", "--quiet", "--no-write-fetch-head", _options.RepositoryUrl!,
                 $"+{_options.Branch}:{observationRef}")
-            : await Git(ct, "fetch", "--quiet", _options.Remote, _options.Branch);
+            : _options.GateExecution && _options.PinnedTipSha is { } pinned
+                ? await Git(ct, "update-ref", "FETCH_HEAD", pinned)
+                : await Git(ct, "fetch", "--quiet", _options.Remote, _options.PinnedTipSha ?? _options.Branch);
         if (!fetch.Success) throw new IOException(fetch.StdErr);
         var resolved = await Git(ct, "rev-parse", "--verify", fetchedRef + "^{commit}");
         if (!resolved.Success) throw new IOException(resolved.StdErr);
         var tip = resolved.StdOut.Trim();
+        if (state.ClosedWindow is { } closedWindow && closedWindow.TipSha == tip && closedWindow.Reason == NoTestDefinition)
+        {
+            _output.WriteLine($"post-merge closed tip={tip}: {closedWindow.Reason}");
+            return 0;
+        }
         var now = _clock.GetUtcNow();
-        var id = Guid.NewGuid().ToString("N");
+        var id = _options.RunId ?? Guid.NewGuid().ToString("N");
         var nightlyChecked = _options.Mode == "nightly" && state.Runs.Any(run => run.Kind == "nightly"
             && run.Status == "green" && run.TipSha == tip
             && run.StartedAtUtc.UtcDateTime.Date == now.UtcDateTime.Date);
@@ -190,6 +204,8 @@ public sealed class PostMergeRunCommand
             return 0;
         }
 
+        DateTimeOffset? windowOpened = null;
+        var windowMinutes = state.WindowMinutes ?? (int)_options.Window.TotalMinutes;
         var from = observeOnly ? state.ActiveRun?.TipSha ?? state.LastWindowTipSha : state.LastWindowTipSha;
         IReadOnlyList<(string Sha, DateTimeOffset At)> merges = [];
         if (_options.Mode == "window")
@@ -205,6 +221,7 @@ public sealed class PostMergeRunCommand
                 .Where(parts => parts.Length == 2 && DateTimeOffset.TryParse(parts[1], out _))
                 .Select(parts => (parts[0], DateTimeOffset.Parse(parts[1])))
                 .ToArray();
+            windowOpened = merges.Count == 0 ? null : merges.Min(merge => merge.At);
             var close = PostMergeRunPlan.Window(merges.Count,
                 merges.Count == 0 ? null : merges.Min(merge => merge.At), now,
                 state.WindowMaxMerges ?? _options.MaxMerges,
@@ -215,15 +232,37 @@ public sealed class PostMergeRunCommand
             if (!close.Close) { _output.WriteLine($"post-merge pending tip={tip}: {close.Reason}"); return 0; }
         }
 
-        if (observeOnly || admissionReason is not null)
+        if (!observeOnly && _options.UseGateCapacity)
+        {
+            using var placement = await _http.PostAsJsonAsync(StateUrl() + "/placement?kind=" + _options.Mode,
+                new PostMergeWindowObservation(tip, windowOpened, now, windowMinutes, admissionReason), Json, ct);
+            placement.EnsureSuccessStatusCode();
+            var destination = await placement.Content.ReadFromJsonAsync<PostMergePlacement>(Json, ct);
+            if (destination?.Executor == "gate")
+            {
+                if (_options.Mode == "window") await ObserveWindow(tip, windowOpened, now, windowMinutes,
+                    destination.Reason ?? "waiting for gate capacity", ct);
+                return 0;
+            }
+            if (destination?.Executor == "closed") return 0;
+        }
+        var promoted = _options.Mode == "window"
+            && PostMergeSchedulingPolicy.DeadlineReached(windowOpened, windowMinutes, now);
+        if (observeOnly || !_options.GateExecution && !promoted && admissionReason is not null)
         {
             if (admissionReason is not null) _output.WriteLine($"post-merge waiting: {admissionReason}");
             return 0;
         }
         var checkout = await Git(ct, "checkout", "--quiet", "--detach", "--force", tip);
         if (!checkout.Success) throw new IOException(checkout.StdErr);
-        var definition = ProjectDefinitionReader.ReadWorkspace(_options.Checkout).Definition
-            ?? throw new IOException("Project execution definition is invalid at the fetched tip.");
+        var definition = ProjectDefinitionReader.ReadWorkspace(_options.Checkout).Definition;
+        if (definition is null || definition.TestSuites.Count == 0 && definition.Commands.Test.Count == 0)
+        {
+            using var closed = await _http.PostAsJsonAsync(StateUrl() + "/close-window",
+                new PostMergeWindowClosure(tip, now, NoTestDefinition), Json, ct);
+            closed.EnsureSuccessStatusCode();
+            return 0;
+        }
         var changed = new List<string>();
         if (_options.Mode == "window")
         {
@@ -255,6 +294,8 @@ public sealed class PostMergeRunCommand
             from, opened, now, merges.Count, commands, [], "running", now, null,
             StartLoadPerCore: host.LoadPerCore, StartOccupiedSlots: host.ActiveSlots)
         {
+            ExecutionHost = _hostOptions?.Hostname ?? Environment.MachineName,
+            ExecutionPlane = _options.GateExecution ? "gate" : "run",
             SuiteSelection = new(selection.Suites, selection.OmittedSuites, selection.Reasons),
             Envelope = await EnvelopeAsync(definition, commands, PostMergeEnvelopeProbe.ShardPlan(planned),
                 host.LoadPerCore, null, ct),
@@ -266,8 +307,15 @@ public sealed class PostMergeRunCommand
         _recordRun = ledger.Record;
         var shardPlan = new List<(string Suite, string Shards)>();
         var quarantinedFailures = 0;
+        var testsStarted = false;
         foreach (var command in commands)
         {
+            if (!testsStarted && (definition.TestSuites.Any(suite => suite.Command == command)
+                || definition.Commands.Test.Contains(command)))
+            {
+                if (BeforeTests is not null) await BeforeTests(ct);
+                testsStarted = true;
+            }
             var verdictStart = verdicts.Count;
             var suite = definition.TestSuites.FirstOrDefault(item => item.Command == command);
             if (MayShard(suite, command))

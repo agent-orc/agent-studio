@@ -132,6 +132,20 @@ public sealed partial class TaskServerStore
             throw new InvalidOperationException($"Gate subject kind migration left {foreignKeyErrors} foreign-key violation(s).");
     }
 
+    public async Task<PostMergeHostAvailability> PostMergeHostsAsync(CancellationToken ct)
+    {
+        await using var connection = Open();
+        await connection.OpenAsync(ct);
+        var roles = new List<string[]>();
+        await using var command = Command(connection,
+            "SELECT capabilities_json FROM runners WHERE status = 'active' AND last_seen_at > $fresh;",
+            ("$fresh", Iso(UtcNow.AddMinutes(-3))));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct)) roles.Add(JsonSerializer.Deserialize<string[]>(reader.GetString(0), GateJson) ?? []);
+        return new(roles.Any(role => role.Contains(GateCapabilities.Executor) && role.Contains(GateCapabilities.PostMerge)),
+            roles.Any(role => role.Contains(ReviewCapabilities.CodingExecutor) || role.Contains(CapabilityProtocol.CodingExecutor)));
+    }
+
     public async Task<GateStatus> CreateGateSubjectAsync(CreateGateSubjectRequest request, string actorId, CancellationToken ct)
     {
         RequireWritable();
@@ -229,7 +243,7 @@ public sealed partial class TaskServerStore
         return status;
     }
 
-    public async Task<GateStatus> CancelGateSubjectAsync(string subjectId, string actorId, CancellationToken ct)
+    public async Task<GateStatus> CancelGateSubjectAsync(string subjectId, string actorId, CancellationToken ct, bool onlyBeforeRunning = false)
     {
         RequireWritable();
         GateStatus? status = null;
@@ -238,7 +252,8 @@ public sealed partial class TaskServerStore
             status = await ReadGateStatusAsync(connection, transaction, subjectId, ct)
                 ?? throw new KeyNotFoundException("Gate subject was not found.");
             var current = status.Attempts[^1];
-            if (GateStates.IsTerminal(current.State)) return;
+            if (GateStates.IsTerminal(current.State)
+                || onlyBeforeRunning && !AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.MaySupersede(current.State)) return;
             var now = Iso(UtcNow);
             await ExecuteAsync(connection, """
                 UPDATE gate_attempts SET state = 'cancelled', outcome = 'cancelled',
@@ -313,7 +328,7 @@ public sealed partial class TaskServerStore
             var allocation = usesGrant ? await ReadGateHostAllocationAsync(connection, transaction, hostId, ct) : null;
             var occupiedGrants = usesGrant ? await CountOccupiedHostGrantsAsync(connection, transaction, hostId, ct) : 0;
             var gateAdmission = GateGrantAdmissionPolicy.Decide(usesGrant, occupied, allocation, occupiedGrants);
-            if (!gateAdmission.Admitted)
+            if (usesGrant && !gateAdmission.Admitted)
             {
                 response = new GateClaimResponse("empty", Message: gateAdmission.Message);
                 return;
@@ -327,14 +342,36 @@ public sealed partial class TaskServerStore
                   FROM gate_attempts a JOIN gate_subjects s ON s.id = a.subject_id
                   LEFT JOIN tasks t ON t.id = s.task_id
                   LEFT JOIN projects p ON p.id = t.project_id
-                 WHERE a.state = 'queued' ORDER BY a.created_at LIMIT 32;
-                """, transaction))
+                 WHERE a.state = 'queued' ORDER BY CASE s.subject_kind WHEN 'merge' THEN $mergePriority
+                     WHEN 'post-merge' THEN $postMergePriority ELSE $otherPriority END, a.created_at LIMIT 32;
+                """, transaction,
+                ("$mergePriority", AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.QueuePriority(GateSubjectKinds.Merge)),
+                ("$postMergePriority", AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.QueuePriority(GateSubjectKinds.PostMerge)),
+                ("$otherPriority", AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.QueuePriority(null))))
             await using (var reader = await command.ExecuteReaderAsync(ct))
                 while (await reader.ReadAsync(ct))
                     candidates.Add((reader.GetString(0), JsonSerializer.Deserialize<GateSubject>(reader.GetString(1), GateJson)!,
                         reader.GetInt32(2), reader.IsDBNull(3) ? null : reader.GetString(3)));
-            foreach (var candidate in candidates)
+            var activeKinds = new List<string>();
+            await using (var command = Command(connection, """
+                SELECT s.subject_kind FROM gate_attempts a JOIN gate_subjects s ON s.id = a.subject_id
+                 WHERE a.host_id = $host AND a.state IN ('claimed','materializing','running','reporting','cleaning');
+                """, transaction, ("$host", hostId)))
+            await using (var reader = await command.ExecuteReaderAsync(ct))
+                while (await reader.ReadAsync(ct)) activeKinds.Add(reader.GetString(0));
+            foreach (var candidate in candidates.OrderBy(item =>
+                AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.QueuePriority(item.Subject.Kind)))
             {
+                if (request.ExcludePostMerge && candidate.Subject.Kind == GateSubjectKinds.PostMerge) continue;
+                if (!usesGrant)
+                {
+                    if (activeKinds.Any(kind => !AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.MayShareGateLane(kind, candidate.Subject.Kind)))
+                    { quotaReason = "Gate host slot is occupied."; continue; }
+                    gateAdmission = GateGrantAdmission.Slot();
+                }
+                else if (candidate.Subject.Kind == GateSubjectKinds.PostMerge
+                    && allocation is { MaxParallelism: > 1 } && occupiedGrants >= allocation.MaxParallelism - 1)
+                    continue; // A post-merge run never takes the last integration grant.
                 var projectName = candidate.ProjectName;
                 // Verification gates belong to the operator lane of a monolith
                 // project, not a Task Server card; card quota does not apply.
@@ -430,6 +467,8 @@ public sealed partial class TaskServerStore
             var expiry = UtcNow.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
             await ExecuteAsync(connection, "UPDATE gate_attempts SET expires_at = $expiry WHERE id = $id;", ct,
                 transaction, ("$expiry", Iso(expiry)), ("$id", attemptId));
+            await ExecuteAsync(connection, "UPDATE runners SET last_seen_at = $now WHERE id = $runner;", ct,
+                transaction, ("$now", Iso(UtcNow)), ("$runner", request.Authority.ExecutorId));
             lease = await ReadGateLeaseAsync(connection, transaction, attemptId, ct);
         }, ct);
         return lease!;

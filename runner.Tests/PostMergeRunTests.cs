@@ -9,6 +9,23 @@ public sealed class PostMergeRunTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 27, 12, 0, 0, TimeSpan.Zero);
 
+    [Theory]
+    [InlineData(29, false)]
+    [InlineData(30, true)]
+    [InlineData(31, true)]
+    public void ExpiredWindowsPromoteRegardlessOfCodingOccupancy(int age, bool promoted)
+        => Assert.Equal(promoted, AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.DeadlineReached(
+            Now.AddMinutes(-age), 30, Now));
+
+    [Fact]
+    public void OwnerDeadlineIsThreeWindowsAndSupersessionStopsAtTestStart()
+    {
+        Assert.False(AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.NeedsOwner(Now.AddMinutes(-90), 30, Now));
+        Assert.True(AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.NeedsOwner(Now.AddMinutes(-91), 30, Now));
+        Assert.True(AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.MaySupersede("materializing"));
+        Assert.False(AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.MaySupersede("running"));
+    }
+
     [Fact]
     public void WindowClosesAtCountOrAge()
     {

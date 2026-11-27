@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-26
+Version: 2026-11-27
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -313,20 +313,52 @@ ignored. The runner state route
 (`/api/runner/post-merge/projects/{project}`) carries `windowSuites`
 (`affected` or `routine`), and the merge-window run selects from it.
 
-In a post-merge strategy develop is checked only by the T3 runs below: the
-coding daemon's host scheduler (AGT-3967) discovers every fast and balanced
-project through `GET /api/runner/post-merge/projects`, and hand-installed
-timers remain a fallback. When
-develop has a first-parent commit that no reported T3 run covers, that commit
-is at least six hours old, and no run reported in the last six hours,
-`PostMergeCoverageService` reports the project as `missing`. The settings page
-and the project Operations view show the warning, and Needs you shows a
-`post-merge.missing` item. Any receipt counts, a skip or a red run included;
-a run on the current tip or a report within six hours clears it. The tip comes
-from the `origin/<branch>` ref file and the age from one `git rev-list -n 1
---first-parent --before` per tip pair. Studio does not fall back to pre-merge
-on this warning, and since RT-1 (AGT-3988) there is no automatic fallback to
-pre-merge at all.
+In a post-merge strategy develop is checked by T3. The coding daemon discovers
+fast and balanced projects through `GET /api/runner/post-merge/projects`.
+AGT-4075 places due merge windows and nightly runs on a connected gate executor
+advertising `gate:post-merge`, through the existing claimable gate transport.
+The gate subject freezes the tip, project, branch and run kind. The gate worker
+runs `PostMergeRunCommand`, preserving command selection, the per-command worker
+envelope, attribution and post-merge receipts. The gate host needs the same
+`PostMergeStateUrl` configuration as the coding scheduler when its Task Server
+URL differs from Studio. Older gate workers without that capability leave
+execution on the run host until they are upgraded.
+
+The run host is the fallback. Once the oldest pending integration reaches the
+project's `windowMinutes`, occupied coding slots and host load no longer veto
+that window. It runs sequentially inside the existing worker test envelope;
+its receipt retains starting occupancy, starting load and peak load. A nightly
+fallback still waits for free coding capacity. Gate queue ordering puts merge
+checks first. Fixed-slot gate admission preserves the separate integration
+compile lane for a merge alongside one post-merge run. Grant admission reserves
+the final host grant for integration when the host has multiple grants.
+
+`PostMergeSchedulingPolicy` owns deadlines and supersession. A newer tip may
+cancel a queued or materializing gate subject. Conditional cancellation and
+advancing to `running` are serialized by the gate authority; `running` starts
+immediately before the first test command. A newer tip never cancels tests
+already running. A pending window older than three times its window duration
+(minimum three minutes for a zero-minute window) produces one project/window
+Needs you occurrence with its admission cause. The minute maintenance sweep
+closes windows with no connected execution host or a strategy that no longer
+uses post-merge checks, retaining `closedWindow` with its reason. A worker
+closes a window with no valid test definition at the fetched tip. That tip stays
+closed until the branch changes, so discovery cannot reopen it every minute.
+Projects without a repository locator also close their old observations. These
+closures are observations, never successful test receipts.
+
+Coverage separates report liveness from completed measurements. Active starts,
+skips and inconclusive results update reporting fields but cannot clear an
+unmeasured-tip obligation. `current` means a completed measurement covers the
+exact tip; `pending` means a younger uncovered obligation; `missing` means an
+uncovered first-parent commit has passed the six-hour deadline. Completed red
+test measurements retain the existing red-develop repair path. Build-only
+failures do not count as measurements. `lastMeasuredTipSha`,
+`lastMeasuredAtUtc` and `tipMeasured` are separate from report fields. The
+existing testing and Operations projections carry the coverage explanation,
+and Needs you uses one stable occurrence per pending window or measured tip.
+The tip comes from `origin/<branch>` and a bounded first-parent history walk.
+No warning changes the project's testing strategy.
 
 ### Before and after the merge (AGT-4020)
 

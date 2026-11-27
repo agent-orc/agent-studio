@@ -233,6 +233,7 @@ internal static class RunnerCapabilityProbe
         }
         else
         {
+            if (options.Role == "gate") list.Add(Capability(GateCapabilities.PostMerge, "gate", null, "post-merge"));
             list.Add(Capability(GateCapabilities.GitMaterialization, "gate", ToolVersion("git"), "git",
                 OnPath("git") ? "ready" : "unavailable"));
             list.Add(Capability(GateCapabilities.BundleMaterialization, "gate", null, "artifact"));
@@ -372,7 +373,7 @@ internal static class RunnerCapabilityProbe
     public static IReadOnlyList<string> GateRegistrationCapabilities(RunnerOptions options)
         => new[]
         {
-            GateCapabilities.Executor, GateCapabilities.GitMaterialization,
+            GateCapabilities.Executor, GateCapabilities.PostMerge, GateCapabilities.GitMaterialization,
             GateCapabilities.BundleMaterialization, CapabilityProtocol.GitFetch,
             CapabilityProtocol.RepositoryAccess, CapabilityProtocol.Disk,
             CapabilityProtocol.TaskServerConnectivity,

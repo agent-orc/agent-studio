@@ -77,6 +77,11 @@ public static class GateRules
                  || request.MemberRunIds is not null)
             throw new ArgumentException("Batch identity fields require a batch id.");
         var plan = request.Plan;
+        if ((request.Kind == GateSubjectKinds.PostMerge) != (plan.PostMerge is not null)
+            || plan.PostMerge is { } work && (string.IsNullOrWhiteSpace(work.Project)
+                || work.Project.Length > 200 || string.IsNullOrWhiteSpace(work.Branch)
+                || work.Kind is not ("window" or "nightly") || work.GateSlots is < 1 or > 64 || plan.Commands.Count != 1))
+            throw new ArgumentException("Post-merge gate requires a bounded execution descriptor.");
         if (plan.GateId != "post-build-test-gate" || plan.Version < 1 || plan.Commands.Count is < 1 or > 32
             || plan.OverallTimeoutSeconds is < 1 or > 21600 || plan.MaxOutputBytes is < 1 or > 1048576
             || plan.CleanupPolicy != "always" || Path.IsPathRooted(plan.WorkingSubdirectory)
