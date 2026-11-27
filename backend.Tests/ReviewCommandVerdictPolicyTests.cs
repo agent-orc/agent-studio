@@ -140,7 +140,8 @@ public sealed class ReviewCommandVerdictPolicyTests
         // The refusal the operator saw on 2026-10-05.
         var unrepaired = RemoteDeliveryIntegrationPolicy.Decide(true, request.Outcome, plan, request.Verdicts);
         Assert.False(unrepaired.ShouldIntegrate);
-        Assert.Equal("At least one applicable Remote Review build/test gate did not pass.", unrepaired.Reason);
+        Assert.Contains("verify-3", unrepaired.Reason, StringComparison.Ordinal);
+        Assert.Contains("Next automatic action", unrepaired.Reason, StringComparison.Ordinal);
 
         // Same normalization order as POST /reviews/attempts/{attemptId}/report.
         var normalized = ReviewCommandVerdictPolicy.NormalizeReport(request, plan);

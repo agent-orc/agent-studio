@@ -3511,6 +3511,30 @@
             tests, guards and lint. The terminal is a new delivery for pipeline-owned
             integration and publication.</td>
         </tr>
+        <tr id="case-stale-red-review-baseline">
+          <td>2026-11-27</td>
+          <td><code>AGT-4099</code><br><span class="small">stale-red-review-baseline</span></td>
+          <td>Reported: lint stayed red on delivery and its stale base after develop
+            was repaired, while reviews repeatedly ended as ReviewInfra. Frozen
+            incident plans and verdicts were not recovered locally.</td>
+          <td>Fixtures reproduce inconsistent environment grading and cached retry
+            measurements. Shared dispositions retain branch debt, remeasure a
+            repaired target merge and require fresh infrastructure retry evidence.</td>
+          <td>A passing measured merge continues delivery; a confirmed product finding
+            reaches its fix round. Incomplete proof retains bounded infrastructure recovery.</td>
+        </tr>
+        <tr id="case-review-measurement-integration-continuation">
+          <td>2026-11-27</td>
+          <td><code>AGT-4099</code><br><span class="small">review-measurement-integration-continuation</span></td>
+          <td>No CLI crash is established. Delivery <code>c610f0c13d79</code>
+            stopped at <code>merge-into-develop</code> after all three integration
+            strategies conflicted in this case log against <code>4d6a2dbd8613</code>.</td>
+          <td>The review measurement incident and newer integration recovery
+            incidents shared the append location.</td>
+          <td>The continuation restores the delivery on the assigned current base,
+            retains every integration-side incident and verifies focused classes,
+            guards and lint. The terminal is a delivery for platform-owned publication.</td>
+        </tr>
       </tbody>
     </table>
 
