@@ -1,6 +1,14 @@
+using System.Text.Json.Serialization;
+
 namespace AgentStudio.Dispatch;
 
-public sealed record DispatchRepositoryState(bool Available, DateTimeOffset NextProbeAt, int Failures);
+public sealed record DispatchRepositoryState(
+    [property: JsonRequired] bool Available,
+    [property: JsonRequired] DateTimeOffset NextProbeAt,
+    [property: JsonRequired] int Failures)
+{
+    internal const int MaxFailures = 6;
+}
 
 /// <summary>Bounds Git probes for projects without an integration tip and logs state transitions.</summary>
 internal sealed class DispatchRepositoryRefresh(DispatchStore store, ILogger logger)
@@ -15,7 +23,7 @@ internal sealed class DispatchRepositoryRefresh(DispatchStore store, ILogger log
         var result = collect();
         if (result is null)
         {
-            var failures = Math.Min(6, (previous?.Failures ?? 0) + 1);
+            var failures = Math.Min(DispatchRepositoryState.MaxFailures, (previous?.Failures ?? 0) + 1);
             store.WriteRepositoryState(project, new(false, now.AddMinutes(Math.Min(60, 1 << failures)), failures));
             if (previous is not { Available: false })
                 logger.LogInformation("Dispatch forecast skipped for {Project}: no repository or reachable integration tip", project);

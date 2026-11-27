@@ -78,6 +78,57 @@ public sealed class DispatchRepositoryRefreshTests : IDisposable
     }
 
     [Fact]
+    public void Unreadable_repository_state_preserves_forecasts_and_can_be_repaired_by_a_probe()
+    {
+        var store = Store();
+        var at = DateTimeOffset.UnixEpoch;
+        var forecast = TouchForecast.Compute("a.cs", TouchForecast.BuildIndex("tip", at, ["a.cs"], []), []);
+        store.Write("p", "card", forecast);
+        store.WriteRepositoryState("p", new(false, at.AddHours(1), 1));
+        var path = Directory.GetFiles(_root, "repository.json", SearchOption.AllDirectories).Single();
+        using (var locked = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            Assert.Null(store.ReadRepositoryState("p"));
+            Assert.Equal(forecast.IndexRevision, store.Read("p", "card")!.IndexRevision);
+            Assert.Equal("available", store.Read("p", "card")!.RepositoryStatus);
+            Assert.Null(store.Read("p", "missing"));
+            Assert.True(new DispatchRepositoryRefresh(store, new CapturedLogger()).IsDue("p", at));
+        }
+        Assert.Equal("no repository", store.Read("p", "card")!.RepositoryStatus);
+        var refresh = new DispatchRepositoryRefresh(store, new CapturedLogger());
+        Assert.NotNull(refresh.Probe("p", at.AddHours(1), () => ("repo", "tip")));
+        Assert.Equal("available", store.Read("p", "card")!.RepositoryStatus);
+    }
+
+    [Theory]
+    [InlineData("{broken")]
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("{\"available\":false}")]
+    [InlineData("{\"available\":false,\"nextProbeAt\":\"1970-01-01T01:00:00Z\",\"failures\":-1}")]
+    [InlineData("{\"available\":false,\"nextProbeAt\":\"1970-01-01T01:00:00Z\",\"failures\":2147483647}")]
+    public void Damaged_repository_state_does_not_break_forecasts_or_prevent_recovery(string contents)
+    {
+        var store = Store();
+        var at = DateTimeOffset.UnixEpoch;
+        var forecast = TouchForecast.Compute("a.cs", TouchForecast.BuildIndex("tip", at, ["a.cs"], []), []);
+        store.Write("p", "card", forecast);
+        store.WriteRepositoryState("p", new(false, at.AddHours(1), 1));
+        var path = Directory.GetFiles(_root, "repository.json", SearchOption.AllDirectories).Single();
+        File.WriteAllText(path, contents);
+
+        Assert.Null(store.ReadRepositoryState("p"));
+        Assert.Equal("available", store.Read("p", "card")!.RepositoryStatus);
+        Assert.Equal(forecast.ForecastFiles, store.Read("p", "card")!.ForecastFiles);
+        Assert.Null(store.Read("p", "missing"));
+        var refresh = new DispatchRepositoryRefresh(store, new CapturedLogger());
+        Assert.True(refresh.IsDue("p", at));
+        Assert.Null(refresh.Probe("p", at, () => null));
+        Assert.Equal(new DispatchRepositoryState(false, at.AddMinutes(2), 1), store.ReadRepositoryState("p"));
+        Assert.Equal("no repository", store.Read("p", "card")!.RepositoryStatus);
+    }
+
+    [Fact]
     public void Fourteen_minutes_of_twenty_second_refreshes_produce_four_probes_and_one_log()
     {
         var at = DateTimeOffset.UnixEpoch;
