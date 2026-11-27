@@ -107,6 +107,8 @@ public sealed record BuildTestGateRequest(
     public bool ReserveBatchSlot { get; init; }
     /// <summary>Integration compile checks use the reserved cross-process merge slot.</summary>
     public bool IntegrationPriority { get; init; }
+    /// <summary>Worker-owned persistent repository, serialized by its integration workspace lease.</summary>
+    public bool WarmIntegrationWorkspace { get; init; }
 
     /// <summary>
     /// AGT-3423: the expected slot hold from the project's recent gate history,
@@ -181,6 +183,8 @@ public sealed record BuildTestGateProcessEvidence
     /// another planned command.
     /// </summary>
     public string Phase { get; init; } = "verification";
+    public VerifyCommandKind? CommandKind { get; init; }
+    public VerifyEcosystem? CommandEcosystem { get; init; }
     public string Command { get; init; } = "";
     public string FileName { get; init; } = "";
     public IReadOnlyList<string> Arguments { get; init; } = [];
@@ -253,6 +257,11 @@ public sealed record BuildTestGateResult(
     public double? GateHostLoadAtStart { get; init; }
     public double? GateHostLoadAtEnd { get; init; }
     public long GateQueueWaitMs { get; init; }
+    public IReadOnlyDictionary<string, long> StageDurationsMs { get; init; } = new Dictionary<string, long>();
+    public int GateAttempts { get; init; } = 1;
+    public int StageTimingsVersion { get; init; }
+    public IReadOnlyList<string> GateRetryReasons { get; init; } = [];
+    public bool StageTimingsIncomplete { get; init; }
     public bool GateCollisionDetected { get; init; }
     public bool SelfHealed { get; init; }
     public string GateId { get; init; } = PipelineCatalogue.BuildTestGateStepId;
@@ -542,6 +551,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             (long)timeout.TotalMilliseconds, request.TimeoutBudgetSource ?? "unspecified");
 
         MachineGateSlots.Lease? machineLease = null;
+        long? checkoutMs = null;
+        var checkoutWatch = new Stopwatch();
         ExactWorkspaceLease? workspaceLease = null;
         IDisposable? cacheExecutionLease = null;
         ProjectPreparationResult? projectPreparation = null;
@@ -617,9 +628,11 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             }
             if (completed is null && request.RequireExactSubject)
             {
+                checkoutWatch.Restart();
                 var prepared = await PrepareExactWorkspaceAsync(
                     repositoryPath, request.ExpectedSha, request.SubjectRef, gateRunId,
-                    infrastructureTimeout, ct, request.SourcePaths).ConfigureAwait(false);
+                    infrastructureTimeout, ct, request.SourcePaths, request.WarmIntegrationWorkspace).ConfigureAwait(false);
+                checkoutMs = checkoutWatch.ElapsedMilliseconds;
                 if (prepared.Lease is null)
                 {
                     completed = InfrastructureFailure(
@@ -732,12 +745,14 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 }
             }
 
+            var integrationPlan = completed is null ? IntegrationCompilePlan.TryPlan(workspace!, request,
+                VerifyCommandPlanner.Plan(workspace!, profile), changedFiles) : null;
             var affectedPreparation = completed is null
                 ? ProjectAffectedVerifyPlanner.TryPlan(workspace!, VerifyCommandPlanner.Plan(workspace!, profile),
                     changedFiles, request.Lane,
                     TestSelectionPlanner.ResolveLevel(request.TestExecution, request.Lane, request.RequiredTestLevel))
                 : null;
-            if (completed is null && (affectedPreparation?.PreparationCommands is null
+            if (completed is null && integrationPlan is null && (affectedPreparation?.PreparationCommands is null
                 || affectedPreparation.Audit.FullSuiteRequired))
             {
                 var preparationManifestPath = PreparationManifestPath(
@@ -811,7 +826,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 }
                 else
                 {
-                    var staged = ComposeRenderGate.Annotate(DeterministicTestScope.Plan(
+                    var staged = ComposeRenderGate.Annotate(integrationPlan ?? DeterministicTestScope.Plan(
                         workspace!, plan, changedFiles, request.ChangedFileStatuses,
                         request.TestExecution, request.Lane, request.RequiredTestLevel), composeRender);
                     var commands = ComposeRenderGate.Append(
@@ -937,6 +952,17 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
 
             if (workspaceLease is not null)
             {
+                if (completed?.Verdict == BuildTestGateVerdict.Ok && request.WarmIntegrationWorkspace)
+                {
+                    var clean = await RunGitAsync(workspace!, ["diff", "--quiet", "HEAD", "--"],
+                        infrastructureTimeout, ct).ConfigureAwait(false);
+                    var finalSha = await ReadHeadShaAsync(workspace!, infrastructureTimeout, ct).ConfigureAwait(false);
+                    if (clean.ExitCode == 0 && string.Equals(finalSha, testedSha, StringComparison.OrdinalIgnoreCase))
+                        workspaceLease.KeepWarm = true;
+                    else completed = completed with { Verdict = BuildTestGateVerdict.Fail,
+                        FailureKind = BuildTestGateFailureKind.MissingSource,
+                        Reason = "Warm integration commands changed the tested tree or HEAD; publication refused." };
+                }
                 var cleanupError = await workspaceLease.RemoveAsync(
                     infrastructureTimeout, CancellationToken.None).ConfigureAwait(false);
                 workspaceLease = null;
@@ -1005,6 +1031,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 using (await _verdictCache.AcquireAsync(cacheProject, ct).ConfigureAwait(false))
                     completed = _verdictCache.Record(cacheProject, testedSha!, profileDigest, completed);
             }
+            completed = completed with { StageDurationsMs = GateStageTimings.Measure(completed, checkoutMs), StageTimingsVersion = 1 };
             return completed;
         }
         finally
@@ -1644,6 +1671,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     projectPreparation)
                     .ConfigureAwait(false);
             }
+            process = process with { CommandKind = command.Kind, CommandEcosystem = command.Ecosystem };
             evidence.Add(process);
             // A sharded step is settled by its shards; its synthetic exit code can be 0 for a crashed shard.
             if (shardedKind is { } settled
@@ -2026,6 +2054,10 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         return derived > TimeSpan.Zero ? derived : TimeSpan.FromMinutes(2);
     }
 
+    internal static string WarmWorkspacePath(string repositoryPath)
+        => Path.Combine(ReviewWorkspaceRoot, "integration-" + Convert.ToHexStringLower(
+            SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(repositoryPath)))));
+
     private async Task<WorkspacePreparation> PrepareExactWorkspaceAsync(
         string repositoryPath,
         string? expectedSha,
@@ -2033,7 +2065,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         string gateRunId,
         TimeSpan infrastructureTimeout,
         CancellationToken ct,
-        IReadOnlyList<string>? sourcePaths = null)
+        IReadOnlyList<string>? sourcePaths = null, bool warm = false)
     {
         if (!Directory.Exists(repositoryPath))
             return WorkspacePreparation.Failed(BuildTestGateFailureKind.MissingSource,
@@ -2115,7 +2147,15 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 }
             }
 
-            var workspace = Path.Combine(ReviewWorkspaceRoot, gateRunId);
+            var workspace = Path.Combine(ReviewWorkspaceRoot, warm ? Path.GetFileName(WarmWorkspacePath(repositoryPath)) : gateRunId);
+            if (warm && sourcePaths is { Count: > 0 })
+                return WorkspacePreparation.Failed(BuildTestGateFailureKind.MissingSource, "Warm integration requires a complete tree.");
+            var existingWarm = warm && Directory.Exists(workspace);
+            if (existingWarm)
+                await _staleLocks.EnsureWritableAsync(workspace, GitLockSurface.All, bounded.Token).ConfigureAwait(false);
+            if (warm && !existingWarm)
+                await RunGitAsync(repositoryPath, ["worktree", "prune"],
+                    Remaining(infrastructureTimeout, stopwatch.Elapsed), bounded.Token).ConfigureAwait(false);
             if (sourcePaths is { Count: > 0 } && (sourcePaths.Count > 32
                 || sourcePaths.Any(path => string.IsNullOrWhiteSpace(path)
                     || Path.IsPathRooted(path)
@@ -2123,7 +2163,9 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 return WorkspacePreparation.Failed(BuildTestGateFailureKind.MissingSource,
                     "gate source paths are invalid");
             var add = await RunGitAsync(
-                repositoryPath, sourcePaths is { Count: > 0 }
+                existingWarm ? workspace : repositoryPath, existingWarm
+                    ? ["reset", "--hard", expectedSha]
+                    : sourcePaths is { Count: > 0 }
                     ? ["worktree", "add", "--no-checkout", "--detach", workspace, expectedSha]
                     : ["worktree", "add", "--detach", workspace, expectedSha],
                 Remaining(infrastructureTimeout, stopwatch.Elapsed), bounded.Token)
@@ -2156,6 +2198,14 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 }
             }
 
+            if (warm)
+            {
+                var clean = await RunGitAsync(workspace, ["clean", "-fd"],
+                    Remaining(infrastructureTimeout, stopwatch.Elapsed), bounded.Token).ConfigureAwait(false);
+                if (clean.ExitCode != 0) return WorkspacePreparation.Failed(
+                    BuildTestGateFailureKind.Environment, "Warm integration workspace could not be cleaned", clean.StandardError);
+                Directory.SetLastWriteTimeUtc(workspace, DateTime.UtcNow);
+            }
             await EnsureGateWorkspaceWritableAsync(workspace, bounded.Token).ConfigureAwait(false);
             var lease = new ExactWorkspaceLease(repositoryPath, workspace, "missing", _logger, _staleLocks);
             string? testedSha;
@@ -2307,6 +2357,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         private readonly ILogger _logger;
         private readonly GitStaleLockGuard _staleLocks;
         private bool _removed;
+        public bool KeepWarm { get; set; }
 
         public ExactWorkspaceLease(string repositoryPath, string path, string testedSha, ILogger logger,
             GitStaleLockGuard staleLocks)
@@ -2326,7 +2377,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
 
         public async Task<WorkspaceCleanupError?> RemoveAsync(TimeSpan timeout, CancellationToken ct)
         {
-            if (_removed) return null;
+            if (_removed || KeepWarm) return null;
             var stopwatch = Stopwatch.StartNew();
             using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
             bounded.CancelAfter(timeout);

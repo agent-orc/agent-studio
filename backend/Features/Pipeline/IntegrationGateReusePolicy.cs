@@ -16,8 +16,8 @@ namespace AgentStudio.Pipeline;
 /// </param>
 /// <param name="DeliveryWasReplayed">
 /// True when the delivery had to be mechanically rebased onto a moved target
-/// before it could merge. The merged content is then no longer the content the
-/// review built.
+/// before it could merge. Compile-only reuse compares the resulting tree
+/// directly; stricter suite reuse also requires unchanged ancestry.
 /// </param>
 public sealed record IntegrationGateReuseInput(
     bool Enabled,
@@ -27,7 +27,8 @@ public sealed record IntegrationGateReuseInput(
     bool DeliveryContainedInMergeResult,
     bool DeliveryWasReplayed,
     string? MergeResultTreeSha = null,
-    bool ConflictsResolved = false);
+    bool ConflictsResolved = false,
+    bool CompileOnlyRequired = false);
 
 /// <summary>What the gate does with this merge.</summary>
 public enum IntegrationGateReuseState
@@ -36,9 +37,8 @@ public enum IntegrationGateReuseState
     FullGate,
 
     /// <summary>
-    /// Reuse the Remote Review verdict for the tests and lint, and keep only
-    /// the compile step, because the merge result is the exact state the review
-    /// tested, with the same integration tip.
+    /// Reuse the Remote Review build verdict and run no gate commands when
+    /// the final integration tree satisfies the reviewed-tree proof.
     /// </summary>
     Reused,
 }
@@ -72,8 +72,8 @@ public sealed record IntegrationGateReuseDecision(
 /// Reuse requires the exact integration tip captured before review commands
 /// and a merge tree identical to the tested tree. Merge-base equality cannot
 /// prove this: unrelated integration commits leave the merge base unchanged.
-/// Missing proof, conflict resolution, replay, or a changed tip/tree keeps the
-/// full gate. The compile step always runs on the local merge result.
+/// Compile-only reuse requires an identical reviewed tree. Stricter suite
+/// reuse also checks the integration tip, ancestry and conflict evidence.
 /// </para>
 /// </summary>
 public static class IntegrationGateReusePolicy
@@ -118,11 +118,21 @@ public static class IntegrationGateReusePolicy
         // AGT-3310: an affected per-card selection is tier T1, not the suite the
         // integration gate would run. The gate keeps its own test stage until
         // the project moves to post-merge checks (pipeline Dossier P7).
-        if (string.Equals(review.TestLevel, TestExecutionLevels.WorkPackage, StringComparison.OrdinalIgnoreCase))
+        if (!input.CompileOnlyRequired && string.Equals(review.TestLevel, TestExecutionLevels.WorkPackage, StringComparison.OrdinalIgnoreCase))
             return Full(
                 "the Remote Review ran the per-card affected test selection (testing.perCard: affected), "
                 + "not the declared test suite",
                 review.AttemptId);
+
+        if (input.CompileOnlyRequired
+            && ReviewSubjectStore.IsValidResultSha(review.ResultSha)
+            && ReviewSubjectStore.IsValidResultSha(review.TestedTreeSha)
+            && string.Equals(review.TestedTreeSha, input.MergeResultTreeSha, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(TaskIntegrationBranch.Name(review.IntegrationRef, fallback: string.Empty),
+                TaskIntegrationBranch.Name(input.IntegrationBranch, fallback: string.Empty), StringComparison.Ordinal))
+            return new(IntegrationGateReuseState.Reused,
+                $"The Remote Review already built exact tree {Short(review.TestedTreeSha)}; no build runs on the identical integration tree.",
+                review.AttemptId) { CoveredRequirements = review.VerifiedRequirements };
 
         if (string.IsNullOrWhiteSpace(review.MergeBaseSha))
             return Full("the Remote Review report records no merge base", review.AttemptId);
@@ -183,7 +193,7 @@ public static class IntegrationGateReusePolicy
         return new IntegrationGateReuseDecision(
             IntegrationGateReuseState.Reused,
             $"the Remote Review verified {Short(review.ResultSha)} on the unchanged {target} tip "
-            + $"{Short(review.IntegrationTipSha)} with tested tree {Short(review.TestedTreeSha)}; only the compile step runs on the merge result",
+            + $"{Short(review.IntegrationTipSha)} with tested tree {Short(review.TestedTreeSha)}; no build runs on the identical merge result",
             review.AttemptId)
         {
             CoveredRequirements = review.VerifiedRequirements,

@@ -114,6 +114,46 @@
         }
       }
     },
+    "integrationBuild": {
+      "description": "Path-scoped build indices and preparation commands for integration compile checks only. Unmapped inputs keep the full build.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "paths",
+          "build",
+          "prepare"
+        ],
+        "properties": {
+          "paths": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+            }
+          },
+          "build": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "prepare": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
     "testSelection": {
       "description": "Optional impact map shared by review, batch, integration and affected post-merge gates. Missing maps, unknown paths and unassigned commands select the full inventory.",
       "type": "array",

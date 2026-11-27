@@ -37,17 +37,20 @@ public static class RemoteGateWorker
             ?? throw new InvalidDataException("Remote gate invocation is empty.");
         Validate(invocation, Path.GetFileName(directory));
         WarnIfOversubscribed(invocation.GateSlots, invocation.ProcessorCount);
-        var repository = Path.Combine(directory, "source.git");
+        var warmIntegration = invocation.Request.IntegrationPriority && invocation.CachePath is not null;
+        var repository = warmIntegration ? invocation.CachePath + ".integration.git" : Path.Combine(directory, "source.git");
         var bundle = Path.Combine(directory, "source.bundle");
         var artifactDirectory = Path.Combine(directory, "artifacts");
         var sourceTimer = Stopwatch.StartNew();
         var bareReady = TimeSpan.Zero;
         var acquiredAt = TimeSpan.Zero;
+        var sourceLockWaitMs = 0L;
         Directory.CreateDirectory(artifactDirectory);
         var slotHeld = 0;
         var request = invocation.Request with
         {
             RepositoryPath = repository,
+            WarmIntegrationWorkspace = warmIntegration,
             SubjectRef = "refs/heads/gate-subject",
             JobFolderPath = null,
             WatchPath = null,
@@ -106,8 +109,15 @@ public static class RemoteGateWorker
         var sessionLost = false;
         var cleanupFailed = false;
         FileStream? cacheLease = null;
+        FileStream? integrationLease = null;
         try
         {
+            if (warmIntegration)
+            {
+                var wait = Stopwatch.StartNew();
+                integrationLease = await GateSourceCacheRetention.LockAsync(repository + ".lock", lifetime.Token);
+                sourceLockWaitMs += wait.ElapsedMilliseconds;
+            }
             if (!invocation.SourceFromCache)
             {
                 await using var source = File.OpenRead(bundle);
@@ -116,29 +126,36 @@ public static class RemoteGateWorker
                     StringComparison.Ordinal))
                     throw new InvalidDataException("Remote gate source bundle digest mismatch.");
             }
-            // The clone is private to this GUID invocation. Its only advertised
-            // branch was created from the requested exact commit, never a live
-            // integration ref. BuildTestGateRunner independently proves HEAD.
+            // Ordinary gates get a private clone; integration retains a mirror under
+            // its process lease. Both advertise only the exact candidate and
+            // BuildTestGateRunner independently proves HEAD.
             if (invocation.CachePath is { } cache)
             {
                 if (invocation.SourceCacheKey is null)
+                {
+                    var wait = Stopwatch.StartNew();
                     cacheLease = await GateSourceCacheRetention.LockAsync(cache + ".lock", lifetime.Token);
+                    sourceLockWaitMs += wait.ElapsedMilliseconds;
+                }
                 if (!Directory.Exists(cache))
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(cache)!);
                     await RemoteGateProcess.RunAsync("git", ["init", "--bare", "--quiet", cache],
                         directory, request.InfrastructureTimeout, lifetime.Token);
                 }
-                await RemoteGateProcess.RunAsync("git", ["clone", "--bare", "--quiet", cache, repository],
+                if (!Directory.Exists(repository))
+                    await RemoteGateProcess.RunAsync("git", ["clone", "--bare", "--quiet", "--no-hardlinks", cache, repository],
                     directory, request.InfrastructureTimeout, lifetime.Token);
                 if (!invocation.SourceFromCache)
                     await RemoteGateProcess.RunAsync("git", ["-C", repository, "fetch", "--no-tags", bundle,
-                        "refs/heads/gate-subject:refs/heads/gate-subject"],
+                        "+refs/heads/gate-subject:refs/heads/gate-subject"],
                         directory, request.InfrastructureTimeout, lifetime.Token);
                 else
-                    await RemoteGateProcess.RunAsync("git", ["-C", repository, "update-ref",
-                        "refs/heads/gate-subject", request.ExpectedSha!],
+                    await RemoteGateProcess.RunAsync("git", ["-C", repository, "fetch", "--no-tags", cache,
+                        request.ExpectedSha!],
                         directory, request.InfrastructureTimeout, lifetime.Token);
+                await RemoteGateProcess.RunAsync("git", ["-C", repository, "update-ref", "refs/heads/gate-subject", request.ExpectedSha!],
+                    directory, request.InfrastructureTimeout, lifetime.Token);
                 await RemoteGateProcess.RunAsync("git", ["-C", repository, "symbolic-ref", "HEAD", "refs/heads/gate-subject"],
                     directory, request.InfrastructureTimeout, lifetime.Token);
                 try
@@ -163,6 +180,7 @@ public static class RemoteGateWorker
                 "--no-reflogs", "--no-progress"], directory, request.InfrastructureTimeout, lifetime.Token);
             await RemoteGateProcess.RunAsync("git", ["-C", repository, "rev-parse", "--verify",
                 request.ExpectedSha! + "^{commit}"], directory, request.InfrastructureTimeout, lifetime.Token);
+            if (warmIntegration) Directory.SetLastWriteTimeUtc(repository, DateTime.UtcNow);
             bareReady = sourceTimer.Elapsed;
             Report("REMOTE_GATE_OBJECTS_READY " + invocation.RunId);
             cacheLease?.Dispose();
@@ -179,6 +197,8 @@ public static class RemoteGateWorker
                     logger.LogWarning(exception, "remote_gate_source_cache_sweep_failed run_id={RunId}", invocation.RunId);
                 }
             }
+            // Source preparation includes cache maintenance before slot admission.
+            bareReady = sourceTimer.Elapsed;
             var runnerLogger = logging.CreateLogger<BuildTestGateRunner>();
             var runner = runnerFactory?.Invoke(runnerLogger) ?? new BuildTestGateRunner(runnerLogger);
             var previousArtifactDirectory = GateArtifactOutput.Current;
@@ -204,13 +224,14 @@ public static class RemoteGateWorker
         finally
         {
             cacheLease?.Dispose();
+            integrationLease?.Dispose();
             if (Volatile.Read(ref slotHeld) != 0 && lifetime.IsCancellationRequested)
                 Report($"REMOTE_GATE_SLOT {invocation.RunId} release");
             cancelWatcher.Cancel();
             sessionLost = await watch;
             try
             {
-                if (Directory.Exists(repository)) Directory.Delete(repository, recursive: true);
+                if (!warmIntegration && Directory.Exists(repository)) Directory.Delete(repository, recursive: true);
                 if (File.Exists(bundle)) File.Delete(bundle);
             }
             catch (Exception exception)
@@ -219,6 +240,11 @@ public static class RemoteGateWorker
                 logger.LogWarning(exception, "remote_gate_worker_cleanup_failed run_id={RunId}", invocation.RunId);
             }
         }
+        var sourceStages = new Dictionary<string, long>(result.StageDurationsMs)
+        { ["sourceLockWait"] = sourceLockWaitMs };
+        if (bareReady > TimeSpan.Zero)
+            sourceStages["sourceObjects"] = Math.Max(0, (long)bareReady.TotalMilliseconds - sourceLockWaitMs);
+        result = result with { StageDurationsMs = sourceStages };
         if (cleanupFailed)
             result = result with
             {
@@ -240,7 +266,8 @@ public static class RemoteGateWorker
         }
         result = AttachCancellationSource(result, Volatile.Read(ref shutdownRequested) != 0);
         result = result with { Executor = "remote-worker:" + Environment.MachineName };
-        var response = new RemoteGateResponse(1, invocation.RunId, invocation.BundleSha256, result);
+        var response = new RemoteGateResponse(1, invocation.RunId, invocation.BundleSha256, result)
+        { WorkerCompletedAtUtc = DateTimeOffset.UtcNow };
         var responsePath = Path.Combine(directory, "response.json");
         await File.WriteAllTextAsync(responsePath + ".tmp", JsonSerializer.Serialize(response, RemoteBuildTestGateRunner.Json));
         File.Move(responsePath + ".tmp", responsePath, overwrite: true);
