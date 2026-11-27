@@ -1,9 +1,11 @@
 import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
 import { UsageCockpitService } from '../../../usage-cockpit/services/usage-cockpit.service';
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
+import { SegmentedControlComponent } from '@studio/ui';
+import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import type { CliType } from '../../../../models/task.model';
-import type { QuotaReport } from '../../../../features/quota';
+import type { QuotaPace, QuotaReport, WindowPaceStatus } from '../../../../features/quota';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import { QuotaApiService } from '../../../../features/quota';
 import { QuotaForecastPanelComponent } from '../../../../features/quota/lazy';
@@ -46,7 +48,7 @@ interface CapRow {
 @Component({
   selector: 'app-cli-admin-panel',
   standalone: true,
-  imports: [FormsModule, CliModelsPanelComponent, CliContractsPanelComponent, WatcherContingentStripComponent, QuotaForecastPanelComponent, ModelSelectionViewComponent],
+  imports: [FormsModule, SegmentedControlComponent, DatePipe, CliModelsPanelComponent, CliContractsPanelComponent, WatcherContingentStripComponent, QuotaForecastPanelComponent, ModelSelectionViewComponent],
   templateUrl: './cli-admin-panel.html',
   styleUrl: './cli-admin-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush
@@ -60,6 +62,16 @@ export class CliAdminPanelComponent implements OnInit, OnDestroy {
   readonly defaultCapPct = signal(95);
   readonly caps = signal<Record<string, Record<string, number>>>({});
   readonly report = signal<QuotaReport | null>(null);
+  readonly paceOptions = [
+    { value: 'steady', label: 'Steady until reset' },
+    { value: 'useBy', label: 'Use by…' },
+    { value: 'unpaced', label: 'Unpaced' },
+  ] as const;
+  readonly paces = signal<Record<string, WindowPaceStatus>>({});
+  readonly deadlines = signal<Partial<Record<string, string>>>({});
+  readonly paceSaving = signal<Record<string, boolean>>({});
+  private paceRevision = 0;
+
   readonly waitEnabled = signal(false);
   readonly waitThresholdMinutes = signal(30);
   readonly waitSaving = signal(false);
@@ -129,6 +141,7 @@ export class CliAdminPanelComponent implements OnInit, OnDestroy {
   reload() {
     this.loading.set(true);
     this.errorMsg.set(null);
+    this.refreshPaces();
     let pending = 3;
     const finish = () => {
       pending--;
@@ -188,7 +201,62 @@ export class CliAdminPanelComponent implements OnInit, OnDestroy {
     });
   }
 
+  private refreshPaces() {
+    const revision = ++this.paceRevision;
+    this.quotaApi.getQuotaPaces().subscribe({
+      next: rows => {
+        if (revision === this.paceRevision) {
+          this.paces.set(Object.fromEntries(rows.map(row => [this.paceKey(row), row])));
+        }
+      },
+      error: err => this.errorMsg.set(this.errorMessage(err, 'Failed to load quota pacing')),
+    });
+  }
+
+  paceKey(row: { cliType: string; windowLabel: string }): string {
+    return row.cliType + '|' + row.windowLabel.toLowerCase();
+  }
+
+  choosePace(row: WindowPaceStatus, mode: QuotaPace['mode']) {
+    if (mode === 'useBy') {
+      this.editDeadline(row, row.pace.useBy?.slice(0, 16) ?? '');
+    } else {
+      this.savePace(row, { mode });
+    }
+  }
+
+  editDeadline(row: WindowPaceStatus, value: string) {
+    this.deadlines.update(drafts => ({ ...drafts, [this.paceKey(row)]: value }));
+  }
+
+  saveDeadline(row: WindowPaceStatus, value: string) {
+    if (value) this.savePace(row, { mode: 'useBy', useBy: new Date(value + 'Z').toISOString() });
+  }
+
+  private savePace(row: WindowPaceStatus, pace: QuotaPace) {
+    const key = this.paceKey(row);
+    this.paceSaving.update(state => ({ ...state, [key]: true }));
+    this.quotaApi.setQuotaPace(row.cliType, row.windowLabel, pace).subscribe({
+      next: updated => {
+        this.paceRevision++;
+        this.paces.update(state => ({ ...state, [key]: updated }));
+        this.deadlines.update(drafts => {
+          const remaining = { ...drafts };
+          delete remaining[key];
+          return remaining;
+        });
+        this.paceSaving.update(state => ({ ...state, [key]: false }));
+        this.errorMsg.set(null);
+      },
+      error: err => {
+        this.errorMsg.set(this.errorMessage(err, 'Failed to save quota pacing'));
+        this.paceSaving.update(state => ({ ...state, [key]: false }));
+      },
+    });
+  }
+
   private refreshQuotaOnly() {
+    this.refreshPaces();
     this.quotaApi.getQuotaReport().subscribe({
       next: r => {
         this.report.set(r);
@@ -252,6 +320,7 @@ export class CliAdminPanelComponent implements OnInit, OnDestroy {
       next: (resp: CapsResponse) => {
         this.defaultCapPct.set(resp.defaultCapPct);
         this.caps.set(resp.caps ?? {});
+        this.refreshPaces();
         this.localRows.update(rows =>
           rows.map(r =>
             r.cliType === cliType && r.windowLabel === windowLabel

@@ -59,8 +59,8 @@ public sealed class LoggingModelSelectionLedger : IModelSelectionLedger
             Rule = entry.Rule,
             Reason = entry.Reason,
             Quota = quota is null ? null : new ModelSelectionQuota(entry.From.CliType,
-                quota.Window, quota.UsedPct, projection?.CapPct, projection?.ProjectedUsedPct,
-                projection?.ResetAt is { } reset ? new DateTimeOffset(DateTime.SpecifyKind(reset, DateTimeKind.Utc)) : null, null),
+                quota.Window ?? projection?.WindowLabel, quota.UsedPct ?? projection?.CurrentUsedPct, projection?.CapPct, projection?.ProjectedUsedPct,
+                projection?.ResetAt is { } reset ? new DateTimeOffset(DateTime.SpecifyKind(reset, DateTimeKind.Utc)) : null, null, quota.WindowPaces),
             Equivalence = entry.Equivalence is null ? null : new ModelSelectionEquivalence(
                 entry.Equivalence.CapabilityClass, entry.Equivalence.CatalogueVersion, entry.Equivalence.Source),
             ReturnToPrimaryAt = entry.ReturnToPrimaryAt is { } returnAt

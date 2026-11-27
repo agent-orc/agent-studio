@@ -93,7 +93,12 @@ public sealed class ModelSelectionPolicyStoreTests
             Assert.Empty(reloaded.ModelFallbacks);
             Assert.Equal(10, reloaded.ShortStepReservePoints);
             var edited = new ModelSelectionPolicyStore(config, projects, ledger);
+            Assert.Equal(QuotaPace.Steady, reloaded.PaceFor("codex", "Weekly"));
+            edited.SetPace(new("codex", "Weekly", new("unpaced")));
             edited.SetReserve(7);
+            var saved = new ModelSelectionPolicyStore(config, projects, ledger).Get();
+            Assert.Equal("unpaced", saved.PaceFor("CODEX", "weekly").Mode);
+            Assert.Equal(QuotaPace.Steady, saved.PaceFor("claude", "weekly"));
             Assert.Equal(7, new ModelSelectionPolicyStore(config, projects, ledger).Get().ShortStepReservePoints);
             Assert.Equal("catalogue", reloaded.Consumers["coding"].Fallbacks?.Mode);
             Assert.Equal(reloaded.Consumers["coding"], reloaded.Consumers["CODING"]);

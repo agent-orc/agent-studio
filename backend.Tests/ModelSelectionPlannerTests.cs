@@ -19,6 +19,41 @@ public sealed class ModelSelectionPlannerTests
     private static readonly DateTime Now = new(2026, 11, 4, 12, 0, 0, DateTimeKind.Utc);
     private static readonly ModelRoutingPolicyRegistry Registry = new();
 
+    [Theory]
+    [InlineData("steady", 65, false, SelectionOutcome.Wait)]
+    [InlineData("useBy", 65, false, SelectionOutcome.Primary)]
+    [InlineData("steady", 65, true, SelectionOutcome.Primary)]
+    [InlineData("useBy", 65, true, SelectionOutcome.Primary)]
+    [InlineData("steady", 96, true, SelectionOutcome.Wait)]
+    [InlineData("useBy", 96, false, SelectionOutcome.Wait)]
+    [InlineData("unpaced", 94, false, SelectionOutcome.Primary)]
+    [InlineData("unpaced", 95, false, SelectionOutcome.Wait)]
+    public void Pace_only_changes_first_run_projection(string mode, double used, bool resume, SelectionOutcome expected)
+    {
+        var request = Request() with { Continuation = resume ? new(CliTypes.Claude, ModelIds.ClaudeOpus5) : null };
+        var facts = Facts(used) with { Routing = null, HostAccepts = (_, _) => true,
+            PaceFor = (_, _) => mode == "useBy" ? new(mode, Now.AddDays(1)) : new(mode) };
+        var result = ModelSelectionPlanner.Plan(request, facts);
+        Assert.Equal(expected, result.Outcome);
+        Assert.Equal(mode, result.Quota?.WindowPaces?["Weekly"].Mode);
+    }
+
+    [Fact]
+    public void Ahead_of_use_by_wait_names_the_line_and_retries_at_the_crossing()
+    {
+        var result = ModelSelectionPlanner.Plan(Request(), Facts(80) with
+        {
+            Routing = null,
+            PaceFor = (_, _) => new("useBy", Now.AddDays(1)),
+        });
+        Assert.Equal(SelectionOutcome.Wait, result.Outcome);
+        Assert.Contains("80% used, 76% allowed now", result.Reason);
+        Assert.Contains("use by 05 Nov 12:00 UTC", result.Reason);
+        Assert.Contains("or when the pace is changed", result.Reason);
+        Assert.Equal(result.Quota!.Projection!.FreeAt, result.RetryAt);
+        Assert.InRange(result.RetryAt!.Value, Now.AddHours(5), Now.AddHours(6));
+    }
+
     [Fact]
     public void Capped_primary_switches_to_the_profile_fallback_and_names_the_rule()
     {

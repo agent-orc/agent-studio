@@ -9,7 +9,8 @@ namespace AgentStudio.Cli;
 public sealed record ModelSelectionRoute(string? CliType, string? Model, string? ThinkingLevel);
 public sealed record ModelSelectionEvidence(string? Excerpt, string? ClassifierKind);
 public sealed record ModelSelectionQuota(string? Provider, string? Window, double? UsedPct, double? CapPct,
-    double? ProjectedPct, DateTimeOffset? ResetAt, double? SnapshotAgeSeconds);
+    double? ProjectedPct, DateTimeOffset? ResetAt, double? SnapshotAgeSeconds,
+    IReadOnlyDictionary<string, QuotaPace>? WindowPaces = null);
 public sealed record ModelSelectionEquivalence(string? CapabilityClass, string? CatalogueVersion, string? Source);
 public sealed record ModelSelectionPrice(double? From, double? To);
 

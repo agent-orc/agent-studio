@@ -52,6 +52,8 @@ public sealed class CliQuotaCapsService : IQuotaCapTable
         }
     }
 
+    public QuotaPace GetPace(string cli, string window) => _policy?.Get().PaceFor(cli, window) ?? QuotaPace.Steady;
+
     public int GetCap(string cliType, string windowLabel)
     {
         if (string.IsNullOrWhiteSpace(cliType) || string.IsNullOrWhiteSpace(windowLabel))

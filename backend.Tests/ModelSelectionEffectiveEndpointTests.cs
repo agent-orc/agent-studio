@@ -24,6 +24,73 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "model-effective-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Pace_write_validates_audits_and_changes_the_next_claim_plan()
+    {
+        const string path = "/api/model-selection/policy/pace";
+        var clock = new MutableClock(new DateTime(2030, 11, 4, 12, 0, 0, DateTimeKind.Utc));
+        var now = clock.GetUtcNow().UtcDateTime;
+        var settings = new Dictionary<string, string?> { ["TaskRepository"] = _root,
+            ["Security:Profile"] = "networked", ["AllowedHosts"] = "studio.test", ["PublicDemo:Enabled"] = "false" };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        Directory.CreateDirectory(_root);
+        new QuotaCacheStore(config, NullLogger<QuotaCacheStore>.Instance).Write([
+            new QuotaSnapshot { CliType = "codex", SubscriptionKey = "account", FetchedAt = now,
+                Windows = [new() { Label = "Weekly", UsedPct = 65, ResetAt = now.AddDays(3) }] },
+        ]);
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+            builder.UseEnvironment("Test").ConfigureAppConfiguration((_, c) => c.AddInMemoryCollection(settings))
+                .ConfigureTestServices(services => services.Replace(ServiceDescriptor.Singleton<TimeProvider>(clock))));
+        var options = new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://studio.test"), HandleCookies = false };
+        using var client = factory.CreateClient(options);
+        using var runner = factory.CreateClient(options);
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        security.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", null));
+        var login = security.Login("owner", "correct horse battery staple!", "pace|test");
+        client.DefaultRequestHeaders.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={login.SessionToken}");
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", login.CsrfToken);
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
+        runner.DefaultRequestHeaders.Authorization = new("Bearer", security.EnrollRunner(security.CreateEnrollment(
+            new RunnerEnrollmentRequest("pace-host", [RunnerScopes.Events], null, null)).Code).Secret);
+
+        var json = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
+        var claim = new ModelRouteAdmissionRequest(new SelectionRequest { Consumer = SelectionConsumers.Coding,
+            Pins = new("codex", "gpt-6-sol", "high"), IsExplicitPin = true }, [new("codex", "gpt-6-sol", "high")], []);
+        async Task<SelectionResult> Plan()
+        {
+            using var response = await runner.PostAsJsonAsync("/api/model-selection/plan", claim);
+            response.EnsureSuccessStatusCode();
+            return (await response.Content.ReadFromJsonAsync<SelectionResult>(json))!;
+        }
+
+        Assert.Equal(SelectionOutcome.Wait, (await Plan()).Outcome);
+        foreach (var (target, mode, time) in new[] { ("other/Weekly", "steady", ""), ("codex/typo", "steady", ""),
+                     ("codex/Weekly", "unknown", ""), ("codex/Weekly", "useBy", "tomorrow"), ("codex/Weekly", "useBy", "2030-11-05") })
+        {
+            var invalid = await client.PutAsJsonAsync($"{path}/{target}", new { mode, useBy = time.Length == 0 ? null : time });
+            Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        }
+        using var denied = await runner.PutAsJsonAsync(path + "/codex/Weekly", new { mode = "unpaced" });
+        Assert.Contains(denied.StatusCode, new[] { HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden });
+        var set = await client.PutAsJsonAsync(path + "/codex/weekly", new { mode = "useBy", useBy = now.AddHours(12) });
+        set.EnsureSuccessStatusCode();
+        var rows = await client.GetFromJsonAsync<QuotaPaceEndpoints.WindowStatus[]>(path);
+        var row = Assert.Single(rows!, r => r.CliType == "codex" && r.WindowLabel.Equals("Weekly", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(now.AddHours(12), row.Pace.UseBy?.UtcDateTime);
+        var selected = await Plan();
+        Assert.Equal(SelectionOutcome.Primary, selected.Outcome);
+        var receipt = factory.Services.GetRequiredService<ModelSelectionLedger>().Query(eventId: selected.LedgerId).Events.First();
+        Assert.Equal("useBy", receipt.Quota?.WindowPaces?["Weekly"].Mode);
+        var audit = Assert.Single(factory.Services.GetRequiredService<ControlPlaneAuditLog>()
+            .ReadNewest(e => e.Stream == ControlPlaneAuditStreams.Operator && e.Operation == "quota-pace-set", 10));
+        var recorded = audit.Details!.Value.Deserialize<WindowPaceSetting>();
+        Assert.True(recorded!.Matches("codex", "Weekly"));
+        Assert.Equal(row.Pace, recorded.Pace);
+        (await client.PutAsJsonAsync(path + "/codex/Weekly", new { mode = "steady" })).EnsureSuccessStatusCode();
+        Assert.Equal(SelectionOutcome.Wait, (await Plan()).Outcome);
+    }
+
+    [Fact]
     public async Task Installation_drill_uses_fake_quotas_and_leaves_no_selection_receipts()
     {
         Directory.CreateDirectory(_root);

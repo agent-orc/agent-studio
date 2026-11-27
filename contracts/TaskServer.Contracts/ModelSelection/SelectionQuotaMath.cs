@@ -20,6 +20,8 @@ namespace AgentStudio.Cli;
 /// </summary>
 public static class SelectionQuotaMath
 {
+    public static int EffectiveCap(int cap, int reserve) => Math.Max(1, cap - Math.Clamp(reserve, 0, 50));
+
     /// <summary>Fable's reported weekly allowance applies only to Fable routes.</summary>
     public static QuotaSnapshot? ForModel(QuotaSnapshot? snapshot, string? model)
         => snapshot?.Windows is null ? snapshot : snapshot with
@@ -97,8 +99,9 @@ public static class SelectionQuotaMath
     /// the window cannot be projected (no reset time, no inferable length, no
     /// usage, or too early in the window to be meaningful).
     /// </summary>
-    public static QuotaProjection? Project(QuotaWindow window, DateTime nowUtc, int capPct)
+    public static QuotaProjection? Project(QuotaWindow window, DateTime nowUtc, int capPct, QuotaPace? pace = null)
     {
+        if (pace?.Mode == "unpaced") return null;
         if (window == null || window.UsedPct is null || window.ResetAt is null) return null;
         var length = InferWindowLength(window.Label);
         if (length is null) return null;
@@ -116,35 +119,54 @@ public static class SelectionQuotaMath
         if (elapsed > length.Value) elapsed = length.Value;         // stale snapshot past its reset
 
         var fraction = elapsed.TotalHours / length.Value.TotalHours;
-        if (fraction < MinElapsedFraction) return null;             // too early to trust the slope
+        var end = PaceEnd(pace, reset);
+        var allowanceFraction = PaceFraction(pace, start, end, nowUtc, fraction);
+        if (allowanceFraction < MinElapsedFraction) return null;
 
         var used = window.UsedPct.Value;
-        var projected = used / fraction;                            // "if this pace holds to reset"
-        if (used > 0d
-            && projected / used > MaxProjectedToUsedRatio
-            && fraction <= SuspiciousEarlyFraction)
+        var projected = used / allowanceFraction;
+        if (used > 0d && projected / used > MaxProjectedToUsedRatio && allowanceFraction <= SuspiciousEarlyFraction)
             return null;
-        var burnPerHour = used / elapsed.TotalHours;
-        var hoursRemaining = Math.Max(0d, (reset - nowUtc).TotalHours);
+
+        var allowed = capPct * allowanceFraction;
+        var timed = pace?.Mode == "useBy";
+        var breach = used < capPct && (timed ? used > allowed : projected >= capPct);
+        DateTime? freeAt = timed && breach
+            ? start.AddTicks((long)Math.Ceiling((end - start).Ticks * (used / capPct))) : null;
 
         return new QuotaProjection(
             WindowLabel: window.Label,
             CurrentUsedPct: used,
             ProjectedUsedPct: projected,
-            BurnRatePctPerHour: burnPerHour,
-            HoursRemaining: hoursRemaining,
+            BurnRatePctPerHour: used / elapsed.TotalHours,
+            HoursRemaining: Math.Max(0d, (reset - nowUtc).TotalHours),
             CapPct: capPct,
             ResetAt: reset,
             // Only a window that is currently UNDER the cap but projected to
             // cross it is a "wall ahead". An already-over-cap window is handled
             // by the strict cap check, not the projection.
-            BreachesBeforeReset: used < capPct && projected >= capPct,
+            BreachesBeforeReset: breach,
             AssumedStartAt: start,
-            ElapsedFraction: fraction);
+            ElapsedFraction: fraction,
+            Pace: pace ?? QuotaPace.Steady,
+            AllowedPct: allowed,
+            FreeAt: freeAt);
+    }
+
+    private static DateTime PaceEnd(QuotaPace? pace, DateTime reset) =>
+        pace is { Mode: "useBy", UseBy: { } deadline } && deadline.UtcDateTime < reset
+            ? deadline.UtcDateTime : reset;
+
+    private static double PaceFraction(QuotaPace? pace, DateTime start, DateTime end, DateTime now, double windowFraction)
+    {
+        if (pace?.Mode != "useBy") return windowFraction;
+        if (now >= end) return 1d;
+        return (now - start).TotalHours / (end - start).TotalHours;
     }
 
     /// <summary>Explain why a snapshot was deliberately excluded from projection.</summary>
-    public static QuotaProjectionWarning? FindWarning(QuotaSnapshot? snapshot, DateTime nowUtc)
+    public static QuotaProjectionWarning? FindWarning(QuotaSnapshot? snapshot, DateTime nowUtc,
+        Func<string, string, QuotaPace>? paceFor = null)
     {
         if (snapshot?.Windows == null) return null;
         foreach (var window in snapshot.Windows)
@@ -157,13 +179,16 @@ public static class SelectionQuotaMath
             var elapsed = nowUtc - start;
             if (elapsed <= TimeSpan.Zero) continue;
             var fraction = Math.Min(1d, elapsed.TotalHours / length.Value.TotalHours);
-            var projected = used / fraction;
+            var pace = paceFor?.Invoke(snapshot.CliType, window.Label);
+            if (pace?.Mode == "unpaced") continue;
+            var allowanceFraction = PaceFraction(pace, start, PaceEnd(pace, reset), nowUtc, fraction);
+            var projected = used / allowanceFraction;
             var anchorConflict = window.ObservedStartAt is not null
                 && nowUtc < start + length.Value
                 && (impliedStart - start).Duration() > StartAnchorTolerance;
             var ratioConflict = used > 0d
                 && projected / used > MaxProjectedToUsedRatio
-                && fraction <= SuspiciousEarlyFraction;
+                && allowanceFraction <= SuspiciousEarlyFraction;
             var reason = window.ProjectionSuspiciousReason
                 ?? (anchorConflict ? $"{window.Label} resetAt conflicts with the observed window start" : null)
                 ?? (ratioConflict ? $"{window.Label} projected/used ratio exceeds {MaxProjectedToUsedRatio:0.#} near window start" : null);
@@ -180,7 +205,8 @@ public static class SelectionQuotaMath
     /// set, or null when nothing is projected to breach.
     /// </summary>
     public static CapEvaluation? EvaluateProjectedBreach(
-        QuotaSnapshot? snapshot, IQuotaCapTable caps, DateTime nowUtc)
+        QuotaSnapshot? snapshot, IQuotaCapTable caps, DateTime nowUtc,
+        Func<string, string, QuotaPace>? paceFor = null)
     {
         if (snapshot?.Windows == null || snapshot.Windows.Count == 0) return null;
         if (string.IsNullOrWhiteSpace(snapshot.CliType)) return null;
@@ -191,7 +217,7 @@ public static class SelectionQuotaMath
         {
             if (string.IsNullOrWhiteSpace(w.Label)) continue;
             var cap = caps.GetCap(snapshot.CliType, w.Label);
-            var proj = Project(w, nowUtc, cap);
+            var proj = Project(w, nowUtc, cap, paceFor?.Invoke(snapshot.CliType, w.Label));
             if (proj is null || !proj.BreachesBeforeReset) continue;
             var overshoot = proj.ProjectedUsedPct - proj.CapPct;
             if (worst is null || overshoot > worstOvershoot)
@@ -204,7 +230,8 @@ public static class SelectionQuotaMath
                     CapPct: cap,
                     UsedPct: w.UsedPct ?? 0d,
                     Projected: true,
-                    ResetAt: w.ResetAt);
+                    ResetAt: w.ResetAt,
+                    PaceProjection: proj);
             }
         }
         return worst;
@@ -215,14 +242,15 @@ public static class SelectionQuotaMath
     /// for logging/event payloads. Null when nothing is projectable.
     /// </summary>
     public static QuotaProjection? WorstProjection(
-        QuotaSnapshot? snapshot, IQuotaCapTable caps, DateTime nowUtc)
+        QuotaSnapshot? snapshot, IQuotaCapTable caps, DateTime nowUtc,
+        Func<string, string, QuotaPace>? paceFor = null)
     {
         if (snapshot?.Windows == null || string.IsNullOrWhiteSpace(snapshot.CliType)) return null;
         QuotaProjection? worst = null;
         foreach (var w in snapshot.Windows)
         {
             if (string.IsNullOrWhiteSpace(w.Label)) continue;
-            var proj = Project(w, nowUtc, caps.GetCap(snapshot.CliType, w.Label));
+            var proj = Project(w, nowUtc, caps.GetCap(snapshot.CliType, w.Label), paceFor?.Invoke(snapshot.CliType, w.Label));
             if (proj is null) continue;
             if (worst is null || proj.ProjectedUsedPct > worst.ProjectedUsedPct) worst = proj;
         }
