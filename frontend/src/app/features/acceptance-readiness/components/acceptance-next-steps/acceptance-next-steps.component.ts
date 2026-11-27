@@ -39,32 +39,93 @@ export class AcceptanceNextStepsComponent {
   readonly otherGaps = input<readonly string[]>([]);
 
   private readonly inReview = computed(() => this.job().state === TaskState.HumanReview);
-  /** Re-check when the card changes, for example after a round or a review. */
-  private readonly checkKey = computed(() =>
-    this.inReview() ? `${this.job().id}|${this.job().lastActivity ?? ''}` : null);
-
-  private readonly check = effect(() => {
+  /** Immutable attribution fences evidence from previous delivery generations. */
+  private readonly delivery = computed(() => {
+    const job = this.job();
+    const commit = [job.commit, ...(job.commits ?? []).slice().reverse()]
+      .find(commit => commit && !commit.supersededByAttempt && !commit.supersededBySha);
+    return { run: commit?.runAttemptId, ref: commit?.branch ?? job.integration?.deliveryRef };
+  });
+  private readonly checkKey = computed(() => this.inReview()
+    ? `${this.job().taskKey}|${this.job().lastActivity ?? ''}|${this.delivery().run ?? ''}|${this.delivery().ref ?? ''}` : null);
+  private readonly read = signal<{ pending: boolean; before: unknown }>({ pending: true, before: null });
+  private readonly check = effect(onCleanup => {
     if (this.checkKey() === null) return;
-    untracked(() => void this.store.checkCard(this.job()));
+    let active = true;
+    onCleanup(() => { active = false; });
+    untracked(() => {
+      const job = this.job();
+      const before = this.store.itemFor(job);
+      this.read.set({ pending: true, before });
+      const settled = () => { if (active) this.read.set({ pending: false, before }); };
+      // checkCard retains its old answer on failure. Object identity tells us
+      // whether this check (or a concurrent lane check) supplied a fresh answer.
+      void this.store.checkCard(job).then(settled, settled);
+    });
   });
 
-  /** F12: a missing brief version is unrecorded, never a changed brief. */
-  readonly briefGap = computed(() => this.inReview() ? briefGapOf(this.contentReview()) : null);
+  /** Keep passes as evidence, independently of the filtered refusal item. */
+  readonly readiness = computed(() => {
+    const answer = this.inReview() ? this.store.itemFor(this.job()) : null;
+    const delivery = this.delivery();
+    if (answer?.runAttemptId && delivery.run && answer.runAttemptId !== delivery.run) return null;
+    const resultRef = answer?.latestResultRef?.replace(/^(?:refs\/heads\/|origin\/)/, '');
+    const deliveryRef = delivery.ref?.replace(/^(?:refs\/heads\/|origin\/)/, '');
+    // Immutable result refs and task branches can name the same delivery.
+    if (resultRef && deliveryRef && !(answer?.runAttemptId && answer.runAttemptId === delivery.run)
+      && resultRef.split('/')[0] === deliveryRef.split('/')[0] && resultRef !== deliveryRef) return null;
+    return answer;
+  });
+  private readonly claimReview = computed(() => {
+    const claim = this.inReview() ? this.contentReview() : null;
+    const run = this.delivery().run ?? this.readiness()?.runAttemptId;
+    return claim?.runAttemptId && run && claim.runAttemptId !== run ? null : claim;
+  });
+  readonly reviewSource = computed(() => {
+    const answer = this.readiness();
+    const claim = this.claimReview();
+    if (!answer) return claim;
+    // Dates order reviews only within the same run. Attempt/report identity
+    // prevents a delayed copy of the same review from replacing readiness.
+    const sameReview = !!claim && (answer.reviewAttemptId && claim.reviewAttemptId
+      ? answer.reviewAttemptId === claim.reviewAttemptId
+      : !!answer.reportRef && answer.reportRef === claim.reportRef);
+    if (claim?.runAttemptId && claim.runAttemptId === answer.runAttemptId && !sameReview
+      && Date.parse(claim.reviewedAtUtc ?? '') > Date.parse(answer.reviewedAtUtc ?? '')) return claim;
+    return answer;
+  });
+  /** Claim brief facts are usable only with the selected review identity. */
+  readonly briefReview = computed(() => {
+    const claim = this.claimReview();
+    const source = this.reviewSource();
+    if (!claim || this.readiness()?.readiness === 'ready' && source === this.readiness()) return null;
+    if (source !== claim && source && ((source.reviewAttemptId && claim.reviewAttemptId !== source.reviewAttemptId)
+      || (source.reportRef && claim.reportRef !== source.reportRef))) return null;
+    return claim;
+  });
+  readonly briefGap = computed(() => briefGapOf(this.briefReview()));
   readonly unrecordedBriefSubject = unrecordedBriefSubject;
+
+  /** Claim-only evidence is provisional, never a verified pass or refusal. */
+  readonly fallback = computed(() => {
+    if (!this.inReview()) return null;
+    const answer = this.readiness();
+    const read = this.read();
+    if (answer && this.reviewSource() === answer && answer !== read.before) return null;
+    if (read.pending) return 'Checking acceptance readiness. The displayed review is provisional.';
+    return answer && this.reviewSource() !== answer
+      ? 'Acceptance readiness for this delivery has not been verified against the latest review.'
+      : 'Acceptance readiness is unavailable. Acceptance for this delivery has not been verified.';
+  });
 
   /** The refused dry run of this card; the run-attempt gap has its own notice. */
   readonly item = computed(() => {
-    const item = this.inReview() ? this.store.itemFor(this.job()) : null;
-    return item && item.readiness !== 'ready' && item.stage !== 'admitted' && item.stage !== 'lineage' ? item : null;
+    const item = this.readiness();
+    return item && this.reviewSource() === item && item.readiness !== 'ready'
+      && item.stage !== 'admitted' && item.stage !== 'lineage' ? item : null;
   });
 
-  /**
-   * F12: the readiness answer's reason and next step lead, as on the toolbar
-   * and the board note; the brief gap and the other gaps are listed under it.
-   * The brief gap leads only without a refusal or when the verdict is stale.
-   */
-  readonly reviewSource = computed(() => this.item() ?? this.contentReview());
-  readonly verdictConflict = computed(() => this.job().orchestratorVerdict === 'accept'
+  readonly verdictConflict = computed(() => !this.fallback() && this.job().orchestratorVerdict === 'accept'
     && ['concerns', 'block'].includes(this.reviewSource()?.contentStatus?.toLowerCase() ?? ''));
   readonly primary = computed(() => acceptancePrimaryReason(this.item()));
   readonly briefLeads = computed(() => !!this.briefGap()
@@ -74,26 +135,22 @@ export class AcceptanceNextStepsComponent {
     if (!primary) return [];
     return secondaryAcceptanceGaps(primary, [
       ...this.otherGaps(),
-      this.briefLeads() ? null : briefGapSentence(this.briefGap(), this.contentReview()),
+      this.briefLeads() ? null : briefGapSentence(this.briefGap(), this.briefReview()),
     ]);
   });
 
-  /**
-   * AGT-3874: a `concerns` or `block` content verdict on the current brief is
-   * refused with `completion-content-gap`. Its review again and written
-   * reason are offered from the claim answer, also before the dry run returns.
-   */
   readonly contentGap = computed(() => {
-    const review = this.contentReview();
+    const review = this.claimReview();
     const status = review?.contentStatus?.toLowerCase();
-    return this.inReview() && !this.briefGap()
+    return review && this.reviewSource() === review && !this.briefGap()
       && (status === 'concerns' || status === 'block') ? review : null;
   });
 
-  readonly show = computed(() => !!this.briefGap() || !!this.item() || !!this.contentGap());
+  readonly show = computed(() => !!this.fallback() || !!this.briefGap() || !!this.item() || !!this.contentGap());
   readonly tone = computed(() => readinessPresentation(this.item()?.readiness ?? 'blocked').tone);
-  readonly canReviewAgain = computed(() => !!this.briefGap() || !!this.contentGap() || this.item()?.stage === 'content');
-  readonly canAcceptWithReason = computed(() => acceptanceOverrideAllowed(this.item()));
+  readonly canReviewAgain = computed(() => !this.fallback()
+    && (!!this.briefGap() || !!this.contentGap() || this.item()?.stage === 'content'));
+  readonly canAcceptWithReason = computed(() => !this.fallback() && acceptanceOverrideAllowed(this.item()));
   readonly roundDraft = computed(() => {
     const draft = this.store.draftFor('detail');
     return draft && draft.job.id === this.job().id ? draft : null;

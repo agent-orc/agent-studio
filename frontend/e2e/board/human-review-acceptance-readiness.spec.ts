@@ -265,7 +265,7 @@ async function installRoutes(page: Page, fixtures: Fixture[], refuseOnAccept: st
   return calls;
 }
 
-async function openBoard(page: Page): Promise<void> {
+async function openBoard(page: Page, checked = true): Promise<void> {
   await page.addInitScript(() => {
     localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
       v: 1,
@@ -276,7 +276,7 @@ async function openBoard(page: Page): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt++) {
     await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded', timeout: 60_000 });
     try {
-      await expect(page.getByTestId('acceptance-readiness-summary')).toBeVisible({ timeout: 60_000 });
+      await expect(page.getByTestId(checked ? 'acceptance-readiness-summary' : 'acceptance-readiness-loading')).toBeVisible({ timeout: 60_000 });
       break;
     } catch (error) {
       // A cold page can remain blank while the shared runner is saturated.
@@ -325,6 +325,94 @@ test.describe('Human Review acceptance readiness', () => {
     await card.getByTestId('acceptance-with-reason-link').click();
     await expect.poll(() => page.evaluate(() => window.location.hash)).toContain('/tasks/AGT-4104');
     expect(pageErrors).toEqual([]);
+  });
+
+  test('clears old detail concerns when readiness passes before the next claim poll', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.clock.install();
+    const fixture = { ...FIXTURES[0], orchestratorVerdict: 'accept' as const };
+    await installRoutes(page, [fixture]);
+    const deliveryRef = 'refs/heads/runner/agent-runner-01/AGT-4101';
+    // Current detail hydration needs matching, versioned document resources.
+    const info = { ...card(fixture), integration: {
+      status: 'integrated', integrationBranch: 'develop', deliveryRef: deliveryRef,
+    } };
+    await page.route(new RegExp(`/api/tasks/${fixture.id}(\\?|$)`), route => json(route, { info }));
+    await page.route('**/api/tasks/*/details/*', route => {
+      const url = new URL(route.request().url());
+      const resource = url.pathname.split('/').at(-1)!;
+      const data = resource === 'documents'
+        ? { name: url.searchParams.get('name'), markdown: '# Current delivery', summaryState: null }
+        : resource === 'git'
+          ? { integration: info.integration, commit: null, commits: [], provenance: null }
+          : resource === 'review' ? { reviewProjection: null, evidence: [] } : {};
+      return json(route, { id: fixture.id, taskKey: info.taskKey, projectId: 'PROJ-041',
+        attemptId: null, coreVersion: '1', resource, version: '1',
+        computedAt: '2026-11-26T11:00:00Z', state: 'ready', data, reason: null });
+    });
+    await page.route('**/api/tasks/*/runs**', route => json(route, {
+      runs: [], runnerEvents: [], promptEntries: [], runCount: 0,
+    }));
+    await page.route('**/api/tasks/*/session-events**', route => json(route, { events: [], sessionChain: [] }));
+    await page.route('**/api/tasks/*/pipeline**', route => json(route, {
+      pipeline: { id: 'fixture', displayName: 'Fixture', version: 1, pre: [], core: [], post: [], allSteps: [] },
+      execution: null, executions: [], config: {}, cost: null,
+    }));
+    await page.route('**/api/tasks/*/plan**', route => json(route, {
+      hasPlan: false, source: null, snapshotCount: 0, activeItemId: null, items: [], unassignedSubActions: [],
+    }));
+    let release!: () => void;
+    const readiness = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/api/tasks/acceptance-readiness', async route => {
+      await readiness;
+      return json(route, { checkedAtUtc: '2026-11-26T11:00:00Z', counts: {}, items: [{
+        ...item(fixture), latestResultRef: deliveryRef, runAttemptId: 'current-run', reviewAttemptId: 'new-pass',
+        reviewedAtUtc: '2026-11-26T11:00:00Z', reportRef: 'reports/new-pass.md',
+      }] });
+    });
+    let claims = 0;
+    await page.route('**/api/tasks/*/delivery-claim**', route => {
+      claims++;
+      return json(route, {
+        taskKey: `${WATCH_PATH}::${fixture.id}`, jobId: fixture.id, lane: '5-human-review',
+        deliveryRef: deliveryRef, integrationBranch: 'develop', releaseBranch: 'main',
+        containmentStatus: 'integrated', integrated: true, released: false, integratedSha: 'delivery-sha',
+        mergeCommit: null, mergeSubject: null, mergedAt: null, hasIntegrationRecord: true,
+        class: 'integrated', findings: [], completionClaim: null, commits: [], detail: null,
+        contentReview: {
+          mode: 'coding', currentBriefVersion: 'brief-current', deliveryBriefVersion: 'brief-current',
+          reviewBriefVersion: 'brief-current', requiredAspect: 'requirement-fit', contentStatus: 'concerns',
+          contentSummary: 'Old concern from the previous review.', runAttemptId: 'current-run',
+          reviewAttemptId: 'old-concerns', reviewedAtUtc: '2026-11-26T10:00:00Z', reportRef: 'reports/old.md',
+          evidenceChecked: null, missing: null, ranAspects: ['requirement-fit'], skippedAspects: [],
+        },
+      });
+    });
+    await openBoard(page, false);
+    await page.getByTestId('task-card').filter({ hasText: fixture.title }).click();
+    await expect(page.getByTestId('studio-task')).toBeVisible();
+    await expect.poll(() => claims).toBeGreaterThan(0);
+    const steps = page.getByTestId('acceptance-next-steps');
+    await expect(steps.getByTestId('acceptance-readiness-fallback')).toContainText(/Checking acceptance readiness|Acceptance readiness is unavailable/);
+    await expect(steps.getByTestId('acceptance-review-source')).toContainText('old-concerns');
+    await expect(steps).not.toContainText('Accept will be refused');
+    await expect(steps.getByTestId('review-current-brief')).toHaveCount(0);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await steps.scrollIntoViewIfNeeded();
+      await steps.screenshot({ path: path.join(RESULTS_DIR, `readiness-provisional-${theme}--mocked.png`) });
+    }
+    release();
+    await expect(steps).toHaveCount(0);
+    const beforePoll = claims;
+    await page.clock.fastForward(31_000);
+    await expect.poll(() => claims).toBeGreaterThan(beforePoll);
+    await expect(steps).toHaveCount(0);
+    await expect(page.getByTestId('studio-triage-action-mark-done')).toBeVisible();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({ path: path.join(RESULTS_DIR, `readiness-pass-${theme}--mocked.png`) });
+    }
   });
 
   test('archives a project with an open Human Review card without showing it as unregistered', async ({ page }) => {
