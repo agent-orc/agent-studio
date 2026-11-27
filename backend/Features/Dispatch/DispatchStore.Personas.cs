@@ -104,14 +104,15 @@ public sealed partial class DispatchStore
                 ? head.Digest : ReadDispatcherLog(record.Plan.Project).LastOrDefault()?.Digest;
             var plan = record.Plan;
             var passed = plan.Slots.SelectMany(slot => slot.PassedOver).ToArray();
-            var rule = string.Join(',', plan.Slots.Select(slot => slot.ReasonCode).Distinct());
-            var reason = $"{plan.Persona}: {plan.Admitted.Count} admitted, {passed.Length} passed over; {rule}";
+            var rule = plan.Slots.Count == 0 ? "no-free-slots" : string.Join(',', plan.Slots.Select(slot => slot.ReasonCode).Distinct());
+            var passedCards = passed.Select(p => p.CardKey).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            var reason = $"{plan.Persona}: {plan.Admitted.Count} planned admissions, {passedCards} passed over; {rule}";
             if (reason.Length > 280) reason = reason[..280];
-            var entry = new DispatcherLogEntryV1(record.DecisionId, plan.Project, plan.Persona, "action-admitted",
+            var entry = new DispatcherLogEntryV1(record.DecisionId, plan.Project, plan.Persona, "dispatch-plan",
                 record.EvaluationId, record.At, record.DecisionId, plan.StrategyId, plan.StrategyRevision,
                 rule, record.FactsDigest, passed, passed.Select(p => p.Detail).OfType<string>().Distinct().ToArray(),
                 reason, record.Shadow, null, previous, "")
-            { ExpectedEffect = $"{plan.Admitted.Count} candidates can start; {passed.Length} remain waiting under {rule}." };
+            { ExpectedEffect = $"{plan.Admitted.Count} candidates are planned to start; {passedCards} distinct candidates were passed over during slot evaluation under {rule}." };
             entry = entry with { Digest = LogDigest(entry) };
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             Write(recordPath, record);

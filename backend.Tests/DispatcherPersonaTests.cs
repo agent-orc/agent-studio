@@ -121,8 +121,45 @@ public sealed class DispatcherPersonaTests : IDisposable
         Assert.Equal(10, Store().ReadDispatcherLog("p").Count);
         Assert.True(Store().VerifyDispatcherLog("p"));
         var file = Directory.GetFiles(_root, "dispatcher.jsonl", SearchOption.AllDirectories).Single();
-        File.WriteAllText(file, File.ReadAllText(file).Replace("admitted", "tampered", StringComparison.Ordinal));
+        File.WriteAllText(file, File.ReadAllText(file).Replace("planned admissions", "tampered", StringComparison.Ordinal));
         Assert.False(Store().VerifyDispatcherLog("p"));
+    }
+
+    [Fact]
+    public void A_throwing_persona_does_not_prevent_other_shadows_or_the_reference_even_with_no_ready_cards()
+    {
+        var store = Store();
+        var service = new DispatcherShadowService(store, null!, null!, null!, null!, new FakeTimeProvider(Now),
+            NullLogger<DispatcherShadowService>.Instance);
+        var descriptors = new PersonaCatalogue().Entries.Select(e => e.Descriptor).Where(d => d.Kind == "dispatcher").ToArray();
+        var broken = descriptors.Single(d => d.Id == "surveyor");
+        broken = broken with { Dispatch = broken.Dispatch! with { Strategy = broken.Dispatch!.Strategy with { Id = "missing-strategy" } } };
+        var facts = new DispatchFacts("p", Now, [], [], 2, DispatchLedgerSummary.Empty, []);
+        var records = service.Record(facts, new[] { broken }.Concat(descriptors.Where(d => d.Id != "surveyor")), "local");
+        Assert.Equal(4, records.Count);
+        Assert.Contains(records, r => r.Plan.Persona == "queue-keeper");
+        Assert.All(records, r => Assert.Empty(r.Plan.Admitted));
+        Assert.Equal(4, store.ReadShadow("p").Count);
+    }
+
+    [Fact]
+    public void Plan_log_describes_plans_and_distinct_waiting_cards_rather_than_claims()
+    {
+        var store = Store();
+        var pass = new DispatchPassOver("B", "file-overlap", "A", "shared.cs");
+        var plan = DispatchPlanPolicy.Plan(new("p", Now, [], [], 0, DispatchLedgerSummary.Empty, []),
+            DispatchStrategies.Starter(DispatchStrategies.LaneEntry)) with
+        {
+            Slots = [new(1, DispatchSlotAction.Serialize, null, "file-overlap", false, [pass]),
+                new(2, DispatchSlotAction.Serialize, null, "file-overlap", false, [pass])],
+        };
+        store.AppendShadow(new("evaluation", "decision", "facts", Now, "local", plan));
+        var entry = Assert.Single(store.ReadDispatcherLog("p"));
+        Assert.Equal("dispatch-plan", entry.Kind);
+        Assert.Contains("0 planned admissions, 1 passed over", entry.Reason);
+        Assert.Contains("1 distinct candidates were passed over", entry.ExpectedEffect);
+        Assert.Empty(store.ReadRunDecisions("p"));
+        Assert.True(store.VerifyDispatcherLog("p"));
     }
 
     [Fact]

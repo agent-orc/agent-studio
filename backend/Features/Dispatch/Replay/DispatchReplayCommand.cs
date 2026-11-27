@@ -11,7 +11,7 @@ public static class DispatchReplayCommand
 {
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
-        WriteIndented = true, Converters = { new JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower) },
+        WriteIndented = true, RespectRequiredConstructorParameters = true, Converters = { new JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower) },
     };
 
     public static int Execute(string[] args, TextWriter output, TextWriter error)
@@ -46,6 +46,11 @@ public static class DispatchReplayCommand
             {
                 var recording = JsonSerializer.Deserialize<DispatchReplayRecording>(File.ReadAllText(Required("--recording")), Json)
                     ?? throw new ArgumentException("The recording is empty.");
+                if (recording.Project is null || recording.Cards is null || recording.HubFiles is null
+                    || recording.Cards.Any(c => c is null || c.Ready is null || c.Ready.Key is null
+                        || c.Ready.DependsOn is null || c.Ready.Forecast is null || c.ForecastText is null
+                        || c.BaseSha is null || c.ResultSha is null))
+                    throw new ArgumentException("The recording is missing project or card facts.");
                 var store = new DispatchStore(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
                 { ["Dispatch:StoragePath"] = Required("--store") }).Build());
                 var from = values.TryGetValue("--from", out var start) ? DateTimeOffset.Parse(start, CultureInfo.InvariantCulture) : (DateTimeOffset?)null;
@@ -55,7 +60,7 @@ public static class DispatchReplayCommand
             output.WriteLine(JsonSerializer.Serialize(DispatchReplaySimulator.Run(wave, options), Json));
             return 0;
         }
-        catch (Exception ex) when (ex is ArgumentException or IOException or JsonException or InvalidOperationException or FormatException or OverflowException)
+        catch (Exception ex) when (ex is ArgumentException or IOException or JsonException or InvalidOperationException or FormatException or OverflowException or KeyNotFoundException or UnauthorizedAccessException)
         {
             error.WriteLine(ex.Message);
             return 2;
@@ -87,7 +92,7 @@ public static class DispatchReplayCommand
             ValidateSha(diffBase);
             var files = ReadGit(repository, "diff", "--name-only", "-z", diffBase, card.ResultSha, "--")
                 .Split('\0', StringSplitOptions.RemoveEmptyEntries).Where(TouchForecast.IsCode).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
-            return new DispatchReplayCard(card.Ready with { Forecast = ConvertForecast(forecast) }, files);
+            return new DispatchReplayCard(card.Ready with { Forecast = TouchForecast.ForDecision(forecast) }, files);
         }).ToArray();
         var records = store.ReadConflicts(project, to: at).Where(record => record.At < at).ToArray();
         var ledger = new DispatchLedgerSummary(records.SelectMany(record => TouchForecast.Modules(record.ConflictedFiles, recording.HubFiles)
@@ -131,10 +136,6 @@ public static class DispatchReplayCommand
             Assumptions = ["The 17 November fixture supplies recorded forecasts, not a rebuilt dated index; lane entries are tied, pins and dependencies absent, the ledger starts cold, and source size priors are the Dossier stand-ins (17 for DP/IN, 5 for RV)."],
         };
     }
-
-    private static DispatchForecast ConvertForecast(TouchForecastV1 forecast) => new(forecast.ForecastFiles,
-        forecast.Modules, forecast.Confidence switch { "cited" => DispatchForecastConfidence.High,
-            "module-only" => DispatchForecastConfidence.Low, _ => DispatchForecastConfidence.None });
 
     private static void ValidateSha(string sha)
     {

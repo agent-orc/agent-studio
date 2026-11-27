@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using AgentStudio.OrchestrationDecisions;
 using System.Runtime.CompilerServices;
 
 namespace AgentStudio.Dispatch;
@@ -14,6 +15,7 @@ public sealed record TouchForecastV1(IReadOnlyList<string> CitedFiles, IReadOnly
     IReadOnlyList<string> Modules, IReadOnlyList<string> HubFiles, string Confidence, string IndexRevision)
 {
     public int Version { get; init; } = 1;
+    public string RepositoryStatus { get; init; } = "available";
     public string IntegrationTip { get; init; } = "";
     public string PromptRevision { get; init; } = "";
     public DateTimeOffset ComputedAt { get; init; }
@@ -124,6 +126,14 @@ public static class TouchForecast
 
     public static string[] Modules(IEnumerable<string> files, IReadOnlyList<string> hubs) => files
         .Except(hubs, StringComparer.Ordinal).Select(Module).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+
+    public static DispatchForecast ForDecision(TouchForecastV1? forecast) => forecast is null ? DispatchForecast.Unknown
+        : new(forecast.ForecastFiles, forecast.Modules, forecast.Confidence switch
+        {
+            "cited" => DispatchForecastConfidence.High,
+            "module-only" => DispatchForecastConfidence.Low,
+            _ => DispatchForecastConfidence.None,
+        });
 
     public static ForecastAccuracy Accuracy(IEnumerable<string> predicted, IEnumerable<string> actual)
     {

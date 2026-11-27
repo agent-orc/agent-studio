@@ -130,11 +130,10 @@ public sealed class DispatcherShadowService(DispatchStore store, PersonaActivati
             DispatchForecast Forecast(string key)
             {
                 var f = ReadForecast(candidate.ProjectName, key);
-                return f is null ? DispatchForecast.Unknown : new(f.ForecastFiles, f.Modules,
-                    f.CitedFiles.Count > 0 ? DispatchForecastConfidence.High : DispatchForecastConfidence.Low);
+                return TouchForecast.ForDecision(f);
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException)
         { logger.LogWarning(ex, "dispatcher-shadow-record-failed project={Project}", candidate.ProjectName); return null; }
     }
 
@@ -216,12 +215,17 @@ public sealed class DispatcherShadowService(DispatchStore store, PersonaActivati
             if (descriptor.Kind != PersonaKinds.Dispatcher || descriptor.Dispatch is not { } dispatch) continue;
             if (!DispatcherCapabilities.Admits(new("dispatch.shadow.record", descriptor.Id, true, false,
                 descriptor.Operations.Contains("dispatch.shadow.record"), Now: facts.NowUtc))) continue;
-            var strategy = new DispatchStrategy(dispatch.Strategy.Id, dispatch.Strategy.Revision, dispatch.Parameters);
-            var plan = MonolithTransitionAdapter.DispatchPlan(facts with { Persona = descriptor.Id }, strategy);
-            var record = new DispatchShadowRecordV1(evaluation, Guid.NewGuid().ToString("N"), digest,
-                facts.NowUtc, path, plan);
-            store.AppendShadow(record);
-            records.Add(record);
+            try
+            {
+                var strategy = new DispatchStrategy(dispatch.Strategy.Id, dispatch.Strategy.Revision, dispatch.Parameters);
+                var plan = MonolithTransitionAdapter.DispatchPlan(facts with { Persona = descriptor.Id }, strategy);
+                var record = new DispatchShadowRecordV1(evaluation, Guid.NewGuid().ToString("N"), digest,
+                    facts.NowUtc, path, plan);
+                store.AppendShadow(record);
+                records.Add(record);
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException or JsonException)
+            { logger.LogWarning(ex, "dispatcher-shadow-persona-failed project={Project} persona={Persona}", facts.Project, descriptor.Id); }
         }
         // The reference never retires. Guard samples need baseline shadow on the same decision-time facts.
         if (!records.Any(r => r.Plan.Persona == "queue-keeper"))
