@@ -1,11 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { of, Subject } from 'rxjs';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { CliModelsPanelComponent, fallbackStateTone } from './cli-models-panel';
 import { CLI_TYPES } from '../../../../models/task.model';
-import type { CliModelFallbackRoute } from '../../../quota';
+import { QuotaApiService, type CliModelFallbackRoute, type CliModelRouteProfile } from '../../../quota';
+import { CliCatalogStore } from '../../services/cli-catalog.store';
+import { RoutingCostService } from '../../services/routing-cost.service';
+import { TaskService } from '../../../../services/task.service';
 
 /**
  * Smoke + one behavioural check. Compiles + instantiates the standalone
@@ -203,5 +207,113 @@ describe('fallbackStateTone', () => {
     expect(fallbackStateTone('fallback-preferred')).toBe('warning');
     expect(fallbackStateTone('something-new')).toBe('neutral');
     expect(fallbackStateTone(undefined)).toBe('neutral');
+  });
+});
+
+
+describe('CliModelsPanelComponent route saves', () => {
+  const profile = (cliType = 'claude'): CliModelRouteProfile => ({
+    cliType, primaryModel: 'original', primaryThinkingLevel: 'high',
+    fallbackCliType: 'codex', fallbackModel: 'automatic', fallbackThinkingLevel: 'medium',
+    isFallbackDerived: true,
+  });
+  let component: CliModelsPanelComponent;
+  let writes: { profile: CliModelRouteProfile; response: Subject<CliModelRouteProfile> }[];
+
+  beforeEach(async () => {
+    writes = [];
+    await TestBed.configureTestingModule({
+      imports: [CliModelsPanelComponent],
+      providers: [
+        provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+        { provide: CliCatalogStore, useValue: { hydrateAll: vi.fn(), modelsFor: () => [], ensure: () => of([]) } },
+        { provide: RoutingCostService, useValue: { models: () => of({ models: [] }) } },
+        { provide: TaskService, useValue: { getRegistryWorkspaces: () => of([]), getModelMigrationCatalog: () => of({ migrations: [] }) } },
+        { provide: QuotaApiService, useValue: {
+          getModelRoutes: () => of({ profiles: { claude: profile(), codex: profile('codex') } }),
+          getModelRoutingPolicy: () => of(null),
+          getEffectiveModelSelection: () => of({ routes: [] }),
+          getActiveModelSwitches: () => of([]),
+          setModelRoute: (value: CliModelRouteProfile) => {
+            const response = new Subject<CliModelRouteProfile>();
+            writes.push({ profile: value, response });
+            return response;
+          },
+        } },
+      ],
+    }).compileComponents();
+    component = TestBed.createComponent(CliModelsPanelComponent).componentInstance;
+    component.ngOnInit();
+  });
+
+  it.each(['primary', 'fallback'] as const)('rolls back a rejected %s edit and retries it', (field) => {
+    if (field === 'primary') component.setPrimary('claude', 'chosen');
+    else component.setFallbackModel('claude', 'chosen');
+    expect(component.routes()['claude']?.[field === 'primary' ? 'primaryModel' : 'fallbackModel']).toBe('chosen');
+    writes[0].response.error(new Error('Rejected'));
+    expect(component.routes()['claude']).toEqual(profile());
+    expect(component.isSaving('claude')).toBe(false);
+    expect(component.routeErrors()['claude']).toBeTruthy();
+    component.retryRoute('claude');
+    expect(writes).toHaveLength(2);
+    expect(writes[1].profile).toEqual(writes[0].profile);
+    const returned = { ...writes[1].profile, primaryModel: 'server-value' };
+    writes[1].response.next(returned);
+    expect(component.routes()['claude']).toEqual(returned);
+    expect(component.routeErrors()['claude']).toBeUndefined();
+    expect(component.isSaving('claude')).toBe(false);
+  });
+
+  it('serializes quick edits against the returned profile while keeping both CLIs independent', () => {
+    component.setPrimary('claude', 'first');
+    component.setFallbackModel('claude', 'second');
+    component.setPrimary('codex', 'other');
+    expect(writes).toHaveLength(2);
+    expect(component.isSaving('claude')).toBe(true);
+    expect(component.isSaving('codex')).toBe(true);
+    const returned = { ...profile(), primaryModel: 'canonical-first', primaryThinkingLevel: 'low' };
+    writes[0].response.next(returned);
+    expect(writes).toHaveLength(3);
+    expect(writes[2].profile).toMatchObject({
+      primaryModel: 'canonical-first', primaryThinkingLevel: 'low',
+      fallbackCliType: 'codex', fallbackModel: 'second',
+    });
+    expect(component.routes()['claude']?.fallbackModel).toBe('second');
+    writes[1].response.error(new Error('Codex rejected'));
+    expect(component.isSaving('claude')).toBe(true);
+    expect(component.routes()['codex']).toEqual(profile('codex'));
+    writes[2].response.error(new Error('Claude rejected'));
+    expect(component.routes()['claude']).toEqual(returned);
+    component.retryRoute('claude');
+    expect(writes[3].profile.primaryModel).toBe('canonical-first');
+    expect(writes[3].profile.fallbackModel).toBe('second');
+    writes[3].response.next(writes[3].profile);
+    expect(component.routeErrors()['codex']).toBeTruthy();
+  });
+
+  it('rolls back and retries both quick edits when the first request fails', () => {
+    component.setPrimary('claude', 'first');
+    component.setFallbackCli('claude', 'gemini');
+    component.setFallbackModel('claude', 'second');
+    writes[0].response.error(new Error('Rejected'));
+    expect(writes).toHaveLength(1);
+    expect(component.routes()['claude']).toEqual(profile());
+    component.retryRoute('claude');
+    expect(writes[1].profile).toMatchObject({ primaryModel: 'first', fallbackCliType: 'gemini', fallbackModel: 'second' });
+    writes[1].response.next(writes[1].profile);
+    expect(component.isSaving('claude')).toBe(false);
+  });
+
+  it('keeps derived fallbacks visible without persisting them on primary edits or retries', () => {
+    component.setPrimary('claude', 'first');
+    expect(component.routes()['claude']).toMatchObject({ fallbackModel: 'automatic', isFallbackDerived: true });
+    expect(writes[0].profile).toMatchObject({ fallbackModel: null, fallbackThinkingLevel: null });
+    expect(writes[0].profile.isFallbackDerived).toBeUndefined();
+    component.setPrimary('claude', 'second');
+    writes[0].response.error(new Error('Rejected'));
+    component.retryRoute('claude');
+    expect(writes[1].profile).toMatchObject({ primaryModel: 'second', fallbackModel: null, fallbackThinkingLevel: null });
+    writes[1].response.next({ ...profile(), primaryModel: 'second' });
+    expect(component.fallbackSummary('claude')).toContain('(auto)');
   });
 });
