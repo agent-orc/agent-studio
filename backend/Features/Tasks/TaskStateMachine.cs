@@ -821,18 +821,23 @@ public class TaskStateMachine
         var info = _scanner.FindJob(jobId, watchPath);
         if (info is null) return new(DeleteJobStatus.NotFound);
 
-        // Remote claims resolve the card while holding this gate. A local
-        // pickup first moves to Progress under the lane mutex. Taking the gate
-        // before the lane lock orders deletion against both admission paths.
-        if (!LeaseEndpoints.ClaimGate.Wait(TimeSpan.FromSeconds(30)))
-            return new(DeleteJobStatus.Conflict, "card-delete-busy", "Run admission is busy. Retry deletion later.");
+        // Deletion orders itself against the admission of this card only, not
+        // behind the process-wide ClaimGate that every claim, completion and
+        // operator move of every project holds. A local pickup moves to
+        // Progress under the lane mutex. A remote claim or lease acquire holds
+        // the card's admission mark from its selection until the card is in
+        // Progress; the attempt authority below then shows the run.
         try
         {
-            using var lane = _laneMutex.TryAcquireStrict(info.WatchPath);
+            using var lane = _laneMutex.TryAcquireStrict(info.WatchPath, DeleteLaneWait);
             if (lane is null)
                 return new(DeleteJobStatus.Conflict, "card-delete-busy", "The card's lane is busy. Retry deletion later.");
             lock (TaskJsonFile.SyncRoot(info.FolderPath))
             {
+                using var admission = LeaseEndpoints.TryEnterCardAdmission(info, "deletion", out var admittedBy);
+                if (admission is null)
+                    return new(DeleteJobStatus.Conflict, "card-delete-busy",
+                        $"Run admission of this card is in progress ({admittedBy}). Retry deletion later.");
                 var recheck = FindJobForLaneMutation(jobId, watchPath);
                 if (recheck is null) return new(DeleteJobStatus.NotFound);
                 if (!WatchPathComparison.PathsEqual(recheck.FolderPath, info.FolderPath))
@@ -873,11 +878,10 @@ public class TaskStateMachine
             _logger.LogError(ex, "Failed to delete job {JobId}", jobId);
             return new(DeleteJobStatus.Failure, Message: "Card deletion failed.");
         }
-        finally
-        {
-            LeaseEndpoints.ClaimGate.Release();
-        }
     }
+
+    // Lane writes are short file moves; a longer wait means a wedged writer.
+    private static readonly TimeSpan DeleteLaneWait = TimeSpan.FromSeconds(5);
 
     private string? GetDeletionProtectionEvidence(TaskInfo card)
     {
