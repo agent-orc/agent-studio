@@ -1111,8 +1111,9 @@ public sealed partial class RemoteReviewPlanBuilder
     private static AspectRunInputs Inputs(TaskInfo task, string? integrationRef)
     {
         var briefPath = Path.Combine(task.FolderPath, "prompt.md");
-        var taskBody = Read(briefPath, 64_000, task.Id);
-        var recentLog = Read(Path.Combine(task.FolderPath, "cli-output.log"), 16_000, string.Empty);
+        var brief = ReviewBrief.Read(briefPath, task.Id);
+        var taskBody = brief.Text;
+        var recentLog = ReviewActivity.Read(task);
         var concept = TaskModes.IsConcept(task.Mode);
         var status = concept
             ? new ReviewStatus(ReadStatus(task.FolderPath), false, string.Empty)
@@ -1144,7 +1145,7 @@ public sealed partial class RemoteReviewPlanBuilder
             CardMode = ReviewCardMode.Describe(task.Mode),
             AcceptanceScope = RequirementAcceptanceScope.Describe(
                 task.AcceptanceScope,
-                taskBody),
+                brief.DeclaresBoundedLegacyScope),
         };
     }
 
@@ -1276,6 +1277,104 @@ public sealed partial class RemoteReviewPlanBuilder
                 text.AppendLf().AppendLf().Append(SummaryOmitted);
             return new(text.ToString(), true, note);
         }
+    }
+
+    /// <summary>
+    /// Brief selection preserves opening authority and closing instructions.
+    /// The complete bounded source determines legacy scope before redaction or
+    /// selection. Oversized sources refuse plan creation instead of silently
+    /// inventing a full-task boundary from an incomplete brief.
+    /// </summary>
+    internal sealed record ReviewBrief(string Text, bool DeclaresBoundedLegacyScope)
+    {
+        internal const int Characters = 64_000;
+        internal const int SourceBytes = BoundedFileRead.EvidenceTextBytes;
+
+        internal static ReviewBrief Read(string path, string fallback)
+        {
+            if (!File.Exists(path)) return new(fallback, false);
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            if (stream.Length > SourceBytes)
+                throw new InvalidDataException($"Review brief prompt.md has {stream.Length} source bytes; "
+                    + $"the complete-source limit is {SourceBytes}. Shorten the brief before freezing review.");
+            // Snapshot a bounded byte sequence once: digest, length and decoded
+            // authority must all describe the same source, including its BOM.
+            var bytes = new byte[(int)stream.Length];
+            stream.ReadExactly(bytes);
+            using var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8,
+                detectEncodingFromByteOrderMarks: true);
+            var source = reader.ReadToEnd();
+            var legacy = RequirementAcceptanceScope.DeclaresBoundedLegacyScope(source);
+            var text = CredentialRedactor.Redact(source);
+            if (text.Length <= Characters) return new(text, legacy);
+
+            var digest = Convert.ToHexStringLower(SHA256.HashData(bytes));
+            // Leave a fixed metadata allowance so redaction expansion, source
+            // lengths and the omission notice count against the same budget.
+            var head = SafeHead(text, 48_000);
+            var tail = SafeTail(text, Characters - head.Length - 512);
+            var omitted = text.Length - head.Length - tail.Length;
+            var note = $"\n[brief middle omitted: {omitted} redacted UTF-16 units; source: prompt.md; "
+                + $"source bytes={bytes.Length}; source UTF-16 units={source.Length}; "
+                + $"SHA-256={digest} (original bytes, before redaction).]\n";
+            return new(head + note + tail, legacy);
+        }
+    }
+
+    /// <summary>
+    /// Activity has a tail policy, independent of the brief's head/tail policy.
+    /// The active canonical file is authoritative; neither root leftovers nor
+    /// rotations can replace it. A visible start marker narrows the retained
+    /// window to the latest invocation, including its post-exit context.
+    /// </summary>
+    internal static class ReviewActivity
+    {
+        internal const int Characters = 16_000;
+
+        internal static string Read(TaskInfo task)
+        {
+            var path = TaskPaths.CliOutputLog(task.FolderPath);
+            if (!File.Exists(path)) return "(Source: logs/cli-output.log unavailable.)";
+            var text = BoundedFileRead.ReadTailChars(path, Characters + 1);
+            var trimmed = text.Length > Characters;
+            if (trimmed)
+            {
+                // Discard the leading partial line, including any torn token
+                // or surrogate, before redaction. A giant single line is withheld.
+                var newline = text.IndexOf('\n');
+                text = newline < 0 ? string.Empty : text[(newline + 1)..];
+            }
+            var lines = text.Split('\n');
+            var lastStart = Array.FindLastIndex(lines, line =>
+                System.Text.RegularExpressions.Regex.IsMatch(line,
+                    @"^\[\d{2}:\d{2}:\d{2}(?:\.\d+)?\] \[system\] \[taskboard\] Started \S+ CLI \(PID",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant));
+            if (lastStart >= 0) text = string.Join('\n', lines[lastStart..]);
+            var context = lastStart >= 0 ? "latest run start in retained tail"
+                : "run boundary unavailable in retained tail; activity may span runs";
+            var attempt = task.Runner is { AttemptId: { Length: > 0 } id } runner
+                ? $"; run context {id}, epoch {runner.AuthorityEpoch} (file rows have no epoch tags)" : string.Empty;
+            var note = $"[Source: logs/cli-output.log; {context}{attempt}; "
+                + $"source bytes={new FileInfo(path).Length}; older activity omitted when outside this tail.]\n";
+            text = CredentialRedactor.Redact(text);
+            note = CredentialRedactor.Redact(note);
+            return note + SafeTail(text, Characters - note.Length);
+        }
+    }
+
+    private static string SafeHead(string text, int characters)
+    {
+        var count = Math.Min(text.Length, characters);
+        if (count > 0 && char.IsHighSurrogate(text[count - 1])) count--;
+        return text[..count];
+    }
+
+    private static string SafeTail(string text, int characters)
+    {
+        var start = Math.Max(0, text.Length - characters);
+        if (start < text.Length && char.IsLowSurrogate(text[start])) start++;
+        return text[start..];
     }
 
     private static string Read(string path, int maximumCharacters, string fallback)

@@ -495,7 +495,8 @@ public class TaskStateMachine
         string? cause = null,
         string? transitionCause = null,
         string? transitionDetail = null,
-        string? expectedSourceState = null)
+        string? expectedSourceState = null,
+        bool beforePendingIntents = false)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return 0;
@@ -530,8 +531,9 @@ public class TaskStateMachine
         if (target == null) return 0;
 
         var ordered = new List<TaskInfo>();
+        if (beforePendingIntents) ordered.Add(target);
         ordered.AddRange(pendingHead);
-        ordered.Add(target);
+        if (!beforePendingIntents) ordered.Add(target);
         ordered.AddRange(rest);
 
         var step = 10;

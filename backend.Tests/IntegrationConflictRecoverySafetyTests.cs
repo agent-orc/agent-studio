@@ -1,0 +1,304 @@
+using AgentStudio.Git;
+using AgentStudio.Pipeline;
+using Microsoft.Extensions.Logging.Abstractions;
+using Xunit;
+
+namespace AgentStudio.Tests;
+
+public sealed class IntegrationConflictRecoverySafetyTests : IDisposable
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "conflict-safety-" + Guid.NewGuid().ToString("N"));
+
+    [Theory]
+    [InlineData("{")]
+    [InlineData("null")]
+    [InlineData("{}")]
+    public async Task InvalidReceiptDoesNotStrandTheProjectDrain(string content)
+    {
+        var request = Request("broken");
+        File.WriteAllText(Path.Combine(request.JobFolderPath, "integration-conflict-recovery.json"), content);
+        var card = new TaskInfo { Id = request.JobId, FolderPath = request.JobFolderPath, State = TaskStates.AutoReview };
+        var recovery = new IntegrationConflictRecovery(_ => "tip", (_, _, _) => false, _ => ["shared.cs"], _ => [card]);
+        var entered = new List<string>();
+        var coordinator = Coordinator(recovery, entered);
+
+        var result = await coordinator.EnqueueAsync(request).WaitAsync(TimeSpan.FromSeconds(5));
+        await coordinator.EnqueueAsync(Request("next")).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, result.Outcome);
+        Assert.Contains("integration-conflict-receipt-unreadable", result.Error);
+        Assert.Equal(["next"], entered);
+        Assert.Equal(content, File.ReadAllText(Path.Combine(request.JobFolderPath, "integration-conflict-recovery.json")));
+    }
+
+    [Fact]
+    public void ReceiptReadIoFailureRefusesRetryInsteadOfThrowing()
+    {
+        var request = Request("locked");
+        var recovery = new IntegrationConflictRecovery(_ => "tip", (_, _, _) => false, _ => [], _ => []);
+        recovery.Record(request, Conflict());
+        using var locked = new FileStream(Path.Combine(request.JobFolderPath, "integration-conflict-recovery.json"),
+            FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, recovery.Replay(request)?.Outcome);
+    }
+
+    [Fact]
+    public async Task ReceiptCleanupFailurePreservesPublishedSuccessAndContinuesDrain()
+    {
+        var request = Request("cleanup");
+        var recovery = new IntegrationConflictRecovery(_ => "tip", (_, _, _) => false, _ => [], _ => []);
+        var published = MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged, mergedSha: "published-sha");
+        var entered = new List<string>();
+        var failures = new List<string>();
+        var reclaimed = new List<string>();
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(item =>
+        {
+            entered.Add(item.JobId);
+            if (item.JobId == request.JobId)
+                Directory.CreateDirectory(Path.Combine(item.JobFolderPath, "integration-conflict-recovery.json"));
+            return Task.FromResult(published);
+        }, NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            recordFailure: (_, _, _, detail) => failures.Add(detail),
+            reclaimAfterIntegration: item => reclaimed.Add(item.JobId), conflictRecovery: recovery);
+
+        var result = await coordinator.EnqueueAsync(request).WaitAsync(TimeSpan.FromSeconds(5));
+        await coordinator.EnqueueAsync(Request("next")).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(published, result);
+        Assert.Equal(["cleanup", "next"], entered);
+        Assert.Equal(["cleanup", "next"], reclaimed);
+        Assert.Empty(failures);
+        Assert.Contains(IntegrationLaneEvents.Read(request.JobFolderPath), row => row.Kind == "ready-to-publish");
+    }
+
+    [Fact]
+    public async Task ReceiptWriteFailureIsExplicitAndDoesNotStrandTheNextDelivery()
+    {
+        var request = Request("write");
+        var recovery = new IntegrationConflictRecovery(_ => "tip", (_, _, _) => false, _ => [], _ => []);
+        var rounds = new List<string>();
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(item =>
+        {
+            if (item.JobId != request.JobId)
+                return Task.FromResult(MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged));
+            Directory.CreateDirectory(Path.Combine(item.JobFolderPath, "integration-conflict-recovery.json"));
+            return Task.FromResult(Conflict());
+        }, NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            startAgentRound: (item, _) =>
+            {
+                rounds.Add(item.JobId);
+                return Task.FromResult(new IntegrationAgentRoundStartResult(true, "queued"));
+            }, conflictRecovery: recovery);
+
+        var result = await coordinator.EnqueueAsync(request).WaitAsync(TimeSpan.FromSeconds(5));
+        var next = await coordinator.EnqueueAsync(Request("next")).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, result.Outcome);
+        Assert.Contains("integration-conflict-receipt-write-failed", result.Error);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, next.Outcome);
+        Assert.Empty(rounds);
+        Assert.Empty(Directory.GetFiles(request.JobFolderPath, "*.tmp"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SlowConflictFactsDoNotBlockAnotherProject(bool retry)
+    {
+        var request = Request("slow");
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var enabled = false;
+        void WaitForFacts()
+        {
+            if (!enabled) return;
+            entered.TrySetResult();
+            release.Task.GetAwaiter().GetResult();
+        }
+        var card = new TaskInfo { Id = "repair", FolderPath = request.JobFolderPath, State = TaskStates.AutoReview };
+        var recovery = new IntegrationConflictRecovery(
+            item => { if (retry && item.JobId == "slow") WaitForFacts(); return "tip"; }, (_, _, _) => false,
+            item => { if (!retry && item.JobId == "slow") WaitForFacts(); return ["other.cs"]; },
+            item => item.Project == "project" ? [card] : []);
+        recovery.Record(request, Conflict());
+        IntegrationConflictRecovery.MarkQueued(request.JobFolderPath);
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            _ => Task.FromResult(Conflict()), NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            conflictRecovery: recovery);
+        if (retry) await coordinator.EnqueueAsync(request);
+        enabled = true;
+        var slow = Task.Run(() => coordinator.EnqueueAsync(request));
+        Task<MergeIntoIntegrationResult>? other = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            other = Task.Run(() => coordinator.EnqueueAsync(Request("other") with { Project = "other" }));
+            await other.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            release.TrySetResult();
+            await slow.WaitAsync(TimeSpan.FromSeconds(5));
+            if (other is not null) await other.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Fact]
+    public async Task SlowBoardReservationReadDoesNotBlockAnotherProject()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recovery = new IntegrationConflictRecovery(_ => "tip", (_, _, _) => false, _ => [], item =>
+        {
+            if (item.Project == "project")
+            {
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+            }
+            return [];
+        });
+        var coordinator = Coordinator(recovery, []);
+        var slow = Task.Run(() => coordinator.EnqueueAsync(Request("slow")));
+        Task<MergeIntoIntegrationResult>? other = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            other = Task.Run(() => coordinator.EnqueueAsync(Request("other") with { Project = "other" }));
+            await other.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            release.TrySetResult();
+            await slow.WaitAsync(TimeSpan.FromSeconds(5));
+            if (other is not null) await other.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Fact]
+    public async Task BoardRechecksQueueChangesDuringReservationRead()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var integrating = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var later = Request("later") with { DeliveredAtUtc = DateTimeOffset.UnixEpoch.AddMinutes(2) };
+        var repair = Request("repair");
+        var card = new TaskInfo { Id = repair.JobId, FolderPath = repair.JobFolderPath, State = TaskStates.AutoReview };
+        var recovery = new IntegrationConflictRecovery(_ => "tip", (_, _, _) => false, _ => ["shared.cs"], _ =>
+        {
+            if (Interlocked.Increment(ref reads) == 1)
+            {
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+            }
+            return [card];
+        });
+        recovery.Record(repair, Conflict());
+        IntegrationConflictRecovery.MarkQueued(repair.JobFolderPath);
+        var board = new DeliveryIntegrationQueueBoard();
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(async _ =>
+        {
+            integrating.TrySetResult();
+            await finish.Task;
+            return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged);
+        }, NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance, queueBoard: board, conflictRecovery: recovery);
+        var slow = Task.Run(() => coordinator.EnqueueAsync(later));
+        Task<MergeIntoIntegrationResult>? repaired = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var enqueued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            repaired = Task.Run(async () =>
+            {
+                var pending = coordinator.EnqueueAsync(repair with
+                { ReviewedResultSha = "resolved", DeliveredAtUtc = DateTimeOffset.UnixEpoch.AddHours(1) });
+                enqueued.SetResult();
+                return await pending;
+            });
+            await enqueued.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(1, board.PositionOf("project", "repair")?.Position);
+            Assert.Equal(2, board.PositionOf("project", "later")?.Position);
+            release.TrySetResult();
+            await integrating.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(1, board.PositionOf("project", "repair")?.Position);
+            Assert.Equal(2, board.PositionOf("project", "later")?.Position);
+        }
+        finally
+        {
+            release.TrySetResult();
+            finish.TrySetResult();
+            await slow.WaitAsync(TimeSpan.FromSeconds(5));
+            if (repaired is not null) await repaired.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Fact]
+    public async Task QueueChangesDuringPathReadAreRecheckedBeforeSelectingTheHead()
+    {
+        var request = Request("later") with { DeliveredAtUtc = DateTimeOffset.UnixEpoch.AddMinutes(2) };
+        var reservation = Request("repair");
+        var card = new TaskInfo { Id = reservation.JobId, FolderPath = reservation.JobFolderPath, State = TaskStates.AutoReview };
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var recovery = new IntegrationConflictRecovery(_ => "tip", (_, _, _) => false, item =>
+        {
+            if (item.JobId == "later" && Interlocked.Increment(ref reads) == 1)
+            {
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+            }
+            return ["other.cs"];
+        }, _ => [card]);
+        recovery.Record(reservation, Conflict());
+        IntegrationConflictRecovery.MarkQueued(reservation.JobFolderPath);
+        var integrated = new List<string>();
+        var coordinator = Coordinator(recovery, integrated);
+        var later = Task.Run(() => coordinator.EnqueueAsync(request));
+        Task<MergeIntoIntegrationResult>? earlier = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // Enqueue returns while the first snapshot's path read is still blocked.
+            var queued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            earlier = Task.Run(async () =>
+            {
+                var pending = coordinator.EnqueueAsync(Request("earlier") with
+                { DeliveredAtUtc = DateTimeOffset.UnixEpoch.AddMinutes(1) });
+                queued.SetResult();
+                return await pending;
+            });
+            await queued.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            release.TrySetResult();
+            await later.WaitAsync(TimeSpan.FromSeconds(5));
+            if (earlier is not null) await earlier.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        Assert.Equal(["earlier", "later"], integrated);
+    }
+
+    private static RemoteDeliveryIntegrationCoordinator Coordinator(IntegrationConflictRecovery recovery, List<string> entered)
+        => new(request =>
+        {
+            entered.Add(request.JobId);
+            return Task.FromResult(MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged));
+        }, NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance, conflictRecovery: recovery);
+
+    private RemoteDeliveryIntegrationRequest Request(string id)
+    {
+        var folder = Path.Combine(_root, id);
+        Directory.CreateDirectory(folder);
+        return new("project", id, folder, _root, "develop", IntegrationStrategies.DirectMerge,
+            PipelineTypes.Task, DateTimeOffset.UnixEpoch, ReviewedResultSha: "delivery-" + id);
+    }
+
+    private static MergeIntoIntegrationResult Conflict() => MergeIntoIntegrationResult.RequiresAgentRound(
+        ["shared.cs"], "Net-change replay conflicted.", new IntegrationConflictReport
+        { IntegrationTipSha = "tip", DeliverySha = "delivery", ConflictedFiles = ["shared.cs"] });
+
+    public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
+}

@@ -46,7 +46,10 @@ public sealed record IntegrationConflictReport
         var count = ConflictedFilesTruncated
             ? $"{ConflictedFileCount} total, showing {ConflictedFiles.Count}"
             : $"{ConflictedFileCount} total";
-        return $"Merge into {IntegrationBranch} conflicted (direct merge, mechanical merge and rebase fallback all failed)\n"
+        var headline = Stages.Any(stage => stage.Stage == "net-change-replay")
+            ? $"Net-change replay into {IntegrationBranch} conflicted"
+            : $"Merge into {IntegrationBranch} conflicted (direct merge, mechanical merge and rebase fallback all failed)";
+        return headline + "\n"
                + $"Stages: {stages}.\n"
                + $"Conflicted files ({count}): {files}. Integration tip {Short(IntegrationTipSha)}; delivery {Short(DeliverySha)}.";
     }

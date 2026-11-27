@@ -124,7 +124,7 @@ public sealed partial class MergeIntoDevelopRunnerTests
     }
 
     [Fact]
-    public async Task RunAsync_MainTarget_ConflictBehindMain_RequestsOneAgentRoundWithTheConflictedFiles()
+    public async Task RunAsync_MainTarget_ConflictBehindMain_RequestsBoundedAgentRoundsWithTheConflictedFiles()
     {
         var repo = SeedRepo("release-behind-main-conflict");
         RunGit(repo, "checkout -q -b task/conflict-main");
@@ -159,14 +159,16 @@ public sealed partial class MergeIntoDevelopRunnerTests
         Assert.Equal("agent-round-required", step!.Verdict);
         Assert.Equal(AcceptedIntegrationFailureCodes.DeliveryAttributionAmbiguous, step.FailureCode);
         Assert.Contains("README.md", step.VerdictSummary);
-        // The continuation starts one automatic round and then hands over to
-        // Human Review; it does not wait in 5e-escalated for an operator.
+        // Conflict recovery allows two automatic rounds before Human Review.
         Assert.Equal(
             RemoteIntegrationContinuationAction.StartAgentRound,
             RemoteIntegrationContinuationPolicy.Decide(outcome.Outcome, automaticAgentRoundsUsed: 0));
         Assert.Equal(
-            RemoteIntegrationContinuationAction.LeaveForHumanReview,
+            RemoteIntegrationContinuationAction.StartAgentRound,
             RemoteIntegrationContinuationPolicy.Decide(outcome.Outcome, automaticAgentRoundsUsed: 1));
+        Assert.Equal(
+            RemoteIntegrationContinuationAction.LeaveForHumanReview,
+            RemoteIntegrationContinuationPolicy.Decide(outcome.Outcome, automaticAgentRoundsUsed: 2));
     }
 
     [Fact]
