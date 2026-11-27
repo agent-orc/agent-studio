@@ -2,10 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * Guardrail "Tokens live only in files" (Dossier operator-agent-level): the
- * token comes only from one file with owner-only permissions under
- * ~/.config/agent-studio. There is no environment variable, no command-line
- * option and no fallback between files.
+ * Credentials come from a named environment variable or an owner-only file.
+ * Only file paths, never secret values, are accepted as CLI options.
  */
 export const CONFIG_SEGMENTS = ['.config', 'agent-studio'];
 
@@ -17,7 +15,7 @@ export const CREDENTIAL_FILES = Object.freeze({
 
 export const DEFAULT_CREDENTIAL = 'operator-token';
 
-/** The variable older task-api scripts read. Its presence is refused, never used. */
+/** Compatibility environment variable used by the task-api scripts. */
 export const RETIRED_TOKEN_VARIABLE = ['AGENT', 'STUDIO', 'API', 'TOKEN'].join('_');
 
 /**
@@ -55,19 +53,16 @@ export function redact(text, token = null) {
 }
 
 /**
- * Refuses every place a token must not come from: the retired variable, any
- * environment value shaped like a Studio token, a `--token` option, and a
- * token-shaped command-line argument.
+ * Refuse token arguments and unexpected environment carriers. The two named
+ * credential variables are consumed and redacted by the CLI.
  */
 export function refuseTokenCarriers({ env, argv }) {
-  if (env[RETIRED_TOKEN_VARIABLE] !== undefined)
-    throw new CredentialError('token-environment-refused',
-      `${RETIRED_TOKEN_VARIABLE} is not read. Unset it and keep the token only in the token file.`);
-  const carrier = Object.entries(env).find(([, value]) => value && isTokenShaped(value));
+  const allowed = new Set([RETIRED_TOKEN_VARIABLE, 'STUDIO_OP_TOKEN']);
+  const carrier = Object.entries(env).find(([key, value]) => !allowed.has(key) && value && isTokenShaped(value));
   if (carrier)
     throw new CredentialError('token-environment-refused',
-      `The environment variable ${carrier[0]} holds a token-shaped value. Unset it; studio-op reads the token only from its file.`);
-  if (argv.some(arg => /^--token(?:-[a-z]+)?(?:=|$)/i.test(arg)))
+      `The environment variable ${carrier[0]} holds a token-shaped value. Use STUDIO_OP_TOKEN or an owner-only credential file.`);
+  if (argv.some(arg => /^--token(?:=|$)/i.test(arg)))
     throw new CredentialError('token-argument-refused',
       'studio-op has no token option. Store the token in its file (studio-op auth status names the path).');
   if (argv.some(isTokenShaped))
@@ -75,8 +70,9 @@ export function refuseTokenCarriers({ env, argv }) {
       'A token-shaped value was passed on the command line. Remove it; if it is a real token, ask the Owner to revoke it.');
 }
 
-/** The file the config selects; only the two known names are allowed. */
+/** A configured tokenFile path, or one of the two standard credential names. */
 export function credentialFile(home, config) {
+  if (config.tokenFile) return { name: 'custom', file: path.resolve(config.tokenFile), kind: 'api-token' };
   const name = config.credential ?? DEFAULT_CREDENTIAL;
   if (!Object.hasOwn(CREDENTIAL_FILES, name))
     throw new CredentialError('credential-name-invalid',
@@ -109,7 +105,7 @@ export function inspectCredential(home, config) {
  */
 export function readCredential({ home, config }) {
   const info = inspectCredential(home, config);
-  if (!info.exists && config.credential !== undefined)
+  if (!info.exists && (config.credential !== undefined || config.tokenFile !== undefined))
     throw new CredentialError('token-file-missing', `The config selects ${info.file}, which does not exist.`);
   if (!info.exists) return null;
   if (!info.regular)

@@ -64,7 +64,7 @@ function cardPath(card, rest = '') {
  * renews the card's attention lease and sends the revision it returned, so a
  * stale write is refused with 412 and an Owner action always wins.
  */
-async function cardWrite(ctx, card, project, method, rest, body) {
+export async function cardWrite(ctx, card, project, method, rest, body) {
   const query = { project };
   const attention = await ctx.client.request('POST', cardPath(card, '/attention'), { query });
   return ctx.client.request(method, cardPath(card, rest), { query, body, headers: { 'If-Match': attention.revision } });
@@ -78,7 +78,7 @@ const WARMING_DELAY_MS = 500;
  * `task-index-warming` without the card; that answer is never judged, the
  * read is repeated for a bounded time instead.
  */
-async function readCard(ctx, card, project) {
+export async function readCard(ctx, card, project) {
   for (let attempt = 0; ; attempt++) {
     const answer = await ctx.client.send('GET', cardPath(card), { query: { project } });
     if (answer.status === 202 && answer.body?.reason === 'task-index-warming') {
@@ -94,7 +94,7 @@ async function readCard(ctx, card, project) {
   }
 }
 
-async function watchPathFor(ctx, project) {
+export async function watchPathFor(ctx, project) {
   const paths = await ctx.client.request('GET', '/api/watch-paths');
   const match = (Array.isArray(paths) ? paths : []).find(entry =>
     String(entry.name).toLowerCase() === String(project).toLowerCase());

@@ -39,8 +39,12 @@ folder into the CLI's personal skills folder (for Claude Code
 
 ## Set up the token (Owner)
 
-The token is read from exactly one file. There is no environment variable, no
-command-line option and no fallback to another file.
+Credentials are read from `--token-file <path>`, `STUDIO_OP_TOKEN` (or the
+compatible `AGENT_STUDIO_API_TOKEN`), a config `tokenFile`, or the existing
+default credential file, in that order. A token value is never accepted as a
+command-line argument. The board commands do not copy or persist credentials,
+and all output redacts the loaded token, including a server response that echoes it.
+File credentials retain the owner-only permission and ownership checks.
 
 The quickest way to an operator session is `studio-op login` (see
 [Login](#login)): you confirm the terminal's code in Studio with your second
@@ -72,8 +76,10 @@ steps below set up a token by hand.
    ```
 
    Add `"credential": "operator-session"` to read the session file instead of
-   `operator-token`. Allowed keys are `url`, `credential` and `clientId`; the
-   file never holds a token. `--url` or `STUDIO_OP_URL` override the URL for one
+   `operator-token`. Connection keys are `url`, `tokenFile`, `credential` and `clientId`; the
+   file never holds a token value. `hardwareDeviceKeys` configures login hardware.
+   Use `--config <path>` or `STUDIO_OP_CONFIG` to select another config file;
+   a relative `tokenFile` resolves beside that config file. `--url` or `STUDIO_OP_URL` override the URL for one
    call. Without any URL, `studio-op` uses the local stable backend
    `http://127.0.0.1:5031`.
 4. Check it:
@@ -99,7 +105,7 @@ Settings > Access. If a secret was exposed anywhere, revoke it at once.
 | `token-file-permissions` | Group or others may access the file. Run `chmod 600` on it. |
 | `token-file-owner`, `token-file-not-regular` | The file belongs to another user, or is a link or directory. |
 | `token-file-empty`, `token-file-invalid` | The file is empty or holds more than one value. |
-| `token-environment-refused` | `AGENT_STUDIO_API_TOKEN` is set, or any environment variable holds a token-shaped value. |
+| `token-environment-refused` | An environment variable other than `STUDIO_OP_TOKEN` or `AGENT_STUDIO_API_TOKEN` holds a token-shaped value. |
 | `token-argument-refused` | A `--token` option or a token-shaped argument was given. |
 | `token-requires-https` | A token would travel over plain HTTP to a non-loopback host, or `login` would receive a session that way. |
 | `device-key-permissions`, `device-key-owner`, `device-key-not-regular`, `device-key-invalid` | The `login` device key file is accessible to others, belongs to another user, is not a regular file, or holds no P-256 key. |
@@ -112,14 +118,135 @@ bearer header values.
 
 ## Commands
 
-Every command accepts `--json` (one JSON document on stdout; progress notes go
-to stderr) and `--url`.
+Every command accepts `--json`, `--url`, `--config` and `--token-file`.
+JSON commands emit one document; the continuous `watch --json` emits one JSON
+object per event line (NDJSON). Progress and refusal reasons go to stderr.
+
+### Board working set
+
+These commands replace private board scripts. Their exit contract is **0** for
+a completed operation, **3** for a missing card, and **4** for a server refusal
+(including attention conflict, stale revision, and refused acceptance).
+Local usage errors return 2, credential setup errors 3, and an unreachable
+Studio 10. Every refusal includes the complete server answer in JSON output
+and its reason on stderr. Bulk writes stop at the first failure and report
+`completed` items and `failedCard`; already successful writes remain applied.
+
+| Command | Behavior |
+|---|---|
+| `snap` | Counts every lane (Archive uses the paged endpoint's total), Progress with CLI, escalations with date and first reason line, Human Review with an `accept` verdict, gate slots and pending work per project, open batches. |
+| `card KEY... [--project NAME]` | Lane, CLI, model, reasoning level, parked reason, review verdict and integration state. |
+| `ready` | Ready in the API's queue order with model and level. |
+| `deps [LANE...]` | Edges of open cards and each predecessor's current lane, including archived predecessors; missing targets say `not-found`. |
+| `continue KEY FILE [LEVEL] [CLI] [MODEL]` | Read the file and submit a round. Also accepts the existing `--prompt-file`, `--thinking`, `--cli` and `--model` options. Reports the actual server status: queued to Ready, started, or saved. |
+| `move LANE KEY...` | Move cards sequentially. Lane names such as `ready` and full states such as `2-ready` work. The existing `move KEY LANE` spelling also works. Use `accept` for completion. |
+| `top KEY...` | Promote cards to the front of Ready in the given order, using individually fenced moves with `targetIndex: 0`. |
+| `route CLI MODEL LEVEL KEY...` | Set CLI, model and reasoning level, taking a fresh lease/revision before each field write. These field writes are not transactional. |
+| `depends KEY [DEP...]` | Replace dependencies, preserving the other reference relations; no DEP clears the list. |
+| `accept KEY...` | Apply the green-evidence check below, then request completion. Full refusal text is printed; refusal returns 4. |
+| `accept-with-reason KEY "reason"` | Submit `operatorOverride: true` and the written reason to the completion route. The server decides authority and may refuse, including when Owner approval is required. |
+| `create FILE` | Create the JSON array below in Backlog, resolve local ids to stable keys, set all dependencies, then promote and order each project's cards in Ready. |
+| `quota` | Per-subscription window used percent, reset time and reading status from `/api/operator/capacity` (also available as cached readings to project-scoped tokens). Missing readings stay unknown. |
+| `why KEY [--project NAME]` | Show every published dependency, dispatch-rule and quota blocker plus exhausted project coding slots. Uses `/api/operator/coding-capacity`; no blocker is reported as an unexplained wait, not a promise to dispatch. |
+| `watch [--interval SECONDS] [--timeout SECONDS]` | Continuously compare board and batch snapshots, printing lane changes, escalations, and newly red batch/member gates. Default interval: 2 seconds. Ctrl-C or timeout releases the watcher lease and local lock and exits 0. |
+| `get PATH`, `post PATH JSON`, `put PATH JSON` | Call an API path on the configured Studio origin. Card writes automatically acquire attention using the same query and send `If-Match`. Authorization remains the server's responsibility. |
+
+Card commands that take `--project` use the Studio project display name to
+disambiguate a key. Bulk `create` uses display names from `/api/watch-paths`
+and its resolved storage path, never the repository path. Input `id` values
+are local labels and are not sent as storage slugs. If omitted, the local id
+is the card's one-based position as a string.
+
+`create` validates duplicate ids, unknown local dependencies and cycles before
+any mutation. It is not a transaction: on failure it prints every `created`
+key and a recovery note. Inspect those keys before retrying, since retrying
+the whole file would create duplicates. All dependency writes finish before
+the first promotion to Ready. File order is preserved within each project.
+
+### Three worked examples
+
+**1. Diagnose a stalled Ready queue.** Select a connection file holding
+`{"url":"https://studio.example.test","tokenFile":"operator-token"}` with
+the owner-only token file beside it:
+
+```sh
+export STUDIO_OP_CONFIG="$HOME/.config/agent-studio/connection.json"
+studio-op snap
+studio-op ready --json
+studio-op why AGT-4100
+studio-op deps ready
+```
+
+A `dependency` reason names the predecessor. A `dispatch-rule` reason retains
+the API's distinction between a current rejection and a last observed claim
+refusal. A `quota` reason names the wait; `slot` means the project's published
+coding pool has no free slot. Read `card` for the predecessor before acting.
+
+**2. Create an ordered pair with a dependency.** Save this as `cards.json`:
+
+```json
+[
+  {
+    "id": "parser", "title": "Add the parser", "project": "Demo App",
+    "mode": "coding", "type": "feature", "level": "high",
+    "cli": "codex", "model": "<model from your Studio catalogue>",
+    "prompt": "Implement the parser and verify its public input contract."
+  },
+  {
+    "id": "consumer", "title": "Use the parser", "project": "Demo App",
+    "mode": "coding", "type": "feature", "level": "high",
+    "cli": "codex", "model": "<model from your Studio catalogue>",
+    "prompt": "Wire the parser into the consumer and verify the integration.",
+    "dependsOn": ["parser"]
+  }
+]
+```
+
+Replace the model placeholders with installed catalogue values, then run:
+
+```sh
+studio-op create cards.json --json
+studio-op ready
+studio-op deps ready
+```
+
+The response maps `parser` and `consumer` to their generated stable keys.
+The second card's dependency is stored before either card reaches Ready.
+
+**3. Send a review follow-up and monitor it.** Put the requested change in
+`follow-up.md`, then queue it and inspect its eventual acceptance:
+
+```sh
+studio-op continue AGT-4100 follow-up.md high codex '<installed model>'
+studio-op top AGT-4100 AGT-4101
+studio-op watch --json --interval 2 --timeout 60
+studio-op card AGT-4100
+studio-op accept AGT-4100
+```
+
+If acceptance is refused, stderr contains the full reason and the exit code
+is 4. Read the reason and resolve the finding before another acceptance.
+
+### Current API limits
+
+There is no queue-only option on `continue`: Studio can start a round
+immediately, queue it in Ready, or save it when promotion fails. The CLI
+reports that outcome and does not interrupt a started run to simulate queuing.
+The decision stream omits ordinary lane changes, so continuous `watch` polls
+snapshots. It observes transitions present at a poll and cannot recover
+short-lived intermediate states between polls. After a new watch starts,
+its first snapshot is the baseline; it has no durable cursor or replay.
+`why` reads published capacity, not an atomic dispatch permit or an exhaustive
+scheduler trace. These commands add no endpoints.
+
+The existing advanced operator commands remain available:
+
 
 | Command | Routes | Notes |
 |---|---|---|
 | `login [--agent <name>] [--label <text>] [--class <id>]... [--lifetime <value>] [--no-qr]` | `POST /api/auth/operator-sign-in`, `POST /api/auth/operator-sign-in/poll` | See [Login](#login). Sends no credential. |
 | `auth status` | `GET /api/operator/decisions?limit=1`, `GET /api/watch-paths`, `GET /api/auth/operator-session/status` for an operator session | Local file checks, identity probe, chosen end, idle end and binding kind. |
-| `watch [--session <label>] [--after <cursor>\|--from-start] [--take-over --reason <text>] [--timeout <s>]` | `POST/DELETE /api/operator/watcher/lease`, `.../heartbeat`, `GET /api/operator/decisions/stream` | See [Watch](#watch). |
+| `watch --decisions [--session <label>] [--after <cursor>\|--from-start] [--take-over --reason <text>] [--timeout <s>]` | `POST/DELETE /api/operator/watcher/lease`, `.../heartbeat`, `GET /api/operator/decisions/stream` | See [Decision watcher](#decision-watcher). |
 | `triage [--project <p>]` | `GET /api/operator/batch-triage` | Flights, red and isolating members, pending pushes with age, next safe member operation. |
 | `eject <card> [--project <p>]` | `POST /api/projects/{p}/batch-gate/members/{card}/eject` | The only member action during isolation. |
 | `continue <card> --prompt-file <f> [--mode continue\|steer\|extend] [--reason] [--base-ref] [--model] [--cli] [--thinking]` | `POST /api/tasks/{card}/attention`, `POST /api/tasks/{card}/continue` | Studio starts from the card's latest result ref and returns it as `base`. |
@@ -206,9 +333,11 @@ request, reconnect and stream uses a new proof. See the
 [operator setup guide](operator-agent.md#3-start-a-session) and
 [DPoP contract](../security/overview.md#proof-of-possession-binding-es-4).
 
-### Watch
+### Decision watcher
 
-`studio-op watch` replaces board polling. It:
+`studio-op watch --decisions` keeps the existing decision-event watcher. The
+legacy `--session`, `--after`, `--from-start` and `--take-over` options also
+select this mode. It:
 
 1. creates the local lock `~/.config/agent-studio/studio-op-watch.lock`
    (mode 600, holding the process id and lease id); a second watch on the same
@@ -232,7 +361,7 @@ the control plane audit before the lease changes.
 ### Accept
 
 `studio-op accept` runs the OA-D5 check on the card and its fresh review
-projection and refuses with exit 7 and every reason:
+projection and refuses with exit 4 and every reason:
 
 | Reason | When |
 |---|---|
@@ -304,6 +433,11 @@ one result per project; exit 6 means some projects refused, exit 1 all.
 
 ## Exit codes
 
+The board working set above uses 0 / 3 / 4, including `continue`, `move`,
+`accept`, `create`, raw calls and the continuous watcher. Its API refusals
+always return 4; a local watcher lock conflict returns 9. The advanced
+commands and `watch --decisions` retain the following existing codes:
+
 | Code | Meaning |
 |---:|---|
 | 0 | Done. `watch` with `--timeout`: no event in time. |
@@ -313,7 +447,7 @@ one result per project; exit 6 means some projects refused, exit 1 all.
 | 4 | Forbidden (Studio 403). |
 | 5 | Not found (Studio 404). |
 | 6 | Conflict: Studio 409, 412 or 428 without a more specific code. |
-| 7 | `accept-refused`: evidence not green or a decision open. |
+| 7 | Reserved legacy acceptance code; board acceptance now returns 4. |
 | 8 | `preflight-blocked`: the restart or deploy preflight names blockers. |
 | 9 | `watcher-active`: another watcher holds the lock or lease. |
 | 10 | `studio-unreachable`. |
@@ -333,7 +467,8 @@ one result per project; exit 6 means some projects refused, exit 1 all.
 | 29 | Watch woke on an event type this release does not know. |
 | 130 | Watch was interrupted (SIGINT or SIGTERM). |
 
-The numbers are stable; new codes take new numbers.
+Use the board command contract above when replacing a private script; use
+this advanced table for decision-watcher runbooks and the other commands.
 
 ## Not included
 

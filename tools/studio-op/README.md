@@ -9,11 +9,19 @@ npm install --global ./tools/studio-op   # or: node tools/studio-op/studio-op.mj
 studio-op auth status
 ```
 
-The token is read only from `~/.config/agent-studio/operator-token` (mode 600),
-or `operator-session`, which `studio-op login` writes after the Owner confirms
+The token is read from `--token-file`, `STUDIO_OP_TOKEN` (also
+`AGENT_STUDIO_API_TOKEN`), a config `tokenFile`, or the default
+`~/.config/agent-studio/operator-token` (mode 600). Existing login sessions use
+`operator-session`, which `studio-op login` writes after the Owner confirms
 the terminal's code in Studio with a second factor.
 Setup, the command-to-route table and the stable exit codes:
 [docs/operations/setup/studio-op.md](../../docs/operations/setup/studio-op.md).
+Board scripts use `snap`, `card`, `ready`, `deps`, `continue`, `move`, `top`,
+`route`, `depends`, `accept`, `accept-with-reason`, `create FILE`, `quota`,
+`why`, `watch`, `get`, `post` and `put`. Each supports `--json`; `watch` emits
+NDJSON. Board API refusals return 4, missing cards 3, success 0. The existing
+decision-event watcher is `watch --decisions`.
+
 Runbooks for agent sessions: [.agents/skills/operator](../../.agents/skills/operator/SKILL.md).
 
 Tests: `node --test tools/studio-op/test/*.test.mjs` (unit and fake-Studio),

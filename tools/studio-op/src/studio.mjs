@@ -66,7 +66,11 @@ export class StudioClient {
   url(path, query = {}) {
     // Keep a path prefix of the configured origin, such as https://host/studio/.
     const root = this.base.href.endsWith('/') ? this.base.href : `${this.base.href}/`;
+    if (!path.startsWith('/') || path.startsWith('//') || /[\\#]/.test(path))
+      throw new OperationError('invalid-path', 'Use an absolute API path on this Studio origin.', { exitCode: EXIT.USAGE });
     const target = new URL(path.replace(/^\/+/, ''), root);
+    if (target.origin !== this.base.origin)
+      throw new OperationError('invalid-path', 'The request must stay on the Studio origin.', { exitCode: EXIT.USAGE });
     for (const [key, value] of Object.entries(query))
       if (value !== undefined && value !== null && value !== '') target.searchParams.set(key, String(value));
     return target;
@@ -92,7 +96,7 @@ export class StudioClient {
     const text = await response.text();
     let parsed = null;
     if (text) {
-      try { parsed = JSON.parse(text); } catch { parsed = { message: text.slice(0, 500) }; }
+      try { parsed = JSON.parse(text); } catch { parsed = { message: text }; }
     }
     return { status: response.status, body: parsed, headers: response.headers };
   }
@@ -123,7 +127,7 @@ export class StudioClient {
     if (!response.ok) {
       const text = await response.text();
       let body = null;
-      try { body = JSON.parse(text); } catch { body = { message: text.slice(0, 500) }; }
+      try { body = JSON.parse(text); } catch { body = { message: text }; }
       throw failure('GET', path, { status: response.status, body });
     }
     return response;
