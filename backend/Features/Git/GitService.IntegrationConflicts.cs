@@ -28,7 +28,7 @@ public partial class GitService
     /// for the caller to commit.
     /// </summary>
     public AddAddConflictResolution TryResolveAddAddConflicts(
-        string worktreePath, IReadOnlyList<string> conflictedFiles)
+        string worktreePath, IReadOnlyList<string> conflictedFiles, bool registeredOnly = false)
     {
         if (conflictedFiles.Count == 0)
             return new AddAddConflictResolution(false, [], "no conflicted file");
@@ -36,6 +36,9 @@ public partial class GitService
         var hunks = new List<UnionResolvedHunk>();
         foreach (var path in conflictedFiles)
         {
+            var registry = registeredOnly ? AppendOnlyRegistry.Find(worktreePath, path) : null;
+            if (registeredOnly && registry is null)
+                return Refused($"{path}: no bounded append-only registration");
             var (stages, stageError, stageCode) = RunGitArgs(worktreePath, "ls-files", "-u", "-z", "--", path);
             if (stageCode != 0)
                 return Refused($"{path}: unmerged stages could not be read: {stageError.Trim()}");
@@ -76,7 +79,9 @@ public partial class GitService
                 {
                     return Refused($"{path}: not UTF-8 text");
                 }
-                var union = AddAddUnionResolution.Resolve(path, text);
+                var union = registry is null
+                    ? AddAddUnionResolution.Resolve(path, text)
+                    : AddAddUnionResolution.ResolveWithin(path, text, registry.StartMarker, registry.EndMarker);
                 if (!union.Resolved) return Refused(union.Refusal!);
                 var content = Encoding.UTF8.GetBytes(union.Content!);
                 resolved.Add((path, bom ? [0xEF, 0xBB, 0xBF, .. content] : content));

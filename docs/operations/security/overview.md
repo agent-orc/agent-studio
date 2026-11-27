@@ -1,5 +1,7 @@
 # Security overview
 
+<!-- append-only:security-overview:start -->
+
 > **Status note (2026-07-07).** ADR-0059 promotes **remote execution** (Linux
 > runner hosts + a central task-server URL) from explicit non-goal to a major
 > goal. The "local-only" situation below still describes the **current,
@@ -2006,3 +2008,4 @@ Existing bound sessions without a recorded key certification end no later
 than 60 minutes after confirmation and require a new terminal sign-in.
 The kill switch also denies pending and confirmed sign-ins that have not yet
 been collected, so a code from before the switch cannot issue later.
+<!-- append-only:security-overview:end -->

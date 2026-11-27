@@ -71,10 +71,55 @@ The integration stages run in this fixed order:
 | Stage | Strategy | Failure evidence |
 |---|---|---|
 | Direct merge | `git merge --no-ff` preserves the reviewed delivery objects. | Number and names of conflicted files. |
-| Mechanical merge | A three-way `ort`/`rerere` merge retries known mechanical resolutions without rewriting delivery history. | Number and names of files still conflicted. |
+| Mechanical merge | A three-way `ort`/`rerere` merge retries known resolutions, then unions pure additions inside registered append-only sections without rewriting delivery history. | Number and names of files still conflicted. |
 | Rebase fallback | An isolated `rebase --rebase-merges` runs with `rerere` and autostash disabled. It is accepted only with an unambiguous one-to-one old/new commit mapping. | Stopped commit and position, such as 2 of 3, plus conflicted files. |
 
 Card reports use the task job's `results/` folder. Repositories opt in to legacy report handling with `.agent-studio/legacy-status-reports`; Agent Studio does so. Only in opted-in repositories, `DeliveryReportPathPolicy` excludes repository-root `status.md` and `results/status.md` from new platform commits. A direct merge keeps the integration version of a report path only when that path conflicts. A batch candidate also keeps its current report version when those are the only conflicts. The delivery's report is preserved as one bounded Markdown artifact per report path: integration reuses the runner artifact when present, removes stale backend snapshots, and otherwise replaces a fixed-name task artifact with the final 16 KiB. The reviewed delivery SHA remains a merge parent. Any conflict in another path follows the ordinary conflict path.
+
+### Append-only documentation and registry contention
+
+The individual mechanical stage reads one JSON registration per feature under
+`.agent-studio/append-only-registries/`. Each names a repository `path`,
+`startMarker` and `endMarker`. Add a complete paragraph, section or case row
+between the existing markers. The resolver keeps the integration block before
+the delivery block only when every conflict hunk has an empty merge-base block.
+Conflicts outside the bounds, missing or conflicting markers, replacements,
+deletions, binary files and unregistered files retain ordinary recovery. It
+validates every file before writing any resolution. Both original delivery
+parents survive, and the existing integration gate still verifies the result.
+Batch integration retains its existing general add/add resolver.
+
+Measure contention with the standard-library script:
+
+```sh
+python3 scripts/registry-hotspots.py --ref develop \
+  --from 2026-11-24T00:00:00+01:00 --to 2026-11-27T00:00:00+01:00 \
+  --project 'Agent Taskboard' --output "$JOB_RESULTS_DIR"
+```
+
+Date-only inputs use UTC. Explicit offsets select local calendar dates.
+`--conflicts` accepts the local-state integration-conflicts directory or an
+export of the project's integration-conflicts API response. Filter by the exact
+project name and target. Without matching records, the script replays surviving
+develop-sync merges on all refs and labels those recovered conflicts separately.
+This fallback cannot reconstruct failed attempts that left no Git objects or
+prove a historical conflict rate. Touch counts use first-parent integration
+diffs and distinct owning cards, including net-change attribution.
+If a net-change receipt references an unavailable source commit and has no
+explicit card attribution, the report lists its SHA in
+`unattributedIntegrations` and continues measuring the available history.
+These receipts do not contribute to distinct-card counts.
+
+`RegistryHotspotGuardTests` fails above eight distinct contributing cards in a
+UTC calendar week within the last seven revision-relative days for an untracked
+registry candidate. Candidates include document tables/section collections,
+TSV inventories, registration calls, policy type lists and transition adapters.
+The diagnostic instructs contributors to generate, split by feature or register
+a bounded append-only section. `scripts/registry-hotspots.json` records the
+measured baseline, strategies and sizes. Its `measured-backlog` rows explicitly
+track follow-up work; only `bounded-union` and `existing-generator` rows describe
+implemented handling. New hot files require a recorded strategy. The guard
+uses Git history and Python 3, without contacting a running installation.
 
 If all three stages fail, the merge step persists one structured conflict report with every stage outcome, the capped file list and total count, the integration tip, and the delivery SHA. The card renders that record in three lines beginning `Merge into develop conflicted (direct merge, mechanical merge and rebase fallback all failed)`. Raw Git hint text is never card copy.
 

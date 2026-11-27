@@ -1,0 +1,5 @@
+{
+  "path": "docs/operations/setup/operator-agent.md",
+  "startMarker": "<!-- append-only:operator-agent:start -->",
+  "endMarker": "<!-- append-only:operator-agent:end -->"
+}
