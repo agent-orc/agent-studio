@@ -42,7 +42,34 @@ import { LEDGER_SCOPE_KEYS, kvValueOf, routeSegmentOf } from '../../services/url
 export const UNKNOWN = 'Unknown';
 
 /** Section the detail opens at. Every other section stays reachable. */
-export type UsageDetailFocus = { kind: 'cli'; cliId: string } | { kind: 'capacity' } | { kind: 'cost' };
+export type UsageDetailFocus = ({ kind: 'cli' } & UsageCliIdentity) | { kind: 'capacity' } | { kind: 'cost' };
+
+export interface UsageCliIdentity {
+  cliId: string;
+  subscriptionKey?: string | null;
+}
+
+/** Provider IDs are case insensitive; subscription keys remain opaque and case sensitive. */
+export function usageCliKey(cli: UsageCliIdentity): string {
+  const provider = encodeURIComponent(cli.cliId.toLowerCase());
+  return cli.subscriptionKey == null ? provider : `${provider}:${encodeURIComponent(cli.subscriptionKey)}`;
+}
+
+/** Keep the unkeyed account distinct even from a subscription whose key is `local`. */
+export function usageCliName(cli: UsageCliIdentity, accounts: readonly UsageCliIdentity[]): string {
+  const provider = cliDisplayName(cli.cliId);
+  if (cli.subscriptionKey != null) {
+    const key = cli.subscriptionKey;
+    let length = Math.min(8, key.length);
+    // Match the account page's short digest, extending it when another account shares it.
+    while (length < key.length && accounts.some(account => sameText(account.cliId, cli.cliId)
+      && account.subscriptionKey !== key && account.subscriptionKey?.startsWith(key.slice(0, length)))) length++;
+    const prefix = key.slice(0, length);
+    const label = length > 16 ? prefix.match(/.{1,8}/g)?.join(' ') ?? prefix : prefix;
+    return `${provider} · subscription ${label}${length < key.length ? '…' : ''}`;
+  }
+  return accounts.filter(account => sameText(account.cliId, cli.cliId)).length > 1 ? `${provider} · local` : provider;
+}
 
 export interface UsageInstantView {
   /** `Mon 29 Sept, 09:00`, in the workspace zone named by the table header. */
@@ -218,9 +245,13 @@ export interface UsageModelGroupView {
   runs: UsageRunRouteView[];
 }
 
-export interface UsageCliDetailView {
-  cliId: string;
+export interface UsageCliDetailView extends UsageCliIdentity {
+  key: string;
+  subscriptionKey: string | null;
   name: string;
+  providerName: string;
+  /** Provider receipts have no subscription identity; list them once per provider. */
+  showProviderRuns: boolean;
   plan: string | null;
   source: string | null;
   state: UsageChipState;
@@ -324,13 +355,18 @@ export function buildCliDetailView(
   cli: UsageCli,
   snapshot: UsageCockpitResponse,
   now: number,
+  showProviderRuns = true,
 ): UsageCliDetailView {
   const zone = usageTimeZone(snapshot.timeZone);
   const chip = buildCliChipView(cli.cliId, cli, zone, now);
   const projectNames = projectNameMap(snapshot.cost);
   return {
     cliId: cli.cliId,
-    name: chip.name,
+    subscriptionKey: cli.subscriptionKey ?? null,
+    key: usageCliKey(cli),
+    name: usageCliName(cli, snapshot.clis),
+    providerName: chip.name,
+    showProviderRuns,
     plan: cli.plan,
     source: cli.source,
     state: chip.state,
@@ -341,7 +377,7 @@ export function buildCliDetailView(
       ? [{ id: `${cli.cliId}/session-unreported`, label: 'Current session', usedPct: null,
         resetAtUtc: null, resetLabel: 'Not reported by provider', suspiciousReason: null }]
       : [])].map(w => windowDetail(w, zone, now)),
-    modelGroups: groupRunsByModel(runsForCli(snapshot.runs, cli.cliId), projectNames),
+    modelGroups: showProviderRuns ? groupRunsByModel(runsForCli(snapshot.runs, cli.cliId), projectNames) : [],
     accountHref: cliAccountHref(cli.cliId),
   };
 }
@@ -567,10 +603,16 @@ export function buildUsageDetailView(snapshot: UsageCockpitResponse, now: number
   const orphanRuns = snapshot.runs.filter(r => !known(r.effectiveCli) || !cliIds.has(r.effectiveCli.trim().toLowerCase()));
   // Primary CLI first, then the provider order of the projection.
   const clis = [...snapshot.clis].sort((a, b) => Number(b.primary) - Number(a.primary));
+  const listedProviders = new Set<string>();
   return {
     workspaceId: snapshot.workspaceId,
     timeZone: zone,
-    clis: clis.map(c => buildCliDetailView(c, snapshot, now)),
+    clis: clis.map(cli => {
+      const provider = cli.cliId.toLowerCase();
+      const showProviderRuns = !listedProviders.has(provider);
+      listedProviders.add(provider);
+      return buildCliDetailView(cli, snapshot, now, showProviderRuns);
+    }),
     unknownCliGroups: groupRunsByModel(orphanRuns, projectNameMap(snapshot.cost)),
     cost: buildCostDetailView(snapshot, now),
   };
@@ -578,5 +620,5 @@ export function buildUsageDetailView(snapshot: UsageCockpitResponse, now: number
 
 /** DOM id of the section a focus opens at. */
 export function detailSectionId(prefix: string, focus: UsageDetailFocus): string {
-  return focus.kind === 'cli' ? `${prefix}-cli-${focus.cliId.toLowerCase()}` : `${prefix}-${focus.kind}`;
+  return focus.kind === 'cli' ? `${prefix}-cli-${usageCliKey(focus)}` : `${prefix}-${focus.kind}`;
 }
