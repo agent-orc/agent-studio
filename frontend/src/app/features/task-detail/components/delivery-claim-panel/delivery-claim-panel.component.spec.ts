@@ -105,6 +105,31 @@ async function mount(info: TaskInfo, getDeliveryClaim = vi.fn(() => of(answer())
 }
 
 describe('DeliveryClaimPanelComponent', () => {
+  it.each([undefined, null])('omits the live-state host for studioLive=%s', async studioLive => {
+    const response = answer(studioLive === undefined ? {} : { studioLive });
+    const fixture = await mount(job(), vi.fn(() => of(response)));
+    const host = fixture.nativeElement as HTMLElement;
+
+    expect(host.querySelector('app-studio-release-state')).toBeNull();
+    expect(host.querySelector('[data-testid="delivery-claim-integration"]')?.nextElementSibling)
+      .toBe(host.querySelector('[data-testid="delivery-claim-merge"]'));
+  });
+
+  it.each([
+    ['live', 'Live since abcdef0123'],
+    ['integrated-not-live', 'Integrated, not live'],
+    ['unknown', 'Live state not checked yet'],
+  ])('preserves the accessible %s indicator', async (state, label) => {
+    const fixture = await mount(job(), vi.fn(() => of(answer({
+      studioLive: { state, revision: 'abcdef0123456789', sinceUtc: '2026-11-26T12:00:00Z' },
+    }))));
+    const indicator = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="studio-card-live-state"]');
+
+    expect(indicator?.textContent).toContain(label);
+    expect(indicator?.closest('[aria-hidden="true"]')).toBeNull();
+    expect(indicator?.querySelector('[aria-hidden="true"]')).not.toBeNull();
+  });
+
   it('shows current brief, concept citations, contradictions, and skipped aspects in Human Review', async () => {
     const fixture = await mount(
       job({ state: TaskState.HumanReview }),

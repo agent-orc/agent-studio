@@ -65,3 +65,68 @@ for (const surface of ['board', 'card-detail', 'operations', 'access']) {
     expect(errors).toEqual([]);
   });
 }
+
+// AGT-4174: absence must remove the flex item, while populated states keep
+// their existing accessible labels. Geometry is relative to the preceding
+// integration label so unrelated shell offsets do not weaken the regression.
+for (const state of ['omitted', 'null', 'live', 'integrated-not-live', 'unknown'] as const) {
+  test(`Delivery live-state layout: ${state}`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await openBoard(page);
+    await page.route('**/api/tasks/*/delivery-claim**', route => route.fulfill({
+      json: {
+        taskKey: MERGED.taskKey, jobId: MERGED.id, lane: MERGED.state, deliveryRef: 'task/WEB-47',
+        integrationBranch: 'develop', releaseBranch: 'main', containmentStatus: 'contained', integrated: true,
+        released: false, integratedSha: 'bbbbbbb', mergeCommit: 'eeeeeee',
+        hasIntegrationRecord: true, class: 'integrated-delivery', findings: [], completionClaim: null,
+        ...(state === 'omitted' ? {} : { studioLive: state === 'null' ? null : {
+          state, revision: 'abcdef0123456789', sinceUtc: '2026-11-26T12:00:00Z',
+        } }),
+      },
+    }));
+    await card(page, MERGED.title).first().click();
+    const panel = page.getByTestId('delivery-claim-panel');
+    await expect(page.getByTestId('delivery-claim-merge')).toHaveText('via eeeeeee');
+    await page.evaluate(() => document.fonts.ready);
+    const out = process.env.JOB_RESULTS_DIR ?? 'test-results';
+    const phase = process.env.DELIVERY_LAYOUT_CAPTURE_PHASE ?? 'after';
+    mkdirSync(join(out, phase), { recursive: true });
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.mouse.move(0, 0);
+        await panel.scrollIntoViewIfNeeded();
+        await page.screenshot({
+          path: join(out, phase, `delivery-${state}-${width}-${theme}--mocked.png`),
+          animations: 'disabled', caret: 'hide',
+        });
+        const geometry = await panel.evaluate(element => {
+          const integration = element.querySelector('[data-testid="delivery-claim-integration"]')!;
+          const merge = element.querySelector('[data-testid="delivery-claim-merge"]')!;
+          const a = integration.getBoundingClientRect();
+          const b = merge.getBoundingClientRect();
+          return { gap: getComputedStyle(element).columnGap, integrationRight: a.right,
+            integrationY: a.y, mergeX: b.x, mergeY: b.y,
+            adjacent: integration.nextElementSibling === merge };
+        });
+        writeFileSync(join(out, phase, `delivery-${state}-${width}-${theme}.json`), JSON.stringify(geometry));
+        expect.soft(geometry.gap).toBe('8px');
+        const indicator = panel.getByTestId('studio-card-live-state');
+        if (state === 'omitted' || state === 'null') {
+          expect.soft(geometry.adjacent).toBe(true);
+          expect.soft(Math.abs(geometry.mergeY - geometry.integrationY)).toBeLessThan(2);
+          expect.soft(geometry.mergeX - geometry.integrationRight).toBeCloseTo(8, 1);
+          await expect.soft(indicator).toHaveCount(0);
+        } else {
+          const label = state === 'live' ? 'Live since abcdef0123'
+            : state === 'integrated-not-live' ? 'Integrated, not live' : 'Live state not checked yet';
+          await expect(indicator).toHaveText(label);
+          await expect(indicator).toMatchAriaSnapshot(`- text: ${label}`);
+        }
+      }
+    }
+    expect(errors).toEqual([]);
+  });
+}
