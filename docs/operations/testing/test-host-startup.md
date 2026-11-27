@@ -59,3 +59,37 @@ counts and a 1 s tolerance, comparing medians of three starts after warmup.
 Both timing probes are `MachineBound`; the isolation guard runs routinely.
 Startup no longer inspects unmatched instances. Restore troubleshooting uses
 the explicit command described in [storage hygiene](../temp-and-cache-hygiene.md).
+
+For a whole-suite measurement, `scripts/measure-instance-suite.py` waits until
+the one-minute host load is at most 75% of available CPUs and ten-second I/O
+pressure is below 5%. It sets `AGENT_STUDIO_TEST_INSTANCE_SIBLINGS` to zero or
+200000. An opt-in test module initializer seeds that many empty siblings under
+the suite's own state root before any hosts start. Normal test runs do not
+seed state. For example, after building:
+
+```sh
+python3 scripts/measure-instance-suite.py --label after-200000 --siblings 200000 \
+  --results "$JOB_RESULTS_DIR" --scratch /tmp/instance-measurement -- \
+  dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build \
+  --filter 'Category!=MachineBound'
+```
+
+The JSON report records command wall time, seed time separately, all test
+failures, suite-root cleanup, and the shared user's
+instance entry names before and after (counts, hashes and any additions).
+Compressed console logs accompany the report. A controlled comparison can
+restore the previous `Prepare` implementation in a separate build while
+keeping suite isolation enabled in both versions; state must never be seeded
+in the user's shared directory.
+
+On Linux, `--audit-mkdirs` also records `mkdir`/`mkdirat` calls from the test
+process tree using `strace --seccomp-bpf`. The report lists calls naming the
+shared instance root, so changes made by neighboring jobs can be distinguished
+from this test run. Use the same tracing option for both timing variants and
+report its overhead as part of the command wall time.
+
+The initializer also records its process id. After that process exits, the
+measurement owner removes only the recorded suite root if process-exit cleanup
+left it behind. Automatic cleanup and any extra cleanup time are reported
+separately. `--focused` allows a command with a `FullyQualifiedName` class filter
+on a busy host; whole-suite commands always wait for the quiet threshold.
