@@ -1,6 +1,7 @@
 import { CardWaitingLineComponent } from '../../../../components/card-waiting-line/card-waiting-line';
 import { deriveActiveTaskRun } from '../../../../services/run-activity.util';
 import { identityDisplay } from '../../../../components/identity-chip/identity-display';
+import { HostAliasService } from '../../../../components/identity-chip/host-alias.service';
 import { IdentityChipComponent } from '../../../../components/identity-chip/identity-chip.component';
 import { commitEmptyTone, decisionTone, dependencyTone, executionTone, gradeTone, issueTone, loopTone, mergeTone, phaseTone, reviewTone } from './task-card-status-tones';
 import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
@@ -70,7 +71,7 @@ import { ModelMigrationBadgeComponent } from '../../../../components/model-migra
 import { RunDispositionBadgesComponent } from '../run-disposition-badges/run-disposition-badges.component';
 import { IntegrationStatusBadgeComponent } from '../../../../components/integration-status-badge/integration-status-badge.component';
 import { ReviewDecisionBadgesComponent } from '../review-decision-badges/review-decision-badges.component';
-import { TaskLiveStatusComponent } from '../../../../components/task-live-status/task-live-status.component';
+import { TaskLiveStatusComponent, taskLiveStatusHost } from '../../../../components/task-live-status/task-live-status.component';
 import { TaskPreviewComponent } from '../../../../components/task-preview/task-preview.component';
 import { TokenPopoverDirective } from './token-popover.directive';
 import { TaskTokenUsagePopoverComponent } from './token-usage-popover/token-usage-popover.component';
@@ -274,8 +275,10 @@ export class TaskCardComponent implements OnInit, OnDestroy {
     return buildPhaseBadge(this.job().phase, this.job().steerPendingSince ?? this.job().phaseEnteredAt, taskCardNow(), this.job().state);
   }
 
-  /** AGT-4034: the live status line names the host of a remote run, so no second host line. */
-  readonly statusNamesHost = computed(() => deriveActiveTaskRun(this.job())?.kind === 'remote');
+  private readonly hostAliases = inject(HostAliasService);
+  /** Deduplicate only when the live-status presentation actually includes a host. */
+  readonly statusNamesHost = computed(() => deriveActiveTaskRun(this.job())?.kind === 'remote'
+    && !!taskLiveStatusHost(this.job(), this.hostAliases));
 
   executionBadge() { return buildExecutionBadge(this.job()); }
 
