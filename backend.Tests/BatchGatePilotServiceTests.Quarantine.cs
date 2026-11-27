@@ -60,7 +60,8 @@ public sealed class BatchGatePilotQuarantineTests : BatchGatePilotServiceTests
         using var state = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var batchIds = state.RootElement.GetProperty("batches").EnumerateArray()
             .Select(batch => batch.GetProperty("batchId").GetString()).ToArray();
-        Assert.Contains(running.BatchId, batchIds);
+        Assert.DoesNotContain(running.BatchId, batchIds);
+        Assert.Equal(BatchPhase.Abandoned, store.LatestState(running.BatchId).Phase);
         Assert.DoesNotContain(StaleBatchId, batchIds);
         var listed = Assert.Single(state.RootElement.GetProperty("quarantined").EnumerateArray());
         Assert.Equal(StaleBatchId, listed.GetProperty("batchId").GetString());
