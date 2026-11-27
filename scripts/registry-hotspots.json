@@ -1,0 +1,111 @@
+{
+  "weeklyCardLimit": 8,
+  "baseline": "AGT-4078: measured hotspots explicitly tracked; measured-backlog rows are chosen follow-up strategies, not converted files.",
+  "handled": [
+    {
+      "path": "backend.Tests/Architecture/Fixtures/git-read-route-census.tsv",
+      "status": "measured-backlog",
+      "strategy": "Split reviewed route classifications into feature files; retain the existing generator and keyed order-insensitive comparison.",
+      "lines": 550,
+      "bytes": 34697
+    },
+    {
+      "path": "backend.Tests/Architecture/TransitionDecisionBoundaryTests.cs",
+      "status": "measured-backlog",
+      "strategy": "Discover pure policies from their owning assembly and retain explicit boundary assertions.",
+      "lines": 249,
+      "bytes": 14676
+    },
+    {
+      "path": "backend/Features/Dispatch/DispatchRegistration.cs",
+      "status": "measured-backlog",
+      "strategy": "Extract ordered registration partials per dispatch feature.",
+      "lines": 137,
+      "bytes": 9277
+    },
+    {
+      "path": "backend/Features/Projects/ProjectSettingsEndpoints.cs",
+      "status": "measured-backlog",
+      "strategy": "Extract endpoint mapping partials per settings feature; preserve mapping order.",
+      "lines": 2141,
+      "bytes": 125741
+    },
+    {
+      "path": "backend/Features/Runner/MonolithTransitionAdapter.cs",
+      "status": "measured-backlog",
+      "strategy": "Extract partial adapter files per decision family; keep the existing delegation order.",
+      "lines": 652,
+      "bytes": 42747
+    },
+    {
+      "path": "backend/Features/Security/AccessSecurityMiddleware.cs",
+      "status": "measured-backlog",
+      "strategy": "Extract permission target resolution partials per feature, preserving precedence.",
+      "lines": 1764,
+      "bytes": 103904
+    },
+    {
+      "path": "backend/Host/Program.cs",
+      "status": "measured-backlog",
+      "strategy": "Extract ordered feature registration extension methods, preserving service and endpoint order.",
+      "lines": 2747,
+      "bytes": 168620
+    },
+    {
+      "path": "docs/concepts/orchestrator-drive-to-conclusion.html",
+      "status": "bounded-union",
+      "strategy": "Registered add/add-only union inside comment bounds.",
+      "lines": 3664,
+      "bytes": 326472
+    },
+    {
+      "path": "docs/dispatcher-personas/index.html",
+      "status": "measured-backlog",
+      "strategy": "Assemble feature fragments at publication; keep the standalone page until assembly is introduced.",
+      "lines": 1032,
+      "bytes": 130924
+    },
+    {
+      "path": "docs/operations/security/overview.md",
+      "status": "bounded-union",
+      "strategy": "Registered add/add-only union inside comment bounds.",
+      "lines": 1981,
+      "bytes": 136051
+    },
+    {
+      "path": "docs/operations/setup/operator-agent.md",
+      "status": "bounded-union",
+      "strategy": "Registered add/add-only union inside comment bounds.",
+      "lines": 657,
+      "bytes": 37421
+    },
+    {
+      "path": "docs/operator-elevated-session/index.html",
+      "status": "measured-backlog",
+      "strategy": "Assemble feature fragments at publication; narrative edits require ordinary merging.",
+      "lines": 870,
+      "bytes": 118422
+    },
+    {
+      "path": "docs/start/README.md",
+      "status": "measured-backlog",
+      "strategy": "Generate the navigation table from per-document metadata.",
+      "lines": 339,
+      "bytes": 58681
+    },
+    {
+      "path": "docs/system/contracts/orchestration-decisions.md",
+      "status": "measured-backlog",
+      "strategy": "Split policy-family contract sections into linked feature contracts.",
+      "lines": 1150,
+      "bytes": 77855
+    },
+    {
+      "path": "docs/system/domains/pipeline.md",
+      "status": "measured-backlog",
+      "strategy": "Split feature sections into linked domain pages with stable anchors.",
+      "lines": 4960,
+      "bytes": 337475
+    }
+  ]
+}
