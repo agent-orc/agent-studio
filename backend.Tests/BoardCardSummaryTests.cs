@@ -11,6 +11,19 @@ namespace AgentStudio.Tests;
 public sealed class BoardCardSummaryTests(ITestOutputHelper output)
 {
     [Fact]
+    public void Completed_summary_is_identical_for_live_and_restored_cards()
+    {
+        var job = Fixture() with { State = TaskStates.Completed };
+        var live = BoardCardSummary.SerializeCompleted(job);
+        var restored = BoardCardSummary.SerializeCompleted(BoardCardSummary.Serialize(job));
+        Assert.Equal(live, restored);
+        using var json = JsonDocument.Parse(live);
+        Assert.True(json.RootElement.GetProperty("summary").GetBoolean());
+        Assert.False(json.RootElement.TryGetProperty("commitSummary", out _));
+        Assert.False(json.RootElement.TryGetProperty("executionLocation", out _));
+    }
+
+    [Fact]
     public void Representative_card_stays_within_two_kilobytes_and_excludes_detail()
     {
         var job = Fixture();

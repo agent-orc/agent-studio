@@ -104,7 +104,8 @@ public sealed class BoardReadSignatureSource(
         IReadOnlyList<TaskInfo> jobs,
         GitProjectionFreshness freshness,
         CliRouter router,
-        TaskRunnerService runners)
+        TaskRunnerService runners,
+        bool completedSummary = false)
     {
         var anyProgress = false;
         for (var i = 0; i < jobs.Count && !anyProgress; i++)
@@ -124,7 +125,7 @@ public sealed class BoardReadSignatureSource(
                 .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase)
                 .Select(entry => $"{Uri.EscapeDataString(entry.Key)}:{entry.Value.Priority}:{entry.Value.Position}"))),
             Part("decisions", DecisionJournalFold(jobs)),
-            Part("runtime", TaskSwitchTrace.Run("compose.runtime", () => RuntimeFold(jobs, router, runners))),
+            Part("runtime", TaskSwitchTrace.Run("compose.runtime", () => RuntimeFold(jobs, router, runners, completedSummary))),
             "visible=" + VisibleSetDigest(jobs),
             Part("day", DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime).DayNumber),
             Part("tick", anyProgress ? ProgressTick() : -1),
@@ -195,11 +196,12 @@ public sealed class BoardReadSignatureSource(
     /// here too - a field that is projected but not folded is a stale card
     /// behind a 304.</para>
     /// </summary>
-    private long RuntimeFold(IReadOnlyList<TaskInfo> jobs, CliRouter router, TaskRunnerService runners)
+    private long RuntimeFold(IReadOnlyList<TaskInfo> jobs, CliRouter router, TaskRunnerService runners, bool completedSummary)
     {
         var hash = new HashCode();
         BoardAuthoritySnapshot? authority = null;
         long leaseTicks = 0;
+        var configuredRunners = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 
         // Runner queues decide the "position n in queue" chip on Ready cards and
         // the runner mode pill, and they move without any file changing.
@@ -216,6 +218,9 @@ public sealed class BoardReadSignatureSource(
         using var cardTrace = TaskSwitchTrace.Span("compose.cards");
         foreach (var job in jobs)
         {
+            // Completed summaries contain only resident task facts. No runtime
+            // overlay can change their bytes, so it cannot change their validator.
+            if (completedSummary && job.State == TaskStates.Completed) continue;
             hash.Add(job.TaskKey);
             hash.Add(job.State);
 
@@ -271,7 +276,12 @@ public sealed class BoardReadSignatureSource(
             // Only the card's share of it is folded; the client last-seen stamp
             // and trust sentence are detail facts that move on every poll.
             var leaseStarted = Stopwatch.GetTimestamp();
-            var location = runners.ResolveExecutionLocation(job, execution, activity);
+            if (!configuredRunners.TryGetValue(job.ProjectName, out var configured))
+            {
+                configured = projectSettings.Get(job.ProjectName).ExecutionRunner;
+                configuredRunners[job.ProjectName] = configured;
+            }
+            var location = runners.ResolveExecutionLocation(job, execution, activity, configured);
             leaseTicks += Stopwatch.GetTimestamp() - leaseStarted;
             hash.Add(BoardCardSummary.ExecutionLocationOnCard(job.State, location));
         }

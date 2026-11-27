@@ -2684,6 +2684,46 @@ every byte of it is a byte the client already holds.
   heartbeat. The client contract is in
   [Task core cache and board reuse](frontend.md#task-core-cache-and-board-reuse-agt-2956).
 
+### Large-board reads and completed summaries (AGT-4068)
+
+`GET /api/tasks/grouped?completedSummary=true` is an opt-in small completed
+lane. Active lanes retain the normal card contract. A completed summary carries
+`id`, `key` (when present), `title`, `state`, `order`, `createdAt`, `watchPath`,
+`projectName`, `enteredLaneAt`, `tags`, and `summary: true`. Its metadata comes
+from the pinned task publication. Runtime overlays, model routing, commit
+summaries, token breakdowns, dependency badges and evidence stay on the existing
+full-detail and detail-resource routes. The same summary shape applies to a
+restored board. The default grouped response and the frontend remain unchanged.
+Completed ordering uses the lane sorter on resident task facts; projected runtime
+and token values are intentionally unavailable to that variant's completed lane.
+
+The summary flag participates in the response signature and content ETag.
+Conditional requests still validate every input that the selected representation
+uses. An unchanged response returns 304 with no body; validation still performs
+work and is not a zero-CPU request. Execution-location configuration is resolved
+once per project during each validator fold, while lease and runtime facts remain
+fresh per card. Completed summaries do not fold runtime fields they do not emit.
+
+Metadata mutation helpers invalidate the affected `task.json` path instead of
+requesting a workspace-wide stamp comparison. They still publish core facts
+before acknowledgement. The existing background publication, full missed-event
+reconciliation, volatile-marker refresh, move, create and deletion contracts stay
+in force. A scoped edit probes the edited folder's fingerprint; it still refreshes
+other resident cards' volatile markers to preserve in-place marker correctness.
+
+`backend.Tests/BoardEndpointBenchmarks.cs` builds isolated boards of 1,000 and
+5,000 cards, 85 percent completed, with task metadata, commit history, prompts,
+logs, timelines and result files. It measures grouped and full-detail reads,
+conditional reads, immediate post-mutation reads, ten concurrent readers,
+mutation-to-index convergence and explicit body rebuilds. It records payload
+field inventories, allocation totals and server trace stages. Run Release builds
+with `RUN_BOARD_ENDPOINT_PERF=1`, `BOARD_ENDPOINT_PERF_OUT=/absolute/path/run.json`,
+and the class filter `FullyQualifiedName~BoardEndpointBenchmarks`. Add
+`BOARD_ENDPOINT_VARIANT='&completedSummary=true'` to measure the opt-in variant.
+These are synthetic TestServer measurements, excluding network transfer,
+compression and client JSON parsing. Task result evidence records the machine,
+before/after numbers and limitations; it does not claim a live-server SLA.
+
 ### Board reads serve the last published snapshot (AGT-3088)
 
 A board read never refreshes the task index on its own thread and never probes

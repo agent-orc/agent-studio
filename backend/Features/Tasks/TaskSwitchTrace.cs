@@ -17,7 +17,7 @@ internal sealed class TaskSwitchTrace
         // AGT-3088 board-read stages; "body" covers the shared-build gate wait,
         // the build and the payload serialisation.
         "snapshot", "filter", "git-freshness", "compose", "compose.review-queue",
-        "compose.runtime", "compose.runner-status", "compose.cards", "compose.lease", "compose.identity", "body",
+        "compose.runtime", "compose.runner-status", "compose.cards", "compose.lease", "compose.identity", "body", "body.project", "body.sort", "body.serialize",
         "mutation.lookup", "mutation.read-current", "mutation.write", "mutation.publish", "mutation.lock", "mutation.key",
         // AGT-3709: the two costs inside "mutation.key".
         "mutation.key.floor", "mutation.key.registry",
