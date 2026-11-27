@@ -2575,11 +2575,9 @@ public class TaskMutationService
         };
     }
 
-    /// <summary>
-    /// Appends a "Continuous Session Nachtrag" block to <c>prompt.md</c> so the user's follow-up
-    /// stays visible as part of the task description. <c>status.md</c> is intentionally not touched -
-    /// it is owned by the post-run summary generator.
-    /// </summary>
+    // Per-instance synchronization checkpoints keep race regressions deterministic.
+    internal Action<string>? PendingIntentCheckpoint { get; set; }
+
     /// <summary>
     /// Persist a user follow-up as a saved <see cref="PendingIntent"/> on the
     /// target job. Used by the busy-project queue path: when the user sends a
@@ -2601,6 +2599,7 @@ public class TaskMutationService
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return null;
+        using var pendingIntentLock = AcquireRoutingLock(info.FolderPath);
         var intent = new PendingIntent
         {
             Mode = ContinueModes.Normalize(mode),
@@ -2616,9 +2615,10 @@ public class TaskMutationService
         try
         {
             var path = Path.Combine(info.FolderPath, "pending-intent.json");
-            File.WriteAllText(path,
-                JsonSerializer.Serialize(intent, _pendingIntentWriteOpts),
-                Encoding.UTF8);
+            var stored = JsonSerializer.SerializeToNode(intent, _pendingIntentWriteOpts)!;
+            stored["intentId"] = Guid.NewGuid().ToString("N");
+            (_keyFileWriter ?? new AtomicJsonFileWriter()).ReplaceExisting(
+                path, stored.ToJsonString(_pendingIntentWriteOpts));
             // PendingIntent appears on TaskInfo (kanban card shows the intent),
             // so the snapshot must be invalidated for the next read to see it.
             _scanner.InvalidateCache(changedPath: path);
@@ -2646,20 +2646,35 @@ public class TaskMutationService
     /// to rename it back so the next tick retries instead of losing the user's
     /// input; see
     /// <see cref="RollbackStashedPendingIntent"/>, which only the run that
-    /// stashed the intent may call.
+    /// stashed the intent may call. An existing reservation is never replaced
+    /// by a later pickup.
     /// </summary>
     public PendingIntent? ReadAndStashPendingIntent(string jobFolder)
     {
+        using var pendingIntentLock = AcquireRoutingLock(jobFolder);
         var path = Path.Combine(jobFolder, "pending-intent.json");
         if (!File.Exists(path)) return null;
         try
         {
-            var raw = File.ReadAllText(path);
-            var intent = JsonSerializer.Deserialize<PendingIntent>(raw, TaskJsonFile.ReadOpts);
-            if (intent == null) return null;
             var stash = Path.Combine(jobFolder, "pending-intent.consumed.json");
-            if (File.Exists(stash)) File.Delete(stash);
+            // An unresolved reservation belongs to its earlier pickup. Leave a
+            // newer save queued until that owner acknowledges or rolls back.
+            if (File.Exists(stash)) return null;
             File.Move(path, stash);
+            PendingIntent? intent;
+            try
+            {
+                var raw = File.ReadAllText(stash);
+                intent = JsonSerializer.Deserialize<PendingIntent>(raw, TaskJsonFile.ReadOpts)
+                    ?? throw new JsonException("The reserved pending intent is null.");
+                PendingIntentCheckpoint?.Invoke("reservation-read");
+            }
+            catch
+            {
+                // A malformed or unreadable reservation must remain retryable.
+                File.Move(stash, path);
+                throw;
+            }
             // pending-intent.json gone → TaskInfo.PendingIntent should be null.
             _scanner.InvalidateCache(changedPath: path);
             _scanner.PublishCoreFromKnownFolder(jobFolder);
@@ -2675,6 +2690,7 @@ public class TaskMutationService
     /// <summary>Reads the claim-owned stash without changing its lifecycle.</summary>
     public PendingIntent? ReadStashedPendingIntent(string jobFolder)
     {
+        using var pendingIntentLock = AcquireRoutingLock(jobFolder);
         var stash = Path.Combine(jobFolder, "pending-intent.consumed.json");
         if (!File.Exists(stash)) return null;
         try
@@ -2699,12 +2715,42 @@ public class TaskMutationService
         string runId,
         string source = "runner-start")
     {
+        using var pendingIntentLock = AcquireRoutingLock(jobFolder);
         var stash = Path.Combine(jobFolder, "pending-intent.consumed.json");
         if (!File.Exists(stash)) return PendingIntentAcknowledgeResult.AlreadyResolved;
         try
         {
-            var intent = JsonSerializer.Deserialize<PendingIntent>(File.ReadAllText(stash), TaskJsonFile.ReadOpts);
+            using var stored = JsonDocument.Parse(File.ReadAllText(stash));
+            var intent = stored.RootElement.Deserialize<PendingIntent>(TaskJsonFile.ReadOpts);
             if (intent is null) return PendingIntentAcknowledgeResult.InvalidStash;
+            var intentId = stored.RootElement.TryGetProperty("intentId", out var identity)
+                ? identity.GetString()
+                : null;
+            var receipts = _timeline?.ReadAll(jobFolder).Where(row =>
+                row.Kind == TimelineEventKinds.FollowUpConsumed
+                && string.Equals(row.RunId, runId, StringComparison.Ordinal)).ToList();
+            var alreadyDelivered = intentId is not null && receipts?.Any(row =>
+                row.Details?.GetValueOrDefault("intentId") == intentId) == true;
+            // Attempt IDs are immutable. A repeated acknowledgement cannot
+            // resolve a newer intent, even when its prompt is identical. Local
+            // continuations may legitimately reuse a CLI session ID.
+            var localSession = source.StartsWith("local-process-start", StringComparison.Ordinal)
+                || source == "startup-reconciliation" && receipts?.Any(row =>
+                    row.Details?.GetValueOrDefault("source")?.StartsWith(
+                        "local-process-start", StringComparison.Ordinal) == true) == true;
+            if (alreadyDelivered || !localSession && receipts?.Count > 0)
+            {
+                if (alreadyDelivered)
+                {
+                    // The receipt was durable but stash deletion failed. Only
+                    // remove the exact intent named in that receipt.
+                    File.Delete(stash);
+                    _scanner.InvalidateCache(changedPath: Path.Combine(jobFolder, "pending-intent.json"));
+                    _scanner.PublishCoreFromKnownFolder(jobFolder);
+                }
+                return PendingIntentAcknowledgeResult.AlreadyResolved;
+            }
+            PendingIntentCheckpoint?.Invoke("acknowledgement-read");
             var actual = AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(intent.Prompt);
             if (!string.Equals(actual, promptSha256, StringComparison.OrdinalIgnoreCase))
                 return PendingIntentAcknowledgeResult.HashMismatch;
@@ -2716,9 +2762,10 @@ public class TaskMutationService
                     string.IsNullOrWhiteSpace(intent.Author) ? TimelineActors.System : intent.Author!,
                     summary: $"Follow-up delivered to run {runId} ({intent.Mode}).",
                     runId: runId,
-                    details: PendingIntentDetails(intent, actual, "delivered", source)))
+                    details: PendingIntentDetails(intent, actual, "delivered", source, intentId)))
                 return PendingIntentAcknowledgeResult.HistoryWriteFailed;
 
+            PendingIntentCheckpoint?.Invoke("acknowledgement-receipt");
             File.Delete(stash);
             _scanner.InvalidateCache(changedPath: Path.Combine(jobFolder, "pending-intent.json"));
             _scanner.PublishCoreFromKnownFolder(jobFolder);
@@ -2741,6 +2788,7 @@ public class TaskMutationService
         string? runId = null,
         string source = "terminal-transition")
     {
+        using var pendingIntentLock = AcquireRoutingLock(jobFolder);
         var canonical = Path.Combine(jobFolder, "pending-intent.json");
         var stash = Path.Combine(jobFolder, "pending-intent.consumed.json");
         if (!File.Exists(canonical) && !File.Exists(stash)) return false;
@@ -2778,9 +2826,11 @@ public class TaskMutationService
         PendingIntent intent,
         string promptSha256,
         string state,
-        string source) => new()
+        string source,
+        string? intentId = null) => new()
     {
         ["state"] = state,
+        ["intentId"] = intentId ?? string.Empty,
         ["mode"] = intent.Mode,
         ["author"] = intent.Author ?? string.Empty,
         ["savedReason"] = intent.SavedReason,
@@ -2796,6 +2846,7 @@ public class TaskMutationService
     /// </summary>
     public bool DiscardPendingIntent(string jobFolder)
     {
+        using var pendingIntentLock = AcquireRoutingLock(jobFolder);
         try
         {
             var canonical = Path.Combine(jobFolder, "pending-intent.json");
@@ -2821,6 +2872,7 @@ public class TaskMutationService
     /// </summary>
     public void RollbackStashedPendingIntent(string jobFolder)
     {
+        using var pendingIntentLock = AcquireRoutingLock(jobFolder);
         var stash = Path.Combine(jobFolder, "pending-intent.consumed.json");
         if (!File.Exists(stash)) return;
         var canonical = Path.Combine(jobFolder, "pending-intent.json");
