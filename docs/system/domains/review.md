@@ -37,6 +37,58 @@ delivery.
 Version: 2026-11-27
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
+## Deterministic measurement dispositions (AGT-4099)
+
+`ReviewMeasurementPolicy` in `orchestration-decisions` owns the typed
+measurement interpretation used by executor grading, report settlement in both
+hosts, summaries and delivery admission. Each planned command has a disposition:
+`Passed`, `NotApplicable`, `NonBlocking`, `ProductFailure`,
+`InfrastructureFailure`, or `MissingVerdict`. A passing sibling command in the
+same aspect cannot hide a missing planned verdict. Legacy single-command
+aspects may match by aspect; multi-command aspects require the command citation.
+
+Explicit unattributed environment concerns and declared or measured flaky
+quarantines admit delivery with their limitation recorded. They do not claim a
+green execution. A red exit-status command measured on delivery, clean repeat
+and baseline, with no charge to the card, is integration-branch debt. It does
+not become `ReviewInfra`. Environment evidence on a green baseline, incomplete
+measurement proof and missing verdicts retain infrastructure handling. A cited,
+diff-confirmed product finding takes the fix-round path even when another
+measurement is environmental. Human holds, immutable results and attempt
+fences remain admission requirements.
+
+When a deterministic command is red on a stale merge base and the fetched target
+has advanced, the review host measures the command on a clean target checkout.
+If the target is repaired, it measures the delivery merged with that target in
+a disposable clone. A pass records the stale red baseline and the successful
+merge measurement without an agent round. A failure reproduced twice on that
+merge against the green target is a product finding. A merge conflict or an
+interrupted measurement remains explicit incomplete evidence. Named test failures on a repaired-target merge must also have a completed,
+parseable failing run; test-host crashes remain infrastructure evidence. The delivery ref and SHA are never
+rewritten. Evidence names the target SHA and the merged tree. The target control uses
+`baseline-target`; merge commands use phase `target-merge` and distinct roles
+`target-merge` and `target-merge-repeat`. Each clone has a separate runtime
+home, temp and cache scope. The standalone report validator permits those
+merged trees only with the unchanged delivery head, the frozen tool command,
+and the command's fetched target SHA. If the workspace records a global
+integration tip, the command must match it. A resumed attempt may omit that
+global reuse proof; its merge measurements still have to agree on their own
+target and tree. Duplicate measurements and mismatched heads, trees or target
+SHAs remain infrastructure evidence failures.
+
+ReviewInfra successors execute deterministic verification again and bypass
+stored baseline results from their failed chain. Cached dependency preparation
+keeps its existing invalidation rules. Report replays and reattachment of the
+same live attempt retain their fencing and idempotency contract.
+
+Summary and admission text name the step and aspect, diagnosis or failed test,
+measurement limitation, and next automatic action. A `non-blocking` verification
+record cannot be reused as an entirely green full-suite verification.
+The operator attention lease is held outside `task.json`; claiming it must not
+invalidate an otherwise unchanged watchdog park. The retry route still requires
+the current attention lease and `If-Match`, and preserves the park, delivery and
+review identity checks.
+
 ## Target-branch plan and older deliveries (AGT-3743)
 
 The target branch remains the only source of the frozen review command plan.
@@ -1230,54 +1282,15 @@ upgrade the review host. A current worker's own infrastructure exits
 (`CommandStalled`, `NoCpuProgress`, `ToolUnavailable`, `TmpMountTornDown`)
 keep `DiagnosisMissing` and the bounded retry.
 
-The successor does not pay again for what already passed. After a `ReviewInfra`
-outcome the fresh plan names the failed attempt, and only that attempt, in
-`ReviewPlanDto.VerifyReuseFromAttemptIds` (`ReviewVerifyReusePolicy`); a product
-failure, an inconclusive or cancelled review, and an integration-branch defect
-name none. The plan itself is still
-built fresh (AGT-W57): it names source attempts, never results, and only the
-commands of the new plan that still match are carried over. On the executor,
-`runner/ReviewVerifyResultCache.cs` stores every passed deterministic verify
-command (build, test, lint) once per host under
-`$RUNNER_REVIEW_WORKDIR/.verify-cache`, keyed like the AGT-2843 baseline cache:
-repository, exact Result-SHA, command hash (the command line, its working
-directory and baseline mode, the preparation commands before it, and a library
-step digest), and the toolchain fingerprint. An entry keeps the exit code, the
-verdict, and the complete stdout and stderr. The successor re-attaches a
-matching entry as its own candidate evidence instead of executing the command,
-and executes everything else. Rules that keep the reuse honest:
-
-- **Only a pass from the direct predecessor.** A failed result is never stored
-  and never read, and an entry from an attempt the plan does not name is
-  ignored. A different Result-SHA, command line or toolchain is a different key.
-  A successor that reuses an entry stores it again under its own attempt id
-  (keeping the original time and age), so its own successor can carry it one
-  hop further. An older attempt of the chain is never a source: when a command
-  executes, its stored entry is dropped before it runs and only a pass writes
-  it back, so a command that failed or never finished in the failed attempt
-  runs again even if an earlier attempt passed it.
-- **Aspects always run again.** Agent aspect calls are never stored; the aspect
-  that timed out or failed runs as before.
-- **A `--no-build` test keeps its build.** A reused command leaves no output in
-  the fresh workspace. The clean repeat already runs each verify command alone,
-  except a `dotnet test --no-build` that needs its preceding build
-  (`ReviewTargetedRerunPolicy.PrecedingBuild`), so that build executes whenever
-  such a test executes.
-- **Bounded.** Entries expire after 24 hours (pruned on the first lookup or
-  store of an attempt), and an attempt that settles without `ReviewInfra` drops
-  every entry of its Result-SHA. A prune that races such a delete on the same
-  host skips the vanished directory. The store is per
-  host: a successor claimed by another review host finds nothing and runs the
-  commands.
-- **Reuse is visible.** The verdict summary of a reused command, the Markdown
-  grade (`verifyReused`/`verifyReuse` frontmatter plus a `Result` column in the
-  command evidence table), and `ReviewProjectionView.Attempts[].VerifyReused`/
-  `VerifyReuse` carry the sentence worded once by `ReviewVerifyReuse.Citation`:
-  `verify result reused from attempt <id> (<age>)`, where `<id>` is the failed
-  attempt and `<age>` the time since the command actually executed. The
-  evidence row also carries `VerifyReusedFromAttemptId` and
-  `VerifyReusedAgeSeconds`; its start and finish times are this attempt's, so
-  the pipeline view shows a zero-length step rather than the earlier run.
+AGT-4099 supersedes the verify-result reuse rule introduced by AGT-2841.
+The plan may still name infrastructure predecessors in
+`ReviewPlanDto.VerifyReuseFromAttemptIds` for wire compatibility, but the
+executor treats that list as a fresh-measurement fence: no candidate verify or
+stored baseline result from that failed chain is reused. Agent aspects also
+run again. Dependency preparation retains its separate cache contract. Verify
+cache files and older historical reuse receipts remain readable, but completed
+attempts discard their candidate-result entries. Reattachment within the same
+live attempt retains its checkpoint; a successor is a new measurement.
 
 Before that per-card retry runs, the fleet-wide cause breaker
 (`backend/Features/Runner/CauseBreaker/`, AGT-W57) counts the failure by its
@@ -1373,7 +1386,10 @@ failure list plus the complete stdout and stderr, so a reused result is
 re-attached as this attempt's baseline command evidence and cites the same
 artefacts a fresh baseline run would have produced.
 
-Three rules keep a hit honest:
+These rules keep a hit valid:
+
+- **Infrastructure retries measure again.** A plan naming failed infrastructure
+  predecessors bypasses stored baseline results on both cache lookup paths.
 
 - **A hit never replaces a candidate run.** The lookup happens only after the
   candidate command has already failed in this attempt's own workspace, and the

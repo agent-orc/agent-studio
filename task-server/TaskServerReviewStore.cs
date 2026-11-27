@@ -1023,7 +1023,7 @@ public sealed partial class TaskServerStore
                 subject.Plan.Commands
                     .Where(command => ReviewCommandKinds.IsAgent(command.ExecutionKind))
                     .Select(command => command.Aspect));
-            request = ReviewReportDiagnosisPolicy.Normalize(request, subject.Plan);
+            request = TaskServerTransitionAdapter.ReviewMeasurements(request, subject.Plan);
             var payloadJson = JsonSerializer.Serialize(request, ReviewJson);
             var payloadHash = Hash(payloadJson);
             if (!string.IsNullOrWhiteSpace(attempt.ReportIdempotencyKey))
@@ -1394,10 +1394,17 @@ public sealed partial class TaskServerStore
                       || !string.Equals(command.HeadBefore, command.BaselineSha, StringComparison.OrdinalIgnoreCase)
                       || string.IsNullOrWhiteSpace(command.TreeBefore)
                     : !string.Equals(command.HeadBefore, subject.ExpectedResultSha, StringComparison.OrdinalIgnoreCase)
-                      || !string.Equals(
-                          command.TreeBefore,
-                          request.Workspace.TreeHash,
-                          StringComparison.OrdinalIgnoreCase))))
+                      || (IsTargetMergeRole(command.WorkspaceRole)
+                          ? string.IsNullOrWhiteSpace(subject.Plan.IntegrationRef)
+                            || !ValidDigest(command.TreeBefore, 40, 64)
+                            || !ValidDigest(command.BaselineSha, 40, 64)
+                            || (request.Workspace.IntegrationTipSha is not null
+                                && !string.Equals(command.BaselineSha, request.Workspace.IntegrationTipSha, StringComparison.OrdinalIgnoreCase))
+                            || request.Commands.Any(other => other.StepId == command.StepId
+                                && IsTargetMergeRole(other.WorkspaceRole)
+                                && (!string.Equals(other.BaselineSha, command.BaselineSha, StringComparison.OrdinalIgnoreCase)
+                                    || !string.Equals(other.TreeBefore, command.TreeBefore, StringComparison.OrdinalIgnoreCase)))
+                          : !string.Equals(command.TreeBefore, request.Workspace.TreeHash, StringComparison.OrdinalIgnoreCase)))))
             return ("ReviewInfra", "CommandSubjectMismatch");
         if (ReviewToolchainFailurePolicy.IsUnavailable(request.Commands, request.Artifacts))
             return ("ReviewInfra", "ToolUnavailable");
@@ -1630,10 +1637,13 @@ public sealed partial class TaskServerStore
                    && plannedPreparation.Arguments.SequenceEqual(command.Arguments, StringComparer.Ordinal)
                    && (command.WorkspaceRole == "candidate"
                        || command.WorkspaceRole == "clean-repeat"
-                       || command.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal));
+                       || command.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)
+                       || IsTargetMergeRole(command.WorkspaceRole));
         }
-        return command.Phase is "verification" or "clean-repeat"
+        var targetMerge = IsTargetMergeRole(command.WorkspaceRole);
+        return (targetMerge ? command.Phase == "target-merge" : command.Phase is "verification" or "clean-repeat")
                && plannedCommand is not null
+               && (!targetMerge || !ReviewCommandKinds.IsAgent(plannedCommand.ExecutionKind))
                && string.Equals(plannedCommand.Aspect, command.Aspect, StringComparison.Ordinal)
                && string.Equals(plannedCommand.FileName, command.FileName, StringComparison.Ordinal)
                && plannedCommand.Arguments.SequenceEqual(command.Arguments, StringComparer.Ordinal)
@@ -1643,8 +1653,12 @@ public sealed partial class TaskServerStore
                        && string.Equals(plannedCommand.ThinkingLevel, command.ThinkingLevel, StringComparison.Ordinal)))
                && (command.WorkspaceRole == "candidate"
                    || command.WorkspaceRole == "clean-repeat"
-                   || command.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal));
+                   || command.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)
+                   || targetMerge);
     }
+
+    private static bool IsTargetMergeRole(string role)
+        => role is "target-merge" or "target-merge-repeat";
 
     private static bool ValidArtifact(ReviewArtifactEvidenceDto artifact)
     {
