@@ -30,6 +30,7 @@ public static class OperatorDecisionTypes
     public const string PostMergeRunsMissing = "post-merge.missing";
     /// <summary>RT-1 (AGT-3988): a post-merge incident red for two hours waits for the owner's answer.</summary>
     public const string PostMergeRedIncident = "post-merge.red-incident";
+    public const string CapacityUnderused = "capacity.underused";
     public const string OverlapStarved = "dispatch.overlap-starved";
     public const string DeployCompleted = "deploy.completed";
     public const string WatcherHeartbeat = "watcher.heartbeat";
@@ -40,7 +41,7 @@ public static class OperatorDecisionTypes
         BatchRed, BatchIsolating, BatchRecordUnreadable, BatchRunningWithoutGate, PushPendingOverdue, PushBlocked, QuotaExhausted, QuotaFallbackActive,
         GateHostUnreachable, HostDiskPressure, ReviewHostDrift, ReviewRetrySchedulerStalled, EnvironmentIncidentOpen, PostMergeRunsMissing,
         PostMergeRedIncident,
-        OverlapStarved, DeployCompleted, WatcherHeartbeat,
+        CapacityUnderused, OverlapStarved, DeployCompleted, WatcherHeartbeat,
     ];
 
     /// <summary>The type a fact key names: every key starts with its type and a <c>|</c>.</summary>
@@ -102,6 +103,7 @@ public static class OperatorOperations
         OperatorDecisionTypes.PostMergeRunsMissing => [OwnerDecide],
         // Revert, fix forward or strict are the owner's answers; the repair card is the evidence (RT-1).
         OperatorDecisionTypes.PostMergeRedIncident => [OwnerDecide, CardInspect],
+        OperatorDecisionTypes.CapacityUnderused => [CapacityRead, CardInspect],
         OperatorDecisionTypes.OverlapStarved => [RunAnyway, CardInspect],
         OperatorDecisionTypes.DeployCompleted => [CardInspect],
         OperatorDecisionTypes.WatcherHeartbeat => [WatcherStatus],

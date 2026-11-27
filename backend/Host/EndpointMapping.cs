@@ -81,6 +81,7 @@ public static class EndpointMapping
         app.MapWatcherEndpoints();
         app.MapOperatorEndpoints();
         app.MapOperatorCapacityEndpoints();
+        app.MapCodingCapacityEndpoints();
         app.MapOperatorBackupEndpoints();
         app.MapOperatorLogEndpoints();
         app.MapMagazineEndpoints();
