@@ -335,23 +335,7 @@ public sealed partial class TaskServerStore
             }
             var grantHalfCores = gateAdmission.ReservesGrant ? Math.Clamp(_options.GateGrantHalfCores, 1, 128) : 0;
             var allocationVersion = gateAdmission.ReservesGrant ? allocation!.AllocationVersion : 0L;
-            var candidates = new List<(string AttemptId, GateSubject Subject, int Number, string? ProjectName)>();
             string? quotaReason = null;
-            await using (var command = Command(connection, """
-                SELECT a.id, s.subject_json, a.attempt_number, p.name
-                  FROM gate_attempts a JOIN gate_subjects s ON s.id = a.subject_id
-                  LEFT JOIN tasks t ON t.id = s.task_id
-                  LEFT JOIN projects p ON p.id = t.project_id
-                 WHERE a.state = 'queued' ORDER BY CASE s.subject_kind WHEN 'merge' THEN $mergePriority
-                     WHEN 'post-merge' THEN $postMergePriority ELSE $otherPriority END, a.created_at LIMIT 32;
-                """, transaction,
-                ("$mergePriority", AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.QueuePriority(GateSubjectKinds.Merge)),
-                ("$postMergePriority", AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.QueuePriority(GateSubjectKinds.PostMerge)),
-                ("$otherPriority", AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.QueuePriority(null))))
-            await using (var reader = await command.ExecuteReaderAsync(ct))
-                while (await reader.ReadAsync(ct))
-                    candidates.Add((reader.GetString(0), JsonSerializer.Deserialize<GateSubject>(reader.GetString(1), GateJson)!,
-                        reader.GetInt32(2), reader.IsDBNull(3) ? null : reader.GetString(3)));
             var activeKinds = new List<string>();
             await using (var command = Command(connection, """
                 SELECT s.subject_kind FROM gate_attempts a JOIN gate_subjects s ON s.id = a.subject_id
@@ -359,96 +343,134 @@ public sealed partial class TaskServerStore
                 """, transaction, ("$host", hostId)))
             await using (var reader = await command.ExecuteReaderAsync(ct))
                 while (await reader.ReadAsync(ct)) activeKinds.Add(reader.GetString(0));
-            foreach (var candidate in candidates.OrderBy(item =>
-                AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.QueuePriority(item.Subject.Kind)))
+            const int pageSize = 32;
+            (int Priority, string CreatedAt, long Order)? after = null;
+            while (true)
             {
-                if (request.ExcludePostMerge && candidate.Subject.Kind == GateSubjectKinds.PostMerge) continue;
-                if (!usesGrant)
+                ct.ThrowIfCancellationRequested();
+                var candidates = new List<(string AttemptId, GateSubject Subject, int Number,
+                    string? ProjectName, int Priority, string CreatedAt, long Order)>(pageSize);
+                // The transaction keeps the queue stable until a claim returns.
+                // Insertion order breaks timestamp ties without reordering arrivals.
+                await using (var command = Command(connection, """
+                    WITH queued AS (
+                        SELECT a.id, s.subject_json, a.attempt_number, p.name, a.created_at, a.rowid AS queue_order,
+                               CASE s.subject_kind WHEN 'merge' THEN $mergePriority
+                                   WHEN 'post-merge' THEN $postMergePriority ELSE $otherPriority END AS priority
+                          FROM gate_attempts a JOIN gate_subjects s ON s.id = a.subject_id
+                          LEFT JOIN tasks t ON t.id = s.task_id
+                          LEFT JOIN projects p ON p.id = t.project_id
+                         WHERE a.state = 'queued'
+                    )
+                    SELECT id, subject_json, attempt_number, name, priority, created_at, queue_order FROM queued
+                     WHERE $afterOrder IS NULL
+                        OR (priority, created_at, queue_order) > ($afterPriority, $afterCreated, $afterOrder)
+                     ORDER BY priority, created_at, queue_order LIMIT $pageSize;
+                    """, transaction,
+                    ("$mergePriority", AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.QueuePriority(GateSubjectKinds.Merge)),
+                    ("$postMergePriority", AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.QueuePriority(GateSubjectKinds.PostMerge)),
+                    ("$otherPriority", AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.QueuePriority(null)),
+                    ("$afterOrder", after?.Order), ("$afterPriority", after?.Priority ?? 0),
+                    ("$afterCreated", after?.CreatedAt), ("$pageSize", pageSize)))
+                await using (var reader = await command.ExecuteReaderAsync(ct))
+                    while (await reader.ReadAsync(ct))
+                        candidates.Add((reader.GetString(0), JsonSerializer.Deserialize<GateSubject>(reader.GetString(1), GateJson)!,
+                            reader.GetInt32(2), reader.IsDBNull(3) ? null : reader.GetString(3),
+                            reader.GetInt32(4), reader.GetString(5), reader.GetInt64(6)));
+                foreach (var candidate in candidates)
                 {
-                    if (activeKinds.Any(kind => !AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.MayShareGateLane(kind, candidate.Subject.Kind)))
-                    { quotaReason = "Gate host slot is occupied."; continue; }
-                    gateAdmission = GateGrantAdmission.Slot();
-                }
-                else if (candidate.Subject.Kind == GateSubjectKinds.PostMerge
-                    && allocation is { MaxParallelism: > 1 } && occupiedGrants >= allocation.MaxParallelism - 1)
-                    continue; // A post-merge run never takes the last integration grant.
-                var projectName = candidate.ProjectName;
-                // Verification gates belong to the operator lane of a monolith
-                // project, not a Task Server card; card quota does not apply.
-                var quota = GateSubjectKinds.IsVerification(candidate.Subject.Kind)
-                    ? new WorkspaceQuotaVerdict(true, null)
-                    : CachedWorkspaceQuota(projectName, "Gate card " + candidate.Subject.TaskId, candidate.Subject.TaskId);
-                if (!quota.Allowed)
-                {
-                    quotaReason = quota.Message ?? "Workspace quota reached.";
-                    continue;
-                }
-                var quotaWarning = quota.MeterUnavailable ? quota.Message : null;
-                if (candidate.Number > 1)
-                {
-                    var previousHost = await ScalarAsync(connection, """
-                        SELECT host_id FROM gate_attempts
-                         WHERE subject_id = $subject AND attempt_number = $previous;
-                        """, ct, transaction,
-                        ("$subject", candidate.Subject.SubjectId),
-                        ("$previous", candidate.Number - 1)) as string;
-                    if (string.Equals(previousHost, hostId, StringComparison.Ordinal))
-                        continue; // A same-SHA infrastructure retry needs a different healthy host.
-                }
-                var required = new HashSet<string>(candidate.Subject.Plan.RequiredCapabilities, StringComparer.Ordinal)
-                {
-                    GateCapabilities.Executor, CapabilityProtocol.RepositoryAccess,
-                    CapabilityProtocol.TaskServerConnectivity, CapabilityProtocol.Disk,
-                    GateCapabilities.GitMaterialization,
-                };
-                if (candidate.Subject.ResultRef is null)
-                    required.Add(GateCapabilities.BundleMaterialization);
-                if (candidate.Subject.ResultRef is not null) required.Add(CapabilityProtocol.GitFetch);
-                var admission = await EvaluateCapabilityAdmissionAsync(connection, transaction,
-                    request.ExecutorId, hostId, required.ToArray(), ct);
-                if (!admission.Eligible) continue;
-                var fence = Convert.ToInt64(await ScalarAsync(connection,
-                    "SELECT last_fence FROM gate_subjects WHERE id = $id;", ct, transaction,
-                    ("$id", candidate.Subject.SubjectId)) ?? 0L) + 1;
-                var now = UtcNow;
-                var expiry = now.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
-                var leaseId = $"gls_{Guid.NewGuid():N}";
-                var resourceNamespace = $"gate-{candidate.AttemptId}-{fence}";
-                var portCursor = Convert.ToInt32(await ScalarAsync(connection,
-                    "SELECT value FROM meta WHERE key = 'review_port_cursor';", ct, transaction) ?? 23992);
-                var portBase = portCursor >= 59992 ? 24000 : portCursor + 8;
-                await SetMetaAsync(connection, transaction, "review_port_cursor",
-                    portBase.ToString(System.Globalization.CultureInfo.InvariantCulture), ct);
-                var deadline = now.AddSeconds(candidate.Subject.Plan.OverallTimeoutSeconds);
-                await ExecuteAsync(connection, """
-                    UPDATE gate_subjects SET last_fence = $fence WHERE id = $subject;
-                    UPDATE gate_attempts SET state = 'claimed', executor_id = $executor, instance_id = $instance,
-                        host_id = $host, lease_id = $lease, fence = $fence,
-                        acquired_at = $now, expires_at = $expiry, resource_namespace = $namespace,
-                        port_base = $portBase, grant_half_cores = $grant, allocation_version = $allocation,
-                        claimed_at = $now, deadline = $deadline WHERE id = $attempt AND state = 'queued';
-                    INSERT INTO gate_events(attempt_id, event, at) VALUES ($attempt, 'claimed', $now);
-                    """, ct, transaction, ("$fence", fence), ("$subject", candidate.Subject.SubjectId),
-                    ("$executor", request.ExecutorId), ("$instance", request.InstanceId), ("$host", hostId),
-                    ("$lease", leaseId), ("$now", Iso(now)), ("$expiry", Iso(expiry)),
-                    ("$namespace", resourceNamespace), ("$portBase", portBase),
-                    ("$grant", grantHalfCores), ("$allocation", allocationVersion),
-                    ("$deadline", Iso(deadline)), ("$attempt", candidate.AttemptId));
-                await AuditAsync(connection, transaction, actorId, "gate.claimed", "gate-attempt",
-                    candidate.AttemptId, JsonSerializer.Serialize(new
+                    ct.ThrowIfCancellationRequested();
+                    if (request.ExcludePostMerge && candidate.Subject.Kind == GateSubjectKinds.PostMerge) continue;
+                    if (!usesGrant)
                     {
-                        fence, hostId, admission = gateAdmission.Reason, grantHalfCores, allocationVersion,
-                    }), ct);
-                var quotaCardNotice = ConsumeQuotaCardNotice(projectName);
-                if (quotaCardNotice is not null)
-                    await AppendLifecycleEventAsync(connection, transaction, candidate.Subject.SourceRunId,
-                        candidate.Subject.TaskId, 0, "quota.meter-unavailable", new { message = quotaCardNotice }, ct);
-                var attempt = await ReadGateAttemptAsync(connection, transaction, candidate.AttemptId, ct);
-                response = new GateClaimResponse("claimed", candidate.Subject, attempt,
-                    new GateLease(leaseId, candidate.AttemptId, request.ExecutorId, request.InstanceId,
-                        hostId, fence, 0, now, expiry, resourceNamespace, portBase,
-                        grantHalfCores, allocationVersion), quotaWarning);
-                return;
+                        if (activeKinds.Any(kind => !AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.MayShareGateLane(kind, candidate.Subject.Kind)))
+                        { quotaReason = "Gate host slot is occupied."; continue; }
+                        gateAdmission = GateGrantAdmission.Slot();
+                    }
+                    else if (candidate.Subject.Kind == GateSubjectKinds.PostMerge
+                        && allocation is { MaxParallelism: > 1 } && occupiedGrants >= allocation.MaxParallelism - 1)
+                        continue; // A post-merge run never takes the last integration grant.
+                    var projectName = candidate.ProjectName;
+                    // Verification gates belong to the operator lane of a monolith
+                    // project, not a Task Server card; card quota does not apply.
+                    var quota = GateSubjectKinds.IsVerification(candidate.Subject.Kind)
+                        ? new WorkspaceQuotaVerdict(true, null)
+                        : CachedWorkspaceQuota(projectName, "Gate card " + candidate.Subject.TaskId, candidate.Subject.TaskId);
+                    if (!quota.Allowed)
+                    {
+                        quotaReason = quota.Message ?? "Workspace quota reached.";
+                        continue;
+                    }
+                    var quotaWarning = quota.MeterUnavailable ? quota.Message : null;
+                    if (candidate.Number > 1)
+                    {
+                        var previousHost = await ScalarAsync(connection, """
+                            SELECT host_id FROM gate_attempts
+                             WHERE subject_id = $subject AND attempt_number = $previous;
+                            """, ct, transaction,
+                            ("$subject", candidate.Subject.SubjectId),
+                            ("$previous", candidate.Number - 1)) as string;
+                        if (string.Equals(previousHost, hostId, StringComparison.Ordinal))
+                            continue; // A same-SHA infrastructure retry needs a different healthy host.
+                    }
+                    var required = new HashSet<string>(candidate.Subject.Plan.RequiredCapabilities, StringComparer.Ordinal)
+                    {
+                        GateCapabilities.Executor, CapabilityProtocol.RepositoryAccess,
+                        CapabilityProtocol.TaskServerConnectivity, CapabilityProtocol.Disk,
+                        GateCapabilities.GitMaterialization,
+                    };
+                    if (candidate.Subject.ResultRef is null)
+                        required.Add(GateCapabilities.BundleMaterialization);
+                    if (candidate.Subject.ResultRef is not null) required.Add(CapabilityProtocol.GitFetch);
+                    var admission = await EvaluateCapabilityAdmissionAsync(connection, transaction,
+                        request.ExecutorId, hostId, required.ToArray(), ct);
+                    if (!admission.Eligible) continue;
+                    var fence = Convert.ToInt64(await ScalarAsync(connection,
+                        "SELECT last_fence FROM gate_subjects WHERE id = $id;", ct, transaction,
+                        ("$id", candidate.Subject.SubjectId)) ?? 0L) + 1;
+                    var now = UtcNow;
+                    var expiry = now.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
+                    var leaseId = $"gls_{Guid.NewGuid():N}";
+                    var resourceNamespace = $"gate-{candidate.AttemptId}-{fence}";
+                    var portCursor = Convert.ToInt32(await ScalarAsync(connection,
+                        "SELECT value FROM meta WHERE key = 'review_port_cursor';", ct, transaction) ?? 23992);
+                    var portBase = portCursor >= 59992 ? 24000 : portCursor + 8;
+                    await SetMetaAsync(connection, transaction, "review_port_cursor",
+                        portBase.ToString(System.Globalization.CultureInfo.InvariantCulture), ct);
+                    var deadline = now.AddSeconds(candidate.Subject.Plan.OverallTimeoutSeconds);
+                    await ExecuteAsync(connection, """
+                        UPDATE gate_subjects SET last_fence = $fence WHERE id = $subject;
+                        UPDATE gate_attempts SET state = 'claimed', executor_id = $executor, instance_id = $instance,
+                            host_id = $host, lease_id = $lease, fence = $fence,
+                            acquired_at = $now, expires_at = $expiry, resource_namespace = $namespace,
+                            port_base = $portBase, grant_half_cores = $grant, allocation_version = $allocation,
+                            claimed_at = $now, deadline = $deadline WHERE id = $attempt AND state = 'queued';
+                        INSERT INTO gate_events(attempt_id, event, at) VALUES ($attempt, 'claimed', $now);
+                        """, ct, transaction, ("$fence", fence), ("$subject", candidate.Subject.SubjectId),
+                        ("$executor", request.ExecutorId), ("$instance", request.InstanceId), ("$host", hostId),
+                        ("$lease", leaseId), ("$now", Iso(now)), ("$expiry", Iso(expiry)),
+                        ("$namespace", resourceNamespace), ("$portBase", portBase),
+                        ("$grant", grantHalfCores), ("$allocation", allocationVersion),
+                        ("$deadline", Iso(deadline)), ("$attempt", candidate.AttemptId));
+                    await AuditAsync(connection, transaction, actorId, "gate.claimed", "gate-attempt",
+                        candidate.AttemptId, JsonSerializer.Serialize(new
+                        {
+                            fence, hostId, admission = gateAdmission.Reason, grantHalfCores, allocationVersion,
+                        }), ct);
+                    var quotaCardNotice = ConsumeQuotaCardNotice(projectName);
+                    if (quotaCardNotice is not null)
+                        await AppendLifecycleEventAsync(connection, transaction, candidate.Subject.SourceRunId,
+                            candidate.Subject.TaskId, 0, "quota.meter-unavailable", new { message = quotaCardNotice }, ct);
+                    var attempt = await ReadGateAttemptAsync(connection, transaction, candidate.AttemptId, ct);
+                    response = new GateClaimResponse("claimed", candidate.Subject, attempt,
+                        new GateLease(leaseId, candidate.AttemptId, request.ExecutorId, request.InstanceId,
+                            hostId, fence, 0, now, expiry, resourceNamespace, portBase,
+                            grantHalfCores, allocationVersion), quotaWarning);
+                    return;
+                }
+                if (candidates.Count < pageSize) break;
+                var last = candidates[^1];
+                after = (last.Priority, last.CreatedAt, last.Order);
             }
             response = new GateClaimResponse("empty", Message: quotaReason ?? "No eligible gate subject is queued.");
         }, ct);
