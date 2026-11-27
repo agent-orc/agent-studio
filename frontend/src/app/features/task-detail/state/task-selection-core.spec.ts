@@ -88,6 +88,8 @@ describe('TaskSelectionService · board record reuse', () => {
   const betaTwin = task('Beta', 'a', 0);
 
   beforeEach(async () => {
+    // Retry and lookahead horizons are virtual; HTTP requests remain explicitly answered.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0));
     sessionStorage.clear();
     localStorage.clear();
@@ -130,6 +132,8 @@ describe('TaskSelectionService · board record reuse', () => {
         .forEach(r => r.flush(null, { status: 503, statusText: 'Unavailable' }));
       http.verify();
     } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
       vi.unstubAllGlobals();
       TestBed.resetTestingModule();
       // The lane pager persists its snapshot; never leak it into later specs.
@@ -254,7 +258,7 @@ describe('TaskSelectionService · board record reuse', () => {
     (await nextRequest(reread, 4_000)).flush({ info: { ...lane[0], reviewEvidencePending: false,
       reviewProjection: gradedProjection } });
     expect(latestNotice()).toBe(gradedNotice);
-    await new Promise(resolve => setTimeout(resolve, 3_500));
+    await vi.advanceTimersByTimeAsync(3_500);
     expect(http.match(reread)).toHaveLength(0);
     answerLookahead();
   });
@@ -268,7 +272,7 @@ describe('TaskSelectionService · board record reuse', () => {
 
   async function waitForLookahead(): Promise<void> {
     TestBed.tick();
-    await new Promise(resolve => setTimeout(resolve, 1650));
+    await vi.advanceTimersByTimeAsync(1650);
     TestBed.tick();
   }
 

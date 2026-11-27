@@ -12,7 +12,7 @@ const scrollLaneToEnd = (lane: Locator) => lane.evaluate(element => {
 
 test('a 41-card lane keeps its footer and header actions', async ({ page }) => {
   await installSyntheticBoard(page, 41, true);
-  await page.goto('/');
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
   const lane = page.getByTestId('lane-scroll-2-ready');
   await expect(page.getByTestId('lane-count-2-ready')).toContainText('41');
   await expect(page.getByTestId('lane-collapse-2-ready')).toBeVisible();
@@ -25,10 +25,10 @@ test('a 41-card lane keeps its footer and header actions', async ({ page }) => {
   await expect(page.getByTestId('create-dialog-header')).toHaveText('New Ready Task');
 });
 
-test('a generated 830-card lane retains totals, search, scrolling and offscreen reorder', async ({ page }) => {
+test('a generated 830-card lane retains totals, scrolling and offscreen reorder', async ({ page }) => {
   test.setTimeout(180_000);
   await installSyntheticBoard(page, 830, true);
-  await page.goto('/');
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
   const lane = page.getByTestId('lane-scroll-2-ready');
   await expect(page.getByTestId('lane-count-2-ready')).toContainText('830', { timeout: 30_000 });
   await expect(lane.locator('app-job-card').first()).toBeVisible();
@@ -74,48 +74,54 @@ test('a generated 830-card lane retains totals, search, scrolling and offscreen 
   await expect.poll(() => reordered?.length ?? 0).toBe(830);
   await expect.poll(() => reordered?.indexOf('AGT-S00000') ?? -1).toBeGreaterThan(400);
 
-  await page.goto('/?q=Window%20target%20AGT-S00829');
-  await expect(page.getByTestId('lane-count-2-ready')).toContainText('1');
-  await expect(lane.locator('app-job-card')).toHaveCount(1);
-  await page.goto('/');
-  await expect(page.getByTestId('lane-count-2-ready')).toContainText('830');
-
-  await page.goto('/?type=bug');
-  await expect(page.getByTestId('lane-count-2-ready')).toContainText('1');
-  await expect(lane.locator('app-job-card')).toHaveCount(1);
-  await page.goto('/');
+  // Restore the fixture's original order before the independent move checks.
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('lane-count-2-ready')).toContainText('830');
 
   const moveRequests: { targetState: string; targetIndex?: number }[] = [];
+  const releaseMoves: (() => void)[] = [];
+  let moveResponses = 0;
   await page.route('**/api/v1/projects/*/tasks/*/move*', async route => {
+    const released = new Promise<void>(resolve => { releaseMoves.push(resolve); });
     moveRequests.push(route.request().postDataJSON());
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // Hold each response until its optimistic board count has been asserted.
+    await released;
     await route.fulfill({ status: 200, json: {} });
+    moveResponses++;
   });
-  await lane.locator('app-job-card').filter({ hasText: 'Generated task AGT-S00000' }).click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Move to Accepted' }).click();
-  await expect.poll(() => moveRequests.some(request => request.targetState === '6-completed')).toBe(true);
-  await expect(page.getByTestId('lane-count-2-ready')).toContainText('829');
+  try {
+    await lane.locator('app-job-card').filter({ hasText: 'Generated task AGT-S00000' }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Move to Accepted' }).click();
+    await expect.poll(() => moveRequests.some(request => request.targetState === '6-completed')).toBe(true);
+    await expect(page.getByTestId('lane-count-2-ready')).toContainText('829');
+    expect(moveResponses).toBe(0);
+    releaseMoves[0]();
+    await expect.poll(() => moveResponses).toBe(1);
 
-  await scrollLaneToEnd(lane);
-  await lane.evaluate(element => {
-    const spacer = element.querySelector<HTMLElement>('[data-testid="lane-window-before"]');
-    if (!spacer) throw new Error('No offscreen cross-lane drop region');
-    const transfer = new DataTransfer();
-    transfer.setData('text/plain', JSON.stringify({
-      jobId: 'AGT-X00000', watchPath: 'C:\\Projects\\agent-taskboard-workspace\\projects\\agent-taskboard',
-      taskKey: 'C:\\Projects\\agent-taskboard-workspace\\projects\\agent-taskboard::AGT-X00000',
-    }));
-    transfer.setData('application/x-source-state', '6-completed');
-    const rect = (element.closest('.lane-group__lanes') ?? element).getBoundingClientRect();
-    spacer.dispatchEvent(new DragEvent('drop', {
-      bubbles: true, cancelable: true, dataTransfer: transfer,
-      clientX: rect.left + 20, clientY: rect.top + rect.height / 2,
-    }));
-  });
-  await expect.poll(() => moveRequests.find(request => request.targetState === '2-ready')?.targetIndex ?? -1)
-    .toBeGreaterThan(400);
-  await expect(page.getByTestId('lane-count-2-ready')).toContainText('830');
+    await scrollLaneToEnd(lane);
+    await lane.evaluate(element => {
+      const spacer = element.querySelector<HTMLElement>('[data-testid="lane-window-before"]');
+      if (!spacer) throw new Error('No offscreen cross-lane drop region');
+      const transfer = new DataTransfer();
+      transfer.setData('text/plain', JSON.stringify({
+        jobId: 'AGT-X00000', watchPath: 'C:\\Projects\\agent-taskboard-workspace\\projects\\agent-taskboard',
+        taskKey: 'C:\\Projects\\agent-taskboard-workspace\\projects\\agent-taskboard::AGT-X00000',
+      }));
+      transfer.setData('application/x-source-state', '6-completed');
+      const rect = (element.closest('.lane-group__lanes') ?? element).getBoundingClientRect();
+      spacer.dispatchEvent(new DragEvent('drop', {
+        bubbles: true, cancelable: true, dataTransfer: transfer,
+        clientX: rect.left + 20, clientY: rect.top + rect.height / 2,
+      }));
+    });
+    await expect.poll(() => moveRequests.find(request => request.targetState === '2-ready')?.targetIndex ?? -1)
+      .toBeGreaterThan(400);
+    await expect(page.getByTestId('lane-count-2-ready')).toContainText('830');
+    expect(moveResponses).toBe(1);
+  } finally {
+    for (const release of releaseMoves) release();
+  }
+  await expect.poll(() => moveResponses).toBe(2);
 
   const group = lane.locator('xpath=ancestor::*[contains(@class,"lane-group__lanes")]');
   const savedScroll = await group.evaluate(element => element.scrollTop);
@@ -126,11 +132,29 @@ test('a generated 830-card lane retains totals, search, scrolling and offscreen 
   await expect(lane.locator('app-job-card').filter({ hasText: 'Window target AGT-S00829' })).toBeVisible();
 });
 
+// Search and type filtering do not depend on drag/reorder state. Each case can
+// run independently and still proves that clearing its filter restores 830.
+for (const [name, query] of [
+  ['text search', '/?q=Window%20target%20AGT-S00829'],
+  ['task type', '/?type=bug'],
+] as const) {
+  test(`${name} filters a generated 830-card lane and restores its total`, async ({ page }) => {
+    await installSyntheticBoard(page, 830, true);
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('lane-count-2-ready')).toContainText('830');
+    await page.goto(query, { waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('lane-count-2-ready')).toContainText('1');
+    await expect(page.getByTestId('lane-scroll-2-ready').locator('app-job-card')).toHaveCount(1);
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('lane-count-2-ready')).toContainText('830');
+  });
+}
+
 test('a generated 3,000-card board mounts a bounded window and renders in both themes and widths', async ({ page }) => {
   test.setTimeout(180_000);
   await installSyntheticBoard(page, 3000, true);
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto('/');
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
   const lane = page.getByTestId('lane-scroll-2-ready');
   await expect(page.getByTestId('lane-count-2-ready')).toContainText('3000', { timeout: 30_000 });
   expect(await lane.locator('app-job-card').count()).toBeLessThan(40);
