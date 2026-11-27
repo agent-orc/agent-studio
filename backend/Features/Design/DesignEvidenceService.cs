@@ -181,7 +181,6 @@ public sealed class DesignEvidenceService
             using var file = directory.OpenRead(fileName);
             using var reader = new StreamReader(file);
             var updated = StampAcceptedAt(reader.ReadToEnd(), stamp);
-            if (!FilesystemPathBoundary.IsRegularFileUnder(root, full)) return null;
             BeforeAcceptReplace?.Invoke();
             directory.Replace(fileName, updated, file.SafeFileHandle);
             var parse = DesignEvidenceParser.Parse(updated);
@@ -202,11 +201,11 @@ public sealed class DesignEvidenceService
     {
         var refsDir = Path.Combine(designDir, "references");
         var items = new List<DesignReferenceItem>();
-        if (!IsEvidenceDirectory(designDir, refsDir)) return items;
         foreach (var path in ListEvidenceFiles(designDir, refsDir))
         {
-            if (!FilesystemPathBoundary.IsRegularFileUnder(Path.GetDirectoryName(designDir)!, path)) continue;
-            try { items.Add(BuildReferenceItem(designDir, refsDir, path)); }
+            var text = ReadEvidence(designDir, path);
+            if (text is null) continue;
+            try { items.Add(BuildReferenceItem(designDir, refsDir, path, text)); }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to read design reference {File}", path);
@@ -231,11 +230,11 @@ public sealed class DesignEvidenceService
     {
         var councilDir = Path.Combine(designDir, "council");
         var items = new List<DesignCouncilNote>();
-        if (!IsEvidenceDirectory(designDir, councilDir)) return items;
         foreach (var path in ListEvidenceFiles(designDir, councilDir))
         {
-            if (!FilesystemPathBoundary.IsRegularFileUnder(Path.GetDirectoryName(designDir)!, path)) continue;
-            try { items.Add(BuildCouncilNote(designDir, councilDir, path)); }
+            var text = ReadEvidence(designDir, path);
+            if (text is null) continue;
+            try { items.Add(BuildCouncilNote(designDir, path, text)); }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to read council note {File}", path);
@@ -265,10 +264,9 @@ public sealed class DesignEvidenceService
         return items;
     }
 
-    private DesignReferenceItem BuildReferenceItem(string designDir, string refsDir, string filePath)
+    private static DesignReferenceItem BuildReferenceItem(string designDir, string refsDir, string filePath, string text)
     {
         var fi = new FileInfo(filePath);
-        var text = ReadEvidence(designDir, filePath) ?? throw new IOException("Design evidence path rejected.");
         var parse = DesignEvidenceParser.Parse(text);
         var rawKind = DesignEvidenceParser.GetString(parse.Fields, "kind")
             ?? DesignEvidenceParser.GetString(parse.Fields, "category");
@@ -289,10 +287,9 @@ public sealed class DesignEvidenceService
             ParseError: parse.ParseError);
     }
 
-    private DesignCouncilNote BuildCouncilNote(string designDir, string councilDir, string filePath)
+    private static DesignCouncilNote BuildCouncilNote(string designDir, string filePath, string text)
     {
         var fi = new FileInfo(filePath);
-        var text = ReadEvidence(designDir, filePath) ?? throw new IOException("Design evidence path rejected.");
         var parse = DesignEvidenceParser.Parse(text);
         var dateFromName = ExtractDateFromFileName(fi.Name);
         return new DesignCouncilNote(
@@ -318,7 +315,6 @@ public sealed class DesignEvidenceService
     private (bool exists, string? summary, string? status) ReadBrief(string designDir)
     {
         var briefPath = Path.Combine(designDir, "brief.md");
-        if (!FilesystemPathBoundary.IsRegularFileUnder(Path.GetDirectoryName(designDir)!, briefPath)) return (false, null, null);
         try
         {
             var text = ReadEvidence(designDir, briefPath);
@@ -339,7 +335,6 @@ public sealed class DesignEvidenceService
     private (string? status, string? detail, string? lastReview) ReadLoop(string designDir)
     {
         var loopPath = Path.Combine(designDir, "loop.md");
-        if (!FilesystemPathBoundary.IsRegularFileUnder(Path.GetDirectoryName(designDir)!, loopPath)) return (null, null, null);
         try
         {
             var text = ReadEvidence(designDir, loopPath);
@@ -379,12 +374,14 @@ public sealed class DesignEvidenceService
     private static string? ResolveDesignRelPath(string designDir, string refsDir, string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
-        var trimmed = raw.Replace('\\', '/');
-        var candidate = trimmed.StartsWith("references/", StringComparison.OrdinalIgnoreCase)
-            || trimmed.StartsWith("council/", StringComparison.OrdinalIgnoreCase)
-                ? Path.Combine(designDir, trimmed) : Path.Combine(refsDir, trimmed);
-        return FilesystemPathBoundary.IsRegularFileUnder(Path.GetDirectoryName(designDir)!, candidate)
-            ? Path.GetRelativePath(designDir, candidate).Replace('\\', '/') : null;
+        var trimmed = raw.Replace('\\', '/').Trim('/');
+        // Explicit metadata is a path hint, including before its image exists.
+        if (trimmed.StartsWith("references/", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("council/", StringComparison.OrdinalIgnoreCase))
+            return trimmed;
+        var sibling = Path.Combine(refsDir, trimmed);
+        return File.Exists(sibling)
+            ? Path.GetRelativePath(designDir, sibling).Replace('\\', '/') : trimmed;
     }
 
     private static string ExtractDateFromFileName(string fileName)

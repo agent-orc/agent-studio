@@ -103,6 +103,61 @@ public sealed class DesignEvidenceServiceTests : IDisposable
     }
 
     [Theory]
+    [InlineData("screenshot", "references/planned.png", "references/planned.png", false)]
+    [InlineData("screenshot", "council/planned.png", "council/planned.png", false)]
+    [InlineData("image", "/references/planned.png/", "references/planned.png", false)]
+    [InlineData("image", "references\\planned.png", "references/planned.png", false)]
+    [InlineData("screenshot", "planned.png", "planned.png", false)]
+    [InlineData("image", "planned.png", "references/planned.png", true)]
+    [InlineData("screenshot", "references/planned.png", "references/planned.png", true)]
+    public void Explicit_screenshot_metadata_keeps_existing_resolution_even_before_image_creation(
+        string field, string raw, string expected, bool imageExists)
+    {
+        Write(Repository, "design/references/reference.md", $"---\n{field}: {raw}\n---\nReference\n");
+        if (imageExists) Write(Repository, "design/references/planned.png", "Disposable image fixture");
+        var service = Service();
+
+        var reference = Assert.Single(service.ListReferences("alpha").References);
+
+        Assert.Equal(expected, reference.ScreenshotRelPath);
+        Assert.True(reference.ParseOk);
+        Assert.Equal(1, service.GetOverview("alpha").ReferencesCount);
+    }
+
+    [Fact]
+    public void Sibling_image_inference_uses_only_a_regular_link_free_file()
+    {
+        Write(Repository, "design/references/reference.md", "Reference\n");
+        var target = Write(Outside, "private.png", "Disposable outside image fixture");
+        var before = File.ReadAllBytes(target);
+        LinkFile("design/references/reference.png", target);
+        Write(Repository, "design/references/reference.jpg", "Disposable inside image fixture");
+
+        var reference = Assert.Single(Service().ListReferences("alpha").References);
+
+        Assert.Equal("references/reference.jpg", reference.ScreenshotRelPath);
+        Assert.Equal(before, File.ReadAllBytes(target));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_list_omits_evidence_replaced_by_a_link_before_open(bool reference)
+    {
+        var folder = reference ? "references" : "council";
+        Write(Repository, $"design/{folder}/note.md", "Inside note");
+        var target = Write(Outside, "private.json", "Disposable outside fixture");
+        var before = File.ReadAllBytes(target);
+        var service = Service();
+        service.BeforeEvidenceOpen = () => Substitute("leaf", folder, target);
+
+        if (reference) Assert.Empty(service.ListReferences("alpha").References);
+        else Assert.Empty(service.ListCouncilNotes("alpha").Notes);
+
+        Assert.Equal(before, File.ReadAllBytes(target));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void Acceptance_does_not_modify_an_outside_target(bool ancestor)
