@@ -3511,6 +3511,20 @@
             tests, guards and lint. The terminal is a new delivery for pipeline-owned
             integration and publication.</td>
         </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4117</code><br><span class="small">post-merge-restart-custody</span></td>
+          <td>A host restart lost in-memory post-merge command evidence and an undelivered terminal receipt left develop running.</td>
+          <td>Post-merge execution had no host journal or recoverable renewable owner; replacement waited for the fixed four/fourteen-hour bound.</td>
+          <td>Flushed command checkpoints reconstruct the same run; a durable terminal outbox replays before a successor. Invalid or incomplete work settles inconclusive with retained evidence, and a new fence rejects the previous owner.</td>
+        </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4117</code><br><span class="small">post-merge-custody-integration-recovery</span></td>
+          <td>No CLI crashed. Direct merge, mechanical merge and rebase fallback stopped at <code>merge-into-develop</code> for delivery <code>51550ce3e48e</code>.</td>
+          <td>The custody adapter and AGT-4173 merge-check admission methods shared the insertion point at the top of <code>MonolithTransitionAdapter</code>.</td>
+          <td>The continuation restores the single delivery on base <code>dfc9f16398ee</code>, retaining both independent method sets. Focused checks, guards and lint verify the replacement for pipeline-owned publication.</td>
+        </tr>
       </tbody>
     </table>
 

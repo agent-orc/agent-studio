@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AgentRunner;
+using AgentStudio.Pipeline;
+using Microsoft.Extensions.Time.Testing;
 using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
@@ -260,6 +262,263 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         Assert.True(test.Quarantined);
         Assert.Contains(run.Verdicts, verdict => verdict.OutputTail?.Contains("Product.Tests.Isolated", StringComparison.Ordinal) == true);
         Assert.DoesNotContain(run.Verdicts, verdict => verdict.Retried);
+    }
+
+    [Fact]
+    public async Task RestartAfterCommandReconstructsLedgerWithoutRepeatingFinishedWork()
+    {
+        var fixture = DurableFixture();
+        using var http = fixture.Http;
+        var executed = new List<string>();
+        var first = DurableWorker(http, executed, afterCheckpoint: _ => throw new InjectedRestart());
+        await Assert.ThrowsAsync<InjectedRestart>(() => first.ExecuteJournalAsync(fixture.Journal, CancellationToken.None));
+        Assert.Equal(["build"], executed);
+        var checkpoint = first.ReadJournal();
+        Assert.Single(checkpoint.Commands);
+        Assert.Single(checkpoint.Checkpoint!.Verdicts);
+        Assert.Equal(0, await DurableWorker(http, executed).ExecuteJournalAsync(null, CancellationToken.None));
+        Assert.Equal(["build", "suite"], executed);
+        var state = new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002");
+        Assert.Null(state.ActiveRun);
+        var receipt = Assert.Single(state.Runs);
+        Assert.Equal("green", receipt.Status);
+        Assert.Equal(2, receipt.Verdicts.Count);
+        Assert.Equal(checkpoint.Checkpoint.Verdicts[0].DurationMs, receipt.Verdicts[0].DurationMs);
+    }
+
+    [Fact]
+    public async Task RestartAfterRecoveredSuiteRetainsPerTestAttemptsAndFocusedDurations()
+    {
+        var fixture = DurableFixture();
+        using var http = fixture.Http;
+        var executed = new List<string>();
+        Task<(int, bool, string)> Execute(string command, CancellationToken _)
+        {
+            executed.Add(command);
+            return Task.FromResult(command == "suite" && executed.Count == 2
+                ? (1, false, "  Failed Product.Tests.One [1 ms]") : (0, false, ""));
+        }
+        var worker = DurableWorker(http, executed,
+            afterCheckpoint: _ => executed.Count == 3 ? throw new InjectedRestart() : Task.CompletedTask,
+            executor: Execute);
+        await Assert.ThrowsAsync<InjectedRestart>(() => worker.ExecuteJournalAsync(fixture.Journal, CancellationToken.None));
+        var saved = worker.ReadJournal().Checkpoint!;
+        Assert.Single(saved.TestVerdicts!);
+        Assert.Single(saved.FocusedRuns!);
+        await DurableWorker(http, executed).ExecuteJournalAsync(null, CancellationToken.None);
+        Assert.Equal(["build", "suite", "suite"], executed);
+        var terminal = Assert.Single(new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002").Runs);
+        Assert.Equal("green", terminal.Status);
+        Assert.Equal(JsonSerializer.Serialize(saved.TestVerdicts), JsonSerializer.Serialize(terminal.TestVerdicts));
+        Assert.Equal(JsonSerializer.Serialize(saved.FocusedRuns), JsonSerializer.Serialize(terminal.FocusedRuns));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PreparedReceiptSurvivesRestartAndApiOutageBeyondThreeRetries(bool outage)
+    {
+        var fixture = DurableFixture();
+        using var http = fixture.Http;
+        var executed = new List<string>();
+        fixture.Transport.RejectTerminal = outage;
+        var first = DurableWorker(http, executed, afterTerminal: outage ? null : _ => throw new InjectedRestart());
+        if (outage)
+        {
+            await Assert.ThrowsAsync<HttpRequestException>(() => first.ExecuteJournalAsync(fixture.Journal, CancellationToken.None));
+            Assert.Equal(3, fixture.Transport.TerminalAttempts);
+        }
+        else await Assert.ThrowsAsync<InjectedRestart>(() => first.ExecuteJournalAsync(fixture.Journal, CancellationToken.None));
+        var terminal = first.ReadJournal().Terminal!;
+        Assert.NotNull(terminal);
+        Assert.NotNull(new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002").ActiveRun);
+        fixture.Transport.RejectTerminal = false;
+        fixture.Transport.Now = Now.AddHours(1); // Well beyond the renewable lease, below the fallback window.
+        Assert.Equal(0, await DurableWorker(http, executed).ExecuteJournalAsync(null, CancellationToken.None));
+        Assert.Equal(["build", "suite"], executed);
+        var state = new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002");
+        Assert.Null(state.ActiveRun);
+        Assert.Equal(JsonSerializer.Serialize(terminal), JsonSerializer.Serialize(Assert.Single(state.Runs)));
+        Assert.False(File.Exists(Path.Combine(_root, "durable", ".post-merge-journal.json")));
+    }
+
+    [Fact]
+    public async Task LostTerminalAcknowledgementReplaysIdempotentlyBeforeAnyNewWork()
+    {
+        var fixture = DurableFixture();
+        using var http = fixture.Http;
+        var executed = new List<string>();
+        fixture.Transport.LoseAcknowledgement = true;
+        var worker = DurableWorker(http, executed);
+        await Assert.ThrowsAsync<HttpRequestException>(() => worker.ExecuteJournalAsync(fixture.Journal, CancellationToken.None));
+        Assert.Null(new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002").ActiveRun);
+        fixture.Transport.LoseAcknowledgement = false;
+        await DurableWorker(http, executed).ExecuteJournalAsync(null, CancellationToken.None);
+        Assert.Equal(["build", "suite"], executed);
+        Assert.Single(new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002").Runs);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InvalidOrInFlightCheckpointSettlesInfrastructureAndRetainsFinishedEvidence(bool inFlight)
+    {
+        var fixture = DurableFixture();
+        using var http = fixture.Http;
+        var executed = new List<string>();
+        var worker = DurableWorker(http, executed, afterCheckpoint: _ => throw new InjectedRestart());
+        await Assert.ThrowsAsync<InjectedRestart>(() => worker.ExecuteJournalAsync(fixture.Journal, CancellationToken.None));
+        if (inFlight)
+        {
+            var path = Path.Combine(_root, "durable", ".post-merge-journal.json");
+            var document = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
+            document["inFlight"] = true;
+            File.WriteAllText(path, document.ToJsonString());
+        }
+        else File.WriteAllText(Path.Combine(_root, "durable", "build-output"), "changed after checkpoint");
+        Assert.Equal(1, await DurableWorker(http, executed).ExecuteJournalAsync(null, CancellationToken.None));
+        Assert.Equal(["build"], executed);
+        var state = new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002");
+        Assert.Null(state.ActiveRun);
+        Assert.Equal("inconclusive", state.DevelopState);
+        var terminal = Assert.Single(state.Runs);
+        Assert.Single(terminal.Verdicts);
+        Assert.Equal(0, terminal.Verdicts[0].ExitCode);
+        Assert.Null(state.LastGreenSha);
+        Assert.Null(state.LastWindowTipSha);
+    }
+
+    [Fact]
+    public async Task UndeliveredOutboxBlocksExecutionWhileApiIsStillUnavailable()
+    {
+        var fixture = DurableFixture();
+        using var http = fixture.Http;
+        var executed = new List<string>();
+        fixture.Transport.RejectTerminal = true;
+        var first = DurableWorker(http, executed);
+        await Assert.ThrowsAsync<HttpRequestException>(() => first.ExecuteJournalAsync(fixture.Journal, CancellationToken.None));
+        await Assert.ThrowsAsync<HttpRequestException>(() => DurableWorker(http, executed).ExecuteAsync(CancellationToken.None));
+        Assert.Equal(["build", "suite"], executed);
+        Assert.NotNull(first.ReadJournal().Terminal);
+        Assert.NotNull(new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002").ActiveRun);
+    }
+
+    [Fact]
+    public async Task RenewalFailureCancelsCommandAndRecoverySettlesItsInterruption()
+    {
+        var fixture = DurableFixture();
+        using var http = fixture.Http;
+        var executed = new List<string>();
+        var clock = new FakeTimeProvider(Now);
+        var begun = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<(int, bool, string)> Command(string command, CancellationToken ct)
+        {
+            executed.Add(command);
+            begun.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return (0, false, "");
+        }
+        fixture.Transport.RejectRenewal = true;
+        var worker = DurableWorker(http, executed, executor: Command, clock: clock);
+        var execution = worker.ExecuteJournalAsync(fixture.Journal, CancellationToken.None);
+        await begun.Task;
+        clock.Advance(TimeSpan.FromSeconds(30));
+        await Assert.ThrowsAsync<HttpRequestException>(() => execution);
+        Assert.True(worker.ReadJournal().InFlight);
+        Assert.NotNull(new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002").ActiveRun);
+        fixture.Transport.RejectRenewal = false;
+        await DurableWorker(http, executed).ExecuteJournalAsync(null, CancellationToken.None);
+        var settled = new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002");
+        Assert.Null(settled.ActiveRun);
+        Assert.Equal("inconclusive", Assert.Single(settled.Runs).Status);
+        Assert.Equal(["build"], executed);
+    }
+
+    [Fact]
+    public async Task LostRecoveryAcknowledgementAfterLeaseExpiryGetsFreshCustodyBeforeCommands()
+    {
+        var fixture = DurableFixture();
+        using var http = fixture.Http;
+        var executed = new List<string>();
+        var recovery = Guid.NewGuid().ToString("N");
+        fixture.Journal.RecoveryId = recovery;
+        var store = new PostMergeRunStore(fixture.StoreRoot);
+        store.RenewCustody("PROJ-002", fixture.Journal.Started.Id, fixture.Journal.Owner, 1, Now, true, recovery);
+        fixture.Transport.Now = Now.AddMinutes(10);
+        var worker = DurableWorker(http, executed, clock: new FakeTimeProvider(fixture.Transport.Now));
+        fixture.Journal.WorkspaceDigest = worker.WorkspaceDigest();
+        File.WriteAllText(Path.Combine(_root, "durable", ".post-merge-journal.json"),
+            JsonSerializer.Serialize(fixture.Journal, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        await worker.ExecuteJournalAsync(null, CancellationToken.None);
+        var custody = new PostMergeRunStore(fixture.StoreRoot).ReadCustody("PROJ-002")!;
+        Assert.Equal(3, custody.Fence);
+        Assert.True(custody.ExpiresAtUtc > fixture.Transport.Now);
+        Assert.Equal(["build", "suite"], executed);
+        Assert.Null(store.Read("PROJ-002").ActiveRun);
+    }
+
+    private PostMergeRunCommand DurableWorker(HttpClient http, List<string> executed,
+        Func<CancellationToken, Task>? afterCheckpoint = null, Func<CancellationToken, Task>? afterTerminal = null,
+        Func<string, CancellationToken, Task<(int ExitCode, bool TimedOut, string Output)>>? executor = null,
+        TimeProvider? clock = null)
+        => new(new("demo", Path.Combine(_root, "durable"), "http://test/", "develop", "origin", "unused",
+            "window", 1, TimeSpan.Zero, 1, [], false), TextWriter.Null, clock ?? new FixedClock(), http, () => new(0, 0))
+        {
+            CommandExecutor = executor ?? ((command, _) => { executed.Add(command); return Task.FromResult((0, false, "")); }),
+            AfterCheckpoint = afterCheckpoint, AfterTerminalPrepared = afterTerminal,
+            ReceiptDelay = (_, _) => Task.CompletedTask,
+        };
+
+    private (HttpClient Http, DurableTransport Transport, PostMergeHostJournal Journal, string StoreRoot) DurableFixture()
+    {
+        var checkout = Path.Combine(_root, "durable");
+        Directory.CreateDirectory(checkout);
+        var definition = new ProjectExecutionDefinition(1, [], new Dictionary<string, string>(),
+            new("", ["build"], ["suite"], []), [new("routine", "routine", 1, "suite")], [], [],
+            new Dictionary<string, string>(), null, null, null, null, null);
+        var run = new PostMergeRunRecord("durable-run", "demo", "window", new string('a', 40), null,
+            Now, Now, 1, ["build", "suite"], [], "running", Now, null)
+            { SuiteSelection = new(["routine"], [], []) };
+        var owner = Guid.NewGuid().ToString("N");
+        var storeRoot = Path.Combine(_root, "store");
+        var store = new PostMergeRunStore(storeRoot);
+        store.Record("PROJ-002", run, owner, 0, Now);
+        var journal = new PostMergeHostJournal(run, PostMergeProjectState.Empty("demo"), definition, 1, owner) { Fence = 1 };
+        var transport = new DurableTransport(storeRoot);
+        return (new HttpClient(transport) { BaseAddress = new Uri("http://test/") }, transport, journal, storeRoot);
+    }
+
+    private sealed class InjectedRestart : Exception;
+
+    // Reconstruct the authority for every request, as a new service graph would after restart.
+    private sealed class DurableTransport(string storeRoot) : HttpMessageHandler
+    {
+        public bool RejectTerminal { get; set; }
+        public bool RejectRenewal { get; set; }
+        public bool LoseAcknowledgement { get; set; }
+        public int TerminalAttempts { get; private set; }
+        public DateTimeOffset Now { get; set; } = PostMergeRunIntegrationTests.Now;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var store = new PostMergeRunStore(storeRoot);
+            var run = (await request.Content!.ReadFromJsonAsync<PostMergeRunRecord>(ct))!;
+            if (request.Headers.TryGetValues("X-Post-Merge-Operation", out var operations))
+            {
+                var recover = operations.Single() == "recover";
+                if (RejectRenewal && !recover) return new(HttpStatusCode.ServiceUnavailable);
+                var result = store.RenewCustody("PROJ-002", run.Id,
+                    request.Headers.GetValues("X-Post-Merge-Owner").Single(),
+                    long.Parse(request.Headers.GetValues("X-Post-Merge-Fence").Single()), Now, recover,
+                    request.Headers.TryGetValues("X-Post-Merge-Recovery-Id", out var ids) ? ids.Single() : null);
+                return result is null ? new(HttpStatusCode.Conflict) : Json(result);
+            }
+            TerminalAttempts++;
+            if (RejectTerminal) return new(HttpStatusCode.ServiceUnavailable);
+            var state = store.Record("PROJ-002", run, request.Headers.GetValues("X-Post-Merge-Owner").Single(),
+                long.Parse(request.Headers.GetValues("X-Post-Merge-Fence").Single()), Now);
+            if (LoseAcknowledgement) throw new HttpRequestException("receipt accepted; acknowledgement lost");
+            return state is null ? new(HttpStatusCode.Conflict) : Json(state);
+        }
     }
 
     private static HttpResponseMessage Json(object value) => new(HttpStatusCode.OK)
