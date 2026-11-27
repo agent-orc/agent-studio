@@ -29,7 +29,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--studio-spacing-1);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   color: var(--wfolder-muted);
 }
 .wfolder__crumb {
@@ -42,7 +42,7 @@
   font: inherit;
   color: var(--wfolder-muted);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
 }
 button.wfolder__crumb:hover { color: var(--wfolder-fg); text-decoration: underline; }
 button.wfolder__crumb:focus-visible {
@@ -70,13 +70,13 @@ button.wfolder__crumb-copy:hover { color: var(--wfolder-fg); text-decoration: no
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   color: var(--wfolder-accent);
   background: color-mix(in srgb, var(--wfolder-accent) 14%, transparent);
 }
 .wfolder__title {
   margin: 0;
-  font-size: 0.98rem;
+  font-size: var(--studio-compat-type-81);
   font-weight: 700;
   color: var(--wfolder-fg);
   overflow: hidden;
@@ -86,7 +86,7 @@ button.wfolder__crumb-copy:hover { color: var(--wfolder-fg); text-decoration: no
 .wfolder__count {
   margin-left: auto;
   flex-shrink: 0;
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   font-variant-numeric: tabular-nums;
   color: var(--wfolder-muted);
 }
@@ -108,12 +108,12 @@ button.wfolder__crumb-copy:hover { color: var(--wfolder-fg); text-decoration: no
   width: 100%;
   table-layout: fixed;
   border-collapse: collapse;
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   color: var(--wfolder-fg);
 }
 .wfolder__table th {
   text-align: left;
-  font-size: 0.66rem;
+  font-size: var(--studio-compat-type-63);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -160,7 +160,7 @@ button.wfolder__crumb-copy:hover { color: var(--wfolder-fg); text-decoration: no
   height: 24px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: transparent;
   color: var(--wfolder-muted);
   cursor: grab;
@@ -192,7 +192,7 @@ button.wfolder__crumb-copy:hover { color: var(--wfolder-fg); text-decoration: no
   margin-left: auto;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: transparent;
   color: var(--wfolder-muted);
   cursor: pointer;
@@ -213,7 +213,7 @@ button.wfolder__crumb-copy:hover { color: var(--wfolder-fg); text-decoration: no
 .wfolder__summary {
   display: block;
   margin-top: var(--studio-spacing-1);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   color: var(--wfolder-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -229,7 +229,7 @@ button.wfolder__crumb-copy:hover { color: var(--wfolder-fg); text-decoration: no
   white-space: nowrap;
   text-overflow: ellipsis;
   font-family: var(--font-mono, monospace);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   color: var(--wfolder-muted);
 }
 /* Narrow-panel fallback (see `@container wfolder` below): filename as a
@@ -242,7 +242,7 @@ button.wfolder__crumb-copy:hover { color: var(--wfolder-fg); text-decoration: no
   max-width: 100%;
   margin-top: var(--studio-spacing-1);
   font-family: var(--font-mono, monospace);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   color: var(--wfolder-muted);
 }
 .wfolder__cell-type {
@@ -259,8 +259,8 @@ button.wfolder__crumb-copy:hover { color: var(--wfolder-fg); text-decoration: no
   display: inline-block;
   padding: 0 var(--studio-spacing-1);
   border: 1px solid color-mix(in srgb, var(--wfolder-fg) 14%, transparent);
-  border-radius: 4px;
-  font-size: 0.62rem;
+  border-radius: var(--studio-compat-radius-6);
+  font-size: var(--studio-compat-type-65);
   line-height: 1.6;
   color: var(--wfolder-muted);
 }

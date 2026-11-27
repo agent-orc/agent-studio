@@ -12,9 +12,9 @@ import { DevToolsService } from '../../../../services/dev-tools.service';
 import { ErrorDialogService } from '../../../../services/error-dialog.service';
 import { UpdateHistoryEntry } from '../../../../models/update-service.model';
 
-import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
+import { OverlayPortalDirective } from '@studio/ui/directives/overlay-portal.directive';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 /**
  * Drawer-style overlay opened from the version badge. Three sections:
  *

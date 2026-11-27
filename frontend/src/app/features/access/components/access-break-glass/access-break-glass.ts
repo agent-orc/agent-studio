@@ -3,7 +3,7 @@ import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@ang
 import { firstValueFrom } from 'rxjs';
 import { AuthService } from '../../../../services/auth.service';
 import { getPasskey } from '../../../../services/webauthn';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import { formatAccessTime } from '../../models/access.model';
 
 interface BreakGlassWindow {

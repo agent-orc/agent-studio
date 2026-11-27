@@ -11,11 +11,11 @@
   gap: var(--studio-spacing-3);
   flex-wrap: wrap;
 }
-h3 { margin: 0; color: var(--studio-fg-strong); font-size: 0.95rem; }
-p { margin: var(--studio-spacing-2) 0 0; font-size: 0.82rem; }
-a { color: var(--studio-accent-strong); font-size: 0.82rem; }
+h3 { margin: 0; color: var(--studio-fg-strong); font-size: var(--studio-compat-type-16); }
+p { margin: var(--studio-spacing-2) 0 0; font-size: var(--studio-compat-type-7); }
+a { color: var(--studio-accent-strong); font-size: var(--studio-compat-type-7); }
 .review-observations__scroll { overflow-x: auto; margin-top: var(--studio-spacing-4); }
-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+table { width: 100%; border-collapse: collapse; font-size: var(--studio-compat-type-13); }
 th, td { padding: var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border); text-align: left; }
 td:nth-child(n + 3) { font-variant-numeric: tabular-nums; white-space: nowrap; }
 thead th { color: var(--studio-fg); font-weight: 600; }

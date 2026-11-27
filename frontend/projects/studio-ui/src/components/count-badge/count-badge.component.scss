@@ -1,0 +1,58 @@
+/*
+ * Count badge — the one canonical count pill for the studio sidebar.
+ * Reads only studio tokens so it flips with the theme. ASS-707: the
+ * horizontal padding + min-width keep single- and multi-digit counts
+ * optically centred (no lopsided "9" vs "127").
+ */
+:is(sui-count-badge, app-count-badge) {
+  display: var(--studio-count-badge-display, inline);
+}
+
+.count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: var(--studio-count-badge-min-width, 18px);
+  height: 14px;
+  padding: 0 var(--studio-count-badge-inline-padding, 6px);
+  background: var(--studio-surface-muted);
+  color: var(--studio-text-muted);
+  border-radius: 7px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: 0;
+  flex-shrink: 0;
+
+  &--active {
+    background: var(--studio-accent);
+    color: var(--studio-on-accent);
+  }
+
+  // Tab-strip variant: a dezent number chip that sits on the tab's
+  // icon/label baseline. Deliberately borderless and pill-shaped (vs the
+  // earlier chunky bordered block) so it reads as a quiet count, not a
+  // loud badge. The fill is a low-alpha wash of `--studio-fg-dim`, which
+  // flips for free in both themes (dim resolves dark on light surfaces,
+  // light on dark ones).
+  &--pane-tab {
+    min-width: 16px;
+    height: 15px;
+    padding: 0 var(--studio-spacing-1);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--studio-fg-dim) 16%, transparent);
+    color: var(--studio-fg-dim);
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  // Active tab: use the shared tab-count contrast pair. The solid fill keeps
+  // the count legible on every theme's tab surface.
+  &--pane-tab.count-badge--active {
+    background: var(--studio-tab-count-active-bg);
+    color: var(--studio-tab-count-active-fg);
+  }
+}

@@ -1,0 +1,172 @@
+/*
+ * Unified notification / banner primitive (F37).
+ *
+ * Token-disciplined: every colour, border, and shadow reads through a
+ * `--notify-*` or `--studio-*` semantic alias. No raw hex / rgba lives
+ * in this file. The light theme overrides those aliases in
+ * `_tokens-semantic.scss`; the component itself never branches on theme.
+ *
+ * ViewEncapsulation is None so consumers that wrap us in a positioning
+ * host (toast stack, banner host) can still target our BEM classes
+ * without `::ng-deep`. The selectors are scoped under `.notification`
+ * so we do not leak.
+ */
+
+:is(sui-notification, app-notification) {
+  display: block;
+}
+
+.notification {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--studio-spacing-3);
+  align-items: flex-start;
+  padding: var(--studio-spacing-3) var(--studio-spacing-4);
+  border-radius: 12px;
+  background: var(--notify-surface-bg);
+  border: 1px solid var(--notify-surface-border);
+  color: var(--notify-surface-fg);
+  font-size: 13px;
+  line-height: 1.45;
+  font-family: var(--font-ui);
+  box-sizing: border-box;
+  animation: notification-in 0.18s ease-out;
+}
+
+.notification--layout-toast {
+  box-shadow: var(--elevation-popover);
+}
+
+.notification--layout-banner {
+  width: 100%;
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border-inline: 0;
+  border-radius: 0;
+  font-size: 13px;
+  box-shadow: none;
+
+  /* A persistent workspace alarm is a classic app notice bar. It occupies
+     the complete in-flow width and never adopts floating card chrome. */
+  .notification__icon {
+    width: 9px;
+    height: 9px;
+    margin-block-start: var(--studio-spacing-1);
+    border-radius: 50%;
+    font-size: 0;
+  }
+
+  .notification__body,
+  .notification__message {
+    display: block;
+  }
+
+  .notification__message {
+    -webkit-line-clamp: unset;
+    overflow: visible;
+  }
+
+  .notification__detail {
+    margin-inline-start: var(--studio-spacing-1);
+    color: var(--studio-fg-muted);
+  }
+
+  .notification__number {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.notification__icon {
+  font-size: 16px;
+  line-height: 1.2;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--notify-icon-bg-neutral);
+  color: var(--notify-icon-fg-neutral);
+  flex-shrink: 0;
+}
+
+.notification__body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notification__title {
+  font-weight: 600;
+  color: var(--notify-surface-fg-strong);
+  margin-bottom: 2px;
+}
+
+.notification__message {
+  /* Clamp the body to four lines + ellipsis so a very long verdict / log
+     line cannot grow the surface into a wall of text. Callers that need
+     scrollable bodies can override `-webkit-line-clamp` from the host
+     via the BEM root (see `<app-notification-stack>` host). */
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.notification__close {
+  background: transparent;
+  border: none;
+  color: var(--notify-surface-fg-dim);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  align-self: flex-start;
+
+  &:hover {
+    background: var(--studio-bg-hover);
+    color: var(--notify-surface-fg-strong);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--studio-accent);
+    outline-offset: 1px;
+  }
+}
+
+/*
+ * Per-severity tints. Each kind overrides the border + icon-bg + icon-fg
+ * triplet; the toast layout additionally adopts a faint tinted surface so
+ * stacked toasts stay visually distinct from one another.
+ */
+@mixin notify-kind($border, $icon-bg, $icon-fg, $tint) {
+  border-color: $border;
+  .notification__icon {
+    background: $icon-bg;
+    color: $icon-fg;
+  }
+  &.notification--layout-banner {
+    background: $tint;
+
+    .notification__icon {
+      background: $icon-fg;
+      color: transparent;
+    }
+  }
+}
+
+.notification--success { @include notify-kind(var(--notify-success-border), var(--notify-success-icon-bg), var(--notify-success-icon-fg), var(--notify-success-tint)); }
+.notification--info    { @include notify-kind(var(--notify-info-border),    var(--notify-info-icon-bg),    var(--notify-info-icon-fg),    var(--notify-info-tint)); }
+.notification--warning { @include notify-kind(var(--notify-warning-border), var(--notify-warning-icon-bg), var(--notify-warning-icon-fg), var(--notify-warning-tint)); }
+.notification--error   { @include notify-kind(var(--notify-error-border),   var(--notify-error-icon-bg),   var(--notify-error-icon-fg),   var(--notify-error-tint)); }
+.notification--accent  { @include notify-kind(var(--notify-accent-border),  var(--notify-accent-icon-bg),  var(--notify-accent-icon-fg),  var(--notify-accent-tint)); }
+
+@keyframes notification-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notification { animation: none; }
+}

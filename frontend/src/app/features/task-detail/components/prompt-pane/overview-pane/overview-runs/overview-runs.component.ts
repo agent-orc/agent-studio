@@ -8,7 +8,7 @@ import {
 } from '../../../../../../services/format.util';
 import { formatDuration, formatTokens } from '../overview-pane-formatters';
 import { runTriggerLabel, runTriggerReportHref } from '../../../protocol-pane/run-timeline/run-trigger-presentation.util';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 const KNOWN_CLIS: readonly CliType[] = ['claude', 'codex', 'gemini'];
 

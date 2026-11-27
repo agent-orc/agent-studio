@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import type { BetterCandidateNote, CliType, WatchPathEntry } from '../../../../models/task.model';
 import type { CliModelInfo } from '../../../../features/cli';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
 /**

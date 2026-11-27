@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { WatcherApiService } from '../../services/watcher-api.service';
 import type { WatcherStatusResponse } from '../../models/watcher.model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * Watcher contingent strip (orchestrator-waechter dossier §10.4): the

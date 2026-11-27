@@ -4,7 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { ModalStackService } from '../../../../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { TaskPromptPopoverComponent } from './task-prompt-popover.component';
 import { DossierReferenceHydratorService } from '../../../../../services/dossier-reference-hydrator.service';
 import {

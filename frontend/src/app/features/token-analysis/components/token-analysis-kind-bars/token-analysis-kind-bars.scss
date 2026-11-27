@@ -20,7 +20,7 @@
   grid-template-columns: minmax(64px, 96px) minmax(0, 1fr) 64px;
   align-items: center;
   gap: var(--studio-spacing-2);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
 }
 
 .kb__row--selected { background: var(--studio-bg-selected); }
@@ -29,11 +29,11 @@
   overflow: hidden;
   padding: var(--studio-spacing-1);
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: transparent;
   color: var(--studio-fg);
   font: inherit;
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -47,7 +47,7 @@
 .kb__stack {
   display: flex;
   /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- 2px surface gap between chart fills */
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
   /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- bar thickness, not spacing */
   height: 14px;
   min-width: 2px;
@@ -59,13 +59,13 @@
   height: 100%;
 }
 
-.kb__segment:first-child { border-radius: 4px 0 0 4px; }
-.kb__segment:last-child { border-radius: 0 4px 4px 0; }
-.kb__segment:only-child { border-radius: 4px; }
+.kb__segment:first-child { border-radius: var(--studio-compat-radius-6) 0 0 var(--studio-compat-radius-6); }
+.kb__segment:last-child { border-radius: 0 var(--studio-compat-radius-6) var(--studio-compat-radius-6) 0; }
+.kb__segment:only-child { border-radius: var(--studio-compat-radius-6); }
 
 .kb__total {
   @include ta.numeric;
   color: var(--studio-fg-dim);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   text-align: right;
 }

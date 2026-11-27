@@ -1,6 +1,6 @@
 import type { TaskInfo } from '../models/task.model';
 import { unintegratedDeliveryLoss } from '../models/lane-move-guard';
-import type { ConfirmDialogService } from './confirm-dialog.service';
+import type { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 
 /**
  * Minimum written-reason length. Mirrors backend

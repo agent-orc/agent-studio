@@ -6,7 +6,7 @@ import { HttpClient } from '@angular/common/http';
 import { OnboardProjectDialogComponent } from './onboard-project-dialog.component';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { CliCatalogStore } from '../../../cli';
 import { RemoteHostsService, seedRemoteHosts, type RemoteHost } from '../../../remote-hosts';
 import type { CreateRegistryProjectRequest } from '../../../../models/task.model';

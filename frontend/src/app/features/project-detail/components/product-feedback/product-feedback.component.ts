@@ -1,4 +1,4 @@
-import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, HostListener, computed, inject, input, signal } from '@angular/core';
 import { TaskState, type TaskInfo } from '../../../../models/task.model';
 import { laneName } from '../../../../models/lane-presentation';

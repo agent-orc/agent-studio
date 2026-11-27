@@ -6,13 +6,13 @@
 .aspect-json {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
 
   &__meta-head {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 8px;
+    gap: var(--studio-spacing-2);
   }
 
   &__title {
@@ -22,7 +22,7 @@
 
   &__model {
     margin-left: auto;
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     font-family: var(--font-mono, monospace);
     color: var(--studio-fg-dim);
   }
@@ -43,18 +43,18 @@
     padding: 0;
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: var(--studio-compat-space-2);
   }
 
   &__metric {
     display: inline-flex;
     align-items: baseline;
-    gap: 4px;
-    padding: 2px 8px;
-    border-radius: 6px;
+    gap: var(--studio-spacing-1);
+    padding: var(--studio-compat-space-4) var(--studio-spacing-2);
+    border-radius: var(--studio-compat-radius-7);
     background: var(--studio-bg-hover);
     border: 1px solid var(--studio-border);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
   }
 
   &__metric-key {
@@ -69,12 +69,12 @@
 
   &__details {
     border-top: 1px solid var(--studio-border);
-    padding-top: 6px;
+    padding-top: var(--studio-compat-space-2);
   }
 
   &__details-summary {
     cursor: pointer;
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -85,10 +85,10 @@
   }
 
   &__details-body {
-    margin-top: 6px;
+    margin-top: var(--studio-compat-space-2);
   }
 
   &--compact {
-    gap: 6px;
+    gap: var(--studio-compat-space-2);
   }
 }

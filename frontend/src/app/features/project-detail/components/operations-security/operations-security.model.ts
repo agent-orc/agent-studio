@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Wire types of GET /api/security/posture (AGT-3575). Metadata only; the API never sends a secret value. */
 export type SecuritySeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';

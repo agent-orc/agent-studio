@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import type { EffectiveModelSelection } from '../../../../quota';
-import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { effectiveRouteView } from './pipeline-step-effective-route.util';
 
 /** Effective launch route of one LLM step, shown only when it contradicts the configured route. */

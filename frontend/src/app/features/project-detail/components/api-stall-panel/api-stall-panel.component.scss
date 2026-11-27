@@ -23,7 +23,7 @@
   display: inline-block;
   color: var(--studio-fg-muted);
   background: var(--studio-bg-hover);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
 }
 

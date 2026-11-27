@@ -1,0 +1,250 @@
+/*
+ * Tree row — workspace tree + task outline + sub-rows. Centralises
+ * the chevron + glyph + name + meta + count layout. Reads only
+ * studio-shell tokens so theme flipping happens for free.
+ *
+ * Selector names mirror the legacy `studio-tree-row__*` so the
+ * existing styles.scss bridge entries still apply when the migration
+ * is incomplete.
+ */
+.tree-row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--studio-tree-row-gap, 8px);
+  width: 100%;
+  // Row height drives the vertical rhythm of the Explorer tree, and so the
+  // spacing between the stacked count badges (project totals + lane counts)
+  // down the sidebar's right edge. Bumped from 24px so the counts read with
+  // breathing room instead of crowding each other (operator polish).
+  min-height: var(--studio-row-min-h-interactive);
+  padding-top: 0;
+  // Right gutter so count badges (e.g. `439`, `27`) get breathing room from
+  // the sidebar's right edge instead of being painted flush against it.
+  // Shared with list-row + section-header via the rail token so every
+  // trailing count across Explorer + Tasks outlines lines up identically.
+  padding-right: var(--studio-tree-row-trailing-gutter, var(--studio-rail-trailing-gutter));
+  padding-bottom: 0;
+  background: transparent;
+  border: 0;
+  font-size: 13px;
+  color: var(--studio-fg);
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease;
+
+  &:hover {
+    background: var(--studio-bg-hover);
+  }
+
+  &:disabled {
+    cursor: default;
+  }
+
+  // Visible keyboard focus. The shell resets native button chrome
+  // (`.studio button` clears outline via the reset), so the unified nav needs
+  // its own focus ring. Inset so it is not clipped by the rail's overflow.
+  &:focus-visible {
+    outline: 2px solid var(--studio-accent);
+    outline-offset: -2px;
+  }
+
+  // Active side-menu item: tint and foreground contrast carry the state.
+  // Style-guide R1 forbids an accent bar on rows.
+  &--active {
+    background: var(--studio-nav-active-bg);
+    color: var(--studio-nav-active-fg);
+    font-weight: 600;
+    box-shadow: none;
+  }
+
+  &--active:hover {
+    background: var(--studio-nav-active-bg-hover);
+  }
+
+  &--active .tree-row__chev,
+  &--active .tree-row__glyph-icon {
+    color: var(--studio-accent-strong);
+  }
+
+  // Padding-left lives below: `.studio button` (specificity 0,1,1)
+  // resets padding to 0 inside the shell, so single-class
+  // `.tree-row--root` / `.tree-row--child` (0,1,0) is too weak. The
+  // scoped rules at the end of this file bump to (0,2,0) so the
+  // hierarchy indent actually applies.
+
+  &__chev {
+    display: inline-grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    color: var(--studio-fg-muted);
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: color 120ms ease;
+
+    &:hover { color: var(--studio-fg); }
+
+    &--placeholder {
+      pointer-events: none;
+      visibility: hidden;
+    }
+  }
+
+  &__glyph {
+    position: relative;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    display: grid;
+    place-items: center;
+    background: var(--studio-fg-muted);
+    color: var(--studio-on-accent);
+    font-size: 9px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  &__glyph-char::before {
+    content: attr(data-glyph);
+  }
+
+  &__glyph-overlay {
+    position: absolute;
+    right: -3px;
+    bottom: -3px;
+    display: inline-grid;
+    place-items: center;
+    width: 8px;
+    height: 8px;
+  }
+
+  &__glyph-icon {
+    display: inline-grid;
+    place-items: center;
+    width: 14px;
+    color: var(--studio-fg-muted);
+    flex-shrink: 0;
+
+    &--placeholder {
+      visibility: hidden;
+    }
+  }
+
+  &__name {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__meta {
+    color: var(--studio-fg-muted);
+    font-size: 11px;
+    font-family: var(--font-mono);
+  }
+
+  // Count badge is the shared <app-count-badge>; its active inversion is
+  // driven by the row's `active()` → `[tone]` binding, not a descendant
+  // selector here.
+}
+
+.tree-row-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.tree-row-wrap--chevron {
+  padding-left: var(--studio-spacing-2);
+}
+
+.tree-row-wrap--chevron.tree-row-wrap--child {
+  padding-left: var(--studio-tree-row-child-indent, 44px);
+}
+
+.tree-row-wrap--chevron .tree-row {
+  flex: 1 1 auto;
+  width: auto;
+  padding-left: 0;
+}
+
+.studio .tree-row-wrap--chevron .tree-row {
+  padding-left: 0;
+}
+
+.tree-row__chev-action {
+  flex: 0 0 24px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--studio-fg-muted);
+  cursor: pointer;
+
+  &:hover { background: var(--studio-bg-hover); color: var(--studio-fg); }
+  &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
+}
+
+.tree-row__actions {
+  position: absolute;
+  right: var(--studio-rail-trailing-gutter);
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  transform: translateY(-50%);
+}
+
+.studio .tree-row-wrap--actions .tree-row {
+  padding-right: calc(var(--studio-rail-trailing-gutter) + var(--studio-row-min-h-interactive));
+}
+
+:is(sui-tree-row, app-tree-row) {
+  display: block;
+  min-width: 0;
+}
+
+/*
+ * Specificity-bumped scoped variants. `.studio button { padding: 0 }`
+ * inside studio-shell.component.scss has specificity (0,1,1) and beats
+ * bare `.tree-row--root` / `.tree-row--child` (0,1,0), killing the
+ * indent that distinguishes project rows from their lane children. We
+ * deliberately scope the modifiers to `.studio` so they land at (0,2,0)
+ * and outrank the universal button reset.
+ *
+ * Same trick the old studio-tree-row migration used (see the
+ * `.studio .studio-tree-row--child` block in studio-shell.component.
+ * scss). Without this the tree renders as a flat list of identically-
+ * indented rows — projects and lane children are visually
+ * indistinguishable.
+ */
+// Base indents for use OUTSIDE the studio shell (e.g. the project-shell
+// rendered in a body-portaled overlay, where no `.studio` ancestor exists
+// and so the scoped rules below never match). Harmless inside `.studio`:
+// the scoped rules carry the same values at higher specificity.
+.tree-row--root  { padding-left: 8px;  }
+.tree-row--child { padding-left: var(--studio-tree-row-child-indent, 44px); }
+
+.studio .tree-row--root  { padding-left: 8px;  }
+.studio .tree-row--child {
+  padding-left: var(--studio-tree-row-child-indent, 44px);
+  font-size: 12px;
+}
+
+// Same specificity trap as the indent above: a tree-row renders as a
+// `<button>`, so `.studio button { padding: 0 }` (0,1,1) silently beats the
+// base `.tree-row { padding-right }` (0,1,0) and the count badge ends up
+// flush against the rail edge. Scope to `.studio` (0,2,0) so the trailing
+// gutter actually wins.
+.studio .tree-row {
+  padding-right: var(--studio-tree-row-trailing-gutter, var(--studio-rail-trailing-gutter));
+}

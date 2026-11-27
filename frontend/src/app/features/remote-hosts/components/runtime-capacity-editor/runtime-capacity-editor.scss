@@ -90,7 +90,7 @@
   min-width: 72px;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg-strong);
 }
@@ -104,7 +104,7 @@
 
 .capacity__save {
   border: 1px solid color-mix(in srgb, var(--studio-accent) 50%, var(--studio-border));
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   padding: var(--studio-spacing-1) var(--studio-spacing-3);
   background: var(--studio-accent);
   color: var(--studio-bg);

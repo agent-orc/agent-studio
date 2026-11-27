@@ -114,4 +114,15 @@ module.exports = tseslint.config(
       'no-restricted-imports': 'off',
     },
   },
+  {
+    files: ['projects/studio-ui/**/*.ts'],
+    rules: {
+      '@angular-eslint/component-selector': ['error', { type: 'element', prefix: ['sui', 'app'], style: 'kebab-case' }],
+      '@angular-eslint/directive-selector': ['error', { type: 'attribute', prefix: ['sui', 'app', 'cac'], style: 'camelCase' }],
+      'no-restricted-imports': ['error', { patterns: [
+        { group: ['**/src/app/**', '**/app/services/**', 'coding-agent-chat', 'coding-agent-chat/**'], message: 'studio-ui cannot depend on the Studio host. Use a host provider.' },
+      ] }],
+    },
+  },
+
 );

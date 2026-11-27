@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, untracked } from '@angular/core';
 import type { TaskInfo } from '../../../../models/task.model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
-import { SegmentedControlComponent, type SegmentedOption } from '../../../../components/segmented-control/segmented-control.component';
-import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
-import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { SegmentedControlComponent, type SegmentedOption } from '@studio/ui/components/segmented-control/segmented-control.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/pending-button.directive';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 import { AcceptanceReadinessStore } from '../../state/acceptance-readiness.store';
 import { readinessKey } from '../../models/acceptance-readiness-groups.util';
 import type { AcceptanceReadinessFilter } from '../../models/acceptance-readiness.model';

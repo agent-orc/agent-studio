@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
-import { SectionHeaderComponent } from '../../../../components/section-header/section-header.component';
+import { SectionHeaderComponent } from '@studio/ui/components/section-header/section-header.component';
 import {
   SegmentedControlComponent,
   SegmentedOption,
-} from '../../../../components/segmented-control/segmented-control.component';
+} from '@studio/ui/components/segmented-control/segmented-control.component';
 import { ThemeService } from '../../services/theme.service';
 import { StudioPanelStateService } from '../../services/studio-panel-state.service';
 // WorkspaceOverlaysComponent imports this component and is itself exported by

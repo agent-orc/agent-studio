@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "outDir": "../../out-tsc/ui-spec", "types": ["vitest/globals"] },
+  "include": ["src/**/*.spec.ts", "../../src/test-locale.ts", "../../src/**/*.d.ts"]
+}

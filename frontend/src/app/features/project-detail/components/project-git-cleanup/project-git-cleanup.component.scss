@@ -8,7 +8,7 @@
   gap: var(--studio-spacing-2);
   color: var(--studio-fg);
   border: 1px solid var(--studio-border);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: var(--studio-bg-elevated);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
 
@@ -38,24 +38,24 @@
 
   &__caret {
     display: inline-block;
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     color: var(--studio-fg-dim);
-    transition: transform 0.12s ease;
+    transition: transform var(--studio-compat-duration-3) ease;
 
     &--open { transform: rotate(90deg); }
   }
 
   &__title {
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     font-weight: 600;
   }
 
   &__pill {
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     color: var(--studio-accent);
     background: var(--studio-bg);
-    padding: 1px 8px;
-    border-radius: 999px;
+    padding: var(--studio-compat-space-6) var(--studio-spacing-2);
+    border-radius: var(--studio-compat-radius-2);
   }
 
   &__body {
@@ -65,15 +65,15 @@
   }
 
   &__lead {
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     color: var(--studio-fg-dim);
     margin: 0;
 
-    code { font-size: 11px; }
+    code { font-size: var(--studio-compat-type-6); }
   }
 
   &__note {
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     color: var(--studio-fg-dim);
     margin: 0;
 
@@ -83,7 +83,7 @@
   &__group {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--studio-compat-space-4);
   }
 
   &__group-head {
@@ -92,7 +92,7 @@
     justify-content: space-between;
     gap: var(--studio-spacing-2);
     margin: var(--studio-spacing-1) 0 0;
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -108,9 +108,9 @@
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     align-items: baseline;
-    gap: 2px var(--studio-spacing-2);
+    gap: var(--studio-compat-space-4) var(--studio-spacing-2);
     padding: var(--studio-spacing-1) var(--studio-spacing-2);
-    border-radius: 3px;
+    border-radius: var(--studio-compat-radius-9);
     cursor: pointer;
 
     &:hover { background: var(--studio-bg); }
@@ -132,22 +132,22 @@
   }
 
   &__row-name {
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     color: var(--studio-fg-strong);
     overflow-wrap: anywhere;
   }
 
   &__sha {
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     color: var(--studio-fg-dim);
   }
 
   &__status {
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    padding: 1px 6px;
-    border-radius: 3px;
+    padding: var(--studio-compat-space-6) var(--studio-compat-space-2);
+    border-radius: var(--studio-compat-radius-9);
     background: var(--studio-bg);
     color: var(--studio-fg-dim);
 
@@ -157,7 +157,7 @@
 
   &__reason {
     grid-column: 2;
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     color: var(--studio-fg-dim);
   }
 
@@ -185,7 +185,7 @@
   }
 
   &__confirm-text {
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     color: var(--studio-warn);
   }
 
@@ -194,22 +194,22 @@
   &__link {
     font: inherit;
     cursor: pointer;
-    border-radius: 3px;
+    border-radius: var(--studio-compat-radius-9);
 
     &:disabled { opacity: 0.5; cursor: default; }
   }
 
   &__action {
-    font-size: 12px;
-    padding: 3px 10px;
+    font-size: var(--studio-font-size-sm);
+    padding: var(--studio-compat-space-1) var(--studio-compat-space-5);
     border: 1px solid var(--studio-border);
     background: var(--studio-bg);
     color: var(--studio-fg);
   }
 
   &__danger {
-    font-size: 12px;
-    padding: 3px 12px;
+    font-size: var(--studio-font-size-sm);
+    padding: var(--studio-compat-space-1) var(--studio-spacing-3);
     border: 1px solid var(--studio-error);
     background: none;
     color: var(--studio-error);
@@ -217,7 +217,7 @@
   }
 
   &__link {
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     padding: 0;
     border: none;
     background: none;
@@ -234,7 +234,7 @@
   }
 
   &__result-head {
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     margin: 0;
   }
 
@@ -244,25 +244,25 @@
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--studio-compat-space-4);
   }
 
   &__result-item {
     display: flex;
     align-items: baseline;
     gap: var(--studio-spacing-2);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     flex-wrap: wrap;
 
     &--kept { opacity: 0.8; }
   }
 
   &__result-badge {
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    padding: 1px 6px;
-    border-radius: 3px;
+    padding: var(--studio-compat-space-6) var(--studio-compat-space-2);
+    border-radius: var(--studio-compat-radius-9);
     background: var(--studio-bg);
 
     &[data-deleted='true'] { color: var(--studio-success); }

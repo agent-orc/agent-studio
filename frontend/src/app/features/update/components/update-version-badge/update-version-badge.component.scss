@@ -1,14 +1,14 @@
 .version-badge {
   display: inline-flex;
   align-items: center;
-  gap: var(--header-btn-gap, 6px);
+  gap: var(--header-btn-gap, var(--studio-compat-space-2));
   height: var(--header-btn-height, 28px);
-  padding: 0 var(--header-btn-padding-x, 10px);
-  border-radius: var(--header-btn-radius, 6px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(205, 214, 244, 0.85);
-  font-size: 0.75rem;
+  padding: 0 var(--header-btn-padding-x, var(--studio-compat-space-5));
+  border-radius: var(--header-btn-radius, var(--studio-compat-radius-7));
+  border: 1px solid var(--studio-compat-border-39);
+  background: var(--studio-compat-surface-53);
+  color: var(--studio-compat-ink-67);
+  font-size: var(--studio-compat-type-11);
   font-family: var(--mono-stack, ui-monospace, SFMono-Regular, monospace);
   line-height: 1;
   cursor: pointer;
@@ -16,10 +16,10 @@
   box-sizing: border-box;
 }
 .version-badge:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--studio-compat-surface-30);
 }
 .version-badge--behind {
-  border-color: rgba(249, 226, 175, 0.45);
+  border-color: var(--studio-compat-border-42);
 }
 .version-badge__sha {
   opacity: 0.6;
@@ -27,8 +27,8 @@
 .version-badge__dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
-  background: #f9e2af;
-  box-shadow: 0 0 6px rgba(249, 226, 175, 0.8);
+  border-radius: var(--studio-compat-radius-4);
+  background: var(--studio-compat-surface-54);
+  box-shadow: var(--studio-compat-elevation-20);
 }
   

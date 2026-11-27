@@ -11,7 +11,7 @@
 }
 
 .db-backups h4, .db-backups h5, .db-backups p, .db-backups ul, .db-backups fieldset { margin: 0; }
-.db-backups h4, .db-backups h5 { font-size: 13px; color: var(--studio-fg-strong); }
+.db-backups h4, .db-backups h5 { font-size: var(--studio-font-size-md); color: var(--studio-fg-strong); }
 .db-backups h5 { margin-top: var(--studio-spacing-2); }
 .db-backups p, .db-backups small, .db-backups legend { color: var(--studio-fg-dim); }
 .db-backups code { overflow-wrap: anywhere; }
@@ -51,7 +51,7 @@
   padding: var(--studio-spacing-3);
   background: var(--studio-surface);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
 }
 
 .db-backups fieldset {
@@ -62,7 +62,7 @@
   border: 0;
 }
 
-.db-backups legend { padding: 0; margin-bottom: var(--studio-spacing-1); font-size: 12px; }
+.db-backups legend { padding: 0; margin-bottom: var(--studio-spacing-1); font-size: var(--studio-font-size-sm); }
 .db-backups fieldset label { display: inline-flex; align-items: center; gap: var(--studio-spacing-1); cursor: pointer; }
 .db-backups__confirm { display: grid; gap: var(--studio-spacing-1); color: var(--studio-fg-dim); }
 
@@ -72,7 +72,7 @@
   color: var(--studio-fg);
   background: var(--studio-surface-muted);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   font-family: var(--font-mono);
 }
 
@@ -81,7 +81,7 @@
   color: var(--studio-fg);
   background: var(--studio-surface);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   font: inherit;
   cursor: pointer;
 }

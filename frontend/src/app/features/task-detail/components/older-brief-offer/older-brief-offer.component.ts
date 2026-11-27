@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, inject, input, output, signal } from '@angular/core';
 import type { TaskInfo } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 type OlderBriefDecision = 'accept' | 'starting-point' | 'discard';
 

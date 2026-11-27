@@ -13,4 +13,4 @@
   background: color-mix(in srgb, var(--studio-status-warning) 6%, var(--studio-bg-surface));
   min-width: 0;
 }
-.batch-quarantine__file, .batch-quarantine__error { font-family: var(--font-mono); font-size: .78rem; color: var(--studio-fg-muted); }
+.batch-quarantine__file, .batch-quarantine__error { font-family: var(--font-mono); font-size: var(--studio-compat-type-30); color: var(--studio-fg-muted); }

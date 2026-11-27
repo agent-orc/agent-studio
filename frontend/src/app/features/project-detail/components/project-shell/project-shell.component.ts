@@ -3,11 +3,11 @@ import { QualityStudioPanelComponent } from '../quality-studio-panel/quality-stu
 import { QualityStudioStatusService } from '../quality-studio-panel/quality-studio-status.service';
 import { AuthSessionState } from '../../../../services/auth.service';
 import { QualityStudioService } from '../../../../services/quality-studio.service';
-import { SectionHeaderComponent } from '../../../../components/section-header/section-header.component';
-import { StudioSidebarHeaderComponent } from '../../../../components/studio-sidebar-header/studio-sidebar-header.component';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { SectionHeaderComponent } from '@studio/ui/components/section-header/section-header.component';
+import { StudioSidebarHeaderComponent } from '@studio/ui/components/studio-sidebar-header/studio-sidebar-header.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { TreeRowComponent } from '../../../../components/tree-row/tree-row.component';
+import { TreeRowComponent } from '@studio/ui/components/tree-row/tree-row.component';
 import {
   PROJECT_RAIL_ITEMS,
   PROJECT_RAIL_PARENT_KEYS,

@@ -4,7 +4,7 @@
  * picker). Extracted out of studio-shell.component.ts to keep the
  * component's TypeScript size under its baseline budget after F23.
  */
-import type { MenuItem } from '../../components/menu';
+import type { MenuItem } from '@studio/ui/components/menu/index';
 
 export interface ProjectPickerRow {
   name: string;

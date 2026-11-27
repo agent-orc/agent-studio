@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { retry, timeout } from 'rxjs';
 import { TaskService } from '../../../../services/task.service';
-import { RowComponent } from '../../../../components/row/row.component';
+import { RowComponent } from '@studio/ui/components/row/row.component';
 import { DiffContentComponent } from '../../../../components/diff-content/diff-content.component';
 import type { TaskInfo } from '../../../../models/task.model';
 import type { GitFileChange } from '../../../git';

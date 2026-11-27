@@ -5,7 +5,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { publicDemoGuardInterceptor, __resetPublicDemoGuardThrottle } from './public-demo-guard.interceptor';
 import { PublicDemoModeService } from './public-demo-mode.service';
-import { NotificationService } from './notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 
 function configure(readOnly: boolean) {
   const readOnlySignal = signal(readOnly);

@@ -8,7 +8,7 @@
   height: 100%;
   min-height: 0;
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-surface);
   color: var(--studio-fg);
 
@@ -36,19 +36,19 @@
 
     code {
       color: var(--studio-fg-dim);
-      font: 10px/1.4 var(--font-mono);
+      font: var(--studio-compat-type-1)/1.4 var(--font-mono);
     }
 
     strong {
       color: var(--studio-fg-strong);
-      font-size: 12px;
+      font-size: var(--studio-font-size-sm);
     }
   }
 
   &__label {
     flex: 0 0 auto;
     color: var(--studio-fg-dim);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -58,10 +58,10 @@
   &__action {
     padding: var(--studio-spacing-1) var(--studio-spacing-2);
     border: 1px solid var(--studio-border);
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
     background: transparent;
     color: var(--studio-fg);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     cursor: pointer;
   }
 
@@ -93,7 +93,7 @@
     width: 100%;
     padding: var(--studio-spacing-1) var(--studio-spacing-2);
     border: 1px solid transparent;
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
     background: transparent;
     color: var(--studio-fg);
     text-align: left;
@@ -109,10 +109,10 @@
   &__status {
     min-width: 2ch;
     padding: 0 var(--studio-spacing-1);
-    border-radius: 3px;
+    border-radius: var(--studio-compat-radius-9);
     background: var(--studio-surface-muted);
     color: var(--studio-fg);
-    font: 700 10px/1.4 var(--font-mono);
+    font: 700 var(--studio-compat-type-1)/1.4 var(--font-mono);
     text-align: center;
   }
 
@@ -133,7 +133,7 @@
 
   &__path {
     overflow: hidden;
-    font: 11px/1.4 var(--font-mono);
+    font: var(--studio-compat-type-6)/1.4 var(--font-mono);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -141,7 +141,7 @@
   &__stats {
     display: flex;
     gap: var(--studio-spacing-1);
-    font: 10px/1.4 var(--font-mono);
+    font: var(--studio-compat-type-1)/1.4 var(--font-mono);
   }
 
   &__added {
@@ -168,7 +168,7 @@
     margin: 0;
     padding: var(--studio-spacing-3);
     color: var(--studio-fg-dim);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
   }
 
   &__note--error {
@@ -197,7 +197,7 @@
 
   &__gate-meta {
     color: var(--studio-fg-dim);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
 
     code {
       overflow-wrap: anywhere;

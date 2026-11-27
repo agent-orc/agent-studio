@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import type { UsageCli } from '../../models/usage-cockpit.model';
 import type { UsageAlarm } from '../../usage-alarm.policy';
 import { buildCliChipView, cliAbbreviation, type UsageChipFit } from '../../usage-chip.util';

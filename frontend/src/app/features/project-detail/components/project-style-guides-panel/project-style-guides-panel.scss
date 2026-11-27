@@ -25,7 +25,7 @@
 
 .style-guides__kicker {
   color: var(--pwiki-paper-muted);
-  font-size: 0.66rem;
+  font-size: var(--studio-compat-type-63);
   font-weight: 750;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -34,13 +34,13 @@
 .style-guides__head h3 {
   margin: var(--studio-spacing-1) 0 0;
   color: var(--pwiki-paper-fg);
-  font-size: 0.96rem;
+  font-size: var(--studio-compat-type-85);
 }
 
 .style-guides__head p {
   margin: var(--studio-spacing-1) 0 0;
   color: var(--pwiki-paper-muted);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   line-height: 1.45;
 }
 
@@ -52,7 +52,7 @@
 
 .style-guides__snapshot {
   color: var(--pwiki-paper-muted);
-  font-size: 0.66rem;
+  font-size: var(--studio-compat-type-63);
   font-variant-numeric: tabular-nums;
 }
 
@@ -67,10 +67,10 @@
 .style-guides__technologies code {
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid var(--pwiki-paper-border);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--pwiki-paper-bg);
   color: var(--pwiki-paper-muted);
-  font-size: 0.66rem;
+  font-size: var(--studio-compat-type-63);
 }
 
 .style-guides__grid {
@@ -85,13 +85,13 @@
   gap: var(--studio-spacing-2);
   padding: var(--studio-spacing-3);
   border: 1px solid var(--pwiki-paper-border);
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: var(--pwiki-paper-bg);
   color: var(--pwiki-paper-fg);
   text-align: left;
   font: inherit;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background var(--studio-compat-duration-1) ease, border-color var(--studio-compat-duration-1) ease;
 }
 
 .style-guides__card:hover,
@@ -112,12 +112,12 @@
 
 .style-guides__copy strong {
   color: var(--pwiki-paper-fg);
-  font-size: 0.84rem;
+  font-size: var(--studio-compat-type-71);
 }
 
 .style-guides__copy > span {
   color: var(--pwiki-paper-muted);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   line-height: 1.45;
 }
 
@@ -126,12 +126,12 @@
   flex-wrap: wrap;
   gap: var(--studio-spacing-1);
   color: var(--pwiki-paper-muted);
-  font-size: 0.66rem;
+  font-size: var(--studio-compat-type-63);
 }
 
 .style-guides__matches > span {
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: color-mix(in srgb, var(--studio-accent-3) 8%, var(--pwiki-paper-bg));
 }
 
@@ -142,7 +142,7 @@
   gap: var(--studio-spacing-2);
   min-width: 0;
   color: var(--pwiki-paper-muted);
-  font-size: 0.66rem;
+  font-size: var(--studio-compat-type-63);
   font-variant-numeric: tabular-nums;
 }
 
@@ -162,12 +162,12 @@
 .style-guides__empty {
   margin: 0;
   color: var(--pwiki-paper-muted);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 .style-guides__state {
   margin: 0;
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 .style-guides__warnings {
@@ -175,10 +175,10 @@
   gap: var(--studio-spacing-1);
   padding: var(--studio-spacing-2);
   border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 36%, var(--pwiki-paper-border));
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--studio-accent-warn) 7%, var(--pwiki-paper-bg));
   color: var(--pwiki-paper-muted);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
 }
 
 .style-guides__warnings p {
@@ -206,6 +206,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .style-guides__card {
-    transition-duration: 0ms;
+    transition-duration: var(--studio-compat-duration-19);
   }
 }

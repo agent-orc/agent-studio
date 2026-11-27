@@ -4,7 +4,7 @@ import { batchIsolationRows, batchIsolationState, batchMemberFor, batchProvenRed
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { BatchPanelComponent } from '../batch-panel/batch-panel';
 import { BatchProvenRedComponent } from '../batch-proven-red/batch-proven-red';
-import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { batchIsolationHold } from '../../../models/batch-isolation-hold';
 import { IsolationHoldComponent } from '../isolation-hold/isolation-hold';
 

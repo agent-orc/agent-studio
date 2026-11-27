@@ -1,9 +1,9 @@
-import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, OnDestroy, inject, output, signal } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
 import type { GateEconomicsResponse, PipelineBaseline } from '../../../task-pipeline/models/gate-economics.model';
 import { projectIdentity } from '../../../../services/project-identity.util';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Develop and nightly-guard gate states onto the shared tones (AGT-3403); unknown values stay neutral. */
 const GATE_STATE_TONE: Readonly<Record<string, StatusTone>> = { green: 'success', running: 'running', red: 'danger', skipped: 'neutral' };

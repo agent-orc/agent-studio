@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * Tone of the current steering authority receipt state (AGT-3403). Admitted

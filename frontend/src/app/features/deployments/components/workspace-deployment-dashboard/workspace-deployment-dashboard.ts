@@ -7,7 +7,7 @@ import type { DeploymentState, EnvironmentStatus, InstanceRunState } from '../..
 import { DEPLOYMENT_CLOCK, DeploymentStatusService } from '../../services/deployment-status.service';
 import type { DeployMatrixResponse, DeployMatrixRow } from '../../services/deployment-status.service';
 import { DeliveryLanesComponent } from '../delivery-lanes/delivery-lanes';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * Current deployment state per cell (AGT-3403); unknown states stay neutral.

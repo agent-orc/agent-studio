@@ -8,7 +8,7 @@ import {
   output,
   signal,
 } from '@angular/core';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { RegistryProjectUrl } from '../../../../models/task.model';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { ProjectUrlProbeService, ProjectUrlStatusLabelPipe, type ProjectUrlStatus } from '../../../../services/project-url-probe.service';

@@ -12,9 +12,9 @@ import {
   signal,
 } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { PendingButtonDirective } from '../async-feedback';
-import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
-import { NotificationService } from '../../services/notification.service';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from '../../services/task.service';
 import {
   ModelMigrationCatalogStore,
@@ -23,7 +23,7 @@ import {
 import { mapThinkingLevel, mappedThinkingLevelNote, type ThinkingLevelMapping } from '../../features/cli/thinking-levels';
 import { CliCatalogStore } from '../../features/cli/catalog';
 import type { CliType } from '../../models/task.model';
-import { OverlayPortalRef, OverlayPortalService, type ConnectedOverlayPositionRef } from '../../services/overlay-portal.service';
+import { OverlayPortalRef, OverlayPortalService, type ConnectedOverlayPositionRef } from '@studio/ui/services/overlay-portal.service';
 
 /**
  * AGT-2716 — the "model update available" affordance for a surface pinned to

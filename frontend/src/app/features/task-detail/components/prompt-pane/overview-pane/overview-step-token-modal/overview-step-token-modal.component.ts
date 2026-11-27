@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { DialogComponent } from '../../../../../../components/dialog/dialog.component';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
 import {
   formatTokenCostDisplay,
   incompleteTokenCostLabel,

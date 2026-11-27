@@ -6,10 +6,10 @@ import { StudioTabStateService } from '../../services/studio-tab-state.service';
 import { DossierReferenceChipComponent } from '../../../../components/dossier-reference-chip/dossier-reference-chip';
 import { DossierCatalogueService } from '../../../../services/dossier-catalogue.service';
 import { resolveDossierReference, type DossierReference } from '../../../../services/dossier-reference.util';
-import { ModalStackService } from '../../../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { laneName, laneTone } from '../../../../models/lane-presentation';
 import { GlobalSearchItem, GlobalSearchService, SEARCH_DOMAINS, SearchDomain } from './global-search.service';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Debounce before a keystroke turns into a request. */
 const DEBOUNCE_MS = 250;

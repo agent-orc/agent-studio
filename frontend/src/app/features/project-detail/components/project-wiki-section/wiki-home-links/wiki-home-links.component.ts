@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
-import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { WikiHome, WikiHomeLink, WikiNodeType } from '../../../../../models/project-docs.model';
 import { ProjectDocsService } from '../../../../../services/project-docs.service';

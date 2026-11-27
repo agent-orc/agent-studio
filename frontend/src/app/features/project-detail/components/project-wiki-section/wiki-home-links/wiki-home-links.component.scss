@@ -29,7 +29,7 @@
 
 .whome__kicker {
   color: var(--pwiki-paper-muted, var(--studio-fg-muted));
-  font-size: 0.6rem;
+  font-size: var(--studio-compat-type-64);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -38,7 +38,7 @@
 .whome__count {
   margin-left: auto;
   color: var(--pwiki-paper-muted, var(--studio-fg-muted));
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   font-variant-numeric: tabular-nums;
 }
 
@@ -59,7 +59,7 @@
   gap: 0;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: transparent;
   color: var(--pwiki-paper-fg, var(--studio-fg));
   font: inherit;
@@ -85,7 +85,7 @@ button.whome__link:focus-visible {
 
 .whome__label {
   overflow: hidden;
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -94,7 +94,7 @@ button.whome__link:focus-visible {
 .whome__note {
   overflow: hidden;
   color: var(--pwiki-paper-muted, var(--studio-fg-muted));
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

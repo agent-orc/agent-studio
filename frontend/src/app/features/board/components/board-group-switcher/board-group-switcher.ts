@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
-import { SegmentedControlComponent, type SegmentedOption } from '../../../../components/segmented-control/segmented-control.component';
+import { SegmentedControlComponent, type SegmentedOption } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { laneName } from '../../../../models/lane-presentation';
 import { TaskState } from '../../../../models/task.model';
 import {

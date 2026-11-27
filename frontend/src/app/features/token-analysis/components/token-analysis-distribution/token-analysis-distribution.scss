@@ -6,17 +6,17 @@
 .dist__legend { @include ta.legend; }
 .dist__swatch { @include ta.swatch; }
 .dist__num { @include ta.numeric; text-align: right; }
-.dist__note { margin: 0; color: var(--studio-fg-muted); font-size: 0.7rem; }
+.dist__note { margin: 0; color: var(--studio-fg-muted); font-size: var(--studio-compat-type-18); }
 .dist__mix { display: flex; flex-direction: column; gap: var(--studio-spacing-2); }
 
 .dist__mix-bar {
   display: flex;
   /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- 2px surface gap between chart fills */
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
   /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- bar thickness, not spacing */
   height: 14px;
   overflow: hidden;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
 }
 
 .dist__mix-part { flex-basis: 0; min-width: 2px; }
@@ -25,7 +25,7 @@
   width: 100%;
   border-collapse: collapse;
   color: var(--studio-fg);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 
   caption {
     margin-bottom: var(--studio-spacing-1);
@@ -68,7 +68,7 @@
   height: 8px;
   max-width: calc(100% - 48px);
   margin-right: var(--studio-spacing-1);
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 var(--studio-compat-radius-6) var(--studio-compat-radius-6) 0;
   background: var(--studio-series-1);
   vertical-align: middle;
 }

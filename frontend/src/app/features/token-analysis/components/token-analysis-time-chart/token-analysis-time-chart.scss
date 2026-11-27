@@ -27,7 +27,7 @@
   position: absolute;
   left: 0;
   color: var(--studio-fg-muted);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   line-height: 1;
 }
 
@@ -38,7 +38,7 @@
   display: flex;
   align-items: flex-end;
   /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- 2px surface gap between chart fills */
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
   height: 100%;
 }
 
@@ -57,9 +57,9 @@
   display: flex;
   flex-direction: column-reverse;
   /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- 2px surface gap between chart fills */
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
   overflow: hidden;
-  border-radius: 4px 4px 0 0;
+  border-radius: var(--studio-compat-radius-6) var(--studio-compat-radius-6) 0 0;
 }
 
 .tc__segment {
@@ -79,5 +79,5 @@
   justify-content: space-between;
   padding-left: var(--studio-spacing-6);
   color: var(--studio-fg-muted);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
 }

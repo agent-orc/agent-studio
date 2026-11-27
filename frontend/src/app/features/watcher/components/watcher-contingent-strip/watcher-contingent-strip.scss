@@ -12,12 +12,12 @@
 }
 
 .watcher-strip__label {
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   color: var(--studio-fg-dim);
 }
 
 .watcher-strip__value {
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   font-weight: 600;
   color: var(--studio-fg);
   font-variant-numeric: tabular-nums;
@@ -26,7 +26,7 @@
 .watcher-strip__bar {
   grid-column: 1 / -1;
   height: 4px;
-  border-radius: 2px;
+  border-radius: var(--studio-compat-radius-8);
   background: var(--studio-bg-elevated);
   overflow: hidden;
 }
@@ -35,7 +35,7 @@
   display: block;
   height: 100%;
   background: var(--studio-accent);
-  transition: width 0.2s ease;
+  transition: width var(--studio-compat-duration-14) ease;
 }
 
 .watcher-strip__bar-fill--over {
@@ -57,6 +57,6 @@
 }
 
 .watcher-strip__error {
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   color: var(--studio-error);
 }

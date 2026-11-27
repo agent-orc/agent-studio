@@ -3,7 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { copyTextToClipboard } from '../../../../../services/clipboard.util';
-import { MediaLightboxService } from '../../../../../services/media-lightbox.service';
+import { MediaLightboxService } from '@studio/ui/services/media-lightbox.service';
 import type { ConversationArtifact } from './artifact-gallery.model';
 import { ArtifactGalleryState } from './artifact-gallery.state';
 

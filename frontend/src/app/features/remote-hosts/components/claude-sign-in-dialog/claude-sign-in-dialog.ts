@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, effect, inject, signal, untracked } from '@angular/core';
 import { Subscription, switchMap, takeWhile, timer } from 'rxjs';
-import { DialogComponent } from '../../../../components/dialog/dialog.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
-import { NotificationService } from '../../../../services/notification.service';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import type {
   ClaudeSignInStartResponse,
   ClaudeSignInStatusResponse,

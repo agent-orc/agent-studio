@@ -1,0 +1,207 @@
+// stylelint-disable color-no-hex scale-unlimited/declaration-strict-value
+//
+// =============================================================================
+// Design tokens — Tier 1: Primitives
+// =============================================================================
+//
+// Raw palette + shadow scale. Primitives have NO semantic meaning ("orange-500"
+// not "brand"). They never change between themes. The light theme rewrites
+// semantic tokens (_tokens-semantic.scss); it does NOT rewrite primitives.
+//
+// Convention:
+//   - --color-<family>-<shade> with shades 50/100/200/.../900
+//   - --shadow-<weight>  with weight 100..500 (low = subtle, high = floating)
+//
+// This file is the ONE place a raw hex / rgba literal is allowed. Every other
+// SCSS file must consume via `var(...)` (enforced by stylelint).
+//
+// When you need a colour that isn't here, add the primitive first, then expose
+// it through a semantic alias in _tokens-semantic.scss. Don't reach back to a
+// raw hex from a component.
+//
+// =============================================================================
+
+:root {
+  // ---------------------------------------------------------------------------
+  // Brand — orange (the studio accent)
+  // ---------------------------------------------------------------------------
+  --color-orange-100: #fde9dc;
+  --color-orange-200: #f5cdb8;
+  --color-orange-300: #ecaf95;
+  --color-orange-400: #e29076;
+  --color-orange-500: #d97757; // brand
+  --color-orange-600: #b65f44;
+  --color-orange-700: #8d5a3d;
+  --color-orange-800: #6a4530;
+  --color-orange-900: #a8472d;
+
+  // ---------------------------------------------------------------------------
+  // Neutral — slate (Tailwind-aligned)
+  // ---------------------------------------------------------------------------
+  --color-slate-50:  #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-450: #8b9bb0;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a;
+
+  // ---------------------------------------------------------------------------
+  // Mocha — Catppuccin (dark theme surfaces)
+  // ---------------------------------------------------------------------------
+  --color-mocha-base:     #1e1e2e; // surface-2 (elevated)
+  --color-mocha-mantle:   #181825; // surface-1
+  --color-mocha-crust:    #11111b;
+  --color-mocha-surface0: #313244;
+  --color-mocha-surface1: #45475a;
+  --color-mocha-surface2: #585b70;
+  --color-mocha-overlay0: #6c7086;
+  --color-mocha-overlay1: #7f849c;
+  --color-mocha-overlay2: #9399b2;
+  --color-mocha-subtext0: #a6adc8;
+  --color-mocha-subtext1: #bac2de;
+  --color-mocha-text:     #cdd6f4;
+  --color-mocha-rosewater: #f5e0dc;
+  --color-mocha-flamingo:  #f2cdcd;
+  --color-mocha-pink:      #f5c2e7;
+  --color-mocha-mauve:     #cba6f7;
+  --color-mocha-red:       #f38ba8;
+  --color-mocha-peach:     #fab387;
+  --color-mocha-yellow:    #f9e2af;
+  --color-mocha-green:     #a6e3a1;
+  --color-mocha-teal:      #94e2d5;
+  --color-mocha-sky:       #89dceb;
+  --color-mocha-sapphire:  #74c7ec;
+  --color-mocha-blue:      #89b4fa;
+  --color-mocha-lavender:  #b4befe;
+
+  // Custom dark surface anchor (slightly violet-tinted body / editor).
+  --color-mocha-base-0:   #0f0f1a;
+  --color-mocha-base-3:   #252537;
+
+  // ---------------------------------------------------------------------------
+  // Greys — neutral light theme surfaces
+  // ---------------------------------------------------------------------------
+  --color-grey-50:  #ffffff;
+  --color-grey-100: #f8f8f8;
+  --color-grey-150: #f3f3f3;
+  --color-grey-200: #ececec;
+  --color-grey-300: #e1e1e1;
+  --color-grey-400: #d4d4d4;
+  --color-grey-500: #b4b4b4;
+  --color-grey-600: #888888;
+  --color-grey-700: #6e6e6e;
+  --color-grey-750: #626262;
+  --color-grey-800: #555555;
+  --color-grey-850: #4a4a4a;
+  --color-grey-900: #333333;
+  --color-grey-950: #1a1a1a;
+
+  // ---------------------------------------------------------------------------
+  // Semantic-flavoured primitives (kept as RAW palette entries — they get
+  // aliased to severity / lane / diff tokens in Tier 2).
+  // ---------------------------------------------------------------------------
+  --color-green-100: #dcfce7;
+  --color-green-200: #bbf7d0;
+  --color-green-300: #86efac;
+  --color-green-400: #4ade80;
+  --color-green-500: #22c55e;
+  --color-green-600: #16a34a;
+  --color-green-700: #15803d;
+  --color-green-800: #116432;
+  --color-green-900: #14532d;
+  --color-green-vscode: #4ec9b0; // VS Code teal — legacy "accent-2"
+  --color-teal-700: #0f766e; // dark teal — readable teal pigment on the light shell
+  --color-teal-800: #0c625c;
+
+  --color-red-100: #fee2e2;
+  --color-red-200: #fecaca;
+  --color-red-300: #fda4af;
+  --color-red-400: #f87171;
+  --color-red-500: #ef4444;
+  --color-red-600: #dc2626;
+  --color-red-700: #b91c1c;
+  --color-red-800: #be123c;
+  --color-red-900: #7f1d1d;
+  --color-rose-500: #f43f5e;
+
+  --color-blue-300: #93c5fd;
+  --color-blue-400: #569cd6; // VS Code blue
+  --color-blue-500: #3b82f6;
+  --color-blue-700: #1d4ed8;
+  --color-blue-800: #1e40af;
+  --color-sky-100:  #e0f2fe;
+  --color-sky-800:  #075985;
+  --color-sky-cppc: #89dceb;
+
+  --color-yellow-200: #f9e2af;
+  --color-yellow-300: #fcd34d;
+  --color-yellow-700: #a16207;
+  --color-yellow-vscode: #cca700;
+  --color-amber-700:  #b45309;
+  --color-amber-800:  #965009;
+  --color-amber-900:  #7b3d08;
+  --color-brown-800:  #806247;
+
+  --color-violet-300: #c4b5fd;
+  --color-violet-700: #6d28d9;
+  --color-purple-vscode: #c586c0;
+
+  // Indigo / sapphire — used by chat composer focus rings & info-link hover.
+  --color-indigo-500: #818cf8;
+  --color-sapphire:   #74c7ec;
+
+  // ---------------------------------------------------------------------------
+  // Alpha / overlay primitives (composed via rgba so they can be mixed in
+  // surface chains where a hex hex literal is forbidden).
+  // ---------------------------------------------------------------------------
+  --alpha-black-04:  rgba(0, 0, 0, 0.04);
+  --alpha-black-05:  rgba(0, 0, 0, 0.05);
+  --alpha-black-06:  rgba(0, 0, 0, 0.06);
+  --alpha-black-08:  rgba(0, 0, 0, 0.08);
+  --alpha-black-10:  rgba(0, 0, 0, 0.10);
+  --alpha-black-12:  rgba(0, 0, 0, 0.12);
+  --alpha-black-16:  rgba(0, 0, 0, 0.16);
+  --alpha-black-18:  rgba(0, 0, 0, 0.18);
+  --alpha-black-20:  rgba(0, 0, 0, 0.20);
+  --alpha-black-24:  rgba(0, 0, 0, 0.24);
+  --alpha-black-30:  rgba(0, 0, 0, 0.30);
+  --alpha-black-32:  rgba(0, 0, 0, 0.32);
+  --alpha-black-40:  rgba(0, 0, 0, 0.40);
+  --alpha-black-50:  rgba(0, 0, 0, 0.50);
+
+  --alpha-white-04:  rgba(255, 255, 255, 0.04);
+  --alpha-white-06:  rgba(255, 255, 255, 0.06);
+  --alpha-white-08:  rgba(255, 255, 255, 0.08);
+  --alpha-white-10:  rgba(255, 255, 255, 0.10);
+  --alpha-white-12:  rgba(255, 255, 255, 0.12);
+  --alpha-white-20:  rgba(255, 255, 255, 0.20);
+
+  // ---------------------------------------------------------------------------
+  // Shadows — five-step scale (low to high elevation)
+  //
+  // Step rule:   100 = single-pixel raised card     (resting card chrome)
+  //              200 = small pop-up                  (popovers, dropdowns)
+  //              300 = medium menu / panel
+  //              400 = modal dialog
+  //              500 = floating modal over backdrop
+  //
+  // Dark vs light variants are separate so the bridge can swap them via
+  // Tier-2 semantic tokens (--elevation-card, --elevation-modal, ...).
+  // ---------------------------------------------------------------------------
+  --shadow-100:       0 1px 2px rgba(0, 0, 0, 0.20);
+  --shadow-200:       0 2px 6px rgba(0, 0, 0, 0.30);
+  --shadow-300:       0 4px 16px rgba(0, 0, 0, 0.50);
+  --shadow-400:       0 12px 32px rgba(0, 0, 0, 0.32);
+  --shadow-500:       0 24px 64px rgba(0, 0, 0, 0.55);
+
+  --shadow-100-light: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-200-light: 0 4px 14px rgba(0, 0, 0, 0.10);
+  --shadow-300-light: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --shadow-400-light: 0 12px 32px rgba(0, 0, 0, 0.16);
+  --shadow-500-light: 0 24px 64px rgba(0, 0, 0, 0.22);
+}

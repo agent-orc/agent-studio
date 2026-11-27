@@ -11,17 +11,17 @@
   margin-bottom: var(--studio-spacing-2);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid color-mix(in srgb, var(--studio-warn) 45%, var(--studio-border));
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: color-mix(in srgb, var(--studio-warn) 12%, var(--studio-bg-elevated));
   color: var(--studio-fg);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
 .remote-rejection--compact {
-  padding: 5px var(--studio-spacing-2);
-  font-size: 11px;
+  padding: var(--studio-compat-space-7) var(--studio-spacing-2);
+  font-size: var(--studio-compat-type-6);
 }
 
 .remote-rejection__body {
@@ -36,17 +36,17 @@
   align-items: center;
   gap: var(--studio-spacing-2);
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-variant-numeric: tabular-nums;
 }
 
 .remote-rejection__code {
   /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- A 1px optical inset on a 9px pill; the smallest spacing token is 4px and doubles the chip height. */
-  padding: 1px var(--studio-spacing-2);
-  border-radius: 999px;
+  padding: var(--studio-compat-space-6) var(--studio-spacing-2);
+  border-radius: var(--studio-compat-radius-2);
   background: color-mix(in srgb, var(--studio-fg-dim) 18%, transparent);
   color: var(--studio-fg-dim);
-  font-size: 9px;
+  font-size: var(--studio-compat-type-4);
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;

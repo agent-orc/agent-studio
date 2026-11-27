@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, untracked } from '@angular/core';
 import { ModelPriceStore, modelPriceLabel } from '../../features/tokens/model-prices';
-import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 
 /**
  * AGT-2903: compact current list price for one model ("$2 / $10"), read from

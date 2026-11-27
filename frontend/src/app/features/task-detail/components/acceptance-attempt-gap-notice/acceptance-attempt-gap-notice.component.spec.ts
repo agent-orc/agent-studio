@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
 import { AcceptanceAttemptGapNoticeComponent } from './acceptance-attempt-gap-notice.component';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import type { TaskInfo } from '../../../../models/task.model';
 
 const GAP: NonNullable<TaskInfo['acceptanceAttemptGap']> = {

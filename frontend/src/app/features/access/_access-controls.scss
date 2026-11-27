@@ -34,7 +34,7 @@
     margin: 0;
     padding: var(--studio-spacing-3);
     border: 1px solid var(--studio-border);
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
   }
   .access-choices legend { padding: 0 var(--studio-spacing-1); color: var(--studio-fg-dim); font-size: var(--studio-font-size-sm); }
   .access-choices .access-hint { flex-basis: 100%; }
@@ -77,62 +77,62 @@
 
 @mixin controls {
   h3, h4, p { margin: 0; }
-  h3 { color: var(--studio-fg-strong); font-size: 0.9rem; }
-  h4 { color: var(--studio-fg-strong); font-size: 0.8rem; }
-  .access-hint { color: var(--studio-fg-dim); font-size: 0.78rem; }
-  .access-error { color: var(--severity-high); font-size: 0.78rem; }
-  label { display: flex; flex-direction: column; gap: 2px; color: var(--studio-fg-dim); font-size: 0.72rem; }
+  h3 { color: var(--studio-fg-strong); font-size: var(--studio-compat-type-22); }
+  h4 { color: var(--studio-fg-strong); font-size: var(--studio-compat-type-12); }
+  .access-hint { color: var(--studio-fg-dim); font-size: var(--studio-compat-type-13); }
+  .access-error { color: var(--severity-high); font-size: var(--studio-compat-type-13); }
+  label { display: flex; flex-direction: column; gap: var(--studio-compat-space-4); color: var(--studio-fg-dim); font-size: var(--studio-compat-type-10); }
   input, select {
     min-height: var(--studio-row-min-h-interactive);
     padding: 0 var(--studio-spacing-2);
     border: 1px solid var(--studio-border-strong);
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
     background: var(--studio-bg-surface);
     color: var(--studio-fg);
     font: inherit;
-    font-size: 0.8rem;
+    font-size: var(--studio-compat-type-12);
   }
   button {
     min-height: var(--studio-row-min-h-interactive);
     padding: 0 var(--studio-spacing-3);
     border: 1px solid var(--studio-accent);
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
     background: var(--studio-accent);
     color: var(--studio-on-accent);
     font: inherit;
-    font-size: 0.8rem;
+    font-size: var(--studio-compat-type-12);
     cursor: pointer;
   }
   button:disabled { cursor: not-allowed; opacity: 0.55; }
   button.access-secondary { border-color: var(--studio-border-strong); background: transparent; color: var(--studio-fg); }
-  button.access-quiet { min-height: auto; padding: 2px var(--studio-spacing-2); border-color: transparent; background: transparent; color: var(--studio-fg-dim); }
+  button.access-quiet { min-height: auto; padding: var(--studio-compat-space-4) var(--studio-spacing-2); border-color: transparent; background: transparent; color: var(--studio-fg-dim); }
   button.access-quiet:hover:not(:disabled) { background: var(--studio-bg-hover); color: var(--studio-fg); }
   .access-row { display: flex; flex-wrap: wrap; align-items: end; gap: var(--studio-spacing-2); }
   .access-badge {
     display: inline-flex;
     align-items: center;
-    padding: 1px var(--studio-spacing-2);
-    border-radius: 999px;
+    padding: var(--studio-compat-space-6) var(--studio-spacing-2);
+    border-radius: var(--studio-compat-radius-2);
     background: var(--studio-bg-selected);
     color: var(--studio-fg-strong);
-    font-size: 0.72rem;
+    font-size: var(--studio-compat-type-10);
     white-space: nowrap;
   }
   .access-badge[data-tone='owner'] { background: var(--studio-card-attention-bg); }
   .access-badge[data-tone='muted'] { background: var(--studio-surface-muted); color: var(--studio-fg-dim); }
   .access-secret {
     padding: var(--studio-spacing-2);
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
     background: var(--studio-surface-muted);
     color: var(--studio-fg-strong);
     font-family: var(--studio-mono);
-    font-size: 0.75rem;
+    font-size: var(--studio-compat-type-11);
     word-break: break-all;
   }
 }
 
 @mixin table {
-  table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+  table { width: 100%; border-collapse: collapse; font-size: var(--studio-compat-type-13); }
   th { padding: var(--studio-spacing-1) var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border-strong); color: var(--studio-fg-dim); font-weight: 500; text-align: left; }
   td { padding: var(--studio-row-pad-block) var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border); color: var(--studio-fg); vertical-align: middle; }
   td.access-actions { text-align: right; white-space: nowrap; }

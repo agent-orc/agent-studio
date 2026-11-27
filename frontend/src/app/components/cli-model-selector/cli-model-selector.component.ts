@@ -18,16 +18,16 @@ import { CLI_TYPES } from '../../models/task.model';
 import { CliCatalogStore, orderModelCatalog, type CliModelInfo } from '../../features/cli';
 import { cliTypeIcon as fmtCliTypeIcon, cliTypeLabel as fmtCliTypeLabel } from '../../services/format.util';
 import { shortModelLabel } from 'coding-agent-chat/core';
-import { nameWithVisibleText } from '../../utils/accessible-name';
-import { ModalStackService } from '../../services/modal-stack.service';
+import { nameWithVisibleText } from '@studio/ui/utils/accessible-name';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { ConnectedOverlayDirective } from '../../directives/connected-overlay.directive';
-import { OverlayPortalDirective } from '../../directives/overlay-portal.directive';
-import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
+import { OverlayPortalDirective } from '@studio/ui/directives/overlay-portal.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { levelMappingNote, modelAriaLabel, modelAvailabilityNote, moveRadioSelection, normalizeThinkingLevel,
   olderModelAriaLabel, olderModelNote, olderModelNoteTone } from './cli-model-selector.util';
 import { BetterCandidateLinesComponent } from '../better-candidate-lines/better-candidate-lines.component';
 import { ModelPriceComponent } from '../model-price/model-price.component';
-import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 interface CliOption {
   id: CliType;

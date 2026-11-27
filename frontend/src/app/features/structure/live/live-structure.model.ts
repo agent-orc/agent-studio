@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { observationWord, type StructureData, type StructureDataLocation, type StructureDiskFact, type StructureLink,
   type StructureNode, type StructureReleaseFacts } from '../structure.model';
 import type { LiveBackupOverview, LiveGateWorker, LiveRunnerSnapshot, LiveSources } from './live-structure.sources';

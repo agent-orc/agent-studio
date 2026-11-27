@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
 import { IntegrationDeadEndComponent } from './integration-dead-end.component';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 
 const AVAILABLE = () => of({ available: true, reason: null });
 

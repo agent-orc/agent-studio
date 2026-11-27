@@ -26,7 +26,7 @@ import {
   productionRollbackFixture,
   RELEASE_1,
 } from '../../testing/deploy-fixtures';
-import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 
 class FakeDeployData {
   readonly environmentsPanel = new BehaviorSubject<DeployPanel<unknown>>({ status: 'loading' });

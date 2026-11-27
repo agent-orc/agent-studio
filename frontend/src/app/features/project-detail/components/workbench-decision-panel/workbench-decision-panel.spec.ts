@@ -10,7 +10,7 @@ import {
   WorkbenchDecisionResponse,
   WorkbenchDocument,
 } from '../../../../models/project-docs.model';
-import { ModalStackService } from '../../../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { TaskService } from '../../../../services/task.service';
 import { CliCatalogStore } from '../../../cli';

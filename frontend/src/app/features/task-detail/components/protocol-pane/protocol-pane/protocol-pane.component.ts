@@ -23,7 +23,7 @@ import type {
 import { TaskState } from '../../../../../models/task.model';
 import type { RunRecord } from '../../../../../features/run-timeline';
 import { deriveWatchdogPill } from '../watchdog-state';
-import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import {
   interimTone,
   rateLimitTone,
@@ -60,8 +60,8 @@ import { ResultViewComponent } from '../result-view/result-view.component';
 import { PreviousResultsControlComponent } from '../previous-results-control/previous-results-control.component';
 import { FileSourceHistoryComponent } from '../../../../../components/file-source-history/file-source-history.component';
 import { SourceViewerComponent, type SourceViewerRequest } from '../../source-viewer/source-viewer.component';
-import { MenuComponent } from '../../../../../components/menu';
-import type { MenuItem, MenuItemClickEvent } from '../../../../../components/menu';
+import { MenuComponent } from '@studio/ui/components/menu/index';
+import type { MenuItem, MenuItemClickEvent } from '@studio/ui/components/menu/index';
 import { authoritativeDeliveryFacts, deriveProtocolVerdict, stripStatusHeader, type ProtocolVerdict } from '../protocol-verdict';
 import { ProtocolVerdictBannerComponent } from '../protocol-verdict-banner/protocol-verdict-banner.component';
 import {
@@ -86,9 +86,9 @@ import { DetailKeyboardSurfaceDirective } from '../../detail-keyboard-surface/de
 import { TaskPreviewComponent } from '../../../../../components/task-preview/task-preview.component';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { PaneHeaderComponent } from '../../../../../components/pane-header/pane-header.component';
-import { PaneTabsComponent } from '../../../../../components/pane-tabs/pane-tabs.component';
-import { OverlayPortalRef, OverlayPortalService } from '../../../../../services/overlay-portal.service';
+import { PaneHeaderComponent } from '@studio/ui/components/pane-header/pane-header.component';
+import { PaneTabsComponent } from '@studio/ui/components/pane-tabs/pane-tabs.component';
+import { OverlayPortalRef, OverlayPortalService } from '@studio/ui/services/overlay-portal.service';
 import { taskNavigationHref, taskUrl } from '../../../state/task-url';
 import { LayoutPanesService } from '../../../services/layout-panes.service';
 import { TaskReferenceNavigationService } from '../../../../../services/task-reference-navigation.service';

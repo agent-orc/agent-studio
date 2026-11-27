@@ -21,7 +21,7 @@ button.kill__danger:hover:not(:disabled) { border-color: var(--severity-high); b
   padding: var(--studio-row-pad-block) var(--studio-row-pad-inline);
   background: var(--studio-surface-muted);
   color: var(--studio-fg);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 .kill__line + .kill__line { border-top: 1px solid var(--studio-border); }
 .kill__line[data-tone='alert'] { background: color-mix(in srgb, var(--severity-high) 14%, var(--studio-bg-surface)); }

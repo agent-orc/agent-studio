@@ -20,7 +20,7 @@
   width: 24rem;
   max-width: 100%;
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-surface);
   color: var(--studio-fg);
   padding: var(--studio-spacing-2);
@@ -32,7 +32,7 @@
 
 .code-entry button {
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-surface);
   color: var(--studio-fg);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);

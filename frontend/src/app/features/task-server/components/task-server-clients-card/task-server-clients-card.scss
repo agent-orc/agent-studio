@@ -11,14 +11,14 @@
   gap: var(--studio-spacing-2);
   margin-bottom: var(--studio-spacing-3);
   color: var(--studio-fg-dim);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 .clients__enrollment label { font-weight: 700; color: var(--studio-fg-strong); }
 .clients__enrollment input {
   min-width: 220px;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
   font: inherit;
@@ -39,15 +39,15 @@
   gap: var(--studio-spacing-3);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-hover);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 .client--retired { opacity: 0.62; }
 
 .client__emoji {
   flex: 0 0 auto;
-  font-size: 15px;
+  font-size: var(--studio-compat-type-32);
   line-height: 1;
   width: 20px;
   text-align: center;
@@ -69,18 +69,18 @@
 }
 .client__id {
   font-family: var(--font-mono, monospace);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   color: var(--studio-fg-muted);
 }
 
 .client__kind {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   font-weight: 600;
   letter-spacing: 0.03em;
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   // stylelint-disable-next-line declaration-property-unit-disallowed-list -- 1px pill inset is sub-scale
-  padding: 1px var(--studio-spacing-2);
+  padding: var(--studio-compat-space-6) var(--studio-spacing-2);
   background: var(--studio-bg-selected);
   color: var(--studio-fg-dim);
 }
@@ -121,7 +121,7 @@
 
 .client__action {
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
@@ -136,7 +136,7 @@
 
 .clients__empty {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   color: var(--studio-fg-muted);
   font-style: italic;
 }

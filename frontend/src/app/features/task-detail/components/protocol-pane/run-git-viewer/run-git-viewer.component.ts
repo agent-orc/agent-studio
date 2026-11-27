@@ -11,7 +11,7 @@ import {
 import { NgTemplateOutlet } from '@angular/common';
 import type { TaskInfo } from '../../../../../models/task.model';
 import type { RunFileChange, RunRecord } from '../../../../../features/run-timeline';
-import { OverlayPortalDirective } from '../../../../../directives/overlay-portal.directive';
+import { OverlayPortalDirective } from '@studio/ui/directives/overlay-portal.directive';
 import { RunGitCacheService } from '../../../services/run-git-cache.service';
 import { highlightBlock } from '../../beautiful-results/highlight-lazy';
 import { perfMark, perfMeasure } from '../../../../../utils/perf-tracker';

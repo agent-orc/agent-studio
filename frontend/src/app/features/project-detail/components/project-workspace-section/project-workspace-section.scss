@@ -1,51 +1,51 @@
-:host { display: block; margin-bottom: 14px; }
-.pws { display: flex; flex-direction: column; gap: 6px; }
-.pws h3 { margin: 0 0 4px; font-size: 0.92rem; color: var(--studio-fg-strong); }
-.pws__row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+:host { display: block; margin-bottom: var(--studio-compat-space-3); }
+.pws { display: flex; flex-direction: column; gap: var(--studio-compat-space-2); }
+.pws h3 { margin: 0 0 var(--studio-spacing-1); font-size: var(--studio-compat-type-8); color: var(--studio-fg-strong); }
+.pws__row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--studio-spacing-2); }
 .pws__select {
   background: var(--studio-card-muted-bg);
   color: var(--studio-fg-strong);
   border: 1px solid var(--studio-card-muted-border);
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 0.85rem;
+  border-radius: var(--studio-compat-radius-7);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  font-size: var(--studio-compat-type-26);
 }
 .pws__save {
   border: 1px solid color-mix(in srgb, var(--studio-accent-3) 40%, transparent);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--studio-accent-3) 14%, transparent);
   color: var(--studio-accent-3-strong);
-  padding: 4px 12px;
+  padding: var(--studio-spacing-1) var(--studio-spacing-3);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--studio-compat-type-26);
   cursor: pointer;
 }
 .pws__save:hover:not(:disabled) { background: color-mix(in srgb, var(--studio-accent-3) 24%, transparent); }
 .pws__save:disabled { opacity: 0.45; cursor: not-allowed; }
 .pws__hint {
-  margin: 4px 0 0;
+  margin: var(--studio-spacing-1) 0 0;
   color: var(--studio-fg-muted);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 .pws__error { color: var(--studio-error); }
 
 .pws__danger {
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: var(--studio-compat-space-5);
+  padding-top: var(--studio-compat-space-5);
   border-top: 1px solid var(--studio-border);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--studio-spacing-1);
 }
 .pws__delete {
   align-self: flex-start;
   border: 1px solid color-mix(in srgb, var(--studio-error) 45%, transparent);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: transparent;
   color: var(--studio-error);
-  padding: 4px 12px;
+  padding: var(--studio-spacing-1) var(--studio-spacing-3);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--studio-compat-type-26);
   cursor: pointer;
 }
 .pws__delete:hover:not(:disabled) { background: color-mix(in srgb, var(--studio-error) 14%, transparent); }

@@ -9,11 +9,11 @@
 .quality-panel__mapping { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-spacing-2); }
 .quality-panel input {
   color: var(--studio-fg); background: var(--studio-bg-elevated); border: 1px solid var(--studio-border-strong);
-  border-radius: 4px; padding: var(--studio-spacing-2);
+  border-radius: var(--studio-compat-radius-6); padding: var(--studio-spacing-2);
 }
 .quality-panel button {
   color: var(--studio-fg); background: var(--studio-bg-elevated); border: 1px solid var(--studio-border-strong);
-  border-radius: 4px; padding: var(--studio-spacing-2) var(--studio-spacing-3); cursor: pointer;
+  border-radius: var(--studio-compat-radius-6); padding: var(--studio-spacing-2) var(--studio-spacing-3); cursor: pointer;
 }
 .quality-panel button:disabled { opacity: .55; cursor: default; }
 .quality-panel button:focus-visible, .quality-panel input:focus-visible { outline: 2px solid var(--studio-accent-3-strong); }

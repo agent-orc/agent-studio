@@ -2,13 +2,13 @@ import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, injec
 import { Subscription } from 'rxjs';
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import { TaskService } from '../../../../services/task.service';
 import type { ProjectDeploymentSummary, ProjectDeploymentTarget, ProjectEnvironments } from '../../../../models/project-overview.model';
 import { VisibleCliTaskService, type VisibleCliTaskCreated } from '../../../visible-cli-task';
 import type { WatchPathEntry } from '../../../../models/task.model';
 import { DeploymentDefinitionEditorComponent } from '../deployment-definition-editor/deployment-definition-editor';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { TARGET_READINESS, deploymentHistoryTone, type TargetReadiness } from './deployment-status-tone';
 import { EnvironmentStateComponent } from '../environment-state/environment-state';
 import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';

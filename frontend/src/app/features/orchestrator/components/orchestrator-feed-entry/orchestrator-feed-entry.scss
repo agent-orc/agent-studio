@@ -42,7 +42,7 @@
 .feed-entry__kind {
   min-width: 0;
   color: var(--studio-fg-strong);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -58,22 +58,22 @@
   min-width: 0;
   padding: var(--studio-row-pad-block) var(--studio-row-pad-inline);
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: var(--studio-bg-hover);
   color: var(--studio-fg-dim);
   cursor: pointer;
-  font: 650 10px/1 var(--font-mono, monospace);
+  font: 650 var(--studio-compat-type-1)/1 var(--font-mono, monospace);
   letter-spacing: .04em;
 }
 
 .feed-entry__project:hover { background: var(--studio-bg-selected); color: var(--studio-fg-strong); }
 .feed-entry__project:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
-.feed-entry__project i { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 0 1px var(--studio-tab-dot-ring); }
+.feed-entry__project i { flex: 0 0 auto; width: 7px; height: 7px; border-radius: var(--studio-compat-radius-4); box-shadow: 0 0 0 1px var(--studio-tab-dot-ring); }
 .feed-entry__project span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .feed-entry__time {
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-variant-numeric: tabular-nums;
   text-align: end;
   white-space: nowrap;
@@ -82,7 +82,7 @@
 .feed-entry__summary {
   min-width: 0;
   color: var(--studio-fg-strong);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -91,7 +91,7 @@
 .feed-entry__context {
   min-width: 0;
   color: var(--studio-fg-muted);
-  font: 10px/1.2 var(--font-mono, monospace);
+  font: var(--studio-compat-type-1)/1.2 var(--font-mono, monospace);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -114,7 +114,7 @@
 }
 
 .feed-entry__task-link:hover { color: var(--studio-fg-strong); }
-.feed-entry__disclosure { color: var(--studio-fg-muted); font-size: 16px; line-height: 1; }
+.feed-entry__disclosure { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-31); line-height: 1; }
 
 @media (min-width: 681px) and (max-width: 1450px) {
   .feed-entry {

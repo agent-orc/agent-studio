@@ -3,9 +3,9 @@ import { Observable, map } from 'rxjs';
 import { DriftService } from '../../../../services/drift.service';
 import { TaskService } from '../../../../services/task.service';
 import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from '../../../../utils/visible-interval';
-import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
+import { OverlayPortalDirective } from '@studio/ui/directives/overlay-portal.directive';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { driftEnumLabel, driftFindingStatusTone, driftParseNotice, driftScoreBandTone, driftSeverityTone } from './drift-status-tones';
 import {
   DriftDimension,

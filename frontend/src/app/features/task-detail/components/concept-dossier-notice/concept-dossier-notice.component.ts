@@ -11,11 +11,11 @@ import {
 import { FormsModule } from '@angular/forms';
 import { TaskInfo, TaskState, type ConceptDossierSummary } from '../../../../models/task.model';
 import { laneName } from '../../../../models/lane-presentation';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 import { TaskService } from '../../../../services/task.service';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { discoverWorkbenchDecisionMarkup } from '../../../../services/workbench-decision-markup.util';
 import { catchError, of, switchMap } from 'rxjs';
 

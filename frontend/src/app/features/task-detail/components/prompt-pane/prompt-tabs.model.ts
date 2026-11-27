@@ -1,4 +1,4 @@
-import type { PaneTabDef } from '../../../../components/pane-tabs/pane-tabs.component';
+import type { PaneTabDef } from '@studio/ui/components/pane-tabs/pane-tabs.component';
 
 export type PromptPaneTabId = 'overview' | 'description' | 'timeline' | 'evidence' | 'code-review';
 

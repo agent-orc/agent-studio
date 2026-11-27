@@ -10,8 +10,8 @@
   ],
   "enforced": [
     "src/app/features/orchestrator/components/orchestrator-feed-burst/orchestrator-feed-burst.html",
-    "src/app/features/github-app/github-app-panel/github-app-panel.component.html", "src/app/components/section-header/section-header.component.html",
-    "src/app/components/error-dialog/error-dialog.component.html",
+    "src/app/features/github-app/github-app-panel/github-app-panel.component.html", "projects/studio-ui/src/components/section-header/section-header.component.html",
+    "projects/studio-ui/src/components/error-dialog/error-dialog.component.html",
     "src/app/features/board/components/delivery-section/delivery-section.html",
     "src/app/features/deployments/components/delivery-lanes/delivery-lanes.html",
     "src/app/features/cli/components/cli-models-panel/cli-models-panel.html",
@@ -63,7 +63,7 @@
       "kind": "popup-trigger",
       "reason": "Help popover trigger. The content floats over the surface instead of expanding the row."
     },
-    "src/app/components/info-button/info-button.component.html": {
+    "projects/studio-ui/src/components/info-button/info-button.component.html": {
       "kind": "popup-trigger",
       "reason": "Info popover trigger. The question-mark glyph is the affordance; the body is an overlay."
     },
@@ -75,11 +75,11 @@
       "kind": "popup-trigger",
       "reason": "aria-haspopup badge that opens a migration popover over the surface."
     },
-    "src/app/components/pane-tabs/pane-tabs.component.html": {
+    "projects/studio-ui/src/components/pane-tabs/pane-tabs.component.html": {
       "kind": "popup-trigger",
       "reason": "Tab-strip overflow menu (aria-haspopup=\"menu\"), overlay list of hidden tabs."
     },
-    "src/app/components/tree-row/tree-row.component.html": {
+    "projects/studio-ui/src/components/tree-row/tree-row.component.html": {
       "kind": "tree-chevron",
       "reason": "Canonical navigation tree row. Its chevron is owned by the Navigation citizenship contract (chapter 08); one marker there would fight the nav rhythm and the active-item bar."
     },

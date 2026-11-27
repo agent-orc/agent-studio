@@ -70,6 +70,17 @@
 
   "overrides": [
     {
+      "files": ["projects/studio-ui-catalogue/src/**/*.scss"],
+      "rules": {
+        "color-no-hex": true,
+        "color-named": "never",
+        "scale-unlimited/declaration-strict-value": [
+          ["padding", "padding-block", "padding-inline", "margin", "gap", "row-gap", "column-gap"],
+          { "ignoreValues": ["0", "auto"], "ignoreFunctions": false, "disableFix": true }
+        ]
+      }
+    },
+    {
       "comment": "RT-7 isolated tests use central colour and spacing tokens.",
       "files": ["src/app/features/project-detail/components/isolated-tests/*.scss"],
       "rules": {

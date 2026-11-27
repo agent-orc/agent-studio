@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
-import { LoadingSurfaceComponent, PendingButtonDirective } from '../../../../components/async-feedback';
+import { LoadingSurfaceComponent, PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import { ProjectGitService } from '../../../../services/project-git.service';
 import { formatCompactDateTime } from '../../../../services/format.util';
 import type { IntegrationQueueState, ProjectIntegrationView } from '../../../git';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Integration queue outcome on the shared indicator (AGT-3403); unknown states stay neutral. */
 export const INTEGRATION_STATUS_TONE: Readonly<Record<IntegrationQueueState, StatusTone>> = {

@@ -20,13 +20,13 @@ import type { TaskInfo, RegistryWorkspaceListItem, RegistryProjectSummary, Watch
 import type { WorkbenchListItem } from '../../models/project-docs.model';
 import { forkJoin } from 'rxjs';
 import { TaskService } from '../../services/task.service';
-import { StudioIconComponent, type StudioIconName } from '../../components/studio-icon/studio-icon.component';
-import { StudioSidebarHeaderComponent } from '../../components/studio-sidebar-header/studio-sidebar-header.component';
-import { EmptyStateComponent } from '../../components/empty-state/empty-state.component';
+import { StudioIconComponent, type StudioIconName } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { StudioSidebarHeaderComponent } from '@studio/ui/components/studio-sidebar-header/studio-sidebar-header.component';
+import { EmptyStateComponent } from '@studio/ui/components/empty-state/empty-state.component';
 import { StudioWelcomeComponent } from './components/studio-welcome/studio-welcome.component';
-import { SectionHeaderComponent } from '../../components/section-header/section-header.component';
-import { CountBadgeComponent } from '../../components/count-badge/count-badge.component';
-import { ListRowComponent } from '../../components/list-row/list-row.component';
+import { SectionHeaderComponent } from '@studio/ui/components/section-header/section-header.component';
+import { CountBadgeComponent } from '@studio/ui/components/count-badge/count-badge.component';
+import { ListRowComponent } from '@studio/ui/components/list-row/list-row.component';
 import { ClientService } from '../../services/client.service';
 import { AuthSessionState, PRODUCT_NO_PROJECT_MESSAGE } from '../../services/auth.service';
 import { FeatureFlagsService } from '../../services/feature-flags.service';
@@ -41,7 +41,7 @@ import {
 } from '../project-detail/components/project-shell/project-shell.config';
 import { BoardFiltersService, flattenGrouped } from '../board';
 import { ProjectLifecycleDialogService } from '../../services/project-lifecycle-dialog.service';
-import { NotificationService } from '../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { copyTextToClipboard } from '../../services/clipboard.util';
 import { WorkspaceManagerService, ProjectDragDropService, WorkspaceOverlaysService, UiPreferencesService } from '../shell';
 import { ProjectLookupService } from '../../services/project-lookup.service';
@@ -54,9 +54,9 @@ import {
   projectRunnerMode,
   type ProjectAutoPickupIndicator, type ProjectPickupMode,
 } from './studio-shell.auto-pickup';
-import { MenuComponent, MenuItem, MenuItemClickEvent } from '../../components/menu';
+import { MenuComponent, MenuItem, MenuItemClickEvent } from '@studio/ui/components/menu/index';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { AppTooltipDirective } from '../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { TaskStatusPopoverDirective } from '../../components/task-status-card';
 import { buildProjectPickerItems, buildTabCtxMenuItems } from './studio-shell.menu-builders';
 import { StudioTabStateService } from './services/studio-tab-state.service';
@@ -83,7 +83,7 @@ import { WorkspaceDeploymentDashboardComponent } from '../deployments';
 import { TaskDefaultsControlComponent } from './components/task-defaults-control/task-defaults-control';
 import { DevelopStateIndicatorComponent } from './components/develop-state-indicator/develop-state-indicator.component';
 import { AttentionControlComponent } from './components/attention-control/attention-control';
-import { StatusIndicatorComponent } from '../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { StudioTabOverflowComponent } from './components/studio-tab-overflow/studio-tab-overflow';
 import type { MagazineChild } from '../magazine/magazine-view/magazine-view';
 import { cliColorFor, normalizeStorage } from './studio-shell.utils';

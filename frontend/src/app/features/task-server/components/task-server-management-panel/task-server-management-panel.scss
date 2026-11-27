@@ -14,7 +14,7 @@
   gap: var(--studio-spacing-3);
   padding: var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-hover);
 }
 .mgmt__action-text {
@@ -25,22 +25,22 @@
   flex: 1 1 auto;
 }
 .mgmt__action-label {
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   font-weight: 700;
   color: var(--studio-fg-strong);
 }
 .mgmt__action-desc {
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   color: var(--studio-fg-dim);
   line-height: 1.4;
 }
 
 .mgmt__btn {
   flex: 0 0 auto;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 600;
   padding: var(--studio-spacing-1) var(--studio-spacing-4);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   border: 1px solid var(--studio-border-strong);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
@@ -75,7 +75,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--studio-spacing-2);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 .mgmt__result-kind {
   flex: 0 0 auto;
@@ -91,7 +91,7 @@
 .mgmt__result-secret {
   flex: 1 1 100%;
   padding: var(--studio-spacing-2);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-selected);
   color: var(--studio-fg-strong);
   overflow-wrap: anywhere;
@@ -103,9 +103,9 @@
   font-weight: 700;
   color: var(--studio-fg);
   background: var(--studio-bg-selected);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   // stylelint-disable-next-line declaration-property-unit-disallowed-list -- 1px pill inset is sub-scale
-  padding: 1px var(--studio-spacing-2);
+  padding: var(--studio-compat-space-6) var(--studio-spacing-2);
 }
 .mgmt__result-count--none { color: var(--studio-fg-muted); }
 
@@ -113,7 +113,7 @@
   margin: var(--studio-spacing-4) 0 0;
   padding: var(--studio-spacing-3) 0 0;
   border-top: 1px dashed var(--studio-border);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-style: italic;
   color: var(--studio-fg-muted);
 }

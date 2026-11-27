@@ -6,7 +6,7 @@ import type {
   TaskServerRunnerCapabilitySnapshot,
   RemoteRunnerLinkHealth,
 } from './remote-host.model';
-import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 export type ProviderAuthDisplayState = 'ok' | 'retrying' | 'limited' | 'expiring' | 'unavailable' | 'unknown';
 

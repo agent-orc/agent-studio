@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { formatCompactTokens } from '../../../tokens/token-number-format.util';
 import type { OutcomeGroup, ScatterPoint } from '../../token-analysis.util';
 import { OUTCOME_GROUP_LABELS, outcomeGroupColor } from '../../token-analysis.util';

@@ -3,7 +3,7 @@ import { firstValueFrom } from 'rxjs';
 import { formatRetentionBytes, type RetentionRunDetail, type RetentionRunSummary, type RetentionSchedule } from '../../models/retention.model';
 import { RetentionService } from '../../services/retention.service';
 import { RetentionReportTableComponent } from '../retention-report-table/retention-report-table.component';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 export interface RetentionStatus { tone: StatusTone; label: string }
 

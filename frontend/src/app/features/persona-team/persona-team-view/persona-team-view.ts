@@ -1,7 +1,7 @@
 import { DatePipe, DecimalPipe, KeyValuePipe } from '@angular/common';
-import { LoadingSurfaceComponent, PendingButtonDirective } from '../../../components/async-feedback';
-import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
-import { SegmentedControlComponent } from '../../../components/segmented-control/segmented-control.component';
+import { LoadingSurfaceComponent, PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { firstValueFrom, forkJoin } from 'rxjs';

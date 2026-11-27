@@ -2,14 +2,14 @@ import { ChangeDetectionStrategy, Component, computed, input, output } from '@an
 import {
   StudioIconComponent,
   type StudioIconName,
-} from '../../../../components/studio-icon/studio-icon.component';
+} from '@studio/ui/components/studio-icon/studio-icon.component';
 import {
   pageTypeIcon,
   pageTypeLabel,
   type PageContext,
 } from '../../../../models/page-context.model';
 import type { ChatExecutionContext } from '../../models/orchestrator.model';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 export type PanelExecutionState = 'active' | 'ready' | 'resolving';
 

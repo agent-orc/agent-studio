@@ -12,8 +12,8 @@ import { NowTickService } from '../../../../services/now-tick.service';
 import { projectIdentity } from '../../../../services/project-identity.util';
 import { ProjectHygieneBadgeComponent } from '../hygiene-strip/project-hygiene-badge/project-hygiene-badge.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { MenuComponent, MenuItem, MenuItemClickEvent } from '../../../../components/menu';
-import { NotificationService } from '../../../../services/notification.service';
+import { MenuComponent, MenuItem, MenuItemClickEvent } from '@studio/ui/components/menu/index';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
 import {
   MergeAcceptView,
@@ -33,11 +33,11 @@ import { TASK_DETAIL_PRIMARY_SHORTCUT, taskDetailPrimaryShortcutTooltip } from '
 import { buildThinkingLevelIndicator } from '../../../../services/thinking-level.util';
 import { ModelLevelIndicatorComponent } from '../../../../components/model-level-indicator/model-level-indicator.component';
 import { ModelMigrationBadgeComponent } from '../../../../components/model-migration-badge/model-migration-badge.component';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import { ExecutionLocationBadgeComponent } from '../../../../components/execution-location-badge/execution-location-badge.component';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
 import { RemoteDispatchRejectionComponent } from '../../../../components/remote-dispatch-rejection/remote-dispatch-rejection.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { BatchGateService } from '../../../../services/batch-gate.service';
 import { batchIsolationHold } from '../../../../models/batch-isolation-hold';
 import { isHeldRequeue } from './isolation-requeue';

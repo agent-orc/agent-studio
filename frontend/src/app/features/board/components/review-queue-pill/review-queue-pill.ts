@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { TaskState, type TaskInfo } from '../../../../models/task.model';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** AGT-3403: an urgent review needs attention; a normal queue position is a quiet fact. */
 export const REVIEW_PRIORITY_TONES: Readonly<Record<string, StatusTone>> = {

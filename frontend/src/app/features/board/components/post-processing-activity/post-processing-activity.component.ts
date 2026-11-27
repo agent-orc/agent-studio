@@ -12,7 +12,7 @@ import type { TaskInfo } from '../../../../models/task.model';
 import { AutoReviewStatusStore } from '../../../../services/auto-review-status.store';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { buildAutoReviewProcessBadge, type AutoReviewProcessBadge } from '../task-card/task-card-view-model';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** AGT-3403: a running gate step spins; a queued gate slot needs attention; an idle wait stays calm. */
 export const POST_PROCESSING_ACTIVITY_TONES: Readonly<Record<AutoReviewProcessBadge['tone'], StatusTone>> = {

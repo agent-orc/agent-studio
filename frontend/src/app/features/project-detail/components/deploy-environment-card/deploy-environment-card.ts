@@ -11,11 +11,11 @@ import {
   type EnvironmentCardView,
 } from '../../state/deploy-area.model';
 import { healthStateTone, runStateTone } from '../../state/deploy-status-tone';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { DeployActionsComponent } from '../deploy-actions/deploy-actions';
 import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
 import type { RollbackOffer } from '../../state/rollback-offer.model';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { runHostStateLabel, runHostStateTone } from '../../../../models/run-host.model';
 import { ClientService } from '../../../../services/client.service';

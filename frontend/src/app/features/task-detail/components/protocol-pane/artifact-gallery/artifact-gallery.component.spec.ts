@@ -3,7 +3,7 @@ import { provideHttpClientTesting, HttpTestingController } from '@angular/common
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
-import { MediaLightboxService } from '../../../../../services/media-lightbox.service';
+import { MediaLightboxService } from '@studio/ui/services/media-lightbox.service';
 import { ArtifactGalleryComponent } from './artifact-gallery.component';
 import type { ConversationArtifact } from './artifact-gallery.model';
 

@@ -40,11 +40,11 @@ $ctp-crust:     #11111b;
 .results-view {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--studio-spacing-3);
   color: $ctp-text;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter',
                system-ui, sans-serif;
-  font-size: 15px;
+  font-size: var(--studio-compat-type-32);
   line-height: 1.65;
 }
 
@@ -54,9 +54,9 @@ $ctp-crust:     #11111b;
 
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border-radius: 4px;
+  gap: var(--studio-spacing-3);
+  padding: var(--studio-spacing-3) var(--studio-spacing-4);
+  border-radius: var(--studio-compat-radius-6);
   border: 1px solid color-mix(in srgb, var(--results-banner-tone) 45%, transparent);
   background: color-mix(in srgb, var(--results-banner-tone) 8%, transparent);
 
@@ -69,12 +69,12 @@ $ctp-crust:     #11111b;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 4px;
+    gap: var(--studio-spacing-1);
     min-width: 0;
   }
 
   &__reason {
-    font-size: 12.5px;
+    font-size: var(--studio-compat-type-5);
     color: $ctp-subtext0;
     word-break: break-word;
   }
@@ -96,10 +96,10 @@ $ctp-crust:     #11111b;
 
 /* ---------- Figures & lightbox --------------------------------------- */
 .results-figure {
-  margin: 18px 0;
+  margin: var(--studio-compat-space-8) 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
   align-items: flex-start;
 }
 
@@ -107,10 +107,10 @@ $ctp-crust:     #11111b;
   padding: 0;
   border: 1px solid rgba($ctp-overlay0, 0.4);
   background: $ctp-mantle;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   overflow: hidden;
   cursor: zoom-in;
-  transition: border-color 0.15s ease, transform 0.15s ease;
+  transition: border-color var(--studio-compat-duration-9) ease, transform var(--studio-compat-duration-9) ease;
   max-width: 100%;
   &:hover {
     border-color: rgba($ctp-mauve, 0.6);
@@ -127,7 +127,7 @@ $ctp-crust:     #11111b;
 }
 
 .results-figure__caption {
-  font-size: 12.5px;
+  font-size: var(--studio-compat-type-5);
   color: $ctp-subtext0;
   font-style: italic;
 }
@@ -138,13 +138,13 @@ $ctp-crust:     #11111b;
 .results-figure__missing {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
+  gap: var(--studio-compat-space-2);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px dashed rgba($ctp-overlay0, 0.6);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: rgba($ctp-surface0, 0.4);
   color: $ctp-subtext0;
-  font-size: 12.5px;
+  font-size: var(--studio-compat-type-5);
   font-family: var(--font-mono, monospace);
   word-break: break-all;
 
@@ -161,9 +161,9 @@ $ctp-crust:     #11111b;
 
 /* ---------- Code blocks ---------------------------------------------- */
 .results-code {
-  margin: 14px 0;
+  margin: var(--studio-compat-space-3) 0;
   border: 1px solid rgba($ctp-overlay0, 0.4);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: $ctp-mantle;
   overflow: hidden;
 }
@@ -172,11 +172,11 @@ $ctp-crust:     #11111b;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 10px;
+  padding: var(--studio-spacing-1) var(--studio-compat-space-5);
   background: rgba($ctp-surface0, 0.7);
   border-bottom: 1px solid rgba($ctp-overlay0, 0.3);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 
 .results-code__lang {
@@ -190,12 +190,12 @@ $ctp-crust:     #11111b;
   border: 1px solid rgba($ctp-overlay0, 0.4);
   background: rgba($ctp-surface1, 0.4);
   color: $ctp-subtext1;
-  padding: 1px 8px;
-  border-radius: 3px;
-  font-size: 11px;
+  padding: var(--studio-compat-space-6) var(--studio-spacing-2);
+  border-radius: var(--studio-compat-radius-9);
+  font-size: var(--studio-compat-type-6);
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  transition: background var(--studio-compat-duration-3) ease, color var(--studio-compat-duration-3) ease, border-color var(--studio-compat-duration-3) ease;
   &:hover {
     background: $ctp-surface1;
     color: $ctp-text;
@@ -205,11 +205,11 @@ $ctp-crust:     #11111b;
 
 .results-code__pre {
   margin: 0;
-  padding: 12px 14px;
+  padding: var(--studio-spacing-3) var(--studio-compat-space-3);
   background: $ctp-mantle;
   overflow-x: auto;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--studio-font-size-md);
   line-height: 1.55;
 }
 
@@ -250,9 +250,9 @@ $ctp-crust:     #11111b;
 
 /* ---------- Diff blocks (diff2html output) -------------------------- */
 .results-diff {
-  margin: 14px 0;
+  margin: var(--studio-compat-space-3) 0;
   border: 1px solid rgba($ctp-overlay0, 0.4);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: $ctp-mantle;
   overflow: hidden;
 
@@ -267,15 +267,15 @@ $ctp-crust:     #11111b;
     background: rgba($ctp-surface0, 0.7);
     border-bottom: 1px solid rgba($ctp-overlay0, 0.3);
     color: $ctp-subtext1;
-    padding: 4px 10px;
+    padding: var(--studio-spacing-1) var(--studio-compat-space-5);
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
   }
   .d2h-file-name { color: $ctp-blue; font-weight: 600; }
   .d2h-tag { background: rgba($ctp-surface1, 0.7); color: $ctp-subtext1; border-color: rgba($ctp-overlay0, 0.4); }
   .d2h-code-line,
   .d2h-code-line-ctn,
-  .d2h-code-side-line { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; }
+  .d2h-code-side-line { font-family: var(--font-mono); font-size: var(--studio-compat-type-5); line-height: 1.55; }
   .d2h-code-linenumber,
   .d2h-code-side-linenumber {
     background: $ctp-base;
@@ -317,7 +317,7 @@ $ctp-crust:     #11111b;
     text-decoration: underline;
     text-decoration-style: dotted;
     text-underline-offset: 2px;
-    transition: color 0.12s ease, text-decoration-color 0.12s ease;
+    transition: color var(--studio-compat-duration-3) ease, text-decoration-color var(--studio-compat-duration-3) ease;
   }
 
   &:hover code,
@@ -329,7 +329,7 @@ $ctp-crust:     #11111b;
   &:focus-visible {
     outline: 2px solid rgba($ctp-blue, 0.6);
     outline-offset: 1px;
-    border-radius: 3px;
+    border-radius: var(--studio-compat-radius-9);
   }
 }
 

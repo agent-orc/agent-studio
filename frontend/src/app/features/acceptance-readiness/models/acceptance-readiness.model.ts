@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Readiness classes of `POST /api/tasks/acceptance-readiness` (AGT-3564). */
 export type AcceptanceReadinessClass =

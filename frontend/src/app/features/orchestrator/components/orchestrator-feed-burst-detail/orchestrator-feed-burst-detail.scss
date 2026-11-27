@@ -11,20 +11,20 @@
 }
 .burst-detail__kind {
   color: var(--studio-fg-strong);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   font-weight: 700;
 }
 .burst-detail__topic {
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: var(--studio-bg-hover);
   color: var(--studio-fg-dim);
-  font: 11px/1 var(--font-mono, monospace);
+  font: var(--studio-compat-type-6)/1 var(--font-mono, monospace);
 }
 .burst-detail__title {
   margin: 0;
   color: var(--studio-fg-strong);
-  font-size: 15px;
+  font-size: var(--studio-compat-type-32);
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -32,7 +32,7 @@
   display: grid;
   gap: var(--studio-spacing-1);
   margin: 0;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 .burst-detail__meta div {
   display: grid;
@@ -55,7 +55,7 @@
 .burst-detail__section h4 {
   margin: 0;
   color: var(--studio-fg-dim);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   font-weight: 600;
 }
 .burst-detail__cards {
@@ -71,7 +71,7 @@
   grid-template-columns: max-content minmax(0, 1fr) max-content;
   align-items: baseline;
   gap: var(--studio-spacing-2);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 .burst-detail__card-link {
   padding: 0;
@@ -79,7 +79,7 @@
   background: transparent;
   color: var(--studio-accent-3-strong);
   cursor: pointer;
-  font: 11px/1.2 var(--font-mono, monospace);
+  font: var(--studio-compat-type-6)/1.2 var(--font-mono, monospace);
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentcolor 45%, transparent);
   text-underline-offset: 2px;
@@ -89,7 +89,7 @@
   outline: 2px solid var(--studio-accent);
   outline-offset: 1px;
 }
-.burst-detail__card-id { font: 11px/1.2 var(--font-mono, monospace); color: var(--studio-fg-dim); }
+.burst-detail__card-id { font: var(--studio-compat-type-6)/1.2 var(--font-mono, monospace); color: var(--studio-fg-dim); }
 .burst-detail__card-title {
   min-width: 0;
   color: var(--studio-fg);

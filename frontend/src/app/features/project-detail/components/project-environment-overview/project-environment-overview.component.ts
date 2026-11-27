@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
-import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
+import { LoadingSurfaceComponent } from '@studio/ui/components/async-feedback/index';
 import { ProjectRunbooksComponent } from '../project-runbooks/project-runbooks';
 import { ProjectOperationsRailComponent } from '../project-operations-rail/project-operations-rail';
 import { EnvironmentStateComponent } from '../environment-state/environment-state';

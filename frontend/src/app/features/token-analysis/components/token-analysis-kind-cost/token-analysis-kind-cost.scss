@@ -10,7 +10,7 @@
   width: 100%;
   border-collapse: collapse;
   color: var(--studio-fg);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
 
   th,
   td {
@@ -64,8 +64,8 @@
   /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- bar thickness */
   height: 6px;
   overflow: hidden;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: var(--studio-border-muted);
 
-  span { display: block; height: 100%; border-radius: 4px; }
+  span { display: block; height: 100%; border-radius: var(--studio-compat-radius-6); }
 }

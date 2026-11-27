@@ -32,23 +32,23 @@ p {
 
 h3 {
   color: var(--studio-fg-strong);
-  font-size: 0.95rem;
+  font-size: var(--studio-compat-type-16);
 }
 
 h4 {
   color: var(--studio-fg-strong);
-  font-size: 0.85rem;
+  font-size: var(--studio-compat-type-26);
 }
 
 .pipeline__head p,
 .pipeline__muted {
   color: var(--studio-fg-dim);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
 }
 
 .pipeline__summary {
   color: var(--studio-fg-muted);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
 }
 
 .pipeline__issues,
@@ -59,7 +59,7 @@ h4 {
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 .pipeline__issues li {
@@ -85,7 +85,7 @@ h4 {
   gap: var(--studio-spacing-3);
   padding: var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-surface);
 }
 
@@ -102,7 +102,7 @@ pre {
   border: 1px solid var(--studio-border);
   background: var(--studio-bg-surface);
   color: var(--studio-fg);
-  font: 0.76rem/1.5 var(--studio-mono);
+  font: var(--studio-compat-type-17)/1.5 var(--studio-mono);
 }
 
 code {

@@ -5,7 +5,7 @@
 .attention__summary:hover { background: var(--studio-bg-hover); }
 .attention__summary:focus-visible, .attention__cause button:focus-visible { outline: 2px solid var(--studio-accent); }
 .attention__preview { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.attention__dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--severity-warn); }
+.attention__dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: var(--studio-compat-radius-4); background: var(--severity-warn); }
 .attention__cause { border-top: 1px solid var(--studio-border); }
 .attention__cause > span:nth-child(2) { flex: 1; min-width: 0; }
 .attention__cause time { color: var(--studio-fg-dim); white-space: nowrap; }

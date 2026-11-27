@@ -1,7 +1,7 @@
 import type { OrchestratorChatTurn } from '../../../../features/orchestrator';
 import type { ChatEvent, ConversationEvent, RawLineRange } from 'coding-agent-chat/core';
 import { adaptChatTurnMetadata, chatMetadataLibraryEnabled } from '../../chat-turn-metadata.adapter';
-import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * Pure helpers for the orchestrator side sheet. Extracted from the

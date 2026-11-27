@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject, input } from '@angular/core';
-import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import {
   WikiMetaPanelStateService,
   WikiMetaSectionId,

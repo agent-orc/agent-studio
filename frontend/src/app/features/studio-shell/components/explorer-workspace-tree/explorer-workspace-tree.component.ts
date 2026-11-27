@@ -19,13 +19,13 @@ import type {
   RegistryWorkspaceListItem,
 } from '../../../../models/task.model';
 import { ProjectUrlProbeService } from '../../../../services/project-url-probe.service';
-import { ModalStackService } from '../../../../services/modal-stack.service';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
-import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
-import { SectionHeaderComponent } from '../../../../components/section-header/section-header.component';
-import { TreeRowComponent } from '../../../../components/tree-row/tree-row.component';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { EmptyStateComponent } from '@studio/ui/components/empty-state/empty-state.component';
+import { SectionHeaderComponent } from '@studio/ui/components/section-header/section-header.component';
+import { TreeRowComponent } from '@studio/ui/components/tree-row/tree-row.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../../components/menu';
+import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '@studio/ui/components/menu/index';
 import { ProjectDragDropService } from '../../../shell';
 import { ExplorerSectionsService } from '../../services/explorer-sections.service';
 import { ExplorerProjectActionsService } from '../../services/explorer-project-actions.service';
@@ -36,7 +36,7 @@ import {
   type ExplorerAutoPickupAggregate,
   type ProjectAutoPickupIndicator,
 } from '../../studio-shell.auto-pickup';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { ExplorerAutoPickupIndicatorComponent } from '../explorer-auto-pickup-indicator/explorer-auto-pickup-indicator.component';
 import type { WorkbenchListItem } from '../../../../models/project-docs.model';
 import { ExplorerProjectDestinationsComponent, type ProjectDestination } from '../explorer-project-destinations/explorer-project-destinations';

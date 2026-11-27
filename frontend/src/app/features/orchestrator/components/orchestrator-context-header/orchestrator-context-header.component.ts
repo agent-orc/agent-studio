@@ -5,9 +5,9 @@ import {
   inject,
   input,
 } from '@angular/core';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { NowTickService } from '../../../../services/now-tick.service';
 import { shortModelName, stateLabel } from '../../../../services/format.util';
 import { TaskState } from '../../../../models/task.model';

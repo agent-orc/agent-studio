@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
-import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import type { DecisionInboxItem } from '../../../../../models/decision-card-presentation';
 import type { CliModelInfo } from '../../../../cli';
 import {

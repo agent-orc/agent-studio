@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { ChipComponent } from '../../../../components/chip/chip.component';
 import { DataGridComponent, GridCellDirective, type GridColumn } from '../../../../components/data-grid';
-import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
-import type { MenuItem } from '../../../../components/menu';
+import { EmptyStateComponent } from '@studio/ui/components/empty-state/empty-state.component';
+import type { MenuItem } from '@studio/ui/components/menu/index';
 import { OverflowMenuComponent } from '../../../../components/overflow-menu/overflow-menu.component';
 import { PageSectionComponent } from '../../../../components/page-section/page-section.component';
 import { groupBindingsByScope, principalKindLabel, principalName, scopeLabel, type IamScopeKind, type RoleBinding } from '../../models/access.model';

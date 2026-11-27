@@ -17,14 +17,14 @@
 
 .updates__title {
   margin: 0;
-  font-size: 1.15rem;
+  font-size: var(--studio-compat-type-33);
   font-weight: 600;
   color: var(--studio-fg);
 }
 
 .updates__desc {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: var(--studio-compat-type-26);
   color: var(--studio-fg-muted);
 }
 
@@ -35,7 +35,7 @@
   gap: var(--studio-spacing-3);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-elevated);
 }
 
@@ -49,8 +49,8 @@
 
 .updates__action {
   padding: var(--studio-spacing-1) var(--studio-spacing-3);
-  border-radius: 4px;
-  font-size: 0.8rem;
+  border-radius: var(--studio-compat-radius-6);
+  font-size: var(--studio-compat-type-12);
   font-weight: 600;
   cursor: pointer;
   border: 1px solid var(--studio-accent);
@@ -66,7 +66,7 @@
   border: none;
   background: transparent;
   color: var(--studio-fg-muted);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
   cursor: pointer;
   text-decoration: underline;
 

@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { MenuComponent } from '../../../../components/menu/menu.component';
-import type { MenuItem, MenuItemClickEvent } from '../../../../components/menu/menu.types';
+import { MenuComponent } from '@studio/ui/components/menu/menu.component';
+import type { MenuItem, MenuItemClickEvent } from '@studio/ui/components/menu/menu.types';
 import { AuthService } from '../../../../services/auth.service';
 import { SessionManagerComponent } from '../../../access/lazy';
 

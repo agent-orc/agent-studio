@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, ViewChild, computed, inject, input, output, signal } from '@angular/core';
 import { TagRegistryEntry } from '../../../../models/task.model';
-import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
-import { OverlayPortalService } from '../../../../services/overlay-portal.service';
+import { OverlayPortalDirective } from '@studio/ui/directives/overlay-portal.directive';
+import { OverlayPortalService } from '@studio/ui/services/overlay-portal.service';
 
 export interface TypeFilterOption {
   /** Backend-side value, e.g. `bug`, `feature`, `chore`. */

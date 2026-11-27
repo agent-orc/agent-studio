@@ -3,7 +3,7 @@
 .git-badge {
   /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- 1px pill inset is intentionally sub-scale */
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-bg-selected);
   color: var(--studio-fg-dim);
   font-size: var(--studio-font-size-sm);

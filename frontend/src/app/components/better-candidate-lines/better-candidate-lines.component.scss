@@ -16,10 +16,10 @@
   padding-block: var(--studio-spacing-1);
   padding-inline: var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: color-mix(in srgb, var(--severity-info) 8%, transparent);
   color: var(--studio-fg-dim);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   line-height: 1.35;
   text-decoration: none;
   white-space: nowrap;

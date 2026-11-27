@@ -28,9 +28,9 @@
 button.copy-key {
   cursor: copy;
   transition:
-    color 120ms ease,
-    background 120ms ease,
-    border-color 120ms ease;
+    color var(--studio-compat-duration-1) ease,
+    background var(--studio-compat-duration-1) ease,
+    border-color var(--studio-compat-duration-1) ease;
 }
 
 button.copy-key:hover {
@@ -47,28 +47,28 @@ button.copy-key:focus-visible {
 .copy-key--card {
   height: 22px;
   padding: 0 var(--studio-spacing-2);
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   color: var(--studio-fg-dim);
   background: var(--studio-card-muted-bg);
   border-color: var(--studio-card-muted-border);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   letter-spacing: 0.02em;
 }
 
 .copy-key--detail {
   height: 22px;
   padding: 0 var(--studio-spacing-2);
-  border-radius: 4px;
-  font-size: 11px;
+  border-radius: var(--studio-compat-radius-6);
+  font-size: var(--studio-compat-type-6);
   letter-spacing: 0.03em;
 }
 
 .copy-key--reference {
   height: 20px;
   padding: 0 var(--studio-spacing-2);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   font-weight: 600;
   letter-spacing: 0.03em;
 }
@@ -88,6 +88,6 @@ button.copy-key:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   button.copy-key {
-    transition-duration: 0s;
+    transition-duration: var(--studio-compat-duration-2);
   }
 }

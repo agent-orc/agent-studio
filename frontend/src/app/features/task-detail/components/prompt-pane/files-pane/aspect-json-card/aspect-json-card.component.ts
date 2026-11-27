@@ -6,7 +6,7 @@ import {
   aspectVerdictTone,
   type AspectVerdictTone,
 } from '../../../../../../components/aspect-findings/aspect-findings.model';
-import { StatusIndicatorComponent } from '../../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { AspectDocument } from '../aspect-document.model';
 
 /**

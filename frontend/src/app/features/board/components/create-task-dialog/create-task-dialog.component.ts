@@ -1,6 +1,6 @@
-import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { AfterViewInit, ChangeDetectionStrategy, Component, DestroyRef, ElementRef, ViewChild, computed, effect, inject, input, model, output, signal } from '@angular/core';
-import { ModalStackService } from '../../../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { forkJoin, of } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
 import { FormsModule } from '@angular/forms';
@@ -14,12 +14,12 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import { CreateModePickerComponent } from '../create-mode-picker/create-mode-picker.component';
 import { RoutingPreviewComponent } from '../routing-preview/routing-preview.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { ModelRoutingRecommendation } from '../../../quota';
 import { ModelRoutingSuggestionComponent } from '../model-routing-suggestion/model-routing-suggestion.component';
-import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
-import { RovingFocusDirective } from '../../../../directives/roving-focus.directive';
-import { ModalFocusDirective } from '../../../../directives/modal-focus.directive';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/pending-button.directive';
+import { RovingFocusDirective } from '@studio/ui/directives/roving-focus.directive';
+import { ModalFocusDirective } from '@studio/ui/directives/modal-focus.directive';
 export interface PendingAttachment {
   id: string;
   file: File;

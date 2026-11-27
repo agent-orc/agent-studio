@@ -15,12 +15,12 @@
   align-self: center;
   padding: var(--studio-spacing-1) var(--studio-spacing-3);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-bg-elevated);
   box-shadow: var(--elevation-tooltip);
   color: var(--studio-fg);
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--studio-compat-type-19);
   cursor: pointer;
 }
 

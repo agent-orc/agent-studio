@@ -8,7 +8,7 @@ import {
 } from '@angular/core';
 
 import { FormsModule } from '@angular/forms';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import {
   OrchestratorConfigOption,
   OrchestratorConfigService,

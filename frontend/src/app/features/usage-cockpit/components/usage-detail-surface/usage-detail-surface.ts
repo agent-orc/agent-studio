@@ -13,8 +13,8 @@ import {
   viewChild,
 } from '@angular/core';
 
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
-import { ModalStackService } from '../../../../services/modal-stack.service';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import type { UsageCockpitResponse } from '../../models/usage-cockpit.model';
 import type { UsageDetailFocus } from '../../usage-detail.util';
 import { UsageDetailPanelComponent } from '../usage-detail-panel/usage-detail-panel';

@@ -12,7 +12,7 @@ import {
 import type { PromoteConceptResponse, PromotedConceptTask } from '../../models/task.model';
 import { TaskService } from '../../services/task.service';
 import { ActionPanelCoordinator, closeWhenAnotherPanelOpens } from '../../services/action-panel-coordinator.service';
-import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import {
   cardLabel,
   promotionErrorMessage,

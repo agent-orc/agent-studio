@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, input, si
 import { HttpClient } from '@angular/common/http';
 import { DatePipe } from '@angular/common';
 import { forkJoin, map, of, Subscription, switchMap } from 'rxjs';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { serverMessage } from '../../services/project-deploy-data.service';
 import { ManagedDatabaseBackupsComponent } from '../managed-database-backups/managed-database-backups';
 import {

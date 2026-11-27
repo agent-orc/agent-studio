@@ -4,7 +4,7 @@ import {
   CauseBreakerService, type CauseBreakerCauseView, type CauseBreakerHeldCard,
 } from '../../../../services/cause-breaker.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
-import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/pending-button.directive';
 
 /** While a re-check runs, its outcome is read again at this pace. */
 const RUNNING_REFRESH_MS = 15_000;

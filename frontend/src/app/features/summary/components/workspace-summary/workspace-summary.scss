@@ -3,8 +3,8 @@
 .wsm {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 16px;
+  gap: var(--studio-spacing-4);
+  padding: var(--studio-spacing-4);
   color: var(--studio-fg);
 }
 
@@ -12,20 +12,20 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--studio-spacing-3);
   flex-wrap: wrap;
 }
 
 .wsm__title {
-  margin: 0 0 4px 0;
-  font-size: 1.25rem;
+  margin: 0 0 var(--studio-spacing-1) 0;
+  font-size: var(--studio-compat-type-73);
   color: var(--studio-fg-strong);
 }
 
 .wsm__sub {
   margin: 0;
   color: var(--studio-fg-dim);
-  font-size: 0.92rem;
+  font-size: var(--studio-compat-type-8);
 }
 
 .wsm__sub-range {
@@ -36,7 +36,7 @@
 .wsm__controls {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
   flex-wrap: wrap;
 }
 
@@ -44,39 +44,39 @@
   background: var(--studio-bg-hover);
   border: 1px solid var(--studio-border-strong);
   color: var(--studio-fg);
-  padding: 5px 10px;
-  border-radius: 6px;
+  padding: var(--studio-compat-space-7) var(--studio-compat-space-5);
+  border-radius: var(--studio-compat-radius-7);
   cursor: pointer;
   font: inherit;
 }
 
 .wsm__headline {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--studio-compat-type-23);
   color: var(--studio-fg-strong);
   background: color-mix(in srgb, var(--studio-accent-3) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--studio-accent-3) 25%, transparent);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: var(--studio-compat-radius-5);
+  padding: var(--studio-compat-space-5) var(--studio-spacing-3);
 }
 
 .wsm__placeholder {
-  padding: 24px;
+  padding: var(--studio-spacing-5);
   text-align: center;
   color: var(--studio-fg-dim);
   border: 1px dashed var(--studio-border-strong);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
 }
 
 .wsm__block {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
 }
 
 .wsm__block-title {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: var(--studio-compat-type-16);
   color: var(--studio-fg-dim);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -94,26 +94,26 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--studio-spacing-1);
 }
 
 .wsm__decision {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
   flex-wrap: wrap;
-  padding: 5px 8px;
+  padding: var(--studio-compat-space-7) var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-hover);
 }
 
 .wsm__sev {
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   font-weight: 700;
   text-transform: uppercase;
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding: var(--studio-compat-space-6) var(--studio-compat-space-2);
+  border-radius: var(--studio-compat-radius-6);
   flex: none;
 
   // Each pill is a pale 22%-tint fill carrying same-hue text. The bare "strong"
@@ -135,7 +135,7 @@
 .wsm__move-time,
 .wsm__commit-meta {
   color: var(--studio-fg-dim);
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   font-variant-numeric: tabular-nums;
 }
 
@@ -143,31 +143,31 @@
 
 .wsm__project {
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-hover);
-  padding: 8px 10px;
+  padding: var(--studio-spacing-2) var(--studio-compat-space-5);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
 }
 
 .wsm__project-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--studio-spacing-3);
   flex-wrap: wrap;
 }
 
 .wsm__project-name {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--studio-compat-type-23);
   color: var(--studio-fg-strong);
 }
 
 .wsm__project-stats {
   color: var(--studio-fg-dim);
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
 }
 
 .wsm__move,
@@ -176,9 +176,9 @@
 .wsm__crash {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
   flex-wrap: wrap;
-  font-size: 0.86rem;
+  font-size: var(--studio-compat-type-77);
 }
 
 .wsm__move-job,
@@ -189,14 +189,14 @@
 
 .wsm__commit-sha {
   color: var(--studio-accent-3-strong);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
 }
 
 .wsm__commit-subject { flex: 1 1 auto; }
 
 .wsm__crash-kind {
   color: var(--severity-high);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   font-weight: 700;
   text-transform: uppercase;
 }

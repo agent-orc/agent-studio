@@ -1,7 +1,7 @@
 import { Injectable, computed, inject } from '@angular/core';
 import type { MarkdownTaskReference } from 'coding-agent-chat/markdown';
 import type { TaskInfo } from '../models/task.model';
-import { NotificationService } from './notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from './task.service';
 import { DecisionFocusRequestService, decisionTaskKey } from './decision-focus-request.service';
 // These two services are imported from their concrete module paths rather than

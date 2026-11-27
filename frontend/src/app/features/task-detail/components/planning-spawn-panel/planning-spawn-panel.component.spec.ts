@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { of } from 'rxjs';
 import { PlanningSpawnPanelComponent } from './planning-spawn-panel.component';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import type { PlanningSpawnSummary, TaskInfo, TaskMode } from '../../../../models/task.model';
 

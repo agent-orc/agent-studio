@@ -1,4 +1,4 @@
-import { SegmentedControlComponent } from '../../../../../components/segmented-control/segmented-control.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { DatePipe, NgTemplateOutlet } from '@angular/common';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
@@ -14,13 +14,13 @@ import {
   type CodeReviewVerdictTone,
 } from '../../code-review-verdict.util';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { AppTooltipDirective } from '../../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { isLargeDiff, describeDiffSize } from '../../../../../utils/large-diff-gate';
 import { coalesceDiffByFile } from '../../../../../utils/coalesce-diff';
 import { currentDiff2Html, hasDiff2HtmlLoaded, loadDiff2Html } from '../../../../../utils/diff2html-lazy';
-import { ResizableSplitterDirective } from '../../../../../components/resizable-splitter/resizable-splitter.directive';
+import { ResizableSplitterDirective } from '@studio/ui/components/resizable-splitter/resizable-splitter.directive';
 import { TaskCommitRoundsComponent } from '../task-commit-rounds/task-commit-rounds.component';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Code review verdict tone to shared status tone (AGT-3403); unknown verdicts are neutral. */
 export const CODE_REVIEW_STATUS_TONES: Readonly<Record<CodeReviewVerdictTone, StatusTone>> = {

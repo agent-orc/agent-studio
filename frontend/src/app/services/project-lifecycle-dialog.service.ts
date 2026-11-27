@@ -1,5 +1,5 @@
 import { inject, Injectable } from '@angular/core';
-import { ConfirmDialogService } from './confirm-dialog.service';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 
 export interface ProjectLifecycleTarget {
   projectId: string;

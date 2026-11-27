@@ -2,9 +2,9 @@ import { ChangeDetectionStrategy, Component, computed, inject, input, signal } f
 import type { TaskInfo } from '../../../../models/task.model';
 import { TaskState } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { ReviewerSession } from '../../../../services/reviewer-session.service';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import { DecisionFocusDirective } from '../../../../components/decision-focus/decision-focus.directive';
 import { serverErrorMessage } from '../../../../utils/server-error-message';
 

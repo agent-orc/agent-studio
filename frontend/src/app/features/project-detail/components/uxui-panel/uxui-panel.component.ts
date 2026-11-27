@@ -16,7 +16,7 @@ import {
   DesignOverviewResponse,
   DesignReferenceItem,
 } from './uxui-panel.types';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { designStatusTone } from './uxui-panel-status';
 
 /**

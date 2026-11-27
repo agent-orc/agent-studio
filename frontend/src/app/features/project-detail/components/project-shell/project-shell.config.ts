@@ -5,7 +5,7 @@
  * inventory and copy below; per-panel real content lands in follow-up
  * slices listed in that mockup's README.
  */
-import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
+import type { StudioIconName } from '@studio/ui/components/studio-icon/studio-icon.component';
 
 export type ProjectRailGroup = 'insight' | 'quality' | 'context' | 'config';
 

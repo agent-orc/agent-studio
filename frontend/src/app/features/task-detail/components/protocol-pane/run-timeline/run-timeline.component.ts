@@ -9,7 +9,7 @@ import { ExecutionLocationBadgeComponent } from '../../../../../components/execu
 import { RunExecutionContextComponent } from './run-execution-context/run-execution-context.component';
 import { ReviewAttemptHistoryComponent } from './review-attempt-history/review-attempt-history.component';
 import { runTriggerLabel, runTriggerReportHref } from './run-trigger-presentation.util';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { runCardStatusLabel, runCardStatusTone } from './run-timeline-status';
 /**
  * Run timeline panel rendered above the activity log in the protocol

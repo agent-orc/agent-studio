@@ -1,7 +1,7 @@
 import { HostNamePipe } from '../../../../components/identity-chip/host-name.pipe';
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { laneName } from '../../../../models/lane-presentation';
 import {
   anomalyLabel, daysUntil, statePresentation, userStatePresentation,

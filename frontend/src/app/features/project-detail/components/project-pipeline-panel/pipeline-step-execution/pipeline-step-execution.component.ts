@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angu
 import { TaskService } from '../../../../../services/task.service';
 import type { PipelineStepProbeResult } from '../../../../task-pipeline';
 import type { PipelineAdminRow } from '../pipeline-config.util';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Probe result status onto the shared tones (AGT-3403); unknown values stay neutral. */
 const PROBE_STATUS_TONE: Readonly<Record<string, StatusTone>> = {

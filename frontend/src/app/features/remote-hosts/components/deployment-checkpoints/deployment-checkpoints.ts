@@ -4,7 +4,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, input, si
 import { catchError, finalize, forkJoin, map, of, switchMap } from 'rxjs';
 import { AuthSessionState } from '../../../../services/auth.service';
 import type { RemoteHost } from '../../models/remote-host.model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { StableReleaseIdentity } from '../../models/host-release-drift';
 import {
   type FullBackupSummary, type InstallationIdentity, type ProjectRepositoryRead,

@@ -3,8 +3,8 @@ import {
   ConnectedOverlayPositionRef,
   OverlayPortalRef,
   OverlayPortalService,
-} from '../../../../services/overlay-portal.service';
-import { ModalStackService } from '../../../../services/modal-stack.service';
+} from '@studio/ui/services/overlay-portal.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { TokenPopoverCoordinator } from './token-popover-coordinator.service';
 
 /**

@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, linkedSignal } from '@angular/core';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import type { DossierCardList } from '../../../../models/project-docs.model';
 import { laneName } from '../../../../models/lane-presentation';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';

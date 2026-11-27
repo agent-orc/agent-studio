@@ -10,7 +10,7 @@
   overflow-y: auto;
   box-sizing: border-box;
   border: 1px solid var(--studio-border);
-  border-radius: 10px;
+  border-radius: var(--studio-compat-radius-3);
   background: var(--studio-bg-editor);
 }
 :host([data-fill="true"]) .git-tree { max-height: none; height: 100%; }
@@ -21,10 +21,10 @@
   min-width: 0;
   box-sizing: border-box;
   overflow: hidden;
-  gap: 8px;
-  padding: 5px 10px 5px 8px;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-compat-space-7) var(--studio-compat-space-5) var(--studio-compat-space-7) var(--studio-spacing-2);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   border-bottom: 1px solid var(--studio-border);
   user-select: none;
   color: var(--studio-fg);
@@ -42,7 +42,7 @@
 .git-tree__chevron {
   width: 12px;
   color: var(--studio-fg-dim);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   text-align: center;
 }
 .git-tree__status {
@@ -79,22 +79,22 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono, monospace);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   color: var(--studio-fg-muted);
   opacity: 0.85;
 }
 .git-tree__count {
   margin-left: auto;
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   color: var(--studio-fg-dim);
 }
 .git-tree__stat {
   margin-left: auto;
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   color: var(--studio-fg-dim);
 }
 // When both count and stat are present (folder rows) only the first pushes
 // to the right; the stat then trails the count naturally.
-.git-tree__count + .git-tree__stat { margin-left: 8px; }
+.git-tree__count + .git-tree__stat { margin-left: var(--studio-spacing-2); }

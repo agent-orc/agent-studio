@@ -2,8 +2,8 @@ import { ChangeDetectionStrategy, Component, HostListener, computed, effect, inj
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { catchError, forkJoin, of } from 'rxjs';
 import { ProjectBasicsFormComponent } from '../../../../components/project-basics-form';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import {
   PROJECT_COLOR_SWATCHES,
   effectiveProjectRootPath,
@@ -14,7 +14,7 @@ import {
 } from '../../../../models/project-basics.model';
 import { CLI_TYPES, type CliType, type RegistryProjectSummary, type RegistryWorkspaceListItem } from '../../../../models/task.model';
 import { CliCatalogStore } from '../../../cli';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { TaskService } from '../../../../services/task.service';
 // Service-only direct import avoids the Project Hub <-> shell component cycle.

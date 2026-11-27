@@ -3,7 +3,7 @@
 .visible-task {
   padding: var(--studio-spacing-4);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
 }
@@ -15,26 +15,26 @@
   gap: var(--studio-spacing-3);
 }
 
-.visible-task__header h3 { margin: 0; font-size: 14px; color: var(--studio-fg-strong); }
-.visible-task__header p { margin: var(--studio-spacing-1) 0 0; font-size: 12px; color: var(--studio-fg-dim); }
+.visible-task__header h3 { margin: 0; font-size: var(--studio-font-size-lg); color: var(--studio-fg-strong); }
+.visible-task__header p { margin: var(--studio-spacing-1) 0 0; font-size: var(--studio-font-size-sm); color: var(--studio-fg-dim); }
 .visible-task__eyebrow,
 .visible-task__prompt > span,
-.visible-task__footer label > span { display: block; margin-bottom: var(--studio-spacing-1); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--studio-fg-muted); }
-.visible-task__duration { margin-left: auto; padding: var(--studio-spacing-1) var(--studio-spacing-2); border-radius: 4px; background: var(--studio-bg-selected); color: var(--studio-fg); font-size: 11px; white-space: nowrap; }
+.visible-task__footer label > span { display: block; margin-bottom: var(--studio-spacing-1); font-size: var(--studio-compat-type-1); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--studio-fg-muted); }
+.visible-task__duration { margin-left: auto; padding: var(--studio-spacing-1) var(--studio-spacing-2); border-radius: var(--studio-compat-radius-6); background: var(--studio-bg-selected); color: var(--studio-fg); font-size: var(--studio-compat-type-6); white-space: nowrap; }
 .visible-task__prompt { margin: var(--studio-spacing-3) 0; }
-.visible-task__prompt pre { margin: 0; padding: var(--studio-spacing-3); overflow: auto; border-radius: 6px; background: var(--studio-bg-editor); color: var(--studio-fg); font: 12px/1.5 var(--studio-font-mono, monospace); white-space: pre-wrap; }
+.visible-task__prompt pre { margin: 0; padding: var(--studio-spacing-3); overflow: auto; border-radius: var(--studio-compat-radius-7); background: var(--studio-bg-editor); color: var(--studio-fg); font: var(--studio-font-size-sm)/1.5 var(--studio-font-mono, monospace); white-space: pre-wrap; }
 .visible-task__footer { align-items: flex-end; }
 .visible-task__footer label { min-width: 180px; }
-.visible-task__footer select { width: 100%; padding: var(--studio-spacing-2); border: 1px solid var(--studio-border-strong); border-radius: 4px; background: var(--studio-bg-editor); color: var(--studio-fg); }
-.visible-task__footer code { align-self: center; color: var(--studio-fg-dim); font-size: 11px; }
-.visible-task__button { margin-left: auto; padding: var(--studio-spacing-2) var(--studio-spacing-3); border: 1px solid var(--studio-accent); border-radius: 4px; background: var(--studio-accent); color: var(--studio-on-accent); font-weight: 700; cursor: pointer; }
+.visible-task__footer select { width: 100%; padding: var(--studio-spacing-2); border: 1px solid var(--studio-border-strong); border-radius: var(--studio-compat-radius-6); background: var(--studio-bg-editor); color: var(--studio-fg); }
+.visible-task__footer code { align-self: center; color: var(--studio-fg-dim); font-size: var(--studio-compat-type-6); }
+.visible-task__button { margin-left: auto; padding: var(--studio-spacing-2) var(--studio-spacing-3); border: 1px solid var(--studio-accent); border-radius: var(--studio-compat-radius-6); background: var(--studio-accent); color: var(--studio-on-accent); font-weight: 700; cursor: pointer; }
 .visible-task__button:disabled { opacity: .55; cursor: not-allowed; }
 .visible-task__button:focus-visible,
 .visible-task__footer select:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
-.visible-task__state { align-self: center; display: inline-flex; align-items: center; gap: var(--studio-spacing-2); color: var(--studio-fg-dim); font-size: 11px; }
-.visible-task__state span { width: 8px; height: 8px; border-radius: 50%; background: var(--studio-success); }
+.visible-task__state { align-self: center; display: inline-flex; align-items: center; gap: var(--studio-spacing-2); color: var(--studio-fg-dim); font-size: var(--studio-compat-type-6); }
+.visible-task__state span { width: 8px; height: 8px; border-radius: var(--studio-compat-radius-4); background: var(--studio-success); }
 .visible-task__notice,
-.visible-task__error { margin: var(--studio-spacing-3) 0 0; padding: var(--studio-spacing-2); border-radius: 4px; font-size: 11px; }
+.visible-task__error { margin: var(--studio-spacing-3) 0 0; padding: var(--studio-spacing-2); border-radius: var(--studio-compat-radius-6); font-size: var(--studio-compat-type-6); }
 .visible-task__notice { background: var(--studio-bg-selected); color: var(--studio-fg-dim); }
 .visible-task__error { background: var(--notify-error-tint); color: var(--notify-error-icon-fg); }
 

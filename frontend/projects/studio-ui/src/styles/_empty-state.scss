@@ -1,0 +1,48 @@
+// Shared, token-driven empty / placeholder state.
+//
+// One treatment for every project-hub rail and section empty so the muted
+// colour stops drifting (it used to wander across rgba(255,255,255,.5/.55),
+// #6c7086, and var(--studio-fg-muted)) and both themes stay legible. The old
+// white-alpha / hardcoded-hex variants were invisible in light theme. See the
+// project-management layout audit, finding E.
+//
+// Global (un-encapsulated) so the same class renders identically across the
+// dozen project-detail components that each declared their own *__empty rule.
+
+// Inline muted note — the default. Used for section sub-notes ("None.",
+// "No data.", "Loading…") that sit inside a populated panel.
+.studio-empty {
+  margin: var(--studio-spacing-1) 0 0;
+  color: var(--studio-fg-muted);
+  font-style: italic;
+  font-size: 0.82rem;
+}
+
+// Centred container for full-panel placeholder rails and section-level
+// "nothing here yet" states (Settings / Audits & Checks / Steering rails,
+// Observability, Product Runtime).
+//
+// Deck-Panel v1 `muted` variant: an empty state is settled, read-only
+// content, so it uses the muted panel surface instead of the old dashed
+// box with a hardcoded black tint (which was invisible in light theme).
+// docs/concepts/visual-style-guide/deck-panel-v1.md.
+.studio-empty--box {
+  margin: 0;
+  padding: var(--studio-spacing-6) var(--studio-spacing-5);
+  text-align: center;
+  font-style: normal;
+  font-size: 0.88rem;
+  border: 1px solid var(--studio-card-muted-border);
+  border-radius: var(--studio-deck-panel-radius);
+  background: var(--studio-card-muted-bg);
+  box-shadow: none;
+}
+.studio-empty--box p { margin: 0 0 var(--studio-spacing-2); }
+.studio-empty--box > :last-child { margin-bottom: 0; }
+
+// Error tone (e.g. a steering-doc file that failed to load). Same shape, danger
+// colour, upright text.
+.studio-empty--error {
+  color: var(--severity-high);
+  font-style: normal;
+}

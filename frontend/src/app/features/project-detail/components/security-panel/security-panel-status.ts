@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { SecurityBaselineBadge } from './security-panel.types';
 
 /** Tone of the baseline badge and baseline status text (AGT-3403). */

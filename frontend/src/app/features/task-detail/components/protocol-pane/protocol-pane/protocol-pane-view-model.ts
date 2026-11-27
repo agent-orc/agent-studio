@@ -1,6 +1,6 @@
 import type { TaskMode, TaskOutcomeIssue, TaskSummaryStatus } from '../../../../../models/task.model';
 import type { ClaudeRateLimitSnapshot, ClaudeSessionInfo } from '../../../../../features/claude';
-import type { PaneTabDef } from '../../../../../components/pane-tabs/pane-tabs.component';
+import type { PaneTabDef } from '@studio/ui/components/pane-tabs/pane-tabs.component';
 import {
   formatTokens as fmtTokens,
   formatRateWindow as fmtRateWindow,

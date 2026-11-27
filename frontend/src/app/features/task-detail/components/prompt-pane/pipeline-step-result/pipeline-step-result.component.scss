@@ -17,11 +17,11 @@
     height: 20px;
     padding: 0;
     border: 1px solid var(--studio-border);
-    border-radius: 5px;
+    border-radius: var(--studio-compat-radius-13);
     background: transparent;
     color: var(--studio-fg-dim);
     cursor: pointer;
-    transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+    transition: color var(--studio-compat-duration-3) ease, border-color var(--studio-compat-duration-3) ease, background var(--studio-compat-duration-3) ease;
 
     &:hover {
       color: var(--studio-fg);
@@ -36,7 +36,7 @@
   }
 
   &__icon {
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     line-height: 1;
   }
 
@@ -49,13 +49,13 @@
     width: min(560px, calc(100vw - 48px));
     max-height: min(520px, calc(100vh - 96px));
     border: 1px solid var(--studio-border);
-    border-radius: 8px;
+    border-radius: var(--studio-compat-radius-5);
     // Opaque elevated surface so the content below never bleeds through the
     // popover. Earlier this read undefined tokens (--studio-bg-raised /
     // --studio-bg), which made `background` fall back to its `transparent`
     // initial value and rendered the result unreadable.
     background: var(--studio-bg-elevated);
-    box-shadow: var(--elevation-modal, 0 12px 32px rgba(0, 0, 0, 0.35));
+    box-shadow: var(--elevation-modal, 0 12px 32px var(--studio-compat-shadow-ink-2));
     overflow: auto;
   }
 
@@ -86,7 +86,7 @@
 
   &__title {
     min-width: 0;
-    font-size: 13px;
+    font-size: var(--studio-font-size-md);
     font-weight: 700;
     color: var(--studio-fg);
     word-break: break-word;
@@ -117,7 +117,7 @@
     border: 0;
     color: inherit;
     font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: var(--studio-compat-type-44);
     line-height: 1.5;
 
     & + .step-result__chip::before {
@@ -135,14 +135,14 @@
   }
 
   &__body {
-    padding: 10px 12px;
-    font-size: 12.5px;
+    padding: var(--studio-compat-space-5) var(--studio-spacing-3);
+    font-size: var(--studio-compat-type-5);
   }
 
   &__state {
     margin: 0;
     color: var(--studio-fg-dim);
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
   }
 }
 
@@ -160,6 +160,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .step-result__toggle {
-    transition-duration: 0s;
+    transition-duration: var(--studio-compat-duration-2);
   }
 }

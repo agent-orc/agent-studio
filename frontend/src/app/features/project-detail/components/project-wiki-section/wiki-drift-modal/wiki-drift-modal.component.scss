@@ -15,13 +15,13 @@
   min-height: 26px;
   padding: 0 var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--studio-bg-sidebar);
   color: var(--studio-fg);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
   font-family: inherit;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition: background var(--studio-compat-duration-1) ease, border-color var(--studio-compat-duration-1) ease, color var(--studio-compat-duration-1) ease;
 }
 
 .pwiki__new-group:hover:not(:disabled) {
@@ -49,10 +49,10 @@
   min-height: 18px;
   padding: 0 var(--studio-spacing-2);
   border: 1px solid var(--pwiki-paper-border);
-  border-radius: 3px;
+  border-radius: var(--studio-compat-radius-9);
   background: var(--pwiki-paper-soft);
   color: var(--pwiki-paper-muted);
-  font-size: 0.64rem;
+  font-size: var(--studio-compat-type-80);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -70,7 +70,7 @@
   border-radius: 0;
   background: transparent;
   color: var(--studio-fg-muted);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
   font-family: inherit;
   cursor: pointer;
 }
@@ -98,7 +98,7 @@
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-editor);
   color: var(--studio-fg);
   box-shadow: var(--elevation-modal);
@@ -117,19 +117,19 @@
 .pwiki__drift-head h3 {
   margin: var(--studio-spacing-2) 0 var(--studio-spacing-1);
   color: var(--studio-fg-strong);
-  font-size: 1rem;
+  font-size: var(--studio-compat-type-23);
 }
 
 .pwiki__drift-head p {
   margin: 0;
   color: var(--studio-fg-muted);
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
 }
 
 .pwiki__drift-head .pwiki__viewer-close {
   min-height: 26px;
   border: 1px solid var(--studio-border);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--studio-bg-sidebar);
 }
 
@@ -154,7 +154,7 @@
   display: grid;
   gap: var(--studio-spacing-1);
   color: var(--studio-fg-muted);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -163,7 +163,7 @@
 .pwiki__drift-config select {
   min-height: 30px;
   border: 1px solid var(--studio-border);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--studio-bg-sidebar);
   color: var(--studio-fg);
   font: inherit;
@@ -176,7 +176,7 @@
   margin: 0;
   padding: var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: color-mix(in srgb, var(--studio-bg-sidebar) 72%, transparent);
 }
 
@@ -188,7 +188,7 @@
 .pwiki__drift-facts dt {
   margin: 0;
   color: var(--studio-fg-muted);
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -197,7 +197,7 @@
   min-width: 0;
   margin: 0;
   color: var(--studio-fg);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   overflow-wrap: anywhere;
 }
 
@@ -207,7 +207,7 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--studio-border);
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: var(--studio-bg-editor);
   color: var(--studio-fg);
   overflow: hidden;
@@ -222,7 +222,7 @@
   padding: 0 var(--studio-spacing-3);
   border-bottom: 1px solid var(--studio-border-strong);
   color: var(--studio-fg-dim);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -243,7 +243,7 @@
   background: var(--studio-bg-editor);
   color: var(--studio-fg);
   font-family: var(--font-mono);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
   line-height: 1.55;
   white-space: pre-wrap;
   @include m.thin-scroll;

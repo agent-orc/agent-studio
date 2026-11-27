@@ -16,7 +16,7 @@
   select {
     padding: var(--studio-spacing-1) var(--studio-spacing-2);
     border: 1px solid var(--studio-border-strong);
-    border-radius: 6px;
+    border-radius: var(--studio-compat-radius-7);
     background: var(--studio-surface);
     color: var(--studio-fg);
     font: inherit;

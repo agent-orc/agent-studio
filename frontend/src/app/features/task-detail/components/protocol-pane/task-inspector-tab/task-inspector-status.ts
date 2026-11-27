@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 const ENRICHMENT_STATUS_TONES: Readonly<Record<string, StatusTone>> = {
   enriched: 'success',

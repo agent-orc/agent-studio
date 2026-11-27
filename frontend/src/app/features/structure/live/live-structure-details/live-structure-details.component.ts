@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { LiveGlyphComponent } from '../live-glyph/live-glyph.component';
 import { LIVE_LEVELS, nodeFacts, type LiveFact } from '../live-structure.facts';
 import { LIVE_KIND_LABEL, LIVE_LAYERS, ago, descendants, pathOf, subtreeWarnings,

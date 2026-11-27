@@ -70,7 +70,7 @@
   font: inherit;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition: background var(--studio-compat-duration-9), border-color var(--studio-compat-duration-9), color var(--studio-compat-duration-9);
 
   &:hover:not(:disabled) { background: var(--studio-bg-hover); color: var(--studio-fg-strong); }
 

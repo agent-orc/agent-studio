@@ -8,7 +8,7 @@ import {
 } from '@angular/core';
 import { TaskStatusCardComponent } from './task-status-card.component';
 import type { TaskInfo } from '../../models/task.model';
-import { OverlayPortalRef, OverlayPortalService } from '../../services/overlay-portal.service';
+import { OverlayPortalRef, OverlayPortalService } from '@studio/ui/services/overlay-portal.service';
 
 const GAP = 8;
 const VIEWPORT_PAD = 6;

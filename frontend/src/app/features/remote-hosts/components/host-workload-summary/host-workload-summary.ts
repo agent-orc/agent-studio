@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 
 @Component({
   selector: 'app-host-workload-summary',

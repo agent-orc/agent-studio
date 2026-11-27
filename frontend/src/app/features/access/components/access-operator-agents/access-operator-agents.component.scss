@@ -9,11 +9,11 @@
 .operators__head > div { flex: 1; min-width: 12rem; }
 .operators__head h4 { display: flex; align-items: center; gap: var(--studio-spacing-2); }
 .operators__scroll { overflow-x: auto; }
-.operators__actor, .operators__issued code { color: var(--studio-mono); font-family: var(--font-mono); font-size: 0.72rem; white-space: nowrap; }
+.operators__actor, .operators__issued code { color: var(--studio-mono); font-family: var(--font-mono); font-size: var(--studio-compat-type-10); white-space: nowrap; }
 // A one-time secret is a calm attention tint, never an alarm; the whole surface carries it (R1).
-.operators__issued { display: flex; flex-direction: column; gap: var(--studio-spacing-1); padding: var(--studio-spacing-2); border-radius: 4px; background: var(--studio-card-attention-bg); color: var(--studio-fg); font-size: 0.78rem; }
+.operators__issued { display: flex; flex-direction: column; gap: var(--studio-spacing-1); padding: var(--studio-spacing-2); border-radius: var(--studio-compat-radius-6); background: var(--studio-card-attention-bg); color: var(--studio-fg); font-size: var(--studio-compat-type-13); }
 .operators__create { display: flex; flex-direction: column; gap: var(--studio-spacing-2); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .operators__device { display: flex; flex-direction: column; gap: var(--studio-spacing-1); min-width: 10rem; }
-.operators__subhead { margin: var(--studio-spacing-2) 0 0; color: var(--studio-fg-strong); font-size: 0.75rem; font-weight: 600; }
-.operators__item > .access-hint code { color: var(--studio-mono); font-family: var(--font-mono); font-size: 0.72rem; }
+.operators__subhead { margin: var(--studio-spacing-2) 0 0; color: var(--studio-fg-strong); font-size: var(--studio-compat-type-11); font-weight: 600; }
+.operators__item > .access-hint code { color: var(--studio-mono); font-family: var(--font-mono); font-size: var(--studio-compat-type-10); }

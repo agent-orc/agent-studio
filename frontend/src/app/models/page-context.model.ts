@@ -1,4 +1,4 @@
-import type { StudioIconName } from '../components/studio-icon/studio-icon.component';
+import type { StudioIconName } from '@studio/ui/components/studio-icon/studio-icon.component';
 import type { WikiClassification } from './project-docs.model';
 
 /** Canonical interactive page kinds shared by Wiki, Dossier, and chat. */

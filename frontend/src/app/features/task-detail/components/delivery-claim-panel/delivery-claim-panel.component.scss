@@ -11,7 +11,7 @@
   gap: var(--studio-spacing-2);
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   @include section.surface(var(--studio-accent));
-  font-size: 0.75rem;
+  font-size: var(--studio-compat-type-11);
 }
 
 /*
@@ -55,7 +55,7 @@
 }
 
 .claim__dot {
-  font-size: 0.6rem;
+  font-size: var(--studio-compat-type-64);
   line-height: 1;
 }
 
@@ -89,11 +89,11 @@
 
 .claim__supersession,
 .claim__basis {
-  padding: 1px 6px;
-  border-radius: 999px;
+  padding: var(--studio-compat-space-6) var(--studio-compat-space-2);
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg-strong);
-  font-size: 0.6875rem;
+  font-size: var(--studio-compat-type-98);
   font-weight: 600;
   white-space: nowrap;
 }

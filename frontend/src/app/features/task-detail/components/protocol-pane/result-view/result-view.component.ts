@@ -9,7 +9,7 @@ import { RESULT_CASE_META } from '../result-case';
 import { BeautifulResultsComponent } from '../../beautiful-results/beautiful-results.component';
 import type { GeneratedFileProvenanceView } from '../../generated-file-provenance.util';
 import { TestEvidenceStatusComponent } from '../../../../test-evidence';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { protocolVerdictTone } from '../protocol-verdict-banner/protocol-verdict-tone';
 import type { ResultMetric } from '../result-document';
 

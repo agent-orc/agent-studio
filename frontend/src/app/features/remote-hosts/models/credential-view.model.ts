@@ -1,5 +1,5 @@
 import type { RemoteHost } from './remote-host.model';
-import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * I8 Execution Hosts credential view (docs/credentials-and-logins/index.html#surface,

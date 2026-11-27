@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, ElementRef, inject, input, output, signal, viewChild } from '@angular/core';
-import { MenuComponent } from '../../../../components/menu/menu.component';
-import type { MenuItemClickEvent } from '../../../../components/menu/menu.types';
+import { MenuComponent } from '@studio/ui/components/menu/menu.component';
+import type { MenuItemClickEvent } from '@studio/ui/components/menu/menu.types';
 
 export interface CockpitNavItem { id: string; label: string; inlineFrom: 'phone' | 'tablet' | 'desktop' | null; }
 export interface UsageDetailRequest { section: 'cli' | 'cost' | 'details'; cliId: string | null; }

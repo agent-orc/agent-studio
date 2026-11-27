@@ -14,7 +14,7 @@ import type {
   StepRunMode,
 } from '../../../../task-pipeline';
 import type { StructuredTooltip } from 'coding-agent-chat/shared';
-import type { StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 export interface PipelineRowVm {
   id: string;

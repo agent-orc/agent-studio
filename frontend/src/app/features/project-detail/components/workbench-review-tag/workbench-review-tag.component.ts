@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import type { WorkbenchReview, WorkbenchReviewVerdict } from '../../../../models/project-docs.model';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { NowTickService } from '../../../../services/now-tick.service';
 
 const VERDICT_TONES: Readonly<Record<WorkbenchReviewVerdict, StatusTone>> = {

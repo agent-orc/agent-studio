@@ -13,7 +13,7 @@ import { ProjectGitChangesComponent } from '../project-git-changes/project-git-c
 import { ProjectGitCommitDetailsComponent } from '../project-git-commit-details/project-git-commit-details.component';
 import { ProjectGitHistoryComponent } from '../project-git-history/project-git-history.component';
 import { ProjectGitTreeComponent } from '../project-git-tree/project-git-tree.component';
-import { ResizableSplitterDirective } from '../../../../components/resizable-splitter/resizable-splitter.directive';
+import { ResizableSplitterDirective } from '@studio/ui/components/resizable-splitter/resizable-splitter.directive';
 
 type LoadState = 'idle' | 'loading' | 'loaded' | 'error';
 

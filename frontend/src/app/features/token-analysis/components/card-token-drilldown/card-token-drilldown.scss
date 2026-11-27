@@ -17,22 +17,22 @@
 .dd__num { @include ta.numeric; }
 .dd__swatch { @include ta.swatch; }
 .dd__dim { color: var(--studio-fg-muted); }
-.dd__note { margin: 0; color: var(--studio-fg-muted); font-size: 0.7rem; }
+.dd__note { margin: 0; color: var(--studio-fg-muted); font-size: var(--studio-compat-type-18); }
 
 .dd__close {
   flex: 0 0 auto;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: transparent;
   color: var(--studio-fg);
   font: inherit;
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   cursor: pointer;
 }
 
 .dd__close:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
-.dd__state { margin: 0; color: var(--studio-fg-muted); font-size: 0.78rem; }
+.dd__state { margin: 0; color: var(--studio-fg-muted); font-size: var(--studio-compat-type-13); }
 
 .dd__state--error {
   display: flex;
@@ -40,7 +40,7 @@
   gap: var(--studio-spacing-2);
   padding: var(--studio-spacing-2);
   border: 1px solid var(--studio-error);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--studio-error) 10%, transparent);
   color: var(--studio-fg);
 }
@@ -61,7 +61,7 @@
   gap: var(--studio-spacing-2);
   padding: var(--studio-spacing-2) 0;
   border-bottom: 1px solid var(--studio-border-muted);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
 }
 
 .dd__when,
@@ -86,7 +86,7 @@
 
 .dd__result {
   align-self: flex-start;
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
 }
 
 .dd__bar {
@@ -94,10 +94,10 @@
   /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- bar thickness */
   height: 6px;
   overflow: hidden;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: var(--studio-border-muted);
 
-  span { display: block; height: 100%; border-radius: 4px; }
+  span { display: block; height: 100%; border-radius: var(--studio-compat-radius-6); }
 }
 
 // Below this width the token column moves under the event, so the event

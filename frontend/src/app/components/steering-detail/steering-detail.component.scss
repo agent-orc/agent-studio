@@ -3,13 +3,13 @@
 .steer {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
 
   &__head {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 8px;
+    gap: var(--studio-spacing-2);
   }
 
   // Verdict chip: the shared status indicator carries tone and icon (AGT-3403).
@@ -21,7 +21,7 @@
     flex: 1 1 auto;
     min-width: 0;
     margin: 0;
-    font-size: 12.5px;
+    font-size: var(--studio-compat-type-5);
     line-height: 1.45;
     color: var(--studio-fg);
     word-break: break-word;
@@ -34,14 +34,14 @@
   &__reason-label {
     font-weight: 700;
     text-transform: uppercase;
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     letter-spacing: 0.04em;
     color: var(--studio-fg-dim);
-    margin-right: 4px;
+    margin-right: var(--studio-spacing-1);
   }
 
   &__body {
-    font-size: 11.5px;
+    font-size: var(--studio-compat-type-19);
   }
 
   &__summary {
@@ -54,18 +54,18 @@
   &__content {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    margin-top: 6px;
+    gap: var(--studio-spacing-2);
+    margin-top: var(--studio-compat-space-2);
   }
 
   &__section {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: var(--studio-compat-space-1);
   }
 
   &__section-label {
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -74,12 +74,12 @@
 
   &__prompt {
     margin: 0;
-    padding: 8px;
-    border-radius: 6px;
+    padding: var(--studio-spacing-2);
+    border-radius: var(--studio-compat-radius-7);
     background: var(--studio-bg-hover);
     border: 1px solid var(--studio-border);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     line-height: 1.45;
     color: var(--studio-fg);
     white-space: pre-wrap;
@@ -92,14 +92,14 @@
     margin: 0;
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: var(--studio-compat-space-1);
   }
 
   &__context-row {
     display: flex;
-    gap: 8px;
+    gap: var(--studio-spacing-2);
     align-items: baseline;
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     line-height: 1.4;
   }
 
@@ -126,12 +126,12 @@
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--studio-compat-space-4);
   }
 
   &__commit {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     line-height: 1.4;
     color: var(--studio-fg);
     word-break: break-word;

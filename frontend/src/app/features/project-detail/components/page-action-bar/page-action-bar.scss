@@ -28,7 +28,7 @@
   flex: 0 0 auto;
   gap: var(--studio-spacing-1);
   color: var(--studio-fg-muted);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   font-weight: 650;
   white-space: nowrap;
 }
@@ -51,11 +51,11 @@
   min-height: 28px;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: transparent;
   color: var(--studio-fg-muted);
   font: inherit;
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -95,7 +95,7 @@
   display: grid;
   gap: var(--studio-spacing-1);
   color: var(--studio-fg-muted);
-  font-size: 0.75rem;
+  font-size: var(--studio-compat-type-11);
   font-weight: 650;
 }
 
@@ -136,12 +136,12 @@
   border-radius: var(--studio-card-compact-radius);
   background: var(--studio-bg-hover);
   color: var(--studio-fg-muted);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 }
 
 .page-pin-form__error {
   color: var(--studio-error);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 }
 
 .page-pin-form__footer {
@@ -189,6 +189,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .page-action-bar__button {
-    transition-duration: 0s;
+    transition-duration: var(--studio-compat-duration-2);
   }
 }

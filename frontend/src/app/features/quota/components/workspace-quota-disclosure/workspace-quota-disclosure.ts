@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, input, signal } from '@angular/core';
 
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import { WorkspaceQuotaComponent } from '../workspace-quota/workspace-quota.component';
 
 /** One workspace's quota editor behind a disclosure row; the editor loads on first open (initial bundle budget). */

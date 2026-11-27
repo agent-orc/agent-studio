@@ -10,13 +10,13 @@ import {
   output,
   signal,
 } from '@angular/core';
-import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
+import { OverlayPortalDirective } from '@studio/ui/directives/overlay-portal.directive';
 import { TaskService } from '../../../../services/task.service';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
 import { detectLanguage } from '../protocol-pane/run-git-viewer/diff-utils';
 import { highlightBlock } from '../beautiful-results/highlight-lazy';
 import { splitHighlightedLines, splitPlainLines } from './source-highlight';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 
 export interface SourceViewerRequest {
   path: string;

@@ -1,6 +1,6 @@
 import { DestroyRef, Injectable, computed, inject, signal, type Signal } from '@angular/core';
 import { Subscription } from 'rxjs';
-import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 import { LocalOwnerSessionService } from '../../../services/local-owner-session.service';
 import { ProjectDeployDataService, serverMessage } from '../services/project-deploy-data.service';
 import { DEPLOY_CLOCK, ready, type DeployPanel, type DeployRun, type EnvironmentStatus } from './deploy-area.model';

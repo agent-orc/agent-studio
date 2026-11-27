@@ -4,11 +4,11 @@
 :host .detail__project {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 10px 2px 3px;
-  margin: 0 0 6px 0;
-  border-radius: 999px;
-  font-size: 11px;
+  gap: var(--studio-compat-space-2);
+  padding: var(--studio-compat-space-4) var(--studio-compat-space-5) var(--studio-compat-space-4) var(--studio-compat-space-1);
+  margin: 0 0 var(--studio-compat-space-2) 0;
+  border-radius: var(--studio-compat-radius-2);
+  font-size: var(--studio-compat-type-6);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-weight: 600;
@@ -22,20 +22,20 @@
   place-items: center;
   width: 18px;
   height: 18px;
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--project-color, var(--studio-accent));
-  color: var(--project-on, var(--studio-on-accent, #1a1a1a));
-  font-size: 11px;
+  color: var(--project-on, var(--studio-on-accent, var(--studio-compat-ink-35)));
+  font-size: var(--studio-compat-type-6);
   font-weight: 800;
 }
 :host .detail__pager {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 4px;
+  gap: var(--studio-spacing-1);
+  padding: var(--studio-compat-space-4) var(--studio-spacing-1);
   border: 1px solid var(--studio-border);
   background: var(--studio-bg-hover);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
 }
 :host .detail__pager-btn {
   background: transparent;
@@ -43,9 +43,9 @@
   color: var(--studio-fg);
   width: 24px;
   height: 24px;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--studio-font-size-lg);
   line-height: 1;
   display: grid;
   place-items: center;
@@ -61,7 +61,7 @@
 }
 :host .detail__pager-count {
   color: var(--studio-fg);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   font-variant-numeric: tabular-nums;
   min-width: 38px;
   text-align: center;
@@ -81,23 +81,23 @@
   position: relative;
   display: inline-flex;
   align-items: stretch;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
 }
 :host .detail__triage-primary {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  border-radius: 999px;
+  gap: var(--studio-compat-space-2);
+  padding: var(--studio-compat-space-11) var(--studio-compat-space-3);
+  border-radius: var(--studio-compat-radius-2);
   background: color-mix(in srgb, var(--studio-accent) 16%, transparent);
   border: 1px solid color-mix(in srgb, var(--studio-accent) 45%, transparent);
   color: var(--studio-accent-strong);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   font-weight: 600;
   letter-spacing: 0.01em;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s, border-color 0.15s, filter 0.15s;
+  transition: background var(--studio-compat-duration-9), border-color var(--studio-compat-duration-9), filter var(--studio-compat-duration-9);
   flex-shrink: 0;
 }
 :host .detail__triage-primary:hover:not(:disabled) {
@@ -126,7 +126,7 @@
   display: block;
   width: 96px;
   height: 12px;
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--studio-accent) 22%, transparent) 25%,
@@ -134,14 +134,14 @@
     color-mix(in srgb, var(--studio-accent) 22%, transparent) 75%
   );
   background-size: 200% 100%;
-  animation: detail-triage-skeleton-shimmer 1.1s ease-in-out infinite;
+  animation: detail-triage-skeleton-shimmer var(--studio-compat-duration-27) ease-in-out infinite;
 }
 @keyframes detail-triage-skeleton-shimmer {
   from { background-position: 200% 0; }
   to { background-position: -200% 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  :host .detail__triage-primary-skeleton { animation-duration: 2.4s; }
+  :host .detail__triage-primary-skeleton { animation-duration: var(--studio-compat-duration-28); }
 }
 /* The landed-status pill that used to sit beside the Human Review acceptance
    primary was removed (UI-feedback 2026-07-09): the task's on-develop state is
@@ -153,9 +153,9 @@
   color: var(--studio-fg);
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   cursor: pointer;
-  font-size: 16px;
+  font-size: var(--studio-compat-type-31);
   line-height: 1;
   display: grid;
   place-items: center;
@@ -175,7 +175,7 @@
   width: 1px;
   height: 1px;
   padding: 0;
-  margin: -1px;
+  margin: var(--studio-compat-space-36);
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
@@ -189,26 +189,26 @@
 :host .detail__mode-badge {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 2px 10px;
-  border-radius: 7px;
-  font-size: 11px;
+  gap: var(--studio-compat-space-7);
+  padding: var(--studio-compat-space-4) var(--studio-compat-space-5);
+  border-radius: var(--studio-compat-radius-1);
+  font-size: var(--studio-compat-type-6);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   border: 1px solid transparent;
 }
 :host .detail__mode-badge--planning {
-  color: #f5f3ff;
-  background: #7c3aed;
-  border-color: #6d28d9;
-  box-shadow: 0 1px 4px rgba(124, 58, 237, 0.45);
+  color: var(--studio-compat-ink-36);
+  background: var(--studio-compat-surface-37);
+  border-color: var(--studio-compat-border-31);
+  box-shadow: var(--studio-compat-elevation-11);
 }
 :host .detail__mode-badge--research {
-  color: #ecfeff;
-  background: #0e7490;
-  border-color: #155e75;
-  box-shadow: 0 1px 4px rgba(14, 116, 144, 0.4);
+  color: var(--studio-compat-ink-37);
+  background: var(--studio-compat-surface-38);
+  border-color: var(--studio-compat-border-32);
+  box-shadow: var(--studio-compat-elevation-12);
 }
 :host .detail__mode-badge--concept {
   color: var(--studio-accent-4-strong);
@@ -219,13 +219,13 @@
 :host .detail__title-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
 }
 :host .detail__key-chip {
   flex: 0 0 auto;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
+  padding: var(--studio-compat-space-4) var(--studio-spacing-2);
+  border-radius: var(--studio-compat-radius-6);
+  font-size: var(--studio-compat-type-6);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.03em;

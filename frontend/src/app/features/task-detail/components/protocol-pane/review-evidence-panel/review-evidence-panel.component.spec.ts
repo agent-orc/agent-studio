@@ -5,7 +5,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ReviewEvidencePanelComponent } from './review-evidence-panel.component';
-import { MediaLightboxService } from '../../../../../services/media-lightbox.service';
+import { MediaLightboxService } from '@studio/ui/services/media-lightbox.service';
 import type { ReviewEvidenceEntry, TaskInfo } from '../../../../../models/task.model';
 
 function entry(overrides: Partial<ReviewEvidenceEntry> = {}): ReviewEvidenceEntry {

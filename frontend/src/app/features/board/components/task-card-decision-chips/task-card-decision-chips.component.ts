@@ -4,7 +4,7 @@ import type { TaskInfo } from '../../../../models/task.model';
 import { buildDecisionBadge, decisionBlockReason, decisionBlockers } from '../../../../models/decision-card-presentation';
 import { ClientService } from '../../../../services/client.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** AGT-3403: an open decision waits for its decider (warning); a decided one is settled (R4). */
 export function deciderTone(open: boolean): StatusTone {
