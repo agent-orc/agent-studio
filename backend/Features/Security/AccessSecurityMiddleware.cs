@@ -1592,10 +1592,12 @@ public sealed class AccessSecurityMiddleware
             if (path.StartsWith("/api/runner/integration-lease/", StringComparison.OrdinalIgnoreCase)
                 && IsParameterSegment(endpoint, 3))
                 return ProjectRouteAddress.Addressed(RouteValue(context, path, endpoint, "projectName"));
-            // Only a matched project/context parameter may name a project.
+            // Unrouted requests keep the legacy path-based scope check used
+            // by direct middleware callers. Once routing selected an endpoint,
+            // only a matched project/context parameter may name a project.
             // Fleet collections and future literal routes require workspace
             // access until an explicit filtered-collection contract exists.
-            if (endpoint is RouteEndpoint route && route.RoutePattern.PathSegments.Count > 2
+            if (endpoint is null || endpoint is RouteEndpoint route && route.RoutePattern.PathSegments.Count > 2
                 && route.RoutePattern.PathSegments[2].Parts.OfType<RoutePatternParameterPart>()
                     .Any(part => !part.IsCatchAll && (part.Name is "projectName" or "projectId" or "project")))
             {
