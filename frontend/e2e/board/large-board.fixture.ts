@@ -14,6 +14,7 @@ const emptyShellPaths = new Set([
   '/api/clients/local-default/defaults',
   '/api/crash-recovery/pending',
   '/api/deploy/cards',
+  '/api/deploy/run-hosts',
   '/api/develop-states',
   '/api/git/summary',
   '/api/pipeline/accepted-integration-alert',
@@ -96,6 +97,32 @@ export async function installSyntheticBoard(page: Page, size: number, crossLaneS
   await page.route('**/api/v1/studio/auth/status', route => route.fulfill({ json: {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   } }));
+  await page.route('**/api/operator/coding-capacity', route => route.fulfill({ json: {
+    fleet: { project: null, totalSlots: 0, usedSlots: 0, freeSlots: 0, ready: size,
+      claimableNow: 0, dependencyWidth: size, cause: 'Synthetic board fixture' },
+    projects: [], subscriptions: [],
+  } }));
+  await page.route('**/api/operator/attention', route => route.fulfill({ json: { count: 0, items: [] } }));
+  await page.route('**/api/operator/backups', route => route.fulfill({ json: {
+    state: 'disabled', stale: false, warnings: [], backups: [], offHost: {},
+  } }));
+  await page.route('**/api/workbenches', route => route.fulfill({ json: {
+    projectName: null, count: 0, currentCount: 0, historyCount: 0, items: [],
+  } }));
+  await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill({ json: {
+    negotiateVersion: 1, connectionId: 'synthetic-board', connectionToken: 'synthetic-board',
+    availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+  } }));
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
+    let keepAlive: ReturnType<typeof setInterval> | undefined;
+    socket.onClose(() => clearInterval(keepAlive));
+    socket.onMessage(message => {
+      if (typeof message === 'string' && message.includes('"protocol":"json"')) {
+        socket.send('{}\u001e');
+        keepAlive ??= setInterval(() => socket.send('{"type":6}\u001e'), 10_000);
+      }
+    });
+  });
   await page.route('**/api/auth/status', route => route.fulfill({ json: {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   } }));
@@ -112,7 +139,7 @@ export async function installSyntheticBoard(page: Page, size: number, crossLaneS
   await page.route('**/api/usage/cockpit**', route => route.fulfill({ json: {
     workspaceId: 'WS-SYNTH', clis: [], cost: null,
   } }));
-  await page.route('**/api/v1/projects', route => route.fulfill({ json: [{
+  await page.route(/\/api\/v1\/projects(\?|$)/, route => route.fulfill({ json: [{
     id: 'PROJ-SYNTH', displayName: projectName, archived: false,
   }] }));
   await page.route('**/api/tasks/archive**', route => route.fulfill({ json: { items: [], total: 0 } }));
