@@ -386,6 +386,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-rt6-legacy-canary-red-develop">
+          <td>2026-11-27</td>
+          <td><code>AGT-4046</code><br><span class="small">rt6-legacy-canary-red-develop</span></td>
+          <td>No CLI crashed. The post-merge base suite failed the new test-envelope canary after AGT-4007 integrated.</td>
+          <td>The older post-merge worker did not declare a run-owned HOME or processor count, so a canary added to the base suite failed before that worker could be upgraded.</td>
+          <td>The canary accepts a command with no envelope declaration for legacy compatibility and enforces the full envelope when any marker is present. The repair enters the normal review and integration pipeline.</td>
+        </tr>
         <tr id="case-es1-strategy-handoff-replay">
           <td>2026-11-26</td>
           <td>AGT-4011 es1-strategy-handoff-replay</td>
