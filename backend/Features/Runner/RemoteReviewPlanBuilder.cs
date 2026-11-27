@@ -24,6 +24,19 @@ namespace AgentStudio.Runner;
 /// </summary>
 public sealed partial class RemoteReviewPlanBuilder
 {
+    /// <summary>Applies a recorded optional-check disposition without changing mandatory proof or the result identity.</summary>
+    internal static Contract.ReviewPlanDto WithoutUnavailableOptionalCommands(Contract.ReviewPlanDto plan, string reason)
+        => plan with
+        {
+            Commands = plan.Commands.Where(command => command.Required).ToArray(),
+            RequiredAspects = plan.RequiredAspects.Where(aspect =>
+                !plan.Commands.Any(command => command.Aspect == aspect && !command.Required)
+                || plan.Commands.Any(command => command.Aspect == aspect && command.Required)).ToArray(),
+            SkippedAspects = [.. plan.SkippedAspects ?? [],
+                .. plan.Commands.Where(command => !command.Required)
+                    .Select(command => new Contract.ReviewSkippedAspectDto(command.Aspect, reason))],
+        };
+
     private static readonly string[] DefaultAspectIds =
     [
         "requirement-fit",

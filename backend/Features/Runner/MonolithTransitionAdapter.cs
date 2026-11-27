@@ -35,6 +35,14 @@ public static class MonolithTransitionAdapter
         => PostMergeSchedulingPolicy.MayShareGateLane(active, candidate);
     public static int PostMergeQueuePriority(string? kind) => PostMergeSchedulingPolicy.QueuePriority(kind);
 
+    public static MachineBlockerDisposition ResolveIntegrationBlocker(IntegrationResolutionFacts facts)
+        => IntegrationBlockerPolicy.Resolve(facts);
+
+    public static MachineBlockerDisposition ResolveVerificationBlocker(VerificationResolutionFacts facts)
+        => IntegrationBlockerPolicy.Verification(facts);
+
+    public static bool IsVerificationBlocker(string reason) => IntegrationBlockerPolicy.IsVerificationBlocker(reason);
+
     public static bool MayWaitForIntegration(IntegrationBlockerFacts facts)
         => IntegrationBlockerPolicy.MayWait(facts);
 

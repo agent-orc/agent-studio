@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 
 namespace AgentRunner;
 
-/// <summary>Test output is evidence only when it names a completed test run.</summary>
+/// <summary>Requires a completed test run or an explicitly empty guard selection.</summary>
 internal static partial class ReviewTestReportPolicy
 {
     internal const string MissingReportClassification = "TestReportUnavailable";
@@ -12,6 +12,7 @@ internal static partial class ReviewTestReportPolicy
     internal static bool Missing(ReviewCommandDto command, ProcessResult result, bool setupChanged = false)
     {
         if (!command.CompareToBaseline || ReviewBaselineModes.IsExitStatus(command.BaselineMode)) return false;
+        if (ExplicitEmptyGuardSelection(command, result)) return false;
         // A successful custom command can prove its exit status without using
         // one of the test reporters we parse. Keep incomplete known runners
         // visible as infrastructure failures rather than treating them as green.
@@ -28,9 +29,32 @@ internal static partial class ReviewTestReportPolicy
         => command.CompareToBaseline
            && !ReviewBaselineModes.IsExitStatus(command.BaselineMode)
            && result.Success
+           && !ExplicitEmptyGuardSelection(command, result)
            && !Missing(command, result)
            && !ReviewBaselineTestResultPolicy.HasResult(
                RemoteReviewWorkspace.ParsedTestFailures(result), result.StdOut, result.StdErr);
+
+    private static bool ExplicitEmptyGuardSelection(ReviewCommandDto command, ProcessResult result)
+    {
+        if (!result.Success || HasExplicitMissingReport(result)) return false;
+        var invocation = Path.GetFileNameWithoutExtension(command.FileName) + " "
+                         + string.Join(' ', command.Arguments);
+        if (!DotNetTestInvocation().IsMatch(invocation)) return false;
+        var filter = FilterArgument().Match(invocation).Groups["filter"].Value;
+        // GuardFirstGatePlan permits projects without guards. Require VSTest's
+        // explicit empty result for that exact selection, never a silent exit.
+        const string guards = "FullyQualifiedName~.Architecture.|Category=Guard";
+        if (filter != guards && filter != $"(Category!=MachineBound)&({guards})") return false;
+        return (result.StdOut + "\n" + result.StdErr).Contains(
+            $"No test matches the given testcase filter `{filter}`", StringComparison.Ordinal);
+    }
+
+    [GeneratedRegex(@"\bdotnet\s+test(?:\s|$)", RegexOptions.CultureInvariant)]
+    private static partial Regex DotNetTestInvocation();
+
+    [GeneratedRegex(@"(?:^|\s)--filter(?:\s+|=)(?:""(?<filter>[^""]+)""|'(?<filter>[^']+)'|(?<filter>\S+))",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex FilterArgument();
 
     private static bool RecognizedRunner(ReviewCommandDto command, ProcessResult result)
     {
