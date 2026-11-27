@@ -1,3 +1,8 @@
+extern alias Runner;
+
+using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Security.Cryptography;
 using System.Text;
 using AgentStudio.Runner;
@@ -10,6 +15,188 @@ public sealed class RemoteReviewReportEvidenceTests : IDisposable
 {
     private readonly string _root = Path.Combine(
         Path.GetTempPath(), "remote-review-evidence-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task ObservedModels_SurviveCommandEvidenceAndReceiptReplayWithoutAggregateDoubleCounting()
+    {
+        var frame = """
+            {"type":"result","session_id":"review-session","usage":{"input_tokens":999999},"modelUsage":{
+              "claude-opus-5-5":{"inputTokens":10,"outputTokens":2,"cacheReadInputTokens":100},
+              "claude-sonnet-5":{"inputTokens":20,"outputTokens":3,"cacheReadInputTokens":200}}}
+            """.ReplaceLineEndings("");
+        var command = await UsageEvidence(string.Join('\n', frame, frame), "claude-opus-5-5", "claude");
+        Assert.Equal("claude-opus-5-5", command.PinnedModel);
+        Assert.Equal(command.PinnedModel, command.Model);
+        Assert.Equal("per-model", command.ModelSource);
+        Assert.Null(RemotePipelineReviewEvidenceProjector.ObservedUsageModel(command));
+        Assert.True(command.ModelMismatch);
+        Assert.Equal(30, command.InputTokens);
+        Assert.Equal(2, command.ModelUsage!.Count);
+        var report = Request(new string('a', 40), [command]);
+        var pricing = TokenTestServices.Pricing();
+        var review = UsageAttempt();
+        var calls = RemotePipelineReviewEvidenceProjector.BuildReviewUsageCalls(pricing, review, report);
+        Assert.Equal(2, calls.Count);
+        Assert.Equal(2, calls.Select(call => call.ParticipantId).Distinct().Count());
+        Assert.Equal(330, calls.Sum(call => call.InputTokens + call.CacheReadTokens));
+        foreach (var row in command.ModelUsage)
+        {
+            var call = Assert.Single(calls, call => call.Model == row.Model);
+            Assert.Equal(command.PinnedModel, call.PinnedModel);
+            Assert.Equal(row.ModelMismatch, call.ModelMismatch);
+            Assert.True(call.ModelPriced);
+            Assert.Equal(pricing.Estimate(row.Model, row.InputTokens, row.OutputTokens,
+                row.CacheReadTokens, row.CacheCreationTokens, command.FinishedAt).Total, call.EstimatedApiCostUsd);
+        }
+        Assert.True(Assert.Single(calls, call => call.Model == "claude-sonnet-5").ModelMismatch);
+        var summary = PersistUsageTwice(calls, review.AttemptId);
+        Assert.Equal(2, summary.Calls);
+        Assert.Equal(30, summary.InputTokens);
+        Assert.Equal(300, summary.CacheReadTokens);
+        Assert.True(summary.AllModelsPriced);
+        Assert.True(summary.HasModelMismatch);
+        Assert.Equal(calls.Sum(call => call.EstimatedApiCostUsd), summary.EstimatedApiCostUsd);
+    }
+
+    [Theory]
+    [InlineData(",\"cached_input_tokens\":0", true, 1000, 0)]
+    [InlineData(",\"cached_input_tokens\":900", true, 100, 900)]
+    [InlineData("", false, 1000, 0)]
+    [InlineData(",\"cached_input_tokens\":null", false, 1000, 0)]
+    [InlineData(",\"cached_input_tokens\":\"0\"", false, 1000, 0)]
+    [InlineData(",\"cached_input_tokens\":-1", false, 1000, 0)]
+    public async Task CodexCacheEvidence_ControlsReceiptCostCompletenessAndReplay(
+        string cache, bool complete, long input, long cacheRead)
+    {
+        var frame = "{\"type\":\"turn.completed\",\"model\":\"gpt-6.1-sol\",\"usage\":{\"input_tokens\":1000,\"output_tokens\":20" + cache + "}}";
+        var command = await UsageEvidence(string.Join('\n', frame, frame), "gpt-6-sol", "codex");
+        Assert.Equal(input, command.InputTokens);
+        Assert.Equal(cacheRead, command.CacheReadTokens);
+        Assert.Equal(1000, command.InputTokens + command.CacheReadTokens);
+        Assert.Equal(complete ? true : (bool?)null, command.InputIncludesCached);
+        Assert.Equal("gpt-6-sol", command.Model);
+        Assert.Equal("gpt-6.1-sol", RemotePipelineReviewEvidenceProjector.ObservedUsageModel(command));
+        Assert.Equal("gpt-6-sol", command.PinnedModel);
+        Assert.True(command.ModelMismatch);
+        var report = Request(new string('a', 40), [command]);
+        var review = UsageAttempt();
+        var calls = RemotePipelineReviewEvidenceProjector.BuildReviewUsageCalls(TokenTestServices.Pricing(), review, report);
+        var call = Assert.Single(calls);
+        Assert.Equal(input, call.InputTokens);
+        Assert.Equal(cacheRead, call.CacheReadTokens);
+        Assert.Equal(command.InputIncludesCached, call.InputIncludesCached);
+        Assert.Equal(complete, call.ModelPriced);
+        Assert.Equal("gpt-6.1-sol", call.Model);
+        Assert.True(call.ModelMismatch);
+        Assert.Equal("gpt-6-sol", call.PinnedModel);
+        if (complete) Assert.True(call.EstimatedApiCostUsd > 0);
+        else Assert.Equal(0m, call.EstimatedApiCostUsd);
+        var summary = PersistUsageTwice(calls, review.AttemptId);
+        Assert.Single(summary.Entries);
+        Assert.Equal(complete, summary.AllModelsPriced);
+        Assert.Equal(input, summary.InputTokens);
+        Assert.Equal(cacheRead, summary.CacheReadTokens);
+    }
+
+    [Fact]
+    public async Task UnobservedModel_RemainsAnUnpricedRequestedFallbackInEvidenceAndReceipt()
+    {
+        var command = await UsageEvidence(
+            """{"type":"result","usage":{"input_tokens":10,"output_tokens":2}}""", "claude-opus-5-5", "claude");
+        Assert.Equal(command.PinnedModel, command.Model);
+        Assert.Equal("requested-fallback", command.ModelSource);
+        Assert.Null(RemotePipelineReviewEvidenceProjector.ObservedUsageModel(command));
+        Assert.Equal("claude-opus-5-5", command.PinnedModel);
+        Assert.False(command.ModelMismatch);
+        var calls = RemotePipelineReviewEvidenceProjector.BuildReviewUsageCalls(TokenTestServices.Pricing(),
+            UsageAttempt(), Request(new string('a', 40), [command]));
+        var call = Assert.Single(calls);
+        Assert.Null(call.Model);
+        Assert.Equal(command.PinnedModel, call.PinnedModel);
+        Assert.False(call.ModelPriced);
+        Assert.Equal(0m, call.EstimatedApiCostUsd);
+        Assert.False(PersistUsageTwice(calls, UsageAttempt().AttemptId).AllModelsPriced);
+    }
+
+    [Fact]
+    public void LegacyCommandWithoutRows_UsesReceiptAwarePricing()
+    {
+        var command = Command("aspect-code-quality", "candidate", new string('a', 40), null) with
+        {
+            ExecutionKind = ReviewCommandKinds.AgentAspect,
+            Model = "gpt-6-sol", InputTokens = 1000, OutputTokens = 20,
+        };
+        var call = Assert.Single(RemotePipelineReviewEvidenceProjector.BuildReviewUsageCalls(TokenTestServices.Pricing(),
+            UsageAttempt(), Request(new string('a', 40), [command])));
+        Assert.False(call.ModelPriced);
+        Assert.Null(call.InputIncludesCached);
+        Assert.Equal(0m, call.EstimatedApiCostUsd);
+    }
+
+    private async Task<ReviewCommandEvidenceDto> UsageEvidence(string stdout, string pinned, string cli)
+    {
+        var at = new DateTime(2026, 11, 27, 0, 0, 0, DateTimeKind.Utc);
+        var sha = new string('a', 40);
+        var plan = new ReviewCommandDto("aspect-code-quality", "code-quality", cli, [],
+            ExecutionKind: ReviewCommandKinds.AgentAspect, CliType: cli, Model: pinned, ThinkingLevel: "high");
+        var subject = new AgentStudio.TaskServer.Contracts.ReviewSubjectDto("subject", "task", "run", "repo", null,
+            sha, null, null, null, "host", "policy", new ReviewPlanDto([plan], [plan.Aspect]), at);
+        var lease = new ReviewLeaseDto("lease", "review-usage", "subject", "executor", "instance", "host", 1,
+            at, at.AddMinutes(2), "active", "usage-evidence", 25400);
+        var workspace = new Runner::AgentRunner.RemoteReviewWorkspace(
+            new Runner::AgentRunner.RunnerOptions
+            {
+                ServerUrl = "http://localhost", RunnerId = "executor", RunnerName = "executor",
+                Hostname = "host", BackendName = "remote-review",
+                WorkDir = Path.Combine(_root, "coding"), BaseBranch = "main",
+                ReviewWorkDir = Path.Combine(_root, "review"), ReviewTempBase = _root,
+            },
+            subject, lease, _ => { });
+        Directory.CreateDirectory(workspace.ArtifactPath);
+        var usage = Runner::AgentRunner.RemoteReviewAgentCommandRunner.ParseUsage(stdout, pinned, cli);
+        var evidence = await workspace.AddCommandEvidenceAsync(plan.StepId, plan.Aspect, cli, [], sha, sha,
+            new Runner::AgentRunner.ProcessResult(0, "Reviewed", ""), at, at.AddSeconds(1), null, 120,
+            "verification", "candidate", null, null, false, false, null, [], default,
+            plannedCommand: plan, agentUsage: usage);
+        // Admission compares these frozen fields with the plan, even when usage differs.
+        Assert.Equal(plan.Model, evidence.Model);
+        Assert.Equal(plan.ThinkingLevel, evidence.ThinkingLevel);
+        // Exercise the independently deployed runner/backend wire boundary.
+        return JsonSerializer.Deserialize<ReviewCommandEvidenceDto>(JsonSerializer.Serialize(evidence))!;
+    }
+
+    private TaskTokenSummary PersistUsageTwice(IReadOnlyList<TaskTokenCall> calls, string attemptId)
+    {
+        var folder = Path.Combine(_root, "receipt");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "task.json");
+        File.WriteAllText(path, """{"id":"usage-task","title":"Review usage"}""");
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["TaskRepository"] = _root, ["WatchPaths:0:Name"] = "Demo", ["WatchPaths:0:Path"] = _root }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var mutations = new TaskMutationService(scanner,
+            new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
+            new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
+            new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance), NullLogger<TaskMutationService>.Instance);
+        var participant = RemotePipelineReviewEvidenceProjector.ReviewParticipantPrefix + attemptId;
+        Assert.True(mutations.SetTokenReceiptEntriesOnFolder(folder, participant, calls));
+        var first = File.ReadAllText(path);
+        Assert.True(mutations.SetTokenReceiptEntriesOnFolder(folder, participant, calls));
+        Assert.Equal(first, File.ReadAllText(path));
+        using var document = JsonDocument.Parse(first);
+        return document.RootElement.GetProperty("tokenSummary").Deserialize<TaskTokenSummary>(
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+    }
+
+    private static AgentStudio.Shared.ReviewAttemptDto UsageAttempt()
+    {
+        var at = new DateTime(2026, 11, 27, 0, 0, 0, DateTimeKind.Utc);
+        return new AgentStudio.Shared.ReviewAttemptDto("review-usage", "Demo::usage-task", "repo", "run", null,
+            new AgentStudio.Shared.ReviewSubjectDto("subject", "repo", new string('a', 40), "run",
+                new string('d', 64), "policy", [], at), AttemptLifecycleState.Leased,
+            null, 1, 0, at, null, null, null, null, null, []);
+    }
 
     [Fact]
     public async Task SuiteCoverageSurvivesTheReportAndAppearsInTheCardReason()

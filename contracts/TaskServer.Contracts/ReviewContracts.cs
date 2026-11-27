@@ -381,6 +381,21 @@ public sealed record ReviewReClaimRequest(
     string IdempotencyKey,
     int RequestedTtlSeconds = 120);
 
+/// <summary>
+/// One provider-reported model's usage. A null model with requested-fallback
+/// provenance retains the request without claiming the provider echoed it.
+/// </summary>
+public sealed record ReviewModelUsageDto(
+    string? Model,
+    long InputTokens,
+    long OutputTokens,
+    long CacheReadTokens,
+    long CacheCreationTokens,
+    bool? InputIncludesCached,
+    string? PinnedModel = null,
+    bool ModelMismatch = false,
+    string ModelSource = "observed");
+
 public sealed record ReviewCommandEvidenceDto(
     string StepId,
     string Aspect,
@@ -457,6 +472,11 @@ public sealed record ReviewCommandEvidenceDto(
     string? CliType = null,
     SelectionResult? ModelSelection = null)
 {
+    public string? PinnedModel { get; init; }
+    public bool ModelMismatch { get; init; }
+    public string? ModelSource { get; init; }
+    /// <summary>Authoritative per-model rows; aggregate counters are for display only.</summary>
+    public IReadOnlyList<ReviewModelUsageDto>? ModelUsage { get; init; }
     public PostMergeEnvelopeFingerprint? Envelope { get; init; }
     public IReadOnlyList<TestQuarantineHit> QuarantinedFailures { get; init; } = [];
 }
