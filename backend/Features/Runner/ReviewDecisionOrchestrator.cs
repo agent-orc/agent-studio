@@ -635,9 +635,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                             continue;
                         }
 
-                        if (!RateLimitOk(maxPerHour)
-                            && MonolithTransitionAdapter.IntegrationBlockerDependency("needs-human-input", pending.Reason ?? "") is null
-                            && !MonolithTransitionAdapter.IsVerificationBlocker(pending.Reason ?? "")) return;
                         await ProcessNeedsInputAsync(workspace, entry, pending, cliBinary, model, ct);
                     }
                     catch (Exception ex)
@@ -1001,10 +998,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     await ProcessConceptAsync(workspace, entry, pending, ct);
                     return PostProcessingCardResult.Decided("concept");
                 }
-                if (!RateLimitOk(maxPerHour)
-                    && MonolithTransitionAdapter.IntegrationBlockerDependency("needs-human-input", pending.Reason ?? "") is null
-                    && !MonolithTransitionAdapter.IsVerificationBlocker(pending.Reason ?? ""))
-                    return PostProcessingCardResult.Deferred("rate-limit-reached");
                 await ProcessNeedsInputAsync(workspace, entry, pending, cliBinary, model, ct);
                 return _scanner.FindJob(pending.Job.Id, entry.Path)?.State == TaskStates.AutoReview
                     ? PostProcessingCardResult.Deferred("needs-input-wait")
@@ -1463,6 +1456,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         if (await TryResolveMachineBlockerAsync(workspace, entry, pending, pending.Reason ?? string.Empty, ct))
             return;
+        if (!RateLimitOk(_configuration.GetValue("ReviewDecisionOrchestrator:CallsPerHour", DefaultCallsPerHour)))
+            return;
         if (_reviewInputDecisions?.EngineDecides == true)
         {
             var logPath = TaskPaths.CliOutputLog(pending.Job.FolderPath);
@@ -1478,8 +1473,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             EngineDecisionWaitMarker.Write(pending.Job.FolderPath, run.RunId);
             return;
         }
-        if (!RateLimitOk(_configuration.GetValue("ReviewDecisionOrchestrator:CallsPerHour", DefaultCallsPerHour)))
-            return;
         var prompt = BuildPrompt(entry, pending, workspace);
         string response = string.Empty;
         StepModelUsage? decisionUsage = null;
@@ -2257,7 +2250,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             var replanned = _attemptAuthority!.ReplanPendingReview(review.AttemptId,
                 RemoteReviewPlanBuilder.WithoutUnavailableOptionalCommands(optionalPlan, disposition.Reason));
-            if (replanned.Status != AttemptWriteStatus.Accepted) return true;
+            if (!replanned.Accepted)
+                _logger.LogDebug("Machine blocker optional verification replan deferred for {AttemptId}: {Status} {Message}",
+                    review.AttemptId, replanned.Status, replanned.Message);
             return true;
         }
         var quarantineReason = HumanReviewEscalation.FormatReason(IntegrationBlockerPolicy.QuarantineCategory,
@@ -2347,8 +2342,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             FollowUp: decisionCard is null ? string.Empty : $"decision card {decisionCard.Key}"),
             current.FolderPath,
             move.NewFolderPath);
-
-        return;
     }
 
     /// <summary>
@@ -8316,8 +8309,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             FollowUp: string.Empty),
             current.FolderPath,
             movedFolderPath);
-
-        return;
     }
 
     private void HandleAcceptAsDone(
