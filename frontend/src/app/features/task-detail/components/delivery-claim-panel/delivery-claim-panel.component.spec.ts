@@ -104,6 +104,12 @@ async function mount(info: TaskInfo, getDeliveryClaim = vi.fn(() => of(answer())
   return fixture;
 }
 
+/** AGT-4200: the changed-brief block and its actions need a verified readiness answer. */
+const staleBrief = readinessItem('task', 'verdict-stale', {
+  taskKey: 'agt::task', headline: 'Verdict stale', stage: 'brief',
+  reason: 'The content verdict checked an earlier brief.',
+});
+
 describe('DeliveryClaimPanelComponent', () => {
   it.each([undefined, null])('omits the live-state host for studioLive=%s', async studioLive => {
     const response = answer(studioLive === undefined ? {} : { studioLive });
@@ -133,7 +139,7 @@ describe('DeliveryClaimPanelComponent', () => {
   it('shows current brief, concept citations, contradictions, and skipped aspects in Human Review', async () => {
     const fixture = await mount(
       job({ state: TaskState.HumanReview }),
-      vi.fn(() => of(answer({ contentReview: conceptReview }))));
+      vi.fn(() => of(answer({ contentReview: conceptReview }))), staleBrief);
     const host = fixture.nativeElement as HTMLElement;
     const grounds = host.querySelector('[data-testid="completion-content-review"]');
     expect(grounds?.getAttribute('data-state')).toBe('gap');
@@ -158,7 +164,7 @@ describe('DeliveryClaimPanelComponent', () => {
 
     it('says no brief version was recorded when the delivery brief is missing, not that it changed', async () => {
       const fixture = await mount(humanReview(),
-        vi.fn(() => of(answer({ contentReview: review({ deliveryBriefVersion: null }) }))));
+        vi.fn(() => of(answer({ contentReview: review({ deliveryBriefVersion: null }) }))), staleBrief);
       const gap = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="stale-brief-acceptance"]');
 
       expect(gap?.getAttribute('data-brief-gap')).toBe('unrecorded');
@@ -171,7 +177,7 @@ describe('DeliveryClaimPanelComponent', () => {
 
     it('says the brief changed when a recorded version differs from the current one', async () => {
       const fixture = await mount(humanReview(),
-        vi.fn(() => of(answer({ contentReview: review({ deliveryBriefVersion: 'aaaaaaaaaaaaaaaa' }) }))));
+        vi.fn(() => of(answer({ contentReview: review({ deliveryBriefVersion: 'aaaaaaaaaaaaaaaa' }) }))), staleBrief);
       const gap = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="stale-brief-acceptance"]');
 
       expect(gap?.getAttribute('data-brief-gap')).toBe('changed');
@@ -238,14 +244,15 @@ describe('DeliveryClaimPanelComponent', () => {
       skippedAspects: [],
     };
 
-    async function mountGap(review: NonNullable<TaskDeliveryClaimAnswer['contentReview']>) {
+    async function mountGap(review: NonNullable<TaskDeliveryClaimAnswer['contentReview']>,
+      readiness: AcceptanceReadinessItem | null = null) {
       const tasks = {
         moveJob: vi.fn(() => of({})),
         reviewContentAgainstCurrentBrief: vi.fn(() => of({ reviewAttemptId: 'r-2', briefVersion: 'aaaa' })),
         refresh: vi.fn(),
       };
       const fixture = await mount(job({ state: TaskState.HumanReview }),
-        vi.fn(() => of(answer({ contentReview: review }))), null, tasks);
+        vi.fn(() => of(answer({ contentReview: review }))), readiness, tasks);
       const host = fixture.nativeElement as HTMLElement;
       const click = async (testId: string) => {
         host.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)!.click();
@@ -256,8 +263,11 @@ describe('DeliveryClaimPanelComponent', () => {
     }
 
     it('offers Review again and Accept with a reason for concerns on the current brief', async () => {
-      const { fixture, host, click, tasks } = await mountGap(concerns);
-      const section = host.querySelector('[data-testid="content-verdict-acceptance"]');
+      // AGT-4200: the actions follow the verified readiness answer, not the claim alone.
+      const { fixture, host, click, tasks } = await mountGap(concerns, readinessItem('task', 'review-concerns', {
+        taskKey: 'agt::task', reason: `The requirement-fit review returned concerns: ${concerns.contentSummary}`,
+      }));
+      const section = host.querySelector('[data-testid="acceptance-next-steps-reason"]');
       expect(section?.textContent).toContain('returned concerns');
       expect(host.querySelector('[data-testid="acceptance-next-steps"]')?.getAttribute('data-readiness')).toBe('review-concerns');
       expect(section?.textContent).toContain('The 830-card first-paint target remains unmet');
@@ -285,7 +295,7 @@ describe('DeliveryClaimPanelComponent', () => {
     });
 
     it('keeps the changed-brief section unchanged when the brief moved', async () => {
-      const { host } = await mountGap({ ...concerns, currentBriefVersion: 'bbbbbbbbbbbbbbbb' });
+      const { host } = await mountGap({ ...concerns, currentBriefVersion: 'bbbbbbbbbbbbbbbb' }, staleBrief);
       expect(host.querySelector('[data-testid="stale-brief-acceptance"]')?.textContent)
         .toContain('Acceptance is blocked by a changed brief');
       expect(host.querySelector('[data-testid="brief-difference-link"]')).not.toBeNull();
