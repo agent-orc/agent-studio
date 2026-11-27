@@ -9,26 +9,22 @@
   display: block;
 }
 
-:is(sui-row, app-row)[data-variant='default'] {
-  --studio-row-pad-block:  var(--studio-row-pad-block-default);
-  --studio-row-pad-inline: var(--studio-row-pad-inline-default);
-  --studio-row-gap:        var(--studio-row-gap-default);
-  --studio-row-min-h:      var(--studio-row-min-h-default);
-  --studio-row-min-h-interactive: var(--studio-row-min-h-interactive-default);
-}
-
-:is(sui-row, app-row)[data-variant='cozy'] {
-  --studio-row-pad-block:  var(--studio-row-pad-block-cozy);
-  --studio-row-pad-inline: var(--studio-row-pad-inline-cozy);
-  --studio-row-gap:        var(--studio-row-gap-cozy);
-  --studio-row-min-h:      var(--studio-row-min-h-cozy);
-  --studio-row-min-h-interactive: var(--studio-row-min-h-interactive-cozy);
+// Explicit local variants override inherited root/surface aliases, including
+// compact when the root is default or cozy. Omitted variants inherit unchanged.
+@each $density in (compact, default, cozy) {
+  :is(sui-row, app-row)[data-variant='#{$density}'] {
+    @each $alias in (row-pad-block, row-pad-inline, row-gap, section-gap, row-min-h, row-min-h-interactive) {
+      --studio-#{$alias}: var(--studio-#{$alias}-#{$density});
+    }
+  }
 }
 
 .app-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  // Keep the primitive's existing compact geometry; larger density gaps
+  // expand once they exceed these existing content-spacing floors.
+  gap: max(var(--studio-spacing-2), var(--studio-row-gap));
   min-height: var(--studio-row-min-h, 20px);
   padding-block: var(--studio-row-pad-block, 3px);
   padding-inline: 0;
@@ -62,7 +58,7 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: max(var(--studio-compat-space-2), var(--studio-row-gap));
 
     &:empty {
       display: none;
@@ -73,7 +69,7 @@
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: max(var(--studio-spacing-1), var(--studio-row-gap));
 
     &:empty {
       display: none;

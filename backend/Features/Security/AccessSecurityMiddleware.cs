@@ -164,6 +164,8 @@ public sealed class AccessSecurityMiddleware
         // Authorization header is one well-formed bearer; any other shape falls
         // through to local authentication. Studio's own API-token and
         // service-account bearers (api.*, sat.*) never take the skip.
+        // This path establishes no local authorization: the proxy must preserve
+        // the caller's bearer and must not attach the Studio edge credential or proof.
         var presentedBearer = ReadBearer(context.Request.Headers.Authorization.FirstOrDefault());
         if (IsProxiedTaskServerPlane(context, path)
             && IsWellFormedBearer(context.Request.Headers.Authorization)

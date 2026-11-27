@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.Persistence;
 
 namespace AgentStudio.Pipeline;
 
@@ -67,8 +68,8 @@ public sealed record IntegrationVerificationRecord
 
 /// <summary>
 /// Reads and writes <see cref="IntegrationVerificationRecord"/> at the task
-/// folder root, beside <c>pipeline-execution.json</c>. Writes are atomic
-/// (temp file plus move); a missing or malformed file reads as "no record".
+/// folder root, beside <c>pipeline-execution.json</c>. Writes flush file contents
+/// and supported rename metadata; a missing or malformed file reads as "no record".
 /// </summary>
 public static class IntegrationVerificationStore
 {
@@ -117,26 +118,9 @@ public static class IntegrationVerificationStore
         ArgumentNullException.ThrowIfNull(record);
 
         var path = PathFor(taskFolder);
-        Directory.CreateDirectory(taskFolder);
-        var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
-        try
-        {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(record, Json));
-            File.Move(temporary, path, overwrite: true);
-            AgentStudio.Tasks.SidecarFileGeneration.Changed(path);
-            Publish(taskFolder, record.State == IntegrationVerificationStates.Verified);
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(temporary)) File.Delete(temporary);
-            }
-            catch (Exception ex)
-            {
-                SilentCatch.Note(ex, "IntegrationVerificationStore: temporary file cleanup");
-            }
-        }
+        new AtomicJsonFileWriter().Write(path, JsonSerializer.Serialize(record, Json));
+        AgentStudio.Tasks.SidecarFileGeneration.Changed(path);
+        Publish(taskFolder, record.State == IntegrationVerificationStates.Verified);
     }
 
     public static void Delete(string taskFolder)

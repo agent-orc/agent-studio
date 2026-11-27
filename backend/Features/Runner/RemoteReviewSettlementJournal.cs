@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AgentStudio.Diagnostics;
+using AgentStudio.Persistence;
 using AgentStudio.Pipeline;
 using AgentStudio.Tasks;
 using Contract = AgentStudio.TaskServer.Contracts;
@@ -317,7 +318,8 @@ public static class RemoteReviewSettlementJournal
         string folder,
         RemoteReviewSettlementEntry entry,
         Func<string?> acceptedIdempotencyKey,
-        Func<AttemptWriteResult> settle)
+        Func<AttemptWriteResult> settle,
+        IAtomicJsonFileWriter? writer = null)
     {
         lock (Gates.GetOrAdd(entry.AttemptId, _ => new object()))
         {
@@ -339,8 +341,10 @@ public static class RemoteReviewSettlementJournal
                 // Nothing was acknowledged for an unaccepted or unreadable journal:
                 // it is the orphan of a rejected or interrupted request.
                 if (accepted is not null) return settle();
-                Write(folder, entry);
             }
+            // A visible orphan may have survived a failed directory flush. Read
+            // it above, then flush it again before the first authority commit.
+            if (accepted is null) Write(folder, owned ? existing.Entry! : entry, writer);
             var settled = settle();
             if (settled.Status is not (AttemptWriteStatus.Accepted or AttemptWriteStatus.Duplicate))
             {
@@ -372,40 +376,34 @@ public static class RemoteReviewSettlementJournal
     /// Writes a bounded entry. Rewrites of verified older entries retain the
     /// original accepted digest for replay; legacy submitted hashes are dropped.
     /// </summary>
-    public static void Write(string folder, RemoteReviewSettlementEntry entry)
+    public static void Write(
+        string folder, RemoteReviewSettlementEntry entry, IAtomicJsonFileWriter? writer = null)
     {
         var path = PathFor(folder, entry.AttemptId);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
-        try
+        var acceptedHash = entry.Version == CurrentVersion
+            ? entry.AcceptedReportSha256 ?? entry.ReportSha256
+            : ReportHash(entry);
+        string? serialized = null;
+        foreach (var streamBytes in new[] { MaximumStepTailBytes / 2, 8 * 1024, 0 })
         {
-            var acceptedHash = entry.Version == CurrentVersion
-                ? entry.AcceptedReportSha256 ?? entry.ReportSha256
-                : ReportHash(entry);
-            string? serialized = null;
-            foreach (var streamBytes in new[] { MaximumStepTailBytes / 2, 8 * 1024, 0 })
+            var boundedReport = BoundReport(entry.Report, streamBytes);
+            serialized = JsonSerializer.Serialize(entry with
             {
-                var boundedReport = BoundReport(entry.Report, streamBytes);
-                serialized = JsonSerializer.Serialize(entry with
-                {
-                    Version = CurrentVersion,
-                    Report = boundedReport,
-                    AcceptedReportSha256 = acceptedHash,
-                    ReportSha256 = HashBoundedReport(boundedReport, acceptedHash),
-                    SubmittedReportSha256 = entry.Version == LegacyVersion ? null : entry.SubmittedReportSha256,
-                    DeliverySha256 = HashDelivery(entry.Delivery),
-                    ReviewBudgetSha256 = HashReviewBudget(entry),
-                    ContinuationSha256 = HashContinuation(entry.Continuation),
-                }, Json);
-                if (Encoding.UTF8.GetByteCount(serialized) <= MaximumFileBytes) break;
-                serialized = null;
-            }
-            if (serialized is null)
-                throw new IOException("The review settlement metadata exceeds its 512 KiB journal limit.");
-            File.WriteAllText(temporary, serialized);
-            File.Move(temporary, path, overwrite: true);
+                Version = CurrentVersion,
+                Report = boundedReport,
+                AcceptedReportSha256 = acceptedHash,
+                ReportSha256 = HashBoundedReport(boundedReport, acceptedHash),
+                SubmittedReportSha256 = entry.Version == LegacyVersion ? null : entry.SubmittedReportSha256,
+                DeliverySha256 = HashDelivery(entry.Delivery),
+                ReviewBudgetSha256 = HashReviewBudget(entry),
+                ContinuationSha256 = HashContinuation(entry.Continuation),
+            }, Json);
+            if (Encoding.UTF8.GetByteCount(serialized) <= MaximumFileBytes) break;
+            serialized = null;
         }
-        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        if (serialized is null)
+            throw new IOException("The review settlement metadata exceeds its 512 KiB journal limit.");
+        (writer ?? new AtomicJsonFileWriter()).Write(path, serialized);
     }
 
     private static Contract.ReviewReportRequest BoundReport(Contract.ReviewReportRequest report, int streamBytes)

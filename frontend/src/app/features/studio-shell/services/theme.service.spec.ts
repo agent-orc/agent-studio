@@ -8,7 +8,7 @@ import {
   type ThemeTokenSet,
 } from './theme-token-sets';
 
-// Prototype values reuse existing aliases. No experimental palette ships.
+// A partial runtime registration exercises cleanup independently of the bundled previews.
 const prototype: ThemeTokenSet = {
   id: 'test-prototype', label: 'Test prototype',
   light: { '--studio-accent': 'var(--studio-fg)' },
@@ -31,6 +31,7 @@ describe('ThemeService', () => {
     localStorage.removeItem(TOKEN_SET_STORAGE_KEY);
     removeListener.mockClear();
     listener = undefined;
+    history.replaceState(null, '', '/');
     vi.stubGlobal('matchMedia', vi.fn(() => ({
       matches: false,
       addEventListener: (_: string, callback: typeof listener) => { listener = callback; },
@@ -39,6 +40,7 @@ describe('ThemeService', () => {
   });
 
   afterEach(() => {
+    history.replaceState(null, '', '/');
     TestBed.resetTestingModule();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -184,4 +186,33 @@ describe('ThemeService', () => {
     expect(() => service.registerTokenSet(DEFAULT_THEME_TOKEN_SET)).toThrow();
     expect(service.tokenSetId()).toBe('studio-default');
   });
+  it('uses a query preview for this visit without replacing the saved browser choice', () => {
+    localStorage.setItem(TOKEN_SET_STORAGE_KEY, JSON.stringify({ version: 1, id: 'preview-1' }));
+    history.replaceState(null, '', '/?tokenSet=preview-3#/board');
+    const service = TestBed.inject(ThemeService);
+    flush();
+    expect(service.tokenSetId()).toBe('preview-3');
+    service.set('dark');
+    flush();
+    expect(service.tokenSet().id).toBe('preview-3.dark');
+    expect(JSON.parse(localStorage.getItem(TOKEN_SET_STORAGE_KEY)!).id).toBe('preview-1');
+    history.replaceState(null, '', '/#/board');
+    TestBed.resetTestingModule();
+    expect(TestBed.inject(ThemeService).tokenSetId()).toBe('preview-1');
+  });
+
+  it('lets an explicit settings choice replace a visit override and ignores unknown query ids', () => {
+    history.replaceState(null, '', '/?tokenSet=preview-3&keep=1#/board');
+    const service = TestBed.inject(ThemeService);
+    service.setTokenSet('preview-2');
+    flush();
+    expect(service.tokenSetId()).toBe('preview-2');
+    expect(location.search).toBe('?keep=1');
+    expect(location.hash).toBe('#/board');
+    expect(JSON.parse(localStorage.getItem(TOKEN_SET_STORAGE_KEY)!).id).toBe('preview-2');
+    TestBed.resetTestingModule();
+    history.replaceState(null, '', '/?tokenSet=unknown');
+    expect(TestBed.inject(ThemeService).tokenSetId()).toBe('preview-2');
+  });
+
 });

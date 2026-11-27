@@ -224,15 +224,53 @@ public sealed class WorkspaceManagementService
     }
 
     /// <summary>
+    /// Reads deletion blockers without the scanner's metadata repair path.
+    /// Both current flat storage and legacy lanes can hold canonical card keys
+    /// or composite watch-path keys. Leased attempts must be drained even when
+    /// their heartbeat has expired; expiry alone does not stop a worker.
+    /// </summary>
+    internal bool HasActiveProjectWork(string storageLocation, AttemptAuthorityService authority)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var legacyFolders = TaskStates.All.Select(state => Path.Combine(storageLocation, state))
+            .Where(Directory.Exists).SelectMany(path => Directory.EnumerateDirectories(path));
+        foreach (var folder in TaskStorageLayout.EnumerateJobDirs(storageLocation).Concat(legacyFolders))
+        {
+            if (!File.Exists(Path.Combine(folder, "task.json"))) continue;
+            if (!TaskJsonFile.TryReadStringField(folder, "state", _logger, out var state)
+                || !TaskJsonFile.TryReadStringField(folder, "key", _logger, out var key)
+                || !TaskJsonFile.TryReadStringField(folder, "id", _logger, out var id))
+                return true;
+
+            state ??= Path.GetFileName(Path.GetDirectoryName(folder));
+            if (state is TaskStates.Progress or TaskStates.AutoReview) return true;
+            var folderId = Path.GetFileName(folder);
+            keys.Add(TaskIdentity.AuthorityKey(key, TaskIdentity.CreateKey(storageLocation, id ?? folderId), id));
+            keys.Add(TaskIdentity.CreateKey(storageLocation, folderId));
+            keys.Add(folderId);
+        }
+
+        var prefix = NormalizePath(storageLocation) + "::";
+        bool BelongsToProject(string key) => keys.Contains(key)
+            || NormalizePath(key).StartsWith(prefix, StringComparison.Ordinal);
+        var snapshot = authority.ReadBoardAuthoritySnapshot();
+        return snapshot.Runs?.Any(pair => BelongsToProject(pair.Key)
+                   && pair.Value.State == AttemptLifecycleState.Leased) == true
+            || snapshot.Reviews.Any(pair => BelongsToProject(pair.Key)
+                   && pair.Value.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased);
+    }
+
+    /// <summary>
     /// F46 — destructive project deletion support behind the registry
     /// <c>DELETE /api/projects/{PROJ-NNN}</c> endpoint. Removes the on-disk
     /// project storage folder at <paramref name="storageLocation"/>
     /// (recursively, including every lane and task) and drops any
     /// <c>WatchPaths</c> entry whose resolved path points at it, so the
     /// project leaves both the kanban and the project picker with no ghost
-    /// row. Unlike <see cref="Delete"/> this does not guard on emptiness —
-    /// the caller has already gated the action behind a typed two-stage
-    /// confirmation.
+    /// row. This internal cleanup primitive also handles failed project
+    /// creation. The HTTP deletion caller must enforce destructive authority,
+    /// exact project-id confirmation, a written reason and active-work refusal
+    /// before calling it. Unlike <see cref="Delete"/> it permits populated storage.
     ///
     /// <para><b>Ordering (no orphan folders):</b> the folder is deleted
     /// first. If that fails the method aborts before touching any metadata,

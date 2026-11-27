@@ -109,8 +109,8 @@ public sealed class RemotePipelineReviewEvidenceProjector
     /// Writes the attempt's agent usage into the task token receipt, the
     /// ledger the workspace timeline and project surfaces aggregate
     /// (AGT-2986). One participant per review attempt keeps a replayed
-    /// report idempotent. Cached input stays in its own dimension: the runner
-    /// already normalized input to the uncached share.
+    /// report idempotent. For known splits the runner already normalized input
+    /// to the uncached share; unknown splits retain null input semantics.
     /// </summary>
     private void RecordReviewUsage(TaskInfo task, ReviewAttemptDto review, Contract.ReviewReportRequest report)
     {
@@ -139,33 +139,58 @@ public sealed class RemotePipelineReviewEvidenceProjector
                      Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)))
         {
             var usageIndex = commandIndex++;
-            var total = command.InputTokens + command.OutputTokens
-                        + command.CacheReadTokens + command.CacheCreationTokens;
-            if (total <= 0) continue;
-            var model = ModelIdentity.StoredId(command.Model);
-            var cost = pricing.Estimate(
-                command.Model, command.InputTokens, command.OutputTokens,
-                command.CacheReadTokens, command.CacheCreationTokens, command.FinishedAt);
-            calls.Add(new TaskTokenCall
+            var rows = command.ModelUsage ?? [new Contract.ReviewModelUsageDto(
+                command.Model, command.InputTokens, command.OutputTokens, command.CacheReadTokens,
+                command.CacheCreationTokens, command.InputIncludesCached, command.PinnedModel,
+                command.ModelMismatch, command.ModelSource ?? "legacy")];
+            var rowIndex = 0;
+            foreach (var usage in rows)
             {
-                Ts = command.FinishedAt,
-                Model = model,
-                DisplayModel = ModelIdentity.Label(model),
-                ThinkingLevel = string.IsNullOrWhiteSpace(command.ThinkingLevel) ? null : command.ThinkingLevel.Trim(),
-                CliType = CliFromExecutable(command.FileName),
-                Host = string.IsNullOrWhiteSpace(command.HostId) ? host : command.HostId,
-                ParticipantId = ReviewParticipantPrefix + review.AttemptId + ":step:" + command.StepId
-                    + ":usage:" + review.AttemptId + ":" + usageIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                InputTokens = command.InputTokens,
-                OutputTokens = command.OutputTokens,
-                CacheReadTokens = command.CacheReadTokens,
-                CacheCreationTokens = command.CacheCreationTokens,
-                InputIncludesCached = command.InputIncludesCached,
-                EstimatedApiCostUsd = cost.Total,
-                ModelPriced = cost.ModelKnown,
-            });
+                var modelIndex = rowIndex++;
+                var total = usage.InputTokens + usage.OutputTokens + usage.CacheReadTokens + usage.CacheCreationTokens;
+                if (total <= 0) continue;
+                // A requested fallback remains a pin, never an observed model or
+                // evidence that the configured rate actually applied.
+                var model = usage.ModelSource == "requested-fallback" ? null : ModelIdentity.StoredId(usage.Model);
+                var cost = pricing.EstimateRecorded(
+                    model, usage.InputTokens, usage.OutputTokens,
+                    usage.CacheReadTokens, usage.CacheCreationTokens, command.FinishedAt,
+                    usage.InputIncludesCached, normalization: null);
+                calls.Add(new TaskTokenCall
+                {
+                    Ts = command.FinishedAt,
+                    Model = model,
+                    DisplayModel = ModelIdentity.Label(model),
+                    PinnedModel = usage.PinnedModel ?? command.PinnedModel,
+                    ModelMismatch = usage.ModelMismatch,
+                    ThinkingLevel = string.IsNullOrWhiteSpace(command.ThinkingLevel) ? null : command.ThinkingLevel.Trim(),
+                    CliType = command.CliType ?? CliFromExecutable(command.FileName),
+                    Host = string.IsNullOrWhiteSpace(command.HostId) ? host : command.HostId,
+                    ParticipantId = ReviewParticipantPrefix + review.AttemptId + ":step:" + command.StepId
+                        + ":usage:" + review.AttemptId + ":" + usageIndex.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        + ":" + modelIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    InputTokens = usage.InputTokens,
+                    OutputTokens = usage.OutputTokens,
+                    CacheReadTokens = usage.CacheReadTokens,
+                    CacheCreationTokens = usage.CacheCreationTokens,
+                    InputIncludesCached = usage.InputIncludesCached,
+                    EstimatedApiCostUsd = cost.Total,
+                    ModelPriced = cost.ModelKnown,
+                });
+            }
         }
         return calls;
+    }
+
+    internal static string? ObservedUsageModel(Contract.ReviewCommandEvidenceDto command)
+    {
+        // Model stays frozen for report admission. Usage rows carry the
+        // observed identities used by receipt and aspect projections.
+        if (command.ModelUsage is null) return command.Model;
+        var models = command.ModelUsage
+            .Select(row => row.ModelSource == "requested-fallback" ? null : row.Model)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray();
+        return models.Length == 1 ? models[0] : null;
     }
 
     private static string? CliFromExecutable(string? fileName)
@@ -255,14 +280,14 @@ public sealed class RemotePipelineReviewEvidenceProjector
             new UTF8Encoding(false));
         File.WriteAllText(
             Path.Combine(task.FolderPath, jsonName),
-            AspectVerdictParsing.RenderJson(verdict, command.Model, receivedAt),
+            AspectVerdictParsing.RenderJson(verdict, ObservedUsageModel(command), receivedAt),
             new UTF8Encoding(false));
 
         var duration = Math.Max(0, (long)(command.FinishedAt - command.StartedAt).TotalMilliseconds);
         var generation = new FileGenerationMeta
         {
             Kind = "aspect",
-            Model = command.Model,
+            Model = ObservedUsageModel(command),
             Cli = command.FileName,
             TokensIn = command.InputTokens,
             TokensOut = command.OutputTokens,
@@ -281,7 +306,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
             StepId = command.StepId,
             Kind = StepKind.Aspect,
             Attempt = pipelineAttempt,
-            Model = command.Model,
+            Model = ObservedUsageModel(command),
             ThinkingLevel = command.ThinkingLevel,
             ReviewedResultSha = command.ExpectedResultSha,
             StartedAt = command.StartedAt,
@@ -573,7 +598,10 @@ public sealed class RemotePipelineReviewEvidenceProjector
             ["status"] = command.ExitCode == 0 && command.Signal is null ? "passed" : "failed",
             ["durationMs"] = Math.Max(0, (long)(command.FinishedAt - command.StartedAt).TotalMilliseconds)
                 .ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["model"] = command.Model ?? string.Empty,
+            ["model"] = ObservedUsageModel(command) ?? string.Empty,
+            ["pinnedModel"] = command.PinnedModel ?? command.Model ?? string.Empty,
+            ["modelMismatch"] = command.ModelMismatch ? "true" : "false",
+            ["modelSource"] = command.ModelSource ?? "legacy",
             ["thinkingLevel"] = command.ThinkingLevel ?? string.Empty,
         };
     }
