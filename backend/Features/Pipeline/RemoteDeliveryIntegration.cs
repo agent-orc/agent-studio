@@ -360,8 +360,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 projectQueue.Running = true;
                 startDrain = true;
             }
-            PublishBoard(request.Project, projectQueue);
         }
+        PublishBoard(request.Project, projectQueue);
 
         var reenter = discardCompletedReplay && IntegrationLaneEvents.Read(request.JobFolderPath)
             .Any(e => e.Kind == "ejected" && e.Outcome is ("AgentRoundRequired" or "Conflict"));
@@ -420,8 +420,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     projectQueue.Current = delivery;
                     projectQueue.CurrentSinceUtc = now;
                 }
-                PublishBoard(project, projectQueue);
             }
+            PublishBoard(project, projectQueue);
             if (delivery is null)
             {
                 await Task.Delay(wait > TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : wait).ConfigureAwait(false);
@@ -487,8 +487,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                         });
                         projectQueue.Revision++;
                         projectQueue.Current = null;
-                        PublishBoard(project, projectQueue);
                     }
+                    PublishBoard(project, projectQueue);
                     continue;
                 }
                 // The runner's publication fence already decided a merge; its
@@ -684,19 +684,40 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         public string CurrentActivity { get; set; } = DeliveryIntegrationQueueBoard.Integrating;
     }
 
-    /// <summary>Called under <c>_gate</c>: the board shows the running delivery first, then the queue in drain order.</summary>
+    /// <summary>
+    /// Called outside <c>_gate</c>: reservation scans can wait on task folders
+    /// and receipts. Publish only a current snapshot, with the running delivery
+    /// first and the pending deliveries in recovery order.
+    /// </summary>
     private void PublishBoard(string project, ProjectQueue queue)
     {
-        var rows = new List<DeliveryIntegrationQueueRow>();
-        if (queue.Current is { } current)
-            rows.Add(new DeliveryIntegrationQueueRow(current.Request.JobId, queue.CurrentActivity,
-                queue.CurrentSinceUtc));
-        var pending = queue.Pending.OrderBy(item => item, QueuedDeliveryComparer.Instance)
-            .Select(item => item.Request).ToArray();
-        if (_conflictRecovery is not null) pending = _conflictRecovery.Order(pending).ToArray();
-        rows.AddRange(pending.Select(request => new DeliveryIntegrationQueueRow(request.JobId,
-            DeliveryIntegrationQueueBoard.Waiting, request.DeliveredAtUtc)));
-        _board.Publish(project, rows);
+        while (true)
+        {
+            long revision;
+            RemoteDeliveryIntegrationRequest[] pending;
+            var rows = new List<DeliveryIntegrationQueueRow>();
+            lock (_gate)
+            {
+                if (!_projectQueues.TryGetValue(project, out var active) || !ReferenceEquals(active, queue)) return;
+                revision = queue.Revision;
+                if (queue.Current is { } current)
+                    rows.Add(new DeliveryIntegrationQueueRow(current.Request.JobId, queue.CurrentActivity,
+                        queue.CurrentSinceUtc));
+                pending = queue.Pending.OrderBy(item => item, QueuedDeliveryComparer.Instance)
+                    .Select(item => item.Request).ToArray();
+            }
+
+            if (_conflictRecovery is not null) pending = _conflictRecovery.Order(pending).ToArray();
+            rows.AddRange(pending.Select(request => new DeliveryIntegrationQueueRow(request.JobId,
+                DeliveryIntegrationQueueBoard.Waiting, request.DeliveredAtUtc)));
+            lock (_gate)
+            {
+                if (!_projectQueues.TryGetValue(project, out var active) || !ReferenceEquals(active, queue)) return;
+                if (revision != queue.Revision) continue;
+                _board.Publish(project, rows);
+                return;
+            }
+        }
     }
 
     /// <summary>
@@ -724,8 +745,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         lock (_gate)
         {
             projectQueue.CurrentActivity = DeliveryIntegrationQueueBoard.CompilingTrain(behind.Length + 1);
-            PublishBoard(project, projectQueue);
+            projectQueue.Revision++;
         }
+        PublishBoard(project, projectQueue);
         try
         {
             await _planTrain([head.Request, .. behind]).ConfigureAwait(false);
@@ -741,8 +763,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             lock (_gate)
             {
                 projectQueue.CurrentActivity = DeliveryIntegrationQueueBoard.Integrating;
-                PublishBoard(project, projectQueue);
+                projectQueue.Revision++;
             }
+            PublishBoard(project, projectQueue);
         }
     }
 

@@ -3447,6 +3447,19 @@
             Fact reads run outside the lock, with replay identity and queue revision
             checks before applying their results.</td>
         </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4048</code><br><span class="small">integration-conflict-board-lock-repair</span></td>
+          <td>No CLI crashed. A blocked reservation scan during board publication
+            blocked enqueue and integration for other projects.</td>
+          <td>Board ordering still scanned task folders and conflict receipts
+            under the shared queue lock after Git fact reads had moved outside it.</td>
+          <td>Board snapshots collect reservation facts outside the lock and
+            recheck queue identity and revision before publication, including
+            activity changes. Deterministic regressions verify independent project
+            progress and repaired-delivery order during a concurrent enqueue.
+            The terminal remains the queued recovery or completed integration.</td>
+        </tr>
       </tbody>
     </table>
 

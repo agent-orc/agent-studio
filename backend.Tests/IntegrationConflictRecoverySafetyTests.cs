@@ -87,6 +87,96 @@ public sealed class IntegrationConflictRecoverySafetyTests : IDisposable
     }
 
     [Fact]
+    public async Task SlowBoardReservationReadDoesNotBlockAnotherProject()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recovery = new IntegrationConflictRecovery(_ => "tip", (_, _, _) => false, _ => [], item =>
+        {
+            if (item.Project == "project")
+            {
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+            }
+            return [];
+        });
+        var coordinator = Coordinator(recovery, []);
+        var slow = Task.Run(() => coordinator.EnqueueAsync(Request("slow")));
+        Task<MergeIntoIntegrationResult>? other = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            other = Task.Run(() => coordinator.EnqueueAsync(Request("other") with { Project = "other" }));
+            await other.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            release.TrySetResult();
+            await slow.WaitAsync(TimeSpan.FromSeconds(5));
+            if (other is not null) await other.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Fact]
+    public async Task BoardRechecksQueueChangesDuringReservationRead()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var integrating = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var later = Request("later") with { DeliveredAtUtc = DateTimeOffset.UnixEpoch.AddMinutes(2) };
+        var repair = Request("repair");
+        var card = new TaskInfo { Id = repair.JobId, FolderPath = repair.JobFolderPath, State = TaskStates.AutoReview };
+        var recovery = new IntegrationConflictRecovery(_ => "tip", (_, _, _) => false, _ => ["shared.cs"], _ =>
+        {
+            if (Interlocked.Increment(ref reads) == 1)
+            {
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+            }
+            return [card];
+        });
+        recovery.Record(repair, Conflict());
+        IntegrationConflictRecovery.MarkQueued(repair.JobFolderPath);
+        var board = new DeliveryIntegrationQueueBoard();
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(async _ =>
+        {
+            integrating.TrySetResult();
+            await finish.Task;
+            return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged);
+        }, NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance, queueBoard: board, conflictRecovery: recovery);
+        var slow = Task.Run(() => coordinator.EnqueueAsync(later));
+        Task<MergeIntoIntegrationResult>? repaired = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var enqueued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            repaired = Task.Run(async () =>
+            {
+                var pending = coordinator.EnqueueAsync(repair with
+                { ReviewedResultSha = "resolved", DeliveredAtUtc = DateTimeOffset.UnixEpoch.AddHours(1) });
+                enqueued.SetResult();
+                return await pending;
+            });
+            await enqueued.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(1, board.PositionOf("project", "repair")?.Position);
+            Assert.Equal(2, board.PositionOf("project", "later")?.Position);
+            release.TrySetResult();
+            await integrating.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(1, board.PositionOf("project", "repair")?.Position);
+            Assert.Equal(2, board.PositionOf("project", "later")?.Position);
+        }
+        finally
+        {
+            release.TrySetResult();
+            finish.TrySetResult();
+            await slow.WaitAsync(TimeSpan.FromSeconds(5));
+            if (repaired is not null) await repaired.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Fact]
     public async Task QueueChangesDuringPathReadAreRecheckedBeforeSelectingTheHead()
     {
         var request = Request("later") with { DeliveredAtUtc = DateTimeOffset.UnixEpoch.AddMinutes(2) };

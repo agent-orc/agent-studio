@@ -121,6 +121,14 @@ facts are read outside the coordinator's queue lock. A queue change during those
 reads causes selection to restart; a cached replay can be discarded only if it is
 still the completed replay that was inspected.
 
+Board publication also reads task folders and conflict receipts outside that
+shared lock. It captures the queue, orders that snapshot using recovery
+reservations, and publishes only if the queue identity and revision still match.
+Concurrent enqueue, dequeue, hold or activity changes require a new snapshot;
+removing or replacing the queue discards an old publication. This can repeat
+reservation reads when the queue changes, without blocking other projects on
+filesystem I/O.
+
 A queued recovery reserves its conflicting paths and original delivery time.
 The individual integration queue holds later overlapping deliveries while the
 recovery is in Ready, Progress or Auto Review. A repaired delivery retains that
