@@ -180,13 +180,26 @@ public sealed class PreDevelopBuildGate
             RequiredTestLevel = postMergeLevel
                 ?? LevelFor(changedFiles, reuseRemoteReviewVerdict, request.RepositoryPath, profile),
         };
+        var gateAttempts = 0;
+        var stages = new Dictionary<string, long>();
+        var retryReasons = new List<string>();
+        var incompleteTimings = false;
+        var legacyTimings = false;
         for (var attempt = 1; ; attempt++)
         {
             var result = await _runner.RunAsync(request, changedFiles, profile,
                 PostStepMode.Fail, timeout, ct).ConfigureAwait(false);
+            gateAttempts += result.GateAttempts;
+            stages = GateStageTimings.Sum(stages, result.StageDurationsMs);
+            retryReasons.AddRange(result.GateRetryReasons);
+            incompleteTimings |= result.StageTimingsIncomplete;
+            legacyTimings |= result.StageTimingsVersion == 0;
             if (!AgentStudio.Runner.MonolithTransitionAdapter.RetryIntegrationAdmission(
                     result.ViolatedBudget?.Name, result.ViolatedBudget?.Phase, attempt))
-                return result;
+                return result with { GateAttempts = gateAttempts, StageDurationsMs = stages,
+                    GateRetryReasons = retryReasons.ToArray(),
+                    StageTimingsIncomplete = incompleteTimings || gateAttempts > 1 && legacyTimings };
+            retryReasons.Add($"Gate slot admission timed out on attempt {attempt}; retrying the same candidate.");
             if (request.JobFolderPath is { } folder)
                 IntegrationLaneEvents.Append(folder, request.Project ?? "", request.JobId ?? "",
                     "gate-capacity-retry", reason: $"gate capacity: admission attempt {attempt}/3 timed out; "

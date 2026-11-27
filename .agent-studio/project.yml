@@ -106,3 +106,11 @@ devServer:
   healthUrl: http://127.0.0.1:4010
   startupTimeoutSeconds: 120
   stopWithRun: true
+# Only merge compile checks use this map. Unknown/shared paths keep the full build.
+integrationBuild:
+  - paths: [frontend/, .nvmrc, scripts/npm-frontend.sh]
+    build: [2]
+    prepare: [bash .agent-studio/prepare-integration.sh frontend]
+  - paths: [global.json, NuGet.config, Directory.Build.props, Directory.Build.targets, Directory.Packages.props, agent-taskboard.sln, backend/, backend.Tests/, runner/, runner.Tests/, task-server/, task-server.Tests/, contracts/, orchestration-decisions/, orchestrator-engine/, orchestrator-engine.Tests/, studio-bff/, update-service/, cli-hosting/, testsupport/, retention/, retention.Tests/, setup/, setup.Tests/, demo-replay-runner/, demo-replay-runner.Tests/, operations-server/, operations-server.Tests/, operations-agent/, tools/SilentCatchAnalyzer/]
+    build: [0, 1]
+    prepare: [bash .agent-studio/prepare-integration.sh backend]

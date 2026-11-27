@@ -12,7 +12,7 @@ public sealed record PullGateHost(string Id, string Name, int Slots, int Process
 public sealed record PullGateClaim(string RunId, string Lease, DateTimeOffset ExpiresAt);
 internal sealed record PullGateJob(string RunId, string BundleSha256, string State,
     string? HostId, string? Lease, DateTimeOffset ExpiresAt, string? Progress,
-    DateTimeOffset? EnqueuedAt = null);
+    DateTimeOffset? EnqueuedAt = null, bool IntegrationPriority = false, DateTimeOffset? ClaimedAtUtc = null);
 
 /// <summary>Durable bundle and result authority. Every mutation is serialized and lease fenced.</summary>
 public sealed class PullGateStore
@@ -199,10 +199,16 @@ public sealed class PullGateStore
         lock (_gate)
         {
             var job = new PullGateJob(invocation.RunId, invocation.BundleSha256, "queued",
-                null, null, default, null, Now);
+                null, null, default, null, Now, invocation.Request.IntegrationPriority);
             Save(job);
             return job.RunId;
         }
+    }
+
+    public DateTimeOffset? StartedAt(string runId)
+    {
+        lock (_gate) return _jobs.TryGetValue(runId, out var job) && job.HostId is not null
+            ? job.ClaimedAtUtc : null;
     }
 
     public PullGateClaim? Claim(string hostId)
@@ -215,17 +221,22 @@ public sealed class PullGateStore
             var capacity = _capacity?.Current(hostId);
             if (capacity is not null) host = host with { Slots = capacity.Slots,
                 ProcessorCount = capacity.ProcessorsPerGate };
-            var used = _jobs.Values.Count(job => job.HostId == hostId && job.State == "claimed"
-                && job.ExpiresAt > Now);
-            if (used >= host.Slots) return null;
-            var job = _jobs.Values.OrderBy(item => item.RunId).FirstOrDefault(item =>
-                item.State == "queued" || item.State == "claimed" && item.ExpiresAt <= Now);
+            var active = _jobs.Values.Where(job => job.HostId == hostId && job.State == "claimed"
+                && job.ExpiresAt > Now).ToArray();
+            var regular = active.Count(job => !job.IntegrationPriority);
+            var integration = active.Count(job => job.IntegrationPriority);
+            var job = _jobs.Values
+                .Where(item => (item.State == "queued" || item.State == "claimed" && item.ExpiresAt <= Now)
+                    && AgentStudio.Runner.MonolithTransitionAdapter.MayClaimMergeCheck(
+                        item.IntegrationPriority, regular, integration, host.Slots))
+                .OrderBy(item => AgentStudio.Runner.MonolithTransitionAdapter.MergeCheckQueuePriority(item.IntegrationPriority))
+                .ThenBy(item => item.EnqueuedAt).ThenBy(item => item.RunId).FirstOrDefault();
             if (job is null) return null;
             var staleArtifacts = Path.Combine(Folder(job.RunId), "artifacts");
             if (Directory.Exists(staleArtifacts)) Directory.Delete(staleArtifacts, recursive: true);
             var claimed = job with { State = "claimed", HostId = hostId,
                 Lease = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32)),
-                ExpiresAt = Now.Add(LeaseTime), Progress = "claimed" };
+                ExpiresAt = Now.Add(LeaseTime), ClaimedAtUtc = Now, Progress = "claimed" };
             var requestPath = Path.Combine(Folder(job.RunId), "request.json");
             var invocation = JsonSerializer.Deserialize<RemoteGateInvocation>(
                 File.ReadAllText(requestPath), Json)!;

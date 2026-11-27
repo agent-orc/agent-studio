@@ -3431,7 +3431,7 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
     /// </summary>
     [Fact]
     [Trait("Category", "MachineBound")]
-    public async Task RunAsync_UnchangedReviewedBase_ReusesTheReviewVerdictAndCompilesOnly()
+    public async Task RunAsync_UnchangedReviewedBase_ReusesTheBuildWithoutDispatch()
     {
         var (repo, jobFolder, gateRunner, runner, delivery, mergeBase) = SeedReviewedDelivery("reuse-green");
         WriteReviewVerification(repo, jobFolder, delivery, mergeBase, "refs/heads/develop");
@@ -3440,8 +3440,8 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
             "Fixture", "reuse-green", jobFolder, repo, "develop", CancellationToken.None);
 
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
-        Assert.Equal(1, gateRunner.Invocations);
-        Assert.Equal(TestExecutionLevels.CompileOnly, gateRunner.Request!.RequiredTestLevel);
+        Assert.Equal(0, gateRunner.Invocations);
+        Assert.Null(gateRunner.Request);
         var evidence = ReadGateEvidence(jobFolder);
         Assert.Contains("reviewReuse=reused attempt=rev_1", evidence);
         Assert.Contains("unchanged develop tip", evidence);
@@ -3564,6 +3564,28 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
 
         Assert.Equal(TestExecutionLevels.BuildOnly, gateRunner.Request!.RequiredTestLevel);
         Assert.Contains("reviewReuse=full", ReadGateEvidence(jobFolder));
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Mechanically_replayed_delivery_checks_only_the_final_publication_tree_once()
+    {
+        const string name = "single-replay-check";
+        var (repo, folder, gate, runner, _, _) = SeedReviewedDelivery(name);
+        RunGit(repo, $"checkout -q task/{name}");
+        RunGit(repo, "checkout -q -b replay-side");
+        File.WriteAllText(Path.Combine(repo, "side.txt"), "side work");
+        Commit(repo, "feat: side work");
+        RunGit(repo, $"checkout -q task/{name}");
+        RunGit(repo, "merge --no-ff -m side replay-side");
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "advance.txt"), "integration moved");
+        Commit(repo, "chore: advance integration");
+        var outcome = await runner.RunAsync("Fixture", name, folder, repo, "develop", CancellationToken.None);
+        Assert.Equal(MergeIntoIntegrationOutcome.MergedAfterRebase, outcome.Outcome);
+        Assert.Equal(1, gate.Invocations);
+        Assert.Equal(outcome.MergedSha, gate.Request!.ExpectedSha);
+        Assert.Equal(outcome.MergedSha, Lane(repo, "develop"));
     }
 
     /// <summary>

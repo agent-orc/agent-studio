@@ -26,6 +26,13 @@ export function nightlyGuardTone(guard: string | null | undefined): StatusTone {
 })
 export class GateEconomicsBlockComponent implements OnDestroy {
   readonly windowOptions = [{ value: '7d', label: '7 days' }, { value: '30d', label: '30 days' }] as const;
+  readonly stageNames: Readonly<Record<string, string>> = {
+    queueWait: 'Integration queue', dispatchQueueWait: 'Dispatch queue', gateQueueWait: 'Gate slot queue',
+    bundlePreparation: 'Bundle preparation', bundleTransfer: 'Bundle transfer', sourceLockWait: 'Source lock',
+    sourceObjects: 'Source objects', sourceCheckout: 'Source checkout', restore: 'Restore', build: 'Build',
+    releaseBuildCheck: 'Release build check', frontendBuild: 'Frontend build', verdictHandBack: 'Verdict hand-back',
+    merge: 'Merge', push: 'Push', reviewToPushed: 'Review passed to pushed',
+  };
   readonly gateTone = gateStateTone;
   readonly nightlyTone = nightlyGuardTone;
   private readonly tasks = inject(TaskService);

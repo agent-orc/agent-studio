@@ -134,7 +134,8 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         var infra = request.InfrastructureTimeout > TimeSpan.Zero
             ? request.InfrastructureTimeout : TimeSpan.FromMinutes(2);
         var cacheKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-            request.Project ?? Path.GetFullPath(request.RepositoryPath)))).ToLowerInvariant();
+            (request.Project ?? Path.GetFullPath(request.RepositoryPath))
+                + (request.IntegrationPriority ? "\0integration" : "")))).ToLowerInvariant();
         var cache = options.Root + "/cache/" + cacheKey;
         var historyKey = request.Project ?? Path.GetFullPath(request.RepositoryPath);
         var estimate = _durations.Estimate(historyKey);
@@ -180,12 +181,21 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                             && long.TryParse(line[11..], out var value)) sourcePackKiB = value;
                     });
                 preparationBudget = TransferBudget(infra, checked(sourcePackKiB * 1024));
-                await Git(local, ["init", "--bare", "--quiet", repository], infra, ct);
-                // Only this private bare repository receives a ref. The operator's
-                // checkout and the integration remote remain untouched.
-                await GitPrepared(local, ["-C", repository, "fetch", "--no-tags", "--no-recurse-submodules",
-                    Path.GetFullPath(request.RepositoryPath), request.ExpectedSha!], preparationBudget,
-                    sourcePackKiB * 1024, "fetch", ct);
+                // Integration already holds the source candidate under its lane journal.
+                // Share its local object store while freezing the bundle instead of
+                // copying the complete history before producing a thin transfer.
+                if (request.IntegrationPriority)
+                    await Git(local, ["clone", "--bare", "--shared", "--no-tags", "--quiet",
+                        Path.GetFullPath(request.RepositoryPath), repository], preparationBudget, ct);
+                else
+                {
+                    await Git(local, ["init", "--bare", "--quiet", repository], infra, ct);
+                    await GitPrepared(local, ["-C", repository, "fetch", "--no-tags", "--no-recurse-submodules",
+                        Path.GetFullPath(request.RepositoryPath), request.ExpectedSha!], preparationBudget,
+                        sourcePackKiB * 1024, "fetch", ct);
+                }
+                // Only this private repository receives the gate ref.
+
                 await Git(local, ["-C", repository, "update-ref", "refs/heads/gate-subject",
                     request.ExpectedSha!], infra, ct);
                 var includedTips = new List<string>();
@@ -283,7 +293,12 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                         {
                             if (line.StartsWith("REMOTE_GATE_SOURCE_READY " + runId + " ", StringComparison.Ordinal)
                                 && long.TryParse(line[("REMOTE_GATE_SOURCE_READY " + runId + " ").Length..],
-                                    out var readyMs)) workerSourceReadyMs = readyMs;
+                                    out var readyMs))
+                            {
+                                workerSourceReadyMs = readyMs;
+                                _logger.LogInformation("remote_gate_source_checkout_ready run_id={RunId} bytes={Bytes} ready_seconds={ReadySeconds}",
+                                    runId, bundleBytes, (dispatchReady + TimeSpan.FromMilliseconds(readyMs)).TotalSeconds);
+                            }
                             ReportWorkerLine(line, runId, options.Host, request);
                         });
                 }
@@ -297,6 +312,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                     }
                 }
             }
+            var handBack = Stopwatch.StartNew();
             await Scp(options, local, options.Host + ":" + remote + "/response.json", "response.json", infra, ct);
             var responsePath = Path.Combine(local, "response.json");
             if (new FileInfo(responsePath).Length > 16 * 1024 * 1024)
@@ -307,11 +323,17 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             if (_slotUsage.HeldFor(runId) is { } held) _durations.Record(historyKey, held);
             var readySeconds = workerSourceReadyMs < 0 ? (double?)null
                 : (dispatchReady + TimeSpan.FromMilliseconds(workerSourceReadyMs)).TotalSeconds;
-            _logger.LogInformation("remote_gate_source_checkout_ready run_id={RunId} bytes={Bytes} ready_seconds={ReadySeconds}",
+            _logger.LogInformation("remote_gate_source_checkout_summary run_id={RunId} bytes={Bytes} ready_seconds={ReadySeconds}",
                 runId, bundleBytes, readySeconds);
             return AcceptResponse(response, runId, digest, options.Host, request.Executor,
                 bundleBytes, transfer.Elapsed, readySeconds, includeReady: true)
-                with { GrantedCores = options.ProcessorCount };
+                with { GrantedCores = options.ProcessorCount,
+                    StageDurationsMs = new Dictionary<string, long>(response.Result.StageDurationsMs)
+                    {
+                        ["bundleTransfer"] = transfer.ElapsedMilliseconds,
+                        ["bundlePreparation"] = Math.Max(0, (long)dispatchReady.TotalMilliseconds - transfer.ElapsedMilliseconds),
+                        ["verdictHandBack"] = handBack.ElapsedMilliseconds,
+                    } };
         }
         finally
         {

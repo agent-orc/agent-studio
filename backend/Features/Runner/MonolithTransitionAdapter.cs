@@ -9,6 +9,10 @@ namespace AgentStudio.Runner;
 /// <summary>Host boundary for the shared decision library. No transition rules belong here.</summary>
 public static class MonolithTransitionAdapter
 {
+    public static bool MayClaimMergeCheck(bool integration, int regularActive, int integrationActive, int regularSlots)
+        => MergeCheckAdmissionPolicy.MayClaim(integration, regularActive, integrationActive, regularSlots);
+    public static int MergeCheckQueuePriority(bool integration) => MergeCheckAdmissionPolicy.Priority(integration);
+
     public static bool PostMergeDeadlineReached(DateTimeOffset? opened, int minutes, DateTimeOffset now)
         => PostMergeSchedulingPolicy.DeadlineReached(opened, minutes, now);
 
