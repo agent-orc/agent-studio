@@ -9,10 +9,53 @@ public static class CompletionContentEvidence
 {
     public const string LocalContextFile = "content-review-context.json";
     public const string LocalRunBriefFile = "local-run-brief-version";
+    public const string LocalAdmissionFile = "local-content-admission.json";
     private static readonly JsonSerializerOptions AdmissionJson = new(JsonSerializerDefaults.Web);
 
     public sealed record AdmissionReceipt(string ReviewAttemptId, string ResultSha, string? BriefVersion,
         string ReportSha256, IReadOnlyList<ReviewContentAdmission> Dispositions, string? FollowUpReceiptRunId = null);
+
+    private sealed record LocalAdmissionReceipt(string ReviewAttemptId, string ResultSha, string DeliveryId,
+        string? BriefVersion, IReadOnlyDictionary<string, string> EvidenceHashes,
+        IReadOnlyList<ReviewContentAdmission> Dispositions);
+
+    /// <summary>Freezes the shared budget decision after all local acceptance gates have passed.</summary>
+    public static void WriteLocalAdmission(string folder, string reviewAttemptId, string? resultSha,
+        IReadOnlyList<ReviewContentAdmission>? dispositions)
+    {
+        if (dispositions is not { Count: > 0 } || string.IsNullOrWhiteSpace(resultSha)) return;
+        var delivery = ReadLocalDelivery(folder);
+        if (delivery is null || !string.Equals(delivery.Value.Sha, resultSha, StringComparison.OrdinalIgnoreCase))
+            return;
+        var local = ReadLocal(folder, dispositions[0].Aspect);
+        if (local is null) return;
+        // The context anchors the receipt independently. A lost receipt must
+        // not silently turn a transferred literal pass into an unrestricted pass.
+        var contextPath = Path.Combine(folder, LocalContextFile);
+        var context = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(contextPath))!;
+        context["admissionReviewAttemptId"] = reviewAttemptId;
+        var writer = new AgentStudio.Persistence.AtomicJsonFileWriter();
+        writer.ReplaceExisting(contextPath, context.ToJsonString());
+        var hashes = dispositions.ToDictionary(item => item.Aspect,
+            item => LocalEvidenceHash(folder, item.Aspect), StringComparer.OrdinalIgnoreCase);
+        writer.ReplaceExisting(Path.Combine(folder, LocalAdmissionFile), JsonSerializer.Serialize(new LocalAdmissionReceipt(
+            reviewAttemptId, resultSha, delivery.Value.Id, local.BriefVersion, hashes, dispositions), AdmissionJson));
+    }
+
+    private static (string? Sha, string Id)? ReadLocalDelivery(string folder)
+    {
+        var timeline = RunTimelineBuilder.Build(TaskSessionLog.ReadSessionEventsInFolder(folder),
+            AgentStudio.Cli.CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(folder)), DateTime.UtcNow);
+        var run = ReviewDecisionOrchestrator.SelectLastSuccessfulReviewRun(timeline.Runs);
+        return run is null ? null : (run.HeadShaAfter,
+            $"local:{run.StartedAt:O}:{run.Index}:{run.CapturedSessionId ?? run.InputSessionId}");
+    }
+
+    private static string LocalEvidenceHash(string folder, string aspect)
+        => AttemptAuthorityService.Hash(JsonSerializer.Serialize(new[] {
+            File.ReadAllText(Path.Combine(folder, LocalContextFile)),
+            File.ReadAllText(Path.Combine(folder, $"aspect-{aspect}.json")),
+        }));
 
     public static string AdmissionPath(string folder, string attemptId)
     {
@@ -46,6 +89,7 @@ public static class CompletionContentEvidence
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, BriefVersionStore.ReadCurrent(folder));
         File.Delete(Path.Combine(folder, LocalContextFile));
+        File.Delete(Path.Combine(folder, LocalAdmissionFile));
     }
 
     public static string? ReadLocalRunVersion(string folder)
@@ -122,7 +166,8 @@ public static class CompletionContentEvidence
         // The local review runner stamps its brief context with its verdict.
         // Old loose aspect files have no lineage and cannot establish a pass.
         if (ReadLocal(task.FolderPath, required) is { } evidence)
-            return new(task.Mode, current, evidence.BriefVersion, evidence.BriefVersion, required,
+        {
+            var facts = new CompletionContentFacts(task.Mode, current, evidence.BriefVersion, evidence.BriefVersion, required,
                 evidence.Status, evidence.Ran, ["not recorded for local review"],
                 ContentSummary: evidence.Summary,
                 EvidenceChecked: evidence.EvidenceChecked,
@@ -130,7 +175,56 @@ public static class CompletionContentEvidence
                 RunAttemptId: evidence.RunAttemptId,
                 ReviewedAtUtc: evidence.ReviewedAtUtc,
                 ReportRef: $"aspect-{required}.json");
+            return ApplyLocalAdmission(task.FolderPath, facts, evidence);
+        }
         return new(task.Mode, current, null, null, required, null, [], []);
+    }
+
+    private static CompletionContentFacts ApplyLocalAdmission(string folder, CompletionContentFacts facts,
+        LocalContent evidence)
+    {
+        var path = Path.Combine(folder, LocalAdmissionFile);
+        if (!File.Exists(path) && evidence.AdmissionReviewAttemptId is null) return facts;
+        LocalAdmissionReceipt receipt;
+        try
+        {
+            receipt = JsonSerializer.Deserialize<LocalAdmissionReceipt>(File.ReadAllText(path), AdmissionJson)
+                ?? throw new JsonException("Empty local content admission receipt.");
+            var delivery = ReadLocalDelivery(folder);
+            if (receipt.ReviewAttemptId != evidence.AdmissionReviewAttemptId
+                || string.IsNullOrWhiteSpace(receipt.ReviewAttemptId)
+                || delivery is null || receipt.DeliveryId != delivery.Value.Id
+                || !string.Equals(receipt.ResultSha, delivery.Value.Sha, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(receipt.BriefVersion, facts.CurrentBriefVersion, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(receipt.BriefVersion, facts.ReviewBriefVersion, StringComparison.OrdinalIgnoreCase)
+                || receipt.EvidenceHashes?.GetValueOrDefault(facts.RequiredAspect) != LocalEvidenceHash(folder, facts.RequiredAspect))
+                return facts with { ContentStatus = null,
+                    AdmissionProblem = "The local content-admission receipt has stale delivery, brief or review identity; rerun local review." };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            SilentCatch.Note(ex, "CompletionContentEvidence: local content admission receipt needs repair");
+            return facts with { ContentStatus = null,
+                AdmissionProblem = "The local content-admission receipt is missing or unreadable; rerun local review." };
+        }
+        facts = facts with { ReviewAttemptId = receipt.ReviewAttemptId };
+        var admission = receipt.Dispositions?.LastOrDefault(item => item is not null
+            && string.Equals(item.Aspect, facts.RequiredAspect, StringComparison.OrdinalIgnoreCase));
+        if (admission is null || !string.Equals(admission.OriginalStatus, facts.ContentStatus, StringComparison.OrdinalIgnoreCase))
+            return facts with { ContentStatus = null,
+                AdmissionProblem = "The local content-admission receipt does not match the original finding; rerun local review." };
+        var followUp = ReviewRoundBudgetStore.Read(folder).Rounds
+            .LastOrDefault(round => round.AttemptId == receipt.ReviewAttemptId)?.FollowUpTaskKey;
+        if (!admission.Admitted(followUp))
+            return facts with { AdmissionProblem = admission.RequiresFollowUp && string.IsNullOrWhiteSpace(followUp)
+                ? $"Review {receipt.ReviewAttemptId} still owes its linked follow-up; retry local review before completion."
+                : admission.Reason };
+        return facts with {
+            ContentStatus = "pass",
+            ContentSummary = $"{facts.ContentSummary} Content admission: {admission.Disposition}; original {admission.OriginalStatus}. "
+                + admission.Reason + (followUp is null ? "" : $" Follow-up: {followUp}.")
+                + $" Receipt: {LocalAdmissionFile}; review {receipt.ReviewAttemptId}; delivery {receipt.ResultSha}.",
+        };
     }
 
     private static CompletionContentFacts ApplyAdmission(string folder, CompletionContentFacts facts,
@@ -239,7 +333,8 @@ public static class CompletionContentEvidence
         string? Summary,
         string? EvidenceChecked,
         string? Missing,
-        DateTime? ReviewedAtUtc);
+        DateTime? ReviewedAtUtc,
+        string? AdmissionReviewAttemptId);
 
     private static LocalContent? ReadLocal(string folder, string required)
     {
@@ -267,7 +362,9 @@ public static class CompletionContentEvidence
                 root.TryGetProperty("summary", out var summary) ? summary.GetString() : null,
                 root.TryGetProperty("evidenceChecked", out var checkedValue) ? checkedValue.GetString() : null,
                 root.TryGetProperty("missing", out var missing) ? missing.GetString() : null,
-                reviewedAt);
+                reviewedAt,
+                context.RootElement.TryGetProperty("admissionReviewAttemptId", out var admissionId)
+                    ? admissionId.GetString() : null);
         }
         catch (Exception ex) when (ex is IOException or JsonException or KeyNotFoundException or InvalidOperationException)
         {

@@ -3386,6 +3386,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // current set is empty. See the "concern tags bleiben kleben" bug.
         ConcernTagWriter.ReconcileConcernTags(current.FolderPath, report.ConcernTagIds, _logger);
 
+        CompletionContentEvidence.WriteLocalAdmission(current.FolderPath, localAttemptId,
+            aspectSubject.Sha, roundBudget.ContentAdmissions);
+
         // Promote to 5-human-review with or without concern tags. ADR-0025:
         // accept-as-done routes to human-review, never directly to completed.
         var move = GuardedMoveJob(

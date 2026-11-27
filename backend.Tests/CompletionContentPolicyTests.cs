@@ -63,6 +63,16 @@ public sealed class CompletionContentPolicyTests
     }
 
     [Fact]
+    public void AdmittedStatusCannotHideAnUnfulfilledContentAdmissionObligation()
+    {
+        var decision = CompletionContentPolicy.Decide(new CompletionContentFacts(
+            "coding", Current, Current, Current, "requirement-fit", "pass",
+            ["requirement-fit"], [], AdmissionProblem: "Review local-review-1 still owes its linked follow-up."));
+        Assert.False(decision.Accepted);
+        Assert.Contains("local-review-1 still owes its linked follow-up", decision.Message);
+    }
+
+    [Fact]
     public void CodingCardCannotUseConceptFitAsItsContentVerdict()
     {
         var decision = CompletionContentPolicy.Decide(new CompletionContentFacts(
