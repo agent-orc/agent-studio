@@ -43,31 +43,41 @@ public sealed class StudioReleasesService(InstanceDeployService instance, Instan
         var branch = git.ResolveIntegrationReadRef(repo, settings.Get(project).IntegrationBranch);
         var target = branch is null ? null : git.GetBranchTip(repo, branch);
         if (target is null) throw new IOException("The integration branch is unavailable.");
+        var resolved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string Resolve(string revision)
+        {
+            if (!resolved.TryGetValue(revision, out var sha))
+                resolved[revision] = sha = git.GetBranchTip(repo, revision) ?? revision;
+            return sha;
+        }
         var revisions = deploys.Read().Releases.Where(release => release.LiveSinceUtc is not null)
-            .Select(release => new StudioRevision(release.CommitSha, release.LiveSinceUtc!.Value, release.FromVersionRoute,
-                release.FromVersionRoute ? "build-baseline" : "deploy"))
+            .Select(release => new StudioRevision(Resolve(release.CommitSha), release.LiveSinceUtc!.Value, release.FromVersionRoute,
+                release.FromVersionRoute ? "build-baseline" : "deploy", "deploy:" + release.Id))
             .ToList();
-        // Deploy reports may be absent on older installations. Remember each running
-        // revision independently of the deploy scripts and their record protocol.
+        // Deploy reports may be absent or retain only the first deployment of a SHA.
+        // Observe transitions, including returns to old revisions, rather than restarts.
         var path = Path.Combine(configuration["TaskRepository"]
             ?? throw new InvalidOperationException("TaskRepository is required."), "deployments", "studio-release-observations.json");
         var observed = File.Exists(path)
             ? JsonSerializer.Deserialize<List<StudioRevision>>(File.ReadAllText(path)) ?? [] : [];
-        if (!revisions.Concat(observed).Any(revision => SameRevision(revision.Revision, running)))
+        observed = observed.Select((revision, index) => revision with {
+            Revision = Resolve(revision.Revision),
+            OccurrenceId = revision.OccurrenceId ?? "observed:legacy:" + index,
+        }).ToList();
+        revisions = Occurrences(revisions.Concat(observed));
+        if (revisions.Count == 0 || !SameRevision(revisions[^1].Revision, running))
         {
-            observed.Add(new(running, _startedAt, true));
+            // A report received after process startup must precede a newly observed transition.
+            var at = revisions.Count == 0 || _startedAt >= revisions[^1].AtUtc
+                ? _startedAt : clock.GetUtcNow().UtcDateTime;
+            var observation = new StudioRevision(running, at, true, OccurrenceId: "observed:" + Guid.NewGuid().ToString("N"));
+            observed.Add(observation);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var temporary = path + ".tmp";
             File.WriteAllText(temporary, JsonSerializer.Serialize(observed));
             File.Move(temporary, path, true);
+            revisions.Add(observation);
         }
-        revisions.AddRange(observed);
-        revisions = revisions.Select(revision => revision with
-            { Revision = git.GetBranchTip(repo, revision.Revision) ?? revision.Revision })
-            .GroupBy(revision => revision.Revision, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.OrderBy(revision => revision.TimeBasis == "build-baseline")
-                .ThenBy(revision => revision.Observed).ThenBy(revision => revision.AtUtc).First())
-            .OrderBy(revision => revision.AtUtc).ThenBy(revision => revision.Revision, StringComparer.Ordinal).ToList();
         var metadata = scanner.ScanAllJobsWithArchive()
             .Where(card => string.Equals(card.ProjectName, project, StringComparison.OrdinalIgnoreCase))
             .GroupBy(card => card.TaskKey, StringComparer.OrdinalIgnoreCase)
@@ -122,6 +132,25 @@ public sealed class StudioReleasesService(InstanceDeployService instance, Instan
     private static bool SameRevision(string left, string right)
         => left.Length >= 7 && right.Length >= 7 && (left.StartsWith(right, StringComparison.OrdinalIgnoreCase)
             || right.StartsWith(left, StringComparison.OrdinalIgnoreCase));
+
+    private static List<StudioRevision> Occurrences(IEnumerable<StudioRevision> revisions)
+    {
+        var ordered = revisions.OrderBy(revision => revision.AtUtc).ToArray();
+        var occurrences = new List<StudioRevision>();
+        for (var start = 0; start < ordered.Length;)
+        {
+            var end = start + 1;
+            while (end < ordered.Length && SameRevision(ordered[start].Revision, ordered[end].Revision)) end++;
+            var interval = ordered[start..end];
+            var reports = interval.Where(revision => revision.TimeBasis == "deploy").ToArray();
+            // Reports and observations of the same uninterrupted revision describe
+            // one interval. Explicit deployments still retain their own identities.
+            if (reports.Length > 0) occurrences.AddRange(reports);
+            else occurrences.Add(interval.FirstOrDefault(revision => revision.TimeBasis != "build-baseline") ?? interval[0]);
+            start = end;
+        }
+        return occurrences;
+    }
 }
 
 public sealed class StudioReleasesWorker(StudioReleasesService releases, ILogger<StudioReleasesWorker> logger)
