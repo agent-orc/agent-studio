@@ -2,6 +2,7 @@ using System.Text.Json;
 using AgentStudio.Tasks;
 using AgentStudio.Shared;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Contract = AgentStudio.TaskServer.Contracts;
 using Xunit;
@@ -219,9 +220,84 @@ public sealed class CompletionContentEvidenceTests : IDisposable
         Assert.False(CompletionContentPolicy.Decide(facts).Accepted);
     }
 
+    [Theory]
+    [InlineData("context", "io", "concerns")]
+    [InlineData("context", "access", "concerns")]
+    [InlineData("context", "json", "concerns")]
+    [InlineData("receipt", "io", "concerns")]
+    [InlineData("receipt", "access", "concerns")]
+    [InlineData("receipt", "json", "concerns")]
+    [InlineData("receipt", "io", "pass")]
+    public void Failed_local_admission_write_is_reported_and_can_be_retried(
+        string stage, string failure, string status)
+    {
+        var budget = LocalAdmission("Consider clearer wording.", qualityBlock: status == "pass",
+            status: status, writeAdmission: false);
+        var findingPath = Path.Combine(_root, "aspect-requirement-fit.json");
+        var originalFinding = File.ReadAllText(findingPath);
+        var expected = failure switch {
+            "access" => (Exception)new UnauthorizedAccessException("Injected access failure."),
+            "json" => new JsonException("Injected serialization failure."),
+            _ => new IOException("Injected write failure."),
+        };
+        var writer = new FailingAdmissionWriter(Path.Combine(_root, stage == "context"
+            ? CompletionContentEvidence.LocalContextFile : CompletionContentEvidence.LocalAdmissionFile), expected);
+        // Reproduce the original unguarded call before exercising its recovery boundary.
+        Assert.Same(expected, Record.Exception(() => CompletionContentEvidence.WriteLocalAdmission(
+            _root, "local-review-1", new string('a', 40), budget.RoundBudget.ContentAdmissions, writer)));
+
+        var logger = new AdmissionLogger();
+        Assert.False(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
+            new string('a', 40), budget.RoundBudget.ContentAdmissions, logger, writer));
+        var error = Assert.Single(logger.Errors);
+        Assert.Same(expected, error.Exception);
+        Assert.Contains("local-content-admission-record-failed", error.Message);
+        Assert.Contains("local-review-1", error.Message);
+        Assert.Contains(_root, error.Message);
+        Assert.False(CompletionContentPolicy.Decide(CompletionContentEvidence.Read(_card, null)).Accepted);
+        Assert.Equal(originalFinding, File.ReadAllText(findingPath));
+
+        Assert.True(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
+            new string('a', 40), budget.RoundBudget.ContentAdmissions, logger));
+        if (status == "pass")
+        {
+            Assert.False(CompletionContentPolicy.Decide(CompletionContentEvidence.Read(_card, null)).Accepted);
+            ReviewRoundBudgetStore.MarkFollowUp(_root, "local-review-1", "AGT-FOLLOW-UP");
+        }
+        var facts = CompletionContentEvidence.Read(_card, null);
+        Assert.True(CompletionContentPolicy.Decide(facts).Accepted);
+        Assert.Equal("local-review-1", facts.ReviewAttemptId);
+        Assert.Contains(CompletionContentEvidence.LocalAdmissionFile, facts.ContentSummary);
+        Assert.Equal(originalFinding, File.ReadAllText(findingPath));
+    }
+
+    private sealed class FailingAdmissionWriter(string failedPath, Exception failure)
+        : AgentStudio.Persistence.IAtomicJsonFileWriter
+    {
+        public void Write(string path, string content) => ReplaceExisting(path, content);
+
+        public void ReplaceExisting(string path, string content)
+        {
+            if (path == failedPath) throw failure;
+            new AgentStudio.Persistence.AtomicJsonFileWriter().ReplaceExisting(path, content);
+        }
+    }
+
+    private sealed class AdmissionLogger : ILogger
+    {
+        public List<(Exception? Exception, string Message)> Errors { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => true;
+        public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (level == LogLevel.Error) Errors.Add((exception, formatter(state, exception)));
+        }
+    }
+
     private AgentStudio.OrchestrationDecisions.ReviewBudgetDecision LocalAdmission(string summary,
         int used = 0, int maximum = 0, bool qualityBlock = false,
-        string status = "concerns", string aspect = "requirement-fit")
+        string status = "concerns", string aspect = "requirement-fit", bool writeAdmission = true)
     {
         LocalDelivery(new string('a', 40));
         CompletionContentEvidence.StampLocalRun(_root);
@@ -238,8 +314,9 @@ public sealed class CompletionContentEvidenceTests : IDisposable
             "local-review-1", 1, 2, 2, 2));
         ReviewRoundBudgetStore.Record(_root, AgentStudio.OrchestrationDecisions.ReviewRoundBudgetLedger.Empty,
             new("local-review-1", budget.BlockingAspects, budget.RoundBudget.DegradedAspects));
-        CompletionContentEvidence.WriteLocalAdmission(_root, "local-review-1", new string('a', 40),
-            budget.RoundBudget.ContentAdmissions);
+        if (writeAdmission)
+            CompletionContentEvidence.WriteLocalAdmission(_root, "local-review-1", new string('a', 40),
+                budget.RoundBudget.ContentAdmissions);
         return budget;
     }
 

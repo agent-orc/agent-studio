@@ -19,9 +19,30 @@ public static class CompletionContentEvidence
         string? BriefVersion, IReadOnlyDictionary<string, string> EvidenceHashes,
         IReadOnlyList<ReviewContentAdmission> Dispositions);
 
+    /// <summary>A failed write keeps local acceptance pending for a later review sweep.</summary>
+    public static bool TryWriteLocalAdmission(string folder, string reviewAttemptId, string? resultSha,
+        IReadOnlyList<ReviewContentAdmission>? dispositions,
+        Microsoft.Extensions.Logging.ILogger logger,
+        AgentStudio.Persistence.IAtomicJsonFileWriter? writer = null)
+    {
+        try
+        {
+            WriteLocalAdmission(folder, reviewAttemptId, resultSha, dispositions, writer);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            logger.LogError(ex,
+                "local-content-admission-record-failed folder={FolderPath} review={ReviewAttemptId}",
+                folder, reviewAttemptId);
+            return false;
+        }
+    }
+
     /// <summary>Freezes the shared budget decision after all local acceptance gates have passed.</summary>
     public static void WriteLocalAdmission(string folder, string reviewAttemptId, string? resultSha,
-        IReadOnlyList<ReviewContentAdmission>? dispositions)
+        IReadOnlyList<ReviewContentAdmission>? dispositions,
+        AgentStudio.Persistence.IAtomicJsonFileWriter? writer = null)
     {
         if (dispositions is not { Count: > 0 } || string.IsNullOrWhiteSpace(resultSha)) return;
         var delivery = ReadLocalDelivery(folder);
@@ -34,7 +55,7 @@ public static class CompletionContentEvidence
         var contextPath = Path.Combine(folder, LocalContextFile);
         var context = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(contextPath))!;
         context["admissionReviewAttemptId"] = reviewAttemptId;
-        var writer = new AgentStudio.Persistence.AtomicJsonFileWriter();
+        writer ??= new AgentStudio.Persistence.AtomicJsonFileWriter();
         writer.ReplaceExisting(contextPath, context.ToJsonString());
         var hashes = dispositions.ToDictionary(item => item.Aspect,
             item => LocalEvidenceHash(folder, item.Aspect), StringComparer.OrdinalIgnoreCase);
