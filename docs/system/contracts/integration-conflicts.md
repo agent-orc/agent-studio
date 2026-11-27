@@ -121,6 +121,17 @@ facts are read outside the coordinator's queue lock. A queue change during those
 reads causes selection to restart; a cached replay can be discarded only if it is
 still the completed replay that was inspected.
 
+These retry receipts control admission. The collision-ledger evidence above
+remains optional. Receipt writes catch filesystem failures and clean up their
+temporary file on a failed atomic replacement. If a conflict receipt cannot be saved, that
+delivery returns an explicit integration error and other deliveries can drain.
+Preparing a recovery saves its queued receipt in one replacement before changing
+the pending intent, delivery subject, route or session delta. A persistence
+failure leaves the reviewed delivery intact and records the failed preparation.
+Failure to delete an old receipt after successful publication is logged without
+changing the successful result or preventing branch reclamation. The receipt
+may remain until filesystem access is repaired.
+
 Board publication also reads task folders and conflict receipts outside that
 shared lock. It captures the queue, orders that snapshot using recovery
 reservations, and publishes only if the queue identity and revision still match.
@@ -136,5 +147,6 @@ original time when it re-enters the queue; unrelated deliveries can pass. A
 successful integration removes the reservation, and parking or moving out of
 those active lanes stops it applying. Holds and infrastructure errors retain the
 receipt. The cost is waiting on shared files for the recovery and its review,
-plus a bounded recheck delay (30 seconds by default). An already running merge
+plus repeated receipt and Git reads while waiting. Reservation-wait sleeps are
+capped at one second. An already running merge
 cannot be preempted. Batch formation, gates and review verdicts are unchanged.

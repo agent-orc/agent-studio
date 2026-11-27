@@ -62,35 +62,45 @@ public sealed class IntegrationConflictRecovery
         return mayRetry ? null : receipt.Result;
     }
 
-    internal void Record(RemoteDeliveryIntegrationRequest request, MergeIntoIntegrationResult result)
+    internal string? Record(RemoteDeliveryIntegrationRequest request, MergeIntoIntegrationResult result)
     {
         if (result.Outcome is not (MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict))
         {
             // A hold or infrastructure error retains priority. A landed result releases it.
             if (result.Outcome.IsSuccessfulIntegration())
-                File.Delete(Path.Combine(request.JobFolderPath, FileName));
-            return;
+            {
+                try { File.Delete(Path.Combine(request.JobFolderPath, FileName)); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // Publication already happened. Receipt cleanup cannot reverse it.
+                    SilentCatch.Note(ex, "IntegrationConflictRecovery: receipt cleanup");
+                }
+            }
+            return null;
         }
-        RecordConflict(request, Sha(request), result);
+        var error = Write(request.JobFolderPath,
+            ConflictReceipt(request, Sha(request), result, Read(request.JobFolderPath)));
+        return error is null ? null
+            : $"{error} Conflict files: {string.Join(", ", result.ConflictedFiles)}. {result.Error}";
     }
 
-    private static void RecordConflict(RemoteDeliveryIntegrationRequest request, string sha, MergeIntoIntegrationResult result)
+    private static IntegrationConflictReceipt ConflictReceipt(RemoteDeliveryIntegrationRequest request,
+        string sha, MergeIntoIntegrationResult result, IntegrationConflictReceipt? previous)
     {
-        var previous = Read(request.JobFolderPath);
         var at = previous is { RecoveryQueued: true } && previous.Target == request.IntegrationBranch
             ? previous.OriginalDeliveredAtUtc : request.DeliveredAtUtc;
         var paths = previous is { RecoveryQueued: true } && previous.Target == request.IntegrationBranch
             ? (previous.ReservedPaths ?? previous.Result.ConflictedFiles).Concat(result.ConflictedFiles)
                 .Distinct(StringComparer.Ordinal).ToArray() : result.ConflictedFiles;
-        Write(request.JobFolderPath, new(sha, request.IntegrationBranch, at, result, ReservedPaths: paths));
+        return new(sha, request.IntegrationBranch, at, result, ReservedPaths: paths);
     }
 
-    internal static void PrepareQueued(RemoteDeliveryIntegrationRequest request, string sha, MergeIntoIntegrationResult result)
+    internal static string? PrepareQueued(RemoteDeliveryIntegrationRequest request, string sha, MergeIntoIntegrationResult result)
     {
         var previous = Read(request.JobFolderPath);
-        if (previous is null || previous.DeliverySha != sha || previous.Target != request.IntegrationBranch)
-            RecordConflict(request, sha, result);
-        MarkQueued(request.JobFolderPath);
+        var receipt = previous is not null && previous.DeliverySha == sha && previous.Target == request.IntegrationBranch
+            ? previous : ConflictReceipt(request, sha, result, previous);
+        return Write(request.JobFolderPath, receipt with { RecoveryQueued = true });
     }
 
     internal static void MarkQueued(string folder)
@@ -155,12 +165,28 @@ public sealed class IntegrationConflictRecovery
         }
     }
 
-    private static void Write(string folder, IntegrationConflictReceipt receipt)
+    private static string? Write(string folder, IntegrationConflictReceipt receipt)
     {
-        if (!Directory.Exists(folder)) return;
         var path = Path.Combine(folder, FileName);
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(receipt, Json));
-        File.Move(temporary, path, overwrite: true);
+        try
+        {
+            File.WriteAllText(temporary, JsonSerializer.Serialize(receipt, Json));
+            File.Move(temporary, path, overwrite: true);
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "IntegrationConflictRecovery: receipt write");
+            return $"integration-conflict-receipt-write-failed: {FileName} could not be saved; repair filesystem access before retrying integration. {ex.Message}";
+        }
+        finally
+        {
+            try { File.Delete(temporary); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                SilentCatch.Note(ex, "IntegrationConflictRecovery: temporary receipt cleanup");
+            }
+        }
     }
 }

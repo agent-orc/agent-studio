@@ -277,6 +277,16 @@ public sealed class IntegrationAgentRoundService
                 budgetExhausted: true));
         }
 
+        // Refuse before changing the reviewed delivery if its durable retry
+        // guard and reservation cannot be prepared.
+        if (IntegrationConflictRecovery.PrepareQueued(request with { JobFolderPath = job.FolderPath },
+                subject.ResultSha, result) is { } persistenceError)
+        {
+            RecordFailure(job.FolderPath, request, result, persistenceError, epoch, subject, budget,
+                conflictedFiles, involvedCards);
+            return Task.FromResult(Failed(persistenceError));
+        }
+
         var prompt = BuildPrompt(job, subject, request, result, conflictedFiles, involvedCards, context);
         var intent = _mutations.SavePendingIntent(
             job.Id,
@@ -321,7 +331,6 @@ public sealed class IntegrationAgentRoundService
             prompt,
             IntegrationContinuationPrompt.VerificationScope.Trim()));
 
-        IntegrationConflictRecovery.PrepareQueued(request with { JobFolderPath = job.FolderPath }, subject.ResultSha, result);
         var position = _states.PromoteToReadyTop(
             job.Id, job.WatchPath,
             transitionCause: LaneChangeCauses.IntegrationRecovery,

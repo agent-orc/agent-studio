@@ -43,6 +43,64 @@ public sealed class IntegrationConflictRecoverySafetyTests : IDisposable
         Assert.Equal(MergeIntoIntegrationOutcome.Error, recovery.Replay(request)?.Outcome);
     }
 
+    [Fact]
+    public async Task ReceiptCleanupFailurePreservesPublishedSuccessAndContinuesDrain()
+    {
+        var request = Request("cleanup");
+        var recovery = new IntegrationConflictRecovery(_ => "tip", (_, _, _) => false, _ => [], _ => []);
+        var published = MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged, mergedSha: "published-sha");
+        var entered = new List<string>();
+        var failures = new List<string>();
+        var reclaimed = new List<string>();
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(item =>
+        {
+            entered.Add(item.JobId);
+            if (item.JobId == request.JobId)
+                Directory.CreateDirectory(Path.Combine(item.JobFolderPath, "integration-conflict-recovery.json"));
+            return Task.FromResult(published);
+        }, NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            recordFailure: (_, _, _, detail) => failures.Add(detail),
+            reclaimAfterIntegration: item => reclaimed.Add(item.JobId), conflictRecovery: recovery);
+
+        var result = await coordinator.EnqueueAsync(request).WaitAsync(TimeSpan.FromSeconds(5));
+        await coordinator.EnqueueAsync(Request("next")).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(published, result);
+        Assert.Equal(["cleanup", "next"], entered);
+        Assert.Equal(["cleanup", "next"], reclaimed);
+        Assert.Empty(failures);
+        Assert.Contains(IntegrationLaneEvents.Read(request.JobFolderPath), row => row.Kind == "ready-to-publish");
+    }
+
+    [Fact]
+    public async Task ReceiptWriteFailureIsExplicitAndDoesNotStrandTheNextDelivery()
+    {
+        var request = Request("write");
+        var recovery = new IntegrationConflictRecovery(_ => "tip", (_, _, _) => false, _ => [], _ => []);
+        var rounds = new List<string>();
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(item =>
+        {
+            if (item.JobId != request.JobId)
+                return Task.FromResult(MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged));
+            Directory.CreateDirectory(Path.Combine(item.JobFolderPath, "integration-conflict-recovery.json"));
+            return Task.FromResult(Conflict());
+        }, NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            startAgentRound: (item, _) =>
+            {
+                rounds.Add(item.JobId);
+                return Task.FromResult(new IntegrationAgentRoundStartResult(true, "queued"));
+            }, conflictRecovery: recovery);
+
+        var result = await coordinator.EnqueueAsync(request).WaitAsync(TimeSpan.FromSeconds(5));
+        var next = await coordinator.EnqueueAsync(Request("next")).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, result.Outcome);
+        Assert.Contains("integration-conflict-receipt-write-failed", result.Error);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, next.Outcome);
+        Assert.Empty(rounds);
+        Assert.Empty(Directory.GetFiles(request.JobFolderPath, "*.tmp"));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

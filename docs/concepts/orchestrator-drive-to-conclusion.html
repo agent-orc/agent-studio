@@ -3460,6 +3460,18 @@
             progress and repaired-delivery order during a concurrent enqueue.
             The terminal remains the queued recovery or completed integration.</td>
         </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4048</code><br><span class="small">integration-conflict-receipt-write-repair</span></td>
+          <td>No CLI crashed. Receipt replacement or cleanup could throw inside
+            the individual integration drain after its merge result was known.</td>
+          <td>Receipt writes and deletion had no filesystem error guard.
+            Recovery preparation also wrote after superseding the delivery.</td>
+          <td>Failed conflict persistence returns an explicit integration error
+            for that delivery, and the queue continues. Recovery preparation
+            persists its receipt before changing the reviewed delivery. Cleanup
+            failure preserves a successful publication and branch reclamation.</td>
+        </tr>
       </tbody>
     </table>
 

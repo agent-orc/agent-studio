@@ -11,14 +11,16 @@ public sealed class IntegrationAgentRoundSessionTests : IDisposable
     private static readonly DateTimeOffset At = DateTimeOffset.UnixEpoch;
 
     [Theory]
-    [InlineData(MergeIntoIntegrationOutcome.Conflict, 0)]
-    [InlineData(MergeIntoIntegrationOutcome.Conflict, 1)]
-    [InlineData(MergeIntoIntegrationOutcome.Conflict, 2)]
-    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 0)]
-    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 1)]
-    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 2)]
+    [InlineData(MergeIntoIntegrationOutcome.Conflict, 0, false)]
+    [InlineData(MergeIntoIntegrationOutcome.Conflict, 1, false)]
+    [InlineData(MergeIntoIntegrationOutcome.Conflict, 2, false)]
+    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 0, false)]
+    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 1, false)]
+    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 2, false)]
+    [InlineData(MergeIntoIntegrationOutcome.Conflict, 0, true)]
+    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 0, true)]
     public async Task Follow_up_is_claimable_only_after_its_session_delta_and_reasoning_route_are_saved(
-        MergeIntoIntegrationOutcome outcome, int used)
+        MergeIntoIntegrationOutcome outcome, int used, bool receiptWriteFailure)
     {
         const string id = "AGT-3970";
         foreach (var state in TaskStates.All)
@@ -89,7 +91,25 @@ public sealed class IntegrationAgentRoundSessionTests : IDisposable
         var result = new MergeIntoIntegrationResult(outcome, null, "Integration needs a round.",
             ["label.cs"], [], new string('b', 40));
 
+        if (receiptWriteFailure)
+            Directory.CreateDirectory(Path.Combine(folder, "integration-conflict-recovery.json"));
+
         var started = await service.TryStartAsync(request, result, ["AGT-4001"]);
+        if (receiptWriteFailure)
+        {
+            Assert.False(started.Started);
+            Assert.Contains("integration-conflict-receipt-write-failed", started.Reason);
+            var unchanged = scanner.FindJob(id, _root)!;
+            Assert.Equal(TaskStates.AutoReview, unchanged.State);
+            Assert.Null(unchanged.PendingIntent);
+            Assert.Equal(subject.ResultSha, ReviewSubjectStore.Read(folder)?.ResultSha);
+            Assert.Null(SessionContinuationLedgerStore.PeekDelta(folder));
+            Assert.Equal("high", unchanged.ThinkingLevel);
+            Assert.Single(timeline.ReadAll(folder), row => row.Kind == TimelineEventKinds.IntegrationFailed);
+            Assert.DoesNotContain(timeline.ReadAll(folder), row => row.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+            Assert.Empty(Directory.GetFiles(folder, "*.tmp"));
+            return;
+        }
         if (used == 2)
         {
             Assert.False(started.Started);

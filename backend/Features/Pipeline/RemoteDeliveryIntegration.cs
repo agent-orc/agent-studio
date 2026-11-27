@@ -471,7 +471,17 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 {
                     var replay = _conflictRecovery?.Replay(delivery.Request);
                     result = replay ?? await _integrate(delivery.Request).ConfigureAwait(false);
-                    if (replay is null) _conflictRecovery?.Record(delivery.Request, result);
+                    if (replay is null && _conflictRecovery?.Record(delivery.Request, result) is { } persistenceError)
+                    {
+                        _recordFailure(delivery.Request, AcceptedIntegrationFailureCodes.IntegrationError,
+                            "The integration conflict recovery receipt could not be saved.", persistenceError);
+                        result = result with
+                        {
+                            Outcome = MergeIntoIntegrationOutcome.Error,
+                            FailureCode = AcceptedIntegrationFailureCodes.IntegrationError,
+                            Error = persistenceError,
+                        };
+                    }
                 }
                 if (MonolithTransitionAdapter.IntegrationResult(result.Outcome.ToString(), 0).Action
                     == AgentStudio.OrchestrationDecisions.IntegrationResultAction.Requeue)
