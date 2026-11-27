@@ -2,12 +2,12 @@
 
 ## Headline
 
-**A build gate that never reached a verdict is an interrupted run, and the next
-process repairs the integration branch before anything else is merged on top.**
+**An unsettled build gate retains branch custody, and the next process repairs
+the integration branch before anything else is merged on top.**
 The pre-develop gate publishes before it verifies, so a process that dies inside
 that window leaves a merge nobody judged. Startup recovery either rolls the
 integration branch back to the exact pre-merge tip or resumes the merge whose
-verdict is already durable, and the affected cards are integrated again without
+green verdict is already durable, and the affected cards are integrated again without
 a new remote review.
 
 ## Why
@@ -42,17 +42,25 @@ one.
   that moment: the local branch tip, or the `origin/<branch>` tip when the merge
   has to recreate the branch.
 - It is completed with the merge result as soon as the merge returns.
-- It is cleared by every path that reaches a verdict, including the rollback
-  path, and by every path that never created a merge.
+- A rollback path persists phase `RollbackRequired` before recording its gate
+  receipt. The exact anchor remains until reset succeeds and phase
+  `RollbackCompleted` is durably recorded. Failed resets retain custody.
+- Green verdicts and paths that never created a merge clear the entry directly.
+  A red verdict alone never clears the rollback obligation.
 
 An entry that is still present when a process starts is therefore, by
-construction, a gate that was interrupted.
+construction, unsettled branch custody, including a rejected gate whose rollback
+was interrupted.
 
 ## The repair
 
 [InterruptedIntegrationGateRecoveryHostedService](../../../backend/Features/Pipeline/InterruptedIntegrationGateRecoveryHostedService.cs)
-runs one pass per process start, before the merge gate opens for new work - the
-only moment at which an un-gated merge can still be rolled back safely. The
+runs one pass per process start. Direct merge admission also reconciles open
+journals before touching the lane, so startup scheduling cannot let a new merge
+use an unrepaired tip. Both recovery paths hold the same fenced publication
+lease as ordinary integration, refresh the remote tracking branch, then read
+lane ancestry. A failed remote refresh or an escalation retains the journal and
+refuses new direct merge admission. The
 decision itself is pure
 ([InterruptedIntegrationGatePolicy](../../../backend/Features/Pipeline/InterruptedIntegrationGatePolicy.cs))
 and is taken **per integration branch**, not per card: rolling one card's merge
@@ -66,6 +74,12 @@ somebody else's delivery.
 | The merge is not in the branch graph any more | The branch was already repaired; re-queue the card only |
 | The anchor is not reachable from the branch tip | Escalate: the exact rollback anchor is gone |
 | The anchor does not contain `origin/<branch>` | Escalate: resetting would un-publish commits that are already on origin |
+
+A restart after reset but before its completion record observes that the
+rejected merge is absent and records completion without resetting again. A
+surviving `RollbackCompleted` phase retains the exact anchor for reconciliation. Published
+commits remain protected by the existing policy. Owner checks fence completion
+and deletion against a newer invocation's journal.
 
 The reset runs in the Studio-owned integration worktree
 ([integration worktree](integration-worktree.md)), never in the developer

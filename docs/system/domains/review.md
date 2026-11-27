@@ -34,7 +34,7 @@ changed by the delivery before the gate tests the resulting tree. Catalogue
 discovery keeps its managed key mutation for descriptors outside a gated
 delivery.
 
-Version: 2026-11-22
+Version: 2026-11-27
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Target-branch plan and older deliveries (AGT-3743)
@@ -384,7 +384,7 @@ and concern reopens, and automatic continuations across all epochs.
 
 An aspect's consecutive block streak keys on its aspect id, independent of the
 finding summary or epoch. After two prior consecutive blocks, or when the
-lifetime round or reissue budget is spent, a further non-build aspect block is
+lifetime round or reissue budget is spent, a further transferable aspect block is
 recorded as `concerns`. With zero automatic reissues allowed, an initial block
 still follows the ordinary escalation path until the aspect streak or lifetime
 round limit binds. One linked follow-up card carries all open findings;
@@ -400,7 +400,9 @@ The delivery then follows the ordinary acceptance
 and integration rules. A build/test failure or tests-and-evidence block is
 never degraded. When the per-card budget is spent, such a block moves to
 Escalated with a receipt naming used and allowed rounds and open aspects.
-A spent non-test block degrades to concerns with one linked follow-up.
+A spent transferable block degrades to concerns with one linked follow-up.
+Blocking `requirement-fit` and `concept-fit` findings remain blocking, including
+at the card-round limit. A repaired delivery needs a fresh settled content pass.
 For Remote Review, the accepted settlement journal carries the original
 blocking verdicts and budget decision. Restart reconciliation restores the
 round ledger and linked follow-up before it resumes delivery integration.
@@ -412,6 +414,48 @@ continuation complete in any lane, and a `lane_changed` row keyed by the
 continuation idempotency key means only the remaining writes run. Only a card
 that never took the move and still sits in 4-auto-review is moved, so a card
 that later returns to review is never bounced by the settled attempt.
+
+### Content admission at completion (AGT-4096)
+
+Remote Review freezes content admission through `ReviewBudgetPolicy` for each
+content aspect. Before settling authority, the report host writes
+`logs/content-admission-<attempt>.json`. Its separate prefix keeps existing
+settlement-journal enumeration unchanged. This canonical
+receipt binds the original verdict, disposition and acceptance reason to the
+review attempt, immutable delivery SHA, authored brief and accepted report hash.
+The accepted settlement must match the current fenced review and run before
+the receipt can establish admission. An orphan receipt establishes nothing.
+Replays retain the frozen decision rather than recomputing it against later
+project settings or budgets.
+
+The dispositions are `passed`, `advisory`, `concern-budget-accepted`,
+`transferred` and `refused`. Advisory concerns and actionable concerns whose
+configured concern budget is exhausted can establish content admission without
+rewriting the original report. A transfer additionally requires the attempt's
+recorded follow-up key. The monolith records that key only after both source
+links are persisted. The engine uses its mandatory `review_follow_up_routed`
+receipt, bound to the frozen orchestration run id. Until then, completion names
+the machine-owned obligation and asks for settlement recovery. For budget
+transfers, the hashed settlement retains the frozen admission, original
+findings and budget decision; restart reconciliation creates or reuses the
+follow-up before delivery resumes. Failed creation never becomes admission.
+
+Completion and the visible acceptance-readiness projection consume the same
+bound receipt. Their existing content fields carry an admitted `pass` plus the
+original concern, literal status, disposition, acceptance reason and follow-up
+key in the summary. Completion claims retain that projection, so historical
+completion checks recognize the same admission and preserve its explanation.
+The immutable report still contains its original concerns. Older concern
+reports without a recorded admission remain refused; a legacy literal pass
+retains its existing lineage checks. Stale briefs, a wrong content aspect,
+unsettled or mismatched reviews, and missing required research reports remain
+refused. Report-only local review retains its existing run-bound contract.
+
+`CompletionContentAdmissionTests` in
+`backend.Tests/CompletionContentPolicyTests.cs` covers advisory and spent-budget
+concerns, repaired deliveries, durable transfer recovery, failed creation,
+historical claims, stale briefs, wrong aspects and missing reports across
+policy, authority, settlement and completion boundaries.
 
 ## Concern fix and scoped re-review contract
 

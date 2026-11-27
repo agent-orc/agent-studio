@@ -22,6 +22,7 @@ public static class OperatorDecisionTypes
     public const string QuotaExhausted = "quota.exhausted";
     public const string QuotaFallbackActive = "quota.fallback-active";
     public const string GateHostUnreachable = "gate-host.unreachable";
+    public const string AuditAlert = "audit.alert";
     public const string HostDiskPressure = "host.disk-pressure";
     public const string ReviewHostDrift = "review-host.drift";
     public const string ReviewRetrySchedulerStalled = "review-retry.scheduler-stalled";
@@ -30,6 +31,7 @@ public static class OperatorDecisionTypes
     public const string PostMergeRunsMissing = "post-merge.missing";
     /// <summary>RT-1 (AGT-3988): a post-merge incident red for two hours waits for the owner's answer.</summary>
     public const string PostMergeRedIncident = "post-merge.red-incident";
+    public const string CapacityUnderused = "capacity.underused";
     public const string OverlapStarved = "dispatch.overlap-starved";
     public const string DeployCompleted = "deploy.completed";
     public const string WatcherHeartbeat = "watcher.heartbeat";
@@ -38,9 +40,9 @@ public static class OperatorDecisionTypes
     [
         EscalationOpened, HumanReviewReady, DecisionCardOpened, BackendStalled, BatchGateStuck, ProgressIdleWithReady,
         BatchRed, BatchIsolating, BatchRecordUnreadable, BatchRunningWithoutGate, PushPendingOverdue, PushBlocked, QuotaExhausted, QuotaFallbackActive,
-        GateHostUnreachable, HostDiskPressure, ReviewHostDrift, ReviewRetrySchedulerStalled, EnvironmentIncidentOpen, PostMergeRunsMissing,
+        GateHostUnreachable, AuditAlert, HostDiskPressure, ReviewHostDrift, ReviewRetrySchedulerStalled, EnvironmentIncidentOpen, PostMergeRunsMissing,
         PostMergeRedIncident,
-        OverlapStarved, DeployCompleted, WatcherHeartbeat,
+        CapacityUnderused, OverlapStarved, DeployCompleted, WatcherHeartbeat,
     ];
 
     /// <summary>The type a fact key names: every key starts with its type and a <c>|</c>.</summary>
@@ -94,6 +96,7 @@ public static class OperatorOperations
         OperatorDecisionTypes.QuotaFallbackActive => [CapacityRead, RoutingChange],
         // The repair is the gate host itself or the RemoteGate:SshHost setting (AGT-3792).
         OperatorDecisionTypes.GateHostUnreachable => [StallsInspect, BatchTriage],
+        OperatorDecisionTypes.AuditAlert => [OwnerDecide],
         OperatorDecisionTypes.HostDiskPressure => [StallsInspect],
         OperatorDecisionTypes.ReviewHostDrift => [StallsInspect],
         OperatorDecisionTypes.ReviewRetrySchedulerStalled => [StallsInspect, CardInspect],
@@ -102,6 +105,7 @@ public static class OperatorOperations
         OperatorDecisionTypes.PostMergeRunsMissing => [OwnerDecide],
         // Revert, fix forward or strict are the owner's answers; the repair card is the evidence (RT-1).
         OperatorDecisionTypes.PostMergeRedIncident => [OwnerDecide, CardInspect],
+        OperatorDecisionTypes.CapacityUnderused => [CapacityRead, CardInspect],
         OperatorDecisionTypes.OverlapStarved => [RunAnyway, CardInspect],
         OperatorDecisionTypes.DeployCompleted => [CardInspect],
         OperatorDecisionTypes.WatcherHeartbeat => [WatcherStatus],

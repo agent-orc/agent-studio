@@ -33,12 +33,23 @@ describe('operator attention model', () => {
     expect(attentionClassOf('batch-gate.stuck')).toBe('batch');
     expect(attentionClassOf('push.pending-overdue')).toBe('push');
     expect(attentionClassOf('push.blocked')).toBe('push-blocked');
+    expect(attentionClassOf('capacity.underused')).toBe('capacity');
     expect(attentionClassOf('quota.exhausted')).toBe('quota');
     expect(attentionClassOf('quota.fallback-active')).toBe('quota');
     expect(attentionClassOf('host.disk-pressure')).toBe('disk');
     expect(attentionClassOf('backend.stalled')).toBe('host');
     expect(attentionClassOf('progress.idle-with-ready')).toBe('host');
     expect(attentionClassOf('something.new')).toBe('other');
+  });
+
+  it('opens the capacity chain head or CLI usage when no head exists', () => {
+    const head = item('capacity.underused');
+    const [group] = groupAttention([head]);
+    expect(attentionTarget(head, group.spec)).toBe('card');
+    expect(attentionActionLabel(head, group.spec)).toBe('Open blocking card');
+    const quota = item('capacity.underused', { cardKey: null, cards: [] });
+    expect(attentionTarget(quota, group.spec)).toBe('cli-usage');
+    expect(attentionActionLabel(quota, group.spec)).toBe('Open CLI usage');
   });
 
   it('groups in class order and the group sizes add up to the rows (R3)', () => {

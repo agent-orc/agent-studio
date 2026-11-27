@@ -868,12 +868,12 @@ public sealed class AgentMessageBusBridge
             topic: "line_guardian_" + kind, summary: TruncateSummary(summary),
             payload: new { incident, kind }, tags: ["line-guardian", "incident:" + incident]), ct);
 
-    public Task EmitControlPlaneAuditAlertAsync(string code, string message, long? sequence, CancellationToken ct = default)
+    public async Task EmitControlPlaneAuditAlertAsync(string code, string message, long? sequence, CancellationToken ct = default)
     {
         var msg = NewMessage(
             participantId: ParticipantRuntime,
             role: "system",
-            kind: "action",
+            kind: "error",
             severity: "High",
             project: null,
             jobId: null,
@@ -881,7 +881,12 @@ public sealed class AgentMessageBusBridge
             summary: TruncateSummary($"Audit trail: {message}"),
             payload: new { code, message, sequence },
             tags: new[] { "control-plane-audit", $"alert:{code}" });
-        return EmitAsync(msg, ct);
+        // Audit alarms need a visible delivery failure. Let the monitor log it once,
+        // naming the alert, instead of swallowing it in the best-effort bus warning.
+        var workspace = Workspace();
+        if (string.IsNullOrWhiteSpace(workspace))
+            throw new InvalidOperationException("TaskRepository is not configured for audit alert delivery.");
+        await _store.AppendAsync(workspace, msg, ct).ConfigureAwait(false);
     }
 
     /// <summary>

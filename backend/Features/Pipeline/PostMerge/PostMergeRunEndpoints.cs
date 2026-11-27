@@ -20,7 +20,8 @@ public static class PostMergeRunEndpoints
                     var state = store.Read(project.Id);
                     return new DevelopStateSummary(project.DisplayName,
                         state.Runs.Count == 0 && state.ActiveRun is null ? null : state.DevelopState,
-                        state.LastGreenSha, state.PendingWindow, state.FlakyCount,
+                        state.LastGreenSha, state.PendingWindow is { } pending
+                            ? pending with { ObservedAtUtc = clock.GetUtcNow() } : null, state.FlakyCount,
                         (state.FlakyHistory ?? []).Where(item => item.AtUtc >= clock.GetUtcNow().AddDays(-14)
                             && item.AtUtc <= clock.GetUtcNow())
                             .GroupBy(item => item.Test, StringComparer.Ordinal)
@@ -30,6 +31,7 @@ public static class PostMergeRunEndpoints
                             .ToArray())
                     {
                         Quarantines = incidents.ActiveQuarantines(project), LineStop = state.LineStop,
+                        ClosedWindow = state.ClosedWindow, GateSubjectId = state.GateSubjectId,
                     };
                 }).ToArray());
         });
@@ -42,6 +44,29 @@ public static class PostMergeRunEndpoints
             .Where(item => item.Repository is not null)
             .Select(item => new PostMergeProjectTarget(item.Project.Id, item.Project.DisplayName,
                 item.Repository!.RepositoryUrl, item.Repository.DefaultBranch)).ToArray()));
+        app.MapPost("/api/runner/post-merge/projects/{project}/placement", async (string project,
+            PostMergeWindowObservation observation, string? kind, ProjectRegistry registry,
+            PostMergeGateScheduler scheduler, ProjectSettingsService settings, CancellationToken ct) =>
+        {
+            var record = registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project);
+            if (record is null) return Results.NotFound();
+            if (!IsSha(observation.TipSha) || kind is not (null or "window" or "nightly"))
+                return Results.BadRequest();
+            var branch = settings.Get(record.DisplayName).IntegrationBranch;
+            return Results.Ok(await scheduler.PlaceAsync(record, observation.TipSha,
+                new(record.DisplayName, string.IsNullOrWhiteSpace(branch) ? "develop" : branch, kind ?? "window"), ct));
+        });
+        app.MapPost("/api/runner/post-merge/projects/{project}/close-window", (string project,
+            PostMergeWindowClosure closure, ProjectRegistry registry, PostMergeRunStore store, TimeProvider clock) =>
+        {
+            var record = registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project);
+            if (record is null) return Results.NotFound();
+            if (string.IsNullOrWhiteSpace(closure.Reason) || closure.Reason.Length > 256
+                || store.Read(record.Id).PendingWindow?.TipSha != closure.TipSha)
+                return Results.Conflict();
+            store.CloseWindow(record.Id, closure.Reason, clock.GetUtcNow(), closure.TipSha);
+            return Results.NoContent();
+        });
         app.MapPost("/api/runner/post-merge/projects/{project}/window", (string project,
             PostMergeWindowObservation observation, ProjectRegistry registry, PostMergeRunStore store) =>
         {
@@ -193,4 +218,6 @@ public sealed record DevelopStateSummary(string Project, string? DevelopState, s
     public int QuarantinedCount => Quarantines.Count;
     public int HeldCount => Quarantines.Count(entry => entry.Kind == "held");
     public string? LineStop { get; init; }
+    public PostMergeWindowClosure? ClosedWindow { get; init; }
+    public string? GateSubjectId { get; init; }
 }

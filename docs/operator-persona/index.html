@@ -1,0 +1,693 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Operator persona | Agent Studio Dossier</title><style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #696762;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style><style>
+    nav { margin: 24px 0; font-size: .85rem; line-height: 1.8; }
+    nav a { display: inline-block; margin-right: 14px; }
+    .catalogue { padding-top: 8px; margin-top: 28px; border-top: 1px solid var(--article-line); }
+    .catalogue dl { margin: 18px 0; }
+    .catalogue dt { margin-top: 12px; font: 650 .8rem/1.5 var(--article-sans); color: var(--article-muted); }
+    .catalogue dd { margin: 2px 0 0; }
+    .source-path { overflow-wrap: anywhere; }
+    .flow { position: relative; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 46px 28px; padding: 24px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font: .85rem/1.5 var(--article-sans); }
+    .flow .node { position: relative; z-index: 1; border: 1px solid var(--article-line); border-radius: 8px; padding: 14px; background: var(--article-paper); }
+    .flow b { display: block; margin-bottom: 6px; }
+    .flow svg { position: absolute; width: 100%; height: 100%; inset: 0; color: var(--article-link); }
+    .flow .control { background: var(--article-link-soft); }
+    .flow .human { background: var(--article-good-soft); }
+    .flow .review { grid-column: 2 / 4; }
+    footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--article-line); font: .8rem/1.6 var(--article-sans); color: var(--article-muted); }
+    @media(max-width:760px) { .flow { grid-template-columns: 1fr; gap: 14px; padding: 14px; } .flow .review { grid-column: auto; } .flow svg { display:none; } }
+</style></head>
+<body><main class="article">
+<header class="page"><p class="kicker">Dossier · Persona team · Operations</p><h1>Operator persona</h1><p class="lede">A fleet operator that turns observed stalls into bounded interventions, records its reasoning beside the human operator, and uses reviewed grants for bounded interventions.</p><div class="meta"><span><b>Source</b> AGT-4056</span><span><b>Status</b> decision-pending</span><span><b>Phase</b> decision-ready</span><span><b>Source audit</b> 27 November 2026 · a12f16847</span></div></header>
+<nav aria-label="Contents"><a href="#scope">Scope</a><a href="#alternatives">Alternatives</a><a href="#recommendation">Recommendation</a><a href="#catalogue">Situations</a><a href="#persona">Persona</a><a href="#authority">Authority</a><a href="#shadow">Shadow mode</a><a href="#review">Review</a><a href="#evidence">Evidence</a><a href="#open-decisions">Open decisions</a><a href="#slices">Slices</a></nav>
+<section id="scope"><h2>Scope</h2><p>Since 24 November an AI session with effective Admin access has operated the fleet through APIs and hosts. Its journal is evidence for a product role. The owner asks for efficient useful delivery and stable software. Spending a subscription to its reset limit is not an objective.</p><p>This proposal adds a <b>fleet-operator</b> persona in the existing team. It assembles operational cases across dispatch, dependency chains, integration, gates, hosts and acceptance. It supplies the missing facts, names the responsible role and verifies what happened after an intervention. Dispatch strategies still decide admission. The line guardian still owns red-test isolation. The orchestration decision library and platform appliers still own transitions.</p><p>The first delivery is an application-owned shadow record: a dated recommendation, the frozen facts it used, the human operator's action and a later reviewed outcome. No new operational effect is required to start learning. This Dossier changes no product code and makes no assertion about a current visible product surface. Product claims below concern source contracts and inspected backend behavior; there are no product screenshots or invented runtime states.</p></section>
+<section id="alternatives" data-concept-section="alternatives"><h2>Alternatives</h2><div class="variant-grid"><article class="variant"><h3>A · Journal and manual operator</h3><p>Keep the current operator skill, APIs and free-text journal. Lowest implementation cost and good discretion, but outcomes remain hard to compare and decisions depend on one session's memory. Use this as the human baseline while shadow evidence accumulates.</p></article><article class="variant"><h3>B · Bounded operator persona</h3><p>Add a normal team persona, a typed case and comparison record, deterministic advice and limited diagnostic sessions. Route actions to existing owners. Start in shadow; later authorize individual low-risk operation families. This provides a measurable path from journal practice to features.</p></article><article class="variant"><h3>C · Autonomous fleet administrator</h3><p>Give one model broad Admin and host access. It could reproduce much of the journal quickly, but would overlap dispatch and triage authority, make actions harder to attribute and spend tokens on frequent polling. Its access would exceed what the cases establish as necessary.</p></article></div></section>
+<section id="recommendation" data-concept-section="recommendation"><h2>Recommendation</h2><div class="callout" data-tone="accent"><p>Adopt B. Deliver the paired shadow record first, then automatic fact collection and advice, then the persona and its review. Keep fleet settings, policy exceptions, acceptance waivers and destructive host work under explicit human authority. Promote only specific bounded actions after their evidence cohort passes review.</p></div><p>Convert a repeated successful intervention into a deterministic product rule when its signal and preconditions are stable. Keep model work for uncertain diagnosis and an optional concise report. A repeated failure calls for a new question, a different evidence source or an escalation, rather than another identical run.</p><figure class="media-breakout"><div class="flow" role="img" aria-label="Frozen facts feed pure advice and a shadow record. Human action receipts join the record; an owner reviews the comparison. Only separately authorized advice reaches existing platform appliers."><svg viewBox="0 0 1000 430" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="currentColor"/></marker></defs><g stroke="currentColor" stroke-width="1.2" fill="none" marker-end="url(#arrow)"><path d="M325 105 H345"/><path d="M650 105 H674"/><path d="M325 290 H345"/><path d="M835 175 V220 H670 V270"/></g></svg><div class="node"><b>Frozen facts</b>Events, cards, dependencies, attempts, gate receipts, host coverage and quota</div><div class="node control"><b>Pure advice</b>Versioned rules, evidence delta, authority check and role handoff</div><div class="node control"><b>Shadow record</b>Recommendation committed before a human action; no execution credential</div><div class="node human"><b>Human operator</b>Actual action, identity, audit or deploy receipt; manual entry if needed</div><div class="node review"><b>Comparison and review</b>Same incident and input cutoff, differences, observed outcome, cost, reviewer and revision. The owner may later authorize a named action through the existing gateway and applier.</div></div><figcaption>Proposed ownership and evidence flow. Diagram labels describe the design, not a deployed feature. The action path remains closed during shadow mode.</figcaption></figure></section>
+<section id="catalogue"><h2>Situations</h2><p>Each entry separates journal evidence from today's inspected code. <b>Automatic</b> means eligible under a bounded platform or standing grant after implementation, never authorization supplied by this document. <b>Confirmation</b> means an exact reviewed action or owner policy choice. <b>Human</b> means the persona prepares the facts and waits for the responsible person. All persona operational effects stay disabled during shadow mode.</p><p>Journal references J00 to J16 are defined in <a href="#journal">Journal evidence</a>. E references lead to file and symbol citations under <a href="#sources">Source audit</a>. A code path proves implementation presence, not production deployment or success.</p>
+<section id="dispatch-stall"><h3>Dispatch stall</h3>
+<article class="catalogue" id="case-DS1"><h4>DS1 · Wave ordering</h4><p class="meta">Journal J01</p><dl>
+<dt>Signal</dt><dd>Many Ready cards from one source share code paths; integration conflict and rework rates rise.</dd>
+<dt>Diagnosis</dt><dd>A source wave was emitted without sequencing or packaging.</dd>
+<dt>Action</dt><dd>Ask the dispatcher to plan the complete wave before releasing it. Preserve owner pins and Dossier dependencies.</dd>
+<dt>Journal result</dt><dd>57 cards were created in one minute. The journal reports no conflict ping-pong after area chains from 22 November, at a cost of only 3 to 4 parallel Dossier cards.</dd>
+<dt>Product detection</dt><dd>Yes, partly: source-wave planning and frozen dispatcher strategy facts exist. <a href="#source-E09">E09</a> <a href="#source-E10">E10</a></dd>
+<dt>Gap</dt><dd>Assess observed rework and useful concurrency together; hand a case to the dispatcher instead of installing a second order.</dd>
+<dt>Authority</dt><dd>Automatic handoff; dispatcher alone applies its plan.</dd>
+</dl></article>
+<article class="catalogue" id="case-DS2"><h4>DS2 · Overlap starvation</h4><p class="meta">Journal J14, J15</p><dl>
+<dt>Signal</dt><dd>Free slots, Ready work, repeated parallel-conflict or overlap-serialize reasons, or broad docs overlap.</dd>
+<dt>Diagnosis</dt><dd>The comparison window or forecast granularity over-serializes work; a reviewed card may already be integrated.</dd>
+<dt>Action</dt><dd>Inspect delivery containment and forecast first. Ask the dispatcher to refine the plan; propose an explicit overlap-setting experiment only if that is still needed.</dd>
+<dt>Journal result</dt><dd>AGT-3481 blocked AGT-4015; an integration round held the serial lane for 50 minutes. On 26 November, changing overlap to off was followed by 5 simultaneous cards, compared with 1 and 10 idle slots.</dd>
+<dt>Product detection</dt><dd>Yes: scope-starvation facts, advisory pairs and off/running/in-flight settings exist. <a href="#source-E04">E04</a> <a href="#source-E06">E06</a> <a href="#source-E07">E07</a> <a href="#source-E08">E08</a></dd>
+<dt>Gap</dt><dd>An operator must correlate observed refusals with integration state and identify the next authorized actor. Setting off is no longer a missing feature.</dd>
+<dt>Authority</dt><dd>Automatic diagnosis and handoff; confirmation for setting changes or Run anyway.</dd>
+</dl></article>
+<article class="catalogue" id="case-DS3"><h4>DS3 · Missing authority</h4><p class="meta">Journal J16</p><dl>
+<dt>Signal</dt><dd>An actionable request is refused with 403 while the same capacity stall remains open.</dd>
+<dt>Diagnosis</dt><dd>The operator lacks an operation or a responsible person has not supplied a setting. Waiting silently cannot resolve it.</dd>
+<dt>Action</dt><dd>Publish one named request: exact denied operation, affected cards, elapsed stall, recommended choice, authorized owner and next check.</dd>
+<dt>Journal result</dt><dd>The journal attributes two days of stalled work, 24 to 26 November, to waiting for an Owner setting without a direct request.</dd>
+<dt>Product detection</dt><dd>Partly: decision events and suggested owner operations exist, and IAM refuses unauthorized calls. <a href="#source-E01">E01</a> <a href="#source-E30">E30</a> <a href="#source-E37">E37</a></dd>
+<dt>Gap</dt><dd>There is no typed link in the current journal from refusal to outstanding owner request, blocked chain and subsequent outcome.</dd>
+<dt>Authority</dt><dd>Automatic request; a person grants authority. No self-elevation.</dd>
+</dl></article>
+</section>
+<section id="chain-heads"><h3>Chain heads</h3>
+<article class="catalogue" id="case-CH1"><h4>CH1 · Blocked dependency roots</h4><p class="meta">Journal J02, J15</p><dl>
+<dt>Signal</dt><dd>Capacity projection lists an escalated or parked head and the number of Ready descendants it blocks.</dd>
+<dt>Diagnosis</dt><dd>The queue has work, but its dependency width is small.</dd>
+<dt>Action</dt><dd>Inspect and resolve the head before proposing independent work. Ask the dispatcher or owner for the appropriate priority treatment.</dd>
+<dt>Journal result</dt><dd>AGT-4011 and AGT-4015 blocked DS, RT and ES chains. The journal recommends clearing roots first; no measured recovery rate is supplied.</dd>
+<dt>Product detection</dt><dd>Yes: chain heads and graph width are already calculated. <a href="#source-E04">E04</a> <a href="#source-E05">E05</a></dd>
+<dt>Gap</dt><dd>Turn the existing fact into a bounded intervention with an owner, not another graph algorithm. A persona manager cannot reorder arbitrary coding cards.</dd>
+<dt>Authority</dt><dd>Automatic diagnosis/handoff; confirmation for priority outside existing role bounds.</dd>
+</dl></article>
+<article class="catalogue" id="case-CH2"><h4>CH2 · Repair placement</h4><p class="meta">Journal J06</p><dl>
+<dt>Signal</dt><dd>A repair is queued behind cards that wait for it, or repeated integration occupancy prevents that repair from being picked.</dd>
+<dt>Diagnosis</dt><dd>The repair cannot free the queue from its current position.</dd>
+<dt>Action</dt><dd>Route test repair-first to the guardian. Route ordinary Ready sequencing to the dispatcher; request owner priority where needed. Never remove mandatory dependency edges.</dd>
+<dt>Journal result</dt><dd>AGT-4020 is the journal example of a repair placed behind its own affected queue. A separate before/after number is not recorded.</dd>
+<dt>Product detection</dt><dd>Partly: dependency blocks, dispatch plans and guardian repair-first operations exist. <a href="#source-E04">E04</a> <a href="#source-E10">E10</a> <a href="#source-E18">E18</a> <a href="#source-E33">E33</a></dd>
+<dt>Gap</dt><dd>Record that the repair is the cause of the wait and verify pickup after the handoff. Do not broaden the chief of staff grant.</dd>
+<dt>Authority</dt><dd>Automatic within the receiving role grant; otherwise confirmation.</dd>
+</dl></article>
+<article class="catalogue" id="case-CH3"><h4>CH3 · Unavailable hardware</h4><p class="meta">Journal J15</p><dl>
+<dt>Signal</dt><dd>A review finding names a required capability absent from the host inventory.</dd>
+<dt>Diagnosis</dt><dd>A TPM or Secure Enclave check cannot be completed by the fleet; another identical run adds no evidence.</dd>
+<dt>Action</dt><dd>Prepare a follow-up that keeps the capability disabled, marks it unverified and supplies a manual probe, subject to the owner accepting that delivery scope.</dd>
+<dt>Journal result</dt><dd>The journal gives this disposition for AGT-4015. It provides no hardware pass and no measured completion result.</dd>
+<dt>Product detection</dt><dd>Partly: owner-decision and review-concern states exist. <a href="#source-E28">E28</a> <a href="#source-E31">E31</a></dd>
+<dt>Gap</dt><dd>The inspected operator fact contract has no typed hardware-evidence waiver. Absence must remain unverified, never become a pass.</dd>
+<dt>Authority</dt><dd>Human decision on delivery scope; automatic draft and capability check.</dd>
+</dl></article>
+</section>
+<section id="conflict-loops"><h3>Conflict loops</h3>
+<article class="catalogue" id="case-CF1"><h4>CF1 · Repeated integration conflict</h4><p class="meta">Journal J03, J15</p><dl>
+<dt>Signal</dt><dd>The same card, target and conflict files recur with no meaningful new delivery evidence; the serial integration lane stays occupied.</dd>
+<dt>Diagnosis</dt><dd>Integration recovery is repeating without changing the conflict.</dd>
+<dt>Action</dt><dd>At the second equal failure, propose one conflict-specific follow-up and dispatcher/owner attention for pickup. Include files, partner cards and result ref; let the existing recovery owner settle its attempt.</dd>
+<dt>Journal result</dt><dd>AGT-4011 repeated the conflict about every 17 minutes. The journal asks for a conflict round after two equal failures; the final measured outcome is absent.</dd>
+<dt>Product detection</dt><dd>Partly: delivery-chain recovery, conflict evidence and continuation service exist. <a href="#source-E11">E11</a> <a href="#source-E13">E13</a></dd>
+<dt>Gap</dt><dd>Correlate conflict identity across attempts and show the one escalation that replaces repeated advice. Existing card/target retry limits still win.</dd>
+<dt>Authority</dt><dd>Automatic proposal. Later bounded continuation only under an explicit T1 grant and current-attempt fence.</dd>
+</dl></article>
+<article class="catalogue" id="case-CF2"><h4>CF2 · Unchanged failure rounds</h4><p class="meta">Journal J03</p><dl>
+<dt>Signal</dt><dd>A third attempt repeats the same gate/error fingerprint and brings no new receipt, diagnosis or changed input.</dd>
+<dt>Diagnosis</dt><dd>The next round needs a new diagnostic question or model capability, not a replay.</dd>
+<dt>Action</dt><dd>Stop recommending the identical round. Draft a diagnostic task with the missing evidence and propose a stronger equivalent-class route within the project economy policy.</dd>
+<dt>Journal result</dt><dd>AGT-3862 is the journal example. No success rate for escalation is recorded.</dd>
+<dt>Product detection</dt><dd>Partly: fleet gate-failure fingerprints, cause sharing and bounded routes already exist. <a href="#source-E12">E12</a> <a href="#source-E13">E13</a> <a href="#source-E36">E36</a></dd>
+<dt>Gap</dt><dd>The operator needs an evidence-delta check across gate, conflict and review families. It must not reset platform retry budgets or ignore pins.</dd>
+<dt>Authority</dt><dd>Automatic diagnosis; model/priority changes outside existing bounds need confirmation.</dd>
+</dl></article>
+<article class="catalogue" id="case-CF3"><h4>CF3 · Missing failure context</h4><p class="meta">Journal J04</p><dl>
+<dt>Signal</dt><dd>The continuation brief contains only a shortened reason while a durable gate receipt holds test names and errors.</dd>
+<dt>Diagnosis</dt><dd>The agent cannot address a failure it was not told about.</dd>
+<dt>Action</dt><dd>Verify tested SHA, failed command, test names, first errors and receipt reference before issuing the follow-up.</dd>
+<dt>Journal result</dt><dd>Two rounds were lost before AGT-3985 carried the gate reason into the prompt.</dd>
+<dt>Product detection</dt><dd>Largely addressed in code: reason excerpt plus full durable failure evidence enter the common continuation path. <a href="#source-E13">E13</a> <a href="#source-E14">E14</a></dd>
+<dt>Gap</dt><dd>Monitor missing or stale evidence and record coverage. Do not rebuild a prompt feature that is already present.</dd>
+<dt>Authority</dt><dd>Safe automatic validation; hold advice if required evidence is absent.</dd>
+</dl></article>
+<article class="catalogue" id="case-CF4"><h4>CF4 · Session continuity</h4><p class="meta">Journal J02</p><dl>
+<dt>Signal</dt><dd>A follow-up switches CLI or starts fresh despite a compatible resumable session; token use rises.</dd>
+<dt>Diagnosis</dt><dd>Context rebuild may dominate the round cost.</dd>
+<dt>Action</dt><dd>Prefer compatible same-session continuation; record why a new session or route was required.</dd>
+<dt>Journal result</dt><dd>The journal compares 2.7 million tokens per Claude round with 26.6 million for Codex or a CLI change. It supplies neither matched cohorts nor token-column definitions.</dd>
+<dt>Product detection</dt><dd>Yes for execution support: compatible session resume is wired into CAR. <a href="#source-E15">E15</a></dd>
+<dt>Gap</dt><dd>Measure normalized input/output/cache use and outcomes on comparable work. The historical ratio is not proof that one model is generally cheaper.</dd>
+<dt>Authority</dt><dd>Automatic compatible resume; never force incompatible session state or override a pin.</dd>
+</dl></article>
+<article class="catalogue" id="case-CF5"><h4>CF5 · Brief drift</h4><p class="meta">Journal J05</p><dl>
+<dt>Signal</dt><dd>A card brief changes while its attempt is running; result and current brief versions diverge.</dd>
+<dt>Diagnosis</dt><dd>The agent delivered against an earlier contract.</dd>
+<dt>Action</dt><dd>Keep additions in an application-owned pending follow-up linked to the current brief. Submit an extend round only after the running attempt settles.</dd>
+<dt>Journal result</dt><dd>AGT-4024 feedback was collected in feedback-4024.md. The journal warns about older-brief delivery; no measured fix outcome is given.</dd>
+<dt>Product detection</dt><dd>Yes for detection: older-brief offers and acceptance staleness checks exist. <a href="#source-E16">E16</a> <a href="#source-E28">E28</a></dd>
+<dt>Gap</dt><dd>The operator needs a deferred-feedback record with expected brief and attempt, rather than editing a running prompt or silently consuming later changes.</dd>
+<dt>Authority</dt><dd>Safe automatic collection; sending still needs current-state admission and the applicable grant.</dd>
+</dl></article>
+</section>
+<section id="red-develop"><h3>Red develop</h3>
+<article class="catalogue" id="case-RD1"><h4>RD1 · Environment or regression</h4><p class="meta">Journal J09, J14</p><dl>
+<dt>Signal</dt><dd>A red receipt differs in environment, cgroup, processor count or load from the comparison run.</dd>
+<dt>Diagnosis</dt><dd>The blamed merge may not be causal.</dd>
+<dt>Action</dt><dd>Hand receipts and envelope fingerprints to the line guardian. It classifies, controls repeats, quarantines within bounds and creates repair-first work.</dd>
+<dt>Journal result</dt><dd>The journal reports three false reds from environment, cgroup or load, and no blamed-merge regression in those cases.</dd>
+<dt>Product detection</dt><dd>Yes: guardian paired decisions, envelope facts, bounded classification and review exist. <a href="#source-E17">E17</a> <a href="#source-E18">E18</a> <a href="#source-E19">E19</a></dd>
+<dt>Gap</dt><dd>The fleet operator tracks impact and waits for guardian evidence; it does not bisect, classify red tests again or lift isolation.</dd>
+<dt>Authority</dt><dd>Automatic handoff. Guardian owns allowed triage; base-test or cap exceptions stay with the owner.</dd>
+</dl></article>
+<article class="catalogue" id="case-RD2"><h4>RD2 · Global test-policy change</h4><p class="meta">Journal J07, J08, J13</p><dl>
+<dt>Signal</dt><dd>An operator plans a strict/fast switch, or a red develop incident has stopped useful integration.</dd>
+<dt>Diagnosis</dt><dd>A policy change can trade evidence cost against fleet flow and can invalidate a naive comparison.</dd>
+<dt>Action</dt><dd>Prepare target-context canary evidence, affected queue inventory, rollback strategy and one owner request. Keep production release evidence intact.</dd>
+<dt>Journal result</dt><dd>After deploy 60 and switching to fast, the journal requested cards/hour and first post-merge results. No validated causal improvement is supplied.</dd>
+<dt>Product detection</dt><dd>Partly: testing API, queued-review replanning, strategy-transition inventory and T2 operation exist. <a href="#source-E08">E08</a> <a href="#source-E21">E21</a> <a href="#source-E30">E30</a></dd>
+<dt>Gap</dt><dd>The remaining task is experiment design and accountable confirmation. The journal claim that only new reviews change is not universally true in this checkout.</dd>
+<dt>Authority</dt><dd>Confirmation of the exact T2 change; the persona never edits server configuration to bypass it.</dd>
+</dl></article>
+</section>
+<section id="gate-capacity"><h3>Gate capacity</h3>
+<article class="catalogue" id="case-GC1"><h4>GC1 · Formation wait</h4><p class="meta">Journal J11, J12</p><dl>
+<dt>Signal</dt><dd>Gate minutes concentrate in per-task paths; formation wait p50 exceeds card runtime; publication rate is low.</dd>
+<dt>Diagnosis</dt><dd>Waiting for a batch partner and duplicate verification may cost more than the batch test.</dd>
+<dt>Action</dt><dd>Propose one field change at a time with a fixed measurement window and saved rollback. Check eligible cohort, queue arrivals and correctness as well as throughput.</dd>
+<dt>Journal result</dt><dd>23 November: 0.375 published cards/hour, p50 formation wait 75 minutes, runtimes 7 to 28 minutes; 487 per-task-gate, 96 pre-check, 106 fallback, 93 diagnostic and 60 batch-gate minutes. The 10/10/15 experiment has no outcome in the supplied journal.</dd>
+<dt>Product detection</dt><dd>Yes for measurement: gate ledger, phase summaries and advisor exist. <a href="#source-E20">E20</a> <a href="#source-E22">E22</a></dd>
+<dt>Gap</dt><dd>No operator experiment record links hypothesis, approval, settings revision and comparable outcome. Daily CardsPublishedPerHour divides by 24 even mid-day.</dd>
+<dt>Authority</dt><dd>Automatic analysis; confirmation for settings changes, including rollback when not pre-authorized.</dd>
+</dl></article>
+<article class="catalogue" id="case-GC2"><h4>GC2 · Strategy handoff backlog</h4><p class="meta">Journal J14</p><dl>
+<dt>Signal</dt><dd>Changing strict to fast leaves pending batch members or fallback gates, with gate slots full.</dd>
+<dt>Diagnosis</dt><dd>Old gate work competes with the new route; a switch can amplify load.</dd>
+<dt>Action</dt><dd>Prefer an empty queue for a controlled experiment. Otherwise preview every affected member and wait for the platform handoff/cancellation receipts before adding work.</dd>
+<dt>Journal result</dt><dd>On 24 November four gate slots were occupied, host load reached 35 and merges exhausted a 120-second queue budget. AGT-4038 was created.</dd>
+<dt>Product detection</dt><dd>Substantially addressed: strategy switch now serializes with formation, cancels fallback flights and fences old publication. <a href="#source-E21">E21</a></dd>
+<dt>Gap</dt><dd>Prove completion in a real target-context run and correlate transition receipts with capacity. Do not report the old defect as still unhandled.</dd>
+<dt>Authority</dt><dd>Automatic preview and monitoring; exact strategy change needs confirmation.</dd>
+</dl></article>
+<article class="catalogue" id="case-GC3"><h4>GC3 · Gate contention</h4><p class="meta">Journal J08, J14</p><dl>
+<dt>Signal</dt><dd>Queue budget expires while gate hosts are overloaded, or a clean manual target-context run is red.</dd>
+<dt>Diagnosis</dt><dd>Execution capacity or envelope differs from the intended deployment shape.</dd>
+<dt>Action</dt><dd>Pause additional gate-generating proposals, inspect host and queue facts, and hand red-test evidence to the guardian. Request a resource or rollout decision if needed.</dd>
+<dt>Journal result</dt><dd>Two of three manual runs were red before deploy 57. The journal calls this a warning, not a proved code regression.</dd>
+<dt>Product detection</dt><dd>Partly: operator stall/batch events and ledger load/runtime evidence exist. <a href="#source-E01">E01</a> <a href="#source-E20">E20</a> <a href="#source-E23">E23</a></dd>
+<dt>Gap</dt><dd>A cross-source case must distinguish queue expiry from failed tests and avoid creating more work on the congested path.</dd>
+<dt>Authority</dt><dd>Automatic diagnosis and suppression of the persona&#x27;s own proposals; confirmation for resource or project policy changes.</dd>
+</dl></article>
+</section>
+<section id="deploy"><h3>Deploy</h3>
+<article class="catalogue" id="case-DP1"><h4>DP1 · Target-context canary</h4><p class="meta">Journal J08, J13</p><dl>
+<dt>Signal</dt><dd>A proposed global deploy lacks a passing representative run on the actual target configuration.</dd>
+<dt>Diagnosis</dt><dd>A local or manual build is insufficient evidence for fleet rollout.</dd>
+<dt>Action</dt><dd>Prepare one exact-commit canary with the actual gate envelope, host capability and rollback candidate, then use the existing server-first deploy runbook.</dd>
+<dt>Journal result</dt><dd>The journal attributes a lost night to deploy 57 without this check. Deploy 60 went live at 02:59Z with the named repairs; the subsequent API restart took 21 seconds.</dd>
+<dt>Product detection</dt><dd>Partly: deploy preflight, versioned plan and exact-commit artifact validation exist. <a href="#source-E23">E23</a> <a href="#source-E24">E24</a></dd>
+<dt>Gap</dt><dd>Preflight checks pending publication, not whether a representative target-context run was convincing. Record the canary receipt and its limits.</dd>
+<dt>Authority</dt><dd>Confirmation for the rollout in the initial release; later only through a named deployment grant and verified preconditions.</dd>
+</dl></article>
+<article class="catalogue" id="case-DP2"><h4>DP2 · Disk pressure and retention</h4><p class="meta">Journal J10, J13</p><dl>
+<dt>Signal</dt><dd>A host reports low free bytes/percent, old release images, build cache or stale review work; some expected hosts stop reporting.</dd>
+<dt>Diagnosis</dt><dd>Product-owned retention is insufficient or telemetry is missing.</dd>
+<dt>Action</dt><dd>Use existing pressure admission; propose a bounded cleanup plan protecting current, two rollback releases, active images and evidence references. Treat absent telemetry as unknown.</dd>
+<dt>Journal result</dt><dd>kori-docker exceeded 95 percent twice. runner-01 moved from 92 percent used and 38 GB free to 73 percent and 120 GB free after removing 45 image tags, 45 GB cache and old build sources. Values are journal reports.</dd>
+<dt>Product detection</dt><dd>Yes for pressure: shared thresholds, hysteresis and host facts exist. Evidence/log retention also exists. <a href="#source-E25">E25</a> <a href="#source-E26">E26</a> <a href="#source-E27">E27</a></dd>
+<dt>Gap</dt><dd>The inspected retention sweep is not release-image cleanup. Fifteen-minute stale host data produces no pressure fact. A fleet coverage check and typed image cleanup remain needed.</dd>
+<dt>Authority</dt><dd>Automatic observation and existing admission. Confirm initial deletion plan; no general docker prune or source-tree deletion authority.</dd>
+</dl></article>
+<article class="catalogue" id="case-DP3"><h4>DP3 · Transient image build failure</h4><p class="meta">Journal J15</p><dl>
+<dt>Signal</dt><dd>An exact-commit image build fails with an apt download error before deployment mutates hosts.</dd>
+<dt>Diagnosis</dt><dd>The download may be transient; exit 100 alone is not sufficient classification.</dd>
+<dt>Action</dt><dd>Prepare one retry of only the failed artifact with the same manifest, commit and VERSION; retain both attempts. Require network evidence and no configuration/package change.</dd>
+<dt>Journal result</dt><dd>The operator reran the build with VERSION from the repository. The journal proposes one automatic build retry but gives no aggregate result.</dd>
+<dt>Product detection</dt><dd>Partly: per-artifact failure and duration are recorded; the inspected networked build raises the first error without that retry. <a href="#source-E24">E24</a></dd>
+<dt>Gap</dt><dd>Add the bounded retry to the deployment coordinator, not to a persona shell loop. A failed retry returns to a person.</dd>
+<dt>Authority</dt><dd>Safe to automate only after a typed transient classifier and retry counter are delivered; confirmation until then.</dd>
+</dl></article>
+<article class="catalogue" id="case-DP4"><h4>DP4 · Post-deploy verification</h4><p class="meta">Journal J13, J14, J15</p><dl>
+<dt>Signal</dt><dd>A deploy completes, but dispatch rejections rise, intended strategy is absent or expected post-merge receipts do not arrive.</dd>
+<dt>Diagnosis</dt><dd>Release completion does not prove fleet recovery.</dd>
+<dt>Action</dt><dd>Compare release/version, runner mode, strategy, rejection reasons, first post-merge result and useful admissions to the preflight snapshot. Report the missing check by name.</dd>
+<dt>Journal result</dt><dd>After deploy 60 the operator checked overlap-serialize and remote-dispatch-rejected before adding work; later overlap off was followed by five parallel cards.</dd>
+<dt>Product detection</dt><dd>Partly: deploy.completed and post-merge.missing events and capacity facts exist. <a href="#source-E01">E01</a> <a href="#source-E04">E04</a> <a href="#source-E08">E08</a></dd>
+<dt>Gap</dt><dd>Attach these receipts to one rollout outcome and distinguish integrated, published and live delivery generations.</dd>
+<dt>Authority</dt><dd>Automatic verification; rollback requires the approved runbook authority and fresh preconditions.</dd>
+</dl></article>
+</section>
+<section id="quota-use"><h3>Quota use</h3>
+<article class="catalogue" id="case-QU1"><h4>QU1 · Useful spare capacity</h4><p class="meta">Journal J11, J12, J15</p><dl>
+<dt>Signal</dt><dd>Projected quota will remain at reset, but coding admission is limited by dependency chains or gate load.</dd>
+<dt>Diagnosis</dt><dd>More coding cards may increase rework; unused quota has no value by itself.</dd>
+<dt>Action</dt><dd>Resolve heads first. Then draft useful research or concept work from owner goals that avoids the congested gate. Do not manufacture work to reach 100 percent usage.</dd>
+<dt>Journal result</dt><dd>The owner explicitly put efficiency before consumption. The journal suggests research/concepts for spare quota but supplies no measured acceptance benefit.</dd>
+<dt>Product detection</dt><dd>Yes for facts: capacity, chain width and projected subscription surplus exist; cost and reliability personas already report. <a href="#source-E04">E04</a> <a href="#source-E32">E32</a></dd>
+<dt>Gap</dt><dd>Rank useful work by expected delivered value and opportunity cost. A concept avoids coding gates but still consumes model and review capacity.</dd>
+<dt>Authority</dt><dd>Automatic proposal within draft caps; owner/chief of staff admits new priorities within existing authority.</dd>
+</dl></article>
+<article class="catalogue" id="case-QU2"><h4>QU2 · Comparable model trials</h4><p class="meta">Journal J02, J12</p><dl>
+<dt>Signal</dt><dd>A blind model comparison mixes capability classes or underspecified stylistic requirements.</dd>
+<dt>Diagnosis</dt><dd>The result cannot isolate model performance or efficiency.</dd>
+<dt>Action</dt><dd>Require matched capability class, same complete brief, equivalent tools/context, repeated cases and priced plus unpriced token columns. Let routing policy select qualified models.</dd>
+<dt>Journal result</dt><dd>The journal says Fable should be compared with Astra, rather than Sol. It provides no matched trial outcome.</dd>
+<dt>Product detection</dt><dd>Partly: equivalence catalogue and token accounting are available. <a href="#source-E15">E15</a> <a href="#source-E36">E36</a></dd>
+<dt>Gap</dt><dd>Operator review needs cohort and trial-validity fields. Session continuity numbers and blind preferences are hypotheses until that evidence exists.</dd>
+<dt>Authority</dt><dd>Automatic validity check; changes to a pinned route or experiment budget need confirmation.</dd>
+</dl></article>
+</section>
+<section id="acceptance"><h3>Acceptance</h3>
+<article class="catalogue" id="case-AC1"><h4>AC1 · Current delivery readiness</h4><p class="meta">Journal J13</p><dl>
+<dt>Signal</dt><dd>A Human Review card passes readiness, or waits for the newer delivery to be published/live.</dd>
+<dt>Diagnosis</dt><dd>The older accepted-looking result may not be the current deliverable.</dd>
+<dt>Action</dt><dd>Read current brief, attempt, result SHA/ref, integration and live-release evidence. Let the platform rail perform ordinary permitted acceptance; route genuine exceptions to a person.</dd>
+<dt>Journal result</dt><dd>12 of 15 acceptances were completed. AGT-3879, AGT-3971 and AGT-3989 waited for publication of newer deliveries. No receipt export is supplied.</dd>
+<dt>Product detection</dt><dd>Yes: readiness classes and automatic acceptance rail already own this distinction and action. <a href="#source-E28">E28</a> <a href="#source-E29">E29</a> <a href="#source-E38">E38</a></dd>
+<dt>Gap</dt><dd>Record the decision and its exact delivery evidence in the comparison. Do not grant a second acceptance rail to the persona.</dd>
+<dt>Authority</dt><dd>Automatic readiness and existing rail action; overrides, archive waivers and Dossier decisions need the authorized person.</dd>
+</dl></article>
+<article class="catalogue" id="case-AC2"><h4>AC2 · Identity, token and attention</h4><p class="meta">Journal J00, J13</p><dl>
+<dt>Signal</dt><dd>Role binding changes but token requests still return 403, a token is exposed in chat, or attention-held names another actor session.</dd>
+<dt>Diagnosis</dt><dd>Identity/token lifetime or an existing attention lease explains the refusal; it is not permission to bypass IAM.</dd>
+<dt>Action</dt><dd>Have the owner issue/bind the identity and rotate exposed credentials through the supported flow. Wait for or request handoff of the ten-minute lease. Never store secrets in the journal.</dd>
+<dt>Journal result</dt><dd>The new token changed effective service-account identity and enabled Admin operations. An old-token actor still held attention. The journal records a rotation recommendation, not completed rotation.</dd>
+<dt>Product detection</dt><dd>Yes for controls: operation tiers, IAM route checks, redacted journal and actor-owned leases exist. <a href="#source-E03">E03</a> <a href="#source-E30">E30</a> <a href="#source-E37">E37</a></dd>
+<dt>Gap</dt><dd>The learning record needs denied-operation and handoff provenance without token values. The journal Admin setup is historical evidence, not the persona authorization design.</dd>
+<dt>Authority</dt><dd>Human-only identity/grant/credential decisions; automatic metadata diagnosis and redacted reporting.</dd>
+</dl></article>
+<article class="catalogue" id="case-AC3"><h4>AC3 · Owner bug intake</h4><p class="meta">Journal J13</p><dl>
+<dt>Signal</dt><dd>The owner reports a concrete small UI bug with a reproducible symptom.</dd>
+<dt>Diagnosis</dt><dd>The report is an authorized work request, but priority and routing remain platform decisions.</dd>
+<dt>Action</dt><dd>Prepare a deduplicated bug card through the task API with the symptom and acceptance evidence. Apply current routing policy; record a fixed model pin only if the owner still requests it.</dd>
+<dt>Journal result</dt><dd>Arrow-key scrolling and oversized service-account/host naming were recorded as AGT-4033 and AGT-4034. Their final outcomes are absent.</dd>
+<dt>Product detection</dt><dd>Partly: persona proposal/draft operations and manager promotion bounds exist. <a href="#source-E31">E31</a> <a href="#source-E33">E33</a></dd>
+<dt>Gap</dt><dd>Link report, created card and eventual acceptance to the operator case. The historical Opus-medium preference is not a universal model default.</dd>
+<dt>Authority</dt><dd>Automatic draft for an explicit report; promotion under existing manager/owner authority.</dd>
+</dl></article>
+</section>
+</section>
+<section id="persona"><h2>Persona</h2><h3>Charter</h3><div class="box"><p>Keep useful work flowing at a proportionate cost. Detect repeated operational stalls, assemble current evidence, route the case to the role that owns the decision, prepare bounded interventions, and check the result. State what is missing and who can supply it. Preserve the current delivery contract, owner priorities and the evidence required for acceptance. Never acquire your own rights, change code, manage Git or turn unknown evidence into a pass.</p></div><p>Use a versioned <code>fleet-operator.persona.json</code>, kind <code>persona</code>, aspect <code>operations</code>, with a workspace activation and an explicit project allowlist. Use the existing principal/session, report, budget, pause and stop-all mechanisms. One operator instance coordinates the allowed projects of one workspace. Host facts require separate named host scopes; installation-wide data must not leak into a narrow project instance. Start inactive and shadow-only. A cross-project case may cite only projects the reader can access.</p><h3>Role boundaries</h3><table><thead><tr><th>Existing owner</th><th>Operator contribution</th><th>Boundary</th></tr></thead><tbody>
+<tr><td>Dispatcher</td><td>Report repeated conflicts, rejected admissions, blocked heads and observed useful concurrency.</td><td>Dispatcher retains the lease, Ready plan, holds, chains, recuts and sequencing within priority. No second pickup policy.</td></tr>
+<tr><td>Line guardian</td><td>Supply exact red receipts, envelope differences and operational impact; follow up missing evidence.</td><td>Guardian retains test classification, attribution, quarantine, scoped holds, repair-first and lift evidence. No duplicate bisect or quarantine store.</td></tr>
+<tr><td>Reliability engineer</td><td>Consume its pattern findings and link them to concrete cases and outcomes.</td><td>Reliability reports trends. Operator prepares or executes only granted incident actions. Merge duplicate findings by fingerprint.</td></tr>
+<tr><td>Operations warden</td><td>Consume backup/security-posture findings when they affect safe operation; report missing host facts.</td><td>Warden retains recovery/security monitoring and its reports. Operator does not become a second backup or credential auditor.</td></tr>
+<tr><td>Cost controller and budget steward</td><td>Supply per-case spend, unpriced use, avoided-repeat evidence and failed experiments.</td><td>Controller measures; steward allocates persona allowance. Operator cannot raise its allowance, pool or route budget.</td></tr>
+<tr><td>Chief of staff</td><td>Draft useful work and prioritize operational requests by blocked impact.</td><td>Chief's proposal-origin and daily move bounds remain. Broader coding priority is the owner's or another explicit role grant.</td></tr>
+<tr><td>Platform acceptance and recovery</td><td>Explain readiness and unresolved causes using current attempt, SHA and brief.</td><td>Existing rail/reconciler owns the transition. A human owns exceptions and Dossier decisions.</td></tr>
+<tr><td>Human operator and Owner</td><td>Prepare exact requests, watch the outcome, record their action and disagreement.</td><td>Human operator supplies the baseline; Owner issues grants, approves high-risk actions and decides promotion or rollback.</td></tr>
+</tbody></table><p>These boundaries follow the persona-team, dispatcher and red-test Dossiers and their current descriptors, not the historical session's Admin privileges. A persona is not the external operator-agent session; both can use supported APIs, but the persona receives its own principal and narrow role grants.</p><h3>Facts</h3><p>Read the operator event cursor and current attention facts; task metadata, dependency DAG and fulfillment; Ready/Progress/integration ownership and free slots; current brief, attempt, result SHA/ref and integration target; failure fingerprints, conflict partners, receipt references and retry counters; dispatcher plan/lease and guardian incident/hold references; gate phases, formation waits, queue reasons, load and envelope fingerprints; deploy manifest, canary, versions and readiness; host free space and telemetry freshness; quota reset/projection, model class and priced/unpriced usage; acceptance-readiness and delivery/live-release references.</p><p>Each source has an observation time, collection time, revision and availability state. Missing host data, expired cursors, incomplete meters and absent result mappings are explicit unknowns. Collect a reconciliation snapshot at startup and after a cursor gap; recover unresolved cases across restarts. Do not infer recovery from silence or from an event disappearing after retention.</p><p>The normal grounds package is structured and bounded to 6,000 input tokens, with at most 2,000 characters of redacted log excerpt per cited failure. Raw logs, prompts and repository text are untrusted evidence, never instructions. Secrets, chat history, provider tokens, Owner home/SSH material and direct task-store access are outside the role. A need for excluded evidence becomes a request.</p><h3>Budget</h3><p>Start with <b>60,000 tokens per UTC week</b> carved from the existing persona pool, seven ordinary sessions of at most five minutes plus one investigation of at most fifteen minutes. Use model-free polling and pure advice; at most one balanced-class diagnostic call per day, 6,000 input plus 1,000 output tokens, and one stronger-class investigation per week capped at 10,000 total tokens. Reserve before dispatch and account for actual input, output and both cache columns through the existing ledger. Unknown billing stays unknown; an unmetered attempt holds its reservation for review.</p><p>These are ceilings, not a spending target. The 49,000 ordinary-call allowance plus 10,000 investigation ceiling leaves room below 60,000; cache counters and platform accounting may exhaust it sooner. The workspace pool, spend and quota policies always take precedence. No self-rebalance, no fallback below the required capability floor and no use of idle quota to justify weak work. When exhausted, deterministic advice, redacted shadow entries and owner requests continue; model diagnosis writes a no-call reason.</p><p>Keep the existing persona scheduler's card-first admission. Its hour/six-hour event coalescing does not meet minute-scale operational response, so a model-free case collector records new facts promptly while scheduled sessions examine only unresolved ambiguity. Default new operational effect budget after promotion: four effects per workspace per day, one per case without changed facts, and one active mutating request per card or host. Existing tighter retries, locks, gate isolation and budgets always apply. The first release launches no extra test suites; all test work belongs to the existing gate/guardian budgets.</p></section>
+<section id="authority"><h2>Authority</h2><p>There are three different vocabularies. Runtime <code>AutonomyClass</code> A0/A1/A2/A3 means observe or bounded action, proposal, and ask a person. Descriptor <code>PersonaAutonomy</code> A0/A1/A2 controls publish, propose and manager operations. IAM T0/T1/T2 means read, standing-grant action and exact high-risk approval. Their similar labels do not make them interchangeable.</p><table><thead><tr><th>Action family</th><th>Current permission boundary</th><th>Proposed operator grant</th></tr></thead><tbody>
+<tr><td>Read scoped facts; publish advice and reports</td><td>Project read and explicit grounds areas; persona item/report/proposal/decision operations.</td><td>Shadow gets these only, plus a narrow proposed <code>operator.shadow.record</code> capability. It cannot call effect endpoints. The record write is metadata, not operational authority.</td></tr>
+<tr><td>Append deferred feedback or request one diagnostic continuation</td><td><code>card.steer</code>, attention and current-card admission; generic persona operations do not grant it today.</td><td>After review, an operator-specific role allowlist may request an after-settlement continuation under scoped T1. Require new evidence/question, stable brief and attempt, no pending recovery, one action receipt and compatible resume. Never edit an active brief.</td></tr>
+<tr><td>Integration/gate retry; collect host logs; drain/resume/restart an allowlisted service</td><td>Existing T1 operation catalogue, host or project scope, platform owner and retry/admission checks.</td><td>Separate opt-in family grants. Initially proposals only. Retry never competes with the existing retry owner. Host restart/drain remains confirmed until its own shadow cohort qualifies.</td></tr>
+<tr><td>Dispatcher/guardian intervention</td><td>The receiving role's grants, lease, incident evidence and pure policy.</td><td>Operator writes a typed handoff. It receives no dispatcher or guardian action rights.</td></tr>
+<tr><td>Batch timing, overlap policy, capacity or model-routing settings</td><td>Project settings/operation-specific checks; ordinary settings access is not a persona grant.</td><td>Confirmed experiment only, exact field/value, expected revision, scope, expiry and rollback. Add catalogue coverage for any route missing a persona mapping; refuse until then.</td></tr>
+<tr><td>Testing strategy; acceptance/archive override; deploy blocker override</td><td>T2 exact-request approval and existing endpoint checks; testing API now also replans queued work.</td><td>No standing persona bypass. Prepare request for Owner and require fresh approval. Never use a server edit or another identity to get around a refusal.</td></tr>
+<tr><td>Normal acceptance</td><td>Existing completion checks and project autonomy control the platform acceptance rail.</td><td>Read and hand off only. Add no independent persona acceptance effect.</td></tr>
+<tr><td>Deploy, build retry and retention</td><td>Deploy preflight, verified artifacts, environment/host operation grants. Existing log/evidence retention is narrower than image cleanup.</td><td>Initially confirmation. Later delegate only an exact-commit transient artifact retry or reviewed retention plan with protected references. No arbitrary shell, broad prune, volume deletion or Git operation.</td></tr>
+<tr><td>Identity, grants, credentials, hardware evidence waiver or product-scope change</td><td>Owner access control, credential flow and delivery contract.</td><td>Human decision. No persona self-grant, token entry, secret rotation or marking absent hardware verified.</td></tr>
+</tbody></table><h3>Decision path</h3><p>Hosts gather and freeze facts. New deterministic intervention rules belong in <code>orchestration-decisions/</code>. The configured <code>OperatorDecision</code> profile and <code>AiOperatorDecisionGateway</code> select authority. Existing keyed platform services apply permitted effects. Advice references the owning role for cases already covered; it does not submit a duplicate transition.</p><p>Before application, re-read lane, brief/attempt/result identity, dependency fulfillment, lease fence, isolation, quota and settings revision. Compare with the frozen request; if changed, record <code>superseded</code> and collect new facts. Persist an idempotency key and the intended effect before dispatch, then an audit-linked receipt. A timeout with unknown effect state is reconciled before retry. Owner takeover, revoked grant or stop-all closes admission immediately. No live action can originate from an after-the-fact shadow import.</p><p>Same conflict twice means a diagnostic escalation recommendation; a third unchanged error means no identical follow-up. These are advice thresholds, not replacements for lower platform caps. A busy orphan worktree still reaches the existing five-preparation-attempt <code>worktree-blocked</code> terminal. Repeated identical observations coalesce; only changed facts, a new outcome or a due named request adds another item.</p></section>
+<section id="shadow"><h2>Shadow mode</h2><h3>Record</h3><p>Use an application-owned append-only case journal extending the operator coordination domain, with Task Server authority when configured. The card/repository files are references, never the runtime store. A separate typed record is needed because <code>OperatorLogRequest</code> has only text, cards and audit ids. Keep the familiar operator log as a human-readable projection and use existing persona items for feed distribution.</p><table><thead><tr><th>Record part</th><th>Required facts</th></tr></thead><tbody>
+<tr><td>Case and snapshot</td><td>Schema/revision; workspace/project; case id and family; source occurrence keys and cursor; observation/collection times; source revisions and completeness; frozen sanitized facts and digest; relevant cards, attempts, result SHAs, settings, host scope and role owner.</td></tr>
+<tr><td>Advice</td><td>Advice id, policy/persona revision, creation time and input cutoff; diagnosis/evidence confidence; typed proposed operation and normalized argument digest, target scope, preconditions, role handoff, autonomy/tier, refusal or no-op reason; expected metric, window, cost ceiling and rollback plan. Free text alone cannot select an effect.</td></tr>
+<tr><td>Actual action</td><td>Human or existing system actor, timestamp, operation/arguments digest, attention identity, audit/deploy/guardian/dispatcher receipt ids and operator-log cursor. Explicit values: did nothing, deferred to named person, or not recorded. Manual host actions carry a redacted attestation and provenance.</td></tr>
+<tr><td>Comparison and outcome</td><td>Link advice and action to the same case; exact match, compatible, different, missed, incomparable or pending; time to advice/action/recovery; later measured metric and denominator, evidence refs, confounders, unintended effect, reviewer and revision. Corrections append and supersede by id.</td></tr>
+</tbody></table><p>Advice must be durable before the actual action and use only facts available at its cutoff. Record <code>shadow</code>, <code>live</code> or <code>retrospective</code> provenance. Historical journal imports are retrospective: preserve the quoted date label and any ambiguity, and mark missing frozen facts or receipts. They can test coverage, not count as prospective agreement or prove automation safety. No historical entry is converted into a claimed API action.</p><h3>Pairing</h3><ol><li>The collector reconciles current facts and records one case snapshot. A versioned pure rule emits advice, or explicitly records insufficient evidence, no action or a specialist handoff.</li><li>The human operates normally through the supported APIs/hosts. Capture the actual operation from audit/coordination records. Until automatic linking lands, a person can add an action receipt or no-action attestation using the first slice's API.</li><li>Pair by source occurrence, card/attempt, target and settings revision. A time window may suggest a match but cannot silently establish it. Keep unmatched actions as missed or pending cases. Shared causes may link several cards to one case.</li><li>A different action requires an explanation, not a penalty. Wait, owner escalation and specialist handoff are valid outcomes. A reviewer can rate an operator recommendation better than the human choice when the later evidence supports it.</li><li>Append measured outcomes. The unapplied action's recovery time, throughput and cost remain unknown unless a controlled replay or matched experiment measures them. Do not compute invented tokens saved.</li></ol><h3>Example</h3><div class="box"><p><b>Retrospective DS2 example, 26 November.</b> The journal reports one running card with ten free slots and broad folder overlap. Candidate advice: inspect rejection reasons, propose changing overlap to off, name required permission and record the rollback. Actual: at 12:05Z the human set off; afterwards five cards ran in parallel. Comparison: compatible in substance, retrospective, input digest and action receipt unavailable. Outcome: observed concurrency 1 to 5, with no supplied published-card rate or quality measurement. This example does not satisfy promotion criteria.</p></div><h3>Promotion</h3><p>Shadow has no execution credential, even when a human operator has Admin. The minimum review cohort is seven consecutive days, thirty prospectively paired cases and five cases in each operation family proposed for automation. At least 90 percent of those cases must have complete input/action provenance. There must be zero unsafe or unauthorized proposed effects after policy validation, and at least 90 percent of reviewed recommendations must be useful or correct deferrals. Report rejected unsafe model drafts separately; they are not eligible advice.</p><p>These proposed thresholds are starting values, not measured capability. A quiet family remains in shadow; manual review cannot manufacture its sample. Test denied grant, stale attempt, stopped team, duplicate effect, restart and unknown-result cases before any live family is enabled. The Owner records a family-specific decision and expiry. A serious safety miss immediately closes that family's action admission and preserves its cases for review. Models and observations may continue only under their remaining grants.</p></section>
+<section id="review"><h2>Review</h2><h3>Reports</h3><p>Every new or materially changed case gets one model-free operator item with the signal, blocked work, what is missing, proposed action, permission, responsible person and due time. Give the Owner an explicit request immediately when authority blocks the fleet; do not bury it in a daily report. Notify the human operator through the existing operator/persona feed, without sending external messages. Dispatcher/guardian handoffs cite the case and wait for a receipt from that role.</p><p>A daily summary to the human operator and chief of staff lists resolved, unresolved and waiting-for-owner cases, oldest wait, published cards per measured hour, gate minutes by type, model/compute use and failed experiments. A weekly <code>fleet-operator-v1</code> report goes to the Owner and cost controller and enters the existing magazine process. It includes disagreements, misses, safety refusals, unknowns and proposed rule revisions. A handoff names the last processed cursor, open cases, expiring grants, current experiment and next check. Reports use templates by default.</p><h3>Measures</h3><table><thead><tr><th>Criterion</th><th>Definition and evidence</th></tr></thead><tbody>
+<tr><td>Detection and response</td><td>Minutes from first observable signal to durable advice, named authority request and actual action; p50/p95, counts and missing timestamp share. Also cases first found by a human.</td></tr>
+<tr><td>Useful flow</td><td>Unique delivered generations published in an explicit UTC interval / elapsed wall hours. Show integrated and live delivery separately. Stratify by coding/concept, strategy, wave and blocking cause. Show used versus actually admissible slots and chain width.</td></tr>
+<tr><td>Efficiency</td><td>Priced spend and unpriced token columns per accepted delivery, repeat rounds with unchanged facts, gate minutes per published card, formation wait and own persona cost. Include all attempts, failures and cache accounting.</td></tr>
+<tr><td>Safety and stability</td><td>Unauthorized/duplicate/stale effects, missed line stops, introduced regressions, reopened/overridden delivery claims and rollback incidents. Required initial target: zero authority or evidence violations.</td></tr>
+<tr><td>Advice quality</td><td>Paired-case coverage, exact/compatible/different/no-action shares; useful recommendations, correct escalations and missed cases as rated by a reviewer with evidence. List disagreements rather than optimizing agreement alone.</td></tr>
+</tbody></table><p>The human operator reviews operational facts and action pairing; the Owner reviews disagreements, authority changes and promotion; the cost controller checks economics. Dispatcher and guardian review their own strategy/triage results. Keep their existing scores separate. Do not introduce a single operator leaderboard before these denominators are reliable.</p><h3>Experiments</h3><p>One active settings experiment per project. Freeze baseline settings and revision, hypothesis, exact changed field, affected cohort, canary, start/end UTC, success and stop conditions, approval and rollback before applying it. Compare equal-duration intervals, with at least twenty eligible published coding deliveries per arm and a complete normal operating cycle; extend the window or label the result inconclusive when the sample is too small. The initial plan can use 24-hour arms, but duration alone is insufficient. Include queue arrival rate, host/envelope/version changes, chain width, error and regression rates.</p><p>The journal's 45/45/45 to 10/10/15 intervention changed three related fields together. It is one bundled hypothesis, not evidence isolating a single field. Deploy 60 plus fast also changed multiple factors. Treat both as confounded exploratory observations. A later experiment varies deadline first, then look-ahead, then maximum wait, and only then stacking, with a new baseline for each. Save rollback 45/45/45 only for that historical configuration; a live experiment uses its actual saved baseline.</p><p>For a short evaluation, use raw publications and explicit elapsed hours. Today's <code>dailySummary.cardsPublishedPerHour</code> is publications divided by 24 even during the day. Show it as a daily normalization and never compare its partial-day value with a two-hour observed rate. Gate minutes are summed execution durations; concurrent gate-minutes are not wall-clock stall minutes.</p></section>
+
+<section id="evidence" data-concept-section="evidence"><h2>Evidence</h2><div class="evidence-list"><a class="evidence" href="#journal"><span class="evidence-class" data-evidence-class="observed">Reported</span><span><b>Operator journal, 24 to 26 November</b><small>Owner-supplied historical observations. No live API, host or journal-store access was used in this task. Dates and numbers are retained as reports, not independently reproduced measurements.</small></span></a><a class="evidence" href="#sources"><span class="evidence-class" data-evidence-class="observed">Inspected</span><span><b>Repository source at a12f16847</b><small>Named contracts, methods and current role descriptors support the product-detection column. A code path is not proof that it was enabled or deployed.</small></span></a><a class="evidence" href="#review"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Wait and authority gaps</b><small>The journal and source together suggest that case correlation, direct requests and comparable outcomes are the next useful layer. No counterfactual throughput gain is asserted.</small></span></a><a class="evidence" href="#open-decisions"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Budgets, thresholds and rollout</b><small>Starting limits require an Owner decision and prospective evidence. This delivery has not accepted those decisions or promoted any persona.</small></span></a></div><h3 id="journal">Journal evidence</h3><p>Provenance: the German journal supplied verbatim in AGT-4056, named <code>operator-lernphase-2026-11-24</code>, with metadata modified <code>2026-11-23T23:41:41.120Z</code>. This English register preserves the observations needed by the catalogue. Later dated entries extend beyond that metadata timestamp. A heading mixes 24 November local time with 23 November UTC, and one entry describes a new token after local midnight. Keep the source labels and explicit Z times; do not invent a normalized action timeline. Service-account ids and secret values are unnecessary for this concept and are omitted.</p>
+<article id="journal-J00"><h4>J00 · 24 November mandate and access boundary</h4><p>Owner requests intelligent, cost-efficient fleet operation, throughput and stability, with successful practice becoming features and a team persona. Efficiency supersedes the earlier wish to consume the full Claude window. Role binding must be issued by the owner, not written by the operator.</p></article>
+<article id="journal-J01"><h4>J01 · Journal item 1</h4><p>57 cards in one minute without dependencies caused conflict loops. Area chains reportedly removed ping-pong from 22 November but limited 30 Dossier cards to 3 or 4 simultaneous runs.</p></article>
+<article id="journal-J02"><h4>J02 · Journal item 2</h4><p>Continuing the same CLI session was reported as 2.7 million tokens per Claude round versus 26.6 million for Codex or CLI changes. Cohort, cache accounting and price coverage are not supplied.</p></article>
+<article id="journal-J03"><h4>J03 · Journal item 3</h4><p>AGT-3862 repeated the same error for a third time. The operator calls for diagnosis and a stronger model instead of another identical round.</p></article>
+<article id="journal-J04"><h4>J04 · Journal item 4</h4><p>A truncated gate reason cost two rounds. AGT-3985 subsequently supplied it automatically in prompts.</p></article>
+<article id="journal-J05"><h4>J05 · Journal item 5</h4><p>Do not change a running brief. Collect AGT-4024 additions for a follow-up; feedback-4024.md is named but not supplied as an artifact in this task.</p></article>
+<article id="journal-J06"><h4>J06 · Journal item 6</h4><p>AGT-4020 illustrates that a repair must not wait behind the queue it is meant to repair.</p></article>
+<article id="journal-J07"><h4>J07 · Journal item 7</h4><p>The operator observed that changing test strategy applied to new reviews while already reviewed work stayed on its old route. The current queued-work switch code is more capable; do not generalize this historical observation.</p></article>
+<article id="journal-J08"><h4>J08 · Journal item 8</h4><p>Deploy 57 lacked a real target-context run; the journal attributes a lost night to that rollout. Two of three manual runs had been red.</p></article>
+<article id="journal-J09"><h4>J09 · Journal item 9</h4><p>Three false reds are attributed to environment, cgroup or load differences rather than the blamed merge.</p></article>
+<article id="journal-J10"><h4>J10 · Journal item 10</h4><p>kori-docker twice exceeded 95 percent usage. Hourly checks were recommended until AGT-3986 became live.</p></article>
+<article id="journal-J11"><h4>J11 · Journal item 11 and experiment 1</h4><p>23 November baseline: 0.375 published cards/hour; per-task-gate 487, pre-check 96, fallback 106, clean diagnostic 93 and batch-gate 60 gate-minutes. Formation wait p50 75 minutes, runtime 7 to 28. deadline/look-ahead/maximum-wait changed together from 45/45/45 to 10/10/15, stacking off. No outcome is included.</p></article>
+<article id="journal-J12"><h4>J12 · Journal items 12 and 13</h4><p>Research and concept work can use spare quota without the coding gate. Blind trials need equivalent model capability and complete briefs; Fable versus Astra is the journal example.</p></article>
+<article id="journal-J13"><h4>J13 · 24 November continuation, token, cleanup and deploy 60</h4><p>Owner-issued Admin binding required a newly generated token; the account id changed and old actor attention lasted ten minutes. Exposed token prompted a rotation recommendation. 12 of 15 acceptances completed; three waited for newer publication. Owner bugs became AGT-4033 and AGT-4034. runner-01 cleanup reduced usage from 92 to 73 percent. Deploy 60 e3ca3c8ad, KORI 0.9.34 went live at 02:59Z; fast was restored at 03:07Z with a 21-second restart. Before that, zero publications that day, nine cards waiting up to 175 minutes and a red four-member batch. Experiment 2 combined deployment and strategy change; no complete result is supplied.</p></article>
+<article id="journal-J14"><h4>J14 · 24 November 04:30Z findings</h4><p>In-flight overlap included long-lived review cards and coarse docs scopes; AGT-3481 blocked AGT-4015 and one integration round held the lane 50 minutes. Switching to fast spilled waiting members into full individual gates, four slots and load 35; merge queue budgets expired after 120 seconds. AGT-4037/4038 were created.</p></article>
+<article id="journal-J15"><h4>J15 · 26 November, deploy 61 24caa36ab</h4><p>Folder overlap left one card running despite ten free slots. At 12:05Z overlap off was followed by five concurrent cards. Escalated AGT-4011/4015 held Dossier chains. AGT-4011 repeated every seventeen minutes. For unavailable TPM/Secure Enclave, propose disabled/unverified capability plus manual probe. An apt exit-100 image failure was retried manually with repository VERSION; the journal proposes one automatic retry.</p></article>
+<article id="journal-J16"><h4>J16 · 26 November reflection</h4><p>The operator reports two days of waiting for an Owner setting. A blocked fleet needs an immediate direct request naming what is missing and who can provide it.</p></article>
+<h3>Interpretation</h3><p>The listed gate durations sum to 842 gate-minutes; batch-gate itself is 60, about 7.1 percent. This supports examining the surrounding work. It does not prove that reducing formation deadlines caused more publications or that all other minutes can be removed. Gate-minute categories and the observation interval need the underlying ledger to reproduce the result.</p><p>The journal names related memories on the orchestrator role model, integration-first, Dossier promotion and conflict responsibility. Their contents were not supplied here. The repository Dossiers and current code are the evidence used for those boundaries. Existing Dossier implementation appendices help locate delivered slices; their older “today” descriptions are not treated as current code facts.</p><h3 id="sources">Source audit</h3><p>Every path below was read in the assigned checkout. Line numbers locate the cited symbol as of the audited SHA. Claims of an absent capability are bounded to these inspected contracts and paths. No production deployment or enabled persona inventory was queried.</p>
+<article id="source-E01"><h4>E01 · public static class OperatorDecisionTypes</h4><p class="source-path"><a href="../../backend/Features/Operator/Decisions/OperatorDecisionContracts.cs">backend/Features/Operator/Decisions/OperatorDecisionContracts.cs</a>, line 8.</p><p>Typed operator events include stalls, red batches, quota, disk pressure, capacity and deploy completion. Suggested operations are names, not executed actions.</p></article>
+<article id="source-E02"><h4>E02 · MaxSweepSeconds</h4><p class="source-path"><a href="../../backend/Features/Operator/Decisions/OperatorDecisionOptions.cs">backend/Features/Operator/Decisions/OperatorDecisionOptions.cs</a>, line 14.</p><p>The decision sweep is capped at five seconds; event retention defaults to 72 hours. This is too short to be the learning record.</p></article>
+<article id="source-E03"><h4>E03 · public sealed record OperatorLogRequest</h4><p class="source-path"><a href="../../backend/Features/Operator/OperatorCoordinationStore.cs">backend/Features/Operator/OperatorCoordinationStore.cs</a>, line 10.</p><p>The existing journal stores actor, time, project, kind, text, cards and audit ids. It redacts credentials. Attention is a ten-minute actor-owned lease. No typed advice/human/outcome comparison exists in this shape.</p></article>
+<article id="source-E04"><h4>E04 · public sealed record CapacityChainHead</h4><p class="source-path"><a href="../../backend/Features/Operator/Capacity/CodingCapacityProjection.cs">backend/Features/Operator/Capacity/CodingCapacityProjection.cs</a>, line 9.</p><p>Capacity already exposes claimability, dependency width and chain heads with cards behind them. Idle detection uses 20 minutes; projected quota surplus uses 20 percent. The projection grants no dispatch permission.</p></article>
+<article id="source-E05"><h4>E05 · internal static class CapacityClaimability</h4><p class="source-path"><a href="../../backend/Features/Operator/Capacity/CapacityClaimability.cs">backend/Features/Operator/Capacity/CapacityClaimability.cs</a>, line 11.</p><p>Capacity explains existing dependency, parked, dispatch and resource refusals. It is an observation, not a separate admission rule.</p></article>
+<article id="source-E06"><h4>E06 · public IReadOnlyList&lt;OperatorDecisionFact&gt; Facts</h4><p class="source-path"><a href="../../backend/Features/Runner/OverlapDispatchGuard.cs">backend/Features/Runner/OverlapDispatchGuard.cs</a>, line 240.</p><p>Observed scope-only starvation can become a typed fact. Advisory overlap pairs are retained; Run anyway is a fingerprint-bound ten-minute permit.</p></article>
+<article id="source-E07"><h4>E07 · public static class OverlapComparisonSet</h4><p class="source-path"><a href="../../backend/Features/Runner/OverlapComparisonSet.cs">backend/Features/Runner/OverlapComparisonSet.cs</a>, line 8.</p><p>The comparison set distinguishes running work from unfinished integration exposure. Reuse this definition rather than treating every review-lane card as a current conflict.</p></article>
+<article id="source-E08"><h4>E08 · app.MapPut(&quot;/api/projects/{projectName}/testing&quot;</h4><p class="source-path"><a href="../../backend/Features/Projects/ProjectSettingsEndpoints.cs">backend/Features/Projects/ProjectSettingsEndpoints.cs</a>, line 1330.</p><p>Testing is changed through SwitchTestingStrategyAsync and queued review replanning. Overlap window accepts off, running and in-flight and requires project.settings.write. Batch settings have a separate PUT handler.</p></article>
+<article id="source-E09"><h4>E09 · public sealed class DispatcherShadowService</h4><p class="source-path"><a href="../../backend/Features/Dispatch/DispatcherShadowService.cs">backend/Features/Dispatch/DispatcherShadowService.cs</a>, line 13.</p><p>Dispatcher facts are collected once for all active strategies. The live plan needs a current lease. This is the precedent for frozen shadow input, not an operator scheduler to copy.</p></article>
+<article id="source-E10"><h4>E10 · &quot;charter&quot;</h4><p class="source-path"><a href="../../backend/Policies/personas/dispatcher.role.v1.json">backend/Policies/personas/dispatcher.role.v1.json</a>, line 6.</p><p>Dispatcher owns conflict prevention, ordering within priority and packaging. Its grants constrain dependencies, holds and recuts.</p></article>
+<article id="source-E11"><h4>E11 · public static class DeliveryChainPolicy</h4><p class="source-path"><a href="../../orchestration-decisions/DeliveryChainPolicy.cs">orchestration-decisions/DeliveryChainPolicy.cs</a>, line 63.</p><p>Delivery-chain rules already queue merge rounds or escalate from typed facts. The operator must not implement a second integration recovery loop.</p></article>
+<article id="source-E12"><h4>E12 · public interface IGateFailureFingerprintCounter</h4><p class="source-path"><a href="../../backend/Features/Pipeline/GateFailureTriage/GateFailureFingerprintCounter.cs">backend/Features/Pipeline/GateFailureTriage/GateFailureFingerprintCounter.cs</a>, line 11.</p><p>Gate failures share the Task Server fingerprint store and a seven-day counting window. An unreadable counter returns unknown.</p></article>
+<article id="source-E13"><h4>E13 · public sealed class TaskFailureContinuationService</h4><p class="source-path"><a href="../../backend/Features/Tasks/TaskFailureContinuationService.cs">backend/Features/Tasks/TaskFailureContinuationService.cs</a>, line 26.</p><p>Manual and automatic failure follow-ups share one service. It uses the current delivery failure, carries gate evidence and preserves task model pins.</p></article>
+<article id="source-E14"><h4>E14 · internal static class DeliveryFailureEvidence</h4><p class="source-path"><a href="../../backend/Features/Tasks/DeliveryFailureEvidence.cs">backend/Features/Tasks/DeliveryFailureEvidence.cs</a>, line 8.</p><p>Failure facts include tested SHA, failed commands, test names and errors. They are appended to the continuation prompt; a bounded reason excerpt is no longer the only evidence.</p></article>
+<article id="source-E15"><h4>E15 · ResumeSessionId =</h4><p class="source-path"><a href="../../backend/Features/Cli/Execution/BackendCarExecution.cs">backend/Features/Cli/Execution/BackendCarExecution.cs</a>, line 199.</p><p>CLI execution supports compatible session resume. Session compatibility and clean-home identity constrain reuse.</p></article>
+<article id="source-E16"><h4>E16 · public sealed record OlderBriefDeliveryOffer</h4><p class="source-path"><a href="../../backend/Features/Tasks/OlderBriefDeliveryStore.cs">backend/Features/Tasks/OlderBriefDeliveryStore.cs</a>, line 6.</p><p>A delivery against an older brief is explicitly retained for a decision. Detection after a change does not prevent a mid-run edit.</p></article>
+<article id="source-E17"><h4>E17 · public GuardianShadowRecord Evaluate</h4><p class="source-path"><a href="../../backend/Features/Personas/LineGuardianStore.cs">backend/Features/Personas/LineGuardianStore.cs</a>, line 96.</p><p>The line guardian already records guardian versus applied decisions, envelope facts and budget use. A full shadow week gates its own live authority.</p></article>
+<article id="source-E18"><h4>E18 · &quot;ownerRequired&quot;</h4><p class="source-path"><a href="../../backend/Policies/personas/line-guardian.grants.v1.json">backend/Policies/personas/line-guardian.grants.v1.json</a>, line 56.</p><p>The guardian owns classification, bounded quarantines, scoped holds and repair-first. Base-test quarantine and cap exceptions need the owner. Testing-strategy changes and reopening settled cards are non-grantable for this role.</p></article>
+<article id="source-E19"><h4>E19 · public sealed record GuardianDisagreement</h4><p class="source-path"><a href="../../backend/Features/Personas/GuardianReview.cs">backend/Features/Personas/GuardianReview.cs</a>, line 12.</p><p>Guardian review has disagreements, provenance and unknown counterfactuals. Operator review should follow these semantics without claiming the guardian score as its own.</p></article>
+<article id="source-E20"><h4>E20 · public sealed record GateRunDailySummary</h4><p class="source-path"><a href="../../backend/Features/Pipeline/BatchGate/GateRunLedger.cs">backend/Features/Pipeline/BatchGate/GateRunLedger.cs</a>, line 62.</p><p>Daily summaries expose gate minutes, published cards and phase percentiles. CardsPublishedPerHour is published / 24, including a partial day; 90 days of ledger rows are retained.</p></article>
+<article id="source-E21"><h4>E21 · public async Task&lt;GateStrategyTransition&gt; SwitchTestingStrategyAsync</h4><p class="source-path"><a href="../../backend/Features/Pipeline/BatchGate/BatchGatePilotService.StrategySwitch.cs">backend/Features/Pipeline/BatchGate/BatchGatePilotService.StrategySwitch.cs</a>, line 14.</p><p>Strategy changes serialize with batch formation, describe pending work, cancel fallback flights for post-merge routing and fence old publication. The journal warning is partly addressed in this checkout.</p></article>
+<article id="source-E22"><h4>E22 · public async Task&lt;BatchPlanDecision&gt; AdviseAsync</h4><p class="source-path"><a href="../../backend/Features/Pipeline/BatchGate/BatchGateAdvisorService.cs">backend/Features/Pipeline/BatchGate/BatchGateAdvisorService.cs</a>, line 26.</p><p>A batch-plan advisor already validates a model reply through shared policy and falls back to the deterministic plan. It does not run a causal settings experiment.</p></article>
+<article id="source-E23"><h4>E23 · public static class DeployPreflightPolicy</h4><p class="source-path"><a href="../../backend/Features/Operator/DeployPreflight/DeployPreflightPolicy.cs">backend/Features/Operator/DeployPreflight/DeployPreflightPolicy.cs</a>, line 14.</p><p>Deploy preflight checks pending pushes, publishing flights and active commit steps. Its plan orders drain, Task Server, readiness, engine and hosts. A representative target-context canary is a further question.</p></article>
+<article id="source-E24"><h4>E24 · def build_one(name):</h4><p class="source-path"><a href="../../deploy/networked/deploy.py">deploy/networked/deploy.py</a>, line 322.</p><p>The networked deploy coordinator builds exact-commit artifacts in parallel, records build failures and raises the first error. This inspected build path has no one-time transient-download retry.</p></article>
+<article id="source-E25"><h4>E25 · public static class HostDiskPressurePolicy</h4><p class="source-path"><a href="../../contracts/TaskServer.Contracts/HostDiskPressure.cs">contracts/TaskServer.Contracts/HostDiskPressure.cs</a>, line 17.</p><p>Disk warnings and critical admission already exist with hysteresis: defaults 20 GiB or 15 percent free for warning, 8 GiB or 5 percent for critical. Missing measurements are described as not reported while the enum is Healthy.</p></article>
+<article id="source-E26"><h4>E26 · public IReadOnlyList&lt;OperatorDecisionFact&gt; Collect</h4><p class="source-path"><a href="../../backend/Features/Operator/Decisions/OperatorHostDiskFactSource.cs">backend/Features/Operator/Decisions/OperatorHostDiskFactSource.cs</a>, line 13.</p><p>Disk facts cover registered hosts, api-host and the gate probe. Measurements older than fifteen minutes produce no disk fact, so silence is not evidence of health.</p></article>
+<article id="source-E27"><h4>E27 · public static class HostStorageRetention</h4><p class="source-path"><a href="../../backend/Features/Pipeline/BatchGate/HostStorageRetention.cs">backend/Features/Pipeline/BatchGate/HostStorageRetention.cs</a>, line 7.</p><p>Retention sweeps settled, unreferenced gate evidence and rotated logs. It is not a release-image retention policy.</p></article>
+<article id="source-E28"><h4>E28 · public static class AcceptanceReadinessPolicy</h4><p class="source-path"><a href="../../backend/Features/Tasks/Acceptance/AcceptanceReadiness.cs">backend/Features/Tasks/Acceptance/AcceptanceReadiness.cs</a>, line 93.</p><p>Acceptance already separates ready, concerns, stale verdict, missing integration, deploy wait and owner decision. A new round is not offered for a deploy or owner wait.</p></article>
+<article id="source-E29"><h4>E29 · public static class AcceptanceRailDecisionPolicy</h4><p class="source-path"><a href="../../orchestration-decisions/AcceptanceRailDecisionPolicy.cs">orchestration-decisions/AcceptanceRailDecisionPolicy.cs</a>, line 83.</p><p>The platform rail already owns ordinary automatic acceptance when project autonomy permits and verification supports it; it also owns bounded recovery. An operator persona must not accept the same generation twice.</p></article>
+<article id="source-E30"><h4>E30 · public static class OperatorOperationCatalog</h4><p class="source-path"><a href="../../backend/Features/Security/Iam/OperatorPolicy/OperatorOperationCatalog.cs">backend/Features/Security/Iam/OperatorPolicy/OperatorOperationCatalog.cs</a>, line 136.</p><p>Operator operations have explicit route, scope and tier mappings. Testing changes and acceptance/archive overrides are T2; catalogued ordinary host and recovery actions are T1. A service-account Admin binding is not a persona grant.</p></article>
+<article id="source-E31"><h4>E31 · public static class PersonaAutonomy</h4><p class="source-path"><a href="../../backend/Features/Personas/PersonaDescriptor.cs">backend/Features/Personas/PersonaDescriptor.cs</a>, line 84.</p><p>Generic personas can observe, publish and propose. Manager operations are role-limited; generic autonomy does not grant arbitrary operator effects. Dispatcher has a specific exception.</p></article>
+<article id="source-E32"><h4>E32 · private static string? Refusal</h4><p class="source-path"><a href="../../backend/Features/Personas/PersonaSchedulingService.cs">backend/Features/Personas/PersonaSchedulingService.cs</a>, line 329.</p><p>Persona admission already checks grants, pool, allowance, metering, workspace quota, idle hosts and waiting Ready work. Event coalescing is hourly for high floors and six-hourly otherwise, not an incident response guarantee.</p></article>
+<article id="source-E33"><h4>E33 · public static void RequireMove</h4><p class="source-path"><a href="../../backend/Features/Personas/PersonaManagerPolicy.cs">backend/Features/Personas/PersonaManagerPolicy.cs</a>, line 39.</p><p>Chief of staff can move only proposal-origin Backlog/Ready cards, at most five times daily. The operator cannot assume this manager covers every blocked coding card.</p></article>
+<article id="source-E34"><h4>E34 · public enum AutonomyClass</h4><p class="source-path"><a href="../../orchestration-decisions/AiOperatorDecisionPolicy.cs">orchestration-decisions/AiOperatorDecisionPolicy.cs</a>, line 8.</p><p>Runtime autonomy A0/A1 acts, A2 proposes, A3 asks. Existing background deciders include delivery-chain, acceptance and stall intervention.</p></article>
+<article id="source-E35"><h4>E35 · public sealed class AiOperatorDecisionGateway</h4><p class="source-path"><a href="../../backend/Features/Runner/AiOperator/AiOperatorDecisionGateway.cs">backend/Features/Runner/AiOperator/AiOperatorDecisionGateway.cs</a>, line 71.</p><p>OperatorDecision is routed through the configured monolith/engine boundary. Extend it for new transition effects rather than adding a persona-owned transition switch.</p></article>
+<article id="source-E36"><h4>E36 · class ModelEquivalenceCatalog</h4><p class="source-path"><a href="../../backend/Features/Cli/Quota/ModelEquivalenceCatalog.cs">backend/Features/Cli/Quota/ModelEquivalenceCatalog.cs</a>, line 10.</p><p>Model equivalence is an existing routing input. It cannot establish that two historical blind trials had matched briefs or capability classes.</p></article>
+<article id="source-E37"><h4>E37 · public static class RoutePermissionCatalog</h4><p class="source-path"><a href="../../backend/Features/Security/Iam/RoutePermissionCatalog.cs">backend/Features/Security/Iam/RoutePermissionCatalog.cs</a>, line 67.</p><p>Ordinary route permissions and operator-operation admission are separate checks. Project settings PUT routes require project.settings.write; neither a prompt nor an event is a grant.</p></article>
+<article id="source-E38"><h4>E38 · public sealed class TaskTransitionService</h4><p class="source-path"><a href="../../backend/Features/Tasks/TaskTransitionService.cs">backend/Features/Tasks/TaskTransitionService.cs</a>, line 10.</p><p>Lane transitions enforce current-delivery containment, completion contracts and durable override evidence. The operator must call the API rather than write task folders.</p></article>
+<article id="source-E39"><h4>E39 · public static class PersonaGroundsPolicy</h4><p class="source-path"><a href="../../backend/Features/Personas/PersonaGroundsPolicy.cs">backend/Features/Personas/PersonaGroundsPolicy.cs</a>, line 4.</p><p>Grounds filtering has role-specific source areas. A new descriptor alone does not give the operator access to every needed fact.</p></article>
+<article id="source-E40"><h4>E40 · public sealed class PersonaCatalogue</h4><p class="source-path"><a href="../../backend/Features/Personas/PersonaCatalogue.cs">backend/Features/Personas/PersonaCatalogue.cs</a>, line 12.</p><p>The catalogue loads validated embedded descriptors. The inspected descriptors contain no fleet-operator instance; adding one needs a versioned descriptor and activation.</p></article>
+<h3>Related Dossiers</h3><ul><li><a href="../persona-team/index.html">Persona team</a>: descriptor, principal, scheduling, managers, reports, budget pool and capability addendum.</li><li><a href="../dispatcher-personas/index.html">Dispatcher personas</a>: priority-constrained strategy, conflict attribution, shadow comparison and lease ownership.</li><li><a href="../red-test-isolation/index.html">Red test isolation</a>: guardian, evidence-based triage, bounds, repair-first and shadow review.</li><li><a href="../operator-agent-level/index.html">Operator agent level</a> and <a href="../operator-elevated-session/index.html">Elevated operator session</a>: external operator identity, event stream, high-risk operations and confirmation.</li><li><a href="../system/contracts/orchestration-decisions.md">Orchestration decisions contract</a>: pure rules, gateway, authority selector and platform appliers.</li><li><a href="../concepts/orchestrator-drive-to-conclusion.html">Drive to conclusion</a>: bounded retries, session resume, explicit terminal ownership and case log.</li></ul></section>
+<section id="open-decisions" data-concept-section="open-decisions"><h2>Open decisions</h2><p>All decisions below are pending. Each has a working recommendation. Promotion may proceed with the recommendation unless a recorded Owner decision selects another option; sight review and decision acceptance occur after this concept delivery.</p>
+<article id="decision-FO-D1"><h3>FO-D1 · Role</h3><p>A keep manual journal; B bounded fleet-operator persona; C autonomous Admin.</p><p><b>Recommendation B.</b> Normal persona and case coordinator, with existing dispatcher, guardian, manager and acceptance owners.</p><p class="meta">Delivery: FO-1, FO-4</p></article>
+<article id="decision-FO-D2"><h3>FO-D2 · Authority</h3><p>A inherit Admin; B narrow capability and host/project grants; C read-only forever.</p><p><b>Recommendation B.</b> Start with observe, record and publish. Add individually reviewed T1 families; exact-request T2 stays with the Owner. No self-issued grants.</p><p class="meta">Delivery: FO-7, FO-13</p></article>
+<article id="decision-FO-D3"><h3>FO-D3 · Shadow review</h3><p>A time only; B time plus family-specific evidence; C agreement percentage alone.</p><p><b>Recommendation B.</b> At least seven days, thirty prospective cases, five per candidate family, 90 percent complete provenance, zero unsafe eligible advice and 90 percent useful recommendations/correct deferrals. Owner decides family promotion; quiet families stay shadow.</p><p class="meta">Delivery: FO-5, FO-6, FO-13</p></article>
+<article id="decision-FO-D4"><h3>FO-D4 · Budget</h3><p>A use spare subscription freely; B capped allowance within the persona pool; C no diagnostic model.</p><p><b>Recommendation B.</b> 60,000 tokens/week; seven five-minute ordinary sessions and one fifteen-minute investigation. Model-free hot path. Existing card-first and workspace limits prevail.</p><p class="meta">Delivery: FO-4</p></article>
+<article id="decision-FO-D5"><h3>FO-D5 · First operational family</h3><p>A automatic acceptance and global tuning; B after-settlement feedback/diagnostic request; C all host actions first.</p><p><b>Recommendation B.</b> Build one idempotent continuation handler, closed by default, with new evidence, current brief/attempt and existing recovery-owner checks. Ordinary acceptance remains on its current rail.</p><p class="meta">Delivery: FO-8, FO-13</p></article>
+<article id="decision-FO-D6"><h3>FO-D6 · Settings experiments</h3><p>A autonomous multivariable tuning; B one-field confirmed experiments; C no tuning.</p><p><b>Recommendation B.</b> One active experiment per project, target-context proof, saved baseline/revision, fixed cohort and stop/rollback rules. Start with batch deadline before other timing fields or stacking. Rollback needs its approved authority too.</p><p class="meta">Delivery: FO-9</p></article>
+<article id="decision-FO-D7"><h3>FO-D7 · Deploy and host work</h3><p>A arbitrary shell and cleanup; B typed plans with protected references; C manual host work forever.</p><p><b>Recommendation B.</b> Canary and rollout outcome evidence first. One classifier-bounded exact-artifact build retry can later be delegated. Cleanup initially stays a confirmed human runbook, protecting active/current plus two rollback releases and referenced evidence.</p><p class="meta">Delivery: FO-10, FO-11, FO-12</p></article>
+<article id="decision-FO-D8"><h3>FO-D8 · Evidence retention</h3><p>A rely on 72-hour events; B durable cases with bounded detail; C retain all raw logs.</p><p><b>Recommendation B.</b> Retain sanitized case detail and revisions for 90 days, weekly aggregate outcomes for 52 weeks, and decision/audit references under existing audit policy. Store receipt ids and small redacted excerpts, never tokens or whole host logs. A legal hold follows existing authority.</p><p class="meta">Delivery: FO-1, FO-5</p></article>
+<article id="decision-FO-D9"><h3>FO-D9 · Unavailable hardware</h3><p>A waive silently; B disabled/unverified capability plus manual probe after owner scope decision; C leave every dependent card blocked.</p><p><b>Recommendation B.</b> Record missing capability, owner choice and the manual validation requirement. Never label unsupported hardware tested. Persona drafts; Owner changes the acceptance scope.</p><p class="meta">Delivery: FO-3, FO-5</p></article>
+<article id="decision-FO-D10"><h3>FO-D10 · Response and requests</h3><p>A model on every poll; B model-free collector with explicit owner requests; C weekly reports only.</p><p><b>Recommendation B.</b> Consume the existing event stream, reconcile at start/cursor gap and at least each minute while active. Persist new advice within ten seconds of a fresh event when sources are ready. Authority-blocked fleet cases request the Owner immediately, remind once after thirty minutes if still unacknowledged, then include them in the daily pending list. Missing source facts remain explicit.</p><p class="meta">Delivery: FO-2, FO-3, FO-5</p></article>
+<article id="decision-FO-D11"><h3>FO-D11 · Evaluation</h3><p>A maximize quota and agreement; B useful delivery, cost and safety with denominators; C a single weighted rank immediately.</p><p><b>Recommendation B.</b> Report measured rates, comparable cohorts, own cost, misses and disagreements. No invented savings and no aggregate operator rank until measurements are trustworthy.</p><p class="meta">Delivery: FO-5, FO-9</p></article>
+</section>
+<section id="slices"><h2>Slices</h2><p>The first card is independently useful: it records and exports the human/shadow comparison through an API. Later cards fill facts, advice and review around that record. Every implementation card is bounded below and has a complete prompt in <a href="workbench.json">workbench.json</a>. Promotion enforces the listed dependencies; no card requires an unrecorded live approval to finish its implementation.</p><table><thead><tr><th>Slice</th><th>Delivery</th><th>Depends on</th></tr></thead><tbody>
+<tr><td>FO-1</td><td>Paired operator shadow record API</td><td>None</td></tr>
+<tr><td>FO-2</td><td>Frozen fleet facts and shadow ingestion</td><td>FO-1</td></tr>
+<tr><td>FO-3</td><td>Pure intervention advice and specialist handoffs</td><td>FO-2</td></tr>
+<tr><td>FO-4</td><td>Fleet operator descriptor and bounded diagnosis</td><td>FO-3</td></tr>
+<tr><td>FO-5</td><td>Human-action pairing and operator outcome report</td><td>FO-4</td></tr>
+<tr><td>FO-6</td><td>Operator comparison in the persona review surface</td><td>FO-5</td></tr>
+<tr><td>FO-7</td><td>Dry-run operation admission and evidence fences</td><td>FO-5</td></tr>
+<tr><td>FO-8</td><td>Deferred feedback and one diagnostic continuation handler</td><td>FO-7</td></tr>
+<tr><td>FO-9</td><td>Confirmed one-field settings experiment record</td><td>FO-7</td></tr>
+<tr><td>FO-10</td><td>Target-context deploy proof and fleet recovery outcome</td><td>FO-5</td></tr>
+<tr><td>FO-11</td><td>One transient artifact-build retry</td><td>FO-10, FO-7</td></tr>
+<tr><td>FO-12</td><td>Host coverage and bounded retention proposal</td><td>FO-10</td></tr>
+<tr><td>FO-13</td><td>Family-specific live admission and rollback</td><td>FO-6, FO-8, FO-9, FO-11, FO-12</td></tr>
+</tbody></table><p>FO-10 and its host/build follow-ups can proceed after the shared reporting and admission foundations. Only FO-13 opens a persona action path, and its implementation alone never enables a real workspace. FO-12 deliberately ends at a bounded human cleanup plan; a general automatic deletion feature is outside this proposal's first release.</p><h3>Delivery boundaries</h3><p>Deterministic repetition, environment, dispatch and ordinary acceptance behavior already covered by delivered code is consumed and measured. Implementation cards close the case-record, source-correlation, review and bounded-action gaps. They must not re-create AGT-3985, AGT-4037/4038, the dispatcher strategy or the guardian triage protocol.</p><p>This concept is confined to <code>docs/operator-persona/</code> as requested. The broader documentation index is unchanged because this run allows changes only inside that Dossier directory. Card discoverability is supplied by the task result references. Any later implementation that adds public documentation must update the repository index under the normal contribution contract.</p></section>
+<footer>AGT-4056 · 27 November 2026 · Concept delivery only. Owner decisions, sight review and operator approval remain pending. Canonical metadata and implementation prompts: <a href="workbench.json">workbench.json</a>.</footer>
+</main></body></html>

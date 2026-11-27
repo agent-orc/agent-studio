@@ -2520,7 +2520,7 @@ export interface TestingStrategyOption {
 export interface PostMergeCoverage {
   project: string;
   strategy: TestingStrategy;
-  state: 'not-expected' | 'current' | 'missing' | 'unknown';
+  state: 'not-expected' | 'current' | 'pending' | 'missing' | 'unknown';
   developTipSha: string | null;
   lastReportedTipSha: string | null;
   lastReportedAtUtc: string | null;

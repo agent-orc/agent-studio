@@ -801,6 +801,8 @@ public static class TaskServerEndpoints
 
         var gates = api.MapGroup("/gates")
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        gates.MapGet("/post-merge-hosts", async (TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.PostMergeHostsAsync(ct)));
         gates.MapPost("/subjects", async (
             HttpContext context, CreateGateSubjectRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.CreateGateSubjectAsync(request, Actor(context), ct), StatusCodes.Status201Created))
@@ -811,8 +813,8 @@ public static class TaskServerEndpoints
             => await InvokeNullableAsync(() => store.GetGateStatusAsync(subjectId, ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
         gates.MapPost("/subjects/{subjectId}/cancel", async (
-            HttpContext context, string subjectId, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.CancelGateSubjectAsync(subjectId, Actor(context), ct)))
+            HttpContext context, string subjectId, bool? onlyBeforeRunning, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.CancelGateSubjectAsync(subjectId, Actor(context), ct, onlyBeforeRunning == true)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
             .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
         // DP-S4: bounded immutable bundle artifacts for merge, promotion and

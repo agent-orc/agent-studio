@@ -63,6 +63,51 @@ with raw CLI samples removed, exactly as on `GET /api/cli/quota`. An
 installation-wide reader gets the same background refresh behavior as that
 quota route. Reading capacity does not change routing.
 
+`GET /api/operator/coding-capacity` (AGT-4053) reads the published board,
+archive-inclusive dependency graph, fresh coding hosts and cached selection
+previews. `fleet` and `projects[]` contain total, used and free coding slots,
+Ready and claimable counts, `cards[]` with all applicable `dependency`,
+`dispatch-rule`, `quota` and `parked` blocks, and `heads[]` ordered with escalated
+and parked chain heads first, then by the number of Ready cards behind them.
+A live dispatch admission supersedes an older recorded refusal. A remaining
+refusal is explicitly labelled as the last observed claim refusal; capacity
+is a read model, not a lease permit or a repository preflight.
+
+Fleet cards are limited to the same watched projects represented in `projects[]`.
+A card still present in a published snapshot after its project is unwatched does
+not add Ready work to the fleet. Authorized cross-project dependency heads remain
+visible as blockers through the archive-inclusive reference graph.
+Duplicate card keys, including case-only variants, keep the first published
+occurrence among the reader's watched projects. Each key contributes once to
+project rows and fleet card counts, matching the reference index's
+first-occurrence rule.
+
+`dependencyWidth` is the maximum antichain of the unfinished Ready and Progress
+graph, equivalently its minimum chain cover. It accounts for forks, joins,
+cycles, cross-project edges and fulfilled delivery edges. `maxConcurrentCards`
+bounds that width by available coding capacity. Project pools may share hosts;
+the fleet counts each coding executor once rather than adding overlapping
+project pools. Class-placed project capacity also respects its project limit.
+Review and gate roles, stale or closed hosts, retired and read-only clients,
+and fixture cards are excluded. A project-scoped reader sees only its project
+cards and matching host pool; subscription rows require `workspace.operate`.
+
+`subscriptions[]` reports used percent, elapsed percent and projected percent
+left at reset for each subscription window. The rate is the average usage
+since the observed or inferred window start. A missing `resetAt` says
+`reset unknown`; unknown duration, an expired reset, stale or suspicious readings
+and the first 5% of a window do not produce a leftover projection.
+
+The decision stream and Needs you expose `capacity.underused` after coding
+slots have been continuously observed free for more than 20 minutes, when no
+card is claimable or fewer cards are claimable than free slots while Ready is
+nonempty. The fleet also reports projected subscription leftovers above 20%
+even when enough cards are claimable. The item names the cause and next action.
+The named thresholds live in `CodingCapacityProjection`, not settings. Full
+capacity, loss of the published board, or loss of fresh host capacity resets
+the observation; after a process restart the 20-minute observation starts anew.
+The board header renders the selected project or fleet count as one quiet line.
+
 ## Operator log and card attention
 
 `POST /api/operator/log` appends an entry with `project`, `kind` (`observed`,

@@ -1139,3 +1139,12 @@ a Ready dependency hold. Already satisfied conditions release pickup immediately
 the existing current-delivery integration fulfillment rule. Review follow-up
 creation publishes that dependency with the new card and records the parent
 delivery commits in its brief.
+
+## Post-merge admission and deadlines (AGT-4075)
+
+`PostMergeSchedulingPolicy` owns window age promotion, the three-window owner
+deadline, gate queue priority and the last supersedable phase. Hosts collect
+clock, window and gate-phase facts. The gate authority serializes conditional
+cancellation against the worker's transition to `running` immediately before
+tests. Run-host promotion keeps the worker test envelope and load receipts.
+This changes verification placement, never the project's testing strategy.

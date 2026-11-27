@@ -1195,6 +1195,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedBatchGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeRunStore>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeGateScheduler>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.TestQuarantineStore(
     Path.Combine(sp.GetRequiredService<AgentStudio.Pipeline.PostMergeRunStore>().Root, "..", "test-quarantines")));
 // SM-4: the operator policy step reads gate evidence to classify stage deploys and promotions (D2).
@@ -1540,6 +1541,9 @@ builder.Services.AddSingleton(sp => new WatcherLeaseService(
     sp.GetRequiredService<OperatorDecisionOptions>(), sp.GetRequiredService<OperatorDecisionLog>(),
     sp.GetRequiredService<ControlPlaneAuditLog>(), sp.GetRequiredService<TimeProvider>(),
     sp.GetService<ILogger<WatcherLeaseService>>()));
+builder.Services.AddSingleton<CapacityIdleTracker>();
+builder.Services.AddSingleton<CodingCapacityService>();
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => sp.GetRequiredService<CodingCapacityService>());
 builder.Services.AddSingleton<OverlapPredictionLedger>();
 builder.Services.AddSingleton<OverlapDispatchGuard>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorOverlapFactSource(

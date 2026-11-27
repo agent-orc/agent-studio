@@ -35,6 +35,16 @@ public sealed class AgentMessageBusBridgeTests : IDisposable
     public void Dispose() => TestTempRoot.TryDelete(_workspace);
 
     [Fact]
+    public async Task Audit_alert_is_accepted_by_the_bus()
+    {
+        await _bridge.EmitControlPlaneAuditAlertAsync("audit-chain-broken", "Sequences 6 to 8 are missing.", 6);
+        var message = Assert.Single(_store.Recent(_workspace, null, 10));
+        Assert.Equal("error", message.Kind);
+        Assert.Equal("High", message.Severity);
+        Assert.Equal("control_plane_audit_alert", message.Topic);
+    }
+
+    [Fact]
     public async Task Batch_pause_handoff_records_one_event_with_all_members()
     {
         await _bridge.EmitBatchPauseHandoffAsync("Project", "batch-9",

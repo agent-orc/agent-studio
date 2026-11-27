@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using AgentStudio.Secrets;
+using AgentStudio.Operator;
 using AgentStudio.Security;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -21,6 +22,203 @@ public sealed class ControlPlaneAuditChainTests(Xunit.Abstractions.ITestOutputHe
     private const string Password = "correct horse battery staple!";
     private readonly string _root = Path.Combine(Path.GetTempPath(), "control-plane-audit-" + Guid.NewGuid().ToString("N"));
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 11, 2, 9, 0, 0, TimeSpan.Zero));
+
+    [Fact]
+    public async Task A_proven_sink_loss_stays_failed_during_read_failure_and_anchors_once_on_retry()
+    {
+        var (log, _, sink, forwarder, _) = Build();
+        Fill(log, 2000);
+        await forwarder.ForwardPendingAsync(CancellationToken.None);
+        WriteAuditLines(log.FilePath, File.ReadAllLines(log.FilePath).Take(1000));
+        File.Delete(log.ForwardPositionPath);
+        var restarted = new ControlPlaneAuditLog(Path.GetDirectoryName(log.FilePath)!, _clock);
+        var monitor = new ControlPlaneAuditMonitor(restarted, HttpsOptions, _clock, _channel);
+        using var verifier = new ControlPlaneAuditVerifier(restarted, monitor, sink, _clock);
+        var reads = 0;
+        Action? read = null;
+        read = () =>
+        {
+            if (++reads == 3) throw new HttpRequestException("sink read interrupted");
+            sink.BeforeRead = read;
+        };
+        sink.BeforeRead = read;
+
+        var interrupted = await verifier.VerifyAsync(CancellationToken.None);
+        var source = new ControlPlaneAuditAlertFactSource(monitor, restarted);
+        var before = Assert.Single(source.Collect(_clock.GetUtcNow().UtcDateTime));
+        Assert.Equal((ControlPlaneAuditIntegrityStates.Failed, "truncated", 1001L),
+            (interrupted.State, interrupted.Problem, interrupted.ProblemSequence));
+        Assert.Null(restarted.LatestRecoveryAnchor);
+        sink.BeforeRead = () => throw new HttpRequestException("sink still offline");
+        Assert.Equal(ControlPlaneAuditIntegrityStates.Failed, (await verifier.VerifyAsync(CancellationToken.None)).State);
+        Assert.Null(restarted.LatestRecoveryAnchor);
+        Assert.Single(monitor.Raised);
+        _clock.Advance(TimeSpan.FromMinutes(1));
+
+        Assert.Equal(ControlPlaneAuditIntegrityStates.Failed, (await verifier.VerifyAsync(CancellationToken.None)).State);
+        var after = Assert.Single(source.Collect(_clock.GetUtcNow().UtcDateTime));
+        Assert.Equal(before.Key, after.Key);
+        Assert.Equal(before.ObservedAtUtc, after.ObservedAtUtc);
+        Assert.Equal(2001, restarted.LatestRecoveryAnchor!.Sequence);
+        Assert.Equal(ControlPlaneAuditIntegrityStates.Verified, (await verifier.VerifyAsync(CancellationToken.None)).State);
+        Assert.Single(monitor.Raised);
+    }
+
+    [Fact]
+    public async Task A_lost_tail_is_detected_from_the_sink_after_restart_even_without_a_forward_cursor()
+    {
+        var (log, _, sink, forwarder, _) = Build();
+        Fill(log, 1003);
+        await forwarder.ForwardPendingAsync(CancellationToken.None);
+        WriteAuditLines(log.FilePath, File.ReadAllLines(log.FilePath).Take(1000));
+        File.Delete(log.ForwardPositionPath);
+        var restarted = new ControlPlaneAuditLog(Path.GetDirectoryName(log.FilePath)!, _clock);
+        var monitor = new ControlPlaneAuditMonitor(restarted, HttpsOptions, _clock, _channel);
+        using var verifier = new ControlPlaneAuditVerifier(restarted, monitor, sink, _clock);
+
+        var result = await verifier.VerifyAsync(CancellationToken.None);
+
+        Assert.Equal(("truncated", 1001L), (result.Problem, result.ProblemSequence));
+        var anchor = Assert.Single(restarted.Read(1, 2000), entry => entry.Operation == "audit.chain-anchor");
+        Assert.Equal(1004, anchor.Sequence);
+        Assert.Equal(ControlPlaneAuditIntegrityStates.Verified, (await verifier.VerifyAsync(CancellationToken.None)).State);
+        Assert.Single(monitor.Raised);
+    }
+
+    [Theory]
+    [InlineData(0xff)]
+    [InlineData(0xc3)]
+    public async Task Recovery_seals_the_exact_bytes_of_an_invalid_or_torn_utf8_tail(int tail)
+    {
+        var (log, monitor, _, _, verifier) = Build();
+        Fill(log, 2);
+        using (var stream = new FileStream(log.FilePath, FileMode.Append, FileAccess.Write, FileShare.Read))
+        {
+            stream.WriteByte((byte)tail);
+            stream.Flush(flushToDisk: true);
+        }
+        var damaged = File.ReadAllBytes(log.FilePath);
+
+        Assert.Equal(ControlPlaneAuditIntegrityStates.Failed, (await verifier.VerifyAsync(CancellationToken.None)).State);
+
+        Assert.Equal(damaged, File.ReadAllBytes(log.FilePath).Take(damaged.Length));
+        var anchor = Assert.Single(log.Read(1, 100), entry => entry.Operation == "audit.chain-anchor");
+        Assert.Equal(4, anchor.Sequence);
+        Assert.Equal(3, anchor.Details!.Value.GetProperty("lastAffected").GetInt64());
+        Assert.True(log.VerifyChain().Ok);
+        Assert.Equal(ControlPlaneAuditIntegrityStates.Verified, (await verifier.VerifyAsync(CancellationToken.None)).State);
+        Assert.Single(monitor.Raised);
+    }
+
+    [Fact]
+    public async Task A_real_break_is_anchored_even_when_a_mutation_appends_after_the_snapshot()
+    {
+        var (log, monitor, _, _, verifier) = Build();
+        Fill(log, 6);
+        WriteAuditLines(log.FilePath, File.ReadAllLines(log.FilePath).Take(3));
+        var damaged = File.ReadAllBytes(log.FilePath);
+        log.VerificationSnapshotCaptured = () =>
+        {
+            log.VerificationSnapshotCaptured = null;
+            log.Append(Record(6));
+        };
+
+        Assert.Equal(ControlPlaneAuditIntegrityStates.Failed, (await verifier.VerifyAsync(CancellationToken.None)).State);
+
+        var anchor = Assert.Single(log.Read(1, 100), entry => entry.Operation == "audit.chain-anchor");
+        Assert.Equal(8, anchor.Sequence);
+        Assert.Contains(log.Read(1, 100), entry => entry.Sequence == 7 && entry.Operation == Record(6).Operation);
+        Assert.Equal(damaged, File.ReadAllBytes(log.FilePath).Take(damaged.Length));
+        Assert.True(log.VerifyChain().Ok);
+        Assert.Equal(ControlPlaneAuditIntegrityStates.Verified, (await verifier.VerifyAsync(CancellationToken.None)).State);
+        Assert.Single(monitor.Raised);
+    }
+
+    [Fact]
+    public async Task A_forward_position_that_advances_after_the_snapshot_does_not_prove_truncation()
+    {
+        var (writer, _, _, forwarder, _) = Build();
+        Fill(writer, 3);
+        await forwarder.ForwardPendingAsync(CancellationToken.None);
+        var reader = new ControlPlaneAuditLog(Path.GetDirectoryName(writer.FilePath)!, _clock);
+        var monitor = new ControlPlaneAuditMonitor(reader, HttpsOptions, _clock, _channel);
+        using var verifier = new ControlPlaneAuditVerifier(reader, monitor, _sink, _clock);
+        reader.VerificationSnapshotCaptured = () =>
+        {
+            Fill(writer, 1, 3);
+            forwarder.ForwardPendingAsync(CancellationToken.None).GetAwaiter().GetResult();
+        };
+
+        var result = await verifier.VerifyAsync(CancellationToken.None);
+
+        Assert.Equal(ControlPlaneAuditIntegrityStates.Verified, result.State);
+        Assert.Empty(monitor.Raised);
+        Assert.Equal(4, writer.ReadForwardPosition().Sequence);
+    }
+
+    [Fact]
+    public async Task Sink_entries_forwarded_during_verification_do_not_prove_local_loss()
+    {
+        var (log, monitor, sink, forwarder, verifier) = Build();
+        Fill(log, 3);
+        await forwarder.ForwardPendingAsync(CancellationToken.None);
+        sink.BeforeRead = () =>
+        {
+            Fill(log, 1, 3);
+            forwarder.ForwardPendingAsync(CancellationToken.None).GetAwaiter().GetResult();
+        };
+
+        var result = await verifier.VerifyAsync(CancellationToken.None);
+
+        Assert.Equal(ControlPlaneAuditIntegrityStates.Verified, result.State);
+        Assert.Empty(monitor.Raised);
+        Assert.Equal(4, sink.Count);
+    }
+
+    [Fact]
+    public async Task A_real_break_is_preserved_and_followed_by_a_verified_recovery_anchor()
+    {
+        var (log, monitor, _, forwarder, verifier) = Build();
+        Fill(log, 6);
+        await forwarder.ForwardPendingAsync(CancellationToken.None);
+        WriteAuditLines(log.FilePath, File.ReadAllLines(log.FilePath).Take(3));
+        var damaged = File.ReadAllBytes(log.FilePath);
+
+        var first = await verifier.VerifyAsync(CancellationToken.None);
+
+        Assert.Equal(("truncated", 4L), (first.Problem, first.ProblemSequence));
+        var anchor = Assert.Single(log.Read(1, 100), entry => entry.Operation == "audit.chain-anchor");
+        Assert.Equal(7, anchor.Sequence);
+        Assert.Equal(damaged, File.ReadAllBytes(log.FilePath).Take(damaged.Length));
+        Assert.Contains("Sequence range 4 to 6", first.Message);
+        Assert.Contains(_clock.GetUtcNow().UtcDateTime.ToString("O"), first.Message);
+        Assert.Contains($"pid:{Environment.ProcessId}", first.Message);
+        Fill(log, 1, 7);
+        Assert.True(log.VerifyChain().Ok);
+        Assert.Equal(ControlPlaneAuditIntegrityStates.Verified, (await verifier.VerifyAsync(CancellationToken.None)).State);
+        Assert.Single(monitor.Raised);
+        Assert.True(monitor.IsOpen(ControlPlaneAuditAlertCodes.ChainBroken));
+        Assert.Equal(2, await forwarder.ForwardPendingAsync(CancellationToken.None));
+        Assert.Equal(ControlPlaneAuditIntegrityStates.Verified, (await verifier.VerifyAsync(CancellationToken.None)).State);
+
+        var restarted = new ControlPlaneAuditLog(Path.GetDirectoryName(log.FilePath)!, _clock);
+        var restartedMonitor = new ControlPlaneAuditMonitor(restarted, HttpsOptions, _clock);
+        using var restartedVerifier = new ControlPlaneAuditVerifier(restarted, restartedMonitor, _sink, _clock);
+        var afterRestart = await restartedVerifier.VerifyAsync(CancellationToken.None);
+        Assert.Equal(ControlPlaneAuditIntegrityStates.Verified, afterRestart.State);
+        Assert.Contains("earlier history remains broken", afterRestart.Message);
+        Assert.Empty(restartedMonitor.Raised);
+        var attention = new ControlPlaneAuditAlertFactSource(restartedMonitor, restarted);
+        Assert.Single(OperatorAttention.Project(attention.Collect(_clock.GetUtcNow().UtcDateTime),
+            OperatorDecisionReader.Everything).Items);
+
+        // Sealing a damaged prefix must not hide a later alteration of that prefix.
+        var text = File.ReadAllText(log.FilePath);
+        File.WriteAllText(log.FilePath, text.Replace("card-0", "card-x", StringComparison.Ordinal));
+        Assert.False(log.VerifyChain().Ok);
+        Assert.Equal(ControlPlaneAuditIntegrityStates.Failed, (await verifier.VerifyAsync(CancellationToken.None)).State);
+        Assert.Equal(2, monitor.Raised.Count);
+    }
 
     [Fact]
     public void Recent_tail_read_stops_at_time_boundary_and_skips_a_torn_append()
@@ -79,7 +277,7 @@ public sealed class ControlPlaneAuditChainTests(Xunit.Abstractions.ITestOutputHe
             case "insert": lines.Insert(5, lines[5]); break;
         }
         Assert.NotEqual(File.ReadAllLines(log.FilePath), lines);
-        File.WriteAllLines(log.FilePath, lines);
+        WriteAuditLines(log.FilePath, lines);
 
         var result = await verifier.VerifyAsync(CancellationToken.None);
 
@@ -96,7 +294,7 @@ public sealed class ControlPlaneAuditChainTests(Xunit.Abstractions.ITestOutputHe
         var (log, _, _, forwarder, _) = Build();
         Fill(log, 6);
         await forwarder.ForwardPendingAsync(CancellationToken.None);
-        File.WriteAllLines(log.FilePath, File.ReadAllLines(log.FilePath).SkipLast(1));
+        WriteAuditLines(log.FilePath, File.ReadAllLines(log.FilePath).SkipLast(1));
 
         // A fresh process knows nothing it wrote; the forward position and the sink still do.
         var restarted = new ControlPlaneAuditLog(Path.GetDirectoryName(log.FilePath)!, _clock);
@@ -285,6 +483,9 @@ public sealed class ControlPlaneAuditChainTests(Xunit.Abstractions.ITestOutputHe
             new ControlPlaneAuditVerifier(log, monitor, _sink, _clock));
     }
 
+    private static void WriteAuditLines(string path, IEnumerable<string> lines)
+        => File.WriteAllText(path, string.Concat(lines.Select(line => line + "\n")));
+
     private static void Fill(ControlPlaneAuditLog log, int count, int start = 0)
     {
         for (var index = start; index < start + count; index++) log.Append(Record(index));
@@ -301,6 +502,7 @@ public sealed class ControlPlaneAuditChainTests(Xunit.Abstractions.ITestOutputHe
         private readonly object _gate = new();
         public ConcurrentDictionary<long, long> ReceivedAt { get; } = new();
         public bool Reachable { get; set; } = true;
+        public Action? BeforeRead { get; set; }
         public string Kind => "fake";
         public int Count { get { lock (_gate) return _lines.Count; } }
         public IReadOnlyList<string> Lines { get { lock (_gate) return _lines.Values.ToList(); } }
@@ -316,6 +518,9 @@ public sealed class ControlPlaneAuditChainTests(Xunit.Abstractions.ITestOutputHe
 
         public Task<IReadOnlyList<string>> ReadAsync(long fromSequence, int limit, CancellationToken ct)
         {
+            var beforeRead = BeforeRead;
+            BeforeRead = null;
+            beforeRead?.Invoke();
             lock (_gate)
                 return Task.FromResult<IReadOnlyList<string>>(_lines.Where(pair => pair.Key >= fromSequence)
                     .Take(limit).Select(pair => pair.Value).ToList());
