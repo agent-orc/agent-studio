@@ -16,6 +16,23 @@
       (valueChange)="setTheme($event)" />
   </div>
 
+  <div class="appearance__row">
+    <label class="appearance__label" for="appearance-token-set">Token set</label>
+    <select id="appearance-token-set" data-testid="settings-token-set"
+      (change)="setTokenSet($any($event.target).value)">
+      @for (set of tokenSets(); track set.id) {
+        <option [value]="set.id" [selected]="set.id === tokenSetId()">{{ set.label }}</option>
+      }
+    </select>
+  </div>
+  @for (set of tokenSets(); track set.id) {
+    @if (set.preview) {
+      <p class="appearance__hint" [attr.data-testid]="'settings-token-description-' + set.id">
+        <strong>{{ set.label }} (Preview).</strong> {{ set.description }}
+      </p>
+    }
+  }
+
   <app-section-header title="Layout" [divider]="true" />
   <div class="appearance__row">
     <span class="appearance__label" id="appearance-activitybar-label">Activity bar</span>

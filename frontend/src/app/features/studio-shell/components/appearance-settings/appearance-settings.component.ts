@@ -34,6 +34,13 @@ export class AppearanceSettingsComponent {
   private readonly panelState = inject(StudioPanelStateService);
   readonly uiPrefs = inject(UiPreferencesService);
 
+  readonly tokenSets = this.themeService.tokenSets;
+  readonly tokenSetId = this.themeService.tokenSetId;
+
+  setTokenSet(value: string): void {
+    this.themeService.setTokenSet(value);
+  }
+
   readonly theme = this.themeService.preference;
   readonly activityBarSide = this.panelState.activityBarSide;
 

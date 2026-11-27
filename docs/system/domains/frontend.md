@@ -60,9 +60,21 @@ rejects growth against the checked-in baseline.
 `ThemeService` owns two independent choices. `atp.studio.theme` remains the
 `light` / `dark` / `system` preference. The typed registry in
 `frontend/src/app/features/studio-shell/services/theme-token-sets.ts` supplies
-palette families with both light and dark variants. The only shipped family is
+palette families with both light and dark variants. The default family is
 `studio-default`: its two empty override maps use the existing library CSS
-unchanged. Appearance and the titlebar keep their existing controls.
+unchanged. Appearance also offers three opt-in preview families from AGT-4070,
+AGT-4071 and AGT-4072: `preview-1` (calm and dense), `preview-2` (editorial),
+and `preview-3` (workbench). Each has a description and both themes. Only roles
+with current token consumers are mapped; page structure stays unchanged.
+This checkout has no hosted font assets, so previews use the supplied system
+fallbacks rather than fetching fonts. Contrast corrections live in the preview
+maps and their text/surface matrix is covered by unit and browser tests.
+
+A normal URL query, for example `/?tokenSet=preview-3#/board`, overrides the
+family for that visit without changing the saved browser choice. Unknown query
+ids leave the saved choice active. An explicit selection in Appearance saves
+the choice and removes the query override, preserving other query parameters
+and the hash route. Theme and System changes preserve the visit override.
 
 `atp.studio.tokenSet` stores `{ "version": 1, "id": "studio-default" }`.
 Only a registered id at the supported version restores. Missing, malformed,
@@ -77,7 +89,8 @@ saved choice; the media-query listener is removed on service destruction.
 lowercase id, label, and both mode maps. `setTokenSet(id)` selects it without a
 build; `tokenSets`, `tokenSetId` and `tokenSet` expose the registry, selected
 family and resolved variant as signals. Prototype maps override central
-`--studio-*` aliases only, on the document root. Switching family or mode restores
+`--studio-*`, `--font-*`, `--elevation-*`, `--model-family-*` and `--lane-*`
+aliases on the document root. Switching family or mode restores
 previous inline values and removes overrides absent from the next variant.
 Primitives and the library bridge keep their names and definitions. This is an
 application configuration API, not an arbitrary CSS import facility. It validates
