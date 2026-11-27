@@ -180,7 +180,7 @@ public sealed partial class TaskServerStore
                            deletion_status = $deletion
                      WHERE issuance_id = $id;
                     """, CancellationToken.None, transaction, ("$now", Iso(UtcNow)),
-                    ("$status", revoked ? "revoked" : "expiry-backstop"),
+                    ("$status", (revoked ? "revoked" : "expiry-backstop") + (rootDeleted ? "" : RootDeletionPendingSuffix)),
                     ("$deletion", rootDeleted ? "no-host-file" : "root-delete-pending"),
                     ("$id", issuanceId)), CancellationToken.None);
             throw;
@@ -194,11 +194,11 @@ public sealed partial class TaskServerStore
         IAttemptRootSecretStore roots, CancellationToken ct)
     {
         RequireWritable();
-        string? closedStatus = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var changed = await ExecuteAsync(connection, """
-                UPDATE attempt_credential_issuances SET revoked_at = $now
+                UPDATE attempt_credential_issuances
+                   SET revoked_at = $now, revocation_status = 'explicit-revocation-pending'
                  WHERE issuance_id = $id AND run_id = $run AND lease_id = $lease
                    AND fence = $fence AND epoch = $epoch AND host_id = $host
                    AND role = $role AND subject_id = $subject AND revoked_at IS NULL;
@@ -210,8 +210,8 @@ public sealed partial class TaskServerStore
             if (changed != 1)
             {
                 // SM-11: the server may have revoked it at completion already.
-                closedStatus = Convert.ToString(await ScalarAsync(connection, """
-                    SELECT revocation_status FROM attempt_credential_issuances
+                var closed = await ScalarAsync(connection, """
+                    SELECT 1 FROM attempt_credential_issuances
                      WHERE issuance_id = $id AND run_id = $run AND lease_id = $lease
                        AND fence = $fence AND epoch = $epoch AND host_id = $host
                        AND role = $role AND subject_id = $subject AND revoked_at IS NOT NULL;
@@ -219,26 +219,78 @@ public sealed partial class TaskServerStore
                     ("$run", identity.AttemptId), ("$lease", identity.LeaseId),
                     ("$fence", identity.Fence), ("$epoch", identity.Epoch),
                     ("$host", identity.HostId), ("$role", identity.Role),
-                    ("$subject", identity.SubjectId)), CultureInfo.InvariantCulture);
-                if (closedStatus is null)
+                    ("$subject", identity.SubjectId));
+                if (closed is null)
                     throw new TaskServerConflictException("credential-already-closed", "Attempt credential is not active for this identity.");
             }
         }, ct);
-        if (closedStatus is not null)
-            return new AttemptCredentialReceipt(issuanceId, closedStatus, "host-receipt-pending", UtcNow);
-        var token = await roots.ReadAsync("issued-" + issuanceId, CancellationToken.None);
-        bool revoked;
-        try { revoked = token is not null && await issuer.RevokeAsync(token, CancellationToken.None); }
-        catch (Exception) { revoked = false; }
-        var status = revoked ? "revoked" : "expiry-backstop";
-        await roots.DeleteAsync("issued-" + issuanceId, CancellationToken.None);
+        return await ResumeAttemptCredentialCleanupAsync(issuanceId, issuer, roots);
+    }
+
+    // Keep issuer outcome durable before deleting the root. Host deletion receipts
+    // use deletion_status independently, so they cannot hide unfinished root cleanup.
+    private const string RootDeletionPendingSuffix = "-root-delete-pending";
+
+    private async Task<AttemptCredentialReceipt> ResumeAttemptCredentialCleanupAsync(
+        string issuanceId, IRepositoryTokenIssuer issuer, IAttemptRootSecretStore roots)
+    {
+        string? status = null, deletion = null;
+        var issued = false;
         await InWriteTransactionAsync(async (connection, transaction) =>
-            await ExecuteAsync(connection, """
-                UPDATE attempt_credential_issuances
-                   SET revocation_status = $status, deletion_status = 'host-receipt-pending'
-                 WHERE issuance_id = $id;
-                """, CancellationToken.None, transaction, ("$status", status), ("$id", issuanceId)), CancellationToken.None);
-        return new AttemptCredentialReceipt(issuanceId, status, "host-receipt-pending", UtcNow);
+        {
+            await using var command = Command(connection, """
+                SELECT revocation_status, deletion_status, issued_at
+                  FROM attempt_credential_issuances WHERE issuance_id = $id AND revoked_at IS NOT NULL;
+                """, transaction, ("$id", issuanceId));
+            await using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
+            if (!await reader.ReadAsync(CancellationToken.None))
+                throw new TaskServerConflictException("credential-already-closed", "Credential revocation intent is missing.");
+            status = reader.IsDBNull(0) ? null : reader.GetString(0);
+            deletion = reader.IsDBNull(1) ? null : reader.GetString(1);
+            issued = !reader.IsDBNull(2);
+        }, CancellationToken.None);
+
+        // Null is the legacy explicit-revoke intent, written before phase tracking.
+        if (status is null or "revocation-pending" or "explicit-revocation-pending")
+        {
+            var token = await roots.ReadAsync("issued-" + issuanceId, CancellationToken.None);
+            var revoked = false;
+            if (token is not null)
+            {
+                try { revoked = await issuer.RevokeAsync(token, CancellationToken.None); }
+                catch (Exception) { revoked = false; }
+            }
+            var outcome = token is null && !issued ? "not-issued"
+                : revoked ? status == "revocation-pending" ? "revoked-at-completion" : "revoked"
+                : "expiry-backstop";
+            status = outcome + RootDeletionPendingSuffix;
+            await InWriteTransactionAsync(async (connection, transaction) =>
+                await ExecuteAsync(connection, """
+                    UPDATE attempt_credential_issuances SET revocation_status = $status WHERE issuance_id = $id;
+                    """, CancellationToken.None, transaction, ("$status", status), ("$id", issuanceId)), CancellationToken.None);
+        }
+
+        // Also resume root-delete-pending recorded by the existing exchange failure path.
+        if (status!.EndsWith(RootDeletionPendingSuffix, StringComparison.Ordinal) || deletion == "root-delete-pending")
+        {
+            await roots.DeleteAsync("issued-" + issuanceId, CancellationToken.None);
+            if (status.EndsWith(RootDeletionPendingSuffix, StringComparison.Ordinal))
+                status = status[..^RootDeletionPendingSuffix.Length];
+            await InWriteTransactionAsync(async (connection, transaction) =>
+                await ExecuteAsync(connection, """
+                    UPDATE attempt_credential_issuances
+                       SET revocation_status = $status,
+                           deletion_status = CASE WHEN deletion_status = 'root-delete-pending' THEN 'no-host-file'
+                                                  ELSE COALESCE(deletion_status, 'host-receipt-pending') END
+                     WHERE issuance_id = $id;
+                    """, CancellationToken.None, transaction, ("$status", status), ("$id", issuanceId)), CancellationToken.None);
+            // Read the actual host receipt, which may have arrived during external cleanup.
+            await InWriteTransactionAsync(async (connection, transaction) =>
+                deletion = Convert.ToString(await ScalarAsync(connection,
+                    "SELECT deletion_status FROM attempt_credential_issuances WHERE issuance_id = $id;",
+                    CancellationToken.None, transaction, ("$id", issuanceId)), CultureInfo.InvariantCulture), CancellationToken.None);
+        }
+        return new AttemptCredentialReceipt(issuanceId, status, deletion ?? "host-receipt-pending", UtcNow);
     }
 
     public async Task<AttemptCredentialReceipt> RecordAttemptCredentialDeletionAsync(
@@ -286,8 +338,14 @@ public sealed partial class TaskServerStore
                 SELECT i.issuance_id
                   FROM attempt_credential_issuances i
                   LEFT JOIN leases l ON l.run_id = i.run_id AND l.lease_id = i.lease_id
-                 WHERE i.revoked_at IS NULL
-                   AND (l.run_id IS NULL OR l.status NOT IN ('active', 'process-unknown'));
+                 WHERE (i.revoked_at IS NULL
+                        AND (l.run_id IS NULL OR l.status NOT IN ('active', 'process-unknown')))
+                    OR (i.revoked_at IS NOT NULL
+                        AND (i.revocation_status IS NULL
+                             OR i.revocation_status IN ('revocation-pending', 'explicit-revocation-pending')
+                             OR i.revocation_status LIKE '%-root-delete-pending'
+                             OR i.deletion_status = 'root-delete-pending'))
+                 ORDER BY i.rowid;
                 """, transaction))
             await using (var reader = await command.ExecuteReaderAsync(ct))
                 while (await reader.ReadAsync(ct)) finished.Add(reader.GetString(0));
@@ -298,23 +356,18 @@ public sealed partial class TaskServerStore
                      WHERE issuance_id = $id AND revoked_at IS NULL;
                     """, ct, transaction, ("$now", Iso(UtcNow)), ("$id", issuance));
         }, ct);
+        var failures = new List<Exception>();
         foreach (var issuance in finished)
         {
-            var token = await roots.ReadAsync("issued-" + issuance, CancellationToken.None);
-            bool revoked;
-            try { revoked = token is not null && await issuer.RevokeAsync(token, CancellationToken.None); }
-            catch (Exception) { revoked = false; }
-            await roots.DeleteAsync("issued-" + issuance, CancellationToken.None);
-            await InWriteTransactionAsync(async (connection, transaction) =>
-                await ExecuteAsync(connection, """
-                    UPDATE attempt_credential_issuances
-                       SET revocation_status = $status,
-                           deletion_status = COALESCE(deletion_status, 'host-receipt-pending')
-                     WHERE issuance_id = $id;
-                    """, CancellationToken.None, transaction,
-                    ("$status", token is null ? "not-issued" : revoked ? "revoked-at-completion" : "expiry-backstop"),
-                    ("$id", issuance)), CancellationToken.None);
+            try { await ResumeAttemptCredentialCleanupAsync(issuance, issuer, roots); }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                failures.Add(new InvalidOperationException(
+                    $"Attempt credential cleanup remains pending for issuance '{issuance}'.", ex));
+            }
         }
+        if (failures.Count > 0)
+            throw new AggregateException("Attempt credential cleanup remains pending; retrying next sweep.", failures);
         return finished.Count;
     }
 
