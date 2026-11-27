@@ -188,7 +188,9 @@ public sealed class DispatchEndpointTests : IDisposable
     [InlineData("live", false, 2)]
     [InlineData("live", true, 1)]
     [InlineData("shadow", false, 0)]
-    public async Task Wave_planning_records_every_member_before_release_and_stops_on_lease_loss(string mode, bool loseLease, int moves)
+    [InlineData("live", false, 0, true)]
+    [InlineData("shadow", false, 0, true)]
+    public async Task Wave_planning_records_every_member_before_release_and_stops_on_lease_loss(string mode, bool loseLease, int moves, bool missingRepository = false)
     {
         await using var factory = Factory();
         using var client = factory.CreateClient();
@@ -227,6 +229,7 @@ public sealed class DispatchEndpointTests : IDisposable
         var lease = store.AcquireLease(project.DisplayName, "area-warden", 0, clock.GetUtcNow(), TimeSpan.FromHours(1), true, true, true)!;
         foreach (var card in cards)
             store.Write(card.ProjectName, card.TaskKey, new(["a.cs"], ["a.cs"], ["area"], [], "high", "v1"));
+        if (missingRepository) store.WriteRepositoryState(project.DisplayName, new(false, clock.GetUtcNow().AddHours(1), 1));
         var dispatchers = new DispatcherShadowService(store, activations, projects, index, settings, clock,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<DispatcherShadowService>.Instance);
         var api = new DispatchRecutTests.MemoryApi(cards.Select(c => new DispatchRecutOriginal(c, "Finding", [c.Key!])));
@@ -242,6 +245,12 @@ public sealed class DispatchEndpointTests : IDisposable
         var service = new DispatchWaveService(scanner, settings, store, dispatchers, null!, projects, clock);
         var result = await service.PlanAsync(project.Id, "complete-wave", api, default);
         Assert.Equal(moves, result.Released.Count);
+        if (missingRepository)
+        {
+            Assert.Equal("awaiting-forecasts", result.State);
+            Assert.Null(store.ReadWaveRelease(project.DisplayName, "complete-wave"));
+            return;
+        }
         if (mode == "live") Assert.Equal(!loseLease, store.ReadWaveRelease(project.DisplayName, "complete-wave")!.Complete);
         Assert.Equal(mode == "shadow" ? "shadow" : loseLease ? "interrupted" : "planned", result.State);
         Assert.All(cards, c => Assert.Equal(999, c.Order));
@@ -364,6 +373,30 @@ public sealed class DispatchEndpointTests : IDisposable
         using var overview = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/sample/details/overview?project=" + Uri.EscapeDataString(project.Id)));
         Assert.Equal(forecast.IndexRevision, overview.RootElement.GetProperty("data").GetProperty("touchForecast").GetProperty("indexRevision").GetString());
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/projects/missing/dispatch/forecasts")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Missing_repository_is_visible_in_forecast_API_and_card_detail_without_a_Git_read()
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        factory.Services.GetRequiredService<TaskIndexCache>().GetSnapshot();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var card = scanner.FindJob("sample", Watch)!;
+        var store = factory.Services.GetRequiredService<DispatchStore>();
+        store.WriteRepositoryState(card.ProjectName, new(false, DateTimeOffset.UnixEpoch.AddHours(1), 1));
+        using var response = await client.GetAsync("/api/projects/Forecast%20Project/dispatch/forecasts");
+        response.EnsureSuccessStatusCode();
+        Assert.Equal("no repository", Assert.Single(response.Headers.GetValues("X-Dispatch-Repository-Status")));
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("no repository", json.RootElement.GetProperty(card.TaskKey).GetProperty("repositoryStatus").GetString());
+        using var empty = await client.GetAsync("/api/projects/Forecast%20Project/dispatch/forecasts?cards=missing");
+        empty.EnsureSuccessStatusCode();
+        Assert.Equal("no repository", Assert.Single(empty.Headers.GetValues("X-Dispatch-Repository-Status")));
+        Assert.Empty((await empty.Content.ReadFromJsonAsync<Dictionary<string, TouchForecastV1?>>())!);
+        using var detail = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/sample?watchPath=" + Uri.EscapeDataString(Watch)));
+        Assert.Equal("no repository", detail.RootElement.GetProperty("touchForecast").GetProperty("repositoryStatus").GetString());
     }
 
     [Fact]

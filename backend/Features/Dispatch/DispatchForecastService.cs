@@ -92,22 +92,32 @@ public sealed class DispatchForecastService(TaskScannerService scanner, TaskInde
             await foreach (var signal in _wake.Reader.ReadAllAsync(stoppingToken))
             {
                 var now = DateTimeOffset.UtcNow;
+                var repositories = new DispatchRepositoryRefresh(store, logger);
                 var cards = CollectRefreshCards(now, out var reconcile);
-                if (cards.Count == 0 && !reconcile) continue;
+                // Unavailable projects also need probes when their Ready lane is empty.
                 foreach (var project in scanner.GetWatchPaths())
                 {
                     var projectCards = cards.Where(entry => entry.Card.ProjectName.Equals(project.Name, StringComparison.OrdinalIgnoreCase)).ToArray();
-                    if (projectCards.Length == 0 && !reconcile) continue;
                     stoppingToken.ThrowIfCancellationRequested();
                     try
                     {
-                        var repo = git.ResolveRepositoryRoot(project);
-                        if (repo is null) throw new IOException("Dispatch repository is unavailable.");
-                        var branch = TaskIntegrationBranch.Name(settings.Get(project.Name).IntegrationBranch);
-                        var tip = TryRun(repo, stoppingToken, "rev-parse", "--verify", $"refs/remotes/origin/{branch}^{{commit}}")
-                            ?? TryRun(repo, stoppingToken, "rev-parse", "--verify", $"refs/heads/{branch}^{{commit}}");
-                        if (tip is null) throw new IOException("Dispatch integration tip is unavailable.");
-                        tip = tip.Trim();
+                        if (projectCards.Length == 0 && !reconcile && store.ReadRepositoryState(project.Name) is not { Available: false }) continue;
+                        var repository = repositories.Probe(project.Name, now, () =>
+                        {
+                            var root = git.ResolveRepositoryRoot(project);
+                            if (root is null) return null;
+                            var branch = TaskIntegrationBranch.Name(settings.Get(project.Name).IntegrationBranch);
+                            var sha = TryRun(root, stoppingToken, "rev-parse", "--verify", $"refs/remotes/origin/{branch}^{{commit}}")
+                                ?? TryRun(root, stoppingToken, "rev-parse", "--verify", $"refs/heads/{branch}^{{commit}}");
+                            return sha is null ? null : (root, sha.Trim());
+                        });
+                        if (repository is null)
+                        {
+                            foreach (var (card, enteredReady, _) in projectCards)
+                                _requested.AddOrUpdate(card.TaskKey, enteredReady, (_, ready) => ready || enteredReady);
+                            continue;
+                        }
+                        var (repo, tip) = repository.Value;
                         var index = store.IndexAsOf(project.Name, now);
                         if (index is null || index.AsOf.UtcDateTime.Date < now.UtcDateTime.Date)
                         {

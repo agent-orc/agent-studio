@@ -119,6 +119,48 @@ public sealed class DispatchReplayHarnessTests
     }
 
     [Fact]
+    public void Command_returns_an_error_for_unreadable_or_incomplete_wave_evidence()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "dispatch-bad-wave-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            foreach (var body in new[] { "{invalid", "{}", "{\"schema\":\"dispatch-replay-wave/1\"}" })
+            {
+                File.WriteAllText(path, body);
+                using var output = new StringWriter();
+                using var error = new StringWriter();
+                Assert.Equal(2, DispatchReplayCommand.Execute(["--fixture", path, "--project", "p"], output, error));
+                Assert.Equal("", output.ToString());
+                Assert.NotEmpty(error.ToString());
+            }
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"project\":\"p\"}")]
+    [InlineData("{\"project\":\"p\",\"cards\":null}")]
+    [InlineData("{\"project\":\"p\",\"cards\":[null]}")]
+    [InlineData("{\"project\":\"p\",\"cards\":[{\"waveId\":\"w\"}]}")]
+    public void Incomplete_recordings_return_a_command_error_without_reading_Git(string body)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "dispatch-recording-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            File.WriteAllText(path, body);
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Assert.Equal(2, DispatchReplayCommand.Execute(["--recording", path, "--project", "p",
+                "--store", path + ".store", "--repo", "unused", "--wave", "w"], output, error));
+            Assert.Equal("", output.ToString());
+            Assert.NotEmpty(error.ToString());
+            Assert.False(Directory.Exists(path + ".store"));
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public void CommandEmitsReplayJsonAndRejectsUnknownOptions()
     {
         using var output = new StringWriter();

@@ -132,8 +132,7 @@ public sealed class DispatchReviewService(DispatchStore store, WorkspaceSettings
             var scope = TaskScopePrediction.Predict(c.Card);
             return new DispatchReplayCard(new(c.Card.Key ?? c.Card.TaskKey, c.Card.Order,
                 c.Forecast.ReadyEntryAt, c.Card.References?.DependsOn.Select(edge => edge.Key).ToArray() ?? [], true,
-                new(c.Forecast.ForecastFiles, c.Forecast.Modules,
-                    c.Forecast.CitedFiles.Count > 0 ? DispatchForecastConfidence.High : DispatchForecastConfidence.Low),
+                TouchForecast.ForDecision(c.Forecast),
                 scope.PredictedScope, scope.Exclusive, scope.ReadOnly,
                 Urgent: c.Card.Tags.Contains("urgent", StringComparer.OrdinalIgnoreCase)), c.Delivery.RealFiles);
         }).ToArray();

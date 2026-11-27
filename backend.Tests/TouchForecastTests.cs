@@ -97,6 +97,18 @@ public sealed class TouchForecastTests
         Assert.Equal("none", TouchForecast.Compute("backend", Index(A), []).Confidence);
     }
 
+    [Theory]
+    [InlineData("cited", AgentStudio.OrchestrationDecisions.DispatchForecastConfidence.High)]
+    [InlineData("module-only", AgentStudio.OrchestrationDecisions.DispatchForecastConfidence.Low)]
+    [InlineData("none", AgentStudio.OrchestrationDecisions.DispatchForecastConfidence.None)]
+    public void Decision_consumers_preserve_the_recorded_confidence(string confidence,
+        AgentStudio.OrchestrationDecisions.DispatchForecastConfidence expected)
+    {
+        var forecast = new TouchForecastV1([], [], [], [], confidence, "index");
+        Assert.Equal(expected, TouchForecast.ForDecision(forecast).Confidence);
+        Assert.Equal(AgentStudio.OrchestrationDecisions.DispatchForecastConfidence.None, TouchForecast.ForDecision(null).Confidence);
+    }
+
     [Fact]
     public void AccuracyUsesSetsAndKeepsUndefinedDenominatorsNull()
     {

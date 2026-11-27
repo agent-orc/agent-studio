@@ -123,6 +123,32 @@ public sealed class DispatchSourceWaveTests : IDisposable
     }
 
     [Theory]
+    [InlineData("{invalid")]
+    [InlineData("{}")]
+    [InlineData("{\"complete\":true}")]
+    [InlineData("null")]
+    [InlineData("{\"decisionId\":\"d\",\"persona\":\"queue-keeper\",\"fence\":1,\"cards\":[],\"complete\":true}")]
+    [InlineData("{\"decisionId\":\"d\",\"persona\":\"queue-keeper\",\"fence\":1,\"cards\":[null],\"complete\":true}")]
+    public void Unreadable_wave_release_fails_closed_without_breaking_other_waves(string body)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["Dispatch:StoragePath"] = _root }).Build();
+        var store = new DispatchStore(config);
+        var now = DateTimeOffset.UnixEpoch;
+        var lease = store.AcquireLease("p", "queue-keeper", 0, now, TimeSpan.FromHours(1), true, true, true)!;
+        var release = new DispatchWaveReleaseV1("decision", "queue-keeper", lease.Fence, ["A"], false);
+        Assert.True(store.WriteWaveRelease("p", "bad", release, now));
+        var damaged = Directory.GetFiles(_root, "*.json", SearchOption.AllDirectories).Single(p => p.Contains(Path.DirectorySeparatorChar + "waves" + Path.DirectorySeparatorChar));
+        File.WriteAllText(damaged, body);
+        Assert.Null(store.ReadWaveRelease("p", "bad"));
+        Assert.False(DispatchWavePolicy.Pickup(new(true, "admit"), "bad", store.ReadWaveRelease("p", "bad")?.Complete == true).Admit);
+        Assert.True(store.WriteWaveRelease("p", "good", release, now));
+        Assert.True(store.WriteWaveRelease("p", "good", release with { Complete = true }, now));
+        Assert.True(store.ReadWaveRelease("p", "good")!.Complete);
+        Assert.Equal(body, File.ReadAllText(damaged));
+    }
+
+    [Theory]
     [InlineData("shadow", true, true, true, false)]
     [InlineData("off", true, true, true, false)]
     [InlineData("live", false, true, true, false)]
