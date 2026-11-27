@@ -5,6 +5,7 @@ using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
 using AgentStudio.Runtime;
+using AgentStudio.Registry;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -63,12 +64,14 @@ public sealed class StudioReleasesServiceTests : IDisposable
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         settings.SetIntegrationBranch("demo", "develop");
+        var projects = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
+        var registered = projects.EnsureProjectForStorage(Watch, "demo", "WS-001");
         var attribution = new ReleaseCardAttributionSource(scanner);
         var store = new InstanceDeployStore(config);
         var instance = new InstanceDeployService(store, git, scanner, attribution, config, _clock,
             NullLogger<InstanceDeployService>.Instance, settings);
         StudioReleasesService Service(string running) => new(instance, store, attribution, scanner, git, settings,
-            Identity(running), config, _clock);
+            Identity(running), config, _clock, projects);
         var first = Service(baseline);
         first.Refresh();
         var waiting = Assert.Single(first.View!.Pending);
@@ -95,6 +98,7 @@ public sealed class StudioReleasesServiceTests : IDisposable
         Assert.Equal("live", nextProcess.View.CardStates["DEMO-1"].State);
         Assert.Equal("live", nextProcess.View.CardStates["DEMO-2"].State);
         Assert.Equal("live", nextProcess.Card("demo", "DEMO-1")!.State);
+        Assert.Equal("live", nextProcess.Card(registered.Id, "DEMO-1")?.State);
         Assert.Null(nextProcess.Card("another-project", "DEMO-1"));
         nextProcess.Refresh();
         Assert.Equal(2, nextProcess.View.Releases.Count);

@@ -104,7 +104,7 @@ test('Releases shows waiting deliveries, history, and the card live state in bot
       expect(await releases.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
       if (results) {
         mkdirSync(results, { recursive: true });
-        await releases.screenshot({ path: join(results, `releases-${process.env.RELEASE_CAPTURE_ROUND ?? 'round1'}-${width}-${theme}.png`) });
+        await releases.screenshot({ path: join(results, `releases-${process.env.RELEASE_CAPTURE_ROUND ?? 'round1'}-${width}-${theme}--mocked.png`) });
       }
     }
   }
@@ -118,7 +118,7 @@ test('Releases shows waiting deliveries, history, and the card live state in bot
       await page.setViewportSize({ width, height: 900 });
       for (const theme of ['light', 'dark'] as const) {
         await setTheme(page, theme);
-        await page.getByTestId('delivery-claim-panel').screenshot({ path: join(results, `card-live-${width}-${theme}.png`) });
+        await page.getByTestId('delivery-claim-panel').screenshot({ path: join(results, `card-live-${width}-${theme}--mocked.png`) });
       }
     }
   }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.Runtime;
+using AgentStudio.Registry;
 
 namespace AgentStudio.Deploy;
 
@@ -7,7 +8,7 @@ namespace AgentStudio.Deploy;
 public sealed class StudioReleasesService(InstanceDeployService instance, InstanceDeployStore deploys,
     ReleaseCardAttributionSource attribution, TaskScannerService scanner, GitService git,
     AgentStudio.Projects.ProjectSettingsService settings, BuildIdentity identity,
-    IConfiguration configuration, TimeProvider clock)
+    IConfiguration configuration, TimeProvider clock, ProjectRegistry projects)
 {
     private StudioReleasesView? _view;
     private const int ReachabilityLimit = 100000;
@@ -21,8 +22,14 @@ public sealed class StudioReleasesService(InstanceDeployService instance, Instan
 
     public StudioCardLiveState? Card(string project, string key)
         => Source is null ? new("unknown")
-            : !string.Equals(Source, project, StringComparison.OrdinalIgnoreCase) ? null
+            : !IsSource(project) ? null
             : View?.CardStates.GetValueOrDefault(key) ?? new StudioCardLiveState("unknown");
+
+    public bool IsSource(string project)
+        => Source is { } source && (string.Equals(source, project, StringComparison.OrdinalIgnoreCase)
+            || projects.FindByIdOrDisplayName(source) is { } sourceRecord
+                && projects.FindByIdOrDisplayName(project) is { } projectRecord
+                && string.Equals(sourceRecord.Id, projectRecord.Id, StringComparison.OrdinalIgnoreCase));
 
     public void Refresh()
     {

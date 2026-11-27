@@ -1,5 +1,9 @@
 @if (initialSection() === 'studio-releases') {
-  <div class="project-area"><app-studio-releases [project]="projectName()" /></div>
+  <div class="project-area">
+    @defer (on immediate) {
+      <app-studio-releases [project]="projectName()" />
+    }
+  </div>
 } @else if (activeRail() === 'deploy') {
   <div class="project-area">
     @defer (on immediate) {
