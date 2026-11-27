@@ -1,13 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
+import { Subject } from 'rxjs';
+import { TaskService } from '../../../../services/task.service';
 import { By } from '@angular/platform-browser';
 import { ProjectTokenUsagePanelComponent, tokenFreshnessTone } from './project-token-usage-panel.component';
 import { ProjectPipelineCostTrendComponent } from '../project-pipeline-cost-trend/project-pipeline-cost-trend.component';
-import type { ProjectPipelineCostTimeline, ProjectTokenUsageSummary } from '../../../../features/project-token-usage';
+import type { ProjectPipelineCostTimeline, ProjectTokenUsageSummary, ProjectTokenHeatmap, ProjectExpensiveJobsResponse } from '../../../../features/project-token-usage';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -301,5 +303,178 @@ describe('tokenFreshnessTone', () => {
     expect(tokenFreshnessTone('partial')).toBe('warning');
     expect(tokenFreshnessTone('unavailable')).toBe('danger');
     expect(tokenFreshnessTone('later')).toBe('neutral');
+  });
+});
+
+
+describe('ProjectTokenUsagePanelComponent request ownership', () => {
+  async function setup(beforeCreate?: () => void) {
+    await TestBed.configureTestingModule({
+      imports: [ProjectTokenUsagePanelComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    beforeCreate?.();
+    const fixture = TestBed.createComponent(ProjectTokenUsagePanelComponent);
+    fixture.componentRef.setInput('projectName', 'alpha');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    const request = (suffix: string, project = 'alpha') => http.expectOne(r =>
+      r.url === `/api/projects/${project}/token-usage/${suffix}`);
+    const host = fixture.nativeElement as HTMLElement;
+    return { fixture, http, request, host, component: fixture.componentInstance };
+  }
+
+  const emptyResponses: Record<string, object> = {
+    summary: { project: 'alpha', hasData: false },
+    heatmap: { project: 'alpha', hasData: false, days: [], jobs: [] },
+    expensive: { project: 'alpha', jobs: [] },
+    'pipeline-cost': { project: 'alpha', hasData: false, days: [], kinds: [], steps: [] },
+  };
+
+  it('ignores all older project responses delivered after the current project', async () => {
+    const summaries = [new Subject<ProjectTokenUsageSummary>(), new Subject<ProjectTokenUsageSummary>()];
+    const heatmaps = [new Subject<ProjectTokenHeatmap>(), new Subject<ProjectTokenHeatmap>()];
+    const lists = [new Subject<ProjectExpensiveJobsResponse>(), new Subject<ProjectExpensiveJobsResponse>()];
+    const costs = [new Subject<ProjectPipelineCostTimeline>(), new Subject<ProjectPipelineCostTimeline>()];
+    const job = (jobId: string, total: number) => ({
+      jobId, title: `${jobId} project task`, category: 'job' as const, total, totalTokens: total,
+      calls: 1, state: null, lastActivity: null, lastModel: null, cells: [{ day: '2026-11-27', total }],
+    });
+    const { fixture, component, host } = await setup(() => {
+      const service = TestBed.inject(TaskService);
+      const index = (name: string) => name === 'alpha' ? 0 : 1;
+      vi.spyOn(service, 'getProjectTokenUsageSummary').mockImplementation(name => summaries[index(name)]);
+      vi.spyOn(service, 'getProjectTokenUsageHeatmap').mockImplementation(name => heatmaps[index(name)]);
+      vi.spyOn(service, 'getProjectExpensiveJobs').mockImplementation(name => lists[index(name)]);
+      vi.spyOn(service, 'getProjectPipelineCost').mockImplementation(name => costs[index(name)]);
+    });
+    fixture.componentRef.setInput('projectName', 'beta');
+    fixture.detectChanges();
+    summaries[1].next({ project: 'beta', hasData: true, lifetimeTotalTokens: 12345 } as ProjectTokenUsageSummary);
+    heatmaps[1].next({ project: 'beta', hasData: true, days: ['2026-11-27'], jobs: [job('beta', 12345)], fetchedAt: '2026-11-27T00:00:00Z' });
+    lists[1].next({ project: 'beta', jobs: [job('beta', 12345)] });
+    // Superseded completion must not clear the current pipeline request's busy state.
+    costs[0].next({ project: 'alpha', totalCostUsd: 999, hasData: false, totalTokens: 999, days: [], kinds: [], steps: [], windowDays: 30, anyModelUnknown: false, taskCount: 1, fetchedAt: '2026-11-27T00:00:00Z' });
+    expect(component.loading()).toBe(true);
+    costs[1].next({ project: 'beta', totalCostUsd: 12.34, hasData: true, kinds: [], steps: [], days: [], totalTokens: 12345, windowDays: 30, anyModelUnknown: false, taskCount: 1, fetchedAt: '2026-11-27T00:00:00Z' });
+    summaries[0].next({ project: 'alpha', hasData: true, lifetimeTotalTokens: 1_000_000_000 } as ProjectTokenUsageSummary);
+    heatmaps[0].next({ project: 'alpha', hasData: true, days: ['2026-11-27'], jobs: [job('alpha', 999)], fetchedAt: '2026-11-27T00:00:00Z' });
+    lists[0].next({ project: 'alpha', jobs: [job('alpha', 999)] });
+    costs[0].next({ project: 'alpha', totalCostUsd: 999, hasData: false, totalTokens: 999, days: [], kinds: [], steps: [], windowDays: 30, anyModelUnknown: false, taskCount: 1, fetchedAt: '2026-11-27T00:00:00Z' });
+    summaries[0].error(new Error('stale transport failure'));
+    fixture.detectChanges();
+    expect(component.summary()?.project).toBe('beta');
+    expect(component.heatmap()?.project).toBe('beta');
+    expect(component.pipelineCost()?.project).toBe('beta');
+    expect(component.loading()).toBe(false);
+    expect(host.querySelector('[data-testid="token-usage-card-total"]')?.textContent).toContain('12K');
+    expect(host.querySelector('[data-testid="pipeline-cost-total"]')?.textContent).toContain('$12.34');
+    expect(host.textContent).not.toContain('stale transport failure');
+    expect(host.textContent).not.toContain('alpha project task');
+    expect(host.querySelector('[data-testid="expensive-btn-beta"]')?.textContent).toContain('12K');
+    expect(host.querySelector('[data-testid="heatmap-row-btn-beta"]')?.textContent).toContain('12K');
+    fixture.destroy();
+  });
+
+  it('cancels all four project reads and the task read when the project changes', async () => {
+    const { fixture, request, component } = await setup();
+    const old = Object.keys(emptyResponses).map(key => request(key));
+    component.onSelectJob('same-id');
+    fixture.detectChanges();
+    const oldDetail = request('job/same-id');
+    fixture.componentRef.setInput('projectName', 'beta');
+    fixture.detectChanges();
+    expect(old.map(r => r.cancelled)).toEqual([true, true, true, true]);
+    expect(oldDetail.cancelled).toBe(true);
+    expect(component.selectedJobId()).toBeNull();
+    expect(component.summary()).toBeNull();
+    expect(component.drilldown()).toBeNull();
+    expect(component.loading()).toBe(true);
+    fixture.destroy();
+    for (const key of Object.keys(emptyResponses)) expect(request(key, 'beta').cancelled).toBe(true);
+  });
+
+  it('cancels a superseded task and clears its content while the next task loads', async () => {
+    const { fixture, request, component, host } = await setup();
+    component.onSelectJob('a');
+    fixture.detectChanges();
+    const a = request('job/a');
+    component.onSelectJob('b');
+    fixture.detectChanges();
+    expect(a.cancelled).toBe(true);
+    expect(host.querySelector('[data-testid="drill-loading"]')).toBeTruthy();
+    request('job/b').flush({ jobId: 'b', title: 'Task B', category: 'job', totalTokens: 12345, calls: 1,
+      runs: [{ index: 0, ts: '2026-11-27T00:00:00Z', total: 12345 }] });
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="token-usage-drill"]')?.textContent).toContain('Task B');
+    expect(host.querySelector('time')?.getAttribute('datetime')).toBe('2026-11-27T00:00:00Z');
+    expect(host.querySelector('time')?.textContent).toContain('2026-11-27 00:00 UTC');
+    fixture.destroy();
+  });
+
+  it('retries task detail without exposing a transport error', async () => {
+    const { fixture, request, component, host } = await setup();
+    component.onSelectJob('b');
+    fixture.detectChanges();
+    request('job/b').flush({ error: 'private transport detail' }, { status: 503, statusText: 'Unavailable' });
+    fixture.detectChanges();
+    const error = host.querySelector('[data-testid="drill-error"]');
+    expect(error?.textContent).toContain('Could not load task token usage.');
+    expect(host.textContent).not.toContain('private transport detail');
+    (error?.querySelector('button') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    request('job/b').flush({ jobId: 'b', title: 'Task B', runs: [] });
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="drill-error"]')).toBeNull();
+    expect(host.querySelector('[data-testid="drill-empty"]')).toBeTruthy();
+    fixture.destroy();
+  });
+
+  it('does not claim zero activity while reads are pending', async () => {
+    const { host } = await setup();
+    for (const id of ['token-usage-empty', 'expensive-empty', 'heatmap-empty', 'pipeline-cost-empty']) {
+      expect(host.querySelector(`[data-testid="${id}"]`)).toBeNull();
+    }
+    expect(host.textContent).not.toContain('No daily activity');
+  });
+
+  for (const failed of Object.keys(emptyResponses)) {
+    it(`isolates ${failed} failure and retries only that section`, async () => {
+      const { fixture, request, component, host } = await setup();
+      for (const [key, response] of Object.entries(emptyResponses)) {
+        const req = request(key);
+        if (key === failed) req.flush({ error: 'private transport detail' }, { status: 503, statusText: 'Unavailable' });
+        else req.flush(response);
+      }
+      fixture.detectChanges();
+      const error = host.querySelector(`[data-testid="${failed}-error"]`);
+      expect(error).toBeTruthy();
+      expect(host.textContent).not.toContain('Http failure');
+      expect(host.textContent).not.toContain('private transport detail');
+      const emptyIds: Record<string, string> = { summary: 'token-usage-empty', heatmap: 'heatmap-empty', expensive: 'expensive-empty',
+        'pipeline-cost': 'pipeline-cost-empty' };
+      const emptyId = emptyIds[failed];
+      expect(host.querySelector(`[data-testid="${emptyId}"]`)).toBeNull();
+      (error?.querySelector('button') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      expect(component.loading()).toBe(true);
+      expect(host.querySelector(`[data-testid="${failed}-error"]`)).toBeNull();
+      request(failed).flush(emptyResponses[failed]);
+      fixture.detectChanges();
+      expect(component.loading()).toBe(false);
+      expect(host.querySelector(`[data-testid="${emptyId}"]`)).toBeTruthy();
+    });
+  }
+
+  it('matches workspace compact counts and exposes exact values', async () => {
+    const { fixture, request, component, host } = await setup();
+    request('summary').flush({ hasData: true, lifetimeTotalTokens: 1_000_000_000,
+      lifetimeJobTokens: 12345, last24hTotalTokens: 12345 });
+    fixture.detectChanges();
+    expect(component.formatTokens(12345)).toBe('12K');
+    expect(component.formatTokens(1_000_000_000)).toBe('1,000.0M');
+    const total = host.querySelector('[data-testid="token-usage-card-total"] .tup__card-value');
+    expect(total?.textContent).toBe('1,000.0M');
+    expect(total?.getAttribute('aria-label')).toBe('1,000,000,000 tokens');
   });
 });
