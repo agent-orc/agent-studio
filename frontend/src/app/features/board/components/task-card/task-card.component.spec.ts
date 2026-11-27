@@ -2215,6 +2215,30 @@ describe('TaskCardComponent — waits-on dependency chip (AGT-2029)', () => {
       .toContain('Dependency resolution → Runner pickup');
   });
 
+  for (const withLiveStatus of [false, true]) {
+    it(`shows the recorded dependency reason once with live status ${withLiveStatus}`, async () => {
+      const fixture = await mount(makeJob({
+        state: '2-ready',
+        waitingReason: 'waits for AGT-2534 (human review)',
+        waitsOn: {
+          blocked: true,
+          cycleDetected: false,
+          items: [{ key: 'AGT-2534', resolved: true, fulfilled: false }],
+        },
+        liveStatus: withLiveStatus
+          ? { attempt: 1, nextSteps: [], queue: { kind: 'runner', position: 4 } }
+          : null,
+      }));
+
+      const reason = fixture.nativeElement.querySelector('[data-testid="card-waiting-reason"]') as HTMLElement;
+      expect(reason.textContent).toBe('waits for AGT-2534 (human review)');
+      expect(fixture.nativeElement.querySelectorAll('[data-testid="card-waiting-reason"]').length).toBe(1);
+      expect(fixture.nativeElement.querySelector('[data-testid="task-live-current"]')).toBeNull();
+      expect(fixture.nativeElement.querySelector('[data-testid="task-card-waiting-on"]')).toBeNull();
+      expect(fixture.nativeElement.textContent).not.toContain('runner slot');
+    });
+  }
+
   it('renders a cycle chip when the dependency graph is cyclic', async () => {
     const fixture = await mount(
       makeJob({
