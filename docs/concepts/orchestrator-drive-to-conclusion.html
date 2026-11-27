@@ -387,6 +387,20 @@
       </thead>
       <tbody>
         <!-- append-only:drive-to-conclusion:start -->
+        <tr id="case-conflict-receipt-preparation-retry">
+          <td>2026-11-27</td>
+          <td><code>AGT-4140</code><br><span class="small">conflict-receipt-preparation-retry</span></td>
+          <td>No CLI crashed. A failed recovery receipt write prevented a later automatic conflict round for the same delivery and integration tip.</td>
+          <td>The preparation failure used the handled-conflict deduplication key even though no round had started and no delivery had been superseded.</td>
+          <td>Preparation failures remain visible and deduplicated but permit another preparation attempt after filesystem repair. The regression fixture reaches Ready once with its saved recovery delta; queued rounds and terminal refusals retain their guards.</td>
+        </tr>
+        <tr id="case-agt-4140-integration-replay">
+          <td>2026-11-27</td>
+          <td><code>AGT-4140</code><br><span class="small">integration-replay</span></td>
+          <td>No CLI crashed. Direct merge, mechanical merge and rebase fallback failed at <code>merge-into-develop</code> for delivery <code>a2470a2a231e</code> against <code>ac7809b6c9db</code>.</td>
+          <td>The recovery service and this case log shared edit locations with the newer integration handoff contract.</td>
+          <td>The replay preserves preparation retries together with the integration branch's reserved-capacity accounting, pinned delivery base, exhausted-budget repair and append-only case markers. The build, 179 focused tests and lint pass; the guard run identifies an existing history-hotspot failure in two unchanged files. The new delivery returns to pipeline-owned integration.</td>
+        </tr>
         <tr id="case-rt6-legacy-canary-red-develop">
           <td>2026-11-27</td>
           <td><code>AGT-4046</code><br><span class="small">rt6-legacy-canary-red-develop</span></td>
