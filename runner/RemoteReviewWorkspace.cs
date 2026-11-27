@@ -1,3 +1,4 @@
+using AgentStudio.OrchestrationDecisions;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -32,6 +33,7 @@ public sealed class RemoteReviewWorkspace
     private string? _baselineSha;
     private string? _integrationHeadSha;
     private string? _reviewedIntegrationTipSha;
+    private readonly HashSet<string> _measuredBaselineCachePaths = new(StringComparer.Ordinal);
     private bool _baselineCachePruned;
     private bool _verifyCachePruned;
     private bool _dirtyBefore;
@@ -261,6 +263,35 @@ public sealed class RemoteReviewWorkspace
         ReviewExecutionCheckpoint? resume,
         Func<ReviewExecutionCheckpoint, CancellationToken, Task>? checkpoint)
     {
+        try
+        {
+            var evidence = await ExecuteMeasuredPlanAsync(ct, resume, checkpoint);
+            if (evidence.Outcome == "ReviewInfra") DiscardInfrastructureMeasurements();
+            return evidence;
+        }
+        catch (ReviewInfrastructureException)
+        {
+            DiscardInfrastructureMeasurements();
+            throw;
+        }
+    }
+
+    private void DiscardInfrastructureMeasurements()
+    {
+        DiscardStoredVerifyResults();
+        foreach (var path in _measuredBaselineCachePaths)
+        {
+            try { File.Delete(path); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            { _log($"review infrastructure baseline eviction failed: {exception.Message}"); }
+        }
+    }
+
+    private async Task<ReviewExecutionEvidence> ExecuteMeasuredPlanAsync(
+        CancellationToken ct,
+        ReviewExecutionCheckpoint? resume,
+        Func<ReviewExecutionCheckpoint, CancellationToken, Task>? checkpoint)
+    {
         var commands = resume?.Commands?.ToList() ?? [];
         var verdicts = resume?.Verdicts?.ToList()
                        ?? _subject.Plan.CarriedVerdicts?.ToList()
@@ -446,9 +477,8 @@ public sealed class RemoteReviewWorkspace
                     "CommandSubjectMismatch",
                     $"Step '{plannedCommand.StepId}' would run at '{headBefore}', not '{_subject.ExpectedResultSha}'.");
 
-            // AGT-2841: a ReviewInfra successor carries a command that
-            // already passed in the failed attempt instead of executing it
-            // again. Only a matching, passed result is in this map.
+            // Only results admitted by the measurement policy may be carried.
+            // Infrastructure predecessors never populate this map (AGT-4099).
             if (reusableVerify.TryGetValue(plannedCommand.StepId, out var reusedVerify))
             {
                 await ReuseVerifyResultAsync(plannedCommand, reusedVerify, commands, artifacts, verdicts, ct);
@@ -1061,6 +1091,9 @@ public sealed class RemoteReviewWorkspace
                             : await DiagnoseFailureAsync(
                                 command, requiredComparison, execution, cleanRepeat, ct)),
                     };
+                if (ReviewMeasurementPolicy.MustMeasureTargetMerge(comparison.BaselineSha,
+                        _integrationHeadSha, comparison.BaselineExitCode, execution.Process.ExitCode))
+                    comparison = await MeasureRepairedTargetAsync(command, comparison, commands, artifacts, ct);
                 if (comparison.Diagnosis?.Classification == DeliveryFailureDiagnosis.Environment
                     && candidateCache is not null)
                 {
@@ -1091,6 +1124,8 @@ public sealed class RemoteReviewWorkspace
                 }
             }
 
+            if (comparison is not null)
+                comparison = comparison with { Diagnosis = BaselineVerdict(command, comparison).Diagnosis };
             commands.Add(await AddCommandEvidenceAsync(
                 command.StepId,
                 command.Aspect,
@@ -1286,25 +1321,10 @@ public sealed class RemoteReviewWorkspace
         // (AGT-2706 settled ProductFailure with every aspect pass and one
         // documentation-impact concern). ReviewGradingPolicy is the single
         // place that decides this; only a blocking token fails the review.
-        var outcome = ReviewGradingPolicy.Grade(verdicts.Select(verdict => verdict.Status))
-            == ReviewGrade.ProductFailure
-            ? "ProductFailure"
-            : verdicts.Any(verdict =>
-                (verdict.Classification == DeliveryFailureDiagnosis.Environment
-                    && !ReviewUnattributedTestFailurePolicy.IsNonBlocking(verdict.Diagnosis))
-                || verdict.Classification is DeliveryFailureDiagnosis.Intermittent
-                    or DeliveryFailureDiagnosis.FirstOccurrence
-                || ReviewCachedBaselinePolicy.IsCacheDefect(verdict.Classification))
-                ? "ReviewInfra"
-            // AGT-2819: no verdict refuses the change, but at least one gate was
-            // already red on the merge base. That is a defect of the integration
-            // branch and reported as such, not a silent pass and not this
-            // card's product failure.
-            : IntegrationBranchDefectSteps(commands).Count > 0
-                ? "IntegrationBranchDefect"
-                : "Pass";
-        if (outcome != "ReviewInfra")
-            DiscardStoredVerifyResults();
+        var outcome = ReviewMeasurementPolicy.Outcome(_subject.Plan with { Commands = plannedCommands }, verdicts);
+        if (outcome == "Pass" && IntegrationBranchDefectSteps(commands).Count > 0)
+            outcome = "IntegrationBranchDefect";
+        DiscardStoredVerifyResults();
         return new ReviewExecutionEvidence(outcome, proof, commands, artifacts, verdicts);
     }
 
@@ -2391,17 +2411,18 @@ public sealed class RemoteReviewWorkspace
             ToolchainFingerprint(command));
         await PruneBaselineCacheAsync(ct);
         var cachePath = ReviewBaselineResultCache.EntryPath(BaselineCacheRoot, key);
+        _measuredBaselineCachePaths.Add(cachePath);
         Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
         var cached = await ReviewBaselineResultCache.ReadAsync(
             cachePath, key, TestFailureParserVersion, command.BaselineMode, DateTime.UtcNow, ct);
-        if (cached is not null)
+        if (cached is not null && ReviewMeasurementPolicy.MayReuseResult(_subject.Plan.VerifyReuseFromAttemptIds))
             return await ReuseBaselineResultAsync(command, subjectResult, cached, "hit", artifacts, commands, ct);
 
         var lockPath = cachePath + ".lock";
         await using var cacheLock = await AcquireCacheLockAsync(lockPath, ct);
         cached = await ReviewBaselineResultCache.ReadAsync(
             cachePath, key, TestFailureParserVersion, command.BaselineMode, DateTime.UtcNow, ct);
-        if (cached is not null)
+        if (cached is not null && ReviewMeasurementPolicy.MayReuseResult(_subject.Plan.VerifyReuseFromAttemptIds))
             return await ReuseBaselineResultAsync(command, subjectResult, cached, "hit-after-wait", artifacts, commands, ct);
 
         var baselinePath = Path.Combine(AttemptRoot, $"baseline-{commandHash[..12]}");
@@ -2777,14 +2798,109 @@ public sealed class RemoteReviewWorkspace
     /// dependency cache. Its evidence carries phase <c>clean-repeat</c> and
     /// workspace role <see cref="ReviewCachedBaselinePolicy.WorkspaceRole"/>.
     /// </summary>
+    private async Task<BaselineComparison> MeasureRepairedTargetAsync(
+        ReviewCommandDto command, BaselineComparison comparison,
+        ICollection<ReviewCommandEvidenceDto> commands, ICollection<ReviewArtifactEvidenceDto> artifacts,
+        CancellationToken ct)
+    {
+        var target = _integrationHeadSha!;
+        var control = await RunCleanBaselineAsync(command, target, commands, artifacts, ct, workspaceRole: "baseline-target");
+        if (!control.Execution.Process.Success || control.Execution.Signal is not null)
+            return comparison; // The fetched target is still red; retain measured branch debt.
+        var merged = await RunTargetMergeAsync(command, target, commands, artifacts, ct, repeat: false);
+        if (merged.Process.Success && merged.Signal is null)
+            return comparison with { Diagnosis = new(IntegrationBranchDefectClassification, 1,
+                [$"{command.StepId}: {CommandLine(command)} was red on stale baseline {comparison.BaselineSha}; "
+                    + $"the repaired target {target} and the delivery merged with it passed. No agent round is required."]) };
+        var repeat = await RunTargetMergeAsync(command, target, commands, artifacts, ct, repeat: true);
+        var mergeFailures = ParsedTestFailures(merged.Process);
+        var repeatFailures = ParsedTestFailures(repeat.Process);
+        if (merged.Signal is not null || repeat.Signal is not null
+            || ReviewTestFailureAttribution.TestHostAborted(merged.Process.StdOut + merged.Process.StdErr)
+            || ReviewTestFailureAttribution.TestHostAborted(repeat.Process.StdOut + repeat.Process.StdErr)
+            || (!ReviewBaselineModes.IsExitStatus(command.BaselineMode)
+                && (mergeFailures.Count == 0 || repeatFailures.Count == 0))
+            || merged.Process.ExitCode is not (> 0 and < 124) || repeat.Process.ExitCode is not (> 0 and < 124))
+            throw await InfrastructureFailureAsync("TargetMergeMeasurementIncomplete",
+                $"{command.StepId} could not be measured twice on the merge with repaired target {target}.", commands, artifacts, ct);
+        if (!ReviewBaselineModes.IsExitStatus(command.BaselineMode))
+        {
+            var mergedPartition = QuarantinePartition(mergeFailures);
+            var repeatPartition = QuarantinePartition(repeatFailures);
+            var attribution = ReviewTestFailureAttribution.Diagnose(
+                mergedPartition.Blocking, repeatPartition.Blocking, [], 0,
+                ReviewTestFailureAttribution.IsBackendTestCommand(command),
+                await BackendChangedAgainstBaselineAsync(command, target, ct));
+            if (mergedPartition.AllQuarantined && repeatPartition.AllQuarantined)
+                attribution = new(DeliveryFailureDiagnosis.Environment, 1,
+                    [ReviewUnattributedTestFailurePolicy.EvidencePrefix + "target merge failed only declared quarantined tests: "
+                        + string.Join(", ", mergeFailures)]);
+            if (attribution is not null)
+                return comparison with { BaselineSha = target, BaselineExitCode = 0,
+                    InitialFailures = mergeFailures, NewFailures = [], PreExistingFailures = [], BaselineFailures = [],
+                    Diagnosis = attribution };
+        }
+        return comparison with { BaselineSha = target, BaselineExitCode = 0,
+            InitialFailures = mergeFailures, NewFailures = mergeFailures, PreExistingFailures = [], BaselineFailures = [],
+            Diagnosis = new(DeliveryFailureDiagnosis.Product, 1,
+                [$"{command.StepId}: {CommandLine(command)} passed on repaired target {target} but failed twice "
+                    + $"on its merge with the delivery (exit {merged.Process.ExitCode}, {repeat.Process.ExitCode}); "
+                    + $"failed tests: {string.Join(", ", mergeFailures)}."]) };
+    }
+
+    private async Task<CommandExecution> RunTargetMergeAsync(
+        ReviewCommandDto command, string target,
+        ICollection<ReviewCommandEvidenceDto> commands, ICollection<ReviewArtifactEvidenceDto> artifacts,
+        CancellationToken ct, bool repeat)
+    {
+        var path = Path.Combine(AttemptRoot, $"target-merge-{Guid.NewGuid():N}");
+        var role = repeat ? "target-merge-repeat" : "target-merge";
+        var environment = BaselineProcessEnvironment(HashText(path));
+        try
+        {
+            var clone = await ProcessRunner.RunAsync("git", ["clone", "--shared", "--no-checkout", RepositoryPath, path],
+                RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+            if (!clone.Success) throw BaselineUnavailable("Target merge clone failed: " + clone.StdErr, target, command);
+            var checkout = await ProcessRunner.RunAsync("git", ["checkout", "--detach", _subject.ExpectedResultSha],
+                path, environment: environment, clearEnvironment: true, ct: ct);
+            if (!checkout.Success) throw BaselineUnavailable("Target merge checkout failed: " + checkout.StdErr, target, command);
+            var merge = await ProcessRunner.RunAsync("git",
+                ["-c", "user.name=Review measurement", "-c", "user.email=review@example.invalid",
+                    "merge", "--no-commit", "--no-ff", target], path,
+                environment: environment, clearEnvironment: true, ct: ct);
+            if (!merge.Success) throw BaselineUnavailable("Target merge could not be measured: " + merge.StdOut + merge.StdErr, target, command);
+            var tree = await GitValueAtAsync(path, ["write-tree"], environment, ct);
+            await ExecutePreparationAsync(path, role, target, environment, commands, artifacts, ct, restoreCache: false);
+            var isolatedBuild = await BuildBeforeNoBuildAsync(command, path, environment, "TargetMergeMeasurementIncomplete", ct);
+            if (isolatedBuild is { Execution.Process.Success: false })
+            {
+                await AddIsolatedBuildEvidenceAsync(isolatedBuild, _subject.ExpectedResultSha, tree,
+                    role, target, "target-merge", commands, artifacts, ct);
+                throw await InfrastructureFailureAsync("TargetMergeMeasurementIncomplete",
+                    $"Prerequisite build for {command.StepId} failed on the target merge {target}.", commands, artifacts, ct);
+            }
+            var execution = await RunCommandAsync(command, path, ct, environment);
+            commands.Add(await AddCommandEvidenceAsync(command.StepId, command.Aspect, command.FileName, command.Arguments,
+                _subject.ExpectedResultSha, tree, execution.Process, execution.StartedAt, execution.FinishedAt,
+                execution.Signal, command.TimeoutSeconds, "target-merge", role, target,
+                comparison: null, retryPerformed: true, dependencyCacheHit: false, dependencyCache: null, artifacts, ct, command));
+            return execution;
+        }
+        finally
+        {
+            try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
+            catch (IOException exception) { _log($"target merge clone removal failed: {exception.Message}"); }
+        }
+    }
+
     private async Task<(CommandExecution Execution, bool BlockedByBuild)> RunCleanBaselineAsync(
         ReviewCommandDto command,
         string baselineSha,
         ICollection<ReviewCommandEvidenceDto> commands,
         ICollection<ReviewArtifactEvidenceDto> artifacts,
-        CancellationToken ct)
+        CancellationToken ct, string? workspaceRole = null)
     {
-        const string role = ReviewCachedBaselinePolicy.WorkspaceRole;
+        var role = workspaceRole ?? ReviewCachedBaselinePolicy.WorkspaceRole;
         var hash = CommandHash(command);
         var path = Path.Combine(AttemptRoot, $"baseline-clean-{hash[..12]}-{Guid.NewGuid():N}");
         var cloned = await ProcessRunner.RunAsync(
@@ -2801,7 +2917,7 @@ public sealed class RemoteReviewWorkspace
             if (!checkedOut.Success)
                 throw BaselineUnavailable(
                     $"Clean baseline could not be checked out: {checkedOut.StdErr.Trim()}", baselineSha, command);
-            var environment = BaselineProcessEnvironment("cbase-" + hash);
+            var environment = BaselineProcessEnvironment(workspaceRole is null ? "cbase-" + hash : HashText(path));
             await ExecutePreparationAsync(
                 path, role, baselineSha, environment, commands, artifacts, ct, restoreCache: false);
             var head = await GitValueAtAsync(path, ["rev-parse", "HEAD"], environment, ct);
@@ -3056,7 +3172,7 @@ public sealed class RemoteReviewWorkspace
     {
         var reusable = new Dictionary<string, VerifyCacheEntry>(StringComparer.Ordinal);
         var sources = _subject.Plan.VerifyReuseFromAttemptIds;
-        if (sources is not { Count: > 0 }) return reusable;
+        if (!ReviewMeasurementPolicy.MayReuseResult(sources) || sources is not { Count: > 0 }) return reusable;
         await PruneVerifyCacheAsync(ct);
         var now = _utcNow();
         foreach (var command in plannedCommands.Where(item => !ReviewCommandKinds.IsAgent(item.ExecutionKind)))
@@ -3186,8 +3302,8 @@ public sealed class RemoteReviewWorkspace
     }
 
     /// <summary>
-    /// An attempt that settles without ReviewInfra gets no successor, so the
-    /// results stored for its Result-SHA would never be read.
+    /// Terminal attempts discard their candidate-result entries. Infrastructure
+    /// exits also evict measured baselines before a successor can read them.
     /// </summary>
     private void DiscardStoredVerifyResults()
         => ReviewVerifyResultCache.DeleteResult(
@@ -4121,8 +4237,14 @@ public sealed class RemoteReviewWorkspace
             _ when comparison.FlakyQuarantinedFailures.Count > 0 => ReviewFlakyTestIndex.VerdictClassification,
             _ => "BaselineCompared",
         };
-        if (comparison.Diagnosis is { } diagnosis)
+        if (comparison.Diagnosis is { } measuredDiagnosis)
         {
+            var diagnosis = measuredDiagnosis.Classification == DeliveryFailureDiagnosis.Environment
+                && owner == ReviewFailureOwner.IntegrationBranch
+                && ReviewBaselineModes.IsExitStatus(command.BaselineMode)
+                ? new DeliveryFailureDiagnosisResult(IntegrationBranchDefectClassification, measuredDiagnosis.Confidence,
+                    measuredDiagnosis.Evidence.Append($"{command.StepId} was already red on baseline {comparison.BaselineSha}").ToArray())
+                : measuredDiagnosis;
             return new ReviewVerdictDto(
                 command.Aspect,
                 diagnosis.ChargesCard ? "block"

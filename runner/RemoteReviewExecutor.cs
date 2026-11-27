@@ -1,3 +1,4 @@
+using AgentStudio.OrchestrationDecisions;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
@@ -643,12 +644,10 @@ public sealed class RemoteReviewExecutor
                 // Built inside the gate and inside the retry loop: a takeover
                 // between attempts must make the next report use its new fence.
                 var lease = _authority.Lease;
-                var diagnosedClassification = evidence.Verdicts.FirstOrDefault(verdict =>
-                    verdict.Classification is
-                        DeliveryFailureDiagnosis.Environment or
-                        DeliveryFailureDiagnosis.Intermittent or
-                        DeliveryFailureDiagnosis.FirstOccurrence
-                    || ReviewCachedBaselinePolicy.IsCacheDefect(verdict.Classification))?.Classification;
+                var diagnosedClassification = evidence.Outcome == "ReviewInfra"
+                    ? evidence.Verdicts.FirstOrDefault(verdict => ReviewMeasurementPolicy.Disposition(verdict)
+                        == ReviewMeasurementDisposition.InfrastructureFailure)?.Classification
+                    : null;
                 var failedHashes = evidence.Commands
                     .Where(command => command.ExitCode is { } exitCode && exitCode != 0)
                     .SelectMany(command => new[] { command.StdoutSha256, command.StderrSha256 })
@@ -1451,20 +1450,12 @@ public sealed class RemoteReviewExecutor
 
     private static string ExecutionSummary(ReviewExecutionEvidence evidence, ReviewPlanDto? plan)
     {
-        var baseline = evidence.Verdicts
-            .Where(verdict => verdict.Classification is
-                "BaselineCompared" or "NewTestFailures" or ReviewFlakyTestIndex.VerdictClassification
-                || ReviewCachedBaselinePolicy.IsCacheDefect(verdict.Classification))
-            .Select(verdict => $"{verdict.Aspect}: {verdict.Summary}")
-            .ToArray();
+        var measurements = ReviewMeasurementPolicy.Summary(plan, evidence.Verdicts);
         var skipped = plan?.SkippedAspects is { Count: > 0 }
             ? " Skipped aspects: " + string.Join("; ", plan.SkippedAspects.Select(item =>
                 $"{item.Aspect} ({item.Reason})"))
             : string.Empty;
-        if (baseline.Length > 0) return string.Join(" ", baseline) + skipped;
-        return evidence.Outcome == "Pass"
-            ? "All executed remote review aspects passed." + skipped
-            : "At least one remote review aspect found a product concern." + skipped;
+        return (measurements.Length > 0 ? measurements : $"Remote Review ended as {evidence.Outcome}; no aspect measurement was recorded.") + skipped;
     }
 
     private static ReviewExecutionEvidence InfrastructureEvidence(

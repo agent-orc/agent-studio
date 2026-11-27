@@ -1,3 +1,4 @@
+using Contract = AgentStudio.TaskServer.Contracts;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 using AgentStudio.Pipeline;
 using AgentStudio.OrchestrationDecisions;
@@ -9,6 +10,10 @@ namespace AgentStudio.Runner;
 /// <summary>Host boundary for the shared decision library. No transition rules belong here.</summary>
 public static class MonolithTransitionAdapter
 {
+    public static Contract.ReviewReportRequest ReviewMeasurements(
+        Contract.ReviewReportRequest request, Contract.ReviewPlanDto? plan)
+        => ReviewMeasurementPolicy.NormalizeReport(request, plan);
+
     public static bool MayClaimMergeCheck(bool integration, int regularActive, int integrationActive, int regularSlots)
         => MergeCheckAdmissionPolicy.MayClaim(integration, regularActive, integrationActive, regularSlots);
     public static int MergeCheckQueuePriority(bool integration) => MergeCheckAdmissionPolicy.Priority(integration);
