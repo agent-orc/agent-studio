@@ -170,11 +170,7 @@ public sealed class MonolithGateStore
                 .Where(attempt => attempt.Attempt.HostId == hostId && IsActive(attempt.Attempt.State))
                 .Select(_ => record.Subject.Kind)).ToArray();
             string? quotaReason = null;
-            foreach (var (record, candidate) in _subjects.Values
-                         .SelectMany(record => record.Attempts.Select(attempt => (record, attempt)))
-                         .Where(item => item.attempt.Attempt.State == GateStates.Queued)
-                         .OrderBy(item => MonolithTransitionAdapter.PostMergeQueuePriority(item.record.Subject.Kind))
-                         .ThenBy(item => item.attempt.Attempt.CreatedAt).Take(32).ToArray())
+            foreach (var (record, candidate) in QueuedCandidates())
             {
                 if (request.ExcludePostMerge && record.Subject.Kind == GateSubjectKinds.PostMerge
                     || active.Any(kind => !MonolithTransitionAdapter.PostMergeMayShareGateLane(kind, record.Subject.Kind)))
@@ -226,6 +222,39 @@ public sealed class MonolithGateStore
                     admission is { MeterUnavailable: true } ? admission.Message : null);
             }
             return new GateClaimResponse("empty", Message: quotaReason ?? "No eligible gate subject is queued.");
+        }
+    }
+
+    // Called under _gate. Keep only one page, including while selecting it:
+    // sorting the whole queue before Take would allocate an unbounded buffer.
+    private IEnumerable<(MonolithGateRecord Record, MonolithGateAttempt Candidate)> QueuedCandidates()
+    {
+        const int pageSize = 32;
+        var comparer = Comparer<(MonolithGateRecord Record, MonolithGateAttempt Candidate, long Order)>.Create((left, right) =>
+        {
+            var priority = MonolithTransitionAdapter.PostMergeQueuePriority(left.Record.Subject.Kind)
+                .CompareTo(MonolithTransitionAdapter.PostMergeQueuePriority(right.Record.Subject.Kind));
+            if (priority != 0) return priority;
+            var created = left.Candidate.Attempt.CreatedAt.CompareTo(right.Candidate.Attempt.CreatedAt);
+            return created != 0 ? created : left.Order.CompareTo(right.Order);
+        });
+        (MonolithGateRecord Record, MonolithGateAttempt Candidate, long Order)? after = null;
+        while (true)
+        {
+            var page = new SortedSet<(MonolithGateRecord Record, MonolithGateAttempt Candidate, long Order)>(comparer);
+            long order = 0;
+            foreach (var record in _subjects.Values)
+            foreach (var candidate in record.Attempts)
+            {
+                var item = (record, candidate, order++);
+                if (candidate.Attempt.State != GateStates.Queued) continue;
+                if (after is { } cursor && comparer.Compare(item, cursor) <= 0) continue;
+                page.Add(item);
+                if (page.Count > pageSize) page.Remove(page.Max);
+            }
+            foreach (var item in page) yield return (item.Record, item.Candidate);
+            if (page.Count < pageSize) yield break;
+            after = page.Max;
         }
     }
 
