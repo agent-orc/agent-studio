@@ -237,7 +237,8 @@ public sealed class IntegrationAgentRoundService
         var tip = result.ConflictReport?.IntegrationTipSha ?? result.PreviousIntegrationSha ?? "";
         var conflictId = IntegrationConflictLedger.Hash($"{request.IntegrationBranch}\n{subject.ResultSha}\n{tip}");
         var budget = IntegrationRecoveryBudget.Count(entries, subject, request.IntegrationBranch);
-        var prior = entries.LastOrDefault(entry => entry.Details?.GetValueOrDefault("conflictId") == conflictId);
+        var prior = entries.LastOrDefault(entry => entry.Details?.GetValueOrDefault("conflictId") == conflictId
+            && !IsPreparationFailure(entry));
         if (prior is not null)
             return Task.FromResult(prior.Kind == TimelineEventKinds.IntegrationFailed && budget.Used >= _maximumRecoveryRounds
                 ? Failed(prior.Summary, Math.Min(budget.Used, _maximumRecoveryRounds), _maximumRecoveryRounds, true)
@@ -290,7 +291,7 @@ public sealed class IntegrationAgentRoundService
                 subject.ResultSha, result) is { } persistenceError)
         {
             RecordFailure(job.FolderPath, request, result, persistenceError, epoch, subject, budget,
-                conflictedFiles, involvedCards);
+                conflictedFiles, involvedCards, preparationFailed: true);
             return Task.FromResult(Failed(persistenceError));
         }
 
@@ -402,6 +403,12 @@ public sealed class IntegrationAgentRoundService
         });
     }
 
+    private static bool IsPreparationFailure(TimelineEvent entry)
+        => entry.Kind == TimelineEventKinds.IntegrationFailed
+           && (entry.Details?.GetValueOrDefault("stage") == "recovery-preparation"
+               // Older receipts did not distinguish preparation from a terminal refusal.
+               || entry.Summary.StartsWith("integration-conflict-receipt-write-failed:", StringComparison.Ordinal));
+
     private void RecordFailure(
         string folderPath,
         RemoteDeliveryIntegrationRequest request,
@@ -411,15 +418,17 @@ public sealed class IntegrationAgentRoundService
         ReviewSubjectRecord? subject = null,
         IntegrationRecoveryBudgetUsage? budget = null,
         IReadOnlyList<string>? conflictedFiles = null,
-        IReadOnlyList<string>? involvedCards = null)
+        IReadOnlyList<string>? involvedCards = null,
+        bool preparationFailed = false)
     {
         conflictedFiles ??= result.ConflictedFiles;
         var conflictSubject = subject ?? ReviewSubjectStore.Read(folderPath);
         var tip = result.ConflictReport?.IntegrationTipSha ?? result.PreviousIntegrationSha ?? "";
         var conflictId = IntegrationConflictLedger.Hash($"{request.IntegrationBranch}\n{conflictSubject?.ResultSha}\n{tip}");
-        if (_timeline.ReadAll(folderPath).Any(entry => entry.Details?.GetValueOrDefault("conflictId") == conflictId))
+        if (_timeline.ReadAll(folderPath).Any(entry => entry.Details?.GetValueOrDefault("conflictId") == conflictId
+                && (!IsPreparationFailure(entry) || preparationFailed)))
             return;
-        if (conflictSubject is not null)
+        if (!preparationFailed && conflictSubject is not null)
             IntegrationConflictLedger.Default.Resolve(request.Project, conflictSubject.TaskKey,
                 conflictSubject.ResultSha, request.IntegrationBranch, "parked",
                 integrationTip: result.ConflictReport?.IntegrationTipSha ?? result.PreviousIntegrationSha);
@@ -431,7 +440,7 @@ public sealed class IntegrationAgentRoundService
             ["integrationBranch"] = request.IntegrationBranch,
             ["detail"] = result.Error ?? string.Empty,
             ["attemptEpoch"] = Invariant(epoch),
-            ["stage"] = "pre-human-review",
+            ["stage"] = preparationFailed ? "recovery-preparation" : "pre-human-review",
         };
         if (subject is not null)
         {

@@ -386,6 +386,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-conflict-receipt-preparation-retry">
+          <td>2026-11-27</td>
+          <td><code>AGT-4140</code><br><span class="small">conflict-receipt-preparation-retry</span></td>
+          <td>No CLI crashed. A failed recovery receipt write prevented a later automatic conflict round for the same delivery and integration tip.</td>
+          <td>The preparation failure used the handled-conflict deduplication key even though no round had started and no delivery had been superseded.</td>
+          <td>Preparation failures remain visible and deduplicated but permit another preparation attempt after filesystem repair. The regression fixture reaches Ready once with its saved recovery delta; queued rounds and terminal refusals retain their guards.</td>
+        </tr>
         <tr id="case-rt6-legacy-canary-red-develop">
           <td>2026-11-27</td>
           <td><code>AGT-4046</code><br><span class="small">rt6-legacy-canary-red-develop</span></td>
