@@ -113,7 +113,7 @@ public sealed class LaneMutexRegistry
     }
 
     /// <summary>Fail closed when a conditional write needs the lane state to remain stable.</summary>
-    public IDisposable? TryAcquireStrict(string? watchPath)
+    public IDisposable? TryAcquireStrict(string? watchPath, TimeSpan? timeout = null)
     {
         if (string.IsNullOrWhiteSpace(watchPath)) return null;
         var key = Normalise(watchPath);
@@ -127,7 +127,7 @@ public sealed class LaneMutexRegistry
             return new NestedRelease(this, held);
         }
         var sem = _mutexes.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
-        if (!sem.Wait(_defaultTimeout))
+        if (!sem.Wait(timeout ?? _defaultTimeout))
         {
             _logger.LogWarning("LaneMutexRegistry: conditional write timed out on {WatchPath}; refusing mutation.", watchPath);
             return null;

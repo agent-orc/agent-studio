@@ -188,13 +188,84 @@ public sealed class CardDeletionSafetyTests : IClassFixture<IamHandlerAccessTest
             && item.ReviewAttemptId == "review-" + batchId);
     }
 
-    private string Seed(string lane)
+    [Fact]
+    public async Task Draft_deletion_does_not_wait_behind_the_admission_of_another_card()
     {
-        var folder = Path.Combine(_host.ProjectPath("alpha"), lane, _cardId);
+        var folder = Seed(TaskStates.Ready);
+        var other = Seed(TaskStates.Ready, "other-" + Guid.NewGuid().ToString("N"), _cardKey + "-OTHER");
+        var otherCard = _host.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(Path.GetFileName(other), _host.ProjectPath("alpha"));
+        Assert.NotNull(otherCard);
+        using var client = Client("owner");
+
+        // A remote claim of another card of the same project holds the
+        // process-wide claim gate and that card's admission mark.
+        Assert.True(await LeaseEndpoints.ClaimGate.WaitAsync(TimeSpan.FromSeconds(60)));
+        HttpResponseMessage response;
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            using var admission = LeaseEndpoints.TryEnterCardAdmission(otherCard, "remote claim by test-runner", out _);
+            Assert.NotNull(admission);
+            response = await client.DeleteAsync(Route("draft"));
+            elapsed.Stop();
+        }
+        finally
+        {
+            LeaseEndpoints.ClaimGate.Release();
+        }
+
+        using (response)
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(1), $"Deletion took {elapsed.Elapsed}.");
+        }
+        Assert.False(Directory.Exists(folder));
+        Assert.True(File.Exists(Path.Combine(other, "task.json")));
+    }
+
+    [Fact]
+    public async Task Draft_whose_own_admission_is_in_progress_is_refused_at_once()
+    {
+        var folder = Seed(TaskStates.Ready);
+        var card = _host.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(_cardId, _host.ProjectPath("alpha"));
+        Assert.NotNull(card);
+        var before = File.ReadAllText(Path.Combine(folder, "task.json"));
+        using var client = Client("owner");
+
+        using (var admission = LeaseEndpoints.TryEnterCardAdmission(card, "remote claim by test-runner", out _))
+        {
+            Assert.NotNull(admission);
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            using var refused = await client.DeleteAsync(Route("draft"));
+            elapsed.Stop();
+
+            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+            using var body = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+            Assert.Equal("card-delete-busy", body.RootElement.GetProperty("error").GetString());
+            var message = body.RootElement.GetProperty("message").GetString()!;
+            Assert.Contains("Run admission of this card is in progress", message);
+            Assert.Contains("remote claim by test-runner", message);
+            Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(1), $"Refusal took {elapsed.Elapsed}.");
+            Assert.Equal(before, File.ReadAllText(Path.Combine(folder, "task.json")));
+        }
+
+        // The refusal is about the admission only: once it ends, the draft is deletable.
+        using var deleted = await client.DeleteAsync(Route("draft"));
+        Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
+        Assert.False(Directory.Exists(folder));
+    }
+
+    private string Seed(string lane) => Seed(lane, _cardId, _cardKey);
+
+    private string Seed(string lane, string cardId, string cardKey)
+    {
+        var folder = Path.Combine(_host.ProjectPath("alpha"), lane, cardId);
         Directory.CreateDirectory(folder);
         File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
         {
-            id = _cardId, key = _cardKey, title = "Unstarted draft", state = lane, order = 1, agent = "codex",
+            id = cardId, key = cardKey, title = "Unstarted draft", state = lane, order = 1, agent = "codex",
         }));
         _host.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
         return folder;
