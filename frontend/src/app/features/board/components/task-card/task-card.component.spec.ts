@@ -1138,32 +1138,45 @@ describe('TaskCardComponent (smoke)', () => {
 
   // ── Canonical execution-location badge ─────────────────────────────────
 
-  it('renders a remote runner badge next to the CLI badge for a leased run', async () => {
-    const fixture = await renderCard(makeJob({
-      state: '3-progress',
-      execution: {
-        jobId: 'task-1', taskKey: 'test::task-1', processId: 4242,
-        startedAt: '2026-07-09T10:00:00Z', status: 'running',
-        exitCode: null, durationSeconds: null, model: 'claude-sonnet-4.5', runOutcome: null,
-      },
-      executionLocation: {
-        state: 'remote-running', executionKind: 'remote', runnerId: 'agent-runner-01',
-        clientId: 'runner-client-01', hostDisplayName: 'linux-host', configuredRunnerId: 'agent-runner-02',
-        startedAt: '2026-07-09T10:00:00Z', lastHeartbeat: '2026-07-09T10:01:00Z',
-        lastActivityAt: '2026-07-09T10:01:02Z', processId: 4242, sessionId: 'session-remote',
-        branch: 'task/AGT-2158', worktreePath: '/worktrees/AGT-2158',
-        connectionState: 'connected', leaseState: 'active',
-        trustReason: 'The task server holds the fenced run lease.',
-      },
-    }));
+  for (const projection of ['absent', 'null', 'populated', 'active-step'] as const) {
+    it(`names the leased host exactly once with ${projection} live status`, async () => {
+      const fixture = await renderCard(makeJob({
+        state: '3-progress',
+        liveStatus: projection === 'absent' ? undefined : projection === 'null' ? null : {
+          attempt: 1, nextSteps: [], queue: null, latestEventAt: null,
+          activeStep: projection === 'active-step' ? {
+            stepId: 'core', kind: 'core', displayName: 'Implementation',
+            startedAt: '2026-07-09T10:00:00Z', cliType: 'codex', model: null,
+          } : null,
+        },
+        execution: {
+          jobId: 'task-1', taskKey: 'test::task-1', processId: 4242,
+          startedAt: '2026-07-09T10:00:00Z', status: 'running',
+          exitCode: null, durationSeconds: null, model: 'claude-sonnet-4.5', runOutcome: null,
+        },
+        executionLocation: {
+          state: 'remote-running', executionKind: 'remote', runnerId: 'runner_d9a38223247c41e4bab44778397c0794',
+          clientId: 'runner-client-01', hostDisplayName: 'linux-host', configuredRunnerId: 'agent-runner-02',
+          startedAt: '2026-07-09T10:00:00Z', lastHeartbeat: '2026-07-09T10:01:00Z',
+          lastActivityAt: '2026-07-09T10:01:02Z', processId: 4242, sessionId: 'session-remote',
+          branch: 'task/AGT-2158', worktreePath: '/worktrees/AGT-2158',
+          connectionState: 'connected', leaseState: 'active',
+          trustReason: 'The task server holds the fenced run lease.',
+        },
+      }));
 
-    const pill = fixture.nativeElement.querySelector('[data-testid="execution-location-badge"]') as HTMLElement | null;
-    expect(pill).not.toBeNull();
-    expect(pill?.getAttribute('data-execution-state')).toBe('remote-running');
-    // AGT-4034: the status line names the host, so the badge does not repeat it.
-    expect(pill?.textContent).toContain('Host');
-    expect(pill?.textContent).not.toContain('agent-runner-01');
-  });
+      await fixture.whenStable();
+      const pill = fixture.nativeElement.querySelector('[data-testid="execution-location-badge"]') as HTMLElement | null;
+      expect(pill).not.toBeNull();
+      expect(pill?.getAttribute('data-execution-state')).toBe('remote-running');
+      const hasStatus = projection === 'populated' || projection === 'active-step';
+      expect(pill?.textContent).toContain(hasStatus ? 'Host' : 'Host · linux-host');
+      expect(pill?.textContent?.includes('linux-host')).toBe(!hasStatus);
+      expect(fixture.nativeElement.textContent.match(/linux-host/g)?.length ?? 0).toBe(1);
+      expect(fixture.nativeElement.querySelector('[data-testid="task-live-status"]') !== null).toBe(hasStatus);
+      fixture.destroy();
+    });
+  }
 
   it('treats a live remote lease as running when no local execution exists', async () => {
     const acquiredAt = new Date().toISOString();
