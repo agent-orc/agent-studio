@@ -177,7 +177,11 @@ public sealed class ProjectOnboardingApiTests
             var duplicate = await client.PostAsJsonAsync("/api/projects", request);
             Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
 
-            var deleted = await client.DeleteAsync($"/api/projects/{created.Id}");
+            using var deletion = new HttpRequestMessage(HttpMethod.Delete, $"/api/projects/{created.Id}")
+            {
+                Content = JsonContent.Create(new { confirmation = created.Id, reason = "Remove test project" })
+            };
+            var deleted = await client.SendAsync(deletion);
             Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
             Assert.False(Directory.Exists(Path.Combine(root, "projects", created.Id)));
         }
@@ -227,7 +231,11 @@ public sealed class ProjectOnboardingApiTests
                     .SetRepositoryPath(created.Id, checkout);
             }
 
-            var deleted = await client.DeleteAsync($"/api/projects/{created.Id}");
+            using var deletion = new HttpRequestMessage(HttpMethod.Delete, $"/api/projects/{created.Id}")
+            {
+                Content = JsonContent.Create(new { confirmation = created.Id, reason = "Remove test project" })
+            };
+            var deleted = await client.SendAsync(deletion);
 
             Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
             Assert.False(Directory.Exists(checkout));
