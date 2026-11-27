@@ -5,7 +5,9 @@ using AgentStudio.Pipeline;
 using AgentStudio.Shared;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -22,13 +24,27 @@ namespace AgentStudio.Tests;
 /// started host; the interrupted integration is still repaired behind it.
 /// <c>scripts/startup-fixture.sh</c> builds the same workspace for the product
 /// start check.
+/// <para>
+/// AGT-4244: the start time is a wall-clock measurement, so the class runs in
+/// a collection that does not run in parallel with the rest of the suite, and
+/// its deadline is derived from the start of the same host on an empty
+/// workspace measured in the same run (never below 60s, never above 180s). A
+/// start that takes minutes, the incident class, still fails; a busy machine
+/// only stretches the baseline and the deadline together. The failure names
+/// the start-up phase that was running, read from the AGT-4239 phase log.
+/// </para>
 /// </summary>
+[Collection(ProductStartupFixtureCollection.Name)]
 public sealed class ProductStartupFixtureTests : IDisposable
 {
     private const int Cards = 1500;
     // The incident morning; no recovery decision here depends on the age of a record.
     private static readonly DateTimeOffset FixtureTime = new(2026, 11, 27, 12, 0, 0, TimeSpan.Zero);
-    private static readonly TimeSpan StartDeadline = TimeSpan.FromSeconds(60);
+    // The fixture start may take this many empty-workspace starts; the
+    // fixed start measured 12 to 18s alone against a baseline of a few seconds.
+    private const int BaselineFactor = 10;
+    private static readonly TimeSpan MinStartDeadline = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan MaxStartDeadline = TimeSpan.FromSeconds(180);
     private static readonly TimeSpan RepairDeadline = TimeSpan.FromSeconds(120);
     private readonly string _root = Path.Combine(Path.GetTempPath(), "startup-fixture-" + Guid.NewGuid().ToString("N"));
     private readonly string _project;
@@ -58,26 +74,24 @@ public sealed class ProductStartupFixtureTests : IDisposable
     [Fact]
     public async Task The_real_start_path_is_healthy_before_its_repairs_and_the_repairs_then_finish()
     {
-        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Test");
-            builder.UseSetting("Startup:HostedServices", "true");
-            builder.UseSetting("Startup:RepairSweeps", "true");
-            builder.UseSetting("TaskRepository", _root);
-            builder.UseSetting("WatchPaths:0:Name", "fixture");
-            builder.UseSetting("WatchPaths:0:Path", _project);
-            builder.UseSetting("WatchPaths:0:RootPath", _repo);
-            builder.UseSetting("WatchPaths:0:RepositoryPath", _repo);
-            builder.UseSetting("ReviewDecisionOrchestrator:Enabled", "false");
-        });
+        var baseline = await MeasureEmptyWorkspaceStartAsync();
+        var deadline = TimeSpan.FromTicks(Math.Clamp(
+            baseline.Ticks * BaselineFactor, MinStartDeadline.Ticks, MaxStartDeadline.Ticks));
+
+        var phases = new PhaseCapture();
+        using var factory = ProductionStartHost(_root, _project, _repo, phases);
 
         var clock = Stopwatch.StartNew();
         var start = Task.Run(() => factory.CreateClient());
-        var finished = await Task.WhenAny(start, Task.Delay(StartDeadline));
+        var finished = await Task.WhenAny(start, Task.Delay(deadline));
         Assert.True(finished == start,
-            $"The production start path was not started within {StartDeadline.TotalSeconds:0}s on the {Cards}-card fixture.");
+            $"The production start path was not started within {deadline.TotalSeconds:0}s "
+            + $"({BaselineFactor} x the empty-workspace start of {baseline.TotalSeconds:0.0}s) on the {Cards}-card fixture. "
+            + phases.Describe());
         using var client = await start;
         var started = clock.Elapsed;
+        Console.WriteLine($"ProductStartupFixture: empty-workspace start {baseline.TotalSeconds:0.0}s, "
+            + $"fixture start {started.TotalSeconds:0.0}s, deadline {deadline.TotalSeconds:0}s");
         using var health = await client.GetAsync("/healthz");
         Assert.Equal(HttpStatusCode.OK, health.StatusCode);
 
@@ -92,7 +106,76 @@ public sealed class ProductStartupFixtureTests : IDisposable
         while (IntegrationGateJournal.Read(_interruptedCard) is not null && journalDeadline.Elapsed < RepairDeadline)
             await Task.Delay(250);
         Assert.Null(IntegrationGateJournal.Read(_interruptedCard));
-        Assert.True(started < StartDeadline, $"started after {started}");
+        Assert.True(started < deadline, $"started after {started}; {phases.Describe()}");
+    }
+
+    private static async Task<TimeSpan> MeasureEmptyWorkspaceStartAsync()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "startup-baseline-" + Guid.NewGuid().ToString("N"));
+        var project = Path.Combine(root, "projects", "baseline");
+        Directory.CreateDirectory(project);
+        try
+        {
+            using var factory = ProductionStartHost(root, project, project, new PhaseCapture());
+            var clock = Stopwatch.StartNew();
+            var start = Task.Run(() => factory.CreateClient());
+            var finished = await Task.WhenAny(start, Task.Delay(MaxStartDeadline));
+            Assert.True(finished == start, $"The empty-workspace start did not finish within {MaxStartDeadline.TotalSeconds:0}s.");
+            using var client = await start;
+            return clock.Elapsed;
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // A host handle can outlive the baseline briefly; the temp root is disposable.
+            }
+        }
+    }
+
+    private static WebApplicationFactory<Program> ProductionStartHost(string root, string project, string repo, PhaseCapture phases)
+        => new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.UseSetting("Startup:HostedServices", "true");
+            builder.UseSetting("Startup:RepairSweeps", "true");
+            builder.UseSetting("TaskRepository", root);
+            builder.UseSetting("WatchPaths:0:Name", Path.GetFileName(project));
+            builder.UseSetting("WatchPaths:0:Path", project);
+            builder.UseSetting("WatchPaths:0:RootPath", repo);
+            builder.UseSetting("WatchPaths:0:RepositoryPath", repo);
+            builder.UseSetting("ReviewDecisionOrchestrator:Enabled", "false");
+            builder.ConfigureLogging(logging => logging.AddProvider(phases));
+        });
+
+    /// <summary>
+    /// Keeps the <c>startup-phase</c> and <c>startup-phase-slow</c> lines of
+    /// the AGT-4239 phase log so a missed deadline names the running phase.
+    /// </summary>
+    private sealed class PhaseCapture : ILoggerProvider, ILogger
+    {
+        private readonly ConcurrentQueue<string> _lines = new();
+
+        public string Describe()
+        {
+            var lines = _lines.ToArray();
+            var slow = lines.Where(line => line.StartsWith("startup-phase-slow", StringComparison.Ordinal)).ToList();
+            var completed = lines.LastOrDefault(line => line.StartsWith("startup-phase ", StringComparison.Ordinal));
+            var running = slow.Count > 0
+                ? "Still running per the watchdog: " + string.Join(" | ", slow.TakeLast(3)) + "."
+                : "No phase passed the watchdog threshold.";
+            return $"{running} Last completed phase: {completed ?? "none (the phase logger was not attached yet)"}.";
+        }
+
+        public ILogger CreateLogger(string categoryName) => categoryName == "AgentStudio.StartupPhases" ? this : NullLoggerInstance;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => _lines.Enqueue(formatter(state, exception));
+        public void Dispose() { }
+
+        private static readonly ILogger NullLoggerInstance = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
     }
 
     private void SeedWorkspace()
@@ -190,4 +273,10 @@ public sealed class ProductStartupFixtureTests : IDisposable
         if (process.ExitCode != 0) throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {error}");
         return output.Trim();
     }
+}
+
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class ProductStartupFixtureCollection
+{
+    public const string Name = "ProductStartupFixture";
 }
