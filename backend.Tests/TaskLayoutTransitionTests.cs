@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
@@ -157,6 +159,103 @@ public class TaskLayoutTransitionTests : IDisposable
         Assert.Equal(new[] { "000/TST-10" }, TaskLayoutIndex.ReadByState(_root)[TaskStates.Ready]);
         Assert.Equal(new[] { "000/TST-11" }, TaskLayoutIndex.ReadByState(_root)[TaskStates.Progress]);
         Assert.Empty(Directory.GetFiles(TaskStorageLayout.IndexRoot(_root), "*.tmp"));
+    }
+
+    [SkippableFact]
+    public void MoveJob_AuthorityWriteFailure_DoesNotChangeIndexesOrPublishLaneChange()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip.If(true, "Uses Unix directory permissions to fail the atomic authority write.");
+            return;
+        }
+        SeedLaneTask(TaskStates.Ready, "blocked", "TST-1");
+        Migrate();
+        var folder = Path.GetDirectoryName(JobJson("TST-1"))!;
+        // Keep the receipt destination writable so a false success could emit a real row.
+        Directory.CreateDirectory(Path.Combine(folder, "logs"));
+        var beforeState = File.ReadAllText(TaskLayoutIndex.ByStatePath(_root));
+        var beforeKey = File.ReadAllText(TaskLayoutIndex.ByKeyPath(_root));
+        var beforeTask = File.ReadAllText(JobJson("TST-1"));
+        var logger = new TransitionLogger();
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+            ["WatchPaths:0:Name"] = "demo",
+            ["WatchPaths:0:Path"] = _root,
+            ["WatchPaths:0:RootPath"] = _root,
+        }).Build();
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var machine = new TaskStateMachine(scanner, logger, timeline: timeline);
+        var originalMode = File.GetUnixFileMode(folder);
+        MoveJobOutcome outcome;
+        try
+        {
+            // Atomic replacement needs a writable directory even when task.json is readable.
+            File.SetUnixFileMode(folder, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+            outcome = machine.MoveJob("blocked", TaskStates.Progress, _root);
+        }
+        finally
+        {
+            File.SetUnixFileMode(folder, originalMode);
+        }
+
+        Assert.Equal(MoveJobStatus.Failure, outcome.Status);
+        Assert.Null(outcome.NewFolderPath);
+        Assert.Contains("authoritative state", outcome.Message);
+        Assert.Equal(beforeTask, File.ReadAllText(JobJson("TST-1")));
+        Assert.Equal(beforeState, File.ReadAllText(TaskLayoutIndex.ByStatePath(_root)));
+        Assert.Equal(beforeKey, File.ReadAllText(TaskLayoutIndex.ByKeyPath(_root)));
+        Assert.DoesNotContain(timeline.ReadAll(folder), row => row.Kind == TimelineEventKinds.LaneChanged);
+        Assert.DoesNotContain(logger.Messages, message => message.StartsWith("task-transition key=", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ChangeState_IndexWriteFailure_RetainsAuthorityAndRebuildRepairsIndex()
+    {
+        SeedLaneTask(TaskStates.Ready, "t", "TST-1");
+        Migrate();
+        var beforeKey = File.ReadAllText(TaskLayoutIndex.ByKeyPath(_root));
+        var indexPath = TaskLayoutIndex.ByStatePath(_root);
+        var logger = new TransitionLogger();
+        // A directory at the destination permits reads to return a missing cache,
+        // but deterministically rejects the atomic index-file replacement.
+        File.Delete(indexPath);
+        Directory.CreateDirectory(indexPath);
+        try
+        {
+            var error = Assert.Throws<IOException>(() =>
+                TaskLayoutTransition.ChangeState(_root, "TST-1", TaskStates.Progress, logger));
+            Assert.Contains("authoritative state was saved", error.Message);
+            Assert.Contains("rebuild", error.Message);
+            Assert.NotNull(error.InnerException);
+            Assert.Equal(TaskStates.Progress, Field(JobJson("TST-1"), "state"));
+            Assert.Equal(beforeKey, File.ReadAllText(TaskLayoutIndex.ByKeyPath(_root)));
+            Assert.DoesNotContain(logger.Messages, message => message.StartsWith("task-transition key=", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(indexPath);
+        }
+
+        TaskLayoutIndex.Rebuild(_root, NullLogger.Instance);
+        var repaired = TaskLayoutIndex.ReadByState(_root);
+        Assert.Equal(new[] { "000/TST-1" }, repaired[TaskStates.Progress]);
+        Assert.False(repaired.ContainsKey(TaskStates.Ready));
+        Assert.Equal(TaskStates.Progress, Field(JobJson("TST-1"), "state"));
+        Assert.Equal(beforeKey, File.ReadAllText(TaskLayoutIndex.ByKeyPath(_root)));
+    }
+
+    private sealed class TransitionLogger : ILogger<TaskStateMachine>
+    {
+        public List<string> Messages { get; } = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Messages.Add(formatter(state, exception));
     }
 
     // ---- helpers -----------------------------------------------------------
