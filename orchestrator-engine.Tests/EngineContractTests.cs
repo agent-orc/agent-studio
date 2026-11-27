@@ -100,6 +100,7 @@ public sealed class EngineContractTests
     }
 
     [Fact]
+    [Trait("Category", "Guard")]
     public async Task Decision_plane_uses_studio_while_stage_claims_use_task_server()
     {
         var taskServerPaths = new List<string>();

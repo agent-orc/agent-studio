@@ -448,6 +448,11 @@ step that timed out, ran out of budget, crashed or exited before a test failed
 reads `guard step failed without a failing guard test (<cause>), full suite not
 run`, and `GuardViolation` stays false.
 
+The engine's decision-plane routing contract is tagged `Category=Guard`, so
+the declared engine guard step runs a boundary check and produces completed
+test evidence. A filter that selects no tests cannot supply that evidence
+merely by exiting zero.
+
 ### Per-project integration test placement (AGT-3314)
 
 `testing.mode` is derived from `testing.strategy` (AGT-3965): `strict` is
