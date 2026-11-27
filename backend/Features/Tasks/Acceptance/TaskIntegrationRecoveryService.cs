@@ -64,7 +64,7 @@ public sealed class TaskIntegrationRecoveryService
         IntegrationBounceObligation? automaticObligation = null)
     {
         var subject = ReviewSubjectStore.Read(job.FolderPath);
-        if (subject is null || string.IsNullOrWhiteSpace(subject.ResultRef))
+        if (subject is null || string.IsNullOrWhiteSpace(subject.ImmutableResultRef ?? subject.ResultRef))
         {
             return Failed("The accepted task has no fenced remote delivery ref to recover.");
         }
@@ -80,7 +80,34 @@ public sealed class TaskIntegrationRecoveryService
         }
 
         var integrationBranch = status.IntegrationBranch;
-        var prompt = BuildPrompt(job, subject, integrationBranch, status.Failure?.ConflictReport);
+        // Manual recovery may project a generic failure after the original
+        // conflict. Retain the durable receipt instead of silently losing files.
+        var conflict = status.Failure?.ConflictReport;
+        var receiptPath = Path.Combine(job.FolderPath, "integration-conflict-recovery.json");
+        if (conflict is null && File.Exists(receiptPath))
+        {
+            try
+            {
+                var receipt = System.Text.Json.JsonSerializer.Deserialize<IntegrationConflictReceipt>(
+                    File.ReadAllText(receiptPath), new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+                if (receipt?.Result?.ConflictedFiles is null
+                    || receipt.DeliverySha != subject.ResultSha || receipt.Target != integrationBranch)
+                    return Failed("The recorded conflict does not match this delivery and target; recovery retained its facts.");
+                conflict = receipt.Result.ConflictReport ?? new IntegrationConflictReport
+                {
+                    IntegrationBranch = integrationBranch,
+                    DeliverySha = receipt.DeliverySha,
+                    IntegrationTipSha = receipt.Result.PreviousIntegrationSha ?? "",
+                    ConflictedFiles = receipt.Result.ConflictedFiles.ToList(),
+                };
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+            {
+                _logger.LogWarning(ex, "Integration conflict receipt could not be read for {JobId}", job.Id);
+                return Failed("The recorded integration conflict is unreadable; recovery retained its facts.");
+            }
+        }
+        var prompt = BuildPrompt(job, subject, integrationBranch, conflict);
         var savedReason = source == AcceptanceRailSource && retryNumber is not null
             ? $"{AcceptanceRailSource}:{failureCode}:retry-{retryNumber.Value}"
             : failureCode;
@@ -112,6 +139,11 @@ public sealed class TaskIntegrationRecoveryService
         var current = _scanner.FindJob(job.Id, job.WatchPath);
         if (current is null)
             return Failed("The task disappeared before integration recovery could be queued.");
+
+        if (!ContinuationBaseStore.Save(current.FolderPath, new ContinuationBaseRecord(
+                subject.ImmutableResultRef ?? subject.ResultRef!, subject.ResultSha,
+                ContinuationBaseReasons.ContinueRoundResult, subject.RunAttemptId, DateTime.UtcNow)))
+            return Failed("The integration recovery delivery base could not be persisted.");
 
         var supersession = _mutations.SupersedeCurrentDeliveryOnFolder(
             current.FolderPath,
@@ -165,10 +197,9 @@ public sealed class TaskIntegrationRecoveryService
             }
         }
 
-        var conflict = status.Failure?.ConflictReport;
         SessionContinuationLedgerStore.SaveDelta(current.FolderPath, new MechanicalRoundDelta(
             conflict?.IntegrationTipSha ?? string.Empty,
-            subject.ResultRef,
+            subject.ImmutableResultRef ?? subject.ResultRef!,
             subject.ResultSha,
             conflict?.ConflictedFiles ?? [],
             prompt,
@@ -219,10 +250,12 @@ public sealed class TaskIntegrationRecoveryService
         var details = new Dictionary<string, string>
         {
             ["automatic"] = (source == AcceptanceRailSource).ToString().ToLowerInvariant(),
+            [IntegrationRecoveryBudget.HandoffPromptKey] = FollowUpPromptDigest.Compute(prompt),
+            [IntegrationRecoveryBudget.HandoffSavedAtKey] = current.PendingIntent?.SavedAt.ToString("O") ?? "",
             ["source"] = source,
             [IntegrationRecoveryBudget.DeliveryChainIdKey] =
                 IntegrationRecoveryBudget.DeliveryChainId(subject),
-            ["deliveryRef"] = subject.ResultRef,
+            ["deliveryRef"] = subject.ImmutableResultRef ?? subject.ResultRef!,
             ["resultSha"] = subject.ResultSha,
             ["integrationBranch"] = integrationBranch,
             ["mode"] = ContinueModes.Steer,
@@ -277,7 +310,7 @@ public sealed class TaskIntegrationRecoveryService
         return new TaskIntegrationRecoveryResult(
             true,
             Position: position,
-            DeliveryRef: subject.ResultRef,
+            DeliveryRef: subject.ResultRef ?? subject.ImmutableResultRef,
             ResultSha: subject.ResultSha,
             IntegrationBranch: integrationBranch,
             RetryNumber: retryNumber);
@@ -329,9 +362,10 @@ public sealed class TaskIntegrationRecoveryService
         IntegrationConflictReport? conflictReport = null)
     {
         return IntegrationContinuationPrompt.Build(
-            job.Key ?? job.Id, subject.ResultRef, subject.ResultSha,
+            job.Key ?? job.Id, subject.ImmutableResultRef ?? subject.ResultRef, subject.ResultSha,
             integrationBranch, "merge-into-develop", "The reviewed delivery did not integrate.",
-            conflictReport);
+            conflictReport,
+            evidence: $"Platform preparation owns merging 'origin/{integrationBranch}' at its exact fetched SHA into the pinned delivery.");
     }
 
     private static TaskIntegrationRecoveryResult Failed(

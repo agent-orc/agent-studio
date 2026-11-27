@@ -577,3 +577,205 @@ public sealed class RemoteDeliveryIntegrationCoordinatorTests
             PipelineTypes.Task,
             new DateTimeOffset(2026, 8, 9, 10, minute, 0, TimeSpan.Zero));
 }
+
+
+public sealed class IntegrationRecoveryHandoffTests : IDisposable
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "recovery-handoff-" + Guid.NewGuid().ToString("N"));
+    private readonly TaskScannerService _scanner;
+    private readonly TaskMutationService _mutations;
+    private readonly TaskStateMachine _states;
+    private readonly TimelineLog _timeline;
+    private const string Id = "AGT-4097-fixture";
+    private readonly ReviewSubjectRecord _subject;
+
+    public IntegrationRecoveryHandoffTests()
+    {
+        foreach (var state in TaskStates.All) Directory.CreateDirectory(Path.Combine(_root, state));
+        var folder = TaskStorageLayout.JobDir(_root, 0, Id);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), System.Text.Json.JsonSerializer.Serialize(new
+        {
+            id = Id, key = Id, title = "Repair shared behavior", state = TaskStates.AutoReview,
+            agent = "codex", cliType = "codex", model = "gpt-6-sol", taskType = "bug", order = 1,
+        }));
+        File.WriteAllText(Path.Combine(folder, "prompt.md"), "Preserve the shared behavior.");
+        _subject = Subject('a');
+        ReviewSubjectStore.Write(folder, _subject);
+        TaskLayoutIndex.Rebuild(_root, NullLogger.Instance);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["WatchPaths:0:Name"] = "fixture", ["WatchPaths:0:Path"] = _root }).Build();
+        _scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var notifier = new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance);
+        _timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        _mutations = new TaskMutationService(_scanner,
+            new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
+            new AgentStudio.Registry.ProjectRegistry(config, NullLogger<AgentStudio.Registry.ProjectRegistry>.Instance),
+            notifier, NullLogger<TaskMutationService>.Instance);
+        _states = new TaskStateMachine(_scanner, NullLogger<TaskStateMachine>.Instance,
+            notifier: notifier, timeline: _timeline);
+    }
+
+    [Fact]
+    public async Task AutomaticRoundReplacesStaleReviewBaseBeforeReadyAndChargesOnlyValidHandoff()
+    {
+        var job = Job();
+        ContinuationBaseStore.Save(job.FolderPath, new ContinuationBaseRecord("refs/heads/old", new string('c', 40),
+            "review-fix-round", "old-attempt", DateTime.UnixEpoch));
+        var result = await Service().TryStartAsync(Request(job), Conflict());
+        Assert.True(result.Started, result.Reason);
+        var queued = Job();
+        var pin = Assert.IsType<ContinuationBaseRecord>(ContinuationBaseStore.Read(queued.FolderPath));
+        Assert.Equal(_subject.ImmutableResultRef, pin.Ref);
+        Assert.Equal(_subject.ResultSha, pin.CommitSha);
+        Assert.Equal("continue-round-result", pin.Reason);
+        Assert.Equal(_subject.RunAttemptId, pin.AttemptId);
+        Assert.Contains("agent-studio-integration-preparation.json", queued.PendingIntent!.Prompt);
+        Assert.Equal(1, IntegrationRecoveryBudget.Count(_timeline.ReadAll(queued.FolderPath), _subject, "develop").Used);
+    }
+
+    [Fact]
+    public async Task UnwritableBaseNeverConsumesTheRecoveryBudgetOrSupersedesTheDelivery()
+    {
+        var job = Job();
+        Directory.CreateDirectory(Path.Combine(job.FolderPath, ContinuationBaseStore.FileName));
+        var result = await Service().TryStartAsync(Request(job), Conflict());
+        Assert.False(result.Started);
+        Assert.Contains("no round was charged", result.Reason);
+        Assert.Equal(TaskStates.AutoReview, Job().State);
+        Assert.Equal(_subject.ResultSha, ReviewSubjectStore.Read(job.FolderPath)!.ResultSha);
+        Assert.Equal(0, IntegrationRecoveryBudget.Count(_timeline.ReadAll(job.FolderPath), _subject, "develop").Used);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HandoffReservesCapacityAndChargesOnlyTheExactWorkerStartReceipt(bool started)
+    {
+        Assert.True((await Service().TryStartAsync(Request(Job()), Conflict())).Started);
+        var job = Job();
+        var handoff = Assert.Single(_timeline.ReadAll(job.FolderPath),
+            row => row.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+        var hash = handoff.Details![IntegrationRecoveryBudget.HandoffPromptKey];
+        var savedAt = handoff.Details[IntegrationRecoveryBudget.HandoffSavedAtKey];
+        IntegrationRecoveryBudgetUsage Usage() => IntegrationRecoveryBudget.Count(
+            _timeline.ReadAll(job.FolderPath), _subject, "develop");
+        Assert.Equal(1, Usage().ReservedRounds);
+        Assert.Equal(0, Usage().ChargedRounds);
+
+        // A different saved intent, even with the same text, cannot charge it.
+        _timeline.Append(job.FolderPath, TimelineEventKinds.FollowUpConsumed, TimelineActors.System,
+            "Older handoff", runId: "older-attempt", details: new()
+            { ["promptSha256"] = hash, ["savedAt"] = "older-save" });
+        Assert.Equal(0, Usage().ChargedRounds);
+        if (started)
+        {
+            _timeline.Append(job.FolderPath, TimelineEventKinds.FollowUpConsumed, TimelineActors.System,
+                "Fenced worker-start acknowledgement", runId: "claimed-attempt", details: new()
+                { ["promptSha256"] = hash, ["savedAt"] = savedAt });
+            Assert.Equal(1, Usage().ChargedRounds);
+            Assert.Equal(0, Usage().ReservedRounds);
+        }
+
+        _timeline.Append(job.FolderPath, TimelineEventKinds.FollowUpSuperseded, TimelineActors.System,
+            "The operator replaced this follow-up", details: new()
+            { ["promptSha256"] = hash, ["savedAt"] = savedAt });
+        Assert.Equal(started ? 1 : 0, Usage().Used);
+        Assert.Equal(started ? 1 : 0, Usage().ChargedRounds);
+        Assert.Equal(0, Usage().ReservedRounds);
+    }
+
+    [Fact]
+    public async Task ExhaustionAcrossChangedShasCreatesOneDurablePinnedRepairAndKeepsHumanHolds()
+    {
+        var job = Job();
+        for (var i = 0; i < 2; i++)
+            _timeline.Append(job.FolderPath, TimelineEventKinds.IntegrationRecoveryQueued, TimelineActors.System,
+                "Earlier automatic handoff", details: new()
+                {
+                    ["automatic"] = "true", ["integrationBranch"] = "develop",
+                    [IntegrationRecoveryBudget.DeliveryChainIdKey] = "old-delivery@" + i,
+                    ["resultSha"] = new string((char)('c' + i), 40),
+                });
+        var result = await Service().TryStartAsync(Request(job), Conflict());
+        Assert.False(result.Started);
+        Assert.True(result.BudgetExhausted, result.Reason);
+        Assert.Contains("Delivery quarantined; repair:", result.Reason);
+        var repair = Assert.Single(_scanner.ScanAutomationJobsWithArchive(_root), item => item.Id != Id);
+        Assert.Equal(TaskStates.Ready, repair.State);
+        var pin = Assert.IsType<ContinuationBaseRecord>(ContinuationBaseStore.Read(repair.FolderPath));
+        Assert.Equal(_subject.ImmutableResultRef, pin.Ref);
+        Assert.Equal(_subject.ResultSha, pin.CommitSha);
+        var quarantine = File.ReadAllText(Path.Combine(job.FolderPath, "integration-delivery-quarantine.json"));
+        Assert.Contains(_subject.ResultSha, quarantine);
+        Assert.Contains(new string('b', 40), quarantine);
+        Assert.Contains("shared.cs", quarantine);
+        Assert.Equal(_subject.ResultSha, ReviewSubjectStore.Read(job.FolderPath)!.ResultSha);
+        Assert.Equal(2, IntegrationRecoveryBudget.Count(_timeline.ReadAll(job.FolderPath), _subject, "develop").Used);
+
+        // Restart/replay, then a changed delivery and target, never mint another
+        // repair or discard a person's review hold on the existing one.
+        Assert.True((await Service().TryStartAsync(Request(job), Conflict())).BudgetExhausted);
+        var move = _states.MoveJob(repair.Id, TaskStates.HumanReview, _root, expectedSourceState: TaskStates.Ready);
+        Assert.Equal(MoveJobStatus.Success, move.Status);
+        ReviewSubjectStore.Write(job.FolderPath, Subject('e'));
+        Assert.True((await Service().TryStartAsync(Request(job), Conflict() with { PreviousIntegrationSha = new string('f', 40) })).BudgetExhausted);
+        Assert.Single(_scanner.ScanAutomationJobsWithArchive(_root), item => item.Id != Id);
+        Assert.Equal(TaskStates.HumanReview, _scanner.FindJob(repair.Id, _root)!.State);
+    }
+
+    [Fact]
+    public async Task LegacyStoreRetainsAllCardsAndADurableRequestWithoutImplicitMigration()
+    {
+        var original = Job();
+        var legacy = Path.Combine(_root, TaskStates.AutoReview, Id);
+        Directory.Move(original.FolderPath, legacy);
+        Directory.Delete(TaskStorageLayout.IndexRoot(_root), true);
+        _scanner.InvalidateCache();
+        var job = Job();
+        for (var i = 0; i < 2; i++)
+            _timeline.Append(job.FolderPath, TimelineEventKinds.IntegrationRecoveryQueued, TimelineActors.System,
+                "Legacy automatic round", details: new() { ["automatic"] = "true" });
+        var result = await Service().TryStartAsync(Request(job), Conflict());
+        Assert.True(result.BudgetExhausted, result.Reason);
+        Assert.Equal(TaskStates.AutoReview, Job().State);
+        Assert.Empty(TaskStorageLayout.EnumerateJobDirs(_root));
+        var quarantine = File.ReadAllText(Path.Combine(legacy, "integration-delivery-quarantine.json"));
+        Assert.Contains("deferred-storage-migration", quarantine);
+        Assert.Contains("repairRequest", quarantine);
+        Assert.Contains(_subject.ImmutableResultRef!, quarantine);
+    }
+
+    [Fact]
+    public void ManualRoundRecoversDurableConflictFactsAndPinsImmutableDelivery()
+    {
+        var job = Job();
+        Assert.Null(IntegrationConflictRecovery.PrepareQueued(Request(job), _subject.ResultSha, Conflict()));
+        var service = new TaskIntegrationRecoveryService(_scanner, _mutations, _states, _timeline,
+            NullLogger<TaskIntegrationRecoveryService>.Instance);
+        var result = service.Queue(job, new TaskIntegrationStatus
+        { IntegrationBranch = "develop", Status = IntegrationStatuses.ConflictSkipped }, "merge-conflict", "operator");
+        Assert.True(result.Queued, result.Error);
+        var queued = Job();
+        Assert.Contains("shared.cs", queued.PendingIntent!.Prompt);
+        Assert.Contains(new string('b', 40), queued.PendingIntent.Prompt);
+        Assert.Equal(_subject.ImmutableResultRef, ContinuationBaseStore.Read(queued.FolderPath)!.Ref);
+        Assert.Equal(0, IntegrationRecoveryBudget.Count(_timeline.ReadAll(queued.FolderPath), _subject, "develop").Used);
+    }
+
+    private TaskInfo Job() => _scanner.FindJob(Id, _root)!;
+    private IntegrationAgentRoundService Service() => new(_scanner, _mutations, _states, _timeline,
+        NullLogger<IntegrationAgentRoundService>.Instance);
+    private RemoteDeliveryIntegrationRequest Request(TaskInfo job) => new("fixture", job.Id, job.FolderPath,
+        _root, "develop", IntegrationStrategies.DirectMerge, PipelineTypes.Task, DateTimeOffset.UnixEpoch);
+    private static ReviewSubjectRecord Subject(char sha) => new()
+    {
+        TaskKey = Id, RunAttemptId = "run-" + sha, AttemptChainId = "chain-" + sha, ResultSha = new string(sha, 40),
+        ResultRef = "refs/heads/mutable-" + sha, ImmutableResultRef = "refs/heads/results/" + sha,
+        CompletedAtUtc = DateTimeOffset.UnixEpoch,
+    };
+    private static MergeIntoIntegrationResult Conflict() => new(MergeIntoIntegrationOutcome.AgentRoundRequired,
+        null, "Net-change replay conflicted.", ["shared.cs"], [], new string('b', 40));
+    public void Dispose() => Directory.Delete(_root, true);
+}

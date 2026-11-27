@@ -123,6 +123,7 @@ public sealed partial class GitWorkspace
         $"refs/heads/{ToBranchName(_preparedIntegrationBranch ?? _baseBranch)}";
     public SalvageReconciliationResult? PickupReconciliation => _pickupReconciliation;
     public PushProtectionCause? PushProtectionRecovery => _pushProtectionRecovery;
+    public ContinuationMergePreparation? ContinuationPreparation { get; private set; }
     private string PushProtectionMarkerPath => WorktreeLeasePath + ".push-protection.json";
     private string RetainedWorktreeMarkerPath => WorktreeLeasePath + ".retained.json";
 
@@ -398,27 +399,7 @@ public sealed partial class GitWorkspace
             {
                 var integrationHead = await FetchRemoteBranchHeadAsync(requestedBase, ct)
                     ?? throw new InvalidOperationException($"Integration branch 'origin/{requestedBase}' disappeared during preparation.");
-                if (!await IsAncestorAsync(integrationHead, authoritativeBase, ct))
-                {
-                    var merged = await ProjectGitAsync([
-                        "-c", "user.name=Agent Studio Runner",
-                        "-c", "user.email=runner@agent-studio.invalid",
-                        "merge", "--no-ff", "--no-edit", $"origin/{requestedBase}"
-                    ], RepoPath, ct);
-                    if (merged.Success)
-                    {
-                        _log($"worktree-continuation-merged salvageSha={continuation.CommitSha} integrationSha={integrationHead} path={RepoPath}");
-                    }
-                    else
-                    {
-                        var abort = await ProjectGitAsync(["merge", "--abort"], RepoPath, ct);
-                        if (!abort.Success)
-                            throw new InvalidOperationException(
-                                $"Continuation merge failed and could not be aborted: {abort.StdErr.Trim()}");
-                        _log($"worktree-continuation-merge-deferred salvageSha={continuation.CommitSha} " +
-                            $"integrationSha={integrationHead} error={OneLine(merged.StdErr)}; agent must resolve the merge");
-                    }
-                }
+                await PrepareContinuationMergeAsync(authoritativeBase, integrationHead, ct);
             }
 
             _startedFromSalvage = continuation is not null
@@ -432,6 +413,59 @@ public sealed partial class GitWorkspace
         {
             GitMetadataGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Prepare the exact fetched objects. A real conflict is an active platform
+    /// merge, ready for file edits; an operational failure never starts an agent
+    /// on an aborted, older tree. The record lives in worktree Git metadata so
+    /// it cannot enter the immutable product delivery.
+    /// </summary>
+    public async Task<ContinuationMergePreparation> PrepareContinuationMergeAsync(
+        string deliverySha, string integrationSha, CancellationToken ct)
+    {
+        var outcome = ContinuationMergePreparationOutcome.AlreadyContainsTarget;
+        IReadOnlyList<string> files = [];
+        string? error = null;
+        if (!await IsAncestorAsync(integrationSha, deliverySha, ct))
+        {
+            var merged = await ProjectGitAsync([
+                "-c", "user.name=Agent Studio Runner",
+                "-c", "user.email=runner@agent-studio.invalid",
+                "merge", "--no-ff", "--no-edit", integrationSha
+            ], RepoPath, ct);
+            if (merged.Success)
+                outcome = ContinuationMergePreparationOutcome.Merged;
+            else
+            {
+                var unmerged = await Git(["diff", "--name-only", "--diff-filter=U", "-z"], RepoPath, ct);
+                files = unmerged.StdOut.TrimEnd('\r', '\n').Split('\0', StringSplitOptions.RemoveEmptyEntries);
+                var mergeHead = await ProjectGitAsync(["rev-parse", "--verify", "MERGE_HEAD"], RepoPath, ct);
+                if (files.Count > 0 && mergeHead.Success
+                    && string.Equals(mergeHead.StdOut.Trim(), integrationSha, StringComparison.OrdinalIgnoreCase))
+                    outcome = ContinuationMergePreparationOutcome.Conflicted;
+                else
+                {
+                    // Preserve the failure and verify cleanup. Neither a failed
+                    // merge nor an unsuccessful abort is a coding handoff.
+                    var abort = await ProjectGitAsync(["merge", "--abort"], RepoPath, ct);
+                    outcome = abort.Success ? ContinuationMergePreparationOutcome.Aborted
+                        : ContinuationMergePreparationOutcome.AbortFailed;
+                    error = $"{merged.StdErr.Trim()} {merged.StdOut.Trim()} Abort: {abort.StdErr.Trim()}".Trim();
+                }
+            }
+        }
+        var head = (await Git(["rev-parse", "HEAD"], RepoPath, ct)).StdOut.Trim();
+        var preparation = new ContinuationMergePreparation(outcome, deliverySha, integrationSha, head, files, error);
+        ContinuationPreparation = preparation;
+        var path = (await Git(["rev-parse", "--git-path", "agent-studio-integration-preparation.json"], RepoPath, ct)).StdOut.Trim();
+        await File.WriteAllTextAsync(Path.GetFullPath(path, RepoPath),
+            JsonSerializer.Serialize(preparation, new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } }), ct);
+        _log($"worktree-continuation-preparation outcome={outcome} deliverySha={deliverySha} integrationSha={integrationSha} headSha={head} files={JsonSerializer.Serialize(files)}");
+        if (!preparation.Runnable)
+            throw new ContinuationMergePreparationException(preparation);
+        return preparation;
     }
 
     /// <summary>
@@ -1021,6 +1055,20 @@ public sealed partial class GitWorkspace
         {
             await TryGit(["worktree", "prune"], SharedRepoPath, ct);
             return WorktreeTeardownResult.NoResult;
+        }
+
+        // The platform owns staging and the merge commit. It must not turn
+        // untouched conflict markers into an immutable successful delivery.
+        var unresolved = (await Git(["diff", "--name-only", "--diff-filter=U", "-z"], RepoPath, ct))
+            .StdOut.TrimEnd('\r', '\n').Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var file in unresolved)
+        {
+            var path = Path.Combine(RepoPath, file);
+            if (File.Exists(path) && File.ReadLines(path).Any(line =>
+                    line.StartsWith("<<<<<<< ", StringComparison.Ordinal)
+                    || line.StartsWith(">>>>>>> ", StringComparison.Ordinal)))
+                throw new WorktreeSalvageException(RepoPath, _workBranch,
+                    new InvalidOperationException($"Unresolved integration conflict in {file}; worktree retained."));
         }
 
         var reportPathsEnabled = UsesLegacyRepositoryReports();
@@ -1687,6 +1735,32 @@ public sealed class ContinuationBaseUnavailableException : InvalidOperationExcep
     public string? Ref { get; }
     public string? ExpectedSha { get; }
     public string? ObservedSha { get; }
+}
+
+public enum ContinuationMergePreparationOutcome { AlreadyContainsTarget, Merged, Conflicted, Aborted, AbortFailed }
+
+public sealed record ContinuationMergePreparation(
+    ContinuationMergePreparationOutcome Outcome,
+    string DeliverySha,
+    string IntegrationSha,
+    string HeadSha,
+    IReadOnlyList<string> UnresolvedFiles,
+    string? Error = null)
+{
+    public bool Runnable => Outcome is ContinuationMergePreparationOutcome.AlreadyContainsTarget
+        or ContinuationMergePreparationOutcome.Merged or ContinuationMergePreparationOutcome.Conflicted;
+
+    public string Instructions => Outcome == ContinuationMergePreparationOutcome.Conflicted
+        ? "The platform left an active merge of the exact target into the delivery. Resolve the listed files, keep both sides, and remove all conflict markers. The platform stages and commits the merge after your file edits. Do not run Git mutations."
+        : Runnable
+            ? "The checkout already contains the exact target. Edit files as needed. Do not run Git mutations."
+            : "Preparation failed. No agent handoff is valid. Retain this evidence and the worktree for platform repair.";
+}
+
+public sealed class ContinuationMergePreparationException(ContinuationMergePreparation preparation)
+    : InvalidOperationException($"Continuation merge preparation {preparation.Outcome}: {preparation.Error}")
+{
+    public ContinuationMergePreparation Preparation { get; } = preparation;
 }
 
 public sealed record WorktreeTeardownResult(

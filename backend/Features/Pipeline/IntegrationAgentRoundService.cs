@@ -37,6 +37,9 @@ public sealed record IntegrationRecoveryBudgetUsage(
     public string? IntegrationBranch { get; init; }
 
     public int Used => MatchingRounds + LegacyRounds;
+    /// <summary>Occupied capacity whose fenced worker has not acknowledged the handoff.</summary>
+    public int ReservedRounds { get; init; }
+    public int ChargedRounds => Used - ReservedRounds;
 
     public string ExhaustedReason(int maximumRounds)
     {
@@ -48,7 +51,9 @@ public sealed record IntegrationRecoveryBudgetUsage(
         var legacy = LegacyRounds == 0
             ? ""
             : $" (includes {LegacyRounds} legacy automatic recovery {RoundWord(LegacyRounds)} without a delivery identifier)";
-        return $"automatic recovery budget used: {used}/{limit}{target}{legacy}";
+        return ReservedRounds > 0
+            ? $"automatic recovery capacity reserved: {used}/{limit}{target}; charged rounds: {ChargedRounds}/{limit}{legacy}"
+            : $"automatic recovery budget used: {used}/{limit}{target}{legacy}";
     }
 
     private static string RoundWord(int count)
@@ -69,6 +74,8 @@ public static class IntegrationRecoveryBudget
 {
     public const string DeliveryChainIdKey = "deliveryChainId";
     public const string IntegrationBranchKey = "integrationBranch";
+    public const string HandoffPromptKey = "handoffPromptSha256";
+    public const string HandoffSavedAtKey = "handoffSavedAt";
 
     public static string DeliveryChainId(ReviewSubjectRecord subject)
     {
@@ -83,13 +90,15 @@ public static class IntegrationRecoveryBudget
         string? integrationBranch = null)
     {
         ArgumentNullException.ThrowIfNull(entries);
+        var history = entries.ToArray();
         var deliveryChainId = subject is null ? null : DeliveryChainId(subject);
         var target = string.IsNullOrWhiteSpace(integrationBranch)
             ? null
             : AgentStudio.Tasks.TaskIntegrationBranch.Name(integrationBranch);
         var matching = 0;
         var legacy = 0;
-        foreach (var entry in entries)
+        var reserved = 0;
+        foreach (var entry in history)
         {
             if (entry.Kind != TimelineEventKinds.IntegrationRecoveryQueued)
                 continue;
@@ -108,6 +117,27 @@ public static class IntegrationRecoveryBudget
                     StringComparison.Ordinal))
                 continue;
 
+            // Old rows remain conservatively charged. New rows reserve capacity
+            // until the existing, attempt-fenced worker-start receipt proves
+            // delivery of this exact saved prompt. Preparation failures cannot
+            // produce that receipt. A consumed handoff remains charged even if
+            // a later intent supersedes it.
+            if (details?.GetValueOrDefault(HandoffPromptKey) is { Length: > 0 } promptHash
+                && details.GetValueOrDefault(HandoffSavedAtKey) is { Length: > 0 } savedAt)
+            {
+                bool Matches(TimelineEvent row) =>
+                    row.Details?.GetValueOrDefault("promptSha256") == promptHash
+                    && row.Details?.GetValueOrDefault("savedAt") == savedAt;
+                var delivered = history.Any(row => row.Kind == TimelineEventKinds.FollowUpConsumed
+                    && !string.IsNullOrWhiteSpace(row.RunId) && Matches(row));
+                if (!delivered)
+                {
+                    if (history.Any(row => row.Kind == TimelineEventKinds.FollowUpSuperseded && Matches(row)))
+                        continue;
+                    reserved++;
+                }
+            }
+
             if (string.IsNullOrWhiteSpace(details?.GetValueOrDefault(DeliveryChainIdKey)))
                 legacy++;
             else
@@ -121,6 +151,7 @@ public static class IntegrationRecoveryBudget
             legacy)
         {
             IntegrationBranch = target,
+            ReservedRounds = reserved,
         };
     }
 }
@@ -143,6 +174,8 @@ public sealed record IntegrationAgentRoundStartResult(
 public sealed class IntegrationAgentRoundService
 {
     public const string AttributionAmbiguousReason = "delivery-attribution-ambiguous";
+    private const string RepairSourcePrefix = "integration-conflict-repair:";
+    private static readonly object RepairGate = new();
 
     private readonly TaskScannerService _scanner;
     private readonly ProjectSettingsService? _settings;
@@ -232,6 +265,9 @@ public sealed class IntegrationAgentRoundService
             RecordFailure(job.FolderPath, request, result, reason, epoch);
             return Task.FromResult(Failed(reason));
         }
+        if (request.ReviewedResultSha is { Length: > 0 } reviewedSha
+            && !string.Equals(reviewedSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase))
+            return Task.FromResult(Failed("The conflict belongs to a superseded delivery; its recovery handoff was refused."));
 
         var entries = _timeline.ReadAll(job.FolderPath);
         var tip = result.ConflictReport?.IntegrationTipSha ?? result.PreviousIntegrationSha ?? "";
@@ -275,6 +311,21 @@ public sealed class IntegrationAgentRoundService
                     .Where(entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued
                         && entry.Details?.GetValueOrDefault("automatic") == "true")
                     .Select(entry => $"{entry.Ts:O}: {entry.Details?.GetValueOrDefault("resultSha")}; files {entry.Details?.GetValueOrDefault("conflictedFiles")}; cards {entry.Details?.GetValueOrDefault("involvedCards")}"));
+            // The policy has ended this card's automatic loop. Retain that
+            // disposition and its immutable subject, with one separately
+            // runnable repair identity for this card/target across all SHAs.
+            // Replays attach to that identity, including a repair's own failure;
+            // they cannot create an unlimited chain of repair cards.
+            try
+            {
+                var repair = EnsureRepair(job, subject, request, result, conflictedFiles, involvedCards, context);
+                reason += $" Delivery quarantined; repair: {repair}.";
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                _logger.LogError(ex, "Integration conflict repair could not be persisted for {JobId}", job.Id);
+                return Task.FromResult(Failed("The exhausted delivery is retained, but its repair handoff could not be persisted; retry repair creation."));
+            }
             RecordFailure(job.FolderPath, request, result, reason, epoch, subject, budget,
                 conflictedFiles, involvedCards);
             return Task.FromResult(Failed(
@@ -310,6 +361,14 @@ public sealed class IntegrationAgentRoundService
         }
 
         _mutations.AppendContinuationNote(job.Id, prompt, job.WatchPath);
+        // An older review-fix base deliberately skips the integration merge.
+        // Replace it with this exact delivery before clearing the review subject
+        // or exposing Ready. The claim must not depend on incidental old state.
+        if (!ContinuationBaseStore.Save(job.FolderPath, new ContinuationBaseRecord(
+                subject.ImmutableResultRef ?? subject.ResultRef!, subject.ResultSha,
+                AgentStudio.TaskServer.Contracts.ContinuationBaseReasons.ContinueRoundResult,
+                subject.RunAttemptId, DateTime.UtcNow)))
+            return Task.FromResult(Failed("The integration recovery delivery base could not be persisted; no round was charged."));
         var supersession = _mutations.SupersedeCurrentDeliveryOnFolder(
             job.FolderPath,
             TaskCommitSupersession.PendingAttempt);
@@ -345,7 +404,7 @@ public sealed class IntegrationAgentRoundService
             expectedSourceState: TaskStates.AutoReview,
             beforePendingIntents: true);
         var queued = _scanner.FindJob(job.Id, job.WatchPath);
-        if (position <= 0 || queued is null || queued.State != TaskStates.Ready)
+        if (position <= 0 || queued is null)
         {
             var reason = "The recovery steer was saved, but the task could not be queued for its automatic agent round.";
             RecordFailure(queued?.FolderPath ?? job.FolderPath, request, result, reason, epoch);
@@ -362,6 +421,8 @@ public sealed class IntegrationAgentRoundService
             details: new Dictionary<string, string>
             {
                 ["automatic"] = "true",
+                [IntegrationRecoveryBudget.HandoffPromptKey] = AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(prompt),
+                [IntegrationRecoveryBudget.HandoffSavedAtKey] = intent.SavedAt.ToString("O"),
                 ["attemptEpoch"] = Invariant(epoch),
                 [IntegrationRecoveryBudget.DeliveryChainIdKey] = budget.DeliveryChainId!,
                 ["deliveryRef"] = subject.ImmutableResultRef ?? subject.ResultRef!,
@@ -400,6 +461,86 @@ public sealed class IntegrationAgentRoundService
             BudgetUsed = budget.Used + 1,
             BudgetLimit = _maximumRecoveryRounds,
         });
+    }
+
+    private string EnsureRepair(TaskInfo job, ReviewSubjectRecord subject,
+        RemoteDeliveryIntegrationRequest request, MergeIntoIntegrationResult result,
+        IReadOnlyList<string> files, IReadOnlyList<string> cards, IntegrationConflictContext? context)
+    {
+        lock (RepairGate)
+        {
+            var source = job.CreationSource?.StartsWith(RepairSourcePrefix, StringComparison.Ordinal) == true
+                ? job.CreationSource
+                : RepairSourcePrefix + IntegrationConflictLedger.Hash($"{job.TaskKey}\n{AgentStudio.Tasks.TaskIntegrationBranch.Name(request.IntegrationBranch)}");
+            var repairRequest = new AgentStudio.Shared.CreateTaskRequest
+            {
+                WatchPath = job.WatchPath,
+                Title = $"Repair integration delivery for {job.Key ?? job.Id}",
+                PromptMarkdown = BuildPrompt(job, subject, request, result, files, cards, context)
+                    + "\n\nRepair the quarantined delivery's integration conflict. Preserve the source task's intended behavior.\n\n"
+                    + (File.Exists(Path.Combine(job.FolderPath, "prompt.md"))
+                        ? File.ReadAllText(Path.Combine(job.FolderPath, "prompt.md")) : job.Title),
+                TargetState = TaskStates.Backlog,
+                CreationSource = source,
+                Agent = job.Agent,
+                CliType = job.CliType,
+                Model = job.Model,
+                ThinkingLevel = "medium",
+                TaskType = TaskTypes.Bug,
+                Order = 0,
+                CreatedBy = TimelineActors.System,
+            };
+            // Creating a flat-store card in a lane-folder workspace would hide
+            // every legacy card from discovery. Migration is explicitly owned
+            // by the storage boundary, never an integration-recovery side effect.
+            if (!TaskStorageLayout.EnumerateJobDirs(job.WatchPath).Any())
+            {
+                WriteQuarantine(job, subject, request, result, files, null, source, repairRequest);
+                return "deferred creation request; explicit storage migration is required";
+            }
+            var repair = _scanner.ScanAutomationJobsWithArchive(job.WatchPath)
+                .FirstOrDefault(card => card.CreationSource == source);
+            if (repair is null)
+            {
+                var id = _mutations.CreateJob(repairRequest)
+                    ?? throw new InvalidOperationException("The integration repair card could not be created.");
+                repair = _scanner.FindJob(id, job.WatchPath)
+                    ?? throw new InvalidOperationException("The integration repair card could not be read back.");
+            }
+
+            // Only a newly created Backlog card has no existing human hold or
+            // live attempt. Replays never reopen, repin or move a settled repair.
+            if (repair.State == TaskStates.Backlog)
+            {
+                if (!ContinuationBaseStore.Save(repair.FolderPath, new ContinuationBaseRecord(
+                        subject.ImmutableResultRef ?? subject.ResultRef!, subject.ResultSha,
+                        AgentStudio.TaskServer.Contracts.ContinuationBaseReasons.ContinueRoundResult,
+                        subject.RunAttemptId, DateTime.UtcNow)))
+                    throw new IOException("The integration repair base could not be pinned.");
+                if (_states.PromoteToReadyTop(repair.Id, repair.WatchPath,
+                        expectedSourceState: TaskStates.Backlog) <= 0)
+                    throw new InvalidOperationException("The integration repair could not be queued.");
+            }
+
+            WriteQuarantine(job, subject, request, result, files, repair.Id, source, null);
+            return repair.Key ?? repair.Id;
+        }
+    }
+
+    private static void WriteQuarantine(TaskInfo job, ReviewSubjectRecord subject,
+        RemoteDeliveryIntegrationRequest request, MergeIntoIntegrationResult result,
+        IReadOnlyList<string> files, string? repairId, string source,
+        AgentStudio.Shared.CreateTaskRequest? repairRequest)
+    {
+        var quarantine = Path.Combine(job.FolderPath, "integration-delivery-quarantine.json");
+        var temp = quarantine + ".tmp";
+        File.WriteAllText(temp, System.Text.Json.JsonSerializer.Serialize(new
+        {
+            version = 1, state = repairId is null ? "deferred-storage-migration" : "repair-recorded",
+            subject, result, integrationBranch = request.IntegrationBranch,
+            conflictedFiles = files, repairCardId = repairId, repairSource = source, repairRequest,
+        }, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
+        File.Move(temp, quarantine, overwrite: true);
     }
 
     private void RecordFailure(
@@ -469,6 +610,7 @@ public sealed class IntegrationAgentRoundService
             request.IntegrationBranch, "merge-into-develop",
             result.Error ?? "Delivery attribution needs a new agent round.", result.ConflictReport,
             conflictedFiles: conflictedFiles, runnerMergesIntegration: true,
+            integrationTip: result.PreviousIntegrationSha,
             involvedCards: involvedCards,
             evidence: context is null ? null : $"Delivery base: {context.BaseSha}.\n{context.Changes}");
     }
