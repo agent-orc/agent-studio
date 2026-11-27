@@ -17,3 +17,20 @@ public static class PostMergeSchedulingPolicy
 
     public static int QueuePriority(string? kind) => kind == "post-merge" ? 1 : 0;
 }
+
+/// <summary>Fenced post-merge custody and infrastructure settlement rules.</summary>
+public static class PostMergeCustodyPolicy
+{
+    public static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(2);
+    public static bool MayWrite(string? owner, long fence, string currentOwner, long currentFence,
+        DateTimeOffset expires, DateTimeOffset now, bool acquiring, bool settling = false)
+        => owner == currentOwner && (fence == currentFence || acquiring && fence == 0) && (expires > now || settling || acquiring && fence == 0);
+    public static bool MayRecover(string owner, long fence, string currentOwner, long currentFence)
+        => owner == currentOwner && fence == currentFence;
+    public static bool MayReplace(DateTimeOffset started, string kind, DateTimeOffset? leaseExpires,
+        DateTimeOffset now)
+        => started.AddHours(kind == "nightly" ? 14 : 4) <= now && (leaseExpires is null || leaseExpires <= now);
+    public static bool NeedsVerdict(string status) => status != "inconclusive";
+    public static bool AdvancesWindow(string status, string kind)
+        => status == "green" || kind == "window" && status == "red";
+}

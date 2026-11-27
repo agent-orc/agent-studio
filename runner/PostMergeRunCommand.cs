@@ -1,6 +1,8 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.TaskServer.Contracts;
 
@@ -117,14 +119,32 @@ public sealed class PostMergeRunCommand
             return 0;
         }
 
-        using (var escalation = await _http.PostAsync(StateUrl() + "/escalation-check", null, ct))
-            escalation.EnsureSuccessStatusCode();
-
         Directory.CreateDirectory(_options.Checkout);
         using var claim = ClaimCheckout();
         var readOnlyObservation = claim is null && observeOnly && _options.RepositoryUrl is not null;
         if (claim is null && !readOnlyObservation)
         { _output.WriteLine("post-merge checkout already claimed"); return 0; }
+        if (claim is not null && File.Exists(JournalPath))
+        {
+            // Observers must leave the interrupted workspace and its evidence untouched.
+            if (observeOnly || claim is null) return 0;
+            _journal = ReadJournal();
+            if (_journal.Terminal is not null)
+            {
+                await DeliverTerminalAsync(ct);
+                return 0;
+            }
+            await RecoverAsync(ct);
+            await ReapInterruptedAsync(ct);
+            if (_journal.InFlight || _journal.WorkspaceDigest is null || _journal.WorkspaceDigest != CheckpointDigest())
+            {
+                await InterruptAsync("host interrupted with an incomplete command or changed workspace", ct);
+                return 1;
+            }
+            return await ExecuteOwnedAsync(ct);
+        }
+        using (var escalation = await _http.PostAsync(StateUrl() + "/escalation-check", null, ct))
+            escalation.EnsureSuccessStatusCode();
         var host = _probeHost();
         var admissionReason = host.ActiveSlots >= _options.MaxSlots
             || host.LoadPerCore is { } load && load > CoverageRunOptions.DefaultMaxLoadPerCore
@@ -277,8 +297,6 @@ public sealed class PostMergeRunCommand
             }
             changed = changed.Distinct(StringComparer.Ordinal).ToList();
         }
-        using var testWorkspace = new TestEnvelopeWorkspace();
-        _testWorkspace = testWorkspace;
         var commands = PostMergeRunPlan.Build(definition, _options.Mode, changed, state.WindowSuites);
         var selection = ProjectTestSelectionPolicy.Select(definition, changed,
             _options.Mode == "nightly" || state.WindowSuites == PostMergeWindowSuiteModes.Routine);
@@ -300,11 +318,71 @@ public sealed class PostMergeRunCommand
             Envelope = await EnvelopeAsync(definition, commands, PostMergeEnvelopeProbe.ShardPlan(planned),
                 host.LoadPerCore, null, ct),
         };
+        _journal = new(started, state, definition, freeSlots, Guid.NewGuid().ToString("N"))
+        { WorkspaceDigest = CheckpointDigest() };
+        SaveJournal();
         await Post(started, ct);
+        SaveJournal();
+        return await ExecuteOwnedAsync(ct);
+    }
+
+    internal async Task<int> ExecuteOwnedAsync(CancellationToken ct)
+    {
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var renewal = RenewLoopAsync(lifetime);
+        try { return await ExecutePlanAsync(lifetime.Token); }
+        catch (PostMergeCheckpointException exception)
+        {
+            await InterruptAsync(exception.Message, lifetime.Token);
+            return 1;
+        }
+        finally
+        {
+            lifetime.Cancel();
+            try { await renewal; }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        }
+    }
+
+    private async Task<int> ExecutePlanAsync(CancellationToken ct)
+    {
+        var started = _journal!.Started;
+        var state = _journal.State;
+        var definition = _journal.Definition;
+        var commands = started.Commands;
+        var tip = started.TipSha;
+        var id = started.Id;
+        var freeSlots = _journal.FreeSlots;
+        var selection = started.SuiteSelection!;
+        var host = new CoverageHostLoad(started.StartLoadPerCore, started.StartOccupiedSlots ?? 0);
+        _testHome = Path.Combine(_options.Checkout, ".post-merge-work", _journal.Owner, "home");
+        _testTemp = Path.Combine(_options.Checkout, ".post-merge-work", _journal.Owner, "temp");
+        Directory.CreateDirectory(_testHome);
+        Directory.CreateDirectory(_testTemp);
+        bool MayShard(ProjectTestSuite? suite, string command) => started.Kind == "nightly" && suite is not null
+            && freeSlots > 1 && command.Contains("dotnet test ", StringComparison.Ordinal)
+            && command.Contains("--no-build", StringComparison.Ordinal);
+
         await using var sampler = new PostMergeLoadSampler(host.LoadPerCore, () => _probeHost().LoadPerCore);
         var verdicts = new List<PostMergeCommandVerdict>();
         var ledger = new PostMergeTestLedger();
-        _recordRun = ledger.Record;
+        var savedFocused = _journal.Checkpoint?.FocusedRuns ?? [];
+        var focusedOrdinal = 0;
+        _recordRun = run =>
+        {
+            if (focusedOrdinal < savedFocused.Count)
+            {
+                var saved = savedFocused[focusedOrdinal];
+                if (run.ToReceipt() with { DurationMs = saved.DurationMs } != saved)
+                    throw new PostMergeCheckpointException("Post-merge focused checkpoint inputs changed.");
+                run = run with { DurationMs = saved.DurationMs };
+            }
+            focusedOrdinal++;
+            ledger.Record(run);
+            _journal!.Checkpoint = started with { Verdicts = verdicts.ToArray(),
+                TestVerdicts = ledger.HasTests ? ledger.Verdicts() : null, FocusedRuns = ledger.FocusedRuns() };
+            SaveJournal();
+        };
         var shardPlan = new List<(string Suite, string Shards)>();
         var quarantinedFailures = 0;
         var testsStarted = false;
@@ -351,14 +429,22 @@ public sealed class PostMergeRunCommand
                         TestQuarantinePolicy.ReadUnion(_options.Checkout, state.Quarantines, _clock.GetUtcNow()).Entries,
                         DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime)).Blocking;
                     ledger.Initial(suite, initial.Command, observed, blocking, tip);
+                    _journal!.Checkpoint = started with { Verdicts = verdicts.ToArray(),
+                        TestVerdicts = ledger.Verdicts(), FocusedRuns = ledger.FocusedRuns() };
+                    SaveJournal();
                     verdicts[index] = await PostMergeTestRetry.RepeatAsync(initial, _ => blocking,
-                        retry => RunCommand(retry, definition.Environment, ct), ledger.Record, tip,
+                        retry => RunCommand(retry, definition.Environment, ct), _recordRun, tip,
                         referenceRun: retry => RunReferenceCommand(retry, definition.Environment, ct));
                     if (verdicts[index].ExitCode == 0) quarantinedFailures++;
                 }
                 for (var index = verdictStart; index < verdicts.Count; index++)
                     verdicts[index] = verdicts[index] with { SuiteId = suite.Id };
             }
+            _journal!.Checkpoint = started with { Verdicts = verdicts.ToArray(),
+                TestVerdicts = ledger.HasTests ? ledger.Verdicts() : null, FocusedRuns = ledger.FocusedRuns() };
+            _journal.WorkspaceDigest = CheckpointDigest();
+            SaveJournal();
+            if (AfterCheckpoint is not null) await AfterCheckpoint(ct);
             if (verdicts.Any(verdict => verdict.ExitCode != 0)) break;
         }
         var status = verdicts.All(v => v.ExitCode == 0) && verdicts.Count >= commands.Count
@@ -369,7 +455,7 @@ public sealed class PostMergeRunCommand
         if (status == "red" && !verdicts.Any(verdict => TestEnvelope.CanaryFailed(verdict.FailedTests ?? [])))
         {
             try { failure = await AttributeFailureAsync(state, definition, tip, verdicts, ledger, ct); }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (Exception exception) when (exception is not (OperationCanceledException or PostMergeCheckpointException))
             {
                 _output.WriteLine($"post-merge attribution unavailable: {exception.GetType().Name}: {exception.Message}");
                 var failed = verdicts.First(verdict => verdict.ExitCode != 0);
@@ -389,8 +475,8 @@ public sealed class PostMergeRunCommand
         }
         var envelope = await EnvelopeAsync(definition, commands, PostMergeEnvelopeProbe.ShardPlan(shardPlan),
             host.LoadPerCore, sampler.Peak, ct);
-        await Post(started with { Status = status, Verdicts = verdicts, Failure = failure,
-            SuiteSelection = new(selection.Suites, selection.OmittedSuites, selection.Reasons)
+        _journal!.Terminal = started with { Status = status, Verdicts = verdicts, Failure = failure,
+            SuiteSelection = new(selection.SelectedSuites, selection.OmittedSuites, selection.Reasons)
             {
                 SuiteCommands = definition.TestSuites.ToDictionary(suite => suite.Id, suite => suite.Command),
                 AttemptedSuites = definition.TestSuites.Where(suite => verdicts.Any(verdict => verdict.SuiteId == suite.Id))
@@ -406,10 +492,215 @@ public sealed class PostMergeRunCommand
             ReferenceEnvelope = _referenceEnvelope,
             FingerprintMatchesReference = _referenceEnvelope is null ? null : _lastEnvelope is { } actual
                 && TestEnvelope.MatchesReference(actual, _referenceEnvelope),
-            EnvelopeCanaryPassed = _canaryFailed ? false : _canaryObserved ? true : null }, ct);
+            EnvelopeCanaryPassed = _canaryFailed ? false : _canaryObserved ? true : null };
+        SaveJournal();
+        if (AfterTerminalPrepared is not null) await AfterTerminalPrepared(ct);
+        await DeliverTerminalAsync(ct);
         _output.WriteLine($"post-merge {status} tip={tip} commands={verdicts.Count}");
         return status == "green" ? 0 : 1;
     }
+
+    internal Func<CancellationToken, Task>? AfterCheckpoint { get; init; }
+    internal Func<CancellationToken, Task>? AfterTerminalPrepared { get; init; }
+    internal Func<string, CancellationToken, Task<(int ExitCode, bool TimedOut, string Output)>>? CommandExecutor { get; init; }
+    private readonly object _journalGate = new();
+    private PostMergeHostJournal? _journal;
+    private int _commandOrdinal;
+    private int _runningCommands;
+    private bool _terminalDelivered;
+    private string JournalPath => Path.Combine(_options.Checkout, ".post-merge-journal.json");
+
+    internal PostMergeHostJournal ReadJournal()
+        => JsonSerializer.Deserialize<PostMergeHostJournal>(File.ReadAllText(JournalPath), Json)
+            ?? throw new IOException("Post-merge journal is empty.");
+
+    private void SaveJournal()
+    {
+        lock (_journalGate)
+        {
+            if (_terminalDelivered) return;
+            var temporary = JournalPath + ".tmp";
+            using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                JsonSerializer.Serialize(stream, _journal, Json);
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporary, JournalPath, overwrite: true);
+        }
+    }
+
+    // Include ignored build outputs: a clean Git status cannot validate a completed build.
+    // Record symlinks without traversing outside the dedicated checkout.
+    internal string WorkspaceDigest()
+    {
+        using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        void Add(string value) => digest.AppendData(Encoding.UTF8.GetBytes(value + "\0"));
+        void Walk(string directory)
+        {
+            foreach (var path in Directory.EnumerateFileSystemEntries(directory).Order(StringComparer.Ordinal))
+            {
+                var name = Path.GetFileName(path);
+                if (name == ".git" || directory == _options.Checkout
+                    && name.StartsWith(".post-merge-", StringComparison.Ordinal) && name != ".post-merge-work") continue;
+                Add(Path.GetRelativePath(_options.Checkout, path));
+                var attributes = File.GetAttributes(path);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    var link = new FileInfo(path);
+                    Add(link.LinkTarget ?? "");
+                    var target = link.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+                    if (target is null || !Path.GetFullPath(target).StartsWith(
+                        Path.GetFullPath(_options.Checkout) + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                        throw new IOException("An external symlink prevents post-merge checkpoint reuse.");
+                    continue;
+                }
+                if (!OperatingSystem.IsWindows()) Add(File.GetUnixFileMode(path).ToString());
+                if ((attributes & FileAttributes.Directory) != 0) { Walk(path); continue; }
+                using var file = File.OpenRead(path);
+                digest.AppendData(SHA256.HashData(file));
+            }
+        }
+        var head = Path.Combine(_options.Checkout, ".git", "HEAD");
+        if (File.Exists(head)) Add(File.ReadAllText(head));
+        Walk(_options.Checkout);
+        return Convert.ToHexString(digest.GetHashAndReset());
+    }
+
+    private string? CheckpointDigest()
+    {
+        try { return WorkspaceDigest(); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _output.WriteLine($"post-merge checkpoint cannot be reused: {exception.Message}");
+            return null;
+        }
+    }
+
+    private async Task ReapInterruptedAsync(CancellationToken ct)
+    {
+        if (!_journal!.InFlight) return;
+        if (CommandExecutor is not null) return;
+        if (!OperatingSystem.IsLinux())
+            throw new IOException("Interrupted post-merge command requires confirmed process cleanup before recovery on this host.");
+        await WorktreeProcessReaper.ReapAsync(_options.Checkout, line => _output.WriteLine(line), ct);
+    }
+
+    private async Task RecoverAsync(CancellationToken ct)
+    {
+        if (_journal!.Fence == 0)
+        {
+            await Post(_journal.Started, ct);
+            SaveJournal();
+        }
+        _journal.RecoveryId ??= Guid.NewGuid().ToString("N");
+        SaveJournal();
+        var expiry = await RenewAsync(recover: true, ct);
+        if (expiry <= _clock.GetUtcNow())
+        {
+            // A lost acknowledgement may be replayed after that generation's lease expired.
+            _journal.RecoveryId = Guid.NewGuid().ToString("N");
+            SaveJournal();
+            await RenewAsync(recover: true, ct);
+        }
+        _journal.RecoveryId = null;
+        SaveJournal();
+    }
+
+    private async Task<DateTimeOffset> RenewAsync(bool recover, CancellationToken ct)
+    {
+        var journal = _journal!;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(20));
+        using var request = new HttpRequestMessage(HttpMethod.Post, StateUrl() + "/runs")
+        { Content = JsonContent.Create(journal.Started, options: Json) };
+        request.Headers.Add("X-Post-Merge-Owner", journal.Owner);
+        request.Headers.Add("X-Post-Merge-Fence", journal.Fence.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Headers.Add("X-Post-Merge-Operation", recover ? "recover" : "renew");
+        if (journal.RecoveryId is not null) request.Headers.Add("X-Post-Merge-Recovery-Id", journal.RecoveryId);
+        using var response = await _http.SendAsync(request, deadline.Token);
+        response.EnsureSuccessStatusCode();
+        var custody = await response.Content.ReadFromJsonAsync<HostCustody>(Json, ct)
+            ?? throw new IOException("Post-merge custody response was empty.");
+        journal.Fence = custody.Fence;
+        SaveJournal();
+        return custody.ExpiresAtUtc;
+    }
+
+    private async Task RenewLoopAsync(CancellationTokenSource lifetime)
+    {
+        if (_journal!.Fence == 0) return;
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), _clock, lifetime.Token);
+                await RenewAsync(recover: false, lifetime.Token);
+            }
+        }
+        catch (Exception) when (!lifetime.IsCancellationRequested)
+        {
+            lifetime.Cancel();
+            throw;
+        }
+    }
+
+    private async Task DeliverTerminalAsync(CancellationToken ct)
+    {
+        await Post(_journal!.Terminal!, ct);
+        lock (_journalGate)
+        {
+            if (_journal.Terminal!.Status == "inconclusive")
+            {
+                var directory = Path.Combine(_options.Checkout, ".post-merge-evidence");
+                Directory.CreateDirectory(directory);
+                File.Move(JournalPath, Path.Combine(directory, _journal.Owner + ".json"), overwrite: true);
+            }
+            else File.Delete(JournalPath);
+            _terminalDelivered = true;
+        }
+        try
+        {
+            var workspace = Path.Combine(_options.Checkout, ".post-merge-work", _journal.Owner);
+            if (Directory.Exists(workspace)) Directory.Delete(workspace, recursive: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        { _output.WriteLine($"post-merge envelope cleanup unavailable: {exception.Message}"); }
+    }
+
+    private async Task InterruptAsync(string reason, CancellationToken ct)
+    {
+        var checkpoint = _journal!.Checkpoint ?? _journal.Started;
+        var retained = checkpoint.Verdicts.ToList();
+        foreach (var command in _journal.Commands.OfType<PostMergeHostCommand>())
+            if (!retained.Any(verdict => verdict.Command == command.Command))
+                retained.Add(Verdict(command.Command, (command.ExitCode, command.TimedOut, command.Output, command.DurationMs)));
+        _journal.Terminal = checkpoint with
+        { Status = "inconclusive", FinishedAtUtc = _clock.GetUtcNow(), Reason = reason,
+            Verdicts = retained.Take(64).ToArray() };
+        SaveJournal();
+        await DeliverTerminalAsync(ct);
+    }
+
+    // Reconstructed-service tests enter at the durable execution boundary.
+    internal async Task<int> ExecuteJournalAsync(PostMergeHostJournal? journal, CancellationToken ct)
+    {
+        Directory.CreateDirectory(_options.Checkout);
+        using var claim = ClaimCheckout() ?? throw new IOException("Post-merge checkout already claimed.");
+        _journal = journal ?? ReadJournal();
+        if (journal is not null) SaveJournal();
+        if (_journal.Terminal is not null) { await DeliverTerminalAsync(ct); return 0; }
+        if (journal is null)
+        {
+            await RecoverAsync(ct);
+            await ReapInterruptedAsync(ct);
+        }
+        if (journal is null && (_journal.InFlight || _journal.WorkspaceDigest is null || _journal.WorkspaceDigest != CheckpointDigest()))
+        { await InterruptAsync("host interrupted with an incomplete command or changed workspace", ct); return 1; }
+        return await ExecuteOwnedAsync(ct);
+    }
+
+    private sealed record HostCustody(long Fence, DateTimeOffset ExpiresAtUtc);
+    private sealed class PostMergeCheckpointException(string message) : IOException(message);
 
     private static PostMergeCommandVerdict Verdict(string command,
         (int ExitCode, bool TimedOut, string Output, long DurationMs) result)
@@ -427,10 +718,9 @@ public sealed class PostMergeRunCommand
     private async Task<(int ExitCode, bool TimedOut, string Output, long DurationMs)> TimedRun(string command,
         IReadOnlyDictionary<string, string> environment, CancellationToken ct)
     {
-        var begun = System.Diagnostics.Stopwatch.GetTimestamp();
-        var result = await RunCommand(command, environment, ct);
-        return (result.ExitCode, result.TimedOut, result.Output,
-            (long)System.Diagnostics.Stopwatch.GetElapsedTime(begun).TotalMilliseconds);
+        var duration = 0L;
+        var result = await RunCommand(command, environment, ct, duration: value => duration = value);
+        return (result.ExitCode, result.TimedOut, result.Output, duration);
     }
 
     private async Task<IReadOnlyList<string>> ListTrackedFiles(CancellationToken ct)
@@ -679,7 +969,8 @@ public sealed class PostMergeRunCommand
     internal PostMergeEnvelopeFingerprint? LastCommandEnvelope => _lastEnvelope;
     private bool _canaryFailed;
     private bool _canaryObserved;
-    private TestEnvelopeWorkspace? _testWorkspace;
+    private string? _testHome;
+    private string? _testTemp;
     private PostMergeEnvelopeFingerprint? _referenceEnvelope;
     private static readonly SemaphoreSlim ReferenceToken = new(1, 1);
 
@@ -704,15 +995,70 @@ public sealed class PostMergeRunCommand
     }
 
     internal async Task<(int ExitCode, bool TimedOut, string Output)> RunCommand(string command,
-        IReadOnlyDictionary<string, string> environment, CancellationToken ct, TestEnvelopeDefinition? shape = null)
+        IReadOnlyDictionary<string, string> environment, CancellationToken ct, TestEnvelopeDefinition? shape = null, Action<long>? duration = null)
     {
+        ct.ThrowIfCancellationRequested();
+        var begun = System.Diagnostics.Stopwatch.GetTimestamp();
+        var ordinal = Interlocked.Increment(ref _commandOrdinal) - 1;
         _output.WriteLine($"post-merge {command}");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromHours(2));
-        using var envelope = WorkerCgroup.PrepareTestCommand(environment, line => _output.WriteLine(line), _testWorkspace?.Home, _testWorkspace?.Temp, shape);
-        await envelope.ProbeSdkAsync(_options.Checkout, ct);
+        using var envelope = WorkerCgroup.PrepareTestCommand(environment, line => _output.WriteLine(line), _testHome, _testTemp, shape);
+        if (CommandExecutor is null) await envelope.ProbeSdkAsync(_options.Checkout, ct);
         _lastEnvelope = envelope.Fingerprint(environment, "command=1");
         _sdkVersion ??= _lastEnvelope.SdkVersion;
+        var sourceSha = _journal?.Started.TipSha;
+        if (_journal is not null && CommandExecutor is null)
+        {
+            var source = await Git(ct, "rev-parse", "--verify", "HEAD^{commit}");
+            if (!source.Success) throw new IOException(source.StdErr);
+            sourceSha = source.StdOut.Trim();
+        }
+        var input = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            JsonSerializer.Serialize(new { command, sourceSha, environment, shape, Envelope = _lastEnvelope }, Json))));
+        if (_journal is not null)
+        {
+            lock (_journalGate)
+            {
+                if (ordinal < _journal.Commands.Count && _journal.Commands[ordinal] is { } cached)
+                {
+                    if (cached.Input != input) throw new PostMergeCheckpointException("Post-merge checkpoint inputs changed.");
+                    _canaryObserved |= cached.CanaryObserved;
+                    _canaryFailed |= cached.CanaryFailed;
+                    duration?.Invoke(cached.DurationMs);
+                    return (cached.ExitCode, cached.TimedOut, cached.Output);
+                }
+                _runningCommands++;
+                _journal.InFlight = true;
+                SaveJournal();
+            }
+        }
+        void Checkpoint(int exit, bool timedOut, string text)
+        {
+            var elapsed = (long)System.Diagnostics.Stopwatch.GetElapsedTime(begun).TotalMilliseconds;
+            duration?.Invoke(elapsed);
+            if (_journal is null) return;
+            lock (_journalGate)
+            {
+                while (_journal.Commands.Count <= ordinal) _journal.Commands.Add(null);
+                _journal.Commands[ordinal] = new(command, input, sourceSha, exit, timedOut, text, elapsed, _canaryObserved, _canaryFailed);
+                _runningCommands--;
+                // Flush the result before hashing potentially large generated outputs.
+                SaveJournal();
+                if (_runningCommands == 0)
+                {
+                    _journal.WorkspaceDigest = CheckpointDigest();
+                    _journal.InFlight = false;
+                    SaveJournal();
+                }
+            }
+        }
+        if (CommandExecutor is not null)
+        {
+            var simulated = await CommandExecutor(command, ct);
+            Checkpoint(simulated.ExitCode, simulated.TimedOut, simulated.Output);
+            return simulated;
+        }
         var launch = envelope.Launch("sh", ["-c", command]);
         var childEnvironment = envelope.Environment;
         try
@@ -729,10 +1075,12 @@ public sealed class PostMergeRunCommand
                 _canaryObserved = true;
             if (result.ExitCode != 0 && (canaryFailure || output.Contains("test envelope attach failed", StringComparison.Ordinal)))
                 _canaryFailed = true;
+            Checkpoint(result.ExitCode, false, output);
             return (result.ExitCode, false, output);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
+            Checkpoint(124, true, "");
             return (124, true, "");
         }
     }
@@ -745,6 +1093,8 @@ public sealed class PostMergeRunCommand
         response.EnsureSuccessStatusCode();
     }
 
+    internal Func<TimeSpan, CancellationToken, Task> ReceiptDelay { get; init; } = Task.Delay;
+
     private string StateUrl() => $"api/runner/post-merge/projects/{Uri.EscapeDataString(_options.Project)}";
     private async Task Post(PostMergeRunRecord run, CancellationToken ct)
     {
@@ -752,8 +1102,20 @@ public sealed class PostMergeRunCommand
         {
             try
             {
-                using var response = await _http.PostAsJsonAsync(StateUrl() + "/runs", run, Json, ct);
-                if (response.IsSuccessStatusCode) return;
+                using var request = new HttpRequestMessage(HttpMethod.Post, StateUrl() + "/runs")
+                { Content = JsonContent.Create(run, options: Json) };
+                if (_journal is not null)
+                {
+                    request.Headers.Add("X-Post-Merge-Owner", _journal.Owner);
+                    request.Headers.Add("X-Post-Merge-Fence", _journal.Fence.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                }
+                using var response = await _http.SendAsync(request, ct);
+                if (response.IsSuccessStatusCode)
+                {
+                    if (_journal is not null && response.Headers.TryGetValues("X-Post-Merge-Fence", out var values)
+                        && long.TryParse(values.Single(), out var fence)) _journal.Fence = fence;
+                    return;
+                }
                 if ((int)response.StatusCode < 500 || attempt == 2)
                     response.EnsureSuccessStatusCode();
             }
@@ -761,7 +1123,7 @@ public sealed class PostMergeRunCommand
             {
                 _output.WriteLine($"post-merge receipt retry {attempt + 1}/3");
             }
-            await Task.Delay(TimeSpan.FromSeconds(attempt + 1), ct);
+            await ReceiptDelay(TimeSpan.FromSeconds(attempt + 1), ct);
         }
         throw new HttpRequestException("Post-merge receipt was not accepted after three attempts.");
     }
@@ -769,3 +1131,18 @@ public sealed class PostMergeRunCommand
     private Task<ProcessResult> Git(CancellationToken ct, params string[] arguments)
         => ProcessRunner.RunAsync("git", ["-C", _options.Checkout, .. arguments], ct: ct);
 }
+
+internal sealed record PostMergeHostJournal(PostMergeRunRecord Started, PostMergeProjectState State,
+    ProjectExecutionDefinition Definition, int FreeSlots, string Owner)
+{
+    public long Fence { get; set; }
+    public string? RecoveryId { get; set; }
+    public bool InFlight { get; set; }
+    public string? WorkspaceDigest { get; set; }
+    public List<PostMergeHostCommand?> Commands { get; init; } = [];
+    public PostMergeRunRecord? Checkpoint { get; set; }
+    public PostMergeRunRecord? Terminal { get; set; }
+}
+
+internal sealed record PostMergeHostCommand(string Command, string Input, string? SourceSha, int ExitCode, bool TimedOut,
+    string Output, long DurationMs, bool CanaryObserved, bool CanaryFailed);
