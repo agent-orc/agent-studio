@@ -48,6 +48,8 @@ public class TaskStateMachine
     private readonly AgentStudio.Pipeline.TaskGateCancellationRegistry? _gateCancellation;
     private readonly TaskMutationService? _mutations;
     private readonly bool _guardedDelivery;
+    private readonly CliRouter? _cliRouter;
+    private readonly AgentStudio.Pipeline.BatchGateStore? _batchStore;
 
     public TaskStateMachine(
         TaskScannerService scanner,
@@ -61,7 +63,9 @@ public class TaskStateMachine
         IConfiguration? configuration = null,
         AgentStudio.Runner.AttemptAuthorityService? attemptAuthority = null,
         AgentStudio.Pipeline.TaskGateCancellationRegistry? gateCancellation = null,
-        TaskMutationService? mutations = null)
+        TaskMutationService? mutations = null,
+        CliRouter? cliRouter = null,
+        AgentStudio.Pipeline.BatchGateStore? batchStore = null)
     {
         _scanner = scanner;
         _logger = logger;
@@ -77,6 +81,8 @@ public class TaskStateMachine
         _attemptAuthority = attemptAuthority;
         _gateCancellation = gateCancellation;
         _mutations = mutations;
+        _cliRouter = cliRouter;
+        _batchStore = batchStore;
         _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
 
@@ -803,26 +809,52 @@ public class TaskStateMachine
     }
 
     public bool DeleteJob(string jobId, string? watchPath = null)
+        => DeleteJobChecked(jobId, watchPath).Status == DeleteJobStatus.Success;
+
+    /// <summary>
+    /// Hard deletion is for unstarted drafts only. Work with execution or
+    /// delivery evidence must use the guarded archive path, which retains the
+    /// evidence and owns discard permissions, written reasons and approvals.
+    /// </summary>
+    public DeleteJobOutcome DeleteJobChecked(string jobId, string? watchPath = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
-        if (info != null)
-        {
-            // F21: serialise with concurrent lane writers (move, archive,
-            // dead-letter) so we cannot delete a folder a peer thread is in
-            // the middle of renaming.
-            using var _ = _laneMutex.Acquire(info.WatchPath);
-            var recheck = _scanner.FindJob(jobId, watchPath);
-            if (recheck == null) return false;
-            // F21: a peer lane-writer may have moved the job while we waited
-            // on the mutex. Deleting it at its NEW location would let both
-            // writers report success (lost update: the mover believes the
-            // card now lives in the target lane). The delete targeted the
-            // folder resolved before the wait — if the job no longer lives
-            // there, fail cleanly and let the caller re-issue.
-            if (!WatchPathComparison.PathsEqual(recheck.FolderPath, info.FolderPath)) return false;
+        if (info is null) return new(DeleteJobStatus.NotFound);
 
-            try
+        // Remote claims resolve the card while holding this gate. A local
+        // pickup first moves to Progress under the lane mutex. Taking the gate
+        // before the lane lock orders deletion against both admission paths.
+        if (!LeaseEndpoints.ClaimGate.Wait(TimeSpan.FromSeconds(30)))
+            return new(DeleteJobStatus.Conflict, "card-delete-busy", "Run admission is busy. Retry deletion later.");
+        try
+        {
+            using var lane = _laneMutex.TryAcquireStrict(info.WatchPath);
+            if (lane is null)
+                return new(DeleteJobStatus.Conflict, "card-delete-busy", "The card's lane is busy. Retry deletion later.");
+            lock (TaskJsonFile.SyncRoot(info.FolderPath))
             {
+                var recheck = FindJobForLaneMutation(jobId, watchPath);
+                if (recheck is null) return new(DeleteJobStatus.NotFound);
+                if (!WatchPathComparison.PathsEqual(recheck.FolderPath, info.FolderPath))
+                    return new(DeleteJobStatus.Conflict, "card-delete-changed", "The card moved. Reload it before deleting.");
+
+                // A published snapshot or a folder memo can precede the lock.
+                // Read the actual metadata and evidence under the deletion locks.
+                var entry = new WatchPathEntry { Path = recheck.WatchPath, Name = recheck.ProjectName };
+                recheck = _scanner.ScanJobFolder(recheck.FolderPath, entry, recheck.State, bypassMemo: true);
+                if (recheck is null) return new(DeleteJobStatus.NotFound);
+                // Flat storage keeps the same path across lane changes. Guard
+                // the lane generation and metadata stamp as well as the path.
+                if (recheck.State != info.State || recheck.EnteredLaneAt != info.EnteredLaneAt
+                    || recheck.TaskJsonWriteTicks != info.TaskJsonWriteTicks)
+                    return new(DeleteJobStatus.Conflict, "card-delete-changed", "The card changed. Reload it before deleting.");
+
+                if (HasDeletionProtection(recheck))
+                    return new(DeleteJobStatus.Conflict, "card-delete-protected",
+                        "Hard deletion is limited to unstarted drafts. Stop active runs and wait for active batches. "
+                        + "Retain work through the guarded archive move; discarding unintegrated work requires "
+                        + "project.cards.override and a usable written reason.");
+
                 Directory.Delete(recheck.FolderPath, true);
                 if (IsUnderFlatLayout(recheck.FolderPath))
                     TaskLayoutIndex.Rebuild(recheck.WatchPath, _logger);
@@ -830,16 +862,46 @@ public class TaskStateMachine
                 _scanner.RemoveCore(recheck);
                 _notifier?.PublishDeleted(recheck.ProjectName, recheck.Id, recheck.WatchPath);
                 ClearReviewPriorityOnExit(recheck, string.Empty);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to delete job {JobId}", jobId);
-                return false;
+                return new(DeleteJobStatus.Success);
             }
         }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete job {JobId}", jobId);
+            return new(DeleteJobStatus.Failure, Message: "Card deletion failed.");
+        }
+        finally
+        {
+            LeaseEndpoints.ClaimGate.Release();
+        }
+    }
 
-        return false;
+    private bool HasDeletionProtection(TaskInfo card)
+    {
+        if (card.State is not (TaskStates.Backlog or TaskStates.Preparation or TaskStates.Ready))
+            return true;
+        if (_cliRouter?.All.Any(cli => cli.GetExecution(card.TaskKey) is not null) == true)
+            return true;
+        // Both local and remote authority have used these identities. A past
+        // attempt is evidence too, including an attempt compacted to history.
+        if (_attemptAuthority is not null && new[] { card.Key, card.TaskKey, card.Id }
+            .Where(key => !string.IsNullOrWhiteSpace(key)).Distinct(StringComparer.OrdinalIgnoreCase)
+            .Any(key => !_attemptAuthority.GetTaskProjection(key!).LegacyTask))
+            return true;
+        // Deletion ends membership regardless of the card's current lane, so
+        // inspect even a member whose lane was changed outside the batch path.
+        if (_batchStore is not null && new AgentStudio.Pipeline.ActiveBatchMemberGuard(_batchStore)
+            .Find(card with { State = TaskStates.AutoReview }, TaskStates.Archive) is not null)
+            return true;
+        return card.Commit is not null || card.Commits.Count > 0 || card.CompletionClaim is not null
+            || card.LastUsage is not null || !string.IsNullOrWhiteSpace(card.SessionName) || card.SessionChain.Count > 0
+            || File.Exists(Path.Combine(card.FolderPath, AgentStudio.Runner.PickupLockFile.LockFileName))
+            || File.Exists(AgentStudio.Pipeline.ReviewSubjectStore.PathFor(card.FolderPath))
+            || AgentStudio.Pipeline.BatchGateOwnershipStore.Read(card.FolderPath) is not null
+            || File.Exists(TaskPaths.CliOutputLog(card.FolderPath))
+            || File.Exists(TaskPaths.SessionEventsLog(card.FolderPath))
+            || File.Exists(Path.Combine(card.FolderPath, "status.md"))
+            || TaskPaths.ResultArtifacts(card.FolderPath).Any();
     }
 
     /// <summary>
@@ -1630,5 +1692,15 @@ public enum OrphanFolderDeleteStatus
     NonTerminalLane,
     NotFound,
     HasJobJson,
+    Failure
+}
+
+public sealed record DeleteJobOutcome(DeleteJobStatus Status, string? Code = null, string? Message = null);
+
+public enum DeleteJobStatus
+{
+    Success,
+    NotFound,
+    Conflict,
     Failure
 }
