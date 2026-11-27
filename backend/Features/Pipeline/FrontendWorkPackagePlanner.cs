@@ -105,8 +105,11 @@ internal static class FrontendWorkPackagePlanner
                     || value.ValueKind != JsonValueKind.String)
                     continue;
                 var body = value.GetString();
+                // The CI wrapper validates a completed JSON report before it
+                // returns success. Keep that check on focused slices as well.
                 if (!string.IsNullOrWhiteSpace(body)
-                    && body.Contains("ng test", StringComparison.OrdinalIgnoreCase))
+                    && (body.Contains("ng test", StringComparison.OrdinalIgnoreCase)
+                        || body.Trim() == "node scripts/run-unit-tests.mjs"))
                     return name;
             }
         }

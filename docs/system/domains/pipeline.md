@@ -3001,6 +3001,9 @@ comparison before Quality Studio's verdict contract can decide a review.
   barrel collision probes. Broad frontend suite commands stay outside the
   candidate inventory and configured continuous set, so impact rules, history,
   cannot silently turn this boundary into the promotion full suite.
+  Focused Angular slices prefer the declared `test:ci` script, including the
+  report-validating `node scripts/run-unit-tests.mjs` wrapper. This preserves
+  the completed-test report check instead of falling back to raw `ng test`.
 - `backend/Services/Pipeline/PipelineStepConditionEvaluator.cs`: per-step
   condition evaluation.
 - `backend/Services/Pipeline/ProjectPipelineOrder.cs`: project-level step order
