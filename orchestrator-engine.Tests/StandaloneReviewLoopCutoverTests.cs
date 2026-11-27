@@ -284,6 +284,11 @@ public sealed class StandaloneReviewLoopCutoverTests
         await store.RegisterRunnerAsync("integration-a", new RegisterRunnerRequest(
             "integration-a", "coding-host", "integration-instance", "1.0.0", TaskServerProtocol.Current,
             [IntegrationCapabilities.Executor]), "setup", default);
+        // Authenticated hosts need an explicit project grant before any lane can claim.
+        Assert.True(store.RequiresHostProjectPolicy);
+        foreach (var host in new[] { "coding-host", "review-host" })
+            await store.UpdateHostProjectPolicyAsync(host,
+                new UpdateHostProjectPolicyRequest(false, [projectId], 0), "setup", default);
         return (projectId, task);
     }
 
