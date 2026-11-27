@@ -15,12 +15,32 @@ const make = (key: string, state: string, extra = {}) => ({
 });
 const ready = [
   make('AGT-4101', '2-ready', { waitingReason: 'waits for AGT-4011 (escalated)',
-    waitsOn: { blocked: true, items: [{ key: 'AGT-4011', resolved: true, fulfilled: false }] } }),
+    waitsOn: { blocked: true, items: [{ key: 'AGT-4011', resolved: true, fulfilled: false }] },
+    liveStatus: { attempt: 1, nextSteps: [], queue: { kind: 'runner', position: 4 } } }),
   make('AGT-4102', '2-ready', { waitingReason: 'waits for a free slot' }),
   make('AGT-4103', '2-ready', { waitingReason: 'quota' }),
   make('AGT-4104', '2-ready', { waitingReason: `dispatch rule: ${'recorded rejection with a long explanation '.repeat(12)}` }),
   make('AGT-4105', '2-ready', { liveStatus: { attempt: 1, nextSteps: [], queue: { kind: 'runner', position: 1 } } }),
 ];
+const dependencyFallbacks = [
+  make('AGT-4106', '2-ready', {
+    waitsOn: { blocked: true, items: [{ key: 'AGT-4011', resolved: true, fulfilled: false }] },
+    liveStatus: { attempt: 1, nextSteps: [], queue: { kind: 'runner', position: 4 } },
+  }),
+  make('AGT-4107', '2-ready', {
+    waitsOn: { blocked: true, cycleDetected: true, items: [{ key: 'AGT-4011', resolved: true, fulfilled: false }] },
+    liveStatus: { attempt: 1, nextSteps: [], queue: { kind: 'runner', position: 4 } },
+  }),
+  make('AGT-4108', '2-ready', {
+    waitsOn: { blocked: true, items: [{ key: 'AGT-4011', resolved: true, fulfilled: false, waitingForRelease: true }] },
+    liveStatus: { attempt: 1, nextSteps: [], queue: { kind: 'runner', position: 4 } },
+  }),
+  make('AGT-4109', '2-ready', {
+    waitingReason: 'waits for AGT-4011 (escalated)',
+    waitsOn: { blocked: true, items: [{ key: 'AGT-4011', resolved: true, fulfilled: false }] },
+  }),
+];
+ready.push(...dependencyFallbacks);
 const escalated = [make('AGT-4011', '5e-escalated', {
   transitiveWaiters: { count: 3, keys: ['AGT-4101', 'AGT-4110', 'AGT-4111'] },
 }), make('AGT-4012', '5e-escalated')];
@@ -103,10 +123,28 @@ for (const width of [1600, 390]) {
     await openBoard(page);
     const lane = page.getByTestId('lane-2-ready');
     await lane.scrollIntoViewIfNeeded();
-    await expect(lane.getByTestId('card-waiting-reason')).toHaveCount(4);
+    await expect(lane.getByTestId('card-waiting-reason')).toHaveCount(5);
     const free = lane.getByTestId('task-card').filter({ hasText: 'AGT-4105' });
     await expect(free.getByTestId('card-waiting-reason')).toHaveCount(0);
     await expect(free.getByTestId('task-live-status')).toHaveCount(0);
+    for (const key of ['AGT-4101', 'AGT-4109']) {
+      const dependency = lane.getByTestId('task-card').filter({ hasText: key });
+      await expect(dependency.getByTestId('card-waiting-reason')).toHaveText('waits for AGT-4011 (escalated)');
+      await expect(dependency.getByTestId('task-live-status')).toHaveCount(0);
+      await expect(dependency.getByTestId('task-card-waiting-on')).toHaveCount(0);
+      await expect(dependency).not.toContainText('runner slot');
+    }
+    for (const [key, headline] of [
+      ['AGT-4106', 'waits for completion: AGT-4011'],
+      ['AGT-4107', 'Dependency gate blocked · cycle: AGT-4011'],
+      ['AGT-4108', 'waits for release: AGT-4011'],
+    ]) {
+      const dependency = lane.getByTestId('task-card').filter({ hasText: key });
+      await expect(dependency.getByTestId('task-live-current')).toContainText(headline);
+      await expect(dependency.getByTestId('card-waiting-reason')).toHaveCount(0);
+      await expect(dependency.getByTestId('task-card-waiting-on')).toHaveCount(0);
+      await expect(dependency).not.toContainText('runner slot');
+    }
     const baselineWidth = (await free.boundingBox())!.width;
     for (const card of await lane.getByTestId('task-card').all()) {
       await expect(card.getByTestId('task-card-key')).toBeVisible();
