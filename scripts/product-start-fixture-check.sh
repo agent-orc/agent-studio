@@ -84,6 +84,9 @@ elapsed=$(( $(date +%s) - started ))
 
 if (( healthy )); then
   echo "product-start-fixture: healthy after ${elapsed}s (deadline ${deadline}s, ${cards} cards)"
+  # The review gate reads a test step as evidence only when it names a
+  # completed test count; this check is one test (AGT-4239 review finding).
+  echo "product-start-fixture: Total: 1, Passed: 1, Failed: 0"
   grep -E 'startup-phase(-slow)? |startup-repair' "${log}" | sed 's/^/  /' | tail -60 || true
   [[ -n "${PRODUCT_START_LOG:-}" ]] || rm -f "${log}"
   exit 0
