@@ -1,6 +1,14 @@
 extern alias TaskServerAssembly;
+extern alias Runner;
 
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using Microsoft.Data.Sqlite;
 using AgentStudio.Pipeline;
+using GateDaemon = Runner::AgentRunner.RemoteGateDaemon;
+using GateClient = Runner::AgentRunner.TaskServerClient;
+using GateRunnerOptions = Runner::AgentRunner.RunnerOptions;
 using AgentStudio.Registry;
 using AgentStudio.Runner;
 using AgentStudio.Projects;
@@ -116,7 +124,7 @@ public sealed class PostMergeGateSchedulerTests : IDisposable
     [MemberData(nameof(QueueScanCases))]
     public async Task ClaimScansPastIneligiblePages(string authority, string kind, int prefix, bool eligible)
     {
-        var (create, claim, status) = await QueueFixture(authority);
+        var (create, claim, status, _) = await QueueFixture(authority);
         var blocked = new List<string>();
         for (var i = 0; i < prefix; i++)
             blocked.Add((await create(QueueRequest(kind, "blocked-" + i, ["fixture:missing"]))).Subject.SubjectId);
@@ -140,7 +148,7 @@ public sealed class PostMergeGateSchedulerTests : IDisposable
     [InlineData("task-server")]
     public async Task PagedClaimRetainsIdentityExclusionAndSubjectConflictChecks(string authority)
     {
-        var (create, claim, status) = await QueueFixture(authority);
+        var (create, claim, status, _) = await QueueFixture(authority);
         var request = QueueRequest(GateSubjectKinds.PostMerge, "selected", []);
         var selected = await create(request);
         var conflict = await Record.ExceptionAsync(() => create(request with { PolicyHash = "changed" }));
@@ -160,7 +168,7 @@ public sealed class PostMergeGateSchedulerTests : IDisposable
     [InlineData("task-server")]
     public async Task ClaimScansPastLaneConflictsWithoutClaimingThem(string authority)
     {
-        var (create, claim, status) = await QueueFixture(authority);
+        var (create, claim, status, _) = await QueueFixture(authority);
         await create(QueueRequest(GateSubjectKinds.Merge, "active", []));
         Assert.Equal("claimed", (await claim(new("gate", "instance"))).Status);
         var blocked = new List<string>();
@@ -180,7 +188,7 @@ public sealed class PostMergeGateSchedulerTests : IDisposable
     [InlineData("task-server")]
     public async Task ClaimPreservesArrivalOrderWhenCreationTimesTie(string authority)
     {
-        var (create, claim, _) = await QueueFixture(authority);
+        var (create, claim, _, _) = await QueueFixture(authority);
         var first = await create(QueueRequest(GateSubjectKinds.Merge, "first", []));
         await create(QueueRequest(GateSubjectKinds.Merge, "second", []));
         Assert.Equal(first.Subject.SubjectId, (await claim(new("gate", "instance"))).Subject!.SubjectId);
@@ -204,6 +212,184 @@ public sealed class PostMergeGateSchedulerTests : IDisposable
         Assert.Equal(GateStates.Cleaning, gates.GetStatus(claim.Subject.SubjectId)!.Phase);
     }
 
+    [Theory]
+    [InlineData("monolith", false)]
+    [InlineData("task-server", false)]
+    [InlineData("task-server-grant", false)]
+    [InlineData("task-server-grant-two", false)]
+    [InlineData("monolith", true)]
+    [InlineData("task-server", true)]
+    [InlineData("task-server-grant", true)]
+    [InlineData("task-server-grant-two", true)]
+    public async Task DaemonAdmitsPostMergeBeyondTwoPagesWhileMergesKeepArriving(string authority, bool terminalBeforeLocalCompletion)
+    {
+        var (create, claim, _, finish) = await QueueFixture(authority);
+        var first = await create(QueueRequest(GateSubjectKinds.Merge, "active", []));
+        for (var i = 0; i < 64; i++)
+            await create(QueueRequest(GateSubjectKinds.Merge, "queued-" + i, []));
+        var post = await create(QueueRequest(GateSubjectKinds.PostMerge, "expired-window", []));
+        using var shutdown = new CancellationTokenSource();
+        var ordinary = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondOrdinary = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondMergeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resumePolling = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var postFlight = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var postStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var polledWithBothFlights = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mergeExecutions = 0;
+        var polls = 0;
+        var firstRetired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var server = new AdmissionServer(async request =>
+        {
+            polls++;
+            if (polls == 2 && terminalBeforeLocalCompletion) await firstRetired.Task.WaitAsync(shutdown.Token);
+            var response = await claim(request);
+            if (polls == 1) Assert.Equal(first.Subject.SubjectId, response.Subject!.SubjectId);
+            if (response.Subject?.Kind == GateSubjectKinds.Merge)
+                await create(QueueRequest(GateSubjectKinds.Merge, "replenished-" + polls, []));
+            return response;
+        });
+        var options = new GateRunnerOptions
+        {
+            ServerUrl = "http://task-server", RunnerId = "gate", RunnerName = "gate", Hostname = "host",
+            Role = "gate", BackendName = "test", BaseBranch = "develop",
+            WorkDir = Path.Combine(_root, "coding"), ReviewWorkDir = Path.Combine(_root, "gate"),
+            StateDir = Path.Combine(_root, "state"),
+        };
+        using var client = new GateClient(new HttpClient(server) { BaseAddress = new Uri(options.ServerUrl) },
+            "gate", options: options, runnerInstanceId: "instance");
+        var daemon = new GateDaemon(options, client, message => throw new InvalidOperationException(message))
+        {
+            OrdinaryExecutor = async (response, _) =>
+            {
+                mergeExecutions++;
+                if (mergeExecutions == 1)
+                {
+                    if (terminalBeforeLocalCompletion)
+                    {
+                        await finish(response.Subject!.SubjectId);
+                        firstRetired.SetResult();
+                    }
+                    return await ordinary.Task;
+                }
+                secondMergeStarted.TrySetResult();
+                return await secondOrdinary.Task;
+            },
+            PostMergeExecutor = (response, _) =>
+            {
+                Assert.Equal(post.Subject.SubjectId, response.Subject!.SubjectId);
+                Assert.False(terminalBeforeLocalCompletion ? secondOrdinary.Task.IsCompleted : ordinary.Task.IsCompleted);
+                postStarted.SetResult();
+                return postFlight.Task;
+            },
+            PollDelay = async token =>
+            {
+                polledWithBothFlights.TrySetResult();
+                if (!resumePolling.Task.IsCompleted) await resumePolling.Task.WaitAsync(token);
+                else if (!(terminalBeforeLocalCompletion ? postStarted.Task.IsCompleted : secondMergeStarted.Task.IsCompleted))
+                    await Task.Yield();
+                else await Task.Delay(Timeout.Infinite, token);
+            },
+        };
+        var run = daemon.RunAsync(shutdown.Token);
+        try
+        {
+            // Timeouts bound a broken implementation; assertions use controlled signals.
+            if (!terminalBeforeLocalCompletion)
+                await postStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await polledWithBothFlights.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(1, mergeExecutions);
+            Assert.Equal(2, polls);
+            if (terminalBeforeLocalCompletion)
+            {
+                // Both claims survive while the authority has retired the first
+                // merge but its local flight has not finished. The successor waits.
+                var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+                var current = JsonSerializer.Deserialize<GateClaimResponse>(
+                    File.ReadAllText(Path.Combine(options.StateDir, "gate-claim.json")), json)!;
+                var pending = JsonSerializer.Deserialize<GateClaimResponse>(
+                    File.ReadAllText(Path.Combine(options.StateDir, "gate-post-merge-claim.json")), json)!;
+                Assert.Equal(first.Subject.SubjectId, current.Subject!.SubjectId);
+                Assert.Equal(GateSubjectKinds.Merge, pending.Subject!.Kind);
+                Assert.NotEqual(current.Lease!.LeaseId, pending.Lease!.LeaseId);
+            }
+            else await finish(first.Subject.SubjectId);
+            ordinary.SetResult(true);
+            resumePolling.SetResult();
+            await secondMergeStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await postStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(postFlight.Task.IsCompleted);
+            Assert.Equal(2, mergeExecutions); // Integration continues while the suite is still running.
+            Assert.Equal(3, polls);
+        }
+        finally
+        {
+            shutdown.Cancel();
+            ordinary.TrySetResult(true);
+            secondOrdinary.TrySetResult(true);
+            postFlight.TrySetResult(true);
+            await run;
+        }
+    }
+
+    [Theory]
+    [InlineData("monolith", GateSubjectKinds.Merge)]
+    [InlineData("monolith", GateSubjectKinds.PostMerge)]
+    [InlineData("task-server", GateSubjectKinds.Merge)]
+    [InlineData("task-server", GateSubjectKinds.PostMerge)]
+    public async Task LaterArrivalsCannotOvertakeEitherQueue(string authority, string waitingKind)
+    {
+        var (create, claim, _, _) = await QueueFixture(authority);
+        var waiting = await create(QueueRequest(waitingKind, "waiting", []));
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        var other = waitingKind == GateSubjectKinds.Merge ? GateSubjectKinds.PostMerge : GateSubjectKinds.Merge;
+        for (var i = 0; i < 64; i++) await create(QueueRequest(other, "later-" + i, []));
+        Assert.Equal(waiting.Subject.SubjectId, (await claim(new("gate", "instance"))).Subject!.SubjectId);
+    }
+
+    [Theory]
+    [InlineData("monolith")]
+    [InlineData("task-server")]
+    public async Task ClaimCursorUsesAgeBeforeKindAcrossPages(string authority)
+    {
+        var (create, claim, _, _) = await QueueFixture(authority);
+        for (var i = 0; i < 64; i++)
+            await create(QueueRequest(GateSubjectKinds.PostMerge, "blocked-post-" + i, ["fixture:missing"]));
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        var merge = await create(QueueRequest(GateSubjectKinds.Merge, "later-merge", []));
+        // The later merge has a lower kind priority than the page cursor. A
+        // kind-first cursor would lose it after scanning the older post-merge page.
+        Assert.Equal(merge.Subject.SubjectId, (await claim(new("gate", "instance"))).Subject!.SubjectId);
+    }
+
+    [Theory]
+    [InlineData(2, 1, GateSubjectKinds.Merge, true)]
+    [InlineData(2, 1, GateSubjectKinds.PostMerge, false)]
+    [InlineData(5, 4, GateSubjectKinds.Merge, true)]
+    [InlineData(5, 4, GateSubjectKinds.PostMerge, false)]
+    [InlineData(5, 3, GateSubjectKinds.PostMerge, true)]
+    [InlineData(1, 0, null, true)]
+    [InlineData(2, 2, GateSubjectKinds.Merge, false)]
+    public void PostMergeGrantProtectsAnIntegrationShare(int capacity, int occupied, string? activeKind, bool expected)
+        => Assert.Equal(expected, AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.MayReservePostMergeGrant(
+            capacity, occupied, activeKind is null ? [] : [activeKind]));
+
+    private sealed class AdmissionServer(Func<GateClaimRequest, Task<GateClaimResponse>> claim) : HttpMessageHandler
+    {
+        private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            object value = request.RequestUri!.AbsolutePath switch
+            {
+                "/api/clients/register" => new Runner::AgentRunner.ClientRegisterResponse("gate", "gate", "gate-executor"),
+                "/api/v1/gates/claims" => await claim((await JsonSerializer.DeserializeAsync<GateClaimRequest>(
+                    await request.Content!.ReadAsStreamAsync(ct), Json, ct))!),
+                _ => throw new InvalidOperationException("Unexpected request: " + request.RequestUri),
+            };
+            return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(value, Json), Encoding.UTF8, "application/json") };
+        }
+    }
+
     private CreateGateSubjectRequest QueueRequest(string kind, string source, string[] capabilities)
     {
         var plan = new GatePlan("post-build-test-gate", 1, [new("verify", "sh", ["-c", "true"], 60)],
@@ -216,16 +402,21 @@ public sealed class PostMergeGateSchedulerTests : IDisposable
     }
 
     private async Task<(Func<CreateGateSubjectRequest, Task<GateStatus>> Create,
-        Func<GateClaimRequest, Task<GateClaimResponse>> Claim, Func<string, Task<GateStatus?>> Status)>
+        Func<GateClaimRequest, Task<GateClaimResponse>> Claim, Func<string, Task<GateStatus?>> Status,
+        Func<string, Task> Finish)>
         QueueFixture(string authority)
     {
         if (authority == "monolith")
         {
             var store = new MonolithGateStore((string?)null, _clock, new GateHosts());
             return (request => Task.FromResult(store.Create(request)),
-                request => Task.FromResult(store.Claim(request)), id => Task.FromResult(store.GetStatus(id)));
+                request => Task.FromResult(store.Claim(request)), id => Task.FromResult(store.GetStatus(id)),
+                id => { store.Cancel(id); return Task.CompletedTask; });
         }
-        var remote = new TaskGateStore(Options.Create(new TaskGateOptions { DataDirectory = _root }), _clock);
+        var remote = new TaskGateStore(Options.Create(new TaskGateOptions
+        {
+            DataDirectory = _root, GateAdmissionMode = authority.StartsWith("task-server-grant", StringComparison.Ordinal) ? "grant" : "slot",
+        }), _clock);
         await remote.InitializeAsync();
         string[] keys = [GateCapabilities.Executor, GateCapabilities.PostMerge, GateCapabilities.GitMaterialization,
             CapabilityProtocol.GitFetch, CapabilityProtocol.RepositoryAccess,
@@ -235,8 +426,23 @@ public sealed class PostMergeGateSchedulerTests : IDisposable
         await remote.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest("gate", "instance",
             CapabilityProtocol.CurrentSchemaVersion, _clock.GetUtcNow().UtcDateTime, 300, 1,
             keys.Select(key => new AdvertisedCapabilityDto(key, key.Split(':')[0])).ToArray()), "gate", default);
+        if (authority.StartsWith("task-server-grant", StringComparison.Ordinal))
+        {
+            await using var connection = new SqliteConnection($"Data Source={remote.DatabasePath};Pooling=False");
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO runtime_capacity_settings(host_id, max_parallelism, target_load_percent, ramp_strategy,
+                    version, updated_at, allocation_version)
+                VALUES ('host', $slots, 80, 'balanced', 1, '2026-11-27T12:00:00.0000000Z', 1);
+                UPDATE runners SET runtime_capacity_applied_version = 1 WHERE id = 'gate';
+                """;
+            command.Parameters.AddWithValue("$slots", authority == "task-server-grant-two" ? 2 : 5);
+            await command.ExecuteNonQueryAsync();
+        }
         return (request => remote.CreateGateSubjectAsync(request, "fixture", default),
-            request => remote.ClaimGateAsync(request, "gate", default), id => remote.GetGateStatusAsync(id, default));
+            request => remote.ClaimGateAsync(request, "gate", default), id => remote.GetGateStatusAsync(id, default),
+            async id => { await remote.CancelGateSubjectAsync(id, "fixture", default); });
     }
 
     private sealed class GateHosts : IGateExecutorDirectory

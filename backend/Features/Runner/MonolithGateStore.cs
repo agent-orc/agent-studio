@@ -170,10 +170,9 @@ public sealed class MonolithGateStore
                 .Where(attempt => attempt.Attempt.HostId == hostId && IsActive(attempt.Attempt.State))
                 .Select(_ => record.Subject.Kind)).ToArray();
             string? quotaReason = null;
-            foreach (var (record, candidate) in QueuedCandidates())
+            foreach (var (record, candidate) in QueuedCandidates(request.ExcludePostMerge))
             {
-                if (request.ExcludePostMerge && record.Subject.Kind == GateSubjectKinds.PostMerge
-                    || active.Any(kind => !MonolithTransitionAdapter.PostMergeMayShareGateLane(kind, record.Subject.Kind)))
+                if (active.Any(kind => !MonolithTransitionAdapter.PostMergeMayShareGateLane(kind, record.Subject.Kind)))
                     continue;
                 AgentStudio.Quota.QuotaAdmission? admission = null;
                 if (verdicts is not null)
@@ -227,16 +226,16 @@ public sealed class MonolithGateStore
 
     // Called under _gate. Keep only one page, including while selecting it:
     // sorting the whole queue before Take would allocate an unbounded buffer.
-    private IEnumerable<(MonolithGateRecord Record, MonolithGateAttempt Candidate)> QueuedCandidates()
+    private IEnumerable<(MonolithGateRecord Record, MonolithGateAttempt Candidate)> QueuedCandidates(bool excludePostMerge)
     {
         const int pageSize = 32;
         var comparer = Comparer<(MonolithGateRecord Record, MonolithGateAttempt Candidate, long Order)>.Create((left, right) =>
         {
-            var priority = MonolithTransitionAdapter.PostMergeQueuePriority(left.Record.Subject.Kind)
-                .CompareTo(MonolithTransitionAdapter.PostMergeQueuePriority(right.Record.Subject.Kind));
-            if (priority != 0) return priority;
-            var created = left.Candidate.Attempt.CreatedAt.CompareTo(right.Candidate.Attempt.CreatedAt);
-            return created != 0 ? created : left.Order.CompareTo(right.Order);
+            var leftKey = new AgentStudio.OrchestrationDecisions.PostMergeQueueOrder(
+                left.Candidate.Attempt.CreatedAt, MonolithTransitionAdapter.PostMergeQueuePriority(left.Record.Subject.Kind), left.Order);
+            var rightKey = new AgentStudio.OrchestrationDecisions.PostMergeQueueOrder(
+                right.Candidate.Attempt.CreatedAt, MonolithTransitionAdapter.PostMergeQueuePriority(right.Record.Subject.Kind), right.Order);
+            return leftKey.CompareTo(rightKey);
         });
         (MonolithGateRecord Record, MonolithGateAttempt Candidate, long Order)? after = null;
         while (true)
@@ -247,7 +246,8 @@ public sealed class MonolithGateStore
             foreach (var candidate in record.Attempts)
             {
                 var item = (record, candidate, order++);
-                if (candidate.Attempt.State != GateStates.Queued) continue;
+                if (candidate.Attempt.State != GateStates.Queued
+                    || excludePostMerge && record.Subject.Kind == GateSubjectKinds.PostMerge) continue;
                 if (after is { } cursor && comparer.Compare(item, cursor) <= 0) continue;
                 page.Add(item);
                 if (page.Count > pageSize) page.Remove(page.Max);

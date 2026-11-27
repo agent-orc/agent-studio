@@ -12,6 +12,7 @@ public sealed class RemoteGateDaemon
     private readonly RunnerOptions _options;
     private readonly TaskServerClient _client;
     private readonly Action<string> _log;
+    private readonly SemaphoreSlim _claimFiles = new(1, 1);
     private readonly Func<RemoteReviewWorkspace, string, Task<bool>> _cleanup;
 
     public RemoteGateDaemon(RunnerOptions options, TaskServerClient client, Action<string> log)
@@ -28,6 +29,8 @@ public sealed class RemoteGateDaemon
         _cleanup = cleanup;
     }
 
+    private sealed record GateFlight(GateClaimResponse Claim, string Path, Task Work);
+
     public async Task RunAsync(CancellationToken shutdown)
     {
         var diskAdmission = new RunnerDiskAdmission(_options);
@@ -36,24 +39,25 @@ public sealed class RemoteGateDaemon
         await RecoverPreviousClaimAsync(shutdown);
         long generation = 0;
         var nextAdvertisement = DateTime.MinValue;
-        Task? postMergeFlight = null;
+        GateFlight?[] flights = new GateFlight?[2];
+        var paths = new[] { ClaimFile, PostMergeClaimFile };
         try
         {
             while (!shutdown.IsCancellationRequested)
             {
                 try
                 {
-                    if (postMergeFlight?.IsCompleted == true)
+                    for (var slot = 0; slot < flights.Length; slot++)
                     {
-                        var completedFlight = postMergeFlight;
-                        // A fault must leave the next poll free to recover the durable claim.
-                        postMergeFlight = null;
-                        await completedFlight;
+                        if (flights[slot] is { } completed && completed.Work.IsCompleted)
+                        {
+                            // Observe a fault once, then recover its durable claim on the next poll.
+                            flights[slot] = null;
+                            await completed.Work;
+                        }
+                        if (flights[slot] is null && File.Exists(paths[slot]))
+                            await RecoverClaimFileAsync(paths[slot], shutdown);
                     }
-                    if (File.Exists(ClaimFile))
-                        await RecoverPreviousClaimAsync(shutdown);
-                    if (postMergeFlight is null && File.Exists(PostMergeClaimFile))
-                        await RecoverClaimFileAsync(PostMergeClaimFile, shutdown);
                     if (DateTime.UtcNow >= nextAdvertisement)
                     {
                         await _client.AdvertiseCapabilitiesAsync(
@@ -68,22 +72,27 @@ public sealed class RemoteGateDaemon
                         await DelayPollAsync(shutdown);
                         continue;
                     }
+                    if (!AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.MayClaim(
+                        flights[0] is not null, flights[1] is not null))
+                    {
+                        await DelayPollAsync(shutdown);
+                        continue;
+                    }
                     var claim = await _client.ClaimGateAsync(new GateClaimRequest(
-                        _options.RunnerId, _client.RunnerInstanceId, 1, _options.TtlSeconds, ExcludePostMerge: postMergeFlight is not null), shutdown);
+                        _options.RunnerId, _client.RunnerInstanceId, 1, _options.TtlSeconds,
+                        ExcludePostMerge: flights.Any(flight => flight?.Claim.Subject?.Kind == GateSubjectKinds.PostMerge)), shutdown);
                     if (claim.Status == "claimed" && claim.Subject is not null
                         && claim.Attempt is not null && claim.Lease is not null)
                     {
-                        if (claim.Subject.Kind == GateSubjectKinds.PostMerge)
-                        {
-                            SaveClaim(claim, PostMergeClaimFile);
-                            postMergeFlight = ExecutePostMergeAsync(claim, shutdown);
-                        }
-                        else
-                        {
-                            SaveClaim(claim);
-                            if (await ExecuteAsync(claim.Subject, claim.Attempt, claim.Lease, shutdown))
-                                File.Delete(ClaimFile);
-                        }
+                        var slot = claim.Subject.Kind == GateSubjectKinds.PostMerge ? 1 : 0;
+                        if (flights[slot] is not null) slot = 1 - slot;
+                        // Authority settlement can precede local completion. Persist a
+                        // successor separately and serialize lanes that cannot share.
+                        var predecessor = flights.FirstOrDefault(flight => flight is not null
+                            && !AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.MayShareGateLane(
+                                flight.Claim.Subject!.Kind, claim.Subject.Kind));
+                        await SaveClaimAsync(claim, paths[slot]);
+                        flights[slot] = new(claim, paths[slot], ExecuteClaimAsync(claim, paths[slot], predecessor, shutdown));
                     }
                     else
                         await DelayPollAsync(shutdown);
@@ -102,31 +111,61 @@ public sealed class RemoteGateDaemon
         }
         finally
         {
-            if (postMergeFlight is not null)
+            foreach (var flight in flights)
             {
-                try { await postMergeFlight; }
+                if (flight is null) continue;
+                try { await flight.Work; }
                 catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
                 {
                     // The persisted claim remains available for restart recovery.
                 }
                 catch (Exception exception)
                 {
-                    _log($"gate post-merge flight failed during shutdown: {exception.GetType().Name}: {exception.Message}");
+                    _log($"gate {flight.Claim.Subject!.Kind} flight failed during shutdown: {exception.GetType().Name}: {exception.Message}");
                 }
             }
         }
     }
 
-    private async Task ExecutePostMergeAsync(GateClaimResponse claim, CancellationToken ct)
+    private async Task ExecuteClaimAsync(GateClaimResponse claim, string path, GateFlight? predecessor, CancellationToken ct)
     {
-        if (await (PostMergeExecutor?.Invoke(claim, ct)
-            ?? ExecuteAsync(claim.Subject!, claim.Attempt!, claim.Lease!, ct)))
-            File.Delete(PostMergeClaimFile);
+        async Task WaitForPredecessor(CancellationToken token)
+        {
+            if (predecessor is null) return;
+            await predecessor.Work.WaitAsync(token);
+            await RecoverClaimFileAsync(predecessor.Path, token, predecessor.Claim.Lease!.LeaseId);
+        }
+        var executor = claim.Subject!.Kind == GateSubjectKinds.PostMerge ? PostMergeExecutor : OrdinaryExecutor;
+        bool clean;
+        if (executor is not null)
+        {
+            await WaitForPredecessor(ct);
+            clean = await executor(claim, ct);
+        }
+        else
+        {
+            // Start lease renewal and the overall deadline before waiting for
+            // local settlement, while leaving the new claim unmaterialized.
+            Func<CancellationToken, Task>? wait = predecessor is null ? null : WaitForPredecessor;
+            clean = await ExecuteAsync(claim.Subject, claim.Attempt!, claim.Lease!, ct, wait);
+        }
+        if (!clean) return;
+        await _claimFiles.WaitAsync();
+        try { File.Delete(path); }
+        finally { _claimFiles.Release(); }
+    }
+
+    private async Task SaveClaimAsync(GateClaimResponse claim, string path)
+    {
+        await _claimFiles.WaitAsync();
+        try { SaveClaim(claim, path); }
+        finally { _claimFiles.Release(); }
     }
 
     private string PostMergeClaimFile => Path.Combine(_options.StateDir, "gate-post-merge-claim.json");
     private string ClaimFile => Path.Combine(_options.StateDir, "gate-claim.json");
 
+    internal Func<GateClaimResponse, CancellationToken, Task<bool>>? OrdinaryExecutor { get; init; }
     internal Func<GateClaimResponse, CancellationToken, Task<bool>>? PostMergeExecutor { get; init; }
     internal Func<CancellationToken, Task>? PollDelay { get; init; }
 
@@ -149,12 +188,22 @@ public sealed class RemoteGateDaemon
 
     internal Task RecoverPreviousClaimAsync(CancellationToken ct) => RecoverClaimFileAsync(ClaimFile, ct);
 
-    private async Task RecoverClaimFileAsync(string path, CancellationToken ct)
+    private async Task RecoverClaimFileAsync(string path, CancellationToken ct, string? expectedLeaseId = null)
+    {
+        await _claimFiles.WaitAsync(ct);
+        try { await RecoverClaimFileCoreAsync(path, ct, expectedLeaseId); }
+        finally { _claimFiles.Release(); }
+    }
+
+    private async Task RecoverClaimFileCoreAsync(string path, CancellationToken ct, string? expectedLeaseId)
     {
         if (!File.Exists(path)) return;
         var claim = JsonSerializer.Deserialize<GateClaimResponse>(await File.ReadAllTextAsync(path, ct));
         if (claim?.Subject is null || claim.Attempt is null || claim.Lease is null)
             throw new InvalidDataException("Persisted gate claim is incomplete.");
+        // A freed slot may already contain its next claim. A predecessor only
+        // recovers its own lease, never the new flight that reused the path.
+        if (expectedLeaseId is not null && claim.Lease.LeaseId != expectedLeaseId) return;
         var status = await _client.GetGateStatusAsync(claim.Subject.SubjectId, ct);
         var previous = status?.Attempts.FirstOrDefault(item => item.AttemptId == claim.Attempt.AttemptId);
         if (previous is null || (GateStates.IsTerminal(previous.State)
@@ -191,7 +240,8 @@ public sealed class RemoteGateDaemon
         File.Delete(path);
     }
 
-    internal async Task<bool> ExecuteAsync(GateSubject subject, GateAttempt attempt, GateLease lease, CancellationToken shutdown)
+    internal async Task<bool> ExecuteAsync(GateSubject subject, GateAttempt attempt, GateLease lease, CancellationToken shutdown,
+        Func<CancellationToken, Task>? beforeMaterialize = null)
     {
         var authority = new GateAuthority(lease.ExecutorId, lease.InstanceId, lease.LeaseId,
             lease.Fence, lease.AuthorityEpoch);
@@ -236,6 +286,7 @@ public sealed class RemoteGateDaemon
         var renewer = RenewUntilDoneAsync(attempt.AttemptId, authority, lease.ExpiresAt, authorityLifetime);
         try
         {
+            if (beforeMaterialize is not null) await beforeMaterialize(leaseLoss.Token);
             await _client.AdvanceGateAsync(attempt.AttemptId,
                 new GatePhaseRequest(authority, GateStates.Materializing), leaseLoss.Token);
             // The frozen commands must still hash to the subject digest before
