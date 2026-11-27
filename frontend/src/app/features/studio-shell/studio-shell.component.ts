@@ -81,6 +81,7 @@ import { AccountControlComponent } from '../shell/components/account-control/acc
 import { EnvironmentFlowComponent } from './components/environment-flow/environment-flow.component';
 import { WorkspaceDeploymentDashboardComponent } from '../deployments';
 import { TaskDefaultsControlComponent } from './components/task-defaults-control/task-defaults-control';
+import { CapacityLineComponent } from '../board/components/capacity-line/capacity-line.component';
 import { DevelopStateIndicatorComponent } from './components/develop-state-indicator/develop-state-indicator.component';
 import { AttentionControlComponent } from './components/attention-control/attention-control';
 import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
@@ -102,7 +103,7 @@ import { cliColorFor, normalizeStorage } from './studio-shell.utils';
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioKeyboardEntryComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent, StatusIndicatorComponent, StudioTabOverflowComponent],
+  imports: [NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioKeyboardEntryComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, CapacityLineComponent, AttentionControlComponent, StatusIndicatorComponent, StudioTabOverflowComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',

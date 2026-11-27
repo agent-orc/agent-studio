@@ -67,7 +67,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
 | Access page pilot of the UI standard: section, outline, grid, row detail, action placement, chips, confirm in place, empty state, secret reveal, and the shared components (AGT-4029) | [system/ui-standard/access-page-pilot.md](../system/ui-standard/access-page-pilot.md) |
 | Runner | [domains/runner.md](../system/domains/runner.md) |
-| Pipeline | [domains/pipeline.md](../system/domains/pipeline.md) |
+| Pipeline, including post-merge gate placement, window deadlines and measurement coverage (AGT-4075) | [domains/pipeline.md](../system/domains/pipeline.md) |
 | Integration conflict history, record version 1, rates and selection evidence (AGT-3969) | [contract](../system/contracts/integration-conflicts.md) |
 | Orchestrator | [domains/orchestrator.md](../system/domains/orchestrator.md) |
 | Orchestration decision library, action vocabulary and architecture guard | [contracts/orchestration-decisions.md](../system/contracts/orchestration-decisions.md) |

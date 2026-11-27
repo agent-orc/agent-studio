@@ -162,8 +162,8 @@ internal sealed class DurableAgentProcess
 
     /// <summary>
     /// The environment differences between the daemon and the coding worker it
-    /// starts. Tool paths, caches, and provider configuration are inherited;
-    /// browser-edge and Task Server secrets are removed.
+    /// starts. Only allowlisted tool paths, runtime settings, caches and selected
+    /// provider configuration cross the process boundary.
     ///
     /// <para>Credentials: the daemon needs all provider credentials for its
     /// capability probes, but a detached worker receives only the credential for
@@ -182,12 +182,7 @@ internal sealed class DurableAgentProcess
         IDictionary<string, string?> environment,
         string? cliType)
     {
-        WorkerEdgeCredentialBoundary.RemoveFrom(environment);
-        if (ProviderAuthEnvironment.TryGetForCli(cliType, out var authName, out var authValue))
-            environment[authName] = authValue;
-        else
-            environment.Remove(ProviderAuthEnvironment.ClaudeCodeOAuthToken);
-        WorkerBuildServerHygiene.ApplyTo(environment);
+        WorkerEdgeCredentialBoundary.ApplyCodingEnvironment(environment, cliType);
     }
 
     /// <summary>
@@ -226,7 +221,7 @@ internal sealed class DurableAgentProcess
             RunId: runId,
             ResumeSessionId: resumeSessionId,
             CleanContextKey: cleanContextKey,
-            Environment: environment?.Where(entry => !WorkerEdgeCredentialBoundary.IsProtectedName(entry.Key))
+            Environment: environment?.Where(entry => WorkerEdgeCredentialBoundary.IsCodingRuntimeName(entry.Key, invocation.CliType))
                 .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.OrdinalIgnoreCase),
             TokenCeiling: tokenCeiling,
             TokenBaseline: tokenBaseline);

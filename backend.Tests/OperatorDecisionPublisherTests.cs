@@ -80,10 +80,12 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
         var seededTypes = OperatorDecisionTypes.All
             .Where(type => type != OperatorDecisionTypes.DeployCompleted
                 && type != OperatorDecisionTypes.EnvironmentIncidentOpen
+                && type != OperatorDecisionTypes.AuditAlert
                 && type != OperatorDecisionTypes.HostDiskPressure
                 && type != OperatorDecisionTypes.ReviewHostDrift
                 && type != OperatorDecisionTypes.PostMergeRunsMissing
                 && type != OperatorDecisionTypes.PostMergeRedIncident
+                && type != OperatorDecisionTypes.CapacityUnderused
                 && type != OperatorDecisionTypes.OverlapStarved
                 && type != OperatorDecisionTypes.BatchRunningWithoutGate)
             .ToArray();

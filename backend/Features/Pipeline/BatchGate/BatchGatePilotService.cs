@@ -513,7 +513,7 @@ public sealed partial class BatchGatePilotService
             FallbackWaits(project), activeFallbacks, LastInvariantReport(project),
             _diskPauseReason, ConfiguredGateSlots(),
             CodeBatchEnabled(project) ? _reservations?.GetBatchWait(project) : null,
-            Service<BatchLaneAdmission>()?.Snapshot());
+            Service<BatchLaneAdmission>()?.Snapshot(), UsesPostMerge(project), SettledMembers());
     }
 
     private IReadOnlySet<string> ActiveIsolationFlights(string project)
@@ -560,6 +560,7 @@ public sealed partial class BatchGatePilotService
             await ProcessInfrastructureRetriesAsync(ct).ConfigureAwait(false);
             // AGT-3563: every later step reads each manifest's phase record.
             ReconcilePhaseRecords();
+            SettleCompletedPending();
             // AGT-3568: an intent a dead host left open owns its generations
             // until it completes; nothing may read batch ownership before.
             RecoverFormationIntents();

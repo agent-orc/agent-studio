@@ -45,6 +45,7 @@ public sealed partial class MergeIntoDevelopRunner
     private readonly IConfiguration? _configuration;
     private readonly AgentStudio.Tasks.TimelineLog? _timeline;
     private readonly RefMutationLeaseService? _refMutationLeases;
+    private readonly InterruptedIntegrationGateRecoveryService? _interruptedGateRecovery;
     private readonly BatchIntegrationReservationService? _batchReservations;
     private readonly BatchGateStore? _batchGates;
     private readonly PipelineHealthService? _pipelineHealth;
@@ -58,6 +59,8 @@ public sealed partial class MergeIntoDevelopRunner
 
     /// <summary>Interval of the wait's log line and readiness check.</summary>
     internal TimeSpan HostCredentialRetryInterval { get; set; } = TimeSpan.FromSeconds(30);
+    internal Action? AfterGateReceiptForTesting { get; set; }
+    internal Action? AfterGateRollbackForTesting { get; set; }
     private readonly TimeProvider _gateTime;
     private readonly TimeSpan? _preMainTimeout;
     private readonly TimeSpan? _preDevelopTimeout;
@@ -120,7 +123,8 @@ public sealed partial class MergeIntoDevelopRunner
         IIntegrationLaneStallAlarm? laneStallAlarm = null,
         PostMergeModeService? postMergeMode = null,
         AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness? hostCredentials = null,
-        ProjectRegistry? projectRegistry = null)
+        ProjectRegistry? projectRegistry = null,
+        InterruptedIntegrationGateRecoveryService? interruptedGateRecovery = null)
     {
         _hostCredentials = hostCredentials;
         _projectRegistry = projectRegistry;
@@ -145,6 +149,7 @@ public sealed partial class MergeIntoDevelopRunner
         _configuration = configuration;
         _timeline = timeline;
         _refMutationLeases = refMutationLeases;
+        _interruptedGateRecovery = interruptedGateRecovery;
         _batchReservations = batchReservations;
         _batchGates = batchGates;
         _pipelineHealth = pipelineHealth;
@@ -389,6 +394,10 @@ public sealed partial class MergeIntoDevelopRunner
                 ? null
                 : await _refMutationLeases.AcquireAsync(
                     project, developerRoot, integrationBranch, ct).ConfigureAwait(false);
+
+            if (_interruptedGateRecovery is not null && refMutationLease is not null)
+                _interruptedGateRecovery.ReconcileBeforeMerge(
+                    developerRoot, integrationBranch, refMutationLease, ct);
 
             if (reviewSubject is not null
                 && _attemptAuthority is not null
@@ -1682,6 +1691,13 @@ public sealed partial class MergeIntoDevelopRunner
         }
         Volatile.Write(ref _integrationGateHolder, null);
         var gateEvidenceFolder = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null).Folder;
+        var invalidNetChangeGate = result.Outcome == MergeIntoIntegrationOutcome.MergedAfterRebase
+            && PreDevelopBuildGate.IsGreen(gate)
+            && (gate.Verdict != BuildTestGateVerdict.Ok
+                || !string.Equals(gate.TestedSha, gatedSha, StringComparison.OrdinalIgnoreCase));
+        if (!PreDevelopBuildGate.IsGreen(gate)
+            || VerifyDefinitionPolicy.IsMissingDefinition(gate) || invalidNetChangeGate)
+            IntegrationGateJournal.RequireRollbackOwned(gateEvidenceFolder, journalOwner);
         if (gate.FailureKind != BuildTestGateFailureKind.Cancellation)
             IntegrationGateReceipts.Record(
                 gateEvidenceFolder, IntegrationGateJournal.PreDevelopBuildGateStep, gate, _timeline, reuse,
@@ -1692,11 +1708,9 @@ public sealed partial class MergeIntoDevelopRunner
             reuseToken: reuse.Token, reason: reuse.Reason,
             collisionDetected: gate.GateCollisionDetected);
 
-        // A verdict exists, in either direction: this process is no longer the
-        // only thing standing between the branch and an un-gated merge.
-        // A cancelled gate may return after a lane move; the live folder can then
-        // hold a newer attempt's journal, which must survive.
-        IntegrationGateJournal.ClearOwned(gateEvidenceFolder, journalOwner);
+        // A red receipt is evidence for the retained rollback obligation.
+        // Only a green verdict or a recorded successful reset releases custody.
+        AfterGateReceiptForTesting?.Invoke();
 
         // AGT-3428: the gate applied but found no verify command and no
         // declaration. Roll the unverified merge back and refuse it with the
@@ -1704,6 +1718,7 @@ public sealed partial class MergeIntoDevelopRunner
         if (VerifyDefinitionPolicy.IsMissingDefinition(gate))
         {
             var rollback = _git.ResetIntegrationBranch(repoRoot, integrationBranch, preMergeTip!);
+            if (rollback.Success) CompleteGateRollback(gateEvidenceFolder, journalOwner);
             _logger.LogWarning(
                 "merge-into-develop refused for project={Project} job={JobId} integration={Integration}: verify definition missing rollback={Rollback}",
                 project, jobId, integrationBranch,
@@ -1724,12 +1739,10 @@ public sealed partial class MergeIntoDevelopRunner
         // A green gate on a net-change publication must have passed on the
         // exact published commit, or acceptance finds a hole on the
         // first-parent line. A red gate keeps its own failure code below.
-        if (result.Outcome == MergeIntoIntegrationOutcome.MergedAfterRebase
-            && PreDevelopBuildGate.IsGreen(gate)
-            && (gate.Verdict != BuildTestGateVerdict.Ok
-                || !string.Equals(gate.TestedSha, gatedSha, StringComparison.OrdinalIgnoreCase)))
+        if (invalidNetChangeGate)
         {
             var rollback = _git.ResetIntegrationBranch(repoRoot, integrationBranch, preMergeTip!);
+            if (rollback.Success) CompleteGateRollback(gateEvidenceFolder, journalOwner);
             return (MergeIntoIntegrationResult.Failed(
                 AcceptedIntegrationFailureCodes.GateUnavailable,
                 $"The net-change publication {gatedSha} has no passed gate on its exact tree. "
@@ -1738,6 +1751,7 @@ public sealed partial class MergeIntoDevelopRunner
         }
         if (PreDevelopBuildGate.IsGreen(gate))
         {
+            IntegrationGateJournal.ClearOwned(gateEvidenceFolder, journalOwner);
             if (postMergeLevel is not null)
                 RecordWindowCoverage(project, jobId, jobFolderPath, gatedSha, testingStrategy, postMergeLevel, null);
             _logger.LogInformation(
@@ -1749,6 +1763,7 @@ public sealed partial class MergeIntoDevelopRunner
         // The merge was created by this invocation, so it owns an exact
         // rollback anchor. The failed outcome prevents Passed and a push.
         var reset = _git.ResetIntegrationBranch(repoRoot, integrationBranch, preMergeTip!);
+        if (reset.Success) CompleteGateRollback(gateEvidenceFolder, journalOwner);
         _logger.LogWarning(
             "merge-into-develop build gate FAILED for project={Project} job={JobId} integration={Integration} merged={MergedSha} verdict={Verdict} reason={Reason} rollback={Rollback}",
             project, jobId, integrationBranch, gatedSha, gate.Verdict, gate.Reason,
@@ -1783,6 +1798,13 @@ public sealed partial class MergeIntoDevelopRunner
               $"Rolling {integrationBranch} back to {Short(preMergeTip!)} FAILED ({reset.Error ?? "unknown error"}); " +
               "the unverified merge is still on the local integration branch and needs manual repair.";
         return (MergeIntoIntegrationResult.Of(outcome, error: error) with { GateExecuted = executed }, gate);
+    }
+
+    private void CompleteGateRollback(string folder, string owner)
+    {
+        AfterGateRollbackForTesting?.Invoke();
+        IntegrationGateJournal.CompleteRollbackOwned(folder, owner);
+        IntegrationGateJournal.ClearOwned(folder, owner);
     }
 
     /// <summary>

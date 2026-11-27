@@ -15,9 +15,12 @@ namespace AgentStudio.Pipeline;
 public interface IBatchGateSubjectAuthority
 {
     string Name { get; }
+    Task<PostMergeHostAvailability> PostMergeHostsAsync(CancellationToken ct)
+        => Task.FromResult(new PostMergeHostAvailability(false, true));
     Task<GateStatus> CreateAsync(CreateGateSubjectRequest request, CancellationToken ct);
     Task<GateStatus?> GetAsync(string subjectId, CancellationToken ct);
     Task CancelAsync(string subjectId, CancellationToken ct);
+    Task<bool> CancelBeforeTestsAsync(string subjectId, CancellationToken ct) => Task.FromResult(false);
 
     /// <summary>
     /// Stores one immutable verification bundle (DP-S4) and returns its
@@ -31,12 +34,17 @@ public interface IBatchGateSubjectAuthority
 public sealed class MonolithBatchGateSubjectAuthority(MonolithGateStore gates) : IBatchGateSubjectAuthority
 {
     public string Name => "monolith";
+    public Task<PostMergeHostAvailability> PostMergeHostsAsync(CancellationToken ct)
+        => Task.FromResult(gates.PostMergeHosts());
 
     public Task<GateStatus> CreateAsync(CreateGateSubjectRequest request, CancellationToken ct)
         => Task.FromResult(gates.Create(request));
 
     public Task<GateStatus?> GetAsync(string subjectId, CancellationToken ct)
         => Task.FromResult(gates.GetStatus(subjectId));
+
+    public Task<bool> CancelBeforeTestsAsync(string subjectId, CancellationToken ct)
+        => Task.FromResult(gates.Cancel(subjectId, onlyBeforeRunning: true).Phase == GateStates.Cancelled);
 
     public Task CancelAsync(string subjectId, CancellationToken ct)
     {
@@ -60,6 +68,9 @@ public sealed class TaskServerBatchGateSubjectAuthority(Func<HttpClient> client)
     private static readonly JsonSerializerOptions WireJson = new(JsonSerializerDefaults.Web);
 
     public string Name => "task-server";
+    public async Task<PostMergeHostAvailability> PostMergeHostsAsync(CancellationToken ct)
+        => await client().GetFromJsonAsync<PostMergeHostAvailability>("/api/v1/gates/post-merge-hosts", ct)
+            ?? throw new InvalidDataException("Gate authority returned no host availability.");
 
     public async Task<GateStatus> CreateAsync(CreateGateSubjectRequest request, CancellationToken ct)
     {
@@ -75,6 +86,13 @@ public sealed class TaskServerBatchGateSubjectAuthority(Func<HttpClient> client)
             $"/api/v1/gates/subjects/{Uri.EscapeDataString(subjectId)}", ct).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         return await ReadAsync(response, "status", ct).ConfigureAwait(false);
+    }
+
+    public async Task<bool> CancelBeforeTestsAsync(string subjectId, CancellationToken ct)
+    {
+        using var response = await client().PostAsync(
+            $"/api/v1/gates/subjects/{Uri.EscapeDataString(subjectId)}/cancel?onlyBeforeRunning=true", null, ct);
+        return (await ReadAsync(response, "cancel", ct))?.Phase == GateStates.Cancelled;
     }
 
     public async Task CancelAsync(string subjectId, CancellationToken ct)

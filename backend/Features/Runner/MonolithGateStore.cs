@@ -10,6 +10,7 @@ namespace AgentStudio.Runner;
 /// <summary>Registered gate executors of the authority (runner hosts with the gate role).</summary>
 public interface IGateExecutorDirectory
 {
+    PostMergeHostAvailability PostMergeHosts() => new(false, true);
     bool TryGetGateExecutor(string runnerId, string instanceId,
         out string hostId, out IReadOnlySet<string> capabilities);
 }
@@ -82,6 +83,8 @@ public sealed class MonolithGateStore
 
     private DateTime Now => _time.GetUtcNow().UtcDateTime;
 
+    public PostMergeHostAvailability PostMergeHosts() => _executors.PostMergeHosts();
+
     public GateStatus Create(CreateGateSubjectRequest request)
     {
         GateRules.ValidateSubject(request);
@@ -127,13 +130,14 @@ public sealed class MonolithGateStore
         }
     }
 
-    public GateStatus Cancel(string subjectId)
+    public GateStatus Cancel(string subjectId, bool onlyBeforeRunning = false)
     {
         lock (_gate)
         {
             var record = RequiredSubject(subjectId);
             var current = record.Attempts[^1];
-            if (GateStates.IsTerminal(current.Attempt.State)) return Status(record);
+            if (GateStates.IsTerminal(current.Attempt.State)
+                || onlyBeforeRunning && !MonolithTransitionAdapter.PostMergeMaySupersede(current.Attempt.State)) return Status(record);
             var now = Now;
             record = Replace(record, current with
             {
@@ -162,15 +166,19 @@ public sealed class MonolithGateStore
                     out var hostId, out var capabilities))
                 throw new GateConflictException("gate-executor-not-registered",
                     "Register this identity with the gate-executor capability before claiming.");
-            if (_subjects.Values.SelectMany(item => item.Attempts).Any(item =>
-                    item.Attempt.HostId == hostId && IsActive(item.Attempt.State)))
-                return new GateClaimResponse("empty", Message: "Gate host slot is occupied.");
+            var active = _subjects.Values.SelectMany(record => record.Attempts
+                .Where(attempt => attempt.Attempt.HostId == hostId && IsActive(attempt.Attempt.State))
+                .Select(_ => record.Subject.Kind)).ToArray();
             string? quotaReason = null;
             foreach (var (record, candidate) in _subjects.Values
                          .SelectMany(record => record.Attempts.Select(attempt => (record, attempt)))
                          .Where(item => item.attempt.Attempt.State == GateStates.Queued)
-                         .OrderBy(item => item.attempt.Attempt.CreatedAt).Take(32).ToArray())
+                         .OrderBy(item => MonolithTransitionAdapter.PostMergeQueuePriority(item.record.Subject.Kind))
+                         .ThenBy(item => item.attempt.Attempt.CreatedAt).Take(32).ToArray())
             {
+                if (request.ExcludePostMerge && record.Subject.Kind == GateSubjectKinds.PostMerge
+                    || active.Any(kind => !MonolithTransitionAdapter.PostMergeMayShareGateLane(kind, record.Subject.Kind)))
+                    continue;
                 AgentStudio.Quota.QuotaAdmission? admission = null;
                 if (verdicts is not null)
                 {

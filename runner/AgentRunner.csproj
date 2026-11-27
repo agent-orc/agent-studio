@@ -40,6 +40,12 @@
     <InternalsVisibleTo Include="OrchestratorEngine.Tests" />
   </ItemGroup>
 
+  <!-- Post-merge shares the existing cross-process gate slot locks with bridge workers. -->
+  <ItemGroup>
+    <Compile Include="../backend/Features/Pipeline/MachineGateSlots.cs" Link="GateCapacity/MachineGateSlots.cs" />
+    <Compile Include="../backend/Features/Pipeline/GateFairness/GateSlotFairnessPolicy.cs" Link="GateCapacity/GateSlotFairnessPolicy.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\contracts\TaskServer.Contracts\TaskServer.Contracts.csproj" />
     <ProjectReference Include="..\orchestration-decisions\Orchestration.Decisions.csproj" />

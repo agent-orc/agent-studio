@@ -489,6 +489,9 @@
         </div>
       </div>
 
+      @if (headerCockpit.shellAccess.operator() && activeTab()?.kind === 'board') {
+        <app-capacity-line [project]="activeProjectName()" />
+      }
       <div class="studio-editor__body">
         <div #studioMain class="studio-editor__main" id="studio-main" tabindex="-1" data-testid="studio-main">
         @if (activeArchivedProjectName(); as archivedName) {
