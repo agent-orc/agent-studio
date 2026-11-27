@@ -3358,9 +3358,24 @@ move-error dialog.
   with the exact rollback anchor, completes it with the merge result, and clears
   it on every path that reaches a verdict, including the rollback. An entry that
   survives into the next process is therefore by construction an interrupted run.
-  `InterruptedIntegrationGateRecoveryHostedService` performs one pass per process
-  start, before the merge gate opens for new work, and decides per integration
-  branch: resume when a durable receipt matches the exact merge result, otherwise
+  `InterruptedIntegrationGateRecoveryHostedService` inventories open journals after
+  the first task-index publication. Explicit repository admission (AGT-4115)
+  holds merge and push entry points until that inventory is known and every
+  interrupted branch in the repository has been repaired. The repair worker
+  closes admission during hosted-service construction, before startup callbacks
+  run. Standalone repair graphs without a hosted worker retain direct `RunOnce`
+  behavior. Waiting happens before merge, push, and batch-reservation gates;
+  hosted-service order and `Task.Yield`
+  provide no readiness guarantee. Repositories without journals proceed after
+  inventory, and each repaired repository proceeds independently. Failed repairs
+  retain their journals and admission hold, emit `integration-recovery-held` with
+  the repository and reason, and retry every 30 seconds until repaired or the host
+  stops. Success emits `integration-recovery-ready`. Retries visit only held
+  repositories, so a new live journal on a released repository remains with its
+  owner. Journal re-reads, Git facts, the existing interrupted-gate policy, reset,
+  and custody completion remain inside the shared fenced ref mutation lease.
+  Recovery decides per integration branch: resume when a durable receipt matches
+  the exact merge result, otherwise
   roll the branch back to the OLDEST unverified pre-merge tip and re-queue every
   affected card. It escalates instead of guessing when the anchor is no longer on
   the branch or no longer contains `origin/<branch>`. The repaired cards carry the

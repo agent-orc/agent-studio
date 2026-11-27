@@ -263,6 +263,8 @@ public sealed partial class MergeIntoDevelopRunner
             await WaitForHostGitCredentialsAsync(project, jobId, ct).ConfigureAwait(false);
             var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
                 ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
+            if (_interruptedGateRecovery is not null)
+                await _interruptedGateRecovery.WaitForStartupRecoveryAsync(reservationRepo, ct).ConfigureAwait(false);
             // Deliberately NOT the caller's token. Merge + gate + rollback form
             // one consistency boundary after acceptance is already durable.
             var mergeWait = System.Diagnostics.Stopwatch.StartNew();
@@ -2423,6 +2425,8 @@ public sealed partial class MergeIntoDevelopRunner
         deliverySequence ??= IntegrationLaneEvents.PublicationSequence(jobFolderPath, approvedSha);
         var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
             ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
+        if (_interruptedGateRecovery is not null)
+            await _interruptedGateRecovery.WaitForStartupRecoveryAsync(reservationRepo, ct).ConfigureAwait(false);
         using var batchReservation = _batchReservations is null
             || string.IsNullOrWhiteSpace(reservationRepo)
             || IsDocumentationDelivery(reservationRepo, integrationBranch,

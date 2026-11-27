@@ -1482,6 +1482,9 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.GateFailureRouter>();
 // recovery rolls that branch back to the exact pre-merge tip (or resumes the
 // merge when a durable verdict for that exact SHA exists) before the merge gate
 // opens for new work, and hands the affected cards to the ladder above.
+// The hosted repair constructor closes the shared singleton's admission.
+// Merge and push await its repository completion signals; registration order
+// and yielding are not readiness guarantees.
 builder.Services.AddSingleton<AgentStudio.Pipeline.InterruptedIntegrationGateRecoveryService>();
 if (!publicDemoExecutionProfile)
 {
