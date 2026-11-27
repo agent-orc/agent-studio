@@ -144,7 +144,18 @@
           }
         </div>
       }
-      @if (git.isAggregate() || git.commitDetail()?.commit) {
+      @if (git.commitFilesState() === 'loading') {
+        <div class="git-view__empty" data-testid="git-files-loading" role="status" aria-live="polite" aria-busy="true">
+          {{ git.isAggregate() ? 'Loading files across these commits…' : 'Loading files for this commit…' }}
+        </div>
+      } @else if (git.commitFilesState() === 'error') {
+        <div class="git-view__empty" data-testid="git-files-error" role="status" aria-live="polite">
+          <p>{{ git.isAggregate() ? 'Could not load files across these commits.' : 'Could not load files for this commit.' }}</p>
+          <button type="button" class="btn-sm" data-testid="git-files-retry" (click)="git.retryCommitFiles()">
+            Retry files
+          </button>
+        </div>
+      } @else if (git.commitFilesState() === 'loaded') {
         @if (git.commitFiles().length) {
           <div class="git-view__split-body">
             <div class="git-view__tree-col" data-testid="git-tree-col">
@@ -175,7 +186,7 @@
             }
           </div>
         } @else {
-          <div class="git-view__empty">{{ git.isAggregate() ? 'No files recorded across these commits.' : 'No files recorded for this commit.' }}</div>
+          <div class="git-view__empty" data-testid="git-files-empty">{{ git.isAggregate() ? 'No files recorded across these commits.' : 'No files recorded for this commit.' }}</div>
         }
       } @else {
         <div class="git-view__empty">Loading commit…</div>
