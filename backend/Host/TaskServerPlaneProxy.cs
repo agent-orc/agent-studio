@@ -13,6 +13,10 @@ public static class TaskServerPlaneProxy
 {
     public const string ClientName = "standalone-task-server";
 
+    // ForwardAsync always chooses explicitly. Requests made by backend services
+    // with this named client have no option and retain their own edge identity.
+    private static readonly HttpRequestOptionsKey<bool> UseEdgeCredential = new("TaskServerPlaneProxy.UseEdgeCredential");
+
     private static readonly HashSet<string> HopByHopHeaders = new(
         [
             "Connection",
@@ -50,13 +54,6 @@ public static class TaskServerPlaneProxy
                 TaskServerProtocol.ClientVersionHeaderName,
                 typeof(TaskServerPlaneProxy).Assembly.GetName().Version?.ToString(3)
                 ?? "unknown");
-            var consumerId = configuration["TaskServer:ConsumerId"]?.Trim();
-            if (!string.IsNullOrWhiteSpace(consumerId))
-                client.DefaultRequestHeaders.Add("X-Principal-Consumer-Id", consumerId);
-            var token = ReadServiceToken(configuration);
-            if (token is not null && string.IsNullOrWhiteSpace(configuration["TaskServer:AuthTokenFile"]))
-                client.DefaultRequestHeaders.Authorization =
-                    new AuthenticationHeaderValue("Bearer", token);
         }).AddHttpMessageHandler(() => new ReloadingProxyCredentialHandler(configuration));
     }
 
@@ -119,6 +116,15 @@ public static class TaskServerPlaneProxy
 
     private static async Task ForwardAsync(HttpContext context)
     {
+        var configuration = context.RequestServices.GetRequiredService<IConfiguration>();
+        var actingRole = ActingRole(context, configuration);
+        // A bearer is always forwarded as its own principal, even alongside a
+        // browser cookie. Only a completed local authorization may use the edge.
+        var useEdgeCredential = !context.Request.Headers.ContainsKey("Authorization")
+            && (SecurityProfiles.IsNetworked(configuration)
+                ? context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal
+                    && context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess
+                : SecurityProfiles.IsLocal(configuration) && actingRole is not null);
         var client = context.RequestServices
             .GetRequiredService<IHttpClientFactory>()
             .CreateClient(ClientName);
@@ -126,6 +132,7 @@ public static class TaskServerPlaneProxy
         using var request = new HttpRequestMessage(
             new HttpMethod(context.Request.Method),
             target);
+        request.Options.Set(UseEdgeCredential, useEdgeCredential);
 
         if (context.Request.ContentLength > 0
             || context.Request.Headers.ContainsKey("Transfer-Encoding"))
@@ -135,6 +142,12 @@ public static class TaskServerPlaneProxy
 
         foreach (var (name, values) in context.Request.Headers)
         {
+            // Consumer metadata must belong to the same principal as the bearer.
+            // The caller path keeps its own metadata; the edge supplies its own.
+            if (useEdgeCredential
+                && (string.Equals(name, "X-Principal-Consumer-Id", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(name, "X-Principal-Consumer-Proof", StringComparison.OrdinalIgnoreCase)))
+                continue;
             if (context.Request.Path.StartsWithSegments("/api/v1/management/device-logins")
                 && string.Equals(name, "X-Actor-Id", StringComparison.OrdinalIgnoreCase))
                 continue;
@@ -152,7 +165,7 @@ public static class TaskServerPlaneProxy
         request.Headers.TryAddWithoutValidation("X-Studio-Public-Origin",
             context.Request.Scheme + "://" + context.Request.Host);
 
-        if (ActingRole(context, context.RequestServices.GetRequiredService<IConfiguration>()) is { } actingRole)
+        if (useEdgeCredential && actingRole is not null)
             request.Headers.TryAddWithoutValidation(CredentialViewProtocol.ActingRoleHeader, actingRole);
         if (context.Request.Path.StartsWithSegments("/api/v1/management/device-logins"))
         {
@@ -242,14 +255,26 @@ public static class TaskServerPlaneProxy
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            if (!string.IsNullOrWhiteSpace(configuration["TaskServer:AuthTokenFile"]))
-            {
-                var token = ReadServiceToken(configuration)
-                    ?? throw new InvalidOperationException("The Task Server service credential is empty.");
+            // Passthrough must not read edge files or acquire ambient credentials,
+            // consumer metadata, or rotation proof from the trusted client.
+            if (request.Options.TryGetValue(UseEdgeCredential, out var useEdgeCredential) && !useEdgeCredential)
+                return base.SendAsync(request, cancellationToken);
+
+            var fileBacked = !string.IsNullOrWhiteSpace(configuration["TaskServer:AuthTokenFile"]);
+            var token = ReadServiceToken(configuration);
+            if (fileBacked && token is null)
+                throw new InvalidOperationException("The Task Server service credential is empty.");
+            if (token is not null && (fileBacked || request.Headers.Authorization is null))
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var consumerId = configuration["TaskServer:ConsumerId"]?.Trim();
+            if (!string.IsNullOrWhiteSpace(consumerId) && !request.Headers.Contains("X-Principal-Consumer-Id"))
+                request.Headers.TryAddWithoutValidation("X-Principal-Consumer-Id", consumerId);
+            if (fileBacked)
+            {
                 if (PrincipalConsumerProofFile.ReadForBearerFile(configuration["TaskServer:AuthTokenFile"]!) is { } proof)
                 {
                     request.Headers.Remove("X-Principal-Consumer-Id");
+                    request.Headers.Remove("X-Principal-Consumer-Proof");
                     request.Headers.TryAddWithoutValidation("X-Principal-Consumer-Id", proof.ConsumerId);
                     request.Headers.TryAddWithoutValidation("X-Principal-Consumer-Proof", proof.Value);
                 }
