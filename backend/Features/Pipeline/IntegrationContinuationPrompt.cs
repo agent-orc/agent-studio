@@ -63,7 +63,8 @@ public static class IntegrationContinuationPrompt
             ? "Resolve the recorded review findings on this same task. " + VerificationScope
               + "Then publish the corrected delivery. "
             : isConflict
-                ? $"Continue on the pinned delivery. The runner merges current {integrationBranch} only during platform preparation. "
+                ? $"Continue on the pinned delivery branch {deliveryRef ?? "of this task"}. "
+                  + $"The runner fetches {integrationBranch} and brings 'origin/{integrationBranch}' in with a merge commit only during platform preparation; never rebase. "
                   + "Read the platform preparation record at the path returned by "
                   + "`git rev-parse --git-path agent-studio-integration-preparation.json`. "
                   + "It records the actual delivery SHA, target SHA, checkout HEAD, unresolved files and exact instructions. "
