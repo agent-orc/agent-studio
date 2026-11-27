@@ -28,6 +28,8 @@ public static class CodingCapacityProjection
         Func<TaskInfo, IReadOnlyList<CapacityBlock>> blocksOf,
         Func<TaskInfo, WaitsOnStatus>? waitsOf = null)
     {
+        // Match reference resolution: the first occurrence owns a stable card key.
+        tasks = tasks.DistinctBy(Key, StringComparer.OrdinalIgnoreCase).ToArray();
         var ready = tasks.Where(task => task.State == TaskStates.Ready).ToArray();
         var waits = tasks.ToDictionary(Key, task => waitsOf?.Invoke(task) ?? references.EvaluateWaitsOn(task),
             StringComparer.OrdinalIgnoreCase);

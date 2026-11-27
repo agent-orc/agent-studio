@@ -18,6 +18,28 @@ public sealed class CodingCapacityTests
         => CodingCapacityProjection.Project("studio", cards, TaskReferenceIndex.Build(cards), 12, 0,
             blocks ?? (_ => []));
 
+    [Theory]
+    [InlineData("A")]
+    [InlineData("a")]
+    public void Duplicate_card_keys_keep_the_first_card_without_inflating_capacity(string duplicateKey)
+    {
+        var first = Card("A");
+        var stale = Card(duplicateKey, TaskStates.Ready, "MISSING") with { Id = "stale-copy" };
+        var evaluated = new List<TaskInfo>();
+        var fact = Project([first, stale, Card("B", TaskStates.Ready, "A")], task =>
+        {
+            evaluated.Add(task);
+            return [];
+        });
+
+        Assert.Equal((2, 1, 1, 1), (fact.Ready, fact.ClaimableNow, fact.DependencyWidth, fact.MaxConcurrentCards));
+        Assert.Equal(new[] { "A", "B" }, fact.Cards.Select(card => card.CardKey));
+        Assert.Same(first, evaluated[0]);
+        Assert.Equal(2, evaluated.Count);
+        Assert.Equal("A", Assert.Single(fact.Heads).CardKey);
+        Assert.Equal(1, Assert.Single(fact.Heads).CardsBehind);
+    }
+
     [Fact]
     public void Two_days_of_dispatch_refusals_do_not_look_like_a_healthy_ready_queue()
     {

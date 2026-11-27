@@ -77,6 +77,10 @@ Fleet cards are limited to the same watched projects represented in `projects[]`
 A card still present in a published snapshot after its project is unwatched does
 not add Ready work to the fleet. Authorized cross-project dependency heads remain
 visible as blockers through the archive-inclusive reference graph.
+Duplicate card keys, including case-only variants, keep the first published
+occurrence among the reader's watched projects. Each key contributes once to
+project rows and fleet card counts, matching the reference index's
+first-occurrence rule.
 
 `dependencyWidth` is the maximum antichain of the unfinished Ready and Progress
 graph, equivalently its minimum chain cover. It accounts for forks, joins,

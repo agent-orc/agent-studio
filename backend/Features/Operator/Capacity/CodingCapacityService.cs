@@ -27,7 +27,9 @@ public sealed class CodingCapacityService(TaskScannerService scanner, ProjectSet
         var projects = scanner.GetWatchPaths().Select(path => path.Name).Distinct(StringComparer.OrdinalIgnoreCase)
             .Where(project => allows?.Invoke(project) ?? true).ToArray();
         var watched = projects.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var tasks = visibleTasks.Where(task => watched.Contains(task.ProjectName)).ToArray();
+        // Deduplicate before partitioning so a stale copy cannot appear in two project rows.
+        var tasks = visibleTasks.Where(task => watched.Contains(task.ProjectName))
+            .DistinctBy(CodingCapacityProjection.Key, StringComparer.OrdinalIgnoreCase).ToArray();
         // Limit reverse-link counts and dependency names to the reader's projects.
         var references = allows is null ? board.AutomationReferences : TaskReferenceIndex.Build(
             visibleTasks.Concat(board.Archive.Where(task => !task.Fixture && allows(task.ProjectName))));

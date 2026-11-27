@@ -8,9 +8,13 @@ namespace AgentStudio.Tests;
 public sealed class CodingCapacityServiceTests
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Fleet_counts_watched_projects_and_keeps_unwatched_dependency_heads(bool scoped)
+    [InlineData(false, null)]
+    [InlineData(true, null)]
+    [InlineData(false, "watched")]
+    [InlineData(true, "watched")]
+    [InlineData(false, "second")]
+    [InlineData(true, "second")]
+    public void Fleet_counts_watched_projects_and_keeps_unwatched_dependency_heads(bool scoped, string? duplicateProject)
     {
         var root = Path.Combine(Path.GetTempPath(), "coding-capacity-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -22,6 +26,8 @@ public sealed class CodingCapacityServiceTests
                 ["TaskRepository"] = root,
                 ["WatchPaths:0:Name"] = "watched",
                 ["WatchPaths:0:Path"] = root,
+                ["WatchPaths:1:Name"] = "second",
+                ["WatchPaths:1:Path"] = Path.Combine(root, "second"),
             }).Build();
             TaskInfo Card(string key, string project, string state) => new()
             {
@@ -35,8 +41,11 @@ public sealed class CodingCapacityServiceTests
             };
             var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
                 new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+            var cards = new List<TaskInfo> { head, waiting, Card("OUTSIDE", "unwatched", TaskStates.Ready) };
+            if (duplicateProject is not null)
+                cards.Add(Card("waiting", duplicateProject, TaskStates.Ready) with { Id = "stale-copy" });
             var cache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config,
-                () => [head, waiting, Card("OUTSIDE", "unwatched", TaskStates.Ready)], timeProvider: clock);
+                () => cards, timeProvider: clock);
             scanner.SetIndexCache(cache);
             cache.GetSnapshot();
             var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
@@ -58,6 +67,12 @@ public sealed class CodingCapacityServiceTests
             Assert.Equal(1, report.Fleet.Ready);
             Assert.Equal(report.Projects.Sum(project => project.Ready), report.Fleet.Ready);
             Assert.Equal("WAITING", Assert.Single(report.Fleet.Cards).CardKey);
+            Assert.Contains(Assert.Single(report.Fleet.Cards).Blocks,
+                block => block.Class == "dependency" && block.Dependency == "HEAD");
+            var watched = Assert.Single(report.Projects, project => project.Project == "watched");
+            Assert.Equal(1, watched.Ready);
+            Assert.Equal(0, watched.ClaimableNow);
+            if (!scoped) Assert.Equal(0, Assert.Single(report.Projects, project => project.Project == "second").Ready);
             if (scoped) Assert.Empty(report.Fleet.Heads);
             else Assert.Equal("HEAD", Assert.Single(report.Fleet.Heads).CardKey);
         }
