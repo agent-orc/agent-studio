@@ -1,19 +1,17 @@
 namespace AgentStudio.Pipeline;
 
 /// <summary>
-/// Runs <see cref="InterruptedIntegrationGateRecoveryService"/> once per process
-/// start (AGT-2849).
+/// Repairs startup integration custody before repository admission (AGT-4115).
 ///
 /// <para>
-/// The timing is the whole point. An un-gated merge can only be rolled back
-/// while nothing has been merged on top of it, so the repair has to happen
-/// before the first new delivery enters the merge gate. It therefore runs once,
-/// early, and then stops: from that moment on every merge either reaches a
-/// verdict or leaves a fresh journal entry for the next start.
+/// Merge and push callers await an explicit repository barrier. Failed
+/// repositories remain held and are retried independently of ready repositories.
 /// </para>
 /// </summary>
 public sealed class InterruptedIntegrationGateRecoveryHostedService : BackgroundService
 {
+    internal Func<CancellationToken, Task> RetryDelayAsync { get; set; }
+        = ct => Task.Delay(TimeSpan.FromSeconds(30), ct);
     private readonly TaskScannerService _scanner;
     private readonly InterruptedIntegrationGateRecoveryService _recovery;
     private readonly ILogger<InterruptedIntegrationGateRecoveryHostedService> _logger;
@@ -24,37 +22,43 @@ public sealed class InterruptedIntegrationGateRecoveryHostedService : Background
         ILogger<InterruptedIntegrationGateRecoveryHostedService> logger)
     {
         _scanner = scanner;
-        _recovery = recovery;
+        _recovery = recovery.RequireStartupRecovery();
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Keep the disk walk and the git reads off the host startup path without
-        // giving up the ordering: the merge gate is only reachable through the
-        // queues and sweeps that start after this yield.
+        // Admission is already closed by repair worker construction. Yield only
+        // keeps disk and Git work off the host startup path.
         await Task.Yield();
-        await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
         try
         {
-            var report = _recovery.RunOnce(stoppingToken);
-            if (report.Branches > 0)
+            await _scanner.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
+            while (!stoppingToken.IsCancellationRequested)
             {
-                _logger.LogWarning(
-                    "interrupted-integration-gate startup recovery repaired branches={Branches} rolledBack={RolledBack} requeued={Requeued} escalated={Escalated}",
-                    report.Branches,
-                    report.RolledBack,
-                    report.Requeued,
-                    report.Escalated);
+                try
+                {
+                    var report = _recovery.RunOnce(stoppingToken);
+                    if (report.Branches > 0)
+                        _logger.LogWarning(
+                            "interrupted-integration-gate startup recovery branches={Branches} rolledBack={RolledBack} requeued={Requeued} escalated={Escalated}",
+                            report.Branches, report.RolledBack, report.Requeued, report.Escalated);
+                    if (!_recovery.HasPendingStartupRecovery) return;
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "integration-recovery-held startup inventory or repair failed; repair will retry");
+                }
+                await RetryDelayAsync(stoppingToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException ex) when (stoppingToken.IsCancellationRequested)
         {
             SilentCatch.Note(ex, "interrupted-integration-gate recovery stopped with the host");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "interrupted-integration-gate startup recovery failed");
         }
     }
 }
