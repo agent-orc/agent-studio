@@ -209,6 +209,7 @@ export interface TaskDeliveryCommitAnswer {
  * reads as "not yet checked".
  */
 export interface TaskDeliveryClaimAnswer {
+  studioLive?: { state: string; revision: string | null; sinceUtc: string | null } | null;
   taskKey: string;
   jobId: string;
   lane: string;

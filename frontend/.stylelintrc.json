@@ -505,8 +505,8 @@
       }
     },
     {
-      "comment": "Task move refusal uses semantic theme and spacing tokens.",
-      "files": ["src/app/_move-refusal.scss"],
+      "comment": "Task move refusal and Studio releases use semantic theme and spacing tokens.",
+      "files": ["src/app/_move-refusal.scss", "src/app/features/studio-releases/studio-releases.component.scss"],
       "rules": {
         "color-no-hex": true,
         "scale-unlimited/declaration-strict-value": [
