@@ -594,6 +594,11 @@ infrastructure path. A failure that survives the same-SHA confirmation gets one
 serial reference repeat per failed method (or one whole-command repeat when a
 focused filter is unavailable), using `reference=1` and the same token size.
 Its attempts and fingerprint are retained separately for RT-2 comparison.
+For direct test invocations and older post-merge workers that provide no
+`TEST_ENVELOPE_*` declaration, the canary does not assert an envelope. If any
+envelope marker is present, it requires the complete declaration. This keeps
+the base suite compatible while a worker binary is being upgraded; envelope
+receipts and process-boundary tests remain the evidence for current workers.
 Recovery in the matching reference envelope is flaky, runs no attribution and
 never stops the line; recovery after a fingerprint mismatch remains environment
 evidence in RT-2.

@@ -94,6 +94,11 @@ public static class TestEnvelope
     public static bool CanaryFailed(IEnumerable<string> failedTests)
         => failedTests.Any(test => test.Contains(CanaryName, StringComparison.Ordinal));
 
+    // Older post-merge workers and direct dotnet test invocations have no envelope
+    // declaration. Any marker makes the canary enforce the complete contract.
+    public static bool HasEnvelopeDeclaration(IReadOnlyDictionary<string, string?> environment)
+        => environment.Keys.Any(name => name.StartsWith("TEST_ENVELOPE_", StringComparison.OrdinalIgnoreCase));
+
     /// <summary>Inside-process assertions, also usable by fixture tests without exposing values.</summary>
     public static IReadOnlyList<string> Violations(IReadOnlyDictionary<string, string?> environment, string? cgroup)
     {

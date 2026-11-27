@@ -11,6 +11,7 @@ public sealed class TestEnvelopeCanaryTests
     {
         var environment = Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
             .ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value);
+        if (!TestEnvelope.HasEnvelopeDeclaration(environment)) return;
         var cgroup = OperatingSystem.IsLinux() ? File.ReadAllText("/proc/self/cgroup") : null;
         Assert.Empty(TestEnvelope.Violations(environment, cgroup));
         Assert.Contains(environment.GetValueOrDefault("TEST_ENVELOPE_CGROUP"), new[] { "worker", "unavailable", "none" });
