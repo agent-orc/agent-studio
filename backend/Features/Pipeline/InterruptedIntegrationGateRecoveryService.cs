@@ -40,6 +40,8 @@ public sealed record InterruptedIntegrationGateRecoveryReport(
 /// </summary>
 public sealed class InterruptedIntegrationGateRecoveryService
 {
+    private readonly RefMutationLeaseService _refMutationLeases;
+    internal Action? AfterRollbackForTesting { get; set; }
     private readonly TaskScannerService _scanner;
     private readonly GitService _git;
     private readonly IntegrationWorktreeProvider _worktrees;
@@ -53,8 +55,10 @@ public sealed class InterruptedIntegrationGateRecoveryService
         IntegrationWorktreeProvider worktrees,
         PipelineExecutionLog pipelineLog,
         TimelineLog timeline,
-        ILogger<InterruptedIntegrationGateRecoveryService> logger)
+        ILogger<InterruptedIntegrationGateRecoveryService> logger,
+        RefMutationLeaseService? refMutationLeases = null)
     {
+        _refMutationLeases = refMutationLeases ?? new RefMutationLeaseService();
         _scanner = scanner;
         _git = git;
         _worktrees = worktrees;
@@ -85,7 +89,7 @@ public sealed class InterruptedIntegrationGateRecoveryService
             branches++;
             try
             {
-                var outcome = RecoverBranch(group.Key.RepoRoot, group.Key.IntegrationBranch, [.. group], ct);
+                var outcome = RecoverBranch(group.First().Journal.Project, group.Key.RepoRoot, group.Key.IntegrationBranch, ct);
                 if (outcome.Action == InterruptedGateRecoveryAction.RollBack) rolledBack++;
                 if (outcome.Action == InterruptedGateRecoveryAction.Escalate) escalated++;
                 requeued += outcome.Requeued;
@@ -96,6 +100,7 @@ public sealed class InterruptedIntegrationGateRecoveryService
             }
             catch (Exception ex)
             {
+                escalated++;
                 _logger.LogError(
                     ex,
                     "interrupted-integration-gate recovery failed for repo={RepoRoot} branch={Branch}",
@@ -111,24 +116,57 @@ public sealed class InterruptedIntegrationGateRecoveryService
     }
 
     private (InterruptedGateRecoveryAction Action, int Requeued) RecoverBranch(
+        string project,
         string repoRoot,
         string integrationBranch,
-        IReadOnlyList<OpenJournal> journals,
         CancellationToken ct)
     {
+        using var lease = _refMutationLeases.AcquireAsync(project, repoRoot, integrationBranch, ct)
+            .GetAwaiter().GetResult();
+        return RecoverBranchUnderLease(repoRoot, integrationBranch, lease, ct);
+    }
+
+    /// <summary>Called by merge admission while it holds the ordinary publication lease.</summary>
+    internal void ReconcileBeforeMerge(
+        string repoRoot, string integrationBranch, RefMutationLeaseService.Lease lease, CancellationToken ct)
+    {
+        RecoverBranchUnderLease(repoRoot, integrationBranch, lease, ct);
+        if (ReadBranchJournals(repoRoot, integrationBranch).Count != 0)
+            throw new IOException("Unsettled integration gate custody requires repair before another merge can enter.");
+    }
+
+    private List<OpenJournal> ReadBranchJournals(string repoRoot, string integrationBranch)
+        => ReadOpenJournals().Where(item => TupleComparer.Equals(
+            (item.Journal.RepoRoot, item.Journal.IntegrationBranch), (repoRoot, integrationBranch))).ToList();
+
+    private (InterruptedGateRecoveryAction Action, int Requeued) RecoverBranchUnderLease(
+        string repoRoot,
+        string integrationBranch,
+        RefMutationLeaseService.Lease lease,
+        CancellationToken ct)
+    {
+        // Re-read after admission to the publication boundary: a prior pass may
+        // have settled these journals or another invocation may own them now.
+        var journals = ReadBranchJournals(repoRoot, integrationBranch);
+        if (journals.Count == 0) return (InterruptedGateRecoveryAction.None, 0);
+        if (!RefMutationLeaseService.IsCurrent(lease))
+            throw new IOException("Integration gate recovery lost its publication fence.");
         if (!Directory.Exists(repoRoot))
-        {
-            // The project was moved or unregistered while the record survived.
-            // Nothing can be proven about that branch, so the record is dropped
-            // rather than acted on against an unknown repository.
-            foreach (var item in journals) IntegrationGateJournal.Clear(item.JobFolderPath);
-            return (InterruptedGateRecoveryAction.None, 0);
-        }
+            throw new IOException("Integration gate recovery repository is unavailable; custody is retained.");
+        var fetched = _git.FetchIntegrationBranch(repoRoot, integrationBranch, ct);
+        if (fetched.Outcome == IntegrationBranchSyncOutcome.Error)
+            throw new IOException(fetched.Error ?? "Integration gate recovery could not refresh origin; custody is retained.");
 
         // The in-flight merge lives on the integration lane (AGT-2996); the
         // local branch never carried it.
         var branchTip = _git.GetBranchTip(repoRoot, _git.IntegrationBaseRef(repoRoot, integrationBranch));
         var publishedTip = _git.GetBranchTip(repoRoot, "origin/" + integrationBranch);
+        // When publication advanced past the lane after a completed local
+        // reset, its graph is authoritative too. A rejected merge published
+        // there still needs the policy's published-tip escalation.
+        if (!string.IsNullOrWhiteSpace(branchTip) && !string.IsNullOrWhiteSpace(publishedTip)
+            && _git.IsAncestor(repoRoot, branchTip, publishedTip))
+            branchTip = publishedTip;
         var entries = journals
             .Select(item => Facts(repoRoot, integrationBranch, branchTip, publishedTip, item))
             .ToList();
@@ -139,33 +177,43 @@ public sealed class InterruptedIntegrationGateRecoveryService
             foreach (var item in journals)
             {
                 RecordEscalation(item, integrationBranch, decision);
-                IntegrationGateJournal.Clear(item.JobFolderPath);
             }
             return (decision.Action, 0);
         }
 
-        string? rollbackError = null;
         if (decision.Action == InterruptedGateRecoveryAction.RollBack)
         {
-            rollbackError = RollBack(repoRoot, integrationBranch, decision.RollbackSha!, ct);
+            foreach (var entry in decision.Unverified)
+            {
+                var item = journals.Single(item => item.JobFolderPath == entry.JobFolderPath);
+                IntegrationGateJournal.RequireRollbackOwned(item.JobFolderPath, item.Journal.Owner);
+            }
+            if (!RefMutationLeaseService.IsCurrent(lease))
+                throw new IOException("Integration gate recovery lost its publication fence before reset.");
+            var rollbackError = RollBack(repoRoot, integrationBranch, decision.RollbackSha!, lease, ct);
             if (rollbackError is not null)
             {
                 foreach (var item in journals)
                 {
                     RecordEscalation(item, integrationBranch, decision, rollbackError);
-                    IntegrationGateJournal.Clear(item.JobFolderPath);
                 }
                 return (InterruptedGateRecoveryAction.Escalate, 0);
             }
         }
+
+        if (decision.Action == InterruptedGateRecoveryAction.RollBack)
+            AfterRollbackForTesting?.Invoke();
 
         var byJob = journals.ToDictionary(item => item.JobFolderPath, StringComparer.OrdinalIgnoreCase);
         var requeued = 0;
         foreach (var entry in decision.Requeue)
         {
             if (!byJob.TryGetValue(entry.JobFolderPath, out var item)) continue;
+            if (decision.Action == InterruptedGateRecoveryAction.RollBack
+                || item.Journal.Phase == IntegrationGatePhase.RollbackRequired)
+                IntegrationGateJournal.CompleteRollbackOwned(item.JobFolderPath, item.Journal.Owner);
             RecordRequeue(item, integrationBranch, decision, entry);
-            IntegrationGateJournal.Clear(item.JobFolderPath);
+            IntegrationGateJournal.ClearOwned(item.JobFolderPath, item.Journal.Owner);
             requeued++;
         }
         return (decision.Action, requeued);
@@ -200,6 +248,11 @@ public sealed class InterruptedIntegrationGateRecoveryService
             }
         }
 
+        // Phase is branch-mutation evidence. A rejected exact-tree publication
+        // can even carry a green gate receipt that the live runner could not use.
+        if (journal.Phase == IntegrationGatePhase.RollbackRequired)
+            verdict = InterruptedGateVerdict.Red;
+
         return new InterruptedGateEntry(
             journal.JobId,
             item.JobFolderPath,
@@ -232,12 +285,15 @@ public sealed class InterruptedIntegrationGateRecoveryService
         string repoRoot,
         string integrationBranch,
         string anchor,
+        RefMutationLeaseService.Lease lease,
         CancellationToken ct)
     {
         var workspace = _worktrees.Resolve(repoRoot, integrationBranch, ct);
         if (!workspace.Success)
             return workspace.Error ?? "The integration worktree is unavailable.";
 
+        if (!RefMutationLeaseService.IsCurrent(lease))
+            return "Integration gate recovery lost its publication fence before reset.";
         var reset = _git.ResetIntegrationBranch(workspace.Path!, integrationBranch, anchor);
         if (!reset.Success)
             return reset.Error ?? "The integration branch could not be reset.";
@@ -258,12 +314,12 @@ public sealed class InterruptedIntegrationGateRecoveryService
     {
         var rolledBack = decision.Action == InterruptedGateRecoveryAction.RollBack;
         var reason = rolledBack
-            ? $"The {integrationBranch} build gate was interrupted before it reached a verdict. "
+            ? $"The {integrationBranch} build gate's branch custody was interrupted. "
               + $"{integrationBranch} was rolled back to {Short(decision.RollbackSha!)}, nothing was pushed, "
               + "and the integration is replayed for the same reviewed delivery."
-            : $"The {integrationBranch} build gate was interrupted before its result was recorded. "
-              + "The merge it had already verified is unchanged and the integration is replayed "
-              + "to publish it for the same reviewed delivery.";
+            : $"The {integrationBranch} build gate's branch custody was interrupted. "
+              + "The branch was reconciled without another reset and integration is replayed "
+              + "for the same reviewed delivery.";
 
         var now = DateTime.UtcNow;
         _pipelineLog.RecordStep(item.JobFolderPath, new PipelineStepExecution

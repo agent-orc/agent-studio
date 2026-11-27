@@ -74,13 +74,24 @@ public sealed class AuditSinkForwarder(
                 Recovered();
                 return forwarded;
             }
-            if (pending[0].PreviousHash != position.Hash)
+            var firstPending = pending[0];
+            if (firstPending.PreviousHash != position.Hash)
             {
-                // The stored chain no longer continues from what the sink holds.
-                await monitor.RaiseAsync(ControlPlaneAuditAlertCodes.SinkMismatch,
-                    $"Entry {pending[0].Sequence} does not continue the chain already forwarded to the sink.",
-                    pending[0].Sequence, ct);
-                return forwarded;
+                // A verified recovery anchor explicitly starts a new segment after known damage.
+                // Hash the file only on this exceptional path, rather than on every forwarding poll.
+                var check = log.VerifyChain();
+                if (check.Ok && check.AnchorSequence > 0 && position.Sequence <= check.AnchorSequence)
+                    pending = log.Read(check.AnchorSequence + 1, BatchSize);
+                var anchored = check.Ok && check.AnchorSequence > 0 && position.Sequence <= check.AnchorSequence
+                    && pending.Count > 0 && pending[0].Operation == ControlPlaneAuditLog.RecoveryOperation
+                    && pending[0].Sequence == check.AnchorSequence + 1;
+                if (!anchored)
+                {
+                    await monitor.RaiseAsync(ControlPlaneAuditAlertCodes.SinkMismatch,
+                        $"Entry {firstPending.Sequence} does not continue the chain already forwarded to the sink.",
+                        firstPending.Sequence, ct);
+                    return forwarded;
+                }
             }
             try
             {
