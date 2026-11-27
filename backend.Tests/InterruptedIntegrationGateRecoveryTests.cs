@@ -149,7 +149,7 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
     [Fact]
     public async Task StackedUnGatedMerges_RollBackToTheOldestPreMergeTip()
     {
-        var stack = Build(gateDies: true);
+        var stack = Build(gateDies: true, recoverOnAdmission: false);
         var first = SeedDelivery(stack, "first");
         var second = SeedDelivery(stack, "second");
         var preMergeTip = Head("develop");
@@ -279,6 +279,210 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
         Assert.Equal(alreadyMerged, Line());
     }
 
+    [Fact]
+    public async Task RedReceiptBeforeReset_ReconstructedRecoveryRestoresExactAnchor()
+    {
+        var stack = Build(gateDies: false, gateRed: true);
+        var folder = SeedDelivery(stack, "red-receipt");
+        var anchor = Head("develop");
+        stack.Runner.AfterGateReceiptForTesting = () => throw new IOException("termination after receipt");
+
+        await stack.Runner.RunAsync(Project, "red-receipt", folder, _repo, "develop", CancellationToken.None);
+
+        Assert.NotEqual(anchor, Line());
+        var rejected = Line();
+        Assert.Equal(BuildTestGateVerdict.Fail, IntegrationGateReceipts.ReadExact(folder,
+            IntegrationGateJournal.PreDevelopBuildGateStep, rejected)?.Verdict);
+        Assert.Equal(IntegrationGatePhase.RollbackRequired, IntegrationGateJournal.Read(folder)?.Phase);
+        Assert.Equal(anchor, IntegrationGateJournal.Read(folder)?.PreMergeTip);
+        var restarted = Build(gateDies: false);
+        var originalFetch = restarted.Git.IntegrationFetchForTesting;
+        var observedPublicationLock = false;
+        restarted.Git.IntegrationFetchForTesting = (start, timeout, ct) =>
+        {
+            var lockPath = Assert.Single(Directory.GetFiles(Path.Combine(_root, "leases"),
+                "lock", SearchOption.AllDirectories));
+            Assert.Throws<IOException>(() =>
+            {
+                using var competingWriter = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            });
+            observedPublicationLock = true;
+            return originalFetch(start, timeout, ct);
+        };
+        var report = BuildRecovery(restarted).RunOnce();
+        Assert.True(observedPublicationLock);
+        Assert.Equal(1, report.RolledBack);
+        Assert.Equal(anchor, Line());
+        Assert.Equal(anchor, Head("origin/develop"));
+        Assert.Null(IntegrationGateJournal.Read(folder));
+        Assert.Equal(0, BuildRecovery(Build(gateDies: false)).RunOnce().Branches);
+    }
+
+    [Fact]
+    public async Task ResetBeforeCompletionReceipt_ReconstructedRecoveryDoesNotResetLaterPublication()
+    {
+        var stack = Build(gateDies: false, gateRed: true);
+        var folder = SeedDelivery(stack, "red-reset");
+        var anchor = Head("develop");
+        stack.Runner.AfterGateRollbackForTesting = () => throw new IOException("termination after reset");
+
+        await stack.Runner.RunAsync(Project, "red-reset", folder, _repo, "develop", CancellationToken.None);
+
+        Assert.Equal(anchor, Line());
+        Assert.Equal(IntegrationGatePhase.RollbackRequired, IntegrationGateJournal.Read(folder)?.Phase);
+        // A later published commit is legitimate. Replaying the old obligation
+        // must observe that the rejected merge is absent and leave it intact.
+        File.WriteAllText(Path.Combine(_repo, "published.txt"), "published\n");
+        Git(_repo, "add", "-A");
+        Git(_repo, "commit", "-q", "-m", "later publication");
+        var published = Head("develop");
+        Git(_repo, "push", "-q", "origin", "develop");
+        Git(_repo, "update-ref", GitService.IntegrationLaneRef("develop"), published);
+        var restarted = Build(gateDies: false);
+        var report = BuildRecovery(restarted).RunOnce();
+        Assert.Equal(0, report.RolledBack);
+        Assert.Equal(1, report.Requeued);
+        Assert.Equal(published, Line());
+        Assert.Equal(published, Head("origin/develop"));
+        Assert.Null(IntegrationGateJournal.Read(folder));
+        Assert.Equal(0, BuildRecovery(Build(gateDies: false)).RunOnce().Branches);
+    }
+
+    [Fact]
+    public async Task NewMergeAdmission_ReconcilesRejectedMergeBeforeChoosingItsBase()
+    {
+        var stack = Build(gateDies: false, gateRed: true);
+        var folder = SeedDelivery(stack, "admission-old");
+        var anchor = Head("develop");
+        stack.Runner.AfterGateReceiptForTesting = () => throw new IOException("termination after receipt");
+        await stack.Runner.RunAsync(Project, "admission-old", folder, _repo, "develop", CancellationToken.None);
+        Assert.NotEqual(anchor, Line());
+
+        // Reconstruct the whole graph, deliberately without running the startup sweep.
+        var restarted = Build(gateDies: false);
+        var next = SeedDelivery(restarted, "admission-next");
+        string? admittedBase = null;
+        restarted.Runner.AfterGateReceiptForTesting = () =>
+            admittedBase = IntegrationGateJournal.Read(next)?.PreMergeTip;
+        var result = await restarted.Runner.RunAsync(Project, "admission-next", next, _repo,
+            "develop", CancellationToken.None);
+
+        Assert.True(result.Outcome.IsSuccessfulIntegration(), result.Error);
+        Assert.Equal(anchor, admittedBase);
+        Assert.Equal(anchor, Head(Line() + "^1"));
+        Assert.Null(IntegrationGateJournal.Read(folder));
+    }
+
+    [Fact]
+    public async Task StaleOrigin_ReconcilesPublicationAndRetainsCustodyBeforeRefusingAdmission()
+    {
+        var stack = Build(gateDies: false, gateRed: true);
+        var folder = SeedDelivery(stack, "stale-origin");
+        var anchor = Head("develop");
+        stack.Runner.AfterGateReceiptForTesting = () => throw new IOException("termination after receipt");
+        await stack.Runner.RunAsync(Project, "stale-origin", folder, _repo, "develop", CancellationToken.None);
+        var rejected = Line();
+        Git(_repo, "push", "-q", "origin", rejected + ":refs/heads/develop");
+        // Make the tracking ref stale even though the actual remote has moved.
+        Git(_repo, "update-ref", "refs/remotes/origin/develop", anchor);
+        var restarted = Build(gateDies: false);
+        var report = BuildRecovery(restarted).RunOnce();
+        Assert.Equal(1, report.Escalated);
+        Assert.Equal(0, report.RolledBack);
+        Assert.Equal(rejected, Head("origin/develop"));
+        Assert.Equal(rejected, Line());
+        Assert.Equal(anchor, IntegrationGateJournal.Read(folder)?.PreMergeTip);
+        var next = SeedDelivery(restarted, "refused-next");
+        var refused = await restarted.Runner.RunAsync(Project, "refused-next", next, _repo,
+            "develop", CancellationToken.None);
+        Assert.Contains("Unsettled integration gate custody", refused.Error);
+        Assert.Null(IntegrationGateJournal.Read(next));
+        Assert.Equal(rejected, Line());
+        Assert.NotNull(IntegrationGateJournal.Read(folder));
+    }
+
+    [Fact]
+    public async Task RecoveryResetBeforeCompletion_ReconstructedPassDoesNotResetAgain()
+    {
+        var stack = Build(gateDies: false, gateRed: true);
+        var folder = SeedDelivery(stack, "recovery-reset");
+        var anchor = Head("develop");
+        stack.Runner.AfterGateReceiptForTesting = () => throw new IOException("termination after receipt");
+        await stack.Runner.RunAsync(Project, "recovery-reset", folder, _repo, "develop", CancellationToken.None);
+        var recovery = BuildRecovery(Build(gateDies: false));
+        recovery.AfterRollbackForTesting = () => throw new IOException("termination after recovery reset");
+        recovery.RunOnce();
+        Assert.Equal(anchor, Line());
+        Assert.Equal(IntegrationGatePhase.RollbackRequired, IntegrationGateJournal.Read(folder)?.Phase);
+
+        var repeated = BuildRecovery(Build(gateDies: false)).RunOnce();
+        Assert.Equal(0, repeated.RolledBack);
+        Assert.Equal(1, repeated.Requeued);
+        Assert.Equal(anchor, Line());
+        Assert.Null(IntegrationGateJournal.Read(folder));
+        Assert.Equal(0, BuildRecovery(Build(gateDies: false)).RunOnce().Branches);
+    }
+
+    [Fact]
+    public async Task FailedRemoteRefresh_RetainsJournalAndRefusesNewMerge()
+    {
+        var stack = Build(gateDies: false, gateRed: true);
+        var folder = SeedDelivery(stack, "fetch-failed");
+        stack.Runner.AfterGateReceiptForTesting = () => throw new IOException("termination after receipt");
+        await stack.Runner.RunAsync(Project, "fetch-failed", folder, _repo, "develop", CancellationToken.None);
+        var rejected = Line();
+        Git(_repo, "remote", "set-url", "origin", Path.Combine(_root, "absent.git"));
+        var restarted = Build(gateDies: false);
+        var recovery = BuildRecovery(restarted).RunOnce();
+        Assert.Equal(1, recovery.Escalated);
+        Assert.NotNull(IntegrationGateJournal.Read(folder));
+        var next = SeedDelivery(restarted, "fetch-refused");
+        var refused = await restarted.Runner.RunAsync(Project, "fetch-refused", next, _repo,
+            "develop", CancellationToken.None);
+        Assert.False(refused.Outcome.IsSuccessfulIntegration());
+        Assert.Null(IntegrationGateJournal.Read(next));
+        Assert.Equal(rejected, Line());
+        Assert.NotNull(IntegrationGateJournal.Read(folder));
+    }
+
+    [Fact]
+    public async Task LostRecoveryFence_RetainsJournalWithoutMovingTheBranch()
+    {
+        var stack = Build(gateDies: true);
+        var folder = SeedDelivery(stack, "lost-fence");
+        await stack.Runner.RunAsync(Project, "lost-fence", folder, _repo, "develop", CancellationToken.None);
+        var rejected = Line();
+        var restarted = Build(gateDies: false);
+        using var lease = await new RefMutationLeaseService(Path.Combine(_root, "leases"))
+            .AcquireAsync(Project, _repo, "develop", CancellationToken.None);
+        lease.Dispose();
+        Assert.Throws<IOException>(() => BuildRecovery(restarted)
+            .ReconcileBeforeMerge(_repo, "develop", lease, CancellationToken.None));
+        Assert.Equal(rejected, Line());
+        Assert.NotNull(IntegrationGateJournal.Read(folder));
+    }
+
+    [Fact]
+    public async Task ResetLocallyButRejectedMergeOnOrigin_RetainsCustodyForRepair()
+    {
+        var stack = Build(gateDies: false, gateRed: true);
+        var folder = SeedDelivery(stack, "published-after-reset");
+        var anchor = Head("develop");
+        string? rejected = null;
+        stack.Runner.AfterGateReceiptForTesting = () => rejected = Line();
+        stack.Runner.AfterGateRollbackForTesting = () => throw new IOException("termination after reset");
+        await stack.Runner.RunAsync(Project, "published-after-reset", folder, _repo, "develop", CancellationToken.None);
+        Assert.Equal(anchor, Line());
+        Assert.NotNull(rejected);
+        Git(_repo, "push", "-q", "origin", rejected + ":refs/heads/develop");
+        var recovery = BuildRecovery(Build(gateDies: false)).RunOnce();
+        Assert.Equal(1, recovery.Escalated);
+        Assert.Equal(0, recovery.RolledBack);
+        Assert.Equal(anchor, Line());
+        Assert.Equal(rejected, Head("origin/develop"));
+        Assert.Equal(IntegrationGatePhase.RollbackRequired, IntegrationGateJournal.Read(folder)?.Phase);
+    }
+
     // ---- helpers ------------------------------------------------------------
 
     private TaskIntegrationStatus Status(Stack stack, string id)
@@ -337,7 +541,7 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
     /// <summary>The integration line: the Studio lane the merges and rollbacks move (AGT-2996).</summary>
     private string Line() => Head(GitService.IntegrationLaneRef("develop"));
 
-    private Stack Build(bool gateDies)
+    private Stack Build(bool gateDies, bool gateRed = false, bool recoverOnAdmission = true)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -362,13 +566,17 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
         var integration = new TaskIntegrationStatusService(
             git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance);
         var worktrees = new IntegrationWorktreeProvider(git);
+        var leases = new RefMutationLeaseService(Path.Combine(_root, "leases"));
+        var recovery = new InterruptedIntegrationGateRecoveryService(scanner, git, worktrees,
+            pipeline, timeline, NullLogger<InterruptedIntegrationGateRecoveryService>.Instance, leases);
         var runner = new MergeIntoDevelopRunner(
             git,
             pipeline,
             NullLogger<MergeIntoDevelopRunner>.Instance,
             projectSettings: settings,
-            preDevelopBuildGate: new PreDevelopBuildGate(new DyingBuildTestGateRunner(gateDies)),
-            integrationWorktrees: worktrees);
+            preDevelopBuildGate: new PreDevelopBuildGate(new DyingBuildTestGateRunner(gateDies, gateRed)),
+            integrationWorktrees: worktrees, refMutationLeases: leases,
+            interruptedGateRecovery: recoverOnAdmission ? recovery : null);
         return new Stack(scanner, git, settings, pipeline, timeline, integration, worktrees, runner);
     }
 
@@ -376,14 +584,15 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
     /// What a restarted process has: the same durable files and the same branch,
     /// and none of the in-memory state of the run that died.
     /// </summary>
-    private static InterruptedIntegrationGateRecoveryService BuildRecovery(Stack stack)
+    private InterruptedIntegrationGateRecoveryService BuildRecovery(Stack stack)
         => new(
             stack.Scanner,
             stack.Git,
             stack.Worktrees,
             stack.Pipeline,
             stack.Timeline,
-            NullLogger<InterruptedIntegrationGateRecoveryService>.Instance);
+            NullLogger<InterruptedIntegrationGateRecoveryService>.Instance,
+            new RefMutationLeaseService(Path.Combine(_root, "leases")));
 
     private static object CommitRecord(string sha) => new
     {
@@ -406,7 +615,8 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
     {
         private readonly bool _dies;
 
-        public DyingBuildTestGateRunner(bool dies) => _dies = dies;
+        private readonly bool _red;
+        public DyingBuildTestGateRunner(bool dies, bool red) { _dies = dies; _red = red; }
 
         public Task<BuildTestGateResult> RunAsync(
             BuildTestGateRequest request,
@@ -418,7 +628,7 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
         {
             if (_dies) throw new IOException("the gate host disappeared mid-run");
             return Task.FromResult(new BuildTestGateResult(
-                BuildTestGateVerdict.Ok, 0, 10, string.Empty, "build ok", true, false)
+                _red ? BuildTestGateVerdict.Fail : BuildTestGateVerdict.Ok, _red ? 1 : 0, 10, string.Empty, "build result", true, false)
             {
                 ExpectedSha = request.ExpectedSha,
                 TestedSha = request.ExpectedSha,
@@ -461,5 +671,71 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
     {
         try { Directory.Delete(_root, recursive: true); }
         catch (Exception ex) { SilentCatch.Note(ex, "Interrupted gate test cleanup is best-effort."); }
+    }
+}
+
+/// <summary>Deterministic journal persistence checks without Git or process boundaries.</summary>
+public sealed class IntegrationGateRollbackJournalTests : IDisposable
+{
+    private readonly string _folder = Path.Combine(Path.GetTempPath(), "rollback-journal-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public void RollbackRequiredCannotBeClearedUntilCompletionIsRecorded()
+    {
+        var entry = Entry("owner");
+        IntegrationGateJournal.Open(_folder, entry);
+        IntegrationGateJournal.RequireRollbackOwned(_folder, entry.Owner);
+        IntegrationGateJournal.ClearOwned(_folder, entry.Owner);
+        IntegrationGateJournal.Clear(_folder);
+        Assert.Equal(IntegrationGatePhase.RollbackRequired, IntegrationGateJournal.Read(_folder)?.Phase);
+        Assert.Equal(entry.PreMergeTip, IntegrationGateJournal.Read(_folder)?.PreMergeTip);
+        IntegrationGateJournal.CompleteRollbackOwned(_folder, entry.Owner);
+        Assert.Equal(IntegrationGatePhase.RollbackCompleted, IntegrationGateJournal.Read(_folder)?.Phase);
+        IntegrationGateJournal.ClearOwned(_folder, entry.Owner);
+        Assert.Null(IntegrationGateJournal.Read(_folder));
+    }
+
+    [Fact]
+    public void OldInvocationCannotChangeOrClearNewerCustody()
+    {
+        IntegrationGateJournal.Open(_folder, Entry("newer"));
+        IntegrationGateJournal.RequireRollbackOwned(_folder, "old");
+        IntegrationGateJournal.CompleteRollbackOwned(_folder, "old");
+        IntegrationGateJournal.ClearOwned(_folder, "old");
+        var surviving = IntegrationGateJournal.Read(_folder);
+        Assert.Equal("newer", surviving?.Owner);
+        Assert.Equal(IntegrationGatePhase.GateRunning, surviving?.Phase);
+        Assert.Equal(Entry("newer").PreMergeTip, surviving?.PreMergeTip);
+    }
+
+    [Fact]
+    public void LegacyJournalWithoutPhaseRemainsRecoverable()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(IntegrationGateJournal.PathFor(_folder))!);
+        File.WriteAllText(IntegrationGateJournal.PathFor(_folder),
+            JsonSerializer.Serialize(new { repoRoot = _folder, preMergeTip = new string('a', 40) }));
+        Assert.Equal(IntegrationGatePhase.GateRunning, IntegrationGateJournal.Read(_folder)?.Phase);
+        IntegrationGateJournal.RequireRollbackOwned(_folder, null);
+        IntegrationGateJournal.CompleteRollbackOwned(_folder, null);
+        Assert.Equal(IntegrationGatePhase.RollbackCompleted, IntegrationGateJournal.Read(_folder)?.Phase);
+    }
+
+    [Fact]
+    public void FailedCustodyWriteIsReportedBeforeIntegrationCanProceed()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path.Combine(_folder, "post-steps"), "occupied");
+        Assert.Throws<IOException>(() => IntegrationGateJournal.Open(_folder, Entry("owner")));
+    }
+
+    private IntegrationGateJournalEntry Entry(string owner) => new()
+    {
+        RepoRoot = _folder, Owner = owner, PreMergeTip = new string('a', 40),
+        GatedSha = new string('b', 40), StartedAt = DateTimeOffset.UnixEpoch,
+    };
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_folder)) Directory.Delete(_folder, recursive: true);
     }
 }
