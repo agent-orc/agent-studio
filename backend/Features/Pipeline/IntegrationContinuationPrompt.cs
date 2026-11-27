@@ -49,10 +49,10 @@ public static class IntegrationContinuationPrompt
                 $"{item.Stage}: {item.Outcome}, {item.ConflictedFileCount} conflicted files"
                 + (item.StoppedCommitSha is null ? "" : $", stopped at {item.StoppedCommitSha}")))
             : stage;
-        var files = conflict?.ConflictedFiles.Count > 0
-            ? string.Join(", ", conflict.ConflictedFiles)
-            : conflictedFiles?.Count > 0
-                ? string.Join(", ", conflictedFiles)
+        var files = conflictedFiles?.Count > 0
+            ? string.Join(", ", conflictedFiles)
+            : conflict?.ConflictedFiles.Count > 0
+                ? string.Join(", ", conflict.ConflictedFiles)
             : "none recorded";
         var isReview = stage.Contains("review", StringComparison.OrdinalIgnoreCase)
             || stage.Contains("quality", StringComparison.OrdinalIgnoreCase);
@@ -64,6 +64,7 @@ public static class IntegrationContinuationPrompt
               + "Then publish the corrected delivery. "
             : isConflict && runnerMergesIntegration
                 ? "Continue on the existing delivery branch. Do not merge develop yourself; the runner merges current develop at the start of the round. "
+                  + "Resolve the conflicts and keep both sides, including the changes on the integration branch. "
                   + "Retain a one-to-one delivery commit mapping: do not squash, split, drop, or combine delivery commits. "
                   + VerificationScope + "Then publish a new delivery. "
             : isConflict
@@ -89,7 +90,9 @@ public static class IntegrationContinuationPrompt
             + (string.IsNullOrWhiteSpace(gateEvidence) ? ""
                 : gateEvidence.Contains('\n') ? $"Failed gate output:\n{gateEvidence.TrimEnd()}\n"
                 : $"Failed gate output: {gateEvidence}.\n")
-            + "Preserve the card's model, CLI, and reasoning pins. "
+            + (runnerMergesIntegration
+                ? "Use the delivery run's CLI and model with medium reasoning. "
+                : "Preserve the card's model, CLI, and reasoning pins. ")
             + (string.IsNullOrWhiteSpace(gateEvidence) && stage != PipelineCatalogue.BuildTestGateStepId
                 ? "" : RerunFailingCommandFirst)
             + taskDirection
