@@ -474,7 +474,15 @@ public sealed class SummaryGenerationService
     private string BuildPrompt(
         TaskInfo info, string rawLog, string outcome, SummaryEvidenceBundle evidence, SummaryStepSelection selection)
     {
-        var slots = BuildSummarySlots(info, "", outcome, evidence);
+        var slots = BuildSummarySlots(info, "", outcome);
+        // Budget evidence against the template and metadata before reserving
+        // any room for the log. Leave at least half the available space for it.
+        slots["evidence"] = "";
+        var templateBytes = Encoding.UTF8.GetByteCount(
+            _prompts.RenderUnrecorded(RuntimePromptService.SummaryProtocol, slots));
+        var evidenceBudget = Math.Min(SummaryEvidenceAssembler.MaxPromptEvidenceBytes,
+            Math.Max(0, (OrchestratorPromptBoundary.MaxPromptBytes - templateBytes - PromptHeadroomBytes) / 2));
+        slots["evidence"] = SummaryEvidenceAssembler.ToPromptJson(evidence, evidenceBudget);
         var fixedBytes = Encoding.UTF8.GetByteCount(
             _prompts.RenderUnrecorded(RuntimePromptService.SummaryProtocol, slots));
         var excerpt = SummaryPromptFit.Fit(
@@ -485,6 +493,10 @@ public sealed class SummaryGenerationService
             new PromptCallContext(info.ProjectName, PipelineCatalogue.SummaryAssessmentStepId, selection.Model));
         var promptBytes = Encoding.UTF8.GetByteCount(prompt);
         _promptBytes[info.TaskKey] = promptBytes;
+        if (promptBytes > OrchestratorPromptBoundary.MaxPromptBytes)
+            _logger.LogWarning(
+                "Summary essential evidence exceeds prompt limit taskKey={TaskKey} promptBytes={PromptBytes}; boundary refusal and fallback remain active",
+                info.TaskKey, promptBytes);
         if (excerpt.Shortened)
         {
             _logger.LogInformation(
