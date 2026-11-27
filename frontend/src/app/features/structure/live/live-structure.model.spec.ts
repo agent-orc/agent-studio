@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { canvasFacts, canvasGaps, containerScale, levelOf, nodeFacts, sourceGap } from './live-structure.facts';
-import { liveSourcesFixture, liveStructureFixture } from './live-structure.fixtures';
+import { liveSourcesFixture, liveStructureFixture, projectedCapacityFixture } from './live-structure.fixtures';
 import { layoutLiveScene } from './live-structure.layout';
 import { NOT_OBSERVED, buildLiveScene, descendants, subtreeWarnings, type LiveNode, type LiveRect } from './live-structure.model';
 import { NO_SOURCES } from './live-structure.sources';
@@ -34,7 +34,7 @@ describe('live structure scene (AGT-4024)', () => {
     expect(s.outside.map(item => item.id)).toContain('backup-target');
   });
 
-  it('derives every warning from a reported fact, and totals equal the sum of the nodes', () => {
+  it('derives warnings from reported facts and totals from execution capacity', () => {
     const s = scene();
     expect(node('machine:review-3', s).warnings.map(w => w.title)).toEqual(['Missing toolchain:playwright', 'AGT-10 refused']);
     expect(node('machine:studio-server#storage', s).warnings.map(w => w.title))
@@ -98,6 +98,60 @@ describe('live structure scene (AGT-4024)', () => {
     expect(fact('machine:home-lab', 'status')?.why).toBe('A host inside names this machine; nothing reports from the machine itself.');
     expect(sourceGap(node('external:cdn', s)).short).toBe('outside, not probed');
     expect(sourceGap(node('component:review-1:review-1-runner', s)).short).toBe('reported by name only');
+  });
+});
+
+describe('live structure unique execution capacity (AGT-4203)', () => {
+  const projected = () => buildLiveScene(projectedCapacityFixture, NO_SOURCES);
+
+  it('counts one runner once when both the host and its process report 2 of 4 slots', () => {
+    const data = { ...projectedCapacityFixture, nodes: projectedCapacityFixture.nodes.filter(item =>
+      item.id === 'installation' || item.facts?.hostId === 'coding-host') };
+    const s = buildLiveScene(data, NO_SOURCES);
+    expect(s.totals).toMatchObject({ busySlots: 2, totalSlots: 4, reporting: 1 });
+    for (const id of ['machine:coding-host', 'component:coding-host:coding-runner']) {
+      expect(node(id, s).slots).toEqual({ busy: 2, total: 4, cards: ['AGT-1', 'AGT-2'] });
+      expect(nodeFacts(node(id, s), s).find(fact => fact.key === 'slots')?.values[0]).toBe('2 of 4 in use');
+    }
+  });
+
+  it('counts both roles once and one reporting identity on their shared host', () => {
+    const s = projected();
+    const processes = s.order.filter(item => item.source?.kind === 'process');
+    expect(processes.map(item => item.source?.unitId).sort()).toEqual(['coding-runner', 'shared-coding', 'shared-review']);
+    expect(new Set(processes.map(item => item.source?.unitId)).size).toBe(3);
+    expect(s.totals).toMatchObject({ busySlots: 5, totalSlots: 10, reporting: 2 });
+    expect(s.totals.busySlots).toBe(processes.reduce((sum, item) => sum + item.slots!.busy, 0));
+    expect(s.totals.totalSlots).toBe(processes.reduce((sum, item) => sum + item.slots!.total!, 0));
+    expect(node('machine:shared-host', s).slots).toEqual({ busy: 3, total: 6, cards: ['AGT-3', 'AGT-4', 'AGT-5'] });
+    expect(node('component:shared-host:shared-coding', s).slots?.total).toBe(4);
+    expect(node('component:shared-host:shared-review', s).slots?.total).toBe(2);
+    const rootFacts = nodeFacts(s.boundary, s);
+    expect(rootFacts.find(fact => fact.key === 'slots')?.values[0]).toBe('5 of 10');
+    expect(rootFacts.find(fact => fact.key === 'reporting')?.values[0]).toBe('2');
+  });
+
+  it('keeps capacity from a different reporting host nested below an aggregate', () => {
+    const data = { ...projectedCapacityFixture, nodes: projectedCapacityFixture.nodes.map(item =>
+      item.id === 'machine:shared-host' ? { ...item, parentId: 'machine:coding-host' } : item).reverse() };
+    expect(buildLiveScene(data, NO_SOURCES).totals).toMatchObject({ busySlots: 5, totalSlots: 10, reporting: 2 });
+  });
+
+  it('uses host identity even when a declared process is placed outside its host aggregate', () => {
+    const data = { ...projectedCapacityFixture, nodes: projectedCapacityFixture.nodes.map(item =>
+      item.unitId === 'shared-review' ? { ...item, parentId: 'installation', provenance: 'declared' as const } : item) };
+    expect(buildLiveScene(data, NO_SOURCES).totals).toMatchObject({ busySlots: 5, totalSlots: 10, reporting: 2 });
+  });
+
+  it('uses process capacity when no host aggregate is available', () => {
+    const data = { ...projectedCapacityFixture, nodes: projectedCapacityFixture.nodes.filter(item => !item.id.startsWith('machine:')) };
+    expect(buildLiveScene(data, NO_SOURCES).totals).toMatchObject({ busySlots: 5, totalSlots: 10, reporting: 2 });
+  });
+
+  it('counts only distinct host identities with an Up report', () => {
+    const data = { ...projectedCapacityFixture, nodes: projectedCapacityFixture.nodes.map(item =>
+      item.facts?.hostId === 'shared-host' ? { ...item, observation: { difference: 'stale' as const, health: 'stale' } } : item) };
+    expect(buildLiveScene(data, NO_SOURCES).totals.reporting).toBe(1);
   });
 });
 
