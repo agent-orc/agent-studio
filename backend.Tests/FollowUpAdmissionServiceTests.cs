@@ -288,6 +288,263 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task PickupOverlappingSave_ReturnsReservedBytes_AndKeepsNewerSaveQueued()
+    {
+        const string slug = "pickup-save-race";
+        WriteJob(slug, TaskStates.Ready);
+        var harness = Build();
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+        Save("intent A");
+        using var read = new ManualResetEventSlim();
+        using var resume = new ManualResetEventSlim();
+        harness.Mutations.PendingIntentCheckpoint = stage =>
+        {
+            if (stage != "reservation-read") return;
+            read.Set();
+            Assert.True(resume.Wait(TimeSpan.FromSeconds(30)), "pickup was not released");
+        };
+
+        var pickup = Task.Run(() => harness.Mutations.ReadAndStashPendingIntent(folder));
+        Task<PendingIntent?>? save = null;
+        try
+        {
+            Assert.True(read.Wait(TimeSpan.FromSeconds(30)), "pickup did not reach its read barrier");
+            using var saveStarted = new ManualResetEventSlim();
+            save = Task.Run(() =>
+            {
+                saveStarted.Set();
+                return Save("intent B");
+            });
+            Assert.True(saveStarted.Wait(TimeSpan.FromSeconds(30)));
+            // Replay the historical read-A/save-B/rename schedule if pickup
+            // does not hold the task gate. With the fix, B waits for release.
+            if (Monitor.TryEnter(TaskJsonFile.SyncRoot(folder)))
+            {
+                Monitor.Exit(TaskJsonFile.SyncRoot(folder));
+                Assert.NotNull(await save.WaitAsync(TimeSpan.FromSeconds(30)));
+            }
+        }
+        finally
+        {
+            resume.Set();
+            await pickup.WaitAsync(TimeSpan.FromSeconds(30));
+            if (save is not null) await save.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
+        var returned = await pickup;
+        Assert.Equal("intent A", returned!.Prompt);
+        Assert.Equal(returned, harness.Mutations.ReadStashedPendingIntent(folder));
+        Assert.Equal("intent B", ReadIntent(folder)!.Prompt);
+
+        PendingIntent? Save(string prompt) => harness.Mutations.SavePendingIntent(
+            slug, ContinueModes.Continue, prompt, "race", null, _watchPath);
+    }
+
+    [Fact]
+    public async Task AcknowledgementOverlappingReservation_CannotDeleteNewerStash()
+    {
+        const string slug = "ack-reserve-race";
+        WriteJob(slug, TaskStates.Ready);
+        var harness = Build();
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+        Save("intent A");
+        Assert.NotNull(harness.Mutations.ReadAndStashPendingIntent(folder));
+        Save("intent B");
+        using var read = new ManualResetEventSlim();
+        using var resume = new ManualResetEventSlim();
+        harness.Mutations.PendingIntentCheckpoint = stage =>
+        {
+            if (stage != "acknowledgement-read") return;
+            read.Set();
+            Assert.True(resume.Wait(TimeSpan.FromSeconds(30)), "acknowledgement was not released");
+        };
+        var acknowledgement = Task.Run(() => harness.Mutations.AcknowledgeStashedPendingIntent(
+            folder, AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute("intent A"), "run-A"));
+        Task<PendingIntent?>? reservation = null;
+        try
+        {
+            Assert.True(read.Wait(TimeSpan.FromSeconds(30)), "acknowledgement did not reach its read barrier");
+            using var reservationStarted = new ManualResetEventSlim();
+            reservation = Task.Run(() =>
+            {
+                reservationStarted.Set();
+                return harness.Mutations.ReadAndStashPendingIntent(folder);
+            });
+            Assert.True(reservationStarted.Wait(TimeSpan.FromSeconds(30)));
+            if (Monitor.TryEnter(TaskJsonFile.SyncRoot(folder)))
+            {
+                Monitor.Exit(TaskJsonFile.SyncRoot(folder));
+                await reservation.WaitAsync(TimeSpan.FromSeconds(30));
+            }
+        }
+        finally
+        {
+            resume.Set();
+            await acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
+            if (reservation is not null) await reservation.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
+        Assert.Equal(PendingIntentAcknowledgeResult.Consumed, await acknowledgement);
+        Assert.Equal("intent B", (await reservation!)!.Prompt);
+        Assert.Equal(await reservation!, harness.Mutations.ReadStashedPendingIntent(folder));
+
+        void Save(string prompt) => Assert.NotNull(harness.Mutations.SavePendingIntent(
+            slug, ContinueModes.Continue, prompt, "race", null, _watchPath));
+    }
+
+    [Fact]
+    public void NewPickup_PreservesUnresolvedReservation_AndLatestQueuedSave()
+    {
+        const string slug = "reservation-owner";
+        WriteJob(slug, TaskStates.Ready);
+        var harness = Build();
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+        Save("intent A");
+        var first = harness.Mutations.ReadAndStashPendingIntent(folder);
+        Save("intent B");
+        Save("intent C");
+
+        Assert.Null(harness.Mutations.ReadAndStashPendingIntent(folder));
+        Assert.Equal(first, harness.Mutations.ReadStashedPendingIntent(folder));
+        Assert.Equal("intent C", ReadIntent(folder)!.Prompt);
+
+        harness.Mutations.RollbackStashedPendingIntent(folder);
+        Assert.Null(harness.Mutations.ReadStashedPendingIntent(folder));
+        Assert.Equal("intent C", ReadIntent(folder)!.Prompt);
+
+        void Save(string prompt) => Assert.NotNull(harness.Mutations.SavePendingIntent(
+            slug, ContinueModes.Continue, prompt, "latest-wins", null, _watchPath));
+    }
+
+    [Theory]
+    [InlineData("remote-worker-start-heartbeat")]
+    [InlineData("startup-reconciliation")]
+    public void OldAcknowledgement_WithIdenticalPrompt_CannotConsumeNewReservation(string source)
+    {
+        const string slug = "ack-replay";
+        const string prompt = "Repeat the requested check.";
+        WriteJob(slug, TaskStates.Ready);
+        var harness = Build();
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+        var hash = AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(prompt);
+        Save();
+        Assert.NotNull(harness.Mutations.ReadAndStashPendingIntent(folder));
+        Assert.Equal(PendingIntentAcknowledgeResult.Consumed,
+            harness.Mutations.AcknowledgeStashedPendingIntent(folder, hash, "old-run", source: source));
+        Save();
+        var newer = harness.Mutations.ReadAndStashPendingIntent(folder);
+
+        Assert.Equal(PendingIntentAcknowledgeResult.AlreadyResolved,
+            harness.Mutations.AcknowledgeStashedPendingIntent(folder, hash, "old-run", source: source));
+        Assert.Equal(newer, harness.Mutations.ReadStashedPendingIntent(folder));
+        Assert.Equal(PendingIntentAcknowledgeResult.Consumed,
+            harness.Mutations.AcknowledgeStashedPendingIntent(folder, hash, "new-run", source: source));
+        Assert.Equal(2, harness.Timeline.ReadAll(folder).Count(row => row.Kind == TimelineEventKinds.FollowUpConsumed));
+
+        void Save() => Assert.NotNull(harness.Mutations.SavePendingIntent(
+            slug, ContinueModes.Continue, prompt, "replay", null, _watchPath));
+    }
+
+    [Fact]
+    public void AcknowledgementRetry_AfterReceiptBeforeDelete_RemovesOnlyItsRecordedIntent()
+    {
+        const string slug = "receipt-before-delete";
+        const string prompt = "Deliver exactly once.";
+        WriteJob(slug, TaskStates.Ready);
+        var harness = Build();
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+        Assert.NotNull(harness.Mutations.SavePendingIntent(
+            slug, ContinueModes.Continue, prompt, "retry", null, _watchPath));
+        Assert.NotNull(harness.Mutations.ReadAndStashPendingIntent(folder));
+        using var reserved = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "pending-intent.consumed.json")));
+        var intentId = reserved.RootElement.GetProperty("intentId").GetString();
+        harness.Mutations.PendingIntentCheckpoint = stage =>
+        {
+            if (stage == "acknowledgement-receipt") throw new IOException("Interrupted before stash deletion.");
+        };
+        var hash = AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(prompt);
+        Assert.Equal(PendingIntentAcknowledgeResult.InvalidStash,
+            harness.Mutations.AcknowledgeStashedPendingIntent(folder, hash, "run-1"));
+        Assert.NotNull(harness.Mutations.ReadStashedPendingIntent(folder));
+        var receipt = Assert.Single(harness.Timeline.ReadAll(folder), row => row.Kind == TimelineEventKinds.FollowUpConsumed);
+        Assert.False(string.IsNullOrWhiteSpace(intentId));
+        Assert.Equal(intentId, receipt.Details!["intentId"]);
+
+        harness.Mutations.PendingIntentCheckpoint = null;
+        Assert.Equal(PendingIntentAcknowledgeResult.AlreadyResolved,
+            harness.Mutations.AcknowledgeStashedPendingIntent(folder, hash, "run-1"));
+        Assert.Null(harness.Mutations.ReadStashedPendingIntent(folder));
+        Assert.Single(harness.Timeline.ReadAll(folder), row => row.Kind == TimelineEventKinds.FollowUpConsumed);
+    }
+
+    [Theory]
+    [InlineData("local-process-start")]
+    [InlineData("startup-reconciliation")]
+    public void LocalContinuations_CanReuseSessionId_WithIdenticalPrompt(string secondSource)
+    {
+        const string slug = "reused-local-session";
+        const string prompt = "Repeat the requested check.";
+        WriteJob(slug, TaskStates.Ready);
+        var harness = Build();
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+        for (var round = 0; round < 2; round++)
+        {
+            Assert.NotNull(harness.Mutations.SavePendingIntent(
+                slug, ContinueModes.Continue, prompt, "local-continue", null, _watchPath));
+            Assert.NotNull(harness.Mutations.ReadAndStashPendingIntent(folder));
+            Assert.Equal(PendingIntentAcknowledgeResult.Consumed,
+                harness.Mutations.AcknowledgeStashedPendingIntent(
+                    folder, AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(prompt),
+                    "shared-session", source: round == 0 ? "local-process-start" : secondSource));
+        }
+        Assert.Equal(2, harness.Timeline.ReadAll(folder).Count(row => row.Kind == TimelineEventKinds.FollowUpConsumed));
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("{broken")]
+    public void InvalidReservation_IsRestoredWithoutLosingQueuedBytes(string raw)
+    {
+        const string slug = "invalid-reservation";
+        WriteJob(slug, TaskStates.Ready);
+        var harness = Build();
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+        var canonical = Path.Combine(folder, "pending-intent.json");
+        File.WriteAllText(canonical, raw);
+
+        Assert.Null(harness.Mutations.ReadAndStashPendingIntent(folder));
+        Assert.Equal(raw, File.ReadAllText(canonical));
+        Assert.False(File.Exists(Path.Combine(folder, "pending-intent.consumed.json")));
+    }
+
+    [Fact]
+    public void FailedAtomicSave_PreservesPreviouslyQueuedIntent()
+    {
+        const string slug = "failed-save";
+        WriteJob(slug, TaskStates.Ready);
+        var writer = new FailingPendingIntentWriter();
+        var harness = Build(fileWriter: writer);
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+        Assert.NotNull(harness.Mutations.SavePendingIntent(
+            slug, ContinueModes.Continue, "intent A", "save", null, _watchPath));
+        writer.Fail = true;
+
+        Assert.Null(harness.Mutations.SavePendingIntent(
+            slug, ContinueModes.Continue, "intent B", "save", null, _watchPath));
+        Assert.Equal("intent A", ReadIntent(folder)!.Prompt);
+    }
+
+    private sealed class FailingPendingIntentWriter : IAtomicJsonFileWriter
+    {
+        public bool Fail { get; set; }
+        public void Write(string path, string content)
+        {
+            if (Fail) throw new IOException("Injected pending-intent publication failure.");
+            new AtomicJsonFileWriter().ReplaceExisting(path, content);
+        }
+    }
+
+    [Fact]
     public async Task EnteringTerminalLane_SupersedesQueuedFollowUpIntoHistory()
     {
         const string slug = "completed-with-follow-up";
@@ -800,7 +1057,7 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         TimelineLog Timeline,
         AttemptAuthorityService Authority);
 
-    private Harness Build(int supersedeFailuresBeforeSuccess = 0)
+    private Harness Build(int supersedeFailuresBeforeSuccess = 0, IAtomicJsonFileWriter? fileWriter = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -839,7 +1096,7 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
                 projects,
                 notifier,
                 NullLogger<TaskMutationService>.Instance,
-                timeline);
+                timeline, fileWriter: fileWriter);
         var claude = GenericCliExecutionService.ForClaude(NullLogger<GenericCliExecutionService>.Instance, config);
         // These cases stop at the occupied runner slot, without executing a CLI.
         // Give the availability probe a version-capable, credential-free binary.
