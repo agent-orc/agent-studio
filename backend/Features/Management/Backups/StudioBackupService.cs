@@ -531,6 +531,22 @@ public sealed class StudioBackupService
             OwnerOnlyAccess.CreateDirectory(catalog.StagingDirectory);
             var result = BackupRestore.Restore(archive, key,
                 new BackupRestorePlan(new Dictionary<string, string>(), CloneCheckouts: false, EverySourceUnder: staging));
+            foreach (var required in options.Sources.Where(source => !source.Optional))
+                if (!result.Manifest.Sources.Any(source => source.Name == required.Name && source.Present))
+                    throw new BackupException("backup-restore-incomplete",
+                        $"Required source {required.Name} is absent from the archive manifest.");
+            foreach (var source in result.Manifest.Sources.Where(source => source.Present))
+            {
+                var root = Path.Combine(staging, source.Name);
+                if (!Directory.Exists(root))
+                    throw new BackupException("backup-restore-incomplete",
+                        $"Declared source {source.Name} was not restored from the archive.");
+                if (source.Name != "operations") continue;
+                foreach (var relative in BackupCollector.OperationsRequired)
+                    if (!File.Exists(Path.Combine(root, relative)))
+                        throw new BackupException("backup-restore-incomplete",
+                            $"Required Operations member operations/{relative} was not restored from the archive.");
+            }
             var expected = result.Contents.Files.Count(file => !file.Path.StartsWith(BackupArchive.BundlePrefix, StringComparison.Ordinal));
             if (result.FilesRestored != expected)
                 throw new BackupException("backup-restore-incomplete", $"Restored {result.FilesRestored} of {expected} files.");

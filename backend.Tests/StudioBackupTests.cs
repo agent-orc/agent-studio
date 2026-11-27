@@ -167,6 +167,143 @@ public sealed class StudioBackupTests : IDisposable
         Assert.Equal("history", command.ExecuteScalar());
     }
 
+    [Theory]
+    [InlineData("home", false)]
+    [InlineData("home", true)]
+    [InlineData("operations", false)]
+    [InlineData("operations", true)]
+    public async Task A_required_source_lost_after_the_manifest_refuses_publication_and_retention(string source, bool replacedByFile)
+    {
+        var later = source == "home" ? _fixture.Home : Path.Combine(_fixture.Root, "operations");
+        var configuration = new ConfigurationBuilder().AddConfiguration(_fixture.Configuration(retention: 1));
+        if (source == "operations")
+        {
+            foreach (var relative in new[] { "principals/principals.json", "agent-secret/token", "client-secret/token" })
+            {
+                var path = Path.Combine(later, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, "authority");
+            }
+            Directory.CreateDirectory(Path.Combine(later, "data"));
+            using var database = OpenDatabase(Path.Combine(later, "data/operations.db"));
+            Execute(database, "CREATE TABLE authority (value TEXT);");
+            configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Backup:Sources:operations:Path"] = later });
+        }
+        var service = new StudioBackupService(configuration.Build(), new BackupWritePause(), _clock, targets: _ => null);
+        var previous = await service.CreateAsync("test", CancellationToken.None);
+        var checksum = File.ReadAllText(_fixture.Catalog.ChecksumPath(previous.Id));
+        var retentionAt = _fixture.Catalog.ReadState().LastRetentionAt;
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        var removed = false;
+        service.AfterCapture = path =>
+        {
+            if (removed || !BackupCollector.Inside(path, _fixture.Workspace)) return;
+            removed = true;
+            Directory.Delete(later, recursive: true);
+            if (replacedByFile) File.WriteAllText(later, "mount unavailable");
+        };
+
+        var failure = await Assert.ThrowsAsync<BackupException>(() => service.CreateAsync("test", CancellationToken.None));
+
+        Assert.True(removed);
+        Assert.Equal("backup-source-missing", failure.Code);
+        Assert.Equal(previous.Id, Assert.Single(service.List()).Id);
+        Assert.Equal(checksum, File.ReadAllText(_fixture.Catalog.ChecksumPath(previous.Id)));
+        Assert.Equal("failed", _fixture.Catalog.ReadState().LastRun?.Outcome);
+        Assert.Equal(retentionAt, _fixture.Catalog.ReadState().LastRetentionAt);
+        Assert.Empty(Directory.EnumerateFiles(_fixture.BackupDirectory, "*.partial"));
+        Assert.False(Directory.Exists(_fixture.Catalog.StagingDirectory));
+        Assert.Equal("verified", (await service.VerifyAsync(previous.Id, "test", CancellationToken.None)).Outcome);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task An_optional_source_absent_from_the_manifest_is_omitted_and_verifies(bool appearsDuringCapture)
+    {
+        var optional = Path.Combine(_fixture.Root, "quality", "data");
+        var service = _fixture.Service(_clock, null);
+        service.AfterCapture = _ =>
+        {
+            if (!appearsDuringCapture) return;
+            Directory.CreateDirectory(optional);
+            File.WriteAllText(Path.Combine(optional, "late.json"), "{}");
+        };
+
+        var record = await service.CreateAsync("test", CancellationToken.None);
+        using (var archive = File.OpenRead(_fixture.Catalog.ArchivePath(record.Id)))
+        {
+            var (manifest, contents) = BackupArchive.Read(archive, BackupKey.Load(_fixture.KeyFile), null, null, null);
+            Assert.False(Assert.Single(manifest.Sources, source => source.Name == "quality-data").Present);
+            Assert.DoesNotContain(contents.Files, file => file.Path.StartsWith("quality-data/", StringComparison.Ordinal));
+        }
+        Assert.Equal("verified", (await service.VerifyAsync(record.Id, "test", CancellationToken.None)).Outcome);
+    }
+
+    [Theory]
+    [InlineData("operations")]
+    [InlineData("operations/empty")]
+    [InlineData("operations/principals/principals.json")]
+    [InlineData("operations/agent-secret/token")]
+    [InlineData("operations/client-secret/token")]
+    [InlineData("operations/data/operations.db")]
+    [InlineData("home")]
+    [InlineData("home-absent")]
+    [InlineData("home-undeclared")]
+    public async Task Restore_verification_checks_source_coverage_beyond_the_archives_own_inventory(string omitted)
+    {
+        var service = _fixture.Service(_clock, null);
+        var previous = await service.CreateAsync("test", CancellationToken.None);
+        var record = Record("studio-backup-incomplete", Start.AddMinutes(1));
+        var key = BackupKey.Load(_fixture.KeyFile);
+        var manifest = new BackupManifest(BackupArchive.Format, record.Id, record.CreatedAt, "test", "test", key.Id, null,
+            [new("workspace", _fixture.Workspace, false, true), new("home", _fixture.Home, false, omitted != "home-absent"),
+             new("projects", _fixture.Projects, true, true), new("operations", Path.Combine(_fixture.Root, "operations"), false, true),
+             new("optional", Path.Combine(_fixture.Root, "absent"), false, false)], [], []);
+        if (omitted == "home-undeclared")
+            manifest = manifest with { Sources = manifest.Sources.Where(source => source.Name != "home").ToArray() };
+        var contents = new List<BackupContentEntry>();
+        var archivePath = _fixture.Catalog.ArchivePath(record.Id);
+        using (var output = File.Create(archivePath))
+        using (var writer = BackupArchive.OpenWriter(BackupCipher.Encrypt(output, key)))
+        {
+            BackupArchive.WriteJson(writer, BackupArchive.ManifestMember, manifest);
+            foreach (var source in manifest.Sources.Where(source => source.Present && source.Name != omitted))
+                BackupArchive.WriteDirectory(writer, source.Name);
+            foreach (var member in new[] { "operations/principals/principals.json", "operations/agent-secret/token",
+                         "operations/client-secret/token", "operations/data/operations.db" })
+            {
+                if (omitted is "operations" or "operations/empty" || member == omitted) continue;
+                var bytes = Encoding.UTF8.GetBytes("authority");
+                using var data = new MemoryStream(bytes);
+                writer.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile, member) { DataStream = data });
+                contents.Add(new(member, bytes.Length, Convert.ToHexStringLower(SHA256.HashData(bytes)), "Stable"));
+            }
+            BackupArchive.WriteJson(writer, BackupArchive.ContentsMember, new BackupContents(contents, record.Consistency));
+        }
+        // The archive and inventory agree, and the external checksum is valid.
+        using (var input = File.OpenRead(archivePath))
+            Assert.Equal(contents.Count, BackupArchive.Read(input, key, null, null, null).Contents.Files.Count);
+        record = record with
+        {
+            Sha256 = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(archivePath))),
+            SizeBytes = new FileInfo(archivePath).Length, FileCount = contents.Count, SourceBytes = contents.Sum(file => file.Size),
+        };
+        _fixture.Catalog.Save(record);
+        _fixture.Catalog.WriteChecksum(record);
+
+        var verification = await service.VerifyAsync(record.Id, "test", CancellationToken.None);
+
+        Assert.Equal("failed", verification.Outcome);
+        Assert.Contains(omitted.StartsWith("home", StringComparison.Ordinal) ? "home" : "operations", verification.Detail, StringComparison.Ordinal);
+        Assert.Equal("failed", _fixture.Catalog.Find(record.Id)?.Verification?.Outcome);
+        Assert.Equal("failed", _fixture.Catalog.ReadState().LastVerification?.Outcome);
+        Assert.Equal(2, service.List().Count);
+        Assert.True(File.Exists(_fixture.Catalog.ArchivePath(previous.Id)));
+        Assert.True(File.Exists(_fixture.Catalog.ChecksumPath(previous.Id)));
+        Assert.Equal("verified", (await service.VerifyAsync(previous.Id, "test", CancellationToken.None)).Outcome);
+    }
+
     [Fact]
     public void Operations_overview_lists_outstanding_recovery_checks()
     {
