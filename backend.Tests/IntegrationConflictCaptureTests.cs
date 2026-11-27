@@ -82,6 +82,68 @@ public sealed class IntegrationConflictCaptureTests : IDisposable
     }
 
     [Fact]
+    public void NetChangeConflictCarriesTargetTipAndAttributionBeforeCleanup()
+    {
+        Directory.CreateDirectory(_root);
+        Git("init", "-q", "-b", "develop");
+        Git("config", "user.name", "Test");
+        Git("config", "user.email", "test@example.invalid");
+        File.WriteAllText(Path.Combine(_root, "shared.cs"), "base\n");
+        Git("add", ".");
+        Git("commit", "-qm", "base");
+        var baseSha = Git("rev-parse", "HEAD");
+        Git("checkout", "-qb", "task/agt-2");
+        File.WriteAllText(Path.Combine(_root, "shared.cs"), "delivery\n");
+        Git("commit", "-qam", "AGT-2: delivery");
+        Git("checkout", "-q", "develop");
+        File.WriteAllText(Path.Combine(_root, "other.cs"), "other\n");
+        Git("add", ".");
+        Git("commit", "-qm", "AGT-3: unrelated");
+        Git("checkout", "-q", "task/agt-2");
+        Git("merge", "--no-ff", "-qm", "merge develop", "develop");
+        var delivery = Git("rev-parse", "HEAD");
+        Git("checkout", "-q", "develop");
+        File.WriteAllText(Path.Combine(_root, "shared.cs"), "target\n");
+        Git("commit", "-qam", "AGT-1: target change");
+        var tip = Git("rev-parse", "HEAD");
+        var config = new ConfigurationBuilder().Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var service = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var ledger = new IntegrationConflictLedger(Path.Combine(_root, ".git", "conflicts"));
+        using var capture = IntegrationConflictCapture.Begin("Project", "AGT-2", "develop", delivery, baseSha, ledger: ledger);
+
+        var result = service.MergeBranchIntoIntegration(_root, "task/agt-2", "develop");
+
+        Assert.Equal(MergeIntoIntegrationOutcome.AgentRoundRequired, result.Outcome);
+        Assert.NotNull(result.ConflictReport);
+        Assert.Equal(tip, result.ConflictReport.IntegrationTipSha);
+        Assert.Equal(delivery, result.ConflictReport.DeliverySha);
+        Assert.Equal("shared.cs", Assert.Single(result.ConflictReport.ConflictedFiles));
+        var file = Assert.Single(Assert.Single(ledger.Read("Project")).Files);
+        Assert.Equal("AGT-1", Assert.Single(file.CardKeys));
+        Assert.Equal(tip, Assert.Single(file.Commits).Sha);
+        var context = service.ConflictChanges(_root, delivery, baseSha, tip, ["shared.cs"], "AGT-2");
+        Assert.Equal(["AGT-1"], context.Cards);
+        Assert.Contains(tip, context.Changes);
+        Assert.Contains("+target", context.Changes);
+        Assert.Contains("-base", context.Changes);
+        Assert.DoesNotContain("AGT-3", context.Changes);
+        var continuationContext = service.ConflictChanges(_root, delivery, delivery, tip, ["shared.cs"], "AGT-2");
+        Assert.Contains("-base", continuationContext.Changes);
+        Assert.DoesNotContain("-delivery", continuationContext.Changes);
+        Assert.False(service.TargetTouchedPaths(_root, tip, tip, ["shared.cs"]));
+        File.WriteAllText(Path.Combine(_root, "other.cs"), "unrelated target change\n");
+        Git("commit", "-qam", "AGT-4: unrelated target change");
+        var unrelatedTip = Git("rev-parse", "HEAD");
+        Assert.False(service.TargetTouchedPaths(_root, tip, unrelatedTip, ["shared.cs"]));
+        File.WriteAllText(Path.Combine(_root, "shared.cs"), "changed target\n");
+        Git("commit", "-qam", "AGT-5: relevant target change");
+        Assert.True(service.TargetTouchedPaths(_root, tip, Git("rev-parse", "HEAD"), ["shared.cs"]));
+        Assert.Equal("", Git("status", "--porcelain", "--untracked-files=no"));
+    }
+
+    [Fact]
     public void CleanReplayDoesNotReadReviewHistory()
     {
         Directory.CreateDirectory(_root);

@@ -3443,6 +3443,67 @@
             current-delivery integration releases pickup without a human round.
             Unknown or ambiguous blockers retain escalation.</td>
         </tr>
+        <tr>
+          <td>2026-11-26</td>
+          <td><code>AGT-4048</code><br><span class="small">integration-conflict-rounds</span></td>
+          <td>No CLI crash was reproduced. Net-change replay returned a conflict
+            without its target tip or structured conflict report.</td>
+          <td>Individual integration forgot completed outcomes after 15 minutes;
+            recovery allowed one round and later shared-file deliveries could pass it.</td>
+          <td>Two automatic rounds keep the source CLI and model at medium reasoning.
+            Durable collision receipts suppress unchanged retries, and later overlapping
+            individual deliveries wait through recovery and review. The third conflict
+            reaches Human Review with history. Historical AGT-4011 timings remain unverified.</td>
+        </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4048</code><br><span class="small">integration-conflict-receipt-and-lock-repair</span></td>
+          <td>No CLI crashed. An invalid or locked conflict receipt could throw
+            before the project drain's error boundary.</td>
+          <td>Receipt reads were unguarded, and retry and changed-path Git facts
+            were collected under the coordinator's shared queue lock.</td>
+          <td>Unreadable receipts produce an explicit integration error for the
+            affected delivery without attempting another merge; other cards drain.
+            Fact reads run outside the lock, with replay identity and queue revision
+            checks before applying their results.</td>
+        </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4048</code><br><span class="small">integration-conflict-board-lock-repair</span></td>
+          <td>No CLI crashed. A blocked reservation scan during board publication
+            blocked enqueue and integration for other projects.</td>
+          <td>Board ordering still scanned task folders and conflict receipts
+            under the shared queue lock after Git fact reads had moved outside it.</td>
+          <td>Board snapshots collect reservation facts outside the lock and
+            recheck queue identity and revision before publication, including
+            activity changes. Deterministic regressions verify independent project
+            progress and repaired-delivery order during a concurrent enqueue.
+            The terminal remains the queued recovery or completed integration.</td>
+        </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4048</code><br><span class="small">integration-conflict-receipt-write-repair</span></td>
+          <td>No CLI crashed. Receipt replacement or cleanup could throw inside
+            the individual integration drain after its merge result was known.</td>
+          <td>Receipt writes and deletion had no filesystem error guard.
+            Recovery preparation also wrote after superseding the delivery.</td>
+          <td>Failed conflict persistence returns an explicit integration error
+            for that delivery, and the queue continues. Recovery preparation
+            persists its receipt before changing the reviewed delivery. Cleanup
+            failure preserves a successful publication and branch reclamation.</td>
+        </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4048</code><br><span class="small">integration-conflict-continuation</span></td>
+          <td>No CLI crashed. Direct merge, mechanical merge and rebase fallback
+            stopped at <code>merge-into-develop</code> in the shared adapter and case log.</td>
+          <td>Recovery methods and incident rows shared insertion points with
+            integration-blocker and post-merge scheduling additions on develop.</td>
+          <td>The continuation retains both adapter method sets and all case rows,
+            restores the reviewed delivery on the assigned base and verifies focused
+            tests, guards and lint. The terminal is a new delivery for pipeline-owned
+            integration and publication.</td>
+        </tr>
       </tbody>
     </table>
 

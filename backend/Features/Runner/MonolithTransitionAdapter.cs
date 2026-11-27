@@ -28,6 +28,17 @@ public static class MonolithTransitionAdapter
     public static string? IntegrationBlockerDependency(string category, string reason)
         => IntegrationBlockerPolicy.Dependency(category, reason);
 
+    public static IntegrationConflictAction IntegrationConflictRound(string outcome, int used, int maximum)
+        => IntegrationConflictPolicy.Round(outcome, used, maximum);
+    public static bool IntegrationConflictRetry(bool deliveryChanged, bool targetChanged, bool pathsChanged)
+        => IntegrationConflictPolicy.MayRetry(deliveryChanged, targetChanged, pathsChanged);
+    public static bool IntegrationConflictAdmission(string card, string target, DateTimeOffset at,
+        IReadOnlyList<string>? paths, IReadOnlyList<IntegrationRecoveryReservation> reservations)
+        => IntegrationConflictPolicy.MayIntegrate(card, target, at, paths, reservations);
+    public static DateTimeOffset IntegrationConflictOrder(string card, string target, DateTimeOffset at,
+        IReadOnlyList<IntegrationRecoveryReservation> reservations)
+        => IntegrationConflictPolicy.OrderAt(card, target, at, reservations);
+
     public static int DispatchWaveOrder(int requested, int allocated, string? wave)
         => DispatchWavePolicy.InitialOrder(requested, allocated, wave);
     public static bool DispatchNeedsWave(int count) => DispatchWavePolicy.NeedsWave(count);

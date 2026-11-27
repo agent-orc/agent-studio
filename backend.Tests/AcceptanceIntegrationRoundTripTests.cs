@@ -264,7 +264,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             IntegrationAgentRoundService.AttributionAmbiguousReason,
             queued.PendingIntent?.SavedReason);
         Assert.Contains("direct merge", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("merging the latest integration branch", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("runner merges current develop", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("shared.txt", queued.PendingIntent?.Prompt, StringComparison.Ordinal);
         Assert.Contains("one-to-one", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
         var recoveryRound = Assert.Single(
@@ -303,7 +303,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var queued = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.Equal(TaskStates.Ready, queued.State);
         Assert.Equal(ContinueModes.Steer, queued.PendingIntent?.Mode);
-        Assert.Contains("merging the latest integration branch", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("runner merges current develop", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("one-to-one", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("do not squash, split, drop, or combine", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
         var queuedLedger = deps.Timeline.ReadAll(queued.FolderPath);
@@ -331,7 +331,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var job = deps.Scanner.FindJob(Slug, _watchPath)!;
         var subject = ReviewSubjectStore.Read(job.FolderPath)!;
         var deliveryChainId = IntegrationRecoveryBudget.DeliveryChainId(subject);
-        for (var attempt = 1; attempt <= 1; attempt++)
+        for (var attempt = 1; attempt <= 2; attempt++)
         {
             deps.Timeline.Append(
                 job.FolderPath,
@@ -363,10 +363,10 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
 
         Assert.False(started.Started);
         Assert.True(started.BudgetExhausted);
-        Assert.Equal(1, started.BudgetUsed);
-        Assert.Equal(1, started.BudgetLimit);
-        Assert.Equal(
-            "automatic recovery budget used: 1/1 for this card on develop. Conflicting files: budget-spent.txt.",
+        Assert.Equal(2, started.BudgetUsed);
+        Assert.Equal(2, started.BudgetLimit);
+        Assert.StartsWith(
+            "automatic recovery budget used: 2/2 for this card on develop. Conflicting files: budget-spent.txt.",
             started.Reason);
         Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
     }
