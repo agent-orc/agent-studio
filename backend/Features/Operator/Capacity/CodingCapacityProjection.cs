@@ -31,6 +31,13 @@ public static class CodingCapacityProjection
         var ready = tasks.Where(task => task.State == TaskStates.Ready).ToArray();
         var waits = tasks.ToDictionary(Key, task => waitsOf?.Invoke(task) ?? references.EvaluateWaitsOn(task),
             StringComparer.OrdinalIgnoreCase);
+        WaitsOnStatus Waits(TaskInfo task)
+        {
+            var key = Key(task);
+            if (!waits.TryGetValue(key, out var status))
+                waits[key] = status = waitsOf?.Invoke(task) ?? references.EvaluateWaitsOn(task);
+            return status;
+        }
         var cards = ready.Select(task => new CapacityCard(Key(task),
             waits[Key(task)].Items.Where(edge => !edge.Fulfilled)
                 .Select(edge => new CapacityBlock("dependency", $"waits for {edge.Key}", edge.Key))
@@ -39,11 +46,10 @@ public static class CodingCapacityProjection
                 .Concat(waits[Key(task)].CycleDetected ? [new CapacityBlock("dependency", "dependency cycle")] : [])
                 .Concat(blocksOf(task)).ToArray())).ToArray();
         var readyKeys = ready.Select(Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var ancestors = Ancestors(tasks.Where(task => task.State is TaskStates.Ready or TaskStates.Progress).Select(Key), references, task =>
-            waits.GetValueOrDefault(Key(task)) ?? waitsOf?.Invoke(task) ?? references.EvaluateWaitsOn(task));
+        var ancestors = Ancestors(tasks.Where(task => task.State is TaskStates.Ready or TaskStates.Progress).Select(Key), references, Waits);
         var heads = references.KnownKeys.Select(references.Resolve).OfType<TaskInfo>()
             .Where(task => !WaitsOnEvaluator.IsFulfilledState(task.State)
-                && !(waits.GetValueOrDefault(Key(task)) ?? waitsOf?.Invoke(task) ?? references.EvaluateWaitsOn(task)).Blocked)
+                && !Waits(task).Blocked)
             .Select(task => new CapacityChainHead(Key(task),
                 task.State == TaskStates.Escalated ? "escalated"
                     : task.ParkedBlocker is not null ? "parked" : task.State == TaskStates.HumanReview ? "awaiting review" : "waiting",
@@ -90,18 +96,71 @@ public static class CodingCapacityProjection
 
     private static int Width(string[] nodes, IReadOnlyDictionary<string, HashSet<string>> ancestors)
     {
-        var matched = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        bool Match(string left, HashSet<string> seen)
+        // Build adjacency once, then use Hopcroft-Karp's shortest augmenting paths.
+        // Matching visits edges rather than scanning all vertices at every recursion.
+        var index = nodes.Select((key, i) => (key, i)).ToDictionary(node => node.key, node => node.i,
+            StringComparer.OrdinalIgnoreCase);
+        var edges = nodes.Select(key => ancestors[key].Where(index.ContainsKey).Select(parent => index[parent]).ToArray()).ToArray();
+        var leftMatch = Enumerable.Repeat(-1, nodes.Length).ToArray();
+        var rightMatch = Enumerable.Repeat(-1, nodes.Length).ToArray();
+        var distance = new int[nodes.Length];
+        var nextEdge = new int[nodes.Length];
+        var shortest = int.MaxValue;
+
+        bool Layer()
         {
-            foreach (var right in nodes.Where(right => ancestors[left].Contains(right)))
-                if (seen.Add(right) && (!matched.TryGetValue(right, out var prior) || Match(prior, seen)))
+            Array.Fill(distance, -1);
+            shortest = int.MaxValue;
+            var pending = new Queue<int>();
+            for (var left = 0; left < nodes.Length; left++)
+                if (leftMatch[left] < 0)
                 {
-                    matched[right] = left;
+                    distance[left] = 0;
+                    pending.Enqueue(left);
+                }
+            while (pending.TryDequeue(out var left))
+            {
+                if (distance[left] >= shortest) continue;
+                foreach (var right in edges[left])
+                {
+                    var prior = rightMatch[right];
+                    if (prior < 0) shortest = distance[left] + 1;
+                    else if (distance[prior] < 0)
+                    {
+                        distance[prior] = distance[left] + 1;
+                        pending.Enqueue(prior);
+                    }
+                }
+            }
+            return shortest != int.MaxValue;
+        }
+
+        bool Match(int left)
+        {
+            while (nextEdge[left] < edges[left].Length)
+            {
+                var right = edges[left][nextEdge[left]++];
+                var prior = rightMatch[right];
+                if (prior < 0 ? distance[left] + 1 == shortest
+                    : distance[prior] == distance[left] + 1 && Match(prior))
+                {
+                    leftMatch[left] = right;
+                    rightMatch[right] = left;
                     return true;
                 }
+            }
+            distance[left] = -1;
             return false;
         }
-        return nodes.Length - nodes.Count(node => Match(node, new(StringComparer.OrdinalIgnoreCase)));
+
+        var matched = 0;
+        while (Layer())
+        {
+            Array.Clear(nextEdge);
+            for (var left = 0; left < nodes.Length; left++)
+                if (leftMatch[left] < 0 && Match(left)) matched++;
+        }
+        return nodes.Length - matched;
     }
 
     public static IReadOnlyList<CapacitySubscription> Subscriptions(QuotaReport report, DateTime now)

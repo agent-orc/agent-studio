@@ -73,6 +73,11 @@ A live dispatch admission supersedes an older recorded refusal. A remaining
 refusal is explicitly labelled as the last observed claim refusal; capacity
 is a read model, not a lease permit or a repository preflight.
 
+Fleet cards are limited to the same watched projects represented in `projects[]`.
+A card still present in a published snapshot after its project is unwatched does
+not add Ready work to the fleet. Authorized cross-project dependency heads remain
+visible as blockers through the archive-inclusive reference graph.
+
 `dependencyWidth` is the maximum antichain of the unfinished Ready and Progress
 graph, equivalently its minimum chain cover. It accounts for forks, joins,
 cycles, cross-project edges and fulfilled delivery edges. `maxConcurrentCards`

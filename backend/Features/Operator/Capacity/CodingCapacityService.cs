@@ -23,14 +23,16 @@ public sealed class CodingCapacityService(TaskScannerService scanner, ProjectSet
     public CodingCapacityResponse? Read(DateTime now, Func<string, bool>? allows = null, bool includeQuota = true)
     {
         if (scanner.TryGetPublishedBoard() is not { } board) return null;
-        var tasks = board.Live.Where(task => !task.Fixture && (allows?.Invoke(task.ProjectName) ?? true)).ToArray();
-        // Limit reverse-link counts and dependency names to the reader's projects.
-        var references = allows is null ? board.AutomationReferences : TaskReferenceIndex.Build(
-            tasks.Concat(board.Archive.Where(task => !task.Fixture && allows(task.ProjectName))));
-        var hosts = Hosts(now);
+        var visibleTasks = board.Live.Where(task => !task.Fixture && (allows?.Invoke(task.ProjectName) ?? true)).ToArray();
         var projects = scanner.GetWatchPaths().Select(path => path.Name).Distinct(StringComparer.OrdinalIgnoreCase)
             .Where(project => allows?.Invoke(project) ?? true).ToArray();
-        var integration = gitProjection.ReadDependencyIntegration(board.AutomationReferences.DependencyTargets(tasks));
+        var watched = projects.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var tasks = visibleTasks.Where(task => watched.Contains(task.ProjectName)).ToArray();
+        // Limit reverse-link counts and dependency names to the reader's projects.
+        var references = allows is null ? board.AutomationReferences : TaskReferenceIndex.Build(
+            visibleTasks.Concat(board.Archive.Where(task => !task.Fixture && allows(task.ProjectName))));
+        var hosts = Hosts(now);
+        var integration = gitProjection.ReadDependencyIntegration(board.AutomationReferences.DependencyTargets(visibleTasks));
         var occupancy = ProjectExecutionPolicy.ProjectOccupancy(board.Live);
         IReadOnlyList<CapacityBlock> Blocks(TaskInfo task)
         {
@@ -64,7 +66,14 @@ public sealed class CodingCapacityService(TaskScannerService scanner, ProjectSet
                 ProjectExecutionPolicy.EvaluateProjectSlot(occupancy, task.ProjectName, project), dispatch.Presentation(task));
             return best.Admission is null ? blocks : blocks.Concat([new CapacityBlock("dispatch-rule", best.Admission)]).ToArray();
         }
-        WaitsOnStatus Waits(TaskInfo task) => board.AutomationReferences.EvaluateWaitsOn(task, integration, settings.Get(task.ProjectName).IntegrationBranch);
+        var waits = new Dictionary<string, WaitsOnStatus>(StringComparer.OrdinalIgnoreCase);
+        WaitsOnStatus Waits(TaskInfo task)
+        {
+            var key = CodingCapacityProjection.Key(task);
+            if (!waits.TryGetValue(key, out var status))
+                waits[key] = status = board.AutomationReferences.EvaluateWaitsOn(task, integration, settings.Get(task.ProjectName).IntegrationBranch);
+            return status;
+        }
         var rows = projects.Select(project =>
         {
             var config = settings.Get(project);

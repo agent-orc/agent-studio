@@ -75,6 +75,25 @@ public sealed class CodingCapacityTests
     }
 
     [Fact]
+    public void Shared_external_ancestors_are_evaluated_once_per_projection()
+    {
+        var head = Card("HEAD", TaskStates.Escalated) with { ProjectName = "other" };
+        var middle = Card("MIDDLE", TaskStates.HumanReview, "HEAD") with { ProjectName = "other" };
+        var ready = Enumerable.Range(0, 20).Select(i => Card($"READY-{i}", TaskStates.Ready, "MIDDLE")).ToArray();
+        var references = TaskReferenceIndex.Build(ready.Concat([head, middle]));
+        var evaluations = new Dictionary<string, int>();
+        var fact = CodingCapacityProjection.Project("studio", ready, references, 12, 0, _ => [], task =>
+        {
+            evaluations[task.Key!] = evaluations.GetValueOrDefault(task.Key!) + 1;
+            return references.EvaluateWaitsOn(task);
+        });
+
+        Assert.Equal(20, fact.DependencyWidth);
+        Assert.Equal(20, Assert.Single(fact.Heads).CardsBehind);
+        Assert.All(evaluations.Values, count => Assert.Equal(1, count));
+    }
+
+    [Fact]
     public void Every_applicable_reason_is_preserved()
     {
         var fact = Project([Card("A", TaskStates.Ready, "MISSING")],
