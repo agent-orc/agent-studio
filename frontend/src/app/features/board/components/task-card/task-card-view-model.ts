@@ -1744,11 +1744,11 @@ export function buildDependencyChip(waitsOn: TaskInfo['waitsOn']): DependencyChi
 
 /**
  * TaskLiveStatus owns the one CURRENT wait reason on current payloads. Keep the
- * dependency chip only as a fallback for older payloads without liveStatus.
+ * dependency chip only as a fallback without liveStatus or a recorded waiting reason.
  */
 export function buildVisibleDependencyChip(job: TaskInfo): DependencyChip | null {
   if (job.state === TaskState.Completed || job.state === TaskState.Archive) return null;
-  if (job.liveStatus) return null;
+  if (job.liveStatus || job.waitingReason) return null;
   // AGT-2795: an edge to a pending decision card already renders as its own
   // "blocked by" link; do not repeat it as a generic waits-on chip.
   const waitsOn = job.waitsOn;
