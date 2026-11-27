@@ -213,6 +213,57 @@ public sealed class RemoteReviewStatusInputTests : IDisposable
         Assert.DoesNotContain(hostContent, fit.Prompt);
     }
 
+    [Fact]
+    public void Frozen_plan_uses_the_canonical_current_log_and_excludes_obsolete_runs()
+    {
+        Directory.CreateDirectory(TaskPaths.LogsDir(_folder));
+        File.WriteAllText(Path.Combine(_folder, "cli-output.log"), "OBSOLETE-ROOT: verification failed");
+        File.WriteAllText(TaskPaths.CliOutputLog(_folder),
+            "[10:00:00] [system] [taskboard] Started codex CLI (PID 1)\nOLD-RUN: failed\n"
+            + "[11:00:00] [system] [taskboard] Started codex CLI (PID 2)\nCURRENT-NESTED: verification passed");
+
+        var fit = Assert.Single(BuildPlan(TaskModes.Coding).Commands, command => command.Aspect == "requirement-fit");
+
+        Assert.Contains("CURRENT-NESTED: verification passed", fit.Prompt);
+        Assert.Contains("Source: logs/cli-output.log", fit.Prompt);
+        Assert.DoesNotContain("OBSOLETE-ROOT", fit.Prompt);
+        Assert.DoesNotContain("OLD-RUN", fit.Prompt);
+    }
+
+    [Fact]
+    public void Missing_canonical_log_never_falls_back_to_the_root_file()
+    {
+        File.WriteAllText(Path.Combine(_folder, "cli-output.log"), "OBSOLETE-ROOT");
+        var fit = Assert.Single(BuildPlan(TaskModes.Coding).Commands, command => command.Aspect == "requirement-fit");
+        Assert.DoesNotContain("OBSOLETE-ROOT", fit.Prompt);
+        Assert.Contains("logs/cli-output.log unavailable", fit.Prompt);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Log_tail_is_bounded_redacted_and_names_its_run_context(bool utf16)
+    {
+        Directory.CreateDirectory(TaskPaths.LogsDir(_folder));
+        var credential = "ghp_" + new string('q', 24);
+        File.WriteAllText(TaskPaths.CliOutputLog(_folder),
+            string.Concat(Enumerable.Repeat("older activity 😀\n", 4_000)) + "CURRENT-TAIL " + credential,
+            utf16 ? System.Text.Encoding.Unicode : new System.Text.UTF8Encoding(false));
+
+        var log = RemoteReviewPlanBuilder.ReviewActivity.Read(new TaskInfo { FolderPath = _folder,
+            Runner = new TaskRunnerInfo { AttemptId = "current-attempt", AuthorityEpoch = 7 } });
+
+        Assert.True(log.Length <= 16_000);
+        Assert.Contains("CURRENT-TAIL", log);
+        Assert.Contains("[REDACTED_CREDENTIAL]", log);
+        Assert.DoesNotContain(credential, log);
+        Assert.Contains("current-attempt", log);
+        Assert.Contains("epoch 7", log);
+        Assert.Contains("run boundary unavailable in retained tail", log);
+        Assert.Contains("older activity omitted", log);
+        Assert.DoesNotContain("�", log);
+    }
+
     private ReviewPlanDto BuildPlan(string mode)
     {
         var config = new ConfigurationBuilder().Build();
