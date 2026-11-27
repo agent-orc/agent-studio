@@ -320,13 +320,26 @@ export function buildLiveScene(data: StructureData, sources: LiveSources): LiveS
   const open = order.reduce((sum, node) => sum + node.warnings.length, 0);
   boundary.health = open ? { tone: 'warning', word: `${open} open ${open === 1 ? 'warning' : 'warnings'}`, detail: null }
     : { tone: 'success', word: 'No open warnings', detail: null };
-  const units = order.filter(node => node.slots);
+  const capacityNodes = order.filter(node => node.slots);
+  // The projection repeats each runner's capacity on its host aggregate and process.
+  // Keep both for drill-down, but count the host once, regardless of placement.
+  const hostAggregates = new Map<string, LiveNode>();
+  for (const node of capacityNodes) {
+    const hostId = node.source?.facts?.hostId;
+    if (hostId && node.id === `machine:${hostId}`) hostAggregates.set(hostId, node);
+  }
+  const units = capacityNodes.filter(node => {
+    const aggregate = hostAggregates.get(node.source?.facts?.hostId ?? '');
+    return !aggregate || aggregate === node;
+  });
+  const reportingHosts = new Set(order.filter(node => node.source?.facts?.hostId && node.health.word === 'Up')
+    .map(node => node.source!.facts!.hostId!));
   const scene: LiveScene = { boundary, outside, order, byId, links, warnings: order.flatMap(node => node.warnings), backup,
     generatedAt: now, revision: data.revision ?? 0,
     totals: { machines: order.filter(node => node.kind === 'machine' || node.kind === 'vm').length,
       containers: order.filter(node => node.kind === 'container').length, services: order.filter(node => node.kind === 'service').length,
       busySlots: units.reduce((sum, node) => sum + node.slots!.busy, 0), totalSlots: units.reduce((sum, node) => sum + (node.slots!.total ?? 0), 0),
-      reporting: order.filter(node => node.source?.facts?.hostId && node.health.word === 'Up').length } };
+      reporting: reportingHosts.size } };
   return scene;
 }
 
