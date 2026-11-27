@@ -3452,6 +3452,18 @@
             Unknown or ambiguous blockers retain escalation.</td>
         </tr>
         <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4049</code><br><span class="small">stale-verdict-recovery-custody</span></td>
+          <td>No CLI crash is established. Stale-verdict recovery parked retryable
+            gate failures; later integration did not clear the machine escalation.</td>
+          <td>The recovery branch combined unsuccessful integration and failed
+            review handoff into a generic escalation and did not scan Escalated.</td>
+          <td>Recovery persists immutable delivery identity and phase, routes typed
+            gate failures to their owner, waits for capacity, and requests fresh
+            review after verified integration. Obsolete matching machine parks
+            return to Auto Review with timeline evidence; human holds remain.</td>
+        </tr>
+        <tr>
           <td>2026-11-26</td>
           <td><code>AGT-4048</code><br><span class="small">integration-conflict-rounds</span></td>
           <td>No CLI crash was reproduced. Net-change replay returned a conflict

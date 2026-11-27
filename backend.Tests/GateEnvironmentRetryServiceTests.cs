@@ -277,6 +277,34 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         Assert.Equal(0, stack.Gate.Invocations);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Stale_recovery_custody_grants_retry_only_for_the_exact_settled_delivery(bool matches)
+    {
+        var stack = Build();
+        var sha = SeedGateEnvironmentFailure(stack, "stale-recovery", 600,
+            passedReview: false, state: TaskStates.AutoReview);
+        var job = stack.Scanner.FindJob("stale-recovery", _watchPath)!;
+        var run = stack.Authority.AcquireRun(stack.TaskKey(job.Id), "PROJ-001", null,
+            "runner", "host", 600, "stale-run").RunAttempt!;
+        Assert.True(stack.Authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, "settle-stale"),
+            Outcome = "done", ResultSha = sha,
+        }).Accepted);
+        var subject = ReviewSubjectStore.Read(job.FolderPath)!;
+        ReviewSubjectStore.Write(job.FolderPath, subject with { RunAttemptId = run.AttemptId });
+        new StaleVerdictRecovery($"{(matches ? run.AttemptId : "older-run")}:{sha}",
+            "old-verdict", "waiting-retry").Write(job);
+        var status = stack.Integration.BuildLookup([job])[job.TaskKey];
+        var evaluation = stack.Retries.Evaluate(job, status, stack.Retries.Options);
+        Assert.False(evaluation.Facts.ReviewPassed);
+        Assert.Equal(matches, evaluation.Facts.IntegrationBeforeFreshReview);
+        Assert.Equal(matches ? GateEnvironmentRetryAction.Retry : GateEnvironmentRetryAction.Ignore,
+            GateEnvironmentRetryPolicy.Decide(evaluation.Facts).Action);
+    }
+
     [Fact]
     public async Task RetryNow_WithoutAPassedReviewForTheDeliverySha_IsRefused()
     {
