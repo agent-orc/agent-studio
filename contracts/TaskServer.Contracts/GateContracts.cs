@@ -147,7 +147,10 @@ public sealed record GateSubject(
     string? Kind = null,
     [property: System.Text.Json.Serialization.JsonIgnore(
         Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    GateBundleLocator? Bundle = null);
+    GateBundleLocator? Bundle = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(
+        Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? ProjectId = null);
 
 public sealed record CreateGateSubjectRequest(
     string TaskId,
@@ -170,7 +173,10 @@ public sealed record CreateGateSubjectRequest(
     string? BaseSha = null,
     IReadOnlyList<string>? MemberRunIds = null,
     string? Kind = null,
-    GateBundleLocator? Bundle = null);
+    GateBundleLocator? Bundle = null,
+    // Canonical Task Server project identity. Omit to derive it from the source
+    // task (run gates) or registered repository (verification gates).
+    string? ProjectId = null);
 
 public sealed record GateAttempt(
     string AttemptId,
