@@ -581,6 +581,9 @@ the Owner. A successful change still rebuilds queued review plans and uses the
 asynchronous batch-gate handoff. The response transition and audit share the
 old and new effective strategies captured under the settings mutation lock,
 including when the requested strategy already matches.
+Switching to post-merge testing stops pending full gates and cancels running
+fallback gates without recording a failed test verdict. The handoff records
+integration evidence separately from a full-suite pass.
 
 For operator sessions, the catalogue operation `project.testing.set` is T2
 with project scope. A session with read access to the project can request an

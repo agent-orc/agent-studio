@@ -137,6 +137,7 @@
 /api/operator/backups	free	-	-	-
 /api/operator/batch-triage	free	-	-	-
 /api/operator/capacity	free	-	-	-
+/api/operator/coding-capacity	free	-	-	-
 /api/operator/decisions	free	-	-	-
 /api/operator/decisions/stream	free	-	-	-
 /api/operator/log	free	-	-	-
@@ -296,6 +297,8 @@
 /api/projects/{projectName}/steering	free	-	-	-
 /api/projects/{projectName}/steering/files/{**relPath}	free	-	-	-
 /api/projects/{projectName}/steering/read-analytics	free	-	-	-
+/api/projects/{projectName}/studio-releases/	free	-	-	-
+/api/projects/{projectName}/studio-releases/cards/{key}	free	-	-	-
 /api/projects/{projectName}/style-guides	free	-	-	-
 /api/projects/{projectName}/tags	free	-	-	-
 /api/projects/{projectName}/testing	free	-	-	-

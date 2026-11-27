@@ -12,14 +12,14 @@
   &__run,
   &__attempts {
     border: 1px solid var(--studio-border);
-    border-radius: 999px;
+    border-radius: var(--studio-compat-radius-2);
     background: var(--studio-bg-elevated);
     color: var(--studio-fg-dim);
     font: inherit;
-    font-size: 9.5px;
+    font-size: var(--studio-compat-type-42);
     line-height: 1.2;
     /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- compact inline pill needs half-token vertical padding. */
-    padding: 2px var(--studio-spacing-1);
+    padding: var(--studio-compat-space-4) var(--studio-spacing-1);
     cursor: pointer;
     white-space: nowrap;
   }
@@ -63,9 +63,9 @@
     max-height: min(360px, calc(100vh - 96px));
     padding: var(--studio-spacing-2);
     border: 1px solid var(--studio-border);
-    border-radius: 8px;
+    border-radius: var(--studio-compat-radius-5);
     background: var(--studio-bg-elevated);
-    box-shadow: var(--elevation-modal, 0 12px 32px rgba(0, 0, 0, 0.35));
+    box-shadow: var(--elevation-modal, 0 12px 32px var(--studio-compat-shadow-ink-2));
     overflow: auto;
   }
 
@@ -76,10 +76,10 @@
     gap: var(--studio-spacing-2);
     min-width: 0;
     padding: var(--studio-spacing-1) var(--studio-spacing-2);
-    border-radius: 5px;
+    border-radius: var(--studio-compat-radius-13);
     background: var(--studio-bg-hover);
     color: var(--studio-fg-dim);
-    font-size: 10.5px;
+    font-size: var(--studio-compat-type-44);
   }
 
   &__attempt-number,

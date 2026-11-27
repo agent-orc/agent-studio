@@ -6,7 +6,7 @@
   font-variant-numeric: tabular-nums;
 
   h2, h3, p { margin: 0; }
-  h3 { color: var(--studio-fg-strong); font-size: 0.95rem; font-weight: 600; }
+  h3 { color: var(--studio-fg-strong); font-size: var(--studio-compat-type-16); font-weight: 600; }
 }
 
 .operations-security__head {
@@ -20,7 +20,7 @@
   flex: none;
   padding: var(--studio-spacing-1) var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-surface);
   color: inherit;
   font: inherit;
@@ -40,7 +40,7 @@
 
   > div { display: grid; gap: var(--studio-spacing-1); }
   dt { @include m.type-label; }
-  dd { margin: 0; color: var(--studio-fg-strong); font-size: 1.15rem; font-weight: 650; }
+  dd { margin: 0; color: var(--studio-fg-strong); font-size: var(--studio-compat-type-33); font-weight: 650; }
 }
 
 .operations-security__soon {
@@ -74,23 +74,23 @@
 
 .operations-security__title {
   display: grid;
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
   min-width: 0;
   overflow-wrap: anywhere;
 
   strong { color: var(--studio-fg-strong); font-weight: 600; }
-  small { color: var(--studio-text-secondary); font-size: 0.8rem; line-height: 1.4; }
+  small { color: var(--studio-text-secondary); font-size: var(--studio-compat-type-12); line-height: 1.4; }
 }
 
-.operations-security__meta { color: var(--studio-fg-dim); font-size: 0.8rem; text-align: right; }
+.operations-security__meta { color: var(--studio-fg-dim); font-size: var(--studio-compat-type-12); text-align: right; }
 
 .operations-security__empty {
   padding: var(--studio-spacing-3);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-hover);
 }
 
-.operations-security__stamp { color: var(--studio-fg-dim); font-size: 0.75rem; }
+.operations-security__stamp { color: var(--studio-fg-dim); font-size: var(--studio-compat-type-11); }
 
 @media (max-width: 750px) {
   .operations-security { padding-inline: var(--studio-spacing-3); }

@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { TaskState, type TaskInfo } from '../../../../models/task.model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { withRouteSegment } from '../../../../services/url-hash.util';
 import { AcceptanceReadinessStore } from '../../state/acceptance-readiness.store';
 import { readinessPresentation } from '../../models/acceptance-readiness.model';
@@ -24,6 +24,8 @@ export class AcceptanceReadinessNoteComponent {
   readonly job = input.required<TaskInfo>();
 
   readonly item = computed(() => this.job().state === TaskState.HumanReview ? this.store.itemFor(this.job()) : null);
+  readonly conflict = computed(() => this.job().orchestratorVerdict === 'accept'
+    && ['concerns', 'block'].includes(this.item()?.contentStatus?.toLowerCase() ?? ''));
   readonly tone = computed(() => readinessPresentation(this.item()?.readiness ?? 'blocked').tone);
   /** F12: the same next step the toolbar and the acceptance grounds name. */
   readonly nextStep = computed(() => acceptancePrimaryReason(this.item())?.nextStep ?? null);
@@ -34,6 +36,8 @@ export class AcceptanceReadinessNoteComponent {
     const hash = typeof window === 'undefined' ? '' : window.location.hash;
     return withRouteSegment(hash, `/tasks/${encodeURIComponent(reference)}?view=evidence:protocol`);
   });
+
+  readonly acceptanceHref = computed(() => this.reportHref().replace('?view=evidence:protocol', ''));
 
   stop(event: Event): void {
     event.stopPropagation();

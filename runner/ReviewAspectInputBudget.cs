@@ -8,6 +8,7 @@ namespace AgentRunner;
 internal static class ReviewAspectInputBudget
 {
     internal const int MaximumCharacters = 800_000;
+    internal const string InstructionsMarker = "<!-- remote-review-aspect-instructions-v1 -->";
     private const int MaximumContextCharacters = 120_000;
     private const int MaximumDiffCharacters = 580_000;
     private const int MaximumFileCharacters = 40_000;
@@ -16,8 +17,8 @@ internal static class ReviewAspectInputBudget
 
     /// <summary>
     /// <paramref name="SharedPrefixLength"/> is the length of the leading part that
-    /// every aspect of one review shares byte for byte (the review context and the
-    /// authoritative diff, ending where the authored marker stood); 0 when the
+    /// every aspect in a compatible evidence group shares byte for byte (the review context and the
+    /// authoritative diff, plus recent activity for its consumers); 0 when the
     /// authored prompt has no marker. The rest is the aspect's own question.
     /// </summary>
     internal sealed record Result(string Prompt, string Report, int SharedPrefixLength = 0);
@@ -127,6 +128,21 @@ internal static class ReviewAspectInputBudget
     /// </summary>
     private static string BoundContext(string authored, StringBuilder report)
     {
+        var materialAt = authored.IndexOf(RemoteReviewWorkspace.SharedMaterialMarker, StringComparison.Ordinal);
+        var instructionsAt = authored.IndexOf(InstructionsMarker, StringComparison.Ordinal);
+        if (materialAt >= 0 && instructionsAt > materialAt)
+        {
+            // Reserve instructions independently of their actual size. Common
+            // evidence takes priority; activity uses the remaining evidence room.
+            // Both scopes stay identical across their consumers. The spare 1,000
+            // characters cover markers and labels when activity is fully omitted.
+            var activityAt = materialAt + RemoteReviewWorkspace.SharedMaterialMarker.Length;
+            var common = BoundPart(authored[..materialAt], 110_000, "Shared review context", report);
+            return common + RemoteReviewWorkspace.SharedMaterialMarker
+                + BoundPart(authored[activityAt..instructionsAt], 110_000 - common.Length, "Recent activity", report)
+                + InstructionsMarker
+                + BoundPart(authored[(instructionsAt + InstructionsMarker.Length)..], 9_000, "Aspect instructions", report);
+        }
         if (ConceptDossierSnapshotSpan.TrySplit(authored, out var before, out var span, out var after)
             && span.Length <= ConceptDossierSnapshotSpan.MaximumCharacters)
         {
@@ -144,6 +160,25 @@ internal static class ReviewAspectInputBudget
         report.AppendLf($"Authored context: {authored.Length - MaximumContextCharacters} characters omitted.");
         return authored[..80_000] + "\n[Authored context omitted to meet review input budget.]\n"
             + authored[^39_000..];
+    }
+
+    private static string BoundPart(string text, int limit, string name, StringBuilder report)
+    {
+        if (text.Length <= limit) return text;
+        var omission = $"\n[{name} omitted to meet review input budget.]\n";
+        if (limit < 256)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+            var content = text.TrimStart();
+            var firstLine = content.Split('\n', 2)[0];
+            var heading = firstLine.StartsWith("## ", StringComparison.Ordinal) ? firstLine + "\n" : "";
+            report.AppendLf($"{name}: {text.Length - heading.Length} characters omitted.");
+            return heading + omission;
+        }
+        var tail = Math.Min(4_000, limit / 4);
+        var head = limit - tail - omission.Length;
+        report.AppendLf($"{name}: {text.Length - head - tail} characters omitted.");
+        return text[..head] + omission + text[^tail..];
     }
 
     private static Result Finish(string prompt, StringBuilder report, string dossier, int shared)
@@ -184,11 +219,19 @@ internal static class ReviewAspectInputBudget
         var at = context.IndexOf(marker, StringComparison.Ordinal);
         if (at < 0)
             return (context.TrimEnd() + "\n\n" + material + screenshots + dossier, 0);
-        // Everything before the marker plus the material is common to the aspects
-        // of one review; the aspect instructions, screenshots and Dossier follow.
+        // The delivery evidence and material are common to all stock aspects.
+        // Activity extends that prefix only for its consumers; instructions,
+        // screenshots and Dossier remain after the shared evidence.
         var shared = context[..at] + material;
-        return (shared + "\n\n" + context[(at + marker.Length)..].TrimStart() + screenshots + dossier,
-            shared.Length);
+        var rest = context[(at + marker.Length)..];
+        var instructionsAt = rest.IndexOf(InstructionsMarker, StringComparison.Ordinal);
+        if (instructionsAt >= 0)
+        {
+            var activity = rest[..instructionsAt].Trim();
+            if (activity.Length > 0) shared += "\n\n" + activity;
+            rest = rest[(instructionsAt + InstructionsMarker.Length)..];
+        }
+        return (shared + "\n\n" + rest.TrimStart() + screenshots + dossier, shared.Length);
     }
 
     private static string FileName(string section)

@@ -16,6 +16,8 @@ public sealed record PostMergeRunRecord(
     /// attempt (initial, same-SHA repeat, last-green control, bisect points).
     /// Null on receipts of older runners.
     /// </summary>
+    public string? ExecutionHost { get; init; }
+    public string? ExecutionPlane { get; init; }
     public IReadOnlyList<PostMergeTestVerdict>? TestVerdicts { get; init; }
     /// <summary>RT-3: every focused run (repeat, control, bisect) and test-project build with its duration.</summary>
     public IReadOnlyList<PostMergeFocusedRun>? FocusedRuns { get; init; }
@@ -38,6 +40,7 @@ public sealed record PostMergeCommandVerdict(string Command, int ExitCode, bool 
 {
     /// <summary>Wall-clock duration of the command's first run; null on older receipts.</summary>
     public long? DurationMs { get; init; }
+    public IReadOnlyDictionary<string, string>? FailureMessages { get; init; }
     /// <summary>The executed suite, including shard commands whose filter was rewritten.</summary>
     public string? SuiteId { get; init; }
 }
@@ -170,6 +173,8 @@ public sealed record PostMergeProjectState(
     public int? WindowMaxMerges { get; init; }
     public int? WindowMinutes { get; init; }
     public PostMergeWindowObservation? PendingWindow { get; init; }
+    public PostMergeWindowClosure? ClosedWindow { get; init; }
+    public string? GateSubjectId { get; init; }
     /// <summary>
     /// What a merge-window run selects, from the project's testing strategy
     /// (AGT-3965): <see cref="PostMergeWindowSuiteModes.Affected"/> (fast) or
@@ -200,6 +205,7 @@ public sealed record PostMergeIncident(string Fingerprint, string RepairCardId, 
     public string? SuiteCategory { get; init; }
     public string? ModelRung { get; init; }
     public string? LineStopReason { get; init; }
+    public string? LatestEvidenceRunId { get; init; }
     public IReadOnlyList<PostMergeOwnerQuestion> OwnerQuestions { get; init; } = [];
     public double? RedMinutes => ResolvedAtUtc is { } resolved
         ? Math.Max(0, (resolved - FirstRedAtUtc).TotalMinutes) : null;

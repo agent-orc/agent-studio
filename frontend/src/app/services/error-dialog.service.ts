@@ -1,6 +1,6 @@
 import { ErrorHandler, Injectable, NgZone, signal, inject } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
-import { ErrorDialogOptions, ErrorDialogState } from '../models/error-dialog.model';
+import { ErrorDialogOptions, ErrorDialogState } from '@studio/ui/models/error-dialog.model';
 import { AuthSessionState } from './auth.service';
 
 @Injectable({ providedIn: 'root' })

@@ -127,6 +127,41 @@ public sealed class TaskTransitionService
     }
 
     /// <summary>
+    /// Returns an agent-reported integration prerequisite to Ready under the
+    /// existing dependency hold. Pickup rechecks published delivery integration;
+    /// no operator round or separate polling state is needed.
+    /// </summary>
+    internal async Task<MoveJobOutcome?> TryWaitForIntegrationAsync(
+        string jobId, string watchPath, string category, string reason,
+        CancellationToken ct, AttemptWriteReference? authorityWrite, string? expectedSourceState)
+    {
+        var key = MonolithTransitionAdapter.IntegrationBlockerDependency(category, reason);
+        if (key is null) return null;
+        var task = _scanner.FindJob(jobId, watchPath);
+        if (task is null || (expectedSourceState is not null && task.State != expectedSourceState)) return null;
+        var index = _scanner.GetReferenceIndex();
+        var parent = index.Resolve(key);
+        var proposed = task.References with
+        {
+            DependsOn = task.References.DependsOn.Append(new TaskDependencyReference(key)).ToList(),
+        };
+        var validDependency = TaskReferenceValidator.Validate(task.Key ?? task.Id, proposed, index.KnownKeys,
+            index.DependsOnGraph, task.References.Workbenches.ToHashSet(StringComparer.OrdinalIgnoreCase)).IsValid;
+        // Fulfillment belongs to the existing pickup evaluator. A report that
+        // arrives after the parent integrates must also return to Ready.
+        if (!MonolithTransitionAdapter.MayWaitForIntegration(new AgentStudio.OrchestrationDecisions.IntegrationBlockerFacts(
+                parent is not null && !TaskModes.IsReadOnly(parent.Mode) && !TaskKinds.IsDecision(parent.Kind),
+                validDependency))) return null;
+        if (!_mutations.SetTaskReferences(task.Id, proposed, watchPath, task.References))
+            return new MoveJobOutcome(MoveJobStatus.Failure, "The integration dependency could not be persisted.");
+        return await MoveAsync(jobId, MonolithTransitionAdapter.IntegrationBlockerWaitLane, watchPath, ct,
+            cause: TimelineActors.System, reason: $"Waiting for {key} delivery integration: {reason}",
+            authorityWrite: authorityWrite, suppressProductExecution: authorityWrite is not null,
+            expectedSourceState: expectedSourceState ?? task.State,
+            transitionCause: LaneChangeCauses.Promoted, transitionDetail: "waiting-for-integration");
+    }
+
+    /// <summary>
     /// Moves a job between states. When auto-commit is enabled and the
     /// transition is <c>3-progress -> 4-auto-review</c>, commits the target
     /// working tree first and stamps the produced SHA onto the moved job.
@@ -1734,7 +1769,8 @@ public sealed class TaskTransitionService
                             ["reviewBriefVersion"] = contentEvidence.ReviewBriefVersion ?? "unknown",
                         });
                 return Refuse(CompletionAdmissionStages.Content,
-                    new MoveJobOutcome(MoveJobStatus.IntegrationFailed, contentDecision.Message, info.FolderPath));
+                    new MoveJobOutcome(MoveJobStatus.IntegrationFailed, contentDecision.Message, info.FolderPath)
+                    { ContentReview = contentEvidence });
             }
         }
         var recordedContainment = false;

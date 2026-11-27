@@ -1144,6 +1144,15 @@ public static class V1ReviewPlaneEndpoints
                 AttemptWriteResult engineSettled;
                 try
                 {
+                    var contentBudget = acceptedReplay ? null
+                        : MonolithTransitionAdapter.ReviewBudget(new ReviewBudgetFacts(
+                            request.Outcome, request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
+                                verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
+                                verdict.Missing, verdict.Classification)).ToArray(),
+                            payload.ConcernRoundsUsed, payload.MaximumConcernRounds, engineCardBudget,
+                            payload.DeliveredRounds ?? ReviewRoundBudgetLedger.Empty, attemptId,
+                            payload.MaximumDeliveredRounds, ReviewRoundBudgetPolicy.DefaultConsecutiveBlockRounds,
+                            payload.ReissuesUsed ?? 0, payload.MaximumReissues));
                     engineSettled = acceptedReplay
                         ? authority.SettleReview(engineSettleRequest)
                         : RemoteReviewSettlementJournal.PrepareAndSettle(reviewTask.FolderPath,
@@ -1160,7 +1169,17 @@ public static class V1ReviewPlaneEndpoints
                             () => authority.GetReview(attemptId)?.Reports
                                 .LastOrDefault(report => report.AuthorityStatus == AttemptWriteStatus.Accepted)
                                 ?.IdempotencyKey,
-                            () => authority.SettleReview(engineSettleRequest));
+                            () =>
+                            {
+                                // The journal's per-attempt gate also fences the receipt.
+                                // A competing or rejected replay cannot replace it.
+                                if (authority.GetReview(attemptId)?.Reports.Any(item =>
+                                        item.AuthorityStatus == AttemptWriteStatus.Accepted) != true)
+                                    CompletionContentEvidence.WriteAdmission(reviewTask.FolderPath, attemptId,
+                                        request, engineReportHash, contentBudget?.RoundBudget.ContentAdmissions, occurrence.RunId,
+                                        currentReview.Subject.Plan?.BriefSha256);
+                                return authority.SettleReview(engineSettleRequest);
+                            });
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
@@ -1459,7 +1478,15 @@ public static class V1ReviewPlaneEndpoints
                         () => authority.GetReview(attemptId)?.Reports
                             .LastOrDefault(report => report.AuthorityStatus == AttemptWriteStatus.Accepted)
                             ?.IdempotencyKey,
-                        () => authority.SettleReview(settleRequest));
+                        () =>
+                        {
+                            if (authority.GetReview(attemptId)?.Reports.Any(item =>
+                                    item.AuthorityStatus == AttemptWriteStatus.Accepted) != true)
+                                CompletionContentEvidence.WriteAdmission(preparedTask.FolderPath, attemptId,
+                                    request, preparedHash, roundBudget.ContentAdmissions,
+                                    reviewBriefVersion: currentReview.Subject.Plan?.BriefSha256);
+                            return authority.SettleReview(settleRequest);
+                        });
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -1936,7 +1963,7 @@ public static class V1ReviewPlaneEndpoints
                     var followUp = BuildRemoteConcernFollowUp(reviewFollowUp.Findings, settled.ReviewAttempt.AttemptId);
                     if (!string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
                     {
-                        var followUpId = mutations.CreateJob(new CreateTaskRequest
+                        var followUpId = mutations.CreateReviewFollowUp(new CreateTaskRequest
                         {
                             Title = $"Follow-up: review concerns in {task.Key ?? task.Id}",
                             Agent = task.Agent,
@@ -1950,7 +1977,7 @@ public static class V1ReviewPlaneEndpoints
                             OwnerClientId = task.OwnerClientId,
                             CreationSource = "review-concern-follow-up",
                             CreatedBy = "pipeline",
-                        });
+                        }, task);
                         var created = followUpId is null ? null : scanner.FindJob(followUpId, task.WatchPath);
                         if (created is not null)
                         {
@@ -1959,6 +1986,7 @@ public static class V1ReviewPlaneEndpoints
                             mutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
                             {
                                 FollowUpOf = [sourceKey],
+                                DependsOn = created.References.DependsOn.Append(new TaskDependencyReference(sourceKey)).ToList(),
                             }, created.WatchPath);
                             mutations.SetTaskReferences(task.Id, (task.References ?? new TaskReferences()) with
                             {
@@ -3438,7 +3466,7 @@ public static class V1ReviewPlaneEndpoints
                 + (string.IsNullOrWhiteSpace(verdict.EvidenceChecked) ? "" : $" Evidence: {verdict.EvidenceChecked}")));
         if (created is null)
         {
-            var id = mutations.CreateJob(new CreateTaskRequest
+            var id = mutations.CreateReviewFollowUp(new CreateTaskRequest
             {
                 Title = title,
                 Agent = source.Agent,
@@ -3452,7 +3480,7 @@ public static class V1ReviewPlaneEndpoints
                 OwnerClientId = source.OwnerClientId,
                 CreationSource = "review-budget-follow-up",
                 CreatedBy = "pipeline",
-            });
+            }, source);
             created = id is null ? null : scanner.FindJob(id, source.WatchPath);
         }
         else if (ReviewRoundBudgetStore.Read(source.FolderPath).Rounds
@@ -3464,16 +3492,17 @@ public static class V1ReviewPlaneEndpoints
         if (created is null) return null;
         var sourceKey = source.Key ?? source.Id;
         var createdKey = created.Key ?? created.Id;
-        mutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
+        if (!mutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
         {
             FollowUpOf = [sourceKey],
-        }, created.WatchPath);
+            DependsOn = created.References.DependsOn.Append(new TaskDependencyReference(sourceKey)).ToList(),
+        }, created.WatchPath)) throw new IOException("The review-budget follow-up source link could not be written.");
         var latestSource = scanner.FindJob(source.Id, source.WatchPath) ?? source;
-        mutations.SetTaskReferences(source.Id, (latestSource.References ?? new TaskReferences()) with
+        if (!mutations.SetTaskReferences(source.Id, (latestSource.References ?? new TaskReferences()) with
         {
             RaisedFollowUps = (latestSource.References?.RaisedFollowUps ?? [])
                 .Append(createdKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-        }, source.WatchPath);
+        }, source.WatchPath)) throw new IOException("The review-budget source follow-up link could not be written.");
         ReviewRoundBudgetStore.MarkFollowUp(latestSource.FolderPath, reviewAttemptId, createdKey);
         return createdKey;
     }
@@ -3487,7 +3516,7 @@ public static class V1ReviewPlaneEndpoints
         TaskScannerService scanner,
         TimelineLog timeline)
     {
-        var followUpId = mutations.CreateJob(new CreateTaskRequest
+        var followUpId = mutations.CreateReviewFollowUp(new CreateTaskRequest
         {
             Title = $"Follow-up: review concerns in {source.Key ?? source.Id}",
             Agent = source.Agent,
@@ -3501,7 +3530,7 @@ public static class V1ReviewPlaneEndpoints
             OwnerClientId = source.OwnerClientId,
             CreationSource = "review-concern-follow-up",
             CreatedBy = "pipeline",
-        });
+        }, source);
         var created = followUpId is null ? null : scanner.FindJob(followUpId, source.WatchPath);
         if (created is null) return null;
 
@@ -3510,6 +3539,7 @@ public static class V1ReviewPlaneEndpoints
         mutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
         {
             FollowUpOf = [sourceKey],
+            DependsOn = created.References.DependsOn.Append(new TaskDependencyReference(sourceKey)).ToList(),
         }, created.WatchPath);
         mutations.SetTaskReferences(source.Id, (source.References ?? new TaskReferences()) with
         {
@@ -4623,6 +4653,19 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
     /// Gate executor identity and its admitted capabilities: the registered
     /// role keys plus every fresh, claimable advertised capability.
     /// </summary>
+    public Contract.PostMergeHostAvailability PostMergeHosts()
+    {
+        lock (_gate)
+        {
+            var fresh = _registrations.Values.Where(item =>
+                item.LastSeenAt > _time.GetUtcNow().UtcDateTime.AddMinutes(-3)).ToArray();
+            return new(fresh.Any(item => item.Capabilities.Contains(Contract.GateCapabilities.Executor)
+                && item.Capabilities.Contains(Contract.GateCapabilities.PostMerge)),
+                fresh.Any(item => item.Capabilities.Contains(Contract.ReviewCapabilities.CodingExecutor)
+                    || item.Capabilities.Contains(Contract.CapabilityProtocol.CodingExecutor)));
+        }
+    }
+
     public bool TryGetGateExecutor(string runnerId, string instanceId,
         out string hostId, out IReadOnlySet<string> capabilities)
     {
@@ -4642,6 +4685,7 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     .Where(item => item.FreshUntil > now && Claimable(item.AdvertisedStatus))
                     .Select(item => item.Key));
             }
+            _registrations[runnerId] = registration with { LastSeenAt = _time.GetUtcNow().UtcDateTime };
             hostId = registration.HostId;
             capabilities = admitted;
             return true;

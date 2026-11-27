@@ -23,14 +23,14 @@
 }
 .ps-settings__section-title {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: var(--studio-compat-type-16);
   font-weight: 600;
   color: var(--studio-fg-strong);
 }
 .ps-settings__section-desc {
   margin: 0;
   color: var(--studio-fg-dim);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
   max-width: 64ch;
 }
 .ps-settings__cards {
@@ -64,21 +64,21 @@
   gap: var(--studio-spacing-2);
 }
 .ps-settings__card-icon {
-  font-size: 1.1rem;
+  font-size: var(--studio-compat-type-39);
   line-height: 1;
 }
 .ps-settings__card-title {
   font-weight: 600;
   color: var(--studio-fg-strong);
-  font-size: 0.92rem;
+  font-size: var(--studio-compat-type-8);
 }
 .ps-settings__badge {
   margin-left: auto;
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   border: 1px solid var(--studio-card-muted-border);
   background: var(--studio-card-muted-bg);
   color: var(--studio-fg-muted);
@@ -86,7 +86,7 @@
 .ps-settings__card-desc {
   margin: 0;
   color: var(--studio-fg-dim);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
 }
 .ps-settings__card-value {
   display: flex;
@@ -112,7 +112,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--studio-spacing-1);
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   font-weight: 600;
   color: var(--studio-fg);
 }
@@ -122,16 +122,16 @@
   gap: var(--studio-spacing-2);
 }
 .ps-settings__cap-window {
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
   color: var(--studio-fg-dim);
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-card-muted-bg);
 }
 .ps-settings__caps-empty {
   margin: 0;
   color: var(--studio-fg-muted);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
 }
 
 .ps-settings__link {
@@ -143,7 +143,7 @@
   color: var(--studio-accent, var(--studio-fg-strong));
   cursor: pointer;
   font: inherit;
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   text-decoration: underline;
 }
 .ps-settings__link:hover { color: var(--studio-fg-strong); }
@@ -164,7 +164,7 @@
   gap: var(--studio-spacing-1);
 }
 .ps-settings__field-label {
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
   font-weight: 600;
   color: var(--studio-fg-muted);
   text-transform: uppercase;
@@ -173,9 +173,9 @@
 .ps-settings__card--wiki-source .ps-settings__field-label { color: var(--studio-wiki-source-label-fg); }
 .ps-settings__select {
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--studio-compat-type-26);
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   border: 1px solid var(--studio-card-muted-border);
   background: var(--studio-card-muted-bg);
   color: var(--studio-fg);
@@ -208,7 +208,7 @@
 .ps-settings__error {
   margin: 0;
   color: var(--studio-danger, var(--studio-fg-strong));
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 .ps-settings__quota-wait-controls {
   display: grid;
@@ -219,13 +219,13 @@
   align-items: center;
   gap: var(--studio-spacing-2);
   color: var(--studio-fg-dim);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
 }
 .ps-settings__number-field input {
   width: 76px;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid var(--studio-card-muted-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-card-muted-bg);
   color: var(--studio-fg);
   font: inherit;

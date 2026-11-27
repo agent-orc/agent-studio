@@ -732,6 +732,9 @@ if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") &&
     builder.Services.AddHostedService<HostedVolumeBackupWorker>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
+builder.Services.AddSingleton<AgentStudio.Deploy.StudioReleasesService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<AgentStudio.Deploy.StudioReleasesWorker>();
 builder.Services.AddSingleton<AgentStudio.Deploy.InstanceDeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.InstanceDeployService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
@@ -1192,6 +1195,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedBatchGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeRunStore>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeGateScheduler>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.TestQuarantineStore(
     Path.Combine(sp.GetRequiredService<AgentStudio.Pipeline.PostMergeRunStore>().Root, "..", "test-quarantines")));
 // SM-4: the operator policy step reads gate evidence to classify stage deploys and promotions (D2).
@@ -1537,6 +1541,9 @@ builder.Services.AddSingleton(sp => new WatcherLeaseService(
     sp.GetRequiredService<OperatorDecisionOptions>(), sp.GetRequiredService<OperatorDecisionLog>(),
     sp.GetRequiredService<ControlPlaneAuditLog>(), sp.GetRequiredService<TimeProvider>(),
     sp.GetService<ILogger<WatcherLeaseService>>()));
+builder.Services.AddSingleton<CapacityIdleTracker>();
+builder.Services.AddSingleton<CodingCapacityService>();
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => sp.GetRequiredService<CodingCapacityService>());
 builder.Services.AddSingleton<OverlapPredictionLedger>();
 builder.Services.AddSingleton<OverlapDispatchGuard>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorOverlapFactSource(
@@ -1588,7 +1595,10 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPos
             StringComparison.OrdinalIgnoreCase)), cardId, null) is [var task, ..]
         ? OperatorDecisionFacts.CardKey(task) : null,
     () => sp.GetRequiredService<ProjectRegistry>().List().Where(project => !project.Archived)
-        .Select(project => (project.DisplayName, sp.GetRequiredService<AgentStudio.Personas.LineGuardianStore>().Read(project.Id)))));
+        .Select(project => (project.DisplayName, sp.GetRequiredService<AgentStudio.Personas.LineGuardianStore>().Read(project.Id))),
+    cardState: (project, cardId) => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live is { } live
+        && TaskScannerService.FindMatches(live.Where(task => string.Equals(task.ProjectName, project,
+            StringComparison.OrdinalIgnoreCase)), cardId, null) is [var task, ..] ? task.State : null));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorEnvironmentIncidentFactSource(
     sp.GetRequiredService<HealthCheckStore>(),
     () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name),

@@ -2,8 +2,8 @@ import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signa
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { DataGridComponent, GridCellDirective, type GridColumn } from '../../../../components/data-grid';
-import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/pending-button.directive';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { formatAccessTime } from '../../models/access.model';
 import type { OperatorSession } from '../../models/operator-agent.model';
 import { deviceBindingLabel } from '../../models/terminal-sign-in.model';

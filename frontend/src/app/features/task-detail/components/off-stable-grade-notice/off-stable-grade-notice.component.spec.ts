@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
 import { OffStableGradeNoticeComponent } from './off-stable-grade-notice.component';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import type { ReviewAttempt, TaskInfo } from '../../../../models/task.model';
 
 const NOTICE = 'graded by release 20261105T1059Z-review-b9a3a90d6895 (commit b9a3a90), '

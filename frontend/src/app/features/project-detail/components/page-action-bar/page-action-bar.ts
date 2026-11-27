@@ -8,10 +8,10 @@ import {
   output,
   signal,
 } from '@angular/core';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
-import { DialogComponent } from '../../../../components/dialog/dialog.component';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import {
   PageContext,
   PageTaskIntent,
@@ -22,7 +22,7 @@ import {
 import type { WikiHome, WikiHomeLink } from '../../../../models/project-docs.model';
 import { PageContextService } from '../../../../services/page-context.service';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 
 /**
  * Canonical page-head action surface. Every interactive repository page uses

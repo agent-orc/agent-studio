@@ -7,6 +7,17 @@ namespace AgentStudio.Tests;
 public sealed class TestEnvelopeTests
 {
     [Fact]
+    public void Canary_requires_a_complete_envelope_once_any_marker_is_declared()
+    {
+        var legacy = new Dictionary<string, string?> { ["HOME"] = "/host/home" };
+        Assert.False(TestEnvelope.HasEnvelopeDeclaration(legacy));
+        var partial = new Dictionary<string, string?>(legacy) { ["TEST_ENVELOPE_SHAPE"] = "standard" };
+        Assert.True(TestEnvelope.HasEnvelopeDeclaration(partial));
+        Assert.Contains("HOME is not owned by this run.", TestEnvelope.Violations(partial, null));
+        Assert.Contains("Processor count is missing.", TestEnvelope.Violations(partial, null));
+    }
+
+    [Fact]
     public void Host_variables_are_allowlisted_and_owned_paths_override_declarations()
     {
         var declared = new Dictionary<string, string> { ["HOME"] = "/foreign", ["PROJECT_VALUE"] = "yes",

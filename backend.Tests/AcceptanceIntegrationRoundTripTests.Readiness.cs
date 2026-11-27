@@ -121,6 +121,20 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         Assert.Equal("The lane shows no reason on the card.", item.Concern);
         Assert.Contains("requirement-fit verdict was concerns", item.Refusal);
         Assert.Equal(refused.Message, item.Refusal);
+        Assert.Contains("The lane shows no reason on the card.", refused.Message);
+        using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext { RequestServices = services };
+        context.Response.Body = new MemoryStream();
+        await TaskEndpointHelpers.MoveResult(refused).ExecuteAsync(context);
+        Assert.Equal(409, context.Response.StatusCode);
+        context.Response.Body.Position = 0;
+        using var body = await JsonDocument.ParseAsync(context.Response.Body);
+        Assert.Equal("completion-content-gap", body.RootElement.GetProperty("code").GetString());
+        var content = body.RootElement.GetProperty("contentReview");
+        Assert.Equal("The lane shows no reason on the card.", content.GetProperty("contentSummary").GetString());
+        Assert.Equal(deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt!.AttemptId,
+            content.GetProperty("reviewAttemptId").GetString());
+        Assert.Equal(VerificationFixtureAtUtc, content.GetProperty("reviewedAtUtc").GetDateTime());
         Assert.Contains("The lane shows no reason on the card.", item.Round!.Prompt);
         Assert.Contains($"refs/heads/{DeliveryRef}", item.Round.Prompt);
     }

@@ -3,8 +3,8 @@ import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
-import { ModalStackService } from '../../../../services/modal-stack.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from '../../../../services/task.service';
 import { CrashRecoveryPromptComponent } from './crash-recovery-prompt.component';
 

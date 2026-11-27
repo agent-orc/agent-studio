@@ -46,7 +46,7 @@ import {
   type AspectFinding,
   type AspectVerdictTone,
 } from '../../../../components/aspect-findings';
-import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { SteeringInfo } from '../../../../components/steering-detail';
 import { buildMergeSignal, type MergeSignalView } from '../../../board';
 import type { TaskTimelineEvent } from '../../../task-timeline';

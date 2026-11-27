@@ -19,7 +19,7 @@ import {
   type DocumentPresentation,
 } from './document-presentation.util';
 import { DocumentDetailsMenuComponent } from './document-details-menu/document-details-menu.component';
-import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { ArchivedFilesManifestComponent } from '../../../../retention/components/archived-files-manifest/archived-files-manifest.component';
 
 /**

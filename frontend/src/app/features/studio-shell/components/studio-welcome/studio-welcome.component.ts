@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
-import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
+import { EmptyStateComponent } from '@studio/ui/components/empty-state/empty-state.component';
 import type { ProjectSidebarRow } from '../../studio-shell.project-rows';
 import { StudioEmptyStateComponent } from '../studio-empty-state/studio-empty-state.component';
 

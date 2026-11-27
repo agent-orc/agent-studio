@@ -11,7 +11,7 @@
 
 .ctx__state {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   color: var(--studio-fg-dim);
 }
 .ctx__state--error { color: var(--notify-error-icon-fg); }
@@ -20,7 +20,7 @@
   width: 100%;
   max-width: 96rem;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-variant-numeric: tabular-nums;
 }
 .ctx__table + .ctx__table { margin-top: var(--studio-spacing-3); }
@@ -44,7 +44,7 @@
 
 .ctx__table thead th {
   color: var(--studio-fg-muted);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   font-weight: 650;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -65,9 +65,9 @@
   max-width: 52ch;
   color: var(--studio-fg-dim);
   line-height: 1.35;
-  padding-block: 2px !important;
+  padding-block: var(--studio-compat-space-4) !important;
 }
 
 .ctx__row--backward td { background: var(--ctx-backward-tint); }
 .ctx__row--lateral td { color: var(--studio-fg-dim); }
-.ctx__back { color: var(--studio-accent-4-strong); margin-right: 2px; }
+.ctx__back { color: var(--studio-accent-4-strong); margin-right: var(--studio-compat-space-4); }

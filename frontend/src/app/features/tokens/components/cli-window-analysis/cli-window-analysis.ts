@@ -1,8 +1,8 @@
-import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import type { CliUsageQuotaRow } from '../../services/cli-usage.store';
 import type { TokenTimeline } from '../../models/tokens.model';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
 import { UsageCockpitService } from '../../../usage-cockpit/services/usage-cockpit.service';
 import { TokensApiService, type CliWindowAttribution } from '../../services/tokens-api.service';

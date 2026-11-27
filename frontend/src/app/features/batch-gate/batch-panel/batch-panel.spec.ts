@@ -5,7 +5,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { describe, expect, it, vi } from 'vitest';
 import { BatchPanelComponent } from './batch-panel';
 import { isolatedRedState, redHalvingState } from '../testing/batch-fixtures';
-import { ModalStackService } from '../../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { TaskReferenceNavigationService } from '../../../services/task-reference-navigation.service';
 import { CreateTaskFormService } from '../../board';

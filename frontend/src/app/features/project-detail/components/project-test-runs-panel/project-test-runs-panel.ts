@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { DatePipe, DecimalPipe } from '@angular/common';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import type { ProjectTestRunItem, ProjectTestRunsResponse } from '../../../../models/project-overview.model';
 import { TaskService } from '../../../../services/task.service';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * Test run result (or state while it has no result) on the shared indicator

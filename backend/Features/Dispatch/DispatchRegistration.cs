@@ -44,7 +44,7 @@ public static class DispatchRegistration
                 return Results.BadRequest(new { error = "Use off, shadow or live." });
             settings.SetDispatchMode(project, request.Mode);
             return Results.Ok(new { mode = settings.Get(project).DispatchMode });
-        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.ProjectSettingsWrite);
+        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.WorkspaceAdminister);
 
         app.MapGet("/api/projects/{project}/dispatch/personas", (string project, HttpContext context,
             TaskScannerService scanner, ProjectRegistry projects, DispatchStore store) =>

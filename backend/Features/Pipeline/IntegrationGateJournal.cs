@@ -1,10 +1,19 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace AgentStudio.Pipeline;
 
+/// <summary>Durable custody state for a merge and its rollback obligation.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<IntegrationGatePhase>))]
+public enum IntegrationGatePhase
+{
+    GateRunning,
+    RollbackRequired,
+    RollbackCompleted,
+}
+
 /// <summary>
-/// One durable record of a merge that is currently sitting on the integration
-/// branch without a gate verdict (AGT-2849).
+/// One durable record of unsettled integration branch custody (AGT-2849, AGT-4114).
 ///
 /// <para>
 /// The pre-develop build gate is the only step that publishes a commit before it
@@ -36,6 +45,9 @@ public sealed record IntegrationGateJournalEntry
 
     public DateTimeOffset StartedAt { get; init; }
 
+    /// <summary>A red verdict retains custody until reset and its completion record succeed.</summary>
+    public IntegrationGatePhase Phase { get; init; }
+
     /// <summary>
     /// Identifies the invocation that opened this entry. A folder that changed
     /// lanes while the gate ran can hold a newer attempt's entry; only the owner
@@ -56,7 +68,7 @@ public sealed record IntegrationGateJournalEntry
 /// question in the other direction: the logs say which subject reached a
 /// verdict, this file says which subject was promised one. An entry that is
 /// still present when a process starts is by definition an interrupted run -
-/// every path that reaches a verdict clears it, including the rollback path.
+/// a green verdict clears it, while rollback retains it until reset is recorded.
 /// </para>
 /// </summary>
 public static class IntegrationGateJournal
@@ -75,8 +87,7 @@ public static class IntegrationGateJournal
 
     /// <summary>
     /// Records that a gate is about to take responsibility for the integration
-    /// branch. Best-effort: a journal that cannot be written must not refuse an
-    /// integration the operator already accepted.
+    /// branch. A failed durable write refuses the merge before it can move a ref.
     /// </summary>
     public static void Open(string jobFolderPath, IntegrationGateJournalEntry entry)
     {
@@ -119,12 +130,28 @@ public static class IntegrationGateJournal
         }
     }
 
-    /// <summary>Clears the entry once the gate has reached a verdict, in either direction.</summary>
+    public static void RequireRollbackOwned(string jobFolderPath, string? owner)
+        => RecordPhaseOwned(jobFolderPath, owner, IntegrationGatePhase.RollbackRequired);
+
+    public static void CompleteRollbackOwned(string jobFolderPath, string? owner)
+        => RecordPhaseOwned(jobFolderPath, owner, IntegrationGatePhase.RollbackCompleted);
+
+    private static void RecordPhaseOwned(string jobFolderPath, string? owner, IntegrationGatePhase phase)
+    {
+        lock (Gate)
+        {
+            if (Read(jobFolderPath) is not { } entry || entry.Owner != owner) return;
+            Write(jobFolderPath, entry with { Phase = phase });
+        }
+    }
+
+    /// <summary>Clears settled custody, or an invocation that never created a merge.</summary>
     public static void Clear(string jobFolderPath)
     {
         lock (Gate)
         try
         {
+            if (Read(jobFolderPath)?.Phase == IntegrationGatePhase.RollbackRequired) return;
             var path = PathFor(jobFolderPath);
             if (File.Exists(path)) File.Delete(path);
         }
@@ -138,10 +165,10 @@ public static class IntegrationGateJournal
     /// Clears the entry only while it still belongs to <paramref name="owner"/>.
     /// An entry another invocation opened since then is its in-flight record.
     /// </summary>
-    public static void ClearOwned(string jobFolderPath, string owner)
+    public static void ClearOwned(string jobFolderPath, string? owner)
         => ClearOwned(jobFolderPath, owner, null);
 
-    internal static void ClearOwned(string jobFolderPath, string owner, Action? afterOwnerRead)
+    internal static void ClearOwned(string jobFolderPath, string? owner, Action? afterOwnerRead)
     {
         lock (Gate)
             if (Read(jobFolderPath)?.Owner == owner)
@@ -153,15 +180,23 @@ public static class IntegrationGateJournal
 
     private static void Write(string jobFolderPath, IntegrationGateJournalEntry entry)
     {
+        var path = PathFor(jobFolderPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            var path = PathFor(jobFolderPath);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, JsonSerializer.Serialize(entry, Json));
+            // Publish a complete, flushed replacement. A failed write leaves
+            // the previous custody record intact and propagates to the caller.
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                stream.Write(JsonSerializer.SerializeToUtf8Bytes(entry, Json));
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporary, path, overwrite: true);
         }
-        catch (Exception ex)
+        finally
         {
-            SilentCatch.Note(ex, "IntegrationGateJournal: writing the in-flight record is best-effort");
+            if (File.Exists(temporary)) File.Delete(temporary);
         }
     }
 }

@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { StallInterventionRow } from '../../models/stall-intervention.model';
 
 /** AGT-3207: what the AI Operator observed, did, why, what changed and how to undo it. */

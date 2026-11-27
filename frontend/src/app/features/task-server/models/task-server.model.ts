@@ -11,7 +11,7 @@
  * Live projection of `GET /api/v1/management/status`. The recovery console and
  * Agent Studio consume this same authoritative contract.
  */
-import type { StatusTone as IndicatorTone } from '../../../components/status-indicator/status-indicator.component';
+import type { StatusTone as IndicatorTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Which deployment phase the connected server is in. */
 export type TaskServerPhase = 'local' | 'central';

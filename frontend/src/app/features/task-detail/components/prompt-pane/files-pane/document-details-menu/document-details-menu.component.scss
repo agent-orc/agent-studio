@@ -11,10 +11,10 @@
   height: 24px;
   place-items: center;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   color: var(--studio-fg-dim);
   cursor: pointer;
-  font-size: 16px;
+  font-size: var(--studio-compat-type-31);
   line-height: 1;
   list-style: none;
 
@@ -37,7 +37,7 @@
   width: min(320px, 78vw);
   padding: var(--studio-spacing-3);
   border: 1px solid var(--studio-border-strong, var(--studio-border));
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-elevated);
   box-shadow: var(--elevation-popover);
   cursor: default;
@@ -57,7 +57,7 @@
 
   dt {
     color: var(--studio-fg-dim);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -67,7 +67,7 @@
     margin: 0;
     overflow-wrap: anywhere;
     color: var(--studio-fg-strong);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     font-variant-numeric: tabular-nums;
   }
 }
@@ -77,11 +77,11 @@
   margin-top: var(--studio-spacing-3);
   padding: var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: var(--studio-bg);
   color: var(--studio-fg);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   cursor: pointer;
 
   &:hover,
@@ -98,5 +98,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .doc-details__trigger,
-  .doc-details__source { transition-duration: 0s; }
+  .doc-details__source { transition-duration: var(--studio-compat-duration-2); }
 }

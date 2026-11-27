@@ -28,10 +28,10 @@
   height: 0.95rem;
   margin: 0;
   border: 1px solid var(--studio-card-muted-border);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-card-muted-bg);
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition: background var(--studio-compat-duration-3) ease, border-color var(--studio-compat-duration-3) ease;
 }
 
 .step-toggle input::after {
@@ -41,10 +41,10 @@
   left: 0.12rem;
   width: 0.65rem;
   height: 0.65rem;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   background: var(--studio-fg-muted);
   transform: translateY(-50%);
-  transition: left 0.12s ease, background 0.12s ease;
+  transition: left var(--studio-compat-duration-3) ease, background var(--studio-compat-duration-3) ease;
 }
 
 .step-toggle input:checked {
@@ -74,6 +74,6 @@
 @media (prefers-reduced-motion: reduce) {
   .step-toggle input,
   .step-toggle input::after {
-    transition-duration: 0s;
+    transition-duration: var(--studio-compat-duration-2);
   }
 }

@@ -1,15 +1,15 @@
 @use '../../../../../styles/mixins' as m;
 
 :host { display: block; }
-.pdrift__icon { margin-right: 6px; }
+.pdrift__icon { margin-right: var(--studio-compat-space-2); }
 .pdrift__count {
   display: inline-block;
-  margin-left: 8px;
-  padding: 1px 8px;
-  border-radius: 999px;
+  margin-left: var(--studio-spacing-2);
+  padding: var(--studio-compat-space-6) var(--studio-spacing-2);
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-card-muted-bg);
   color: var(--studio-fg-dim);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   font-weight: 600;
 }
 
@@ -20,11 +20,11 @@
 
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--studio-compat-space-5);
   flex-wrap: wrap;
-  margin: 6px 0;
+  margin: var(--studio-compat-space-2) 0;
   color: var(--severity-high);
-  font-size: 0.85rem;
+  font-size: var(--studio-compat-type-26);
 }
 .pdrift__error strong { color: var(--severity-high); }
 
@@ -32,7 +32,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: var(--studio-deck-panel-gap);
-  margin: 10px 0 8px;
+  margin: var(--studio-compat-space-5) 0 var(--studio-spacing-2);
 }
 .pdrift__marble {
   @include m.deck-panel;
@@ -42,7 +42,7 @@
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
   min-height: 96px;
 }
 .pdrift__marble:hover { background: var(--studio-bg-hover); border-color: var(--studio-card-border-hover); }
@@ -50,28 +50,28 @@
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
 }
-.pdrift__marble-label { font-weight: 600; color: var(--studio-fg-strong); font-size: 0.92rem; }
+.pdrift__marble-label { font-weight: 600; color: var(--studio-fg-strong); font-size: var(--studio-compat-type-8); }
 .pdrift__marble-score {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
-  font-size: 1.05rem;
+  font-size: var(--studio-compat-type-9);
   color: var(--studio-fg-dim);
 }
 .pdrift__marble-role {
   margin: 0;
   color: var(--studio-fg-dim);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   line-height: 1.35;
   flex-grow: 1;
 }
 .pdrift__marble footer {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
   flex-wrap: wrap;
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 }
 .pdrift__marble--high       {
   background: color-mix(in srgb, var(--studio-accent-strong) 6%, var(--studio-card-bg));
@@ -87,9 +87,9 @@
 .pdrift__cov { color: var(--studio-fg-muted); font-variant-numeric: tabular-nums; }
 
 .pdrift__source {
-  margin: 6px 0 0;
+  margin: var(--studio-compat-space-2) 0 0;
   color: var(--studio-fg-muted);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
 }
 .pdrift__source code { color: var(--severity-pending); }
 
@@ -97,21 +97,21 @@
 .pdrift__panel {
   @include m.deck-panel;
 
-  margin-top: 14px;
+  margin-top: var(--studio-compat-space-3);
 }
 .pdrift__panel header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: var(--studio-spacing-2);
 }
-.pdrift__panel header h4 { margin: 0; color: var(--studio-fg-strong); font-size: 0.95rem; }
+.pdrift__panel header h4 { margin: 0; color: var(--studio-fg-strong); font-size: var(--studio-compat-type-16); }
 .pdrift__close {
   background: transparent;
   border: none;
   color: var(--studio-fg-muted);
   cursor: pointer;
-  font-size: 1.1rem;
+  font-size: var(--studio-compat-type-39);
   line-height: 1;
 }
 .pdrift__close:hover { color: var(--studio-fg-strong); }
@@ -119,67 +119,67 @@
 .pdrift__panel-meta {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 4px 12px;
-  margin: 0 0 8px;
-  font-size: 0.82rem;
+  gap: var(--studio-spacing-1) var(--studio-spacing-3);
+  margin: 0 0 var(--studio-spacing-2);
+  font-size: var(--studio-compat-type-7);
 }
 .pdrift__panel-meta > div { display: contents; }
 .pdrift__panel-meta dt { color: var(--studio-fg-muted); }
 .pdrift__panel-meta dd { margin: 0; color: var(--studio-fg); }
 
 .pdrift__panel-summary {
-  margin: 0 0 10px;
+  margin: 0 0 var(--studio-compat-space-5);
   color: var(--studio-fg);
-  font-size: 0.85rem;
+  font-size: var(--studio-compat-type-26);
   line-height: 1.5;
 }
 
-.pdrift__panel-details { margin: 6px 0; }
+.pdrift__panel-details { margin: var(--studio-compat-space-2) 0; }
 .pdrift__panel-details summary {
   cursor: pointer;
   color: var(--studio-fg-dim);
-  font-size: 0.80rem;
+  font-size: var(--studio-compat-type-68);
   user-select: none;
 }
 .pdrift__panel-details ul {
-  margin: 6px 0 0;
-  padding-left: 20px;
-  font-size: 0.82rem;
+  margin: var(--studio-compat-space-2) 0 0;
+  padding-left: var(--studio-compat-space-15);
+  font-size: var(--studio-compat-type-7);
   color: var(--studio-fg);
 }
 .pdrift__panel-details code {
   background: var(--studio-card-muted-bg);
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-size: 0.78rem;
+  padding: var(--studio-compat-space-6) var(--studio-spacing-1);
+  border-radius: var(--studio-compat-radius-9);
+  font-size: var(--studio-compat-type-13);
   color: var(--severity-pending);
 }
 
 .pdrift__actions {
   display: flex;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
   flex-wrap: wrap;
   align-items: center;
-  margin-top: 10px;
+  margin-top: var(--studio-compat-space-5);
 }
 .pdrift__action-label {
   color: var(--studio-fg-muted);
-  font-size: 0.78rem;
-  margin-left: 4px;
+  font-size: var(--studio-compat-type-13);
+  margin-left: var(--studio-spacing-1);
 }
 .pdrift__action-divider {
   width: 1px;
   align-self: stretch;
   background: var(--studio-card-muted-border);
-  margin: 0 6px;
+  margin: 0 var(--studio-compat-space-2);
 }
 .pdrift__btn {
   background: color-mix(in srgb, var(--severity-info) 10%, transparent);
   color: var(--studio-fg);
   border: 1px solid color-mix(in srgb, var(--severity-info) 35%, transparent);
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 0.80rem;
+  border-radius: var(--studio-compat-radius-7);
+  padding: var(--studio-spacing-1) var(--studio-compat-space-5);
+  font-size: var(--studio-compat-type-68);
   cursor: pointer;
 }
 .pdrift__btn:hover:not([disabled]) { background: color-mix(in srgb, var(--severity-info) 18%, transparent); }
@@ -191,8 +191,8 @@
 
 
 .pdrift__action-msg {
-  margin: 8px 0 0;
+  margin: var(--studio-spacing-2) 0 0;
   color: var(--studio-accent-teal);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
   

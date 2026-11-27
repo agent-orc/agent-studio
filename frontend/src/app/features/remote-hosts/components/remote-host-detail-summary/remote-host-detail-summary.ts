@@ -1,4 +1,4 @@
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
 
 @Component({

@@ -1,8 +1,8 @@
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
-import { SectionHeaderComponent } from '../../../../components/section-header/section-header.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
-import { TreeRowComponent } from '../../../../components/tree-row/tree-row.component';
+import { SectionHeaderComponent } from '@studio/ui/components/section-header/section-header.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { TreeRowComponent } from '@studio/ui/components/tree-row/tree-row.component';
 import {
   PromptCatalogItem,
   PromptProjectOverride,

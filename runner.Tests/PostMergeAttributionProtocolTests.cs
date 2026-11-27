@@ -12,6 +12,7 @@ namespace AgentRunner.Tests;
 /// script stands in for the test host: it logs partial builds and decides each
 /// focused run from the checked-out tree or a run counter.
 /// </summary>
+[Trait("Category", "MachineBound")]
 public sealed class PostMergeAttributionProtocolTests : IDisposable
 {
     private const string Test = "Runner.Tests.FeatureTests.Works";
@@ -28,8 +29,12 @@ public sealed class PostMergeAttributionProtocolTests : IDisposable
         Assert.True(exit == 1, output);
         var failure = terminal.Failure!;
         Assert.Equal(fixture.Merges[1], failure.AttributedMerge);
+        var failedCommand = Assert.Single(terminal.Verdicts, verdict => verdict.ExitCode != 0);
+        Assert.Equal("Expected healthy endpoint, actual unavailable", failedCommand.FailureMessages![Test]);
+        Assert.DoesNotContain("Expected healthy endpoint", failedCommand.OutputTail);
         Assert.Equal("AGT-2", failure.AttributedTaskId);
-        Assert.Equal(fixture.Merges, failure.SuspectMerges);
+        // Static reach removes unrelated merges; measured attribution remains authoritative.
+        Assert.Equal([fixture.Merges[1]], failure.SuspectMerges);
         // File overlap decides coupling: merges three and four do not touch Feature.cs.
         Assert.False(failure.LaterMergeDependsOnSuspect);
         Assert.True(failure.RevertAppliesCleanly);
@@ -218,7 +223,8 @@ public sealed class PostMergeAttributionProtocolTests : IDisposable
         Write(seed, "suite.sh", "#!/bin/sh\n"
             + "case \"$*\" in *\"dotnet build\"*) echo \"$*\" >> build.log; exit 0;; esac\n"
             + "n=$(cat .runs 2>/dev/null || echo 0); n=$((n+1)); echo \"$n\" > .runs\n"
-            + $"fail() {{ echo '  Failed {Test} [1 ms]'; exit 1; }}\n"
+            + $"fail() {{ echo '  Failed {Test} [1 ms]'; echo 'Error Message:'; echo 'Expected healthy endpoint, actual unavailable'; "
+            + "i=0; while [ \"$i\" -lt 100 ]; do echo 'diagnostic padding after the first error'; i=$((i+1)); done; exit 1; }\n"
             + scenario + "\nexit 0\n");
         Write(seed, "runner/Runner.csproj", "<Project />");
         Write(seed, "runner.Tests/Runner.Tests.csproj",

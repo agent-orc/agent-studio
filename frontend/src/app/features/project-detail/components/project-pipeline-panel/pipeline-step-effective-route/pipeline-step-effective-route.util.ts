@@ -1,5 +1,5 @@
 import type { EffectiveModelSelection } from '../../../../quota';
-import type { StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** What a step row shows when the launch route differs from the configured one. */
 export interface EffectiveRouteView {

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { of, throwError, type Observable } from 'rxjs';
 import { HumanReviewDecisionPanelComponent } from './human-review-decision-panel.component';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { AuthSessionState, type AuthStatus } from '../../../../services/auth.service';
 import type { TaskInfo } from '../../../../models/task.model';
 

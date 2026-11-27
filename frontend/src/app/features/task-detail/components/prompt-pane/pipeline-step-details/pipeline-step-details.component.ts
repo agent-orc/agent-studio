@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
-import { DialogComponent } from '../../../../../components/dialog/dialog.component';
-import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
-import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { PipelineStepResultComponent, type PipelineStepResultHeader } from '../pipeline-step-result/pipeline-step-result.component';
 import { TaskPromptPopoverComponent } from '../task-prompt-popover/task-prompt-popover.component';

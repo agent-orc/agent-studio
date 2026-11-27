@@ -20,7 +20,7 @@
   }
 
   .mobile-lane-primary:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--studio-accent) 88%, black);
+    background: color-mix(in srgb, var(--studio-accent) 88%, var(--studio-compat-surface-39));
   }
 
   .mobile-lane-primary:disabled {

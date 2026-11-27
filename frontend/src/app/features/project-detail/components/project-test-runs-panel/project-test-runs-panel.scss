@@ -34,7 +34,7 @@ p {
 
 h1 {
   color: var(--studio-fg-strong);
-  font-size: clamp(28px, 4vw, 42px);
+  font-size: clamp(var(--studio-compat-type-74), var(--studio-compat-type-37), var(--studio-compat-type-75));
 }
 
 .test-runs__header p:last-child,
@@ -46,7 +46,7 @@ h1 {
 .test-runs__eyebrow,
 dt {
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -56,7 +56,7 @@ button {
   min-height: 36px;
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg-strong);
   font: inherit;
@@ -114,7 +114,7 @@ button:focus-visible {
   width: 9px;
   height: 9px;
   flex: 0 0 auto;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   background: var(--studio-fg-muted);
 }
 
@@ -159,10 +159,10 @@ code {
 
 .test-runs__card {
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-surface-muted);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 
 .test-runs__time {

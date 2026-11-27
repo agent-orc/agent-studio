@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, input, output } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import type { FeedBurst } from '../orchestrator-feed/feed-bursts';
 

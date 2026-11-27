@@ -36,7 +36,7 @@ import { describeStatusBarReviewLane, summarizeStatusBarReviewLane } from './sta
 import { withRouteSegment } from '../../../../services/url-hash.util';
 import { browserTimeZone, formatZonedTime } from '../../../../services/usage-time.util';
 import { injectUsageClock } from '../../../usage-cockpit/usage-clock';
-import { nameWithVisibleText } from '../../../../utils/accessible-name';
+import { nameWithVisibleText } from '@studio/ui/utils/accessible-name';
 
 const HOST_LOAD_REFRESH_MS = 30_000;
 

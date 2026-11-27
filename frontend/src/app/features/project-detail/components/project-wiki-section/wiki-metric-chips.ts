@@ -1,5 +1,5 @@
 import { WikiTreeMetadata, WikiTreeNode } from '../../../../models/project-docs.model';
-import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
+import type { StudioIconName } from '@studio/ui/components/studio-icon/studio-icon.component';
 
 /** Visual tone of a tree metric chip (drift grade / direction). */
 export type WikiMetricTone = 'good' | 'info' | 'warn' | 'bad' | 'muted';

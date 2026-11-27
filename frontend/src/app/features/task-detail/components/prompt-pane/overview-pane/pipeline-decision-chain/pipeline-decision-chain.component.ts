@@ -3,7 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { HttpErrorResponse } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { DisclosureMarkerComponent } from '../../../../../../components/disclosure-marker/disclosure-marker.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import type {
   PipelineExecutionRecord,
   TaskPipelineResponse,
@@ -12,7 +12,7 @@ import { formatClock, formatStepDuration } from '../overview-pane-formatters';
 import { clearVisibleInterval, setVisibleInterval } from '../../../../../../utils/visible-interval';
 import { summarizeDecisionCost } from '../../../../../task-pipeline';
 import { buildDecisionTransitions, decisionVerdictTone, operatorIntentOutcome, type DecisionTransitionVm } from './decision-chain.util';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 interface ReceiptSummary {
   receiptId: string; occurrenceId: string; taskId: string | null; projectId: string | null;

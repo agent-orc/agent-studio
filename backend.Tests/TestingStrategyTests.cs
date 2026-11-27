@@ -85,12 +85,12 @@ public sealed class TestingStrategyTests : IDisposable
             PostMergeCoveragePolicy.Precheck(TestingStrategies.Strict, null, Tip, _clock.GetUtcNow()));
 
     [Fact]
-    public void ARunOnTheCurrentTipOrWithinSixHoursCoversDevelop()
+    public void ExactMeasuredTipIsCurrentAndARecentMeasurementLeavesNewerTipsPending()
     {
         var now = _clock.GetUtcNow();
         Assert.Equal(PostMergeCoverageStates.Current, PostMergeCoveragePolicy.Precheck(TestingStrategies.Fast,
             new PostMergeLastReport(Tip, now.AddDays(-3)), Tip, now));
-        Assert.Equal(PostMergeCoverageStates.Current, PostMergeCoveragePolicy.Precheck(TestingStrategies.Balanced,
+        Assert.Equal(PostMergeCoverageStates.Pending, PostMergeCoveragePolicy.Precheck(TestingStrategies.Balanced,
             new PostMergeLastReport(Covered, now.AddHours(-5)), Tip, now));
         Assert.Null(PostMergeCoveragePolicy.Precheck(TestingStrategies.Fast,
             new PostMergeLastReport(Covered, now.AddHours(-6)), Tip, now));
@@ -100,7 +100,7 @@ public sealed class TestingStrategyTests : IDisposable
     }
 
     [Fact]
-    public void TheLastReportIsTheNewestReceiptOfAnyKind()
+    public void LivenessDoesNotReplaceACompletedMeasurement()
     {
         var now = _clock.GetUtcNow();
         var state = PostMergeProjectState.Empty("p") with
@@ -116,6 +116,12 @@ public sealed class TestingStrategyTests : IDisposable
         var running = state with { ActiveRun = Run("c", Covered, "running", now.AddHours(-1), null) };
         Assert.Equal(new PostMergeLastReport(Covered, now.AddHours(-1)), PostMergeCoveragePolicy.LastReport(running));
         Assert.Null(PostMergeCoveragePolicy.LastReport(PostMergeProjectState.Empty("p")));
+        Assert.Null(PostMergeCoveragePolicy.LastMeasurement(running));
+        var measured = state with { Runs = [Run("m", Covered, "green", now.AddHours(-9), now.AddHours(-8))
+            with { Commands = ["dotnet test"], Verdicts = [new("dotnet test", 0, false)] }, .. state.Runs] };
+        Assert.Equal(Covered, PostMergeCoveragePolicy.LastMeasurement(measured)!.TipSha);
+        Assert.Equal(Covered, PostMergeCoveragePolicy.LastMeasurement(measured with
+            { Runs = [.. measured.Runs, Run("infra", Tip, "inconclusive", now, now)] })!.TipSha);
     }
 
     [Fact]
@@ -153,7 +159,7 @@ public sealed class TestingStrategyTests : IDisposable
         // Develop moves on; within six hours of that report nothing is missing.
         git.TipSha = Covered;
         _clock.Advance(TimeSpan.FromHours(5));
-        Assert.Equal(PostMergeCoverageStates.Current, service.Evaluate(ProjectName)!.State);
+        Assert.Equal(PostMergeCoverageStates.Pending, service.Evaluate(ProjectName)!.State);
 
         // Past six hours without another report the warning returns, now
         // naming the last report, as a new occurrence.
@@ -164,6 +170,40 @@ public sealed class TestingStrategyTests : IDisposable
         Assert.Contains("in the last 6 hours (last at 2026-11-22 12:09 UTC on 111111111111)", again.Message);
         var second = Assert.Single(facts.Collect(_clock.GetUtcNow().UtcDateTime));
         Assert.NotEqual(fact.Key, second.Key);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AStartedSuiteWithoutTestResultsIsNotACompletedMeasurement(bool timedOut)
+    {
+        var now = _clock.GetUtcNow();
+        var run = Run("infra", Tip, "red", now, now) with
+        {
+            Commands = ["dotnet test"],
+            Verdicts = [new("dotnet test", timedOut ? 124 : 127, timedOut) { SuiteId = "routine" }],
+        };
+        Assert.Null(PostMergeCoveragePolicy.LastMeasurement(PostMergeProjectState.Empty("p") with { Runs = [run] }));
+        var measured = run with { Verdicts = [new("dotnet test", 1, false, FailedTests: ["Feature.Tests.Fails"]) { SuiteId = "routine" }] };
+        Assert.Equal(Tip, PostMergeCoveragePolicy.LastMeasurement(PostMergeProjectState.Empty("p") with { Runs = [measured] })!.TipSha);
+    }
+
+    [Fact]
+    public void SaturatedWindowRaisesOneStableOwnerOccurrenceAfterThreeWindows()
+    {
+        var (service, git, runs, record) = Service(TestingStrategies.Fast);
+        git.TipSha = Tip;
+        git.Uncovered = false;
+        var now = _clock.GetUtcNow();
+        runs.ObserveWindow(record.Id, new(Tip, now.AddMinutes(-91), now, 30, "waiting for gate capacity"));
+        var facts = new OperatorPostMergeCoverageFactSource(service.Missing);
+        var coverage = service.Evaluate(ProjectName)!;
+        Assert.Contains("three times", coverage.Message);
+        Assert.Contains("gate capacity", coverage.Message);
+        var first = Assert.Single(facts.Collect(now.UtcDateTime));
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        service.Evaluate(ProjectName);
+        Assert.Equal(first.Key, Assert.Single(facts.Collect(_clock.GetUtcNow().UtcDateTime)).Key);
     }
 
     [Fact]
@@ -198,8 +238,8 @@ public sealed class TestingStrategyTests : IDisposable
         git.TipSha = Tip;
         git.Uncovered = false;
 
-        Assert.Equal(PostMergeCoverageStates.Current, service.Evaluate(ProjectName)!.State);
-        Assert.Equal(PostMergeCoverageStates.Current, service.Evaluate(ProjectName)!.State);
+        Assert.Equal(PostMergeCoverageStates.Pending, service.Evaluate(ProjectName)!.State);
+        Assert.Equal(PostMergeCoverageStates.Pending, service.Evaluate(ProjectName)!.State);
         Assert.Equal(1, git.Walks);
 
         git.Uncovered = true;

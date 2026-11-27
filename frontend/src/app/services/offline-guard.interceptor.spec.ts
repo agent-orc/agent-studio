@@ -6,7 +6,7 @@ import { TestBed } from '@angular/core/testing';
 import { AUTH_GATE_POST_URLS, offlineGuardInterceptor, __resetOfflineGuardThrottle } from './offline-guard.interceptor';
 import { AuthService } from './auth.service';
 import { ConnectionStatusService } from './connection-status.service';
-import { NotificationService } from './notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 
 function configure(offline: boolean) {
   const offlineSignal = signal(offline);

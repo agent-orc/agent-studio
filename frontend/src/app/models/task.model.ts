@@ -209,6 +209,7 @@ export interface TaskDeliveryCommitAnswer {
  * reads as "not yet checked".
  */
 export interface TaskDeliveryClaimAnswer {
+  studioLive?: { state: string; revision: string | null; sinceUtc: string | null } | null;
   taskKey: string;
   jobId: string;
   lane: string;
@@ -235,6 +236,10 @@ export interface TaskDeliveryClaimAnswer {
     requiredAspect: string;
     contentStatus: string | null;
     contentSummary: string | null;
+    reviewAttemptId?: string | null;
+    reviewedAtUtc?: string | null;
+    runAttemptId?: string | null;
+    reportRef?: string | null;
     evidenceChecked: string | null;
     missing: string | null;
     ranAspects: string[];
@@ -2515,7 +2520,7 @@ export interface TestingStrategyOption {
 export interface PostMergeCoverage {
   project: string;
   strategy: TestingStrategy;
-  state: 'not-expected' | 'current' | 'missing' | 'unknown';
+  state: 'not-expected' | 'current' | 'pending' | 'missing' | 'unknown';
   developTipSha: string | null;
   lastReportedTipSha: string | null;
   lastReportedAtUtc: string | null;

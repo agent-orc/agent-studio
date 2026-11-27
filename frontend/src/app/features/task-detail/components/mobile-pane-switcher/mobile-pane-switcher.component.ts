@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, input, ViewEncaps
 import type { PaneName } from '../../services/layout-panes.service';
 import { LayoutPanesService } from '../../services/layout-panes.service';
 import { GitPaneService } from '../../services/git-pane.service';
-import { SegmentedControlComponent, type SegmentedOption } from '../../../../components/segmented-control/segmented-control.component';
+import { SegmentedControlComponent, type SegmentedOption } from '@studio/ui/components/segmented-control/segmented-control.component';
 
 @Component({
   selector: 'app-mobile-pane-switcher',

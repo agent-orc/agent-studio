@@ -1,6 +1,6 @@
 import type { ChatContextAttachment } from 'coding-agent-chat/core';
 import type { TaskInfo } from '../../models/task.model';
-import type { StudioIconName } from '../../components/studio-icon/studio-icon.component';
+import type { StudioIconName } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { pageTypeIcon, pageTypeLabel, type PageContext } from '../../models/page-context.model';
 import { projectRailLabel } from '../project-detail/components/project-shell/project-shell.config';
 import type { StudioTab } from '../studio-shell';

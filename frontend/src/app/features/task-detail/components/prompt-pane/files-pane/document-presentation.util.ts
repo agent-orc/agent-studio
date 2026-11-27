@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { TaskArtifact } from '../../../../../models/task.model';
 import { cleanStepResultMarkdown } from '../pipeline-step-result/pipeline-step-result.util';
 import type { AspectDocument } from './aspect-document.model';

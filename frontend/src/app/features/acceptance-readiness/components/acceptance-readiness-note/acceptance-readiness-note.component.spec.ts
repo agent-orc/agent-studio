@@ -55,6 +55,18 @@ describe('AcceptanceReadinessNoteComponent', () => {
     expect(parentClick).not.toHaveBeenCalled();
   });
 
+  it('shows the accept conflict with concern provenance and both ways out', () => {
+    item = Object.assign(readinessItem('b', 'review-concerns'), {
+      reviewAttemptId: 'review-current', reviewedAtUtc: '2026-11-26T10:00:00Z',
+    });
+    const host = render(reviewCard('b', { displayKey: 'AGT-3991', orchestratorVerdict: 'accept' }));
+    expect(host.textContent).toContain('Review decision: accept; requirement-fit: concerns');
+    expect(host.textContent).toContain('review-current');
+    expect(host.textContent).toContain('2026-11-26');
+    expect(host.querySelector('[data-testid="acceptance-send-round"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="acceptance-with-reason-link"]')?.textContent).toContain('Accept with a reason');
+  });
+
   it('offers no round for a ready card', () => {
     item = readinessItem('b', 'ready');
     const host = render();

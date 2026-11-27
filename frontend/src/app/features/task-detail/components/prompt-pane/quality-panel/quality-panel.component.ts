@@ -3,7 +3,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Subscription } from 'rxjs';
 import { QualityChangeRound, QualityChangeView, ReviewEvidenceEntry, TaskInfo } from '../../../../../models/task.model';
 import { QualityStudioService } from '../../../../../services/quality-studio.service';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 const STATE_LABELS: Record<QualityChangeView['state'], string> = {
   'not-registered': 'Repository not registered', waiting: 'Waiting for review',

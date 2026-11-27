@@ -67,6 +67,6 @@
 .gsb__badge {
   padding: 0 var(--studio-spacing-1);
   border: 1px solid var(--studio-card-muted-border);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   color: var(--studio-fg-muted);
 }

@@ -58,7 +58,7 @@
   flex-direction: column;
   width: 100%;
   min-width: 0;
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
 
   &__heading-row {
     display: grid;
@@ -69,13 +69,13 @@
   }
 
   &__title {
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--studio-fg-strong);
     margin: 0;
-    padding-bottom: 1px;
+    padding-bottom: var(--studio-compat-space-6);
     border-bottom: 1px solid var(--studio-border);
   }
 
@@ -95,10 +95,10 @@
     background: transparent;
     color: var(--studio-fg-muted);
     font: inherit;
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     line-height: 1;
     cursor: pointer;
-    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+    transition: background var(--studio-compat-duration-3) ease, border-color var(--studio-compat-duration-3) ease, color var(--studio-compat-duration-3) ease;
 
     &:hover,
     &:focus-visible,
@@ -128,8 +128,8 @@
   row-gap: var(--studio-row-gap);
 
   &--perf {
-    margin-top: 2px;
-    padding-top: 2px;
+    margin-top: var(--studio-compat-space-4);
+    padding-top: var(--studio-compat-space-4);
     border-top: 1px dashed var(--studio-border);
   }
 
@@ -161,7 +161,7 @@
   padding-block: var(--studio-row-pad-block);
 
   &--source .ov-value {
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     font-weight: 600;
     letter-spacing: 0.03em;
     text-transform: uppercase;
@@ -178,7 +178,7 @@
   // Grid column 1. Width comes from the `.ov-row` track; `min-width: 0`
   // keeps a long label clipped to the fixed column instead of widening it.
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   color: var(--studio-fg-dim);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -187,16 +187,16 @@
 
 .ov-value {
   // Grid column 2. Inner flex lays out the value's chips/pills/text.
-  font-size: 12.5px;
+  font-size: var(--studio-compat-type-5);
   color: var(--studio-fg);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
   min-width: 0;
 
   &--mono {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
   }
 
   &--strong {
@@ -208,14 +208,14 @@
 
 .ov-dim {
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 
 .ov-cli-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
+  gap: var(--studio-spacing-1);
+  font-size: var(--studio-font-size-sm);
   color: var(--studio-fg);
 }
 
@@ -230,7 +230,7 @@
     padding-left: var(--studio-spacing-2);
     border-left: 1px solid var(--studio-border);
     color: var(--studio-fg-dim);
-    font-size: 11.5px;
+    font-size: var(--studio-compat-type-19);
     font-weight: 500;
     white-space: nowrap;
   }
@@ -239,20 +239,20 @@
 .ov-owner-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
+  gap: var(--studio-spacing-1);
+  font-size: var(--studio-font-size-sm);
 }
 
 .ov-pill {
   display: inline-flex;
   align-items: center;
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 999px;
+  padding: var(--studio-compat-space-6) var(--studio-compat-space-2);
+  border-radius: var(--studio-compat-radius-2);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  margin-left: 4px;
+  margin-left: var(--studio-spacing-1);
 
   &--warn {
     background: color-mix(in srgb, var(--severity-warn) 18%, transparent);
@@ -272,7 +272,7 @@
 .ov-pipeline {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--studio-compat-space-6);
   width: 100%;
   max-width: 100%;
 
@@ -290,7 +290,7 @@
 .ov-pl-group {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--studio-compat-space-6);
   min-width: 0;
   max-width: 100%;
   margin-top: var(--studio-spacing-2);
@@ -317,7 +317,7 @@
   min-height: calc(var(--studio-row-min-h) + var(--studio-row-gap));
   padding: var(--studio-row-pad-block) var(--studio-spacing-2);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--ov-pl-phase-accent) 10%, var(--studio-bg-hover));
   color: var(--studio-fg-dim);
   font: inherit;
@@ -344,7 +344,7 @@
   &__label {
     flex: 0 0 auto;
     min-width: 64px;
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 800;
     letter-spacing: 0.08em;
     color: color-mix(in srgb, var(--ov-pl-phase-accent) 55%, var(--studio-fg-strong));
@@ -364,10 +364,10 @@
     width: 16px;
     height: 16px;
     border: 1px solid var(--studio-border);
-    border-radius: 999px;
+    border-radius: var(--studio-compat-radius-2);
     color: var(--studio-fg-muted);
     background: color-mix(in srgb, var(--studio-bg-elevated) 64%, transparent);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 700;
     line-height: 1;
     cursor: help;
@@ -379,7 +379,7 @@
     align-items: center;
     gap: var(--studio-spacing-2);
     min-width: 0;
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     color: var(--studio-fg-muted);
   }
 
@@ -450,7 +450,7 @@
   &__cell {
     flex: 0 0 auto;
     text-align: right;
-    font-size: 9.5px;
+    font-size: var(--studio-compat-type-42);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -485,9 +485,9 @@
   // the same inset so the metric columns still line up, while the phase band
   // remains the full-width parent in the hierarchy.
   margin-left: var(--ov-pipeline-step-indent);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--ov-pl-phase-accent) 5%, transparent);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 
   &[data-phase='core'] { --ov-pl-phase-accent: var(--studio-accent-3); }
   &[data-phase='aspect'] { --ov-pl-phase-accent: var(--severity-pass); }
@@ -527,7 +527,7 @@
     background: color-mix(in srgb, var(--lane-progress) 14%, var(--studio-bg-running));
 
     .ov-pl-step__status {
-      animation: ov-pulse 1.3s ease-in-out infinite;
+      animation: ov-pulse var(--studio-compat-duration-29) ease-in-out infinite;
     }
 
     .ov-pl-step__name {
@@ -545,9 +545,9 @@
     justify-content: center;
     width: 18px;
     height: 18px;
-    border-radius: 5px;
+    border-radius: var(--studio-compat-radius-13);
     border: 1px solid color-mix(in srgb, var(--studio-border) 72%, transparent);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 700;
     line-height: 1;
     color: var(--studio-fg-dim);
@@ -575,7 +575,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     padding-inline: var(--studio-spacing-1);
-    font-size: 9px;
+    font-size: var(--studio-compat-type-4);
     line-height: 1;
     white-space: nowrap;
     cursor: help;
@@ -594,7 +594,7 @@
 
   &__status {
     justify-self: center;
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     line-height: 1;
     text-align: center;
   }
@@ -609,7 +609,7 @@
     justify-content: center;
     color: var(--studio-fg-dim);
     background: var(--studio-bg-hover);
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
     cursor: help;
   }
 
@@ -619,7 +619,7 @@
     min-width: 0;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--studio-compat-space-2);
   }
 
   &__name {
@@ -646,7 +646,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--studio-fg-muted);
-    font-size: 9.5px;
+    font-size: var(--studio-compat-type-42);
     font-style: italic;
   }
 
@@ -693,11 +693,11 @@
   &__model {
     flex: 0 1 132px;
     font-family: var(--font-mono);
-    font-size: 9px;
+    font-size: var(--studio-compat-type-4);
     color: var(--studio-fg-muted);
     background: transparent;
-    border-radius: 4px;
-    padding: 0 4px;
+    border-radius: var(--studio-compat-radius-6);
+    padding: 0 var(--studio-spacing-1);
     max-width: 132px;
     opacity: 0.78;
     overflow: hidden;
@@ -738,7 +738,7 @@
     width: 38px;
     text-align: right;
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     white-space: nowrap;
     color: var(--studio-fg-muted);
   }
@@ -773,8 +773,8 @@
   &__tokens-button {
     border: 1px solid transparent;
     background: transparent;
-    border-radius: 5px;
-    padding: 1px 4px;
+    border-radius: var(--studio-compat-radius-13);
+    padding: var(--studio-compat-space-6) var(--studio-spacing-1);
     cursor: pointer;
 
     &:hover,
@@ -901,12 +901,12 @@
   padding-block: var(--studio-spacing-1);
   padding-inline: var(--studio-spacing-2);
   border-top: 1px dashed var(--studio-border);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 
   &__label {
     grid-column: 3 / 5;
     min-width: 0;
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -917,7 +917,7 @@
     display: block;
     margin-top: var(--studio-spacing-1);
     color: var(--studio-fg-muted);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 500;
     letter-spacing: 0;
     text-transform: none;
@@ -938,7 +938,7 @@
 // Restart badge in the Pipeline section header: the shared status indicator
 // (info tone) marks the current run as a new attempt (AGT-3403).
 .ov-pl-restart-badge {
-  margin-left: 8px;
+  margin-left: var(--studio-spacing-2);
 }
 
 // Segmented pipeline run switcher. The current run stays first, archived runs
@@ -969,7 +969,7 @@
 
   &__label {
     flex: 0 0 auto;
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -986,13 +986,13 @@
     flex: 0 1 auto;
     min-width: 0;
     padding: var(--studio-spacing-1) var(--studio-spacing-3);
-    border-radius: 999px;
+    border-radius: var(--studio-compat-radius-2);
     background: color-mix(in srgb, var(--studio-accent) 12%, var(--studio-surface));
     border: 1px solid color-mix(in srgb, var(--studio-accent) 42%, var(--studio-border-strong));
     color: var(--studio-fg-strong);
     white-space: nowrap;
     cursor: pointer;
-    transition: border-color 0.15s ease, background 0.15s ease;
+    transition: border-color var(--studio-compat-duration-9) ease, background var(--studio-compat-duration-9) ease;
 
     &:hover {
       border-color: color-mix(in srgb, var(--studio-accent) 60%, var(--studio-border-strong));
@@ -1011,36 +1011,36 @@
   }
 
   &__num {
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     font-weight: 600;
   }
 
   &__current-badge {
-    font-size: 9px;
+    font-size: var(--studio-compat-type-4);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     padding: var(--studio-spacing-1) var(--studio-spacing-2);
-    border-radius: 999px;
+    border-radius: var(--studio-compat-radius-2);
     color: var(--studio-accent-strong);
     background: color-mix(in srgb, var(--studio-accent) 18%, transparent);
   }
 
   &__sep {
     color: var(--studio-fg-dim);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
   }
 
   &__outcome {
     display: inline-flex;
     align-items: center;
     gap: var(--studio-spacing-2);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     font-weight: 600;
   }
 
   &__duration {
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     color: var(--studio-fg-dim);
   }
 
@@ -1066,14 +1066,14 @@
     gap: var(--studio-spacing-1);
     flex: 0 0 auto;
     padding: var(--studio-spacing-1) var(--studio-spacing-2);
-    border-radius: 999px;
+    border-radius: var(--studio-compat-radius-2);
     background: var(--studio-surface-muted);
     border: 1px solid var(--studio-border-muted);
     color: var(--studio-fg-dim);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     line-height: 1.2;
     cursor: pointer;
-    transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+    transition: border-color var(--studio-compat-duration-9) ease, background var(--studio-compat-duration-9) ease, color var(--studio-compat-duration-9) ease;
 
     &:hover {
       color: var(--studio-fg);
@@ -1100,21 +1100,21 @@
   &__ellipsis {
     flex: 0 0 auto;
     color: var(--studio-fg-dim);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
   }
 
   &__more {
     flex: 0 0 auto;
     min-height: 24px;
     padding: var(--studio-spacing-1) var(--studio-spacing-2);
-    border-radius: 999px;
+    border-radius: var(--studio-compat-radius-2);
     background: transparent;
     border: 1px dashed var(--studio-border-strong);
     color: var(--studio-fg-dim);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 600;
     cursor: pointer;
-    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    transition: color var(--studio-compat-duration-9) ease, border-color var(--studio-compat-duration-9) ease, background var(--studio-compat-duration-9) ease;
 
     &:hover {
       color: var(--studio-fg);
@@ -1131,8 +1131,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   :host * {
-    animation-duration: 0s !important;
-    transition-duration: 0s !important;
+    animation-duration: var(--studio-compat-duration-2) !important;
+    transition-duration: var(--studio-compat-duration-2) !important;
   }
 }
 .ov-pl-step__cost-button,
@@ -1154,7 +1154,7 @@
 .ov-cost-incomplete {
   color: var(--studio-fg-muted);
   font-family: var(--font-sans);
-  font-size: 9px;
+  font-size: var(--studio-compat-type-4);
   font-weight: 600;
   line-height: 1.25;
   white-space: normal;

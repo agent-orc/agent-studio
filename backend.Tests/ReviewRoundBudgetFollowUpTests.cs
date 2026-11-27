@@ -46,7 +46,10 @@ public sealed class ReviewRoundBudgetFollowUpTests : IDisposable
             PromptMarkdown = "Implement the source delivery.",
         });
         Assert.NotNull(sourceId);
-        var source = Assert.IsType<TaskInfo>(scanner.FindJob(sourceId!, watchPath));
+        var source = Assert.IsType<TaskInfo>(scanner.FindJob(sourceId!, watchPath)) with
+        {
+            Commits = [new TaskCommitInfo { Sha = new string('a', 40) }],
+        };
         var verdicts = new ReviewVerdictDto[]
         {
             new("code-quality", "block", "quality:concerns", "Different method has an open issue.",
@@ -88,6 +91,17 @@ public sealed class ReviewRoundBudgetFollowUpTests : IDisposable
             task.CreationSource == "review-budget-follow-up");
         Assert.Equal(first, created.Key ?? created.Id);
         Assert.Contains(source.Key ?? source.Id, created.References?.FollowUpOf ?? []);
+        Assert.Equal(source.Key ?? source.Id, Assert.Single(created.References.DependsOn).Key);
+        Assert.Contains(new string('a', 40), File.ReadAllText(Path.Combine(created.FolderPath, "prompt.md")));
+        var index = TaskReferenceIndex.Build([source, created]);
+        var settings = new ProjectSettings { PickupMode = PickupModes.Auto, ExecutionLocation = "runner-1" };
+        var integration = new Dictionary<string, TaskIntegrationStatus>
+        {
+            [source.TaskKey] = new() { Status = IntegrationStatuses.Pending },
+        };
+        Assert.False(RemoteDispatchEligibility.IsClaimableReady(created, settings, "runner-1", null, false, index, integration));
+        integration[source.TaskKey] = new() { Status = IntegrationStatuses.Integrated };
+        Assert.True(RemoteDispatchEligibility.IsClaimableReady(created, settings, "runner-1", null, false, index, integration));
         var updatedSource = Assert.IsType<TaskInfo>(scanner.FindJob(source.Id, watchPath));
         Assert.Equal([first!], updatedSource.References?.RaisedFollowUps);
         Assert.All(ReviewRoundBudgetStore.Read(updatedSource.FolderPath).Rounds,

@@ -15,9 +15,9 @@ import {
   TaskReferenceMicrocardComponent,
   type TaskReferenceStatus,
 } from '../../../../components/task-reference-microcard/task-reference-microcard';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 
 interface ReferenceStatusResponse {
   items: TaskReferenceStatus[];

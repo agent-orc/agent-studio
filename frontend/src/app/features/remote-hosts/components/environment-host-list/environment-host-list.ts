@@ -5,7 +5,7 @@ import { roleSlotTotal } from '../../models/role-slots';
 import { groupNotEnrolled } from '../../models/host-summary';
 import { hostStatusIndicatorTone, hostStatusLabel } from '../../models/remote-host.model';
 import { heldCauseLabel } from '../../../../models/held-capability-cause';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { differsFromStableLabel, type StableReleaseIdentity } from '../../models/host-release-drift';
 
 @Component({

@@ -1696,6 +1696,21 @@ claim and a `completion_content_overridden` timeline entry. The Human Review
 delivery panel displays these grounds, the content citations, and ran/skipped
 aspects before acceptance.
 
+Completion's content evidence exposes `runAttemptId`, `reviewAttemptId`,
+`reviewedAtUtc`, and `reportRef` alongside the aspect status, summary and
+missing evidence. A content refusal returns those facts as `contentReview`
+in the 409 response and includes the concern and its provenance in the error
+text. Acceptance readiness carries the same source identifiers to the board
+and detail. Human Review explicitly shows an `accept` decision conflicting
+with content concerns, with a round and acceptance with a written reason as
+remedies. Unknown legacy local review dates remain unrecorded. The attempt's
+overall `Pass` outcome and the decision log's `accept` do not replace the
+current delivery's semantic content verdict, including for bounded slices.
+Content lookup uses `TaskIdentity.AuthorityKey`, matching run claims: stable
+key, composite task key, then slug, with blank keys treated as absent. This
+keeps a legacy card's current remote review authoritative when an older local
+content artifact remains in its folder.
+
 When the delivery or verdict brief version differs from the current brief,
 Human Review announces the acceptance block before the owner acts. Prompt edits
 record `brief_changed` and retain the immediately preceding text for a brief
@@ -2935,8 +2950,9 @@ Without `cards`, it returns resident active cards. Card detail includes
 `touchForecast`. Reads use stored facts and never start Git.
 `GET` and `PUT /api/projects/{project}/dispatch/hub-files` expose the project
 setting. PUT takes `{ "files": ["path/to/file.cs"] }`; null restores defaults,
-an empty array excludes no hubs. The write requires the Owner role and project
-settings permission. Defaults are Program.cs, RoutePermissionCatalog.cs and
+an empty array excludes no hubs. Dispatcher administration writes (mode, hub
+files, lease control, wave planning, recut and undo) require the Owner role and
+`workspace.administer` permission. Defaults are Program.cs, RoutePermissionCatalog.cs and
 task.model.ts at the paths listed in the Dossier.
 
 Storage lives under `<TaskRepository>/.dispatch/`, with hashed project and card
@@ -2948,7 +2964,10 @@ integration tip for older subjects, to avoid recording an empty delivery. Real c
 recall are retained with the exact forecast that was measured, even after a
 later prompt edit. An empty precision or recall denominator is null. Failed
 Git collection logs a warning and retries without recording an empty diff as
-success. No task workspace files are written by the dispatch collector.
+success. No task workspace files are written by the dispatch collector. At
+startup, the collector awaits the first task-index publication asynchronously
+before reconciliation, retaining queued change events while a restored board
+can answer reads without a blocking refresh wait.
 
 ### Line guardian role (RT-8)
 
@@ -2960,3 +2979,24 @@ Authority starts in shadow and changes only through an owner project setting.
 Its principal is `persona:line-guardian:<project-id>`. The receipt journal,
 budget admission, owner requests and API are documented in
 [pipeline.md](pipeline.md#line-guardian-authority-and-shadow-journal-rt-8-agt-4009).
+
+## Review follow-up integration prerequisites
+
+Review-budget, review-concern and engine review-finding follow-ups are created
+with both `followUpOf` and an ordinary `dependsOn` edge to their source card.
+The edge is present in the first published task snapshot. Their brief records
+the source's effective delivery commit identities, or explicitly says delivery
+has not yet been recorded. They use the existing target-branch integration
+fulfillment rule, so acceptance by a person is not required before pickup.
+
+An agent blocker such as `agt-3973-implementation-not-integrated`,
+`missing-AGT-4015-implementation`, or "implementation of card AGT-4011 is not
+integrated" becomes a persisted dependency wait when the named coding card is
+known and the edge is valid. The card returns to Ready with a dependency pickup
+hold. The existing local and remote admission checks release the hold once the
+source delivery is integrated, without a continuation prompt or operator round.
+Unknown cards, cycles and multiple conflicting targets retain the ordinary
+escalation path. A report arriving after integration returns to Ready with an
+already fulfilled dependency. Human input requests retain their
+decision semantics. This wait does not change the report-only parked-card
+recall sweep or automatically reopen existing operator parks.

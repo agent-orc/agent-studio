@@ -86,6 +86,9 @@ public sealed class DispatchForecastService(TaskScannerService scanner, TaskInde
         using var timer = new Timer(_ => Wake(), null, TimeSpan.Zero, TimeSpan.FromMinutes(1));
         try
         {
+            // Startup must not block a worker on the first workspace scan.
+            // Keep subscribed events queued until that publication is ready.
+            await tasks.WaitForFirstPublicationAsync(stoppingToken).ConfigureAwait(false);
             await foreach (var signal in _wake.Reader.ReadAllAsync(stoppingToken))
             {
                 var now = DateTimeOffset.UtcNow;

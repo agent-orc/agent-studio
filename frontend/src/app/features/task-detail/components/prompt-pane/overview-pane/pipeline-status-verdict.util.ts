@@ -30,4 +30,4 @@ export function reviewRoundStatus(step: PipelineStepExecution | null | undefined
   return step?.stillOpen === true ? 'Still open' : null;
 }
 import type { PipelineStepExecution } from '../../../../task-pipeline';
-import type { StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';

@@ -5,7 +5,7 @@
  * inventory and copy below; per-panel real content lands in follow-up
  * slices listed in that mockup's README.
  */
-import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
+import type { StudioIconName } from '@studio/ui/components/studio-icon/studio-icon.component';
 
 export type ProjectRailGroup = 'insight' | 'quality' | 'context' | 'config';
 
@@ -13,6 +13,7 @@ export type ProjectRailKey =
   | 'overview'
   | 'deploy'
   | 'operations'
+  | 'studio-releases'
   | 'project-urls'
   | 'git'
   | 'integration'
@@ -359,7 +360,7 @@ export const PROJECT_RAIL_PARENT_KEYS: readonly ProjectRailKey[] = Array.from(
 // project-level Deploy and Operations areas instead of the Deck rail.
 const RAIL_KEY_SET = new Set<string>([
   ...PROJECT_RAIL_ITEMS.map(i => i.key),
-  'deploy', 'operations', 'pipeline', 'observability',
+  'deploy', 'operations', 'studio-releases', 'pipeline', 'observability',
 ]);
 
 export function isProjectRailKey(value: string | null | undefined): value is ProjectRailKey {
@@ -390,6 +391,7 @@ export function resolveProjectSection(section: string | null | undefined): Proje
 
 /** Canonical user-facing label for a Deck rail section. */
 export function projectRailLabel(section: string | null | undefined): string {
+  if (section === 'studio-releases') return 'Releases';
   if (section === 'deploy' || section === 'deployment' || section === 'pipeline') return 'Deploy';
   if (section === 'operations' || section === 'observability') return 'Operations';
   const key = isProjectRailKey(section) ? section : DEFAULT_PROJECT_RAIL_KEY;

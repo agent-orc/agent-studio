@@ -182,6 +182,7 @@ public sealed class BatchGateEngineApplierContractTests : BatchGatePilotServiceT
         var open = Assert.Single(scanner.ScanAllJobs(), card =>
             card.CreationSource?.StartsWith("engine-follow-up:", StringComparison.Ordinal) == true);
         Assert.Equal(first.Id, open.Id);
+        Assert.Equal(source.Key ?? source.Id, Assert.Single(open.References.DependsOn).Key);
         var prompt = File.ReadAllText(Path.Combine(open.FolderPath, "prompt.md"));
         Assert.Equal(1, prompt.Split("- requirement-fit: Fix the source boundary.").Length - 1);
         Assert.Equal(1, prompt.Split("- documentation-impact: Update the contract docs.").Length - 1);

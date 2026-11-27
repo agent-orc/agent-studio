@@ -1,4 +1,10 @@
-@if (activeRail() === 'deploy') {
+@if (initialSection() === 'studio-releases') {
+  <div class="project-area">
+    @defer (on immediate) {
+      <app-studio-releases [project]="projectName()" />
+    }
+  </div>
+} @else if (activeRail() === 'deploy') {
   <div class="project-area">
     @defer (on immediate) {
       <app-project-deploy-area [projectName]="projectName()" [initialView]="deployView()"
@@ -9,6 +15,7 @@
   </div>
 } @else if (activeRail() === 'operations') {
   <div class="project-area" data-testid="project-operations-area">
+    <a class="releases-link" data-testid="operations-releases" [href]="'#/projects/' + projectSlug(projectName()) + '/studio-releases'">Releases</a>
     <app-structure-view [projectName]="projectName()" [embedded]="true" />
     <a [href]="'#/projects/' + projectSlug(projectName()) + '/operations/structure'">Open structure view</a>
     @defer (on immediate) {

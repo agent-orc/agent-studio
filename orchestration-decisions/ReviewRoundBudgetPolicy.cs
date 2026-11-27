@@ -22,6 +22,7 @@ public sealed record ReviewRoundBudgetDecision(
     string? SpentBy)
 {
     public bool Degrade => DegradedAspects.Count > 0;
+    public IReadOnlyList<ReviewContentAdmission>? ContentAdmissions { get; init; }
 }
 
 /// <summary>Pure lifetime review budget. An operator epoch changes evidence, never this history.</summary>

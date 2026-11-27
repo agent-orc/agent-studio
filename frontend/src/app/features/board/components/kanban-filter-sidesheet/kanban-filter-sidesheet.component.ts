@@ -12,12 +12,12 @@ import {
 } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { ClientSummary, TagRegistryEntry } from '../../../../models/task.model';
-import { ModalStackService } from '../../../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { BoardFiltersService, type EnvironmentCardFilter } from '../../state/board-filters.service';
 import { TypeFilterOption } from '../filters-dropdown/filters-dropdown.component';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { SidesheetComponent } from '../../../../components/sidesheet/sidesheet.component';
+import { SidesheetComponent } from '@studio/ui/components/sidesheet/sidesheet.component';
 /**
  * VS Code-style right-edge sidesheet that hosts the board's search box and
  * faceted filters in one place. The board reflows live as the user types

@@ -17,7 +17,7 @@
     margin: 0;
     padding: 0;
     border: 0;
-    border-radius: 6px;
+    border-radius: var(--studio-compat-radius-7);
     background: transparent;
     color: inherit;
     font: inherit;
@@ -48,7 +48,7 @@
     flex-wrap: wrap;
     gap: var(--studio-spacing-2);
     min-width: 0;
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     font-variant-numeric: tabular-nums;
     line-height: 1.45;
   }
@@ -63,7 +63,7 @@
     display: inline-flex;
     flex: 0 0 auto;
     gap: var(--studio-spacing-1);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
   }
 
   &__decision,
@@ -87,14 +87,14 @@
     background: transparent;
     color: var(--studio-fg);
     font: inherit;
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     font-weight: 600;
     line-height: 1;
     cursor: pointer;
     transition:
-      background 0.15s ease,
-      border-color 0.15s ease,
-      color 0.15s ease;
+      background var(--studio-compat-duration-9) ease,
+      border-color var(--studio-compat-duration-9) ease,
+      color var(--studio-compat-duration-9) ease;
 
     &:hover:not(:disabled) {
       background: var(--studio-bg-hover);
@@ -135,7 +135,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    &__action { transition-duration: 0s; }
+    &__action { transition-duration: var(--studio-compat-duration-2); }
   }
 
   @media (max-width: 960px) {

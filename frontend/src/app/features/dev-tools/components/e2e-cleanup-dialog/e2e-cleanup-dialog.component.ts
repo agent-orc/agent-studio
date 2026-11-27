@@ -1,10 +1,10 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DevToolsService, E2EJob, DeleteE2EReport } from '../../../../services/dev-tools.service';
-import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 
-import { DialogComponent } from '../../../../components/dialog/dialog.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 type Phase = 'loading' | 'list' | 'deleting' | 'report' | 'error';
 
 /**

@@ -128,21 +128,21 @@ import { ProjectOverlaysComponent, ProjectUrlPreviewTabComponent, WorkbenchTabHo
 import { ProjectHubViewComponent, StudioDiffViewComponent, StudioActivityViewComponent } from './features/studio-shell/lazy';
 import { TaskService } from './services/task.service';
 import { ClientService } from './services/client.service';
-import { NotificationService } from './services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import type { TaskDetail, TaskInfo, WatchPathEntry, CliType } from './models/task.model';
 import { CLI_TYPES, TaskState } from './models/task.model';
 import { laneName } from './models/lane-presentation';
 import { ErrorDialogService } from './services/error-dialog.service';
-import { ConfirmDialogService } from './services/confirm-dialog.service';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 import {
   cliTypeLabel as fmtCliTypeLabel,
   formatMultiplier as fmtMultiplier,
 } from './services/format.util';
-import { ErrorDialogComponent } from './components/error-dialog/error-dialog.component';
-import { ConfirmDialogComponent } from './components/app-dialog/confirm-dialog/confirm-dialog.component';
-import { NotificationStackComponent } from './components/app-dialog/notification-stack/notification-stack.component';
-import { MediaLightboxComponent } from './components/media-lightbox/media-lightbox.component';
-import { MediaLightboxService } from './services/media-lightbox.service';
+import { ErrorDialogComponent } from '@studio/ui/components/error-dialog/error-dialog.component';
+import { ConfirmDialogComponent } from '@studio/ui/components/app-dialog/confirm-dialog/confirm-dialog.component';
+import { NotificationStackComponent } from '@studio/ui/components/app-dialog/notification-stack/notification-stack.component';
+import { MediaLightboxComponent } from '@studio/ui/components/media-lightbox/media-lightbox.component';
+import { MediaLightboxService } from '@studio/ui/services/media-lightbox.service';
 import { OfflineBannerComponent } from './components/offline-banner/offline-banner.component';
 import { RecoverySignInNoticeComponent } from './components/recovery-sign-in-notice/recovery-sign-in-notice.component';
 import { TerminalSignInRouteService } from './features/access';
@@ -163,10 +163,10 @@ import { ReviewerSession } from './services/reviewer-session.service';
 import { CliCatalogStore } from './features/cli';
 import type { TaskScreenshot } from './features/screenshots';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { MenuComponent, MenuItem, MenuItemClickEvent } from './components/menu';
+import { MenuComponent, MenuItem, MenuItemClickEvent } from '@studio/ui/components/menu/index';
 import { CostBreakdownService } from './features/tokens';
 import { CostBreakdownDialogComponent } from './features/tokens/lazy';
-import { LoadingSurfaceComponent } from './components/async-feedback';
+import { LoadingSurfaceComponent } from '@studio/ui/components/async-feedback/index';
 import { AuthService } from './services/auth.service';
 import { AuthGateComponent } from './components/auth-gate/auth-gate';
 import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/remote-hosts';

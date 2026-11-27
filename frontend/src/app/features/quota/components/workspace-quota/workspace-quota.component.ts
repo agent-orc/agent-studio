@@ -4,7 +4,7 @@ import { HttpClient } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { AuthSessionState } from '../../../../services/auth.service';
 import type { WorkspaceQuotaStatus } from '../../state/workspace-quota-board-state.service';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 interface QuotaLimits {
   modelTokensPerWeek: number | null;

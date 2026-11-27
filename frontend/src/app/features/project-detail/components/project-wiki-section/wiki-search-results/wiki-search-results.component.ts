@@ -12,9 +12,9 @@ import {
 import {
   SegmentedControlComponent,
   SegmentedOption,
-} from '../../../../../components/segmented-control/segmented-control.component';
-import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
-import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
+} from '@studio/ui/components/segmented-control/segmented-control.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { WikiSearchResponse, WikiSearchResult } from '../../../../../models/project-docs.model';
 import { WikiStarsService } from '../wiki-stars.service';

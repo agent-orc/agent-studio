@@ -1,8 +1,8 @@
 import { DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, output, signal } from '@angular/core';
-import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { LoadingSurfaceComponent } from '@studio/ui/components/async-feedback/index';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { TestQuarantine } from '../../../../models/test-quarantine.model';
 
 @Component({

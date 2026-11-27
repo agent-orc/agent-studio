@@ -6,11 +6,11 @@
   max-width: 18rem;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid var(--studio-commit-border);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-commit-bg);
   color: var(--studio-commit-muted-fg);
   font-family: var(--studio-font-mono, monospace);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

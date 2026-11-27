@@ -10,24 +10,24 @@
 .ov-value {
   &--mono {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
   }
 }
 
 .ov-tool-chips {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-left: 4px;
+  gap: var(--studio-spacing-1);
+  margin-left: var(--studio-spacing-1);
 }
 
 .ov-tool-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 10.5px;
-  padding: 1px 6px 1px 7px;
-  border-radius: 999px;
+  gap: var(--studio-spacing-1);
+  font-size: var(--studio-compat-type-44);
+  padding: var(--studio-compat-space-6) var(--studio-compat-space-2) var(--studio-compat-space-6) var(--studio-compat-space-11);
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-bg-hover);
   color: var(--studio-fg);
   border: 1px solid var(--studio-border);
@@ -38,7 +38,7 @@
 
   &__count {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     color: var(--studio-fg-dim);
   }
 }
@@ -53,10 +53,10 @@
     min-height: calc(var(--studio-row-min-h) + var(--studio-row-gap));
     margin: var(--studio-spacing-2) 0 0;
     padding: var(--studio-row-pad-block) var(--studio-spacing-2);
-    border-radius: 6px;
+    border-radius: var(--studio-compat-radius-7);
     background: var(--studio-bg-hover);
     color: var(--studio-fg-strong);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 800;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -74,7 +74,7 @@
     margin-left: var(--ov-pipeline-step-indent);
     padding-block: var(--studio-row-pad-block);
     padding-inline: var(--studio-spacing-2);
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     font-variant-numeric: tabular-nums;
   }
 
@@ -83,7 +83,7 @@
     width: 8px;
     height: 8px;
     justify-self: center;
-    border-radius: 999px;
+    border-radius: var(--studio-compat-radius-2);
     background: var(--studio-fg-muted);
     opacity: 0.7;
   }
@@ -127,7 +127,7 @@
 
   &__time-label {
     color: var(--studio-fg-muted);
-    font-size: 9px;
+    font-size: var(--studio-compat-type-4);
     font-weight: 700;
     letter-spacing: 0.04em;
     text-align: right;
@@ -138,7 +138,7 @@
   &__last-touch {
     overflow: hidden;
     color: var(--studio-fg-muted);
-    font-size: 10.5px;
+    font-size: var(--studio-compat-type-44);
     text-align: right;
     text-overflow: ellipsis;
     white-space: nowrap;

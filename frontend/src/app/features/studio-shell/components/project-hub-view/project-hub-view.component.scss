@@ -20,3 +20,11 @@
   color: var(--studio-fg);
   background: var(--studio-bg-surface);
 }
+
+.releases-link {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding-inline: var(--studio-spacing-4);
+  color: var(--studio-accent);
+}

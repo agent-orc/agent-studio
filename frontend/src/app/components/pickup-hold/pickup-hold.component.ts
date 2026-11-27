@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import type { PickupHoldResolution, PickupHoldStatus, TaskInfo } from '../../models/task.model';
 import { hostCapabilityWait, pickupHoldMechanismLabel, titleCaseToken } from '../../models/ready-wait-reason';
-import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
-import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { NowTickService } from '../../services/now-tick.service';
 import { PickupHoldResolutionComponent } from '../pickup-hold-resolution/pickup-hold-resolution.component';
 import { RemoteHostsService } from '../../features/remote-hosts';

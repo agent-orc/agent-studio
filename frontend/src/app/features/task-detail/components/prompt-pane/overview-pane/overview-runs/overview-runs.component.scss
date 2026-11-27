@@ -28,7 +28,7 @@
 .overview-runs__title {
   margin: 0;
   color: var(--studio-fg-strong);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -37,10 +37,10 @@
 .overview-runs__sum-badge {
   padding: 0 var(--studio-spacing-2);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-surface-muted);
   color: var(--studio-fg);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 700;
   line-height: 20px;
   font-variant-numeric: tabular-nums;
@@ -55,7 +55,7 @@
   width: 100%;
   min-width: 0;
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   overflow-wrap: anywhere;
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -84,10 +84,10 @@
   max-width: 100%;
   padding: var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-surface-muted);
   color: var(--studio-fg);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .overview-runs__identity {
@@ -105,7 +105,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
@@ -120,7 +120,7 @@
 
 .overview-runs__label {
   color: var(--studio-fg-muted);
-  font-size: 9px;
+  font-size: var(--studio-compat-type-4);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;

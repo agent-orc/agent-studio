@@ -22,7 +22,7 @@ if (!outDir) {
 mkdirSync(outDir, { recursive: true });
 
 const BANNER = 'src/app/features/task-detail/components/protocol-pane/protocol-verdict-banner/protocol-verdict-banner.component.scss';
-const MARKER = 'src/app/components/disclosure-marker/disclosure-marker.component.scss';
+const MARKER = 'projects/studio-ui/src/components/disclosure-marker/disclosure-marker.component.scss';
 
 function compile(scss, file) {
   return sass.compileString(scss, {

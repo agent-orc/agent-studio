@@ -7,7 +7,7 @@ import {
   inject,
   input,
 } from '@angular/core';
-import { ModalStackService } from '../../../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { ActiveFilterPill, BoardFiltersService } from '../../state/board-filters.service';
 
 @Component({

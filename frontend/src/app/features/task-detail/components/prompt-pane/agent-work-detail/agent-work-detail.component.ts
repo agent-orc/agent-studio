@@ -10,8 +10,8 @@ import {
 import type { AgentWorkCall, AgentWorkDetail } from '../../../../session-events';
 import { TaskService } from '../../../../../services/task.service';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { DisclosureMarkerComponent } from '../../../../../components/disclosure-marker/disclosure-marker.component';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * Drill-down for the Overview "Agent Work" block: a grouped, expandable view

@@ -20,6 +20,6 @@ public static class DispatchWaveEndpoints
             catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
             catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
             catch (HttpRequestException) { return Results.Conflict(new { error = "A wave task operation was refused; retry wave planning after checking the cards." }); }
-        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.ProjectCardsWrite);
+        }).RequireStudioRole(StudioRoles.Owner).RequirePermission(IamPermissions.WorkspaceAdminister);
     }
 }

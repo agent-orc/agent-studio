@@ -5,7 +5,7 @@ import { of } from 'rxjs';
 import { AcceptanceNextStepsComponent } from './acceptance-next-steps.component';
 import { AcceptanceReadinessStore, type AcceptanceRoundDraft } from '../../state/acceptance-readiness.store';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import type { TaskDeliveryClaimAnswer } from '../../../../models/task.model';
 import type { AcceptanceReadinessItem } from '../../models/acceptance-readiness.model';
 import { readinessItem, reviewCard } from '../../testing/acceptance-readiness.fixtures';
@@ -77,6 +77,26 @@ describe('AcceptanceNextStepsComponent (AGT-3867)', () => {
     expect(testId(host, 'review-current-brief')).not.toBeNull();
     expect(testId(host, 'accept-with-reason-open')).not.toBeNull();
     expect(testId(host, 'brief-difference-link')).toBeNull();
+  });
+
+  it('shows the conflicting accept decision and current review source in the detail', async () => {
+    const item = readinessItem('DEMO-19', 'review-concerns', {
+      reviewAttemptId: 'review-current', reviewedAtUtc: '2026-11-26T10:00:00Z',
+    });
+    const { fixture, host } = await mount(item);
+    fixture.componentRef.setInput('job', reviewCard('DEMO-19', { orchestratorVerdict: 'accept' }));
+    fixture.detectChanges();
+    expect(testId(host, 'acceptance-verdict-conflict')?.textContent)
+      .toContain('Review decision: accept; requirement-fit: concerns');
+    expect(testId(host, 'acceptance-review-source')?.textContent).toContain('review-current');
+    expect(testId(host, 'acceptance-review-source')?.textContent).toContain('2026-11-26');
+  });
+
+  it('keeps claim concern provenance visible before readiness answers', async () => {
+    const { host } = await mount(null, { ...currentBriefConcerns,
+      reviewAttemptId: 'review-from-claim', reviewedAtUtc: '2026-11-26T10:00:00Z' });
+    expect(testId(host, 'acceptance-review-source')?.textContent).toContain('review-from-claim');
+    expect(testId(host, 'content-verdict-acceptance')?.textContent).toContain('The lane hides the reason.');
   });
 
   it('marks the gap addressed once the content review is requested, so a recorded refusal drops (F2)', async () => {

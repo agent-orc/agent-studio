@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject, input, output, signal } from '@angular/core';
 import { AnalysisReportService } from '../../../../services/analysis-report.service';
 import { AnalysisReport, AnalysisReportReference } from '../../../../models/analysis-report.model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { findingSeverityTone, parseStatusTone, reportSeverityTone } from './analysis-report-status';
 
 /**

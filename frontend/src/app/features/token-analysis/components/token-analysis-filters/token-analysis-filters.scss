@@ -13,7 +13,7 @@
   gap: var(--studio-spacing-1);
   min-width: 0;
   color: var(--studio-fg-muted);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
 
   select {
     min-width: 0;
@@ -21,11 +21,11 @@
     height: 28px;
     padding: 0 var(--studio-spacing-1);
     border: 1px solid var(--studio-border);
-    border-radius: 6px;
+    border-radius: var(--studio-compat-radius-7);
     background: var(--studio-bg-elevated);
     color: var(--studio-fg);
     font: inherit;
-    font-size: 0.76rem;
+    font-size: var(--studio-compat-type-17);
   }
 
   select:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
@@ -36,11 +36,11 @@
   height: 28px;
   padding: 0 var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: transparent;
   color: var(--studio-fg);
   font: inherit;
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
   cursor: pointer;
 }
 

@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core';
-import { CopyableCommandComponent } from '../../../../components/copyable-command/copyable-command.component';
+import { CopyableCommandComponent } from '@studio/ui/components/copyable-command/copyable-command.component';
 import { SecretRevealComponent } from '../../../../components/secret-reveal/secret-reveal.component';
 import { ALL_RUNNER_PROJECTS, runHostCommand, type EnrollmentKind } from '../../models/access.model';
 import { toggleProject } from '../../models/access-view.model';

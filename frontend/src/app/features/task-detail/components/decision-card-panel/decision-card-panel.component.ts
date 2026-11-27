@@ -9,11 +9,11 @@ import {
   isDecisionOverdue,
   recommendedOption,
 } from '../../../../models/decision-card-presentation';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { ClientService } from '../../../../services/client.service';
 import { formatDateTimeUtc } from '../../../../services/format.util';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { PublicDemoModeService } from '../../../../services/public-demo-mode.service';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';

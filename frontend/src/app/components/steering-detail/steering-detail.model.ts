@@ -24,7 +24,7 @@ import {
   type AspectFinding,
   type AspectVerdictTone,
 } from '../aspect-findings';
-import type { StatusTone } from '../status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** The four completion-loop steering verdicts (mirrors the orchestrator). */
 export type SteeringVerdict = 'accept' | 'reissue' | 'escalate' | 'continuation';

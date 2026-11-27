@@ -49,11 +49,11 @@
   place-items: center;
   flex: 0 0 auto;
   border: 1px solid var(--studio-border);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--studio-bg-sidebar);
   color: var(--studio-fg-muted);
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition: background var(--studio-compat-duration-1) ease, border-color var(--studio-compat-duration-1) ease, color var(--studio-compat-duration-1) ease;
 }
 
 .pwiki__chrome-btn:hover {
@@ -76,7 +76,7 @@
   width: 28px;
   height: 28px;
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-sidebar);
   color: var(--studio-accent-strong);
   flex: 0 0 auto;
@@ -91,7 +91,7 @@
 
 .pwiki__title-h {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--studio-compat-type-23);
   font-weight: 650;
   color: var(--studio-fg-strong);
   white-space: nowrap;
@@ -105,7 +105,7 @@
   gap: var(--studio-spacing-2);
   padding-left: var(--studio-spacing-2);
   color: var(--studio-fg-muted);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
 }
 
 .pwiki__top-meta span,
@@ -128,7 +128,7 @@
 }
 
 .pwiki__count {
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   color: var(--studio-fg-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -143,13 +143,13 @@
   min-height: 26px;
   padding: 0 var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--studio-bg-sidebar);
   color: var(--studio-fg);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
   font-family: inherit;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition: background var(--studio-compat-duration-1) ease, border-color var(--studio-compat-duration-1) ease, color var(--studio-compat-duration-1) ease;
 }
 
 .pwiki__new-group:hover:not(:disabled) {
@@ -211,7 +211,7 @@
   outline: 0;
   touch-action: none;
   user-select: none;
-  transition: background 120ms ease;
+  transition: background var(--studio-compat-duration-1) ease;
 }
 
 .pwiki__splitter::before {
@@ -223,7 +223,7 @@
   right: -3px;
   z-index: 1;
   cursor: col-resize;
-  transition: background 120ms ease;
+  transition: background var(--studio-compat-duration-1) ease;
 }
 
 .pwiki__splitter span {
@@ -259,7 +259,7 @@
   min-height: 20px;
   padding: 0 var(--studio-spacing-1);
   color: var(--studio-fg-muted);
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -273,7 +273,7 @@
   min-height: 30px;
   padding: 0 var(--studio-spacing-1) 0 var(--studio-spacing-2);
   border: 1px solid color-mix(in srgb, var(--studio-border) 78%, transparent);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: color-mix(in srgb, var(--studio-bg-editor) 58%, transparent);
   color: var(--studio-fg-muted);
 }
@@ -283,7 +283,7 @@
 }
 
 .pwiki__root-strip > span {
-  font-size: 0.69rem;
+  font-size: var(--studio-compat-type-83);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -294,7 +294,7 @@
   overflow: hidden;
   background: transparent;
   color: var(--studio-fg);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -306,11 +306,11 @@
   place-items: center;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: transparent;
   color: var(--studio-fg-muted);
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition: background var(--studio-compat-duration-1) ease, border-color var(--studio-compat-duration-1) ease, color var(--studio-compat-duration-1) ease;
 }
 
 .pwiki__tree-tool:hover,
@@ -327,7 +327,7 @@
   min-height: 28px;
   padding: 0 var(--studio-spacing-2);
   border: 1px solid color-mix(in srgb, var(--studio-border) 72%, transparent);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: color-mix(in srgb, var(--studio-bg-editor) 62%, transparent);
   color: var(--studio-fg-muted);
 }
@@ -339,7 +339,7 @@
   outline: 0;
   background: transparent;
   color: var(--studio-fg);
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   font-family: inherit;
 }
 
@@ -355,14 +355,14 @@
   gap: var(--studio-spacing-1);
   width: 100%;
   min-height: 30px;
-  margin-bottom: 2px;
-  padding: 3px var(--studio-spacing-2) 3px 0;
+  margin-bottom: var(--studio-compat-space-4);
+  padding: var(--studio-compat-space-1) var(--studio-spacing-2) var(--studio-compat-space-1) 0;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: transparent;
   color: var(--studio-fg);
   font-family: inherit;
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   text-align: left;
   cursor: pointer;
 }
@@ -396,7 +396,7 @@
 .pwiki__rows {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
   min-height: 0;
   overflow-y: auto;
   padding-right: var(--studio-spacing-1);
@@ -409,7 +409,7 @@
   gap: var(--studio-spacing-1);
   min-height: 30px;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   outline: 0;
 }
 
@@ -461,12 +461,12 @@
   align-items: center;
   gap: var(--studio-spacing-1);
   min-height: 30px;
-  padding: 3px var(--studio-spacing-2);
+  padding: var(--studio-compat-space-1) var(--studio-spacing-2);
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: transparent;
   color: var(--studio-fg);
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   font-family: inherit;
   text-align: left;
   cursor: pointer;
@@ -539,7 +539,7 @@
   border-radius: 0;
   background: transparent;
   color: var(--studio-fg-muted);
-  font-size: 0.58rem;
+  font-size: var(--studio-compat-type-89);
   font-weight: 600;
   font-family: inherit;
   line-height: 1;
@@ -568,7 +568,7 @@
 
 .pwiki__metric-prefix {
   color: color-mix(in srgb, var(--studio-fg-muted) 78%, transparent);
-  font-size: 0.52rem;
+  font-size: var(--studio-compat-type-90);
   font-weight: 500;
   text-transform: uppercase;
 }
@@ -611,16 +611,16 @@
   min-width: 0;
   display: inline-flex;
   align-items: center;
-  gap: var(--studio-spacing-1, 4px);
+  gap: var(--studio-spacing-1, var(--studio-spacing-1));
   overflow: hidden;
 }
 
 .pwiki__class-chip {
   min-width: 0;
-  padding: 0 4px;
+  padding: 0 var(--studio-spacing-1);
   border: 1px solid color-mix(in srgb, var(--studio-border) 65%, transparent);
-  border-radius: 4px;
-  font-size: 0.58rem;
+  border-radius: var(--studio-compat-radius-6);
+  font-size: var(--studio-compat-type-89);
   line-height: 1.5;
   white-space: nowrap;
   overflow: hidden;
@@ -629,7 +629,7 @@
 }
 
 .pwiki__class-chip[data-kind='type'] {
-  font-size: 0.55rem;
+  font-size: var(--studio-compat-type-91);
   font-weight: 600;
   letter-spacing: 0.04em;
   color: color-mix(in srgb, var(--studio-fg-muted) 82%, transparent);
@@ -652,7 +652,7 @@
   background: none;
   color: var(--studio-accent-strong);
   font-family: inherit;
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
   text-align: left;
   overflow-wrap: anywhere;
   cursor: pointer;
@@ -670,7 +670,7 @@
   place-items: center;
   flex: 0 0 auto;
   border: 1px solid color-mix(in srgb, var(--studio-border) 65%, transparent);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: color-mix(in srgb, var(--studio-bg-editor) 70%, transparent);
   color: var(--studio-fg-muted);
 }
@@ -687,7 +687,7 @@
   flex-shrink: 0;
   align-self: center;
   color: var(--studio-fg-muted);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   font-variant-numeric: tabular-nums;
 }
 
@@ -698,10 +698,10 @@
   margin-right: var(--studio-spacing-1);
   padding: 0 var(--studio-spacing-2);
   border: 1px solid color-mix(in srgb, var(--studio-accent) 55%, transparent);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--studio-bg-editor);
   color: var(--studio-fg);
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   font-family: inherit;
 }
 
@@ -755,7 +755,7 @@
   border-radius: 0;
   background: transparent;
   color: var(--studio-fg-muted);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
   font-family: inherit;
   cursor: pointer;
 }
@@ -770,7 +770,7 @@
 .pwiki__tab small {
   flex-shrink: 0;
   color: var(--studio-fg-muted);
-  font-size: 0.66rem;
+  font-size: var(--studio-compat-type-63);
   font-weight: 650;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -810,7 +810,7 @@
   border-radius: 0;
   background: transparent;
   color: var(--studio-fg-muted);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
   font-family: inherit;
   cursor: pointer;
 }
@@ -866,7 +866,7 @@
   border-bottom: 1px solid var(--studio-border);
   background: var(--studio-bg-hover);
   color: var(--studio-fg-muted);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 .pwiki__deeplink-hint code {
@@ -904,7 +904,7 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .pwiki__workspace {
-    transition: grid-template-columns 220ms ease;
+    transition: grid-template-columns var(--studio-compat-duration-21) ease;
   }
 }
 
@@ -955,10 +955,10 @@
   min-height: 18px;
   padding: 0 var(--studio-spacing-2);
   border: 1px solid var(--pwiki-paper-border);
-  border-radius: 3px;
+  border-radius: var(--studio-compat-radius-9);
   background: var(--pwiki-paper-soft);
   color: var(--pwiki-paper-muted);
-  font-size: 0.64rem;
+  font-size: var(--studio-compat-type-80);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -969,7 +969,7 @@
   margin: 0;
   overflow: hidden;
   color: var(--pwiki-paper-fg);
-  font-size: 0.92rem;
+  font-size: var(--studio-compat-type-8);
   font-weight: 650;
   line-height: 1.25;
   text-overflow: ellipsis;
@@ -983,7 +983,7 @@
   overflow: hidden;
   color: var(--pwiki-paper-muted);
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   text-overflow: ellipsis;
   white-space: nowrap;
   padding: 0;
@@ -1004,7 +1004,7 @@
 :host ::ng-deep cac-markdown.pwiki__reader-body .markdown-body {
   width: 100%;
   max-width: none;
-  font-size: 14px;
+  font-size: var(--studio-font-size-lg);
   line-height: 1.58;
 }
 
@@ -1069,7 +1069,7 @@
   align-items: center;
   gap: var(--studio-spacing-2);
   color: var(--pwiki-paper-muted);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 }
 
 .pwiki__edit-prefix code {
@@ -1102,11 +1102,11 @@
   margin: 0;
   padding: var(--studio-spacing-4);
   border: 1px solid var(--pwiki-paper-border);
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: var(--pwiki-paper-soft);
   color: var(--pwiki-paper-fg);
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   line-height: 1.6;
 }
 
@@ -1142,7 +1142,7 @@
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background var(--studio-compat-duration-1) ease, color var(--studio-compat-duration-1) ease;
 }
 
 .pwiki__meta-toggle:hover {
@@ -1164,7 +1164,7 @@
 .pwiki__meta-toggle-label {
   flex: 0 0 auto;
   color: var(--studio-fg-muted);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1190,10 +1190,10 @@
   justify-content: center;
   padding: 0 var(--studio-spacing-1);
   border: 1px solid color-mix(in srgb, var(--studio-border) 80%, transparent);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: color-mix(in srgb, var(--studio-fg-muted) 12%, transparent);
   color: var(--studio-fg);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -1289,7 +1289,7 @@
 .pwiki__info-list dt {
   margin: 0;
   color: var(--studio-fg-muted);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -1298,7 +1298,7 @@
   min-width: 0;
   margin: 0;
   color: var(--studio-fg);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
   overflow-wrap: anywhere;
 }
 
@@ -1326,10 +1326,10 @@
   align-items: center;
   padding: 0 var(--studio-spacing-2);
   border: 1px solid color-mix(in srgb, var(--studio-accent) 32%, var(--studio-border));
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: color-mix(in srgb, var(--studio-accent) 9%, transparent);
   color: var(--studio-fg);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1348,10 +1348,10 @@
   gap: var(--studio-spacing-1);
   padding: 0 var(--studio-spacing-2);
   border: 1px solid color-mix(in srgb, var(--studio-accent) 32%, var(--studio-border));
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: color-mix(in srgb, var(--studio-accent) 8%, transparent);
   color: var(--studio-accent-strong);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   font-family: inherit;
   cursor: pointer;
 }
@@ -1395,7 +1395,7 @@
   grid-template-columns: 3rem minmax(0, 1fr);
   min-height: 20px;
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   line-height: 1.55;
 }
 
@@ -1442,7 +1442,7 @@
   border-bottom: 1px solid color-mix(in srgb, var(--severity-warn) 55%, transparent);
   background: color-mix(in srgb, var(--severity-warn) 16%, var(--pwiki-paper-bg));
   color: color-mix(in srgb, var(--severity-warn) 78%, var(--pwiki-paper-fg));
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 .pwiki__rev-banner code {
@@ -1454,10 +1454,10 @@
   min-height: 24px;
   padding: 0 var(--studio-spacing-2);
   border: 1px solid color-mix(in srgb, var(--severity-warn) 75%, transparent);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: var(--pwiki-paper-bg);
   color: color-mix(in srgb, var(--severity-warn) 78%, var(--pwiki-paper-fg));
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   font-family: inherit;
   cursor: pointer;
 }
@@ -1658,20 +1658,20 @@
   z-index: 5;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 6px;
-  border-radius: 6px;
+  gap: var(--studio-compat-space-7);
+  padding: var(--studio-compat-space-1) var(--studio-compat-space-2);
+  border-radius: var(--studio-compat-radius-7);
   border: 0;
   background: transparent;
   color: var(--studio-fg, inherit);
-  font: 500 12px/1 system-ui, sans-serif;
+  font: 500 var(--studio-font-size-sm)/1 system-ui, sans-serif;
   cursor: pointer;
   opacity: 0.5;
-  transition: opacity 0.15s ease, background 0.15s ease;
+  transition: opacity var(--studio-compat-duration-9) ease, background var(--studio-compat-duration-9) ease;
 }
 .pwiki__maximize:hover {
   opacity: 1;
-  background: var(--studio-bg-hover, rgba(120, 120, 120, 0.12));
+  background: var(--studio-bg-hover, var(--studio-compat-surface-28));
 }
 .pwiki__doc-frame--max {
   position: fixed;

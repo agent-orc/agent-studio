@@ -2,7 +2,7 @@ import { HostNamePipe } from '../../../components/identity-chip/host-name.pipe';
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { WorkspaceOverlaysService } from '../../shell/state/workspace-overlays.service';
 import { CredentialInventoryService } from '../credential-inventory.service';
-import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Current credential alerts shared by the board and operator activity view. */
 @Component({

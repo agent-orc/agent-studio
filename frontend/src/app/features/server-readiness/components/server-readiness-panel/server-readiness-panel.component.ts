@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, output, signal } from '@angular/core';
-import { CopyableCommandComponent } from '../../../../components/copyable-command/copyable-command.component';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { CopyableCommandComponent } from '@studio/ui/components/copyable-command/copyable-command.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { remedyLinkLabel } from '../../../../models/remedy-action.model';
 import { RemedyNavigationService } from '../../../../services/remedy-navigation.service';
 import { ServerReadinessService } from '../../services/server-readiness.service';

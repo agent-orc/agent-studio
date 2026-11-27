@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
-import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { formatAccessTime } from '../../models/access.model';
 import {
   formatDuration,

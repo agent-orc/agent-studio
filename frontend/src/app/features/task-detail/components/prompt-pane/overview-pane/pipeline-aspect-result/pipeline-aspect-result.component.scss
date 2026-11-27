@@ -4,19 +4,19 @@
   flex: 1 1 120px;
   overflow: hidden;
   color: var(--studio-fg-dim);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .aspect-result__link {
   flex: 0 0 auto;
-  padding: 1px var(--studio-spacing-1);
+  padding: var(--studio-compat-space-6) var(--studio-spacing-1);
   border: 0;
   background: transparent;
   color: var(--studio-accent);
   font: inherit;
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   cursor: pointer;
 
   &:hover,
@@ -71,7 +71,7 @@
   overflow: hidden;
   color: var(--studio-fg-muted);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--studio-compat-type-4);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

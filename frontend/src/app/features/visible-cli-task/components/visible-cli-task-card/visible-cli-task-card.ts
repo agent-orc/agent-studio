@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { VisibleCliTaskCreated, VisibleCliTaskRequest, VisibleCliTaskWorkspace } from '../../models/visible-cli-task.model';
 import { VisibleCliTaskService } from '../../services/visible-cli-task.service';
 

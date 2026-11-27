@@ -49,3 +49,5 @@ Thumbs.db
 /test-results/
 /test-results-mocked/
 /playwright/.cache/
+
+/test-results-ui/

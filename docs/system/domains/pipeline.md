@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-26
+Version: 2026-11-27
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -43,6 +43,30 @@ it using the existing authenticated attachment path. Conflict step receipts
 also contribute their full delivery and integration SHAs and conflict report.
 A successful integration gate clears the previous failure input. The parked
 card detail shows the receipt's test list and an expandable full reason.
+
+## Interrupted direct integration custody (AGT-4114)
+
+The in-flight integration gate journal retains the exact pre-merge anchor until
+branch custody is settled. A rejected gate persists `RollbackRequired` before
+its receipt is recorded. The red receipt proves rejection; it does not complete
+the branch mutation. Only a successful reset followed by a durable
+`RollbackCompleted` journal update permits deletion. A failed reset or recovery
+escalation retains the journal and refuses new direct merge admission.
+
+Startup recovery and direct merge admission reconcile surviving journals under
+the same fenced `RefMutationLeaseService` publication boundary used by ordinary
+integration. Recovery refreshes `origin/<branch>` before collecting lane and
+ancestry facts for the existing `InterruptedIntegrationGatePolicy`. It refuses
+repair when remote state cannot be obtained. The policy protects published
+commits and recognizes a rejected merge already absent from the lane, including
+a restart after reset but before its completion record. Repeated recovery then
+records the repair without resetting the lane again. Owner checks keep a late
+old gate from completing a newer invocation's journal.
+
+The admission reconciliation closes the startup scheduling race: even if the
+startup sweep has not reached a project yet, a new direct merge cannot use its
+unreconciled rejected tip. See the
+[interrupted integration gate contract](../../operations/git/interrupted-integration-gate.md).
 
 ## Gate economics and integration lane
 
@@ -313,20 +337,52 @@ ignored. The runner state route
 (`/api/runner/post-merge/projects/{project}`) carries `windowSuites`
 (`affected` or `routine`), and the merge-window run selects from it.
 
-In a post-merge strategy develop is checked only by the T3 runs below: the
-coding daemon's host scheduler (AGT-3967) discovers every fast and balanced
-project through `GET /api/runner/post-merge/projects`, and hand-installed
-timers remain a fallback. When
-develop has a first-parent commit that no reported T3 run covers, that commit
-is at least six hours old, and no run reported in the last six hours,
-`PostMergeCoverageService` reports the project as `missing`. The settings page
-and the project Operations view show the warning, and Needs you shows a
-`post-merge.missing` item. Any receipt counts, a skip or a red run included;
-a run on the current tip or a report within six hours clears it. The tip comes
-from the `origin/<branch>` ref file and the age from one `git rev-list -n 1
---first-parent --before` per tip pair. Studio does not fall back to pre-merge
-on this warning, and since RT-1 (AGT-3988) there is no automatic fallback to
-pre-merge at all.
+In a post-merge strategy develop is checked by T3. The coding daemon discovers
+fast and balanced projects through `GET /api/runner/post-merge/projects`.
+AGT-4075 places due merge windows and nightly runs on a connected gate executor
+advertising `gate:post-merge`, through the existing claimable gate transport.
+The gate subject freezes the tip, project, branch and run kind. The gate worker
+runs `PostMergeRunCommand`, preserving command selection, the per-command worker
+envelope, attribution and post-merge receipts. The gate host needs the same
+`PostMergeStateUrl` configuration as the coding scheduler when its Task Server
+URL differs from Studio. Older gate workers without that capability leave
+execution on the run host until they are upgraded.
+
+The run host is the fallback. Once the oldest pending integration reaches the
+project's `windowMinutes`, occupied coding slots and host load no longer veto
+that window. It runs sequentially inside the existing worker test envelope;
+its receipt retains starting occupancy, starting load and peak load. A nightly
+fallback still waits for free coding capacity. Gate queue ordering puts merge
+checks first. Fixed-slot gate admission preserves the separate integration
+compile lane for a merge alongside one post-merge run. Grant admission reserves
+the final host grant for integration when the host has multiple grants.
+
+`PostMergeSchedulingPolicy` owns deadlines and supersession. A newer tip may
+cancel a queued or materializing gate subject. Conditional cancellation and
+advancing to `running` are serialized by the gate authority; `running` starts
+immediately before the first test command. A newer tip never cancels tests
+already running. A pending window older than three times its window duration
+(minimum three minutes for a zero-minute window) produces one project/window
+Needs you occurrence with its admission cause. The minute maintenance sweep
+closes windows with no connected execution host or a strategy that no longer
+uses post-merge checks, retaining `closedWindow` with its reason. A worker
+closes a window with no valid test definition at the fetched tip. That tip stays
+closed until the branch changes, so discovery cannot reopen it every minute.
+Projects without a repository locator also close their old observations. These
+closures are observations, never successful test receipts.
+
+Coverage separates report liveness from completed measurements. Active starts,
+skips and inconclusive results update reporting fields but cannot clear an
+unmeasured-tip obligation. `current` means a completed measurement covers the
+exact tip; `pending` means a younger uncovered obligation; `missing` means an
+uncovered first-parent commit has passed the six-hour deadline. Completed red
+test measurements retain the existing red-develop repair path. Build-only
+failures do not count as measurements. `lastMeasuredTipSha`,
+`lastMeasuredAtUtc` and `tipMeasured` are separate from report fields. The
+existing testing and Operations projections carry the coverage explanation,
+and Needs you uses one stable occurrence per pending window or measured tip.
+The tip comes from `origin/<branch>` and a bounded first-parent history walk.
+No warning changes the project's testing strategy.
 
 ### Before and after the merge (AGT-4020)
 
@@ -594,6 +650,11 @@ infrastructure path. A failure that survives the same-SHA confirmation gets one
 serial reference repeat per failed method (or one whole-command repeat when a
 focused filter is unavailable), using `reference=1` and the same token size.
 Its attempts and fingerprint are retained separately for RT-2 comparison.
+For direct test invocations and older post-merge workers that provide no
+`TEST_ENVELOPE_*` declaration, the canary does not assert an envelope. If any
+envelope marker is present, it requires the complete declaration. This keeps
+the base suite compatible while a worker binary is being upgraded; envelope
+receipts and process-boundary tests remain the evidence for current workers.
 Recovery in the matching reference envelope is flaky, runs no attribution and
 never stops the line; recovery after a fingerprint mismatch remains environment
 evidence in RT-2.
@@ -734,6 +795,28 @@ the figures. A first-week production cohort is not available in this checkout;
 the local baseline cannot establish a production incident budget.
 
 ### Red develop repair (AGT-3312)
+
+AGT-4051: automatic repair creation lands first in Ready, resolving the
+project's coding model at creation with medium reasoning. The RT model ladder
+can still raise a later repair rung. Compatibility receipts reuse an open repair
+when the failing-test sets overlap by a majority of the smaller set, including
+supersets; they refresh the tests, tip and suspects without resetting the first
+red clock. RT receipts retain their per-test incident and quarantine identity
+across changing log fingerprints; overlapping red sets share one coding repair. A green compatibility receipt archives repair
+cards that have never run, with a lane-change timeline reason. Cards with run
+evidence and cards owned by delivery retain their lanes. RT quarantines still
+require their existing covering-pass lift evidence.
+
+Needs-you projects a separate pickup warning after ten minutes while develop
+is red and the repair has not reached Progress or Auto Review. It includes the
+first red time, repair key and current lane, and disappears when the repair
+starts or the incident resolves. The RT owner-decision ladder remains in place.
+Repair briefs list each failing test's first diagnostic; new runners preserve
+these before compacting console output. Older receipts explicitly say when a
+diagnostic was not recorded. Suspect lists use the RT static test-file and
+covering-folder map, retaining build inputs and project-graph fallback when
+reach is unknown. Measured control and bisect attribution remains authoritative.
+
 
 RT-2 (AGT-4003) adds the pure `RedTestTriagePolicy`, `BisectVerdictPolicy` and
 `HoldScopePolicy` for the recommended RT-D1, RT-D2, RT-D4, RT-D5, RT-D6,
@@ -1705,6 +1788,30 @@ lease lives in `ref-mutation-leases` beside it. The card-local admission marker
 is `logs/batch-gate-ownership.json`. Native member records carry the gate
 identity and evidence; the integration-record endpoint only records integration
 bookkeeping.
+
+Ref mutation fence restart contract (AGT-4116): the project/repository OS lock
+covers reading, reserving and publishing each generation across all branches.
+`fence.history` is a versioned, SHA-256 checked record containing the previous
+high-water value and its next reserved generation. The service writes and
+flushes a same-directory `.prepared` file, then atomically renames it over the
+history before preparing, flushing and atomically replacing the plain `fence`.
+Only then does acquisition return a grant. The authority is never truncated.
+Prepared files are not grants and are overwritten under the lock after restart.
+An interrupted attempt may consume a generation; subsequent grants strictly
+increase beyond both the validated reservation and any valid authoritative value.
+The bounded history survives an empty, partial, invalid or missing authority.
+A valid positive legacy plain fence migrates without resetting the sequence.
+An invalid legacy authority without history, an invalid history record, or an
+exhausted sequence raises `RefMutationLeaseService.RepositoryHoldException`
+with code `ref-mutation-fence-hold`, project, repository and evidence path. No
+lease is issued, the lock is released, and other custody keys remain available.
+Preserve the evidence for repair; deleting state or resetting to zero is unsafe.
+This is a custody failure, not a new orchestration transition. The guarantee
+covers process interruption on a filesystem supporting atomic same-directory
+replacement and file flush; it does not claim recovery after loss of the state
+volume or storage that fails to honor those operations. Concurrent older
+writers must be drained before adopting this format because they truncate the
+plain authority and do not maintain reservation history.
 
 Each pilot tick retries formed manifests from the store. The oldest formed
 manifest takes the next available project gate slot, so later larger batches
@@ -4811,3 +4918,43 @@ create new escape events. Archiving a waiting card ends its measured wait.
 Observed metrics are shared with an identical shadow plan only when every
 incident in the selected cohort has a matching guardian observation. A partial
 first shadow week never borrows unobserved baseline outcomes.
+
+
+## Managed project artifact push custody
+
+`ManagedRepositoryMutationService` hands managed project document and decision
+commits to `WorkspaceArtifactPushQueue`. For an enabled project push, it flushes
+an application-owned intent before creating the commit and places the intent's
+unique `Agent-Studio-Push-Intent` marker in the commit body. Failure to persist
+the intent refuses the commit and restores the bounded write. After commit it
+flushes one outbox receipt per repository, target branch and approved SHA before
+signalling the in-memory channel or reporting `PushQueued = true`. A failed
+SHA hand-off reports the local commit without claiming mutation success; the
+intent remains recoverable. Network work stays off the mutation path.
+
+The default outbox is below
+`LocalStateRoot/agentstudio/workspace-artifact-push-outbox/<TaskRepository hash>`.
+`WorkspaceArtifacts:PushOutboxPath` can select an absolute persistent directory.
+Keep that path (or the default TaskRepository identity and local-state volume)
+stable across restarts. Receipts use flushed temporary files and atomic rename;
+acknowledgement removes only the exact tuple. Prepared intents survive ambiguous
+Git failures. Recovery resolves their unique marker from Git history and reflogs
+to one full SHA; absent or ambiguous evidence stays retained and never authorizes
+a push of the current branch tip.
+
+`WorkspaceArtifactPushWorker` replays the outbox at startup and every 60 seconds
+(`WorkspaceArtifacts:PushOutboxSweepSeconds`, bounded to 1 through 3600 seconds),
+without needing another mutation. It queries origin for the recorded branch.
+An equal remote tip or fetched remote descendant proves containment and clears
+the receipt, covering a crash after push but before acknowledgement. Local
+tracking-ref ahead counts cannot clear exact-SHA obligations. Otherwise the
+worker pushes only the approved SHA with a non-force refspec, retaining the
+existing repository gate, three-attempt backoff, timeout escalation and typed
+`managed-repo-push-failed` event / `workspace-repository-push-failed` advisory.
+A spent retry budget retains the receipt for a later sweep. Duplicate channel
+notifications do not restart that budget within a sweep interval.
+
+Legacy workspace HEAD catch-up and Task Server export exclusions retain their
+existing behavior. This contract adds no orchestration transition, integration
+permission, force push or branch-tip approval. Pre-upgrade commits without an
+outbox receipt or marker cannot be inferred safely from arbitrary local history.

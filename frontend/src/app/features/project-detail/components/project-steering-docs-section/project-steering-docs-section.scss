@@ -10,10 +10,10 @@
 
 .psd {
   --psd-editor-chrome: color-mix(in srgb, var(--studio-bg-sidebar) 92%, var(--studio-bg-editor));
-  --psd-paper-bg: rgb(255 255 255);
-  --psd-paper-fg: rgb(17 24 39);
-  --psd-paper-muted: rgb(75 85 99);
-  --psd-paper-border: rgb(226 232 240);
+  --psd-paper-bg: var(--studio-compat-ink-25);
+  --psd-paper-fg: var(--studio-compat-ink-26);
+  --psd-paper-muted: var(--studio-compat-ink-27);
+  --psd-paper-border: var(--studio-compat-border-22);
   --psd-border: color-mix(in srgb, var(--studio-border) 78%, transparent);
   --psd-surface: color-mix(in srgb, var(--studio-bg-editor) 60%, transparent);
   --psd-surface-hover: var(--studio-bg-hover);
@@ -54,11 +54,11 @@
   place-items: center;
   flex: 0 0 auto;
   border: 1px solid var(--studio-border);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--studio-bg-sidebar);
   color: var(--studio-fg-muted);
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition: background var(--studio-compat-duration-1) ease, border-color var(--studio-compat-duration-1) ease, color var(--studio-compat-duration-1) ease;
 }
 
 .psd__chrome-btn:hover {
@@ -82,7 +82,7 @@
   height: 28px;
   flex: 0 0 auto;
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-sidebar);
   color: var(--studio-accent-strong);
 }
@@ -97,7 +97,7 @@
 .psd__title-h {
   margin: 0;
   color: var(--studio-fg-strong);
-  font-size: 1rem;
+  font-size: var(--studio-compat-type-23);
   font-weight: 650;
   white-space: nowrap;
 }
@@ -105,7 +105,7 @@
 .psd__count,
 .psd__mock-pill {
   color: var(--studio-fg-muted);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -122,7 +122,7 @@
   flex: 1 1 auto;
   padding-left: var(--studio-spacing-2);
   color: var(--studio-fg-muted);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
 }
 
 .psd__top-meta span,
@@ -190,7 +190,7 @@
   min-height: 20px;
   padding: 0 var(--studio-spacing-1);
   color: var(--studio-fg-muted);
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -204,7 +204,7 @@
   min-height: 30px;
   padding: 0 var(--studio-spacing-1) 0 var(--studio-spacing-2);
   border: 1px solid var(--psd-border);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--psd-surface);
   color: var(--studio-fg-muted);
 }
@@ -214,7 +214,7 @@
 }
 
 .psd__root-strip > span {
-  font-size: 0.69rem;
+  font-size: var(--studio-compat-type-83);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -225,7 +225,7 @@
   overflow: hidden;
   background: transparent;
   color: var(--studio-fg);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -246,7 +246,7 @@
   gap: var(--studio-spacing-1);
   min-height: 30px;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   outline: 0;
 }
 
@@ -285,11 +285,11 @@
   gap: var(--studio-spacing-1);
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: transparent;
   color: var(--studio-fg);
   font: inherit;
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   text-align: left;
   cursor: pointer;
 }
@@ -332,13 +332,13 @@
 .psd__file-path {
   color: var(--studio-fg-muted);
   font-family: var(--font-mono, monospace);
-  font-size: 0.67rem;
+  font-size: var(--studio-compat-type-84);
 }
 
 .psd__group-count {
   margin-left: auto;
   color: var(--studio-fg-muted);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   font-variant-numeric: tabular-nums;
 }
 
@@ -362,10 +362,10 @@
   min-height: 1.1rem;
   padding: 0 var(--studio-spacing-1);
   border: 1px solid var(--psd-info-border);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--psd-info-bg);
   color: var(--studio-fg-dim);
-  font-size: 0.64rem;
+  font-size: var(--studio-compat-type-80);
   white-space: nowrap;
 }
 
@@ -390,12 +390,12 @@
 .psd__viewer-head h4 {
   margin: 0 0 var(--studio-spacing-1);
   color: var(--studio-fg-strong);
-  font-size: 1rem;
+  font-size: var(--studio-compat-type-23);
 }
 
 .psd__viewer-head code {
   color: var(--studio-accent-4-strong);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
 }
 
 .psd__meta {
@@ -404,7 +404,7 @@
   gap: var(--studio-spacing-1) var(--studio-spacing-3);
   margin: 0 0 var(--studio-spacing-3);
   color: var(--studio-fg);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 .psd__meta div { display: contents; }
@@ -421,10 +421,10 @@
   margin: 0;
   padding: var(--studio-spacing-2);
   border: 1px solid var(--psd-warn-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--psd-warn-bg);
   color: var(--studio-fg);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
   line-height: 1.45;
 }
 
@@ -432,16 +432,16 @@
   min-height: 24rem;
   padding: var(--studio-spacing-5);
   border: 1px solid var(--psd-paper-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--psd-paper-bg);
   color: var(--psd-paper-fg);
-  box-shadow: 0 8px 28px rgb(0 0 0 / 18%);
+  box-shadow: var(--studio-compat-elevation-8);
 }
 
 .psd__body-md {
   display: block;
   color: var(--psd-paper-fg);
-  font-size: 0.92rem;
+  font-size: var(--studio-compat-type-8);
   line-height: 1.65;
 }
 
@@ -459,14 +459,14 @@
   min-width: 0;
   padding: var(--studio-spacing-3);
   border: 1px solid var(--psd-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--studio-bg-sidebar) 42%, transparent);
 }
 
 .psd__sub {
   margin: 0 0 var(--studio-spacing-2);
   color: var(--studio-fg-muted);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -475,7 +475,7 @@
   margin: 0;
   padding-left: var(--studio-spacing-4);
   color: var(--studio-fg);
-  font-size: 0.84rem;
+  font-size: var(--studio-compat-type-71);
   line-height: 1.55;
 }
 
@@ -507,7 +507,7 @@
 .psd__mock-pill {
   padding: 0 var(--studio-spacing-2);
   border: 1px solid var(--psd-border);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--psd-surface);
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -523,7 +523,7 @@
 .psd__usage-mock p {
   margin: 0 0 var(--studio-spacing-3);
   color: var(--studio-fg-muted);
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   line-height: 1.45;
 }
 
@@ -542,7 +542,7 @@
 
 .psd__usage-head {
   color: var(--studio-fg-muted);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -550,18 +550,18 @@
 .psd__usage-row {
   padding: var(--studio-spacing-2);
   border: 1px solid var(--psd-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--studio-bg-editor) 52%, transparent);
   color: var(--studio-fg);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
 }
 
 .psd__usage-row code,
 .psd__evidence {
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: transparent;
   color: var(--studio-accent-4-strong);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
 }
 
 .psd__usage-row code {
@@ -584,7 +584,7 @@
 .psd__warning {
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--psd-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--psd-surface);
 }
 
@@ -614,14 +614,14 @@
 .psd__warning p {
   margin: var(--studio-spacing-1) 0;
   color: var(--studio-fg);
-  font-size: 0.84rem;
+  font-size: var(--studio-compat-type-71);
   line-height: 1.45;
 }
 
 .psd__evidence-label,
 .psd__warn-kind {
   color: var(--studio-fg-muted);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 }
 
 .psd__actions {
@@ -634,12 +634,12 @@
 .psd__btn {
   padding: var(--studio-spacing-1) var(--studio-spacing-3);
   border: 1px solid var(--psd-info-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--psd-info-bg);
   color: var(--studio-fg);
   cursor: pointer;
   font: inherit;
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
 }
 
 .psd__btn:hover:not([disabled]) {
@@ -657,14 +657,14 @@
 }
 
 .psd__btn-spin { margin-left: var(--studio-spacing-1); opacity: 0.8; }
-.psd__action-msg { margin: var(--studio-spacing-2) 0 0; color: var(--studio-accent-teal); font-size: 0.78rem; }
-.psd__action-error { margin: var(--studio-spacing-2) 0 0; color: var(--severity-high); font-size: 0.78rem; }
+.psd__action-msg { margin: var(--studio-spacing-2) 0 0; color: var(--studio-accent-teal); font-size: var(--studio-compat-type-13); }
+.psd__action-error { margin: var(--studio-spacing-2) 0 0; color: var(--severity-high); font-size: var(--studio-compat-type-13); }
 
 .psd__error {
   margin: var(--studio-spacing-4);
   padding: var(--studio-spacing-3);
   border: 1px solid var(--psd-error-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--psd-error-bg);
   color: var(--severity-high);
 }

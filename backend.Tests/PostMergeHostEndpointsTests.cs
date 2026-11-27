@@ -142,11 +142,13 @@ public sealed class PostMergeHostEndpointsTests : IDisposable
             Attribution = new(green, ["pass", "pass"], [new(point, ["fail", "fail"], "fail") { ParentResults = ["pass", "pass"] }],
                 PostMergeClassificationHints.Regression) { BuildCommand = "dotnet build runner.Tests/AgentRunner.Tests.csproj --no-restore" },
         };
+        var diagnosticSecret = "sk-" + "proj-" + new string('x', 80);
         var terminal = running with
         {
             Status = "red", FinishedAtUtc = now.AddMinutes(9), Failure = failure, Envelope = envelope,
             Verdicts = [new(running.Commands[0], 1, false, "Failed Runner.Tests.FeatureTests.Works",
-                [test.Test], [], true) { DurationMs = 61_000 }],
+                [test.Test], [], true) { DurationMs = 61_000,
+                    FailureMessages = new Dictionary<string, string> { [test.Test] = "Expected healthy. " + diagnosticSecret } }],
             TestVerdicts = [test],
             FocusedRuns = [new(PostMergeRunPhases.Repeat, tip, 1, 1, false, 812),
                 new(PostMergeRunPhases.ControlBuild, green, 0, 0, false, 14_000),
@@ -158,12 +160,18 @@ public sealed class PostMergeHostEndpointsTests : IDisposable
         using (var rejected = await client.PostAsJsonAsync("/api/runner/post-merge/projects/one/runs",
                    terminal with { FocusedRuns = [new(PostMergeRunPhases.Bisect, "not-a-sha", 1, 0, false, -1)] }))
             Assert.Equal(System.Net.HttpStatusCode.BadRequest, rejected.StatusCode);
+        using (var rejected = await client.PostAsJsonAsync("/api/runner/post-merge/projects/one/runs",
+                   terminal with { Verdicts = [terminal.Verdicts[0] with
+                       { FailureMessages = new Dictionary<string, string> { [test.Test] = new string('x', 2001) } }] }))
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, rejected.StatusCode);
         (await client.PostAsJsonAsync("/api/runner/post-merge/projects/one/runs", terminal)).EnsureSuccessStatusCode();
 
         var state = await client.GetFromJsonAsync<PostMergeProjectState>("/api/runner/post-merge/projects/one");
         var stored = state!.Runs.Single(run => run.Id == "rt3");
         Assert.Equal(envelope, stored.Envelope);
         Assert.Equal(61_000, stored.Verdicts[0].DurationMs);
+        Assert.StartsWith("Expected healthy.", stored.Verdicts[0].FailureMessages![test.Test]);
+        Assert.DoesNotContain(diagnosticSecret, stored.Verdicts[0].FailureMessages![test.Test]);
         var verdict = Assert.Single(stored.TestVerdicts!);
         Assert.Equal(test.Attempts, verdict.Attempts);
         Assert.Equal(["pass", "pass"], Assert.Single(stored.Failure!.Attribution!.Points).ParentResults);

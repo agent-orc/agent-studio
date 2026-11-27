@@ -120,7 +120,11 @@
           "options": {
             "lintFilePatterns": [
               "src/**/*.ts",
-              "src/**/*.html"
+              "src/**/*.html",
+              "projects/studio-ui/**/*.ts",
+              "projects/studio-ui/**/*.html",
+              "projects/studio-ui-catalogue/**/*.ts",
+              "projects/studio-ui-catalogue/**/*.html"
             ]
           }
         },
@@ -131,7 +135,15 @@
             "tsConfig": "tsconfig.spec.json",
             "runner": "vitest",
             "runnerConfig": "vitest.config.ts",
-            "setupFiles": ["src/test-locale.ts", "src/test-lazy-imports.ts", "src/test-dom-prototype-guard.ts"]
+            "setupFiles": [
+              "src/test-locale.ts",
+              "src/test-lazy-imports.ts",
+              "src/test-dom-prototype-guard.ts"
+            ],
+            "include": [
+              "**/*.spec.ts",
+              "../projects/studio-ui/src/**/*.spec.ts"
+            ]
           },
           "configurations": {
             "release": {
@@ -939,6 +951,65 @@
             }
           },
           "defaultConfiguration": "development"
+        }
+      }
+    },
+    "studio-ui": {
+      "projectType": "library",
+      "root": "projects/studio-ui",
+      "sourceRoot": "projects/studio-ui/src",
+      "prefix": "sui",
+      "architect": {
+        "test": {
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "tsConfig": "projects/studio-ui/tsconfig.spec.json",
+            "runner": "vitest",
+            "runnerConfig": "vitest.config.ts",
+            "include": [
+              "**/*.spec.ts"
+            ],
+            "buildTarget": "studio-ui-catalogue:build:unit-test",
+            "setupFiles": [
+              "src/test-locale.ts"
+            ]
+          }
+        }
+      }
+    },
+    "studio-ui-catalogue": {
+      "projectType": "application",
+      "root": "projects/studio-ui-catalogue",
+      "sourceRoot": "projects/studio-ui-catalogue/src",
+      "prefix": "app",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:application",
+          "options": {
+            "browser": "projects/studio-ui-catalogue/src/main.ts",
+            "index": "projects/studio-ui-catalogue/src/index.html",
+            "tsConfig": "projects/studio-ui-catalogue/tsconfig.app.json",
+            "inlineStyleLanguage": "scss",
+            "assets": [
+              {
+                "glob": "**/*",
+                "input": "public"
+              }
+            ],
+            "styles": [
+              "src/styles.scss"
+            ],
+            "outputPath": "dist/studio-ui-catalogue"
+          },
+          "configurations": {
+            "unit-test": {
+              "assets": [],
+              "styles": [],
+              "optimization": false,
+              "extractLicenses": false,
+              "sourceMap": true
+            }
+          }
         }
       }
     }

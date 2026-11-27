@@ -1,0 +1,132 @@
+/*
+ * Deck-Panel v1 — global classes.
+ *
+ * Decision: docs/concepts/visual-style-guide/deck-panel-v1.md (owner AGT-2337).
+ * Delivery: AGT-2280 (Deck sections unified onto one panel style).
+ *
+ * One quiet, tokenized panel shape for bounded content in the Project Deck:
+ * card surface, 1 px card border, 10 px radius, spacing-4 inset, no resting
+ * shadow. The section heading and description live OUTSIDE the panel.
+ *
+ * Two ways to consume the contract:
+ *  - templates that have no meaningful local class use `.deck-panel` here;
+ *  - existing component classes `@include m.deck-panel;` from styles/mixins
+ *    so the shape lands without renaming templates or test ids.
+ *
+ * Full-bleed tools (Wiki, Git View, Integration, Agent Docs, Prompts) are a
+ * host layout decision — they never gain an artificial outer card.
+ */
+
+.deck-panel {
+  min-width: 0;
+  padding: var(--studio-deck-panel-inset);
+  border: 1px solid var(--studio-card-border);
+  border-radius: var(--studio-deck-panel-radius);
+  background: var(--studio-card-bg);
+  box-shadow: none;
+}
+
+/* Read-only guidance, inherited values, settled history. */
+.deck-panel--muted {
+  border-color: var(--studio-card-muted-border);
+  background: var(--studio-card-muted-bg);
+}
+
+/*
+ * A state that is acute NOW. Not "important content", not historical failure.
+ * Whole-surface tint + strengthened semantic border, never a left stripe.
+ */
+.deck-panel--attention {
+  border-color: color-mix(in srgb, var(--studio-error) 55%, var(--studio-card-border));
+  background: color-mix(in srgb, var(--studio-error) 8%, var(--studio-card-bg));
+}
+
+.deck-panel--attention-warn {
+  border-color: color-mix(in srgb, var(--studio-warn) 55%, var(--studio-card-border));
+  background: color-mix(in srgb, var(--studio-warn) 8%, var(--studio-card-bg));
+}
+
+/* A panel whose rows / table own the inset and run flush to the border. */
+.deck-panel--flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Sibling panels inside one Deck section. */
+.deck-stack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--studio-deck-panel-gap);
+}
+
+/*
+ * Section head — the Deck section owns the page title and one short
+ * description; it sits above the panels, not inside one.
+ */
+.deck-section-head {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--studio-spacing-4);
+  padding-bottom: var(--studio-spacing-3);
+  border-bottom: 1px solid var(--studio-border);
+}
+
+.deck-section-head__title {
+  margin: 0;
+  color: var(--studio-fg-strong);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.3;
+}
+
+.deck-section-head__desc {
+  margin: var(--studio-spacing-1) 0 0;
+  color: var(--studio-fg-dim);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.deck-section-head__eyebrow {
+  margin: 0;
+  color: var(--studio-fg-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.deck-panel__head {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--studio-spacing-3);
+}
+
+.deck-panel__title {
+  margin: 0;
+  color: var(--studio-fg-strong);
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.deck-panel__eyebrow {
+  margin: 0;
+  color: var(--studio-fg-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.deck-panel__desc {
+  margin: 0;
+  color: var(--studio-fg-dim);
+  font-size: 0.82rem;
+}

@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { AspectFindingsListComponent } from '../aspect-findings';
-import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { steeringStatusTone, type SteeringInfo } from './steering-detail.model';
 
 /**

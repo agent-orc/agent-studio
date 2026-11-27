@@ -2,7 +2,7 @@ import { HttpErrorResponse, HttpInterceptorFn } from '@angular/common/http';
 import { inject } from '@angular/core';
 import { throwError } from 'rxjs';
 import { ConnectionStatusService } from './connection-status.service';
-import { NotificationService } from './notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 
 /**
  * Refuses *mutating* backend calls while the app is offline, so an action the

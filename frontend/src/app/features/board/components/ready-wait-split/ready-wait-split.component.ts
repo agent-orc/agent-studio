@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import type { TaskInfo } from '../../../../models/task.model';
 import { splitReadyWaits, type ReadyWaitBucket } from '../../../../models/ready-wait-reason';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { effectivePickupHold } from '../../../../components/pickup-hold/effective-pickup-hold';
 import { RemoteHostsService } from '../../../remote-hosts';
 

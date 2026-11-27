@@ -14,28 +14,28 @@
   gap: var(--studio-spacing-2);
   padding: var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: var(--studio-bg-surface);
 }
 .approvals__request[data-focused='true'] { background: color-mix(in srgb, var(--studio-accent) 8%, var(--studio-bg-surface)); }
-.approvals__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--studio-spacing-1) var(--studio-spacing-3); font-size: 0.8rem; }
+.approvals__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--studio-spacing-1) var(--studio-spacing-3); font-size: var(--studio-compat-type-12); }
 .approvals__head strong { color: var(--studio-fg-strong); font-weight: 600; }
-.approvals__meta { color: var(--studio-fg-dim); font-size: 0.78rem; }
-.approvals__facts { display: grid; grid-template-columns: minmax(8rem, max-content) minmax(0, 1fr); gap: var(--studio-spacing-1) var(--studio-spacing-3); margin: 0; font-size: 0.78rem; }
+.approvals__meta { color: var(--studio-fg-dim); font-size: var(--studio-compat-type-13); }
+.approvals__facts { display: grid; grid-template-columns: minmax(8rem, max-content) minmax(0, 1fr); gap: var(--studio-spacing-1) var(--studio-spacing-3); margin: 0; font-size: var(--studio-compat-type-13); }
 .approvals__facts dt { color: var(--studio-fg-dim); }
 .approvals__facts dd { margin: 0; min-width: 0; color: var(--studio-fg); overflow-wrap: anywhere; }
-.approvals__facts code, .approvals__scroll code { font-family: var(--studio-mono); font-size: 0.75rem; }
+.approvals__facts code, .approvals__scroll code { font-family: var(--studio-mono); font-size: var(--studio-compat-type-11); }
 .approvals__digest { word-break: break-all; }
 .approvals__parameters {
   margin: 0;
   padding: var(--studio-spacing-2);
   max-height: 12rem;
   overflow: auto;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: var(--studio-surface-muted);
   color: var(--studio-fg-strong);
   font-family: var(--studio-mono);
-  font-size: 0.75rem;
+  font-size: var(--studio-compat-type-11);
   white-space: pre-wrap;
   word-break: break-all;
 }

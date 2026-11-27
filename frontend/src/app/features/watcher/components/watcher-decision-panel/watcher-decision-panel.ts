@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, OnInit, computed, inject, input, ou
 import { FormsModule } from '@angular/forms';
 import { WatcherApiService } from '../../services/watcher-api.service';
 import type { WatcherProposal, WatcherProposalOutcome } from '../../models/watcher.model';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * A recorded proposal decision on the shared indicator. Approval and edited

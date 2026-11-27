@@ -2,7 +2,7 @@ import { isTerminalTaskState, TaskState, integrationRecordTooltip, latestIntegra
 import type { TaskInfo, ClientSummary, CliType, TagRegistryEntry, AutoLoopSnapshot, PendingIntent, TaskMode } from '../../../../models/task.model';
 import type { TaskCommitInfo } from '../../../../features/git';
 import type { StructuredTooltip } from 'coding-agent-chat/shared';
-import type { MenuItem } from '../../../../components/menu';
+import type { MenuItem } from '@studio/ui/components/menu/index';
 import type { AutoReviewStatusView } from '../../../../services/auto-review-status.store';
 import { cliTypeIcon, cliTypeLabel, shortModelName, taskModeIcon, taskModeLabel } from '../../../../services/format.util';
 import { shouldShowFailureToast } from '../../../task-detail/services/run-outcome.util';
@@ -14,7 +14,7 @@ import { buildTokenCostTooltip, formatTokenCostDisplay } from '../../../tokens';
 import { laneName, lanePresentation } from '../../../../models/lane-presentation';
 import { laneMoveRefusal, laneMoveRefusalText } from '../../../../models/lane-move-guard';
 import { MANUAL_MOVE_LANES, manualMoveSkipsExecution } from '../../../task-detail/state/triage-actions.model';
-import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
+import type { StudioIconName } from '@studio/ui/components/studio-icon/studio-icon.component';
 
 export function taskTypeIconName(kind: string): StudioIconName {
   if (kind === 'bug') return 'warn';
@@ -1744,11 +1744,11 @@ export function buildDependencyChip(waitsOn: TaskInfo['waitsOn']): DependencyChi
 
 /**
  * TaskLiveStatus owns the one CURRENT wait reason on current payloads. Keep the
- * dependency chip only as a fallback for older payloads without liveStatus.
+ * dependency chip only as a fallback without liveStatus or a recorded waiting reason.
  */
 export function buildVisibleDependencyChip(job: TaskInfo): DependencyChip | null {
   if (job.state === TaskState.Completed || job.state === TaskState.Archive) return null;
-  if (job.liveStatus) return null;
+  if (job.liveStatus || job.waitingReason) return null;
   // AGT-2795: an edge to a pending decision card already renders as its own
   // "blocked by" link; do not repeat it as a generic waits-on chip.
   const waitsOn = job.waitsOn;

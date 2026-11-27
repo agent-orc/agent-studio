@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
-import { StatusIndicatorComponent, type StatusTone } from '../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { BatchIsolationRow, BatchIsolationRowStatus } from '../../../models/batch-gate.model';
 import { BatchProvenRedComponent } from '../batch-proven-red/batch-proven-red';
 

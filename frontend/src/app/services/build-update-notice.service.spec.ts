@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { buildIdentityInterceptor } from './build-identity.interceptor';
 import { BUILD_SHA } from './build-identity';
 import { BuildUpdateNoticeService, BUILD_SHA_HEADER } from './build-update-notice.service';
-import { NotificationService } from './notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 
 const frontendSha = 'a'.repeat(40);
 const backendSha = 'b'.repeat(40);

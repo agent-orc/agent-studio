@@ -18,11 +18,11 @@ import {
 } from '../activity-log.parser';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
 import { RenderedTurn, buildToolChips, escapeForPlain, isDebugNoise, liveStatusTone, roleHeading } from './activity-log-view-model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { ConversationHistoryWindow } from './activity-log-windowing';
 
 import { StickToBottomDirective, TooltipDirective } from 'coding-agent-chat/shared';
-import { MenuComponent, MenuItem, MenuItemClickEvent } from '../../../../components/menu';
+import { MenuComponent, MenuItem, MenuItemClickEvent } from '@studio/ui/components/menu/index';
 import { parseRuntimeSentinels } from '../runtime-sentinel.parser';
 import { RuntimeSentinelViewComponent } from '../runtime-sentinel-view/runtime-sentinel-view.component';
 type ViewMode = 'conversation' | 'trace';

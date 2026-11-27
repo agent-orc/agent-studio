@@ -44,25 +44,25 @@
   padding-bottom: var(--studio-spacing-1);
   border-bottom: 1px solid var(--cli-env-divider);
   color: var(--studio-fg-dim);
-  font-size: 0.95rem;
+  font-size: var(--studio-compat-type-16);
   font-weight: 600;
 }
 
 .cli-env p {
   margin: 0;
   color: var(--studio-fg-muted);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 .cli-env__refresh {
   flex: 0 0 auto;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid var(--cli-env-control-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--cli-env-control-bg);
   color: var(--studio-fg);
   font: inherit;
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   cursor: pointer;
 }
 
@@ -110,19 +110,19 @@
 
 .cli-env__tile-label {
   color: var(--studio-fg-muted);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 }
 
 .cli-env__tile strong {
   color: var(--studio-fg);
-  font-size: 1.18rem;
+  font-size: var(--studio-compat-type-72);
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
 }
 
 .cli-env__tile-detail {
   color: var(--studio-fg-muted);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 }
 
 .cli-env__tile--ok {
@@ -178,13 +178,13 @@
 .cli-env__icon {
   flex: 0 0 auto;
   color: var(--studio-fg-muted);
-  font-size: 0.95rem;
+  font-size: var(--studio-compat-type-16);
 }
 
 .cli-env__head strong {
   min-width: 0;
   color: var(--studio-fg);
-  font-size: 0.9rem;
+  font-size: var(--studio-compat-type-22);
 }
 
 .cli-env__status { margin-left: auto; }
@@ -204,7 +204,7 @@
 
 .cli-env__facts dt {
   color: var(--studio-fg-muted);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 }
 
 .cli-env__facts dd {
@@ -212,7 +212,7 @@
   margin: 0;
   color: var(--studio-fg);
   font-family: var(--font-mono, monospace);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

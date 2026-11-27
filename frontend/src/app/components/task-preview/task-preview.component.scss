@@ -11,14 +11,14 @@
 .preview__copy { display: flex; gap: var(--studio-spacing-2); min-width: 0; }
 .preview__copy span, .preview__copy a { overflow-wrap: anywhere; }
 
-.preview--card { justify-content: space-between; font-size: 0.75rem; }
+.preview--card { justify-content: space-between; font-size: var(--studio-compat-type-11); }
 .preview--card .preview__copy { flex-wrap: wrap; }
 .preview--card img { width: 64px; max-height: 42px; object-fit: contain; }
 
 .preview--detail {
   padding: var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-hover);
 }
 .preview--detail .preview__copy { flex-direction: column; gap: var(--studio-spacing-1); }

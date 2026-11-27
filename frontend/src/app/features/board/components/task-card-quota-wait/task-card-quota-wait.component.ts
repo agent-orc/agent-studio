@@ -3,7 +3,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import type { TaskInfo } from '../../../../models/task.model';
 import { taskCardNow } from '../task-card/task-card-clock';
 import { buildQuotaWaitBadge } from '../task-card/task-card-view-model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 @Component({
   selector: 'app-task-card-quota-wait',

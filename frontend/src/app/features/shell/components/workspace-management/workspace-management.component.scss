@@ -18,24 +18,24 @@
 
 .wsm__title {
   margin: 0;
-  font-size: 1.15rem;
+  font-size: var(--studio-compat-type-33);
   font-weight: 600;
   color: var(--studio-fg);
 }
 
 .wsm__desc {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: var(--studio-compat-type-26);
   color: var(--studio-fg-muted);
 }
 
 .wsm__note {
-  margin: 4px 0 0;
-  padding: 6px 8px;
+  margin: var(--studio-spacing-1) 0 0;
+  padding: var(--studio-compat-space-2) var(--studio-spacing-2);
   background: color-mix(in srgb, var(--studio-accent) 8%, var(--studio-bg-elevated));
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   color: var(--studio-fg-dim);
-  border-radius: 2px;
+  border-radius: var(--studio-compat-radius-8);
   line-height: 1.4;
 
   &--error {
@@ -49,9 +49,9 @@
 }
 
 .wsm__btn {
-  padding: 6px 12px;
-  border-radius: 4px;
-  font-size: 12px;
+  padding: var(--studio-compat-space-2) var(--studio-spacing-3);
+  border-radius: var(--studio-compat-radius-6);
+  font-size: var(--studio-font-size-sm);
   cursor: pointer;
   border: 1px solid var(--studio-border-strong);
   background: var(--studio-bg-elevated);
@@ -65,11 +65,11 @@
 }
 
 .wsm__toggle {
-  padding: 3px 12px;
+  padding: var(--studio-compat-space-1) var(--studio-spacing-3);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 11px;
+  border-radius: var(--studio-compat-radius-18);
   background: transparent;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   color: var(--studio-fg-dim);
   cursor: pointer;
 
@@ -83,10 +83,10 @@
 
 /* --- Registry rows: extracted verbatim from studio-shell.component.scss --- */
 .studio-settings-workspaces {
-  padding: 4px 0 8px;
+  padding: var(--studio-spacing-1) 0 var(--studio-spacing-2);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
 
   &__list {
     list-style: none;
@@ -94,7 +94,7 @@
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--studio-spacing-1);
   }
 }
 
@@ -103,18 +103,18 @@
   grid-template-columns: 12px 1fr auto;
   grid-template-rows: auto auto;
   align-items: center;
-  column-gap: 8px;
-  row-gap: 2px;
-  padding: 5px 6px;
-  border-radius: 4px;
-  font-size: 12px;
+  column-gap: var(--studio-spacing-2);
+  row-gap: var(--studio-compat-space-4);
+  padding: var(--studio-compat-space-7) var(--studio-compat-space-2);
+  border-radius: var(--studio-compat-radius-6);
+  font-size: var(--studio-font-size-sm);
   background: var(--studio-bg-elevated);
 }
 
 .studio-settings-workspace-color {
   width: 10px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: var(--studio-compat-radius-8);
   display: inline-block;
   grid-row: 1;
   grid-column: 1;
@@ -133,8 +133,8 @@
 
 .studio-settings-workspace-name--btn {
   cursor: pointer;
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding: var(--studio-compat-space-6) var(--studio-spacing-1);
+  border-radius: var(--studio-compat-radius-9);
   background: transparent;
   border: none;
 
@@ -146,8 +146,8 @@
   background: var(--studio-bg);
   color: var(--studio-fg-strong);
   border: 1px solid var(--studio-accent, var(--studio-border));
-  border-radius: 3px;
-  padding: 1px 4px;
+  border-radius: var(--studio-compat-radius-9);
+  padding: var(--studio-compat-space-6) var(--studio-spacing-1);
   font: inherit;
   font-weight: 600;
   outline: none;
@@ -159,7 +159,7 @@
   }
 
   &:focus-visible {
-    box-shadow: 0 0 0 2px var(--studio-accent-faint, rgba(167, 139, 250, 0.35));
+    box-shadow: 0 0 0 2px var(--studio-accent-faint, var(--studio-compat-shadow-ink-1));
   }
 }
 
@@ -167,8 +167,8 @@
   grid-row: 2;
   grid-column: 2 / -1;
   color: var(--studio-error);
-  font-size: 10px;
-  margin-top: 2px;
+  font-size: var(--studio-compat-type-1);
+  margin-top: var(--studio-compat-space-4);
 }
 
 .studio-settings-workspace-row--busy {
@@ -182,39 +182,39 @@
 }
 
 .studio-settings-workspaces__create {
-  margin-top: 4px;
+  margin-top: var(--studio-spacing-1);
   align-self: flex-start;
 }
 
 .studio-settings-workspaces__footer {
   display: flex;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
   align-items: center;
-  margin-top: 4px;
+  margin-top: var(--studio-spacing-1);
 }
 
 .studio-settings-projects {
   list-style: none;
-  margin: 4px 0 0;
+  margin: var(--studio-spacing-1) 0 0;
   padding: 0;
   grid-column: 1 / -1;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin-left: 4px;
-  padding-left: 6px;
+  gap: var(--studio-compat-space-4);
+  margin-left: var(--studio-spacing-1);
+  padding-left: var(--studio-compat-space-2);
   background: color-mix(in srgb, var(--studio-bg) 35%, transparent);
-  border-radius: 3px;
+  border-radius: var(--studio-compat-radius-9);
 }
 
 .studio-settings-project-row {
   display: grid;
   grid-template-columns: 8px auto auto minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 6px;
-  padding: 2px 4px;
-  border-radius: 3px;
-  font-size: 11px;
+  gap: var(--studio-compat-space-2);
+  padding: var(--studio-compat-space-4) var(--studio-spacing-1);
+  border-radius: var(--studio-compat-radius-9);
+  font-size: var(--studio-compat-type-6);
   cursor: grab;
 
   &--archived { opacity: 0.55; }
@@ -228,14 +228,14 @@
 .studio-settings-project-color {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   display: inline-block;
 }
 
 .studio-settings-project-id,
 .studio-settings-project-code {
   color: var(--studio-fg-muted);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
 }
 
 .studio-settings-project-name {
@@ -247,7 +247,7 @@
 
 .studio-settings-project-actions {
   display: flex;
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
   justify-content: flex-end;
   flex-wrap: wrap;
 }
@@ -266,21 +266,21 @@
 .studio-settings-workspace-id {
   color: var(--studio-fg-muted);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   grid-row: 1;
   grid-column: 3;
 }
 
 .studio-settings-workspace-count {
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   grid-row: 2;
   grid-column: 2;
 }
 
 .studio-settings-workspace-actions {
   display: flex;
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
   grid-row: 2;
   grid-column: 3;
   justify-content: flex-end;
@@ -294,10 +294,10 @@
   background: transparent;
   border: 1px solid transparent;
   color: var(--studio-fg-muted);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   width: 22px;
   height: 22px;
-  border-radius: 3px;
+  border-radius: var(--studio-compat-radius-9);
   cursor: pointer;
   display: inline-flex;
   align-items: center;

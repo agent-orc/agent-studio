@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { CardOutcome } from './models/token-analysis.model';
 
 /** Status tone of a card outcome in the token analysis (AGT-3403); unknown outcomes stay neutral. */

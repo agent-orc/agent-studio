@@ -1,9 +1,9 @@
-import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, output, signal } from '@angular/core';
 import { CliUsageStore } from '../../../tokens';
 import type { CliUsageQuotaRow, TokenSummaryByModel } from '../../../tokens';
 import type { OrchestratorLogEntry } from '../../models/orchestrator.model';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 
 type Period = '1h' | '24h' | '7d';
 interface UsageEvent { ts: number; tokens: number; }

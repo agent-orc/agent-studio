@@ -9,4 +9,4 @@
 .host-list__row strong { font-size: var(--studio-font-size-lg); }
 .host-list__row--role { padding-left: var(--studio-spacing-5); }
 .host-list__slots { margin-left: auto; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
-.host-list__held { flex: 0 1 auto; min-width: 0; padding: 0 var(--studio-spacing-1); border-radius: 4px; background: var(--notify-warning-icon-bg); color: var(--notify-warning-icon-fg); font-size: var(--studio-font-size-sm); }
+.host-list__held { flex: 0 1 auto; min-width: 0; padding: 0 var(--studio-spacing-1); border-radius: var(--studio-compat-radius-6); background: var(--notify-warning-icon-bg); color: var(--notify-warning-icon-fg); font-size: var(--studio-font-size-sm); }

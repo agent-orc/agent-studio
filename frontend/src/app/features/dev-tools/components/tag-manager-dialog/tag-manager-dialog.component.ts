@@ -10,8 +10,8 @@ import {
 import { FormsModule } from '@angular/forms';
 import { TaskService } from '../../../../services/task.service';
 import { TagRegistryStore } from '../../../../services/tag-registry.store';
-import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
-import { DialogComponent } from '../../../../components/dialog/dialog.component';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { TagRegistryEntry } from '../../../../models/task.model';
 

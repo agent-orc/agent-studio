@@ -8,11 +8,11 @@ import {
 } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { CredentialAlertsComponent } from '../../../credentials/credential-alerts/credential-alerts.component';
-import { MenuComponent, MenuItem, MenuItemClickEvent } from '../../../../components/menu';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { MenuComponent, MenuItem, MenuItemClickEvent } from '@studio/ui/components/menu/index';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { ExecutionLocationBadgeComponent }
   from '../../../../components/execution-location-badge/execution-location-badge.component';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import { DecisionFocusDirective } from '../../../../components/decision-focus/decision-focus.directive';
 import { laneTone as laneToneFor } from '../../../../models/lane-presentation';
 import { stateLabel as fmtStateLabel } from '../../../../services/format.util';
@@ -20,7 +20,7 @@ import type { RunActivityBadge } from '../../../../services/run-activity.util';
 import type { TaskDetail, TaskRunActivityKind } from '../../../../models/task.model';
 import { TASK_DETAIL_PRIMARY_SHORTCUT, taskPhoneLayout, type AcceptanceRefusal } from '../../../task-detail/runtime';
 import { AcceptanceRefusalComponent } from '../../../task-detail/components/acceptance-refusal/acceptance-refusal.component';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 const RUN_ACTIVITY_TONES: Readonly<Record<TaskRunActivityKind, StatusTone>> = {
   active: 'running',

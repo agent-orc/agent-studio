@@ -3627,7 +3627,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 source.Id);
             return;
         }
-        var followUpId = _taskMutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+        var followUpId = _taskMutations.CreateReviewFollowUp(new AgentStudio.Shared.CreateTaskRequest
         {
             Title = $"Follow-up: review concerns in {source.Key ?? source.Id}",
             Agent = source.Agent,
@@ -3641,7 +3641,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             OwnerClientId = source.OwnerClientId,
             CreationSource = "review-concern-follow-up",
             CreatedBy = "pipeline",
-        });
+        }, source);
         var created = followUpId is null ? null : _scanner.FindJob(followUpId, source.WatchPath);
         if (created is null)
         {
@@ -3657,6 +3657,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _taskMutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
         {
             FollowUpOf = [sourceKey],
+            DependsOn = created.References.DependsOn.Append(new TaskDependencyReference(sourceKey)).ToList(),
         }, created.WatchPath);
         _taskMutations.SetTaskReferences(source.Id, (source.References ?? new TaskReferences()) with
         {
@@ -3703,7 +3704,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             .Select(verdict => $"## {verdict.Aspect}: {verdict.Summary}\n\n{verdict.Body}"));
         if (created is null)
         {
-            var id = _taskMutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+            var id = _taskMutations.CreateReviewFollowUp(new AgentStudio.Shared.CreateTaskRequest
             {
                 Title = title,
                 Agent = source.Agent,
@@ -3717,7 +3718,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 OwnerClientId = source.OwnerClientId,
                 CreationSource = "review-budget-follow-up",
                 CreatedBy = "pipeline",
-            });
+            }, source);
             created = id is null ? null : _scanner.FindJob(id, source.WatchPath);
         }
         else if (ReviewRoundBudgetStore.Read(source.FolderPath).Rounds
@@ -3732,6 +3733,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _taskMutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
         {
             FollowUpOf = [sourceKey],
+            DependsOn = created.References.DependsOn.Append(new TaskDependencyReference(sourceKey)).ToList(),
         }, created.WatchPath);
         var latestSource = _scanner.FindJob(source.Id, source.WatchPath) ?? source;
         _taskMutations.SetTaskReferences(source.Id, (latestSource.References ?? new TaskReferences()) with
@@ -5503,6 +5505,46 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var thinkingLevel = catalogueStep is null
                 ? null
                 : PipelineStepConfigResolver.ResolveThinkingLevel(projectSettings, catalogueStep, cli, model);
+            var (diff, commitLabel) = BuildGradeDiff(entry, job, buildGateResult);
+
+            var request = new AgentStudio.Review.CodeReviewStepRequest(
+                Project: entry.Name,
+                JobId: job.Id,
+                JobTitle: job.Title ?? job.Id,
+                JobFolderPath: job.FolderPath,
+                TaskBody: taskBody,
+                Diff: diff,
+                CliType: cli!,
+                Model: model!)
+            {
+                Mode = AgentStudio.Review.CodeReviewMode.Grade,
+                DeferGradeWrites = true,
+                Commit = commitLabel,
+                ThinkingLevel = thinkingLevel,
+                ReviewAttemptId = _pipelineLog?.Read(job.FolderPath)?.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ResultsInventory = ResultsInventory.Render(job.FolderPath),
+                CardMode = ReviewCardMode.Describe(job.Mode),
+            };
+            var inputKey = AgentStudio.Review.CodeReviewGradeReuse.ComputeInputKey(
+                request, _codeReviewStep.RenderPromptForReuse(request));
+            request = request with { InputKey = inputKey };
+
+            // A deferred review re-drives the same open attempt on every tick.
+            // Unchanged inputs reuse that attempt's graded report with no side
+            // effects. Decided before the Running row, which would otherwise
+            // move the terminal row into earlierRuns.
+            var reused = TryReuseCodeReviewGrade(job.FolderPath, inputKey);
+            if (reused is not null)
+            {
+                _logger.LogInformation(
+                    "code-review-grade: reused project={Project} job={JobId} grade={Grade} inputKey={InputKey} file={File}",
+                    entry.Name, job.Id,
+                    AgentStudio.Review.CodeReviewGradeParsing.GradeToken(reused.Grade!.Value),
+                    AgentStudio.Review.CodeReviewGradeReuse.ShortKey(inputKey),
+                    reused.FileName);
+                return reused;
+            }
+
             if (RefuseSpendBudget(job, stepId, StepKind.Orchestrator)) return null;
             var gradeAdmission = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
                 cli, model, thinkingLevel, entry.Name, 0, "review-grade", SameClassOnly: true));
@@ -5531,44 +5573,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ? gradeAdmission.ModelFallback?.Reason == "operator-preference" ? "operator-switch" : "quota-cap"
                 : modelResolution?.Source ?? PipelineStepConfigResolver.ModelSourceRuntime;
 
-            var (diff, commitLabel) = BuildGradeDiff(entry, job, buildGateResult);
-
-            var request = new AgentStudio.Review.CodeReviewStepRequest(
-                Project: entry.Name,
-                JobId: job.Id,
-                JobTitle: job.Title ?? job.Id,
-                JobFolderPath: job.FolderPath,
-                TaskBody: taskBody,
-                Diff: diff,
-                CliType: cli!,
-                Model: model!)
-            {
-                Mode = AgentStudio.Review.CodeReviewMode.Grade,
-                DeferGradeWrites = true,
-                Commit = commitLabel,
-                ThinkingLevel = thinkingLevel,
-                ReviewAttemptId = _pipelineLog?.Read(job.FolderPath)?.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                ResultsInventory = ResultsInventory.Render(job.FolderPath),
-                CardMode = ReviewCardMode.Describe(job.Mode),
-            };
-            var inputKey = AgentStudio.Review.CodeReviewGradeReuse.ComputeInputKey(request);
-            request = request with { InputKey = inputKey };
-
-            // A deferred review re-drives the same open attempt on every tick.
-            // Unchanged inputs reuse that attempt's graded report with no side
-            // effects. Decided before the Running row, which would otherwise
-            // move the terminal row into earlierRuns.
-            var reused = TryReuseCodeReviewGrade(job.FolderPath, inputKey);
-            if (reused is not null)
-            {
-                _logger.LogInformation(
-                    "code-review-grade: reused project={Project} job={JobId} grade={Grade} inputKey={InputKey} file={File}",
-                    entry.Name, job.Id,
-                    AgentStudio.Review.CodeReviewGradeParsing.GradeToken(reused.Grade!.Value),
-                    AgentStudio.Review.CodeReviewGradeReuse.ShortKey(inputKey),
-                    reused.FileName);
-                return reused;
-            }
+            request = request with { CliType = cli!, Model = model!, ThinkingLevel = thinkingLevel };
+            // RunAsync renders and keys the admitted reviewer's actual prompt.
+            // The requested-reviewer hit above never enters spend or quota admission.
 
             // Persist dispatch before the one-shot begins. A slow or interrupted
             // reviewer now reads Running instead of the misleading Pending state.

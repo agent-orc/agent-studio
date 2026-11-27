@@ -8,9 +8,9 @@ import {
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { formatDateTimeUtc } from '../../../../../services/format.util';
-import { MediaLightboxService } from '../../../../../services/media-lightbox.service';
+import { MediaLightboxService } from '@studio/ui/services/media-lightbox.service';
 import { resolveProtocolImageSrc } from '../protocol-image-resolver';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 const SEVERITY_TONES: Readonly<Record<ReviewEvidenceSeverity, StatusTone>> = {
   high: 'danger',

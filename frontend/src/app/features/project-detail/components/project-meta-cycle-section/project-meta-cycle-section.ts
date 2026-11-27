@@ -7,7 +7,7 @@ import {
   MetaCycleReport,
   MetaCycleVerdict,
 } from '../../../../models/supervisor.model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { findingSeverityTone } from '../analysis-report-drilldown/analysis-report-status';
 import { metaCycleHistoryTone, metaCycleVerdictTone } from './meta-cycle-status';
 

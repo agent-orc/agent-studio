@@ -12,16 +12,16 @@
   border-radius: var(--studio-radius-md);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 .review__head { display: grid; gap: var(--studio-spacing-1); min-width: 0; }
-.review__title { margin: 0; color: var(--studio-fg-strong); font-size: 0.82rem; font-weight: 600; }
+.review__title { margin: 0; color: var(--studio-fg-strong); font-size: var(--studio-compat-type-7); font-weight: 600; }
 .review__hint,
 .review__help { margin: 0; color: var(--studio-fg-muted); overflow-wrap: anywhere; }
 
 .review__form { display: grid; gap: var(--studio-spacing-1); min-width: 0; }
-.review__label { color: var(--studio-fg); font-size: 0.72rem; font-weight: 600; }
+.review__label { color: var(--studio-fg); font-size: var(--studio-compat-type-10); font-weight: 600; }
 .review__input {
   width: 100%;
   box-sizing: border-box;

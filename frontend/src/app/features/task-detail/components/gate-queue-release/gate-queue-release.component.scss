@@ -12,7 +12,7 @@
     flex: 1 1 320px;
     margin: 0;
     color: var(--studio-fg);
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     line-height: 1.45;
     font-variant-numeric: tabular-nums;
   }
@@ -25,14 +25,14 @@
     background: transparent;
     color: var(--studio-fg);
     font: inherit;
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     font-weight: 600;
     line-height: 1;
     cursor: pointer;
     transition:
-      background 0.15s ease,
-      border-color 0.15s ease,
-      color 0.15s ease;
+      background var(--studio-compat-duration-9) ease,
+      border-color var(--studio-compat-duration-9) ease,
+      color var(--studio-compat-duration-9) ease;
 
     &:hover:not(:disabled) {
       background: var(--studio-bg-hover);
@@ -58,6 +58,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    &__action { transition-duration: 0s; }
+    &__action { transition-duration: var(--studio-compat-duration-2); }
   }
 }

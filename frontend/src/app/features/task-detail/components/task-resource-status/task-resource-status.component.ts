@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, untracked } from '@angular/core';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { ResourceName } from '../../../../models/task-core.model';
 import { LayoutPanesService } from '../../services/layout-panes.service';
 import { TaskSelectionService } from '../../state/task-selection.service';

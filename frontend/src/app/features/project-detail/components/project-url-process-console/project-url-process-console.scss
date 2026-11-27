@@ -28,7 +28,7 @@
 
 .process-console__identity {
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 
 .process-console__identity strong {
@@ -52,7 +52,7 @@
   gap: var(--studio-spacing-2) var(--studio-spacing-4);
   align-items: baseline;
   margin: 0;
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
 }
 
 .process-console__facts div {
@@ -86,20 +86,20 @@
   padding: var(--studio-spacing-3);
   overflow: auto;
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-editor);
   color: var(--studio-fg);
-  font: 11px/1.55 var(--font-mono);
+  font: var(--studio-compat-type-6)/1.55 var(--font-mono);
   white-space: pre-wrap;
 }
 
 .process-console__button {
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   cursor: pointer;
 }
 

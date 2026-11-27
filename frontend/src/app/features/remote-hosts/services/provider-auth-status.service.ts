@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, OnDestroy, computed, inject, signal } from '@angular/core';
 import { Observable, filter, map, switchMap, take, tap, timer, timeout } from 'rxjs';
-import { NotificationService } from '../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import {
   providerAuthBadgesForSnapshot,
   type ProviderAuthBadge,

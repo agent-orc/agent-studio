@@ -3,7 +3,7 @@ import { deriveActiveTaskRun } from '../../../../services/run-activity.util';
 import { identityDisplay } from '../../../../components/identity-chip/identity-display';
 import { IdentityChipComponent } from '../../../../components/identity-chip/identity-chip.component';
 import { commitEmptyTone, decisionTone, dependencyTone, executionTone, gradeTone, issueTone, loopTone, mergeTone, phaseTone, reviewTone } from './task-card-status-tones';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, OnInit, computed, effect, inject, input, output, signal } from '@angular/core';
 import { TaskState, isTerminalTaskState, type AutoLoopSnapshot, type TaskExecutionLocation, type TaskInfo, type PendingIntent } from '../../../../models/task.model';
 import { RemoteDispatchRejectionComponent } from '../../../../components/remote-dispatch-rejection/remote-dispatch-rejection.component';
@@ -63,8 +63,8 @@ import {
 } from './task-card-view-model';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { TaskStatusPopoverDirective } from '../../../../components/task-status-card';
-import { MenuComponent, MenuItemClickEvent } from '../../../../components/menu';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { MenuComponent, MenuItemClickEvent } from '@studio/ui/components/menu/index';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { ModelLevelIndicatorComponent } from '../../../../components/model-level-indicator/model-level-indicator.component';
 import { ModelMigrationBadgeComponent } from '../../../../components/model-migration-badge/model-migration-badge.component';
 import { RunDispositionBadgesComponent } from '../run-disposition-badges/run-disposition-badges.component';
@@ -76,7 +76,7 @@ import { TokenPopoverDirective } from './token-popover.directive';
 import { TaskTokenUsagePopoverComponent } from './token-usage-popover/token-usage-popover.component';
 import { TaskCardQuotaWaitComponent } from '../task-card-quota-wait/task-card-quota-wait.component';
 import { taskCardNow } from './task-card-clock';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
 import { deriveStalledTaskState, isTaskRunActive } from '../../../../services/run-activity.util';
 import { BoardFiltersService } from '../../state/board-filters.service';
@@ -98,7 +98,7 @@ import { TaskCardQuotaNoticeComponent } from '../../../quota';
 import { DossierSliceLinkComponent } from '../../../../components/dossier-slice-link/dossier-slice-link';
 import { AcceptanceReadinessNoteComponent } from '../../../acceptance-readiness/lazy';
 import { ServerCheckoutNoticeComponent } from '../../../server-checkout';
-import { holdsReturnedFocus } from '../../../../directives/modal-focus.directive';
+import { holdsReturnedFocus } from '@studio/ui/directives/modal-focus.directive';
 // Shared clock keeps relative timestamps in lockstep without NG0100 changes.
 const nowTick = signal(Date.now());
 if (typeof window !== 'undefined') {

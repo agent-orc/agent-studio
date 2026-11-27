@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { TaskState, type TaskDeliveryClaimAnswer, type TaskInfo } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { NotificationService } from '@studio/ui/services/notification.service';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { AcceptanceReadinessStore } from '../../state/acceptance-readiness.store';
 import { acceptanceOverrideAllowed, readinessPresentation } from '../../models/acceptance-readiness.model';
 import { acceptancePrimaryReason, secondaryAcceptanceGaps } from '../../models/acceptance-primary-reason';
@@ -63,6 +63,9 @@ export class AcceptanceNextStepsComponent {
    * and the board note; the brief gap and the other gaps are listed under it.
    * The brief gap leads only without a refusal or when the verdict is stale.
    */
+  readonly reviewSource = computed(() => this.item() ?? this.contentReview());
+  readonly verdictConflict = computed(() => this.job().orchestratorVerdict === 'accept'
+    && ['concerns', 'block'].includes(this.reviewSource()?.contentStatus?.toLowerCase() ?? ''));
   readonly primary = computed(() => acceptancePrimaryReason(this.item()));
   readonly briefLeads = computed(() => !!this.briefGap()
     && (!this.primary() || this.primary()!.readiness === 'verdict-stale'));

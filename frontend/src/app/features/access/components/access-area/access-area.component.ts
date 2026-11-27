@@ -3,7 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { DataGridComponent, type GridColumn } from '../../../../components/data-grid';
 import { DetailLayoutComponent } from '../../../../components/detail-layout/detail-layout.component';
-import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
+import { EmptyStateComponent } from '@studio/ui/components/empty-state/empty-state.component';
 import { LocalOwnerSignInComponent } from '../../../../components/local-owner-sign-in/local-owner-sign-in';
 import { PageOutlineComponent, type OutlineItem } from '../../../../components/page-outline/page-outline.component';
 import { PageSectionComponent } from '../../../../components/page-section/page-section.component';

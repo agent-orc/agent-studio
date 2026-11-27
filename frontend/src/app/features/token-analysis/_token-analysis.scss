@@ -21,14 +21,14 @@
   h3 {
     margin: 0;
     color: var(--studio-fg-strong);
-    font-size: 0.86rem;
+    font-size: var(--studio-compat-type-77);
     font-weight: 600;
   }
 
   p {
     margin: 0;
     color: var(--studio-fg-muted);
-    font-size: 0.72rem;
+    font-size: var(--studio-compat-type-10);
   }
 }
 
@@ -40,7 +40,7 @@
   padding: 0;
   list-style: none;
   color: var(--studio-fg-dim);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 
   li {
     display: inline-flex;
@@ -53,7 +53,7 @@
   flex: 0 0 auto;
   width: 10px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: var(--studio-compat-radius-8);
 }
 
 @mixin numeric {
@@ -62,7 +62,7 @@
 
 @mixin axis-text {
   fill: var(--studio-fg-muted);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   font-variant-numeric: tabular-nums;
 }
 

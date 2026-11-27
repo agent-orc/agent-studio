@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { of } from 'rxjs';
 import { ConceptDossierNoticeComponent } from './concept-dossier-notice.component';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { TaskState, type ConceptDossierSummary, type TaskInfo, type TaskMode } from '../../../../models/task.model';
 

@@ -3,7 +3,7 @@ import { ChangeDetectionStrategy, Component, ElementRef, Injector, afterNextRend
 import { taskServerRouteDetail, taskServerRouteStatus } from '../../models/remote-host.model';
 import { heldCauseLabel } from '../../../../models/held-capability-cause';
 import type { HeldCapability, RemoteHost, RemoteHostCapabilityHealth } from '../../models/remote-host.model';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 @Component({
   selector: 'app-capability-health',

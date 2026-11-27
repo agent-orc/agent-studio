@@ -1,6 +1,6 @@
 import type { TaskInfo } from '../../../../models/task.model';
 import type { TaskService } from '../../../../services/task.service';
-import type { NotificationService } from '../../../../services/notification.service';
+import type { NotificationService } from '@studio/ui/services/notification.service';
 import { REVIEW_FIRST_ID, REVIEW_NORMAL_ID } from './task-card-view-model';
 
 export function handleReviewPriorityAction(

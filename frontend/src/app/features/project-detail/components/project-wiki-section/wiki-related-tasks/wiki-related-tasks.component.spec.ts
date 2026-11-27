@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { describe, expect, it, vi } from 'vitest';
 import { of } from 'rxjs';
-import { AppTooltipDirective } from '../../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { WikiRelatedTasksComponent } from './wiki-related-tasks.component';
 import { TaskService } from '../../../../../services/task.service';
 import { TaskReferenceNavigationService } from '../../../../../services/task-reference-navigation.service';

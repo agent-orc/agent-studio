@@ -22,7 +22,7 @@
 
 .artifact-block__title {
   color: var(--studio-fg-muted);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -66,7 +66,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: filter 120ms ease;
+  transition: filter var(--studio-compat-duration-1) ease;
 }
 
 .artifact-thumb__placeholder {
@@ -78,7 +78,7 @@
   justify-content: center;
   background: var(--studio-surface-muted);
   color: var(--studio-fg-muted);
-  font-size: 0.75rem;
+  font-size: var(--studio-compat-type-11);
   text-align: center;
 }
 
@@ -97,7 +97,7 @@
 .artifact-thumb__name,
 .artifact-document__name {
   overflow: hidden;
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -108,7 +108,7 @@
   overflow: hidden;
   color: var(--studio-fg-dim);
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -164,7 +164,7 @@
   background: color-mix(in srgb, var(--studio-accent-3) 14%, transparent);
   color: var(--studio-accent-3-strong);
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: var(--studio-compat-type-93);
   font-weight: 750;
   line-height: 1;
   text-align: center;
@@ -181,7 +181,7 @@
 .artifact-document__action {
   flex: 0 0 auto;
   color: var(--studio-fg-muted);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 }
 
 .artifact-document__copy,
@@ -191,7 +191,7 @@
   background: transparent;
   color: var(--studio-fg-muted);
   font: inherit;
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   cursor: pointer;
 }
 
@@ -227,7 +227,7 @@
   display: block;
   padding: var(--studio-spacing-3);
   color: var(--studio-fg-muted);
-  font-size: 0.75rem;
+  font-size: var(--studio-compat-type-11);
 }
 
 .artifact-document__state--error {
@@ -245,7 +245,7 @@
   overflow: visible;
   background: transparent;
   color: var(--studio-fg);
-  font: 0.72rem/1.55 var(--font-mono);
+  font: var(--studio-compat-type-10)/1.55 var(--font-mono);
   white-space: pre-wrap;
 }
 
@@ -276,6 +276,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .artifact-thumb__image {
-    transition-duration: 0s;
+    transition-duration: var(--studio-compat-duration-2);
   }
 }

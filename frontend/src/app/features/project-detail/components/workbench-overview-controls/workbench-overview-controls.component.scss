@@ -16,7 +16,7 @@
     color: var(--studio-fg-strong);
     padding: 0 var(--studio-spacing-2);
     font: inherit;
-    font-size: .76rem;
+    font-size: var(--studio-compat-type-40);
   }
   input::placeholder { color: var(--studio-fg-muted); }
   input:focus-visible, select:focus-visible, button:focus-visible {

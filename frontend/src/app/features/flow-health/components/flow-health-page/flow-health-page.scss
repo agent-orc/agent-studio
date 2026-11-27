@@ -66,7 +66,7 @@
 .fh__dot {
   width: 0.6rem;
   height: 0.6rem;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   background: var(--fh-tone);
   align-self: center;
 }
@@ -151,7 +151,7 @@ tbody th {
   i {
     width: 0.55rem;
     height: 0.55rem;
-    border-radius: 50%;
+    border-radius: var(--studio-compat-radius-4);
     background: var(--lane-tone-fg);
   }
 }

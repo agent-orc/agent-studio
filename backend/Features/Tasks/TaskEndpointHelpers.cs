@@ -88,6 +88,12 @@ internal static class TaskEndpointHelpers
                 code = "batch-gate-evidence-missing",
                 hint = "The current delivery has no batch gate, integrated fallback, or published containment evidence. Verify its published branch and retry the move.",
             }),
+        MoveJobStatus.IntegrationFailed when outcome.ContentReview is { } content => Results.Conflict(new
+        {
+            error = outcome.Message,
+            code = "completion-content-gap",
+            contentReview = content,
+        }),
         MoveJobStatus.IntegrationFailed => Results.Conflict(new
         {
             error = outcome.Message,

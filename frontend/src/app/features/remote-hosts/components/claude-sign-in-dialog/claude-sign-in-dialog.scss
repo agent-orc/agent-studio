@@ -10,7 +10,7 @@
   align-items: center;
   gap: var(--studio-spacing-3);
   min-height: 72px;
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-selected);
   padding: var(--studio-spacing-4);
 }
@@ -44,7 +44,7 @@
 }
 
 .claude-auth__privacy {
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: var(--studio-bg-hover);
   color: var(--studio-fg-dim);
   padding: var(--studio-spacing-3);
@@ -53,7 +53,7 @@
 
 .claude-auth__failure {
   border: 1px solid var(--notify-error-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--notify-error-tint);
   color: var(--notify-error-icon-fg);
   padding: var(--studio-spacing-4);
@@ -61,7 +61,7 @@
 
 .claude-auth__failure strong { display: block; margin-bottom: var(--studio-spacing-2); color: var(--studio-fg-strong); }
 .claude-auth__actions { display: flex; gap: var(--studio-spacing-2); }
-.claude-auth__actions button { padding: var(--studio-spacing-2) var(--studio-spacing-3); border-radius: 6px; font: inherit; cursor: pointer; }
+.claude-auth__actions button { padding: var(--studio-spacing-2) var(--studio-spacing-3); border-radius: var(--studio-compat-radius-7); font: inherit; cursor: pointer; }
 .claude-auth__secondary { border: 1px solid var(--studio-border-strong); background: transparent; color: var(--studio-fg); }
 .claude-auth__primary { border: 1px solid var(--studio-accent); background: var(--studio-accent); color: var(--studio-on-accent); font-weight: 700; }
 .claude-auth__secondary:focus-visible,

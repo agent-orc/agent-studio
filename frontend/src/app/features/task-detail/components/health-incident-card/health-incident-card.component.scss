@@ -21,8 +21,8 @@
   align-items: flex-start;
   gap: var(--studio-spacing-3);
 
-  h1 { margin: var(--studio-spacing-2) 0 var(--studio-spacing-1); color: var(--studio-fg-strong); font-size: 1.25rem; }
-  p { margin: 0; color: var(--studio-fg-muted); font-size: 0.8rem; }
+  h1 { margin: var(--studio-spacing-2) 0 var(--studio-spacing-1); color: var(--studio-fg-strong); font-size: var(--studio-compat-type-73); }
+  p { margin: 0; color: var(--studio-fg-muted); font-size: var(--studio-compat-type-12); }
 }
 
 .health-incident__actions { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }

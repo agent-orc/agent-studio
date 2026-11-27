@@ -1,0 +1,11 @@
+@if (state(); as live) {
+    @if (live.state === 'live') {
+      <app-status-indicator tone="neutral" [compact]="true" testId="studio-card-live-state"
+        [label]="'Live since ' + (live.revision?.slice(0, 10) ?? 'recorded deploy')"
+        [detail]="(live.sinceUtc | date:'medium') ?? undefined" />
+    } @else if (live.state === 'integrated-not-live') {
+      <app-status-indicator tone="neutral" [compact]="true" label="Integrated, not live" testId="studio-card-live-state" />
+    } @else if (live.state === 'unknown') {
+      <app-status-indicator tone="neutral" [compact]="true" label="Live state not checked yet" testId="studio-card-live-state" />
+    }
+  }

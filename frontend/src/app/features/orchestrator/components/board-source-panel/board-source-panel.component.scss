@@ -5,7 +5,7 @@
   flex-direction: column;
   gap: var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-surface-muted);
   padding: var(--studio-spacing-3);
   color: var(--studio-fg);
@@ -18,25 +18,25 @@
   gap: var(--studio-spacing-3);
 }
 
-.board-source__head h3 { margin: 0; color: var(--studio-fg-strong); font-size: 13px; }
-.board-source__head p { margin: var(--studio-spacing-1) 0 0; color: var(--studio-fg-muted); font-size: 11px; }
+.board-source__head h3 { margin: 0; color: var(--studio-fg-strong); font-size: var(--studio-font-size-md); }
+.board-source__head p { margin: var(--studio-spacing-1) 0 0; color: var(--studio-fg-muted); font-size: var(--studio-compat-type-6); }
 
 .board-source__button {
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-surface);
   color: var(--studio-fg);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   cursor: pointer;
 }
 
-.board-source__muted { color: var(--studio-fg-muted); font-size: 11px; }
+.board-source__muted { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-6); }
 
 .board-source__banner {
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   padding: var(--studio-spacing-2);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   border: 1px solid var(--studio-border);
 }
 
@@ -57,12 +57,12 @@
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: var(--studio-spacing-2) var(--studio-spacing-3);
   margin: 0;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 
 .board-source__facts dt {
   color: var(--studio-fg-muted);
-  font-size: 9.5px;
+  font-size: var(--studio-compat-type-42);
   text-transform: uppercase;
 }
 
@@ -74,12 +74,12 @@
 .board-source__table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 
 .board-source__table th {
   color: var(--studio-fg-muted);
-  font-size: 9.5px;
+  font-size: var(--studio-compat-type-42);
   text-align: left;
   text-transform: uppercase;
   padding: var(--studio-spacing-1);
@@ -100,9 +100,9 @@
   min-width: 0;
   flex: 1;
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-surface);
   color: var(--studio-fg);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   padding: var(--studio-spacing-1);
 }

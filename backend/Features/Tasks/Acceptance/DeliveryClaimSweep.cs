@@ -55,6 +55,7 @@ public sealed record TaskDeliveryClaimAnswer(
     string? Detail)
 {
     public CompletionContentFacts? ContentReview { get; init; }
+    public AgentStudio.Deploy.StudioCardLiveState? StudioLive { get; init; }
 
     /// <summary>
     /// State of the published Git facts the answer joined (Git facts S3):
@@ -109,6 +110,7 @@ public sealed class DeliveryClaimSweep
     private readonly ProjectRegistry _projects;
     private readonly TaskListGitProjectionCache? _projection;
     private readonly GitCardFactReader? _cardFacts;
+    private readonly AgentStudio.Deploy.StudioReleasesService? _studioReleases;
     private readonly TimeProvider _time;
     private readonly ILogger<DeliveryClaimSweep> _logger;
 
@@ -121,8 +123,10 @@ public sealed class DeliveryClaimSweep
         ILogger<DeliveryClaimSweep> logger,
         TaskListGitProjectionCache? projection = null,
         GitCardFactReader? cardFacts = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        AgentStudio.Deploy.StudioReleasesService? studioReleases = null)
     {
+        _studioReleases = studioReleases;
         _scanner = scanner;
         _integrationStatus = integrationStatus;
         _mutations = mutations;
@@ -195,6 +199,7 @@ public sealed class DeliveryClaimSweep
                 TaskCommitSupersession.State(commit))).ToList(),
             status?.Detail)
         {
+            StudioLive = _studioReleases?.Card(card.ProjectName, card.Key ?? card.Id),
             FactsState = snapshot?.State ?? GitFactsResults.WarmingState,
             FactsGeneration = published?.Generation ?? snapshot?.Generation ?? 0,
         };

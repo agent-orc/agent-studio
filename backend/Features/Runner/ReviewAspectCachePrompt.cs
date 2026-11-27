@@ -12,15 +12,35 @@ internal static class ReviewAspectCachePrompt
 {
     internal const string MaterialMarker = "<!-- remote-review-shared-material-v1 -->";
 
+    internal const string InstructionsMarker = "<!-- remote-review-aspect-instructions-v1 -->";
+
+    internal static string ComposeStock(string authored, AspectRunInputs inputs, string cli,
+        string aspect, string? promptOverride)
+        => (cli.Equals("claude", StringComparison.OrdinalIgnoreCase)
+            || cli.Equals("codex", StringComparison.OrdinalIgnoreCase))
+           && aspect is "requirement-fit" or "code-quality" or "documentation-impact" or "tests-and-evidence"
+           && string.IsNullOrWhiteSpace(promptOverride)
+            ? Compose(authored, inputs) : authored;
+
     internal static string Compose(string authored, AspectRunInputs inputs)
     {
-        var suffix = authored;
+        var suffix = authored.ReplaceLineEndings("\n");
         suffix = RemoveProject(suffix);
         suffix = RemoveAcceptance(suffix);
         suffix = RemoveFencedSection(suffix, "Task body (`prompt.md`)", inputs.TaskBody);
         suffix = RemoveFencedSection(suffix, "Diff summary (task branch vs base)", inputs.DiffSummary);
         suffix = RemoveFencedSection(suffix, "results/ folder inventory", string.IsNullOrWhiteSpace(inputs.ResultsInventory)
             ? "No results/ inventory available." : inputs.ResultsInventory);
+
+        suffix = RemoveFencedSection(suffix, "Status summary (the agent's own report)", inputs.StatusSummary);
+        suffix = RemoveFencedSection(suffix, "Status summary", inputs.StatusSummary);
+        if (!string.IsNullOrWhiteSpace(inputs.StatusReportNote))
+            suffix = suffix.Replace(inputs.StatusReportNote.ReplaceLineEndings("\n") + "\n", string.Empty,
+                StringComparison.Ordinal);
+        var withoutActivity = RemoveFencedSection(suffix, "Recent log (last lines)", inputs.RecentLog);
+        withoutActivity = RemoveFencedSection(withoutActivity, "Recent log", inputs.RecentLog);
+        var consumesActivity = !string.Equals(suffix, withoutActivity, StringComparison.Ordinal);
+        suffix = withoutActivity;
 
         var prefix = new StringBuilder();
         prefix.AppendLine("# Review context");
@@ -42,9 +62,20 @@ internal static class ReviewAspectCachePrompt
         AppendEvidence(prefix, "Diff summary (task branch vs base)", inputs.DiffSummary);
         AppendEvidence(prefix, "results/ folder inventory", string.IsNullOrWhiteSpace(inputs.ResultsInventory)
             ? "No results/ inventory available." : inputs.ResultsInventory);
+        AppendEvidence(prefix, "Status summary (the agent's own report)", inputs.StatusSummary);
+        if (!string.IsNullOrWhiteSpace(inputs.StatusReportNote))
+        {
+            prefix.AppendLine();
+            prefix.AppendLine(inputs.StatusReportNote);
+        }
         prefix.AppendLine(MaterialMarker);
+        // A second evidence group serves only the three activity consumers.
+        // Documentation retains the common delivery evidence without activity.
+        if (consumesActivity)
+            AppendEvidence(prefix, "Recent log (last lines)", inputs.RecentLog);
+        prefix.AppendLine(InstructionsMarker);
         prefix.AppendLine();
-        return prefix + suffix.TrimStart();
+        return (prefix + suffix.TrimStart()).ReplaceLineEndings("\n");
     }
 
     private static void AppendEvidence(StringBuilder text, string heading, string value)
@@ -70,7 +101,7 @@ internal static class ReviewAspectCachePrompt
     {
         foreach (var newline in (string[])["\r\n", "\n"])
         {
-            var removed = RemoveFencedSection(prompt, heading, value, newline);
+            var removed = RemoveFencedSection(prompt, heading, value.ReplaceLineEndings(newline), newline);
             if (!ReferenceEquals(removed, prompt)) return removed;
         }
         return prompt;

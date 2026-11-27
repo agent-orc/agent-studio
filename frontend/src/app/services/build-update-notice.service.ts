@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { take } from 'rxjs';
-import { NotificationService } from './notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { BUILD_SHA } from './build-identity';
 
 export const BUILD_SHA_HEADER = 'X-Agent-Studio-Commit';

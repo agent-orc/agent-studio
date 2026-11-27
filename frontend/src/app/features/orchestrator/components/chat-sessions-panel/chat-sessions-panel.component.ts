@@ -9,10 +9,10 @@ import {
   signal,
 } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
-import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../../components/menu';
-import { SectionHeaderComponent } from '../../../../components/section-header/section-header.component';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '@studio/ui/components/menu/index';
+import { SectionHeaderComponent } from '@studio/ui/components/section-header/section-header.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { TaskService } from '../../../../services/task.service';
 import { clearVisibleInterval, setVisibleInterval, type VisibleIntervalHandle } from '../../../../utils/visible-interval';
 import { CliCatalogStore } from '../../../cli/catalog';

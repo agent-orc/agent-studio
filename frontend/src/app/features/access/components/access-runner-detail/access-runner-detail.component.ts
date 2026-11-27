@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { InlineConfirmComponent } from '../../../../components/inline-confirm/inline-confirm.component';
 import { PageSectionComponent } from '../../../../components/page-section/page-section.component';
-import { RowComponent } from '../../../../components/row/row.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { RowComponent } from '@studio/ui/components/row/row.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { ALL_RUNNER_PROJECTS, formatAccessTime } from '../../models/access.model';
 import {
   enrollmentIdentity, enrollmentOpen, enrollmentStatus, enrollmentTone, identityLabel, projectNames, runnerExpiry, runnerIdentity, toggleProject,

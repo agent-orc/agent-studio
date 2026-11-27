@@ -37,7 +37,7 @@
   width: min(520px, 100%);
   padding: var(--studio-spacing-5);
   border: 1px solid var(--studio-border);
-  border-radius: 12px;
+  border-radius: var(--studio-compat-radius-15);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
   box-shadow: var(--elevation-modal);
@@ -53,7 +53,7 @@
 .rh__modal-actions button {
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: var(--studio-bg-hover);
   color: var(--studio-fg);
   cursor: pointer;

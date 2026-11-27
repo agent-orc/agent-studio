@@ -60,7 +60,7 @@
 .task-live__label,
 .task-live__next-label {
   color: var(--task-live-copy-fg, var(--studio-fg-muted));
-  font-size: 9px;
+  font-size: var(--studio-compat-type-4);
   font-weight: 800;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -70,7 +70,7 @@
 .task-live__signal {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   background: var(--studio-fg-dim);
   flex: 0 0 auto;
 }
@@ -80,7 +80,7 @@
 .task-live--active .task-live__signal:not(.task-live__signal--spacer) {
   background: var(--studio-accent-3-strong);
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--studio-accent-3) 45%, transparent);
-  animation: task-live-pulse 1.35s ease-out infinite;
+  animation: task-live-pulse var(--studio-compat-duration-8) ease-out infinite;
 }
 
 .task-live--waiting .task-live__signal {
@@ -96,7 +96,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   font-weight: 700;
 }
 
@@ -137,7 +137,7 @@
   background: none;
   color: var(--studio-accent-3-strong);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   font-weight: 700;
   cursor: pointer;
   text-decoration: underline;
@@ -166,7 +166,7 @@
 
 .task-live--detail .task-live__headline {
   flex: 0 1 auto;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 // AGT-3617: the hold names its cause in one sentence; it wraps instead of
@@ -197,7 +197,7 @@
   &:focus-visible {
     outline: 2px solid var(--studio-accent);
     outline-offset: 1px;
-    border-radius: 2px;
+    border-radius: var(--studio-compat-radius-8);
   }
 }
 
@@ -207,7 +207,7 @@
 
 .task-live__attempt {
   color: var(--task-live-copy-fg, var(--studio-fg-muted));
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -218,13 +218,13 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--task-live-copy-fg, var(--studio-fg-muted));
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   line-height: 1.35;
 }
 
 .task-live--detail .task-live__detail,
 .task-live--detail .task-live__next {
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .task-live__detail--inline {

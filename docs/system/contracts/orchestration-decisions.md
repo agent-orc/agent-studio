@@ -1128,3 +1128,23 @@ fence or guard returns 409. Pin and stop affect future admissions and retain
 guard monitoring. Undo restores the displaced persona and preserves the
 previous pin and alternation controls. These controls live only on the existing
 DS-8 project review page. They grant no T2 bypass or additional capacity.
+
+## Agent-reported integration prerequisites (AGT-4050)
+
+`IntegrationBlockerPolicy` recognizes one unambiguous parent implementation
+integration blocker in an agent-blocked or environment-blocker report. Hosts
+resolve the named coding card and validate the dependency DAG before applying
+a Ready dependency hold. Already satisfied conditions release pickup immediately.
+`MonolithTransitionAdapter` exposes this shared rule. Admission continues to use
+the existing current-delivery integration fulfillment rule. Review follow-up
+creation publishes that dependency with the new card and records the parent
+delivery commits in its brief.
+
+## Post-merge admission and deadlines (AGT-4075)
+
+`PostMergeSchedulingPolicy` owns window age promotion, the three-window owner
+deadline, gate queue priority and the last supersedable phase. Hosts collect
+clock, window and gate-phase facts. The gate authority serializes conditional
+cancellation against the worker's transition to `running` immediately before
+tests. Run-host promotion keeps the worker test envelope and load receipts.
+This changes verification placement, never the project's testing strategy.

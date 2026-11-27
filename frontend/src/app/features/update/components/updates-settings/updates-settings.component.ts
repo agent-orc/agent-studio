@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { UpdateClientService } from '../../../../services/update.service';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Update state on the shared indicator (docs/quality/design/status-indicator.md). */
 const updateTones: Readonly<Record<'running' | 'behind' | 'failed' | 'ok' | 'unknown', StatusTone>> = {

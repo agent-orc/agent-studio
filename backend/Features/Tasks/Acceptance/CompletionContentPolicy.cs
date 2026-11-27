@@ -16,7 +16,12 @@ public sealed record CompletionContentFacts(
     string? EvidenceChecked = null,
     string? Missing = null,
     CompletionSettlementProblem? Settlement = null,
-    string? MissingReport = null);
+    string? MissingReport = null,
+    string? RunAttemptId = null,
+    string? ReviewAttemptId = null,
+    DateTime? ReviewedAtUtc = null,
+    string? ReportRef = null,
+    string? AdmissionProblem = null);
 
 /// <summary>
 /// Why no settled remote review report backs the content check (AGT-3467):
@@ -67,6 +72,7 @@ public static class CompletionContentPolicy
     {
         var gaps = new List<string>();
         var expectedAspect = TaskModes.IsConcept(facts.Mode) ? "concept-fit" : "requirement-fit";
+        if (facts.AdmissionProblem is { } admissionProblem) gaps.Add(admissionProblem);
         if (!string.Equals(facts.RequiredAspect, expectedAspect, StringComparison.OrdinalIgnoreCase))
             gaps.Add($"content aspect must be {expectedAspect}, not {facts.RequiredAspect}");
         if (string.IsNullOrWhiteSpace(facts.DeliveryBriefVersion))
@@ -93,6 +99,17 @@ public static class CompletionContentPolicy
 
         if (gaps.Count == 0) return new(true, false, "Content review passed for the current brief.");
         var message = "Completion refused: " + string.Join("; ", gaps) + ".";
+        if (!string.IsNullOrWhiteSpace(facts.ContentStatus)
+            && !string.Equals(facts.ContentStatus, "pass", StringComparison.OrdinalIgnoreCase))
+        {
+            var source = facts.ReviewAttemptId is { } attempt ? $"Review {attempt}" : "Local content review";
+            source += facts.ReviewedAtUtc is { } at ? $" at {at:O}" : " (date not recorded)";
+            var concern = string.IsNullOrWhiteSpace(facts.ContentSummary)
+                ? "No concern text was recorded." : facts.ContentSummary.Trim();
+            message += $" {source}. Concern: {concern}";
+            if (!string.IsNullOrWhiteSpace(facts.Missing)) message += $" Missing: {facts.Missing.Trim()}";
+            if (!string.IsNullOrWhiteSpace(facts.ReportRef)) message += $" Report: {facts.ReportRef}.";
+        }
         if (facts.MissingReport is not null)
             return new(false, false, facts.OperatorOverride
                 ? message + " An override cannot replace the missing report."

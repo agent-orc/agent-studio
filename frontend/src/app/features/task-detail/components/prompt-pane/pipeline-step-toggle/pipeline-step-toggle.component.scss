@@ -10,15 +10,15 @@
   min-height: 1.5rem;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: transparent;
   color: var(--studio-fg-muted);
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: var(--studio-compat-type-98);
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
-  transition: color 120ms ease, opacity 120ms ease;
+  transition: color var(--studio-compat-duration-1) ease, opacity var(--studio-compat-duration-1) ease;
 
   &:hover:not(:disabled) {
     color: var(--studio-fg);
@@ -44,9 +44,9 @@
     width: 1.625rem;
     height: 0.875rem;
     border: 1px solid var(--studio-border-strong);
-    border-radius: 999px;
+    border-radius: var(--studio-compat-radius-2);
     background: color-mix(in srgb, var(--studio-fg-muted) 16%, transparent);
-    transition: background-color 120ms ease, border-color 120ms ease;
+    transition: background-color var(--studio-compat-duration-1) ease, border-color var(--studio-compat-duration-1) ease;
   }
 
   &__thumb {
@@ -55,10 +55,10 @@
     inset-inline-start: 0.125rem;
     width: 0.5rem;
     height: 0.5rem;
-    border-radius: 50%;
+    border-radius: var(--studio-compat-radius-4);
     background: var(--studio-fg-dim);
     transform: translateY(-50%);
-    transition: background-color 120ms ease, transform 120ms ease;
+    transition: background-color var(--studio-compat-duration-1) ease, transform var(--studio-compat-duration-1) ease;
   }
 
   &__state {
@@ -85,6 +85,6 @@
   .pipeline-step-toggle,
   .pipeline-step-toggle__track,
   .pipeline-step-toggle__thumb {
-    transition-duration: 0s;
+    transition-duration: var(--studio-compat-duration-2);
   }
 }

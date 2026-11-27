@@ -1,6 +1,6 @@
 :host { display: inline-flex; align-items: center; }
 
-.concept-help { position: relative; display: inline-flex; align-items: center; margin-left: 6px; }
+.concept-help { position: relative; display: inline-flex; align-items: center; margin-left: var(--studio-compat-space-2); }
 
 .concept-help__trigger {
   display: inline-flex;
@@ -8,42 +8,42 @@
   justify-content: center;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
-  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: var(--studio-compat-radius-4);
+  border: 1px solid var(--studio-compat-border-1);
   background: transparent;
-  color: rgba(226, 232, 240, 0.78);
+  color: var(--studio-compat-ink-1);
   font-family: Georgia, 'Times New Roman', serif;
   font-style: italic;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   line-height: 1;
   padding: 0;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  transition: background var(--studio-compat-duration-3) ease, border-color var(--studio-compat-duration-3) ease, color var(--studio-compat-duration-3) ease;
 }
 .concept-help__trigger:hover,
 .concept-help__trigger:focus-visible {
-  border-color: rgba(203, 166, 247, 0.65);
-  background: rgba(203, 166, 247, 0.18);
-  color: #e9d5ff;
+  border-color: var(--studio-compat-border-2);
+  background: var(--studio-compat-surface-1);
+  color: var(--studio-compat-ink-2);
   outline: none;
 }
 .concept-help__trigger--open {
-  border-color: rgba(203, 166, 247, 0.85);
-  background: rgba(203, 166, 247, 0.22);
-  color: #f1f5f9;
+  border-color: var(--studio-compat-border-3);
+  background: var(--studio-compat-surface-2);
+  color: var(--studio-compat-ink-3);
 }
 
 .concept-help__popover {
   position: fixed;
   min-width: 260px;
   max-width: 360px;
-  padding: 12px 14px;
-  background: #0b1020;
-  color: #e2e8f0;
-  border: 1px solid rgba(148, 163, 184, 0.30);
-  border-radius: 8px;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
-  font-size: 0.82rem;
+  padding: var(--studio-spacing-3) var(--studio-compat-space-3);
+  background: var(--studio-compat-surface-3);
+  color: var(--studio-compat-ink-4);
+  border: 1px solid var(--studio-compat-border-4);
+  border-radius: var(--studio-compat-radius-5);
+  box-shadow: var(--studio-compat-elevation-1);
+  font-size: var(--studio-compat-type-7);
   line-height: 1.5;
 }
 
@@ -51,49 +51,49 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 6px;
+  gap: var(--studio-spacing-3);
+  margin-bottom: var(--studio-compat-space-2);
 }
 .concept-help__title {
   margin: 0;
-  font-size: 0.92rem;
+  font-size: var(--studio-compat-type-8);
   font-weight: 600;
-  color: #f1f5f9;
+  color: var(--studio-compat-ink-3);
 }
 .concept-help__close {
   background: transparent;
   border: none;
-  color: rgba(226, 232, 240, 0.65);
-  font-size: 1.05rem;
+  color: var(--studio-compat-ink-5);
+  font-size: var(--studio-compat-type-9);
   line-height: 1;
-  padding: 0 2px;
+  padding: 0 var(--studio-compat-space-4);
   cursor: pointer;
 }
-.concept-help__close:hover { color: #f1f5f9; }
+.concept-help__close:hover { color: var(--studio-compat-ink-3); }
 
 .concept-help__body p {
-  margin: 0 0 8px;
-  color: #e2e8f0;
+  margin: 0 0 var(--studio-spacing-2);
+  color: var(--studio-compat-ink-4);
 }
 .concept-help__body p:last-child { margin-bottom: 0; }
 
 .concept-help__foot {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  margin-top: var(--studio-compat-space-5);
+  padding-top: var(--studio-spacing-2);
+  border-top: 1px solid var(--studio-compat-border-5);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
 }
 .concept-help__learn {
-  color: #a5b4fc;
+  color: var(--studio-compat-ink-6);
   text-decoration: none;
   font-weight: 600;
 }
-.concept-help__learn:hover { color: #c4b5fd; text-decoration: underline; }
+.concept-help__learn:hover { color: var(--studio-compat-ink-7); text-decoration: underline; }
 .concept-help__path {
-  color: rgba(148, 163, 184, 0.75);
+  color: var(--studio-compat-ink-8);
   font-family: ui-monospace, monospace;
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 }
   

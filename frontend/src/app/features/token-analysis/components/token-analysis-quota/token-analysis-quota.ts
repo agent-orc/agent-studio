@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { formatCompactTokens } from '../../../tokens/token-number-format.util';
 import type { TokenAnalysisQuotaWindow } from '../../models/token-analysis.model';
 import type { QuotaLine } from '../../token-analysis.util';

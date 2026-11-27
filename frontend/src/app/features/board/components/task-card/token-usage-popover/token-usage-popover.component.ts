@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { TaskInfo } from '../../../../../models/task.model';
 import { TaskService } from '../../../../../services/task.service';
 import { tokenAnalysisCardHash } from '../../../../token-analysis/token-analysis-navigation.util';

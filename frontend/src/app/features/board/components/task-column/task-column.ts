@@ -1,4 +1,4 @@
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -34,7 +34,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { groupReviewJobs, type LaneCardGroup } from '../review-grouping.util';
 import { groupEscalatedJobs } from '../escalation-grouping.util';
 import { LaneGroupHeadComponent } from '../lane-group-head/lane-group-head.component';
-import { InfoButtonComponent } from '../../../../components/info-button/info-button.component';
+import { InfoButtonComponent } from '@studio/ui/components/info-button/info-button.component';
 import { lanePresentation } from '../../../../models/lane-presentation';
 import { laneSortIndicator, perProjectOrderNote } from '../../../../services/lane-sort.util';
 import { deriveStalledTaskState } from '../../../../services/run-activity.util';

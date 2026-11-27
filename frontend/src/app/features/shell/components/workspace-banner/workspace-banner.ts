@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, inject, input, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { NotificationService } from '../../../../services/notification.service';
-import type { NotificationKind } from '../../../../models/app-dialog.model';
+import { NotificationService } from '@studio/ui/services/notification.service';
+import type { NotificationKind } from '@studio/ui/models/app-dialog.model';
 import { RemoteQueueStarvationBannerComponent } from '../remote-queue-starvation-banner/remote-queue-starvation-banner';
 import { AcceptedIntegrationAlertBannerComponent } from '../accepted-integration-alert-banner/accepted-integration-alert-banner';
 

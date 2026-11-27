@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
-import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { PublicDemoModeService } from '../../services/public-demo-mode.service';
 import { ShellAccessService } from '../../services/shell-access.service';
 

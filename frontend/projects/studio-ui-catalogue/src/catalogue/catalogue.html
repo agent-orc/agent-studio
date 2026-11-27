@@ -1,0 +1,56 @@
+<header>
+  <h1>Components</h1>
+  <span>Studio UI · current appearance</span>
+  <button type="button" (click)="toggleTheme()">Switch theme</button>
+</header>
+<div class="catalogue-layout">
+  <nav aria-label="Component library">
+    @for (item of entries; track item.id) {
+      <sui-tree-row [label]="item.id" [active]="item.id === entry.id"
+        [ariaCurrent]="item.id === entry.id ? 'page' : null" [tooltip]="item.id" (selectRequest)="go(item.id)" />
+    }
+  </nav>
+  <main>
+    <label class="mobile-picker">Component
+      <select aria-label="Component" (change)="changeComponent($event)">
+        @for (item of entries; track item.id) { <option [value]="item.id" [selected]="item.id === entry.id">{{ item.id }}</option> }
+      </select>
+    </label>
+    <h2>{{ entry.id }}</h2>
+    <div class="states" aria-label="Component states">
+      @for (item of entry.states; track item.id) {
+        <a [href]="link(entry.id, item.id)" [attr.aria-current]="item.id === state.id ? 'true' : null">{{ item.id }}</a>
+      }
+    </div>
+    <section class="specimen" data-testid="specimen" [attr.aria-label]="entry.id + ' ' + state.id">
+      @if (visible()) {
+        @if (entry.component; as component) {
+          <ng-container *ngComponentOutlet="component; inputs: state.inputs; content: content" />
+        } @else {
+          @switch (entry.id) {
+            @case ('pending-button') {
+              <button type="button" [appPendingButton]="state.id === 'pending'" [disabled]="state.id === 'disabled'" pendingLabel="Saving…">Save record</button>
+            }
+            @case ('tooltip') {
+              <button type="button" appTooltip="Help for this control" [appTooltipDelay]="0"
+                [appTooltipLinks]="state.id === 'interactive' ? [{label: 'Component help', href: '#documentation'}] : []">Focus or hover for help</button>
+            }
+            @case ('resizable-splitter') {
+              <div class="split-example">
+                <span>First pane</span>
+                <div appResizableSplitter splitterStorageKey="catalogue-split" splitterCssProperty="--catalogue-pane-width" role="separator" aria-label="Resize panes" tabindex="0"></div>
+                <span>Second pane</span>
+              </div>
+            }
+          }
+        }
+      } @else {
+        <span>Closed. Select a state to reopen.</span>
+      }
+    </section>
+    <section id="documentation" aria-label="Usage documentation">
+      <h2>Usage</h2>
+      <cac-markdown [source]="entry.documentation" />
+    </section>
+  </main>
+</div>

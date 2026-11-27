@@ -11,31 +11,31 @@
 .upd-block__panel {
   max-width: 420px;
   width: min(420px, 92vw);
-  padding: 1.5rem 1.75rem;
-  border-radius: 8px;
+  padding: var(--studio-compat-space-52) var(--studio-compat-space-53);
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-elevated);
   border: 1px solid color-mix(in srgb, var(--studio-accent-3) 25%, transparent);
   color: var(--studio-fg);
   text-align: center;
   box-shadow: var(--elevation-modal);
 }
-.upd-block__spinner { width: 38px; height: 38px; margin: 0 auto 0.75rem; display: grid; place-items: center; }
+.upd-block__spinner { width: 38px; height: 38px; margin: 0 auto var(--studio-compat-space-54); display: grid; place-items: center; }
 .upd-block__spinner-ring {
   width: 100%; height: 100%;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   border: 3px solid color-mix(in srgb, var(--studio-accent-3) 20%, transparent);
   border-top-color: var(--studio-accent-3);
-  animation: upd-block-spin 0.9s linear infinite;
+  animation: upd-block-spin var(--studio-compat-duration-32) linear infinite;
 }
-.upd-block__title { margin: 0 0 0.5rem; font-size: 1.05rem; font-weight: 600; }
-.upd-block__phase { margin: 0 0 0.5rem; color: var(--studio-fg); }
+.upd-block__title { margin: 0 0 var(--studio-compat-space-19); font-size: var(--studio-compat-type-9); font-weight: 600; }
+.upd-block__phase { margin: 0 0 var(--studio-compat-space-19); color: var(--studio-fg); }
 .upd-block__heads {
-  margin: 0 0 0.25rem;
+  margin: 0 0 var(--studio-compat-space-24);
   font-family: var(--mono-stack, ui-monospace, monospace);
-  font-size: 0.8125rem;
+  font-size: var(--studio-compat-type-70);
   color: var(--studio-fg-dim);
 }
-.upd-block__arrow { margin: 0 0.4rem; opacity: 0.6; }
-.upd-block__hint { margin: 0.75rem 0 0; font-size: 0.75rem; color: var(--studio-fg-muted); }
+.upd-block__arrow { margin: 0 var(--studio-compat-space-23); opacity: 0.6; }
+.upd-block__hint { margin: var(--studio-compat-space-54) 0 0; font-size: var(--studio-compat-type-11); color: var(--studio-fg-muted); }
 @keyframes upd-block-spin { to { transform: rotate(360deg); } }
   

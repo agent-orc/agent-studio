@@ -1,29 +1,29 @@
 @use '../../../../../styles/mixins' as m;
 
-:host { display: block; padding: 20px 22px; max-width: 880px; margin: 0 auto; color: var(--studio-fg); }
+:host { display: block; padding: var(--studio-compat-space-15) var(--studio-compat-space-9); max-width: 880px; margin: 0 auto; color: var(--studio-fg); }
 .ard__head {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  margin-bottom: 14px;
-  padding-bottom: 8px;
+  gap: var(--studio-compat-space-5);
+  margin-bottom: var(--studio-compat-space-3);
+  padding-bottom: var(--studio-spacing-2);
   border-bottom: 1px solid var(--studio-card-muted-border);
 }
-.ard__title { margin: 0; color: var(--studio-fg-strong); font-size: 1.1rem; flex: 1; }
-.ard__trigger { color: var(--studio-fg-muted); font-size: 0.78rem; }
+.ard__title { margin: 0; color: var(--studio-fg-strong); font-size: var(--studio-compat-type-39); flex: 1; }
+.ard__trigger { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-13); }
 
 .ard__warn {
   @include m.deck-panel;
   @include m.deck-panel-attention(var(--studio-warn));
-  margin: 0 0 14px;
-  font-size: 0.85rem;
+  margin: 0 0 var(--studio-compat-space-3);
+  font-size: var(--studio-compat-type-26);
   color: var(--severity-warn);
 }
 .ard__warn code {
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   background: var(--studio-bg-overlay);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding: var(--studio-compat-space-6) var(--studio-spacing-1);
+  border-radius: var(--studio-compat-radius-9);
 }
 .ard__warn--strong {
   @include m.deck-panel-attention;
@@ -34,46 +34,46 @@
   @include m.deck-panel;
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 4px 12px;
-  margin: 0 0 14px;
-  font-size: 0.82rem;
+  gap: var(--studio-spacing-1) var(--studio-spacing-3);
+  margin: 0 0 var(--studio-compat-space-3);
+  font-size: var(--studio-compat-type-7);
 }
 .ard__meta > div { display: contents; }
 .ard__meta dt { color: var(--studio-fg-muted); }
 .ard__meta dd { margin: 0; color: var(--studio-fg); }
-.ard__meta dd code { font-size: 0.78rem; color: var(--studio-accent-4-strong); }
+.ard__meta dd code { font-size: var(--studio-compat-type-13); color: var(--studio-accent-4-strong); }
 
 .ard__sub {
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   color: var(--studio-fg-muted);
-  margin: 18px 0 6px;
+  margin: var(--studio-compat-space-8) 0 var(--studio-compat-space-2);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
-.ard__findings, .ard__followups, .ard__refs { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
-.ard__finding { display: grid; grid-template-columns: 70px 160px 1fr; gap: 8px; padding: 6px 8px; background: var(--studio-card-muted-bg); border-radius: 6px; font-size: 0.82rem; }
+.ard__findings, .ard__followups, .ard__refs { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--studio-compat-space-2); }
+.ard__finding { display: grid; grid-template-columns: 70px 160px 1fr; gap: var(--studio-spacing-2); padding: var(--studio-compat-space-2) var(--studio-spacing-2); background: var(--studio-card-muted-bg); border-radius: var(--studio-compat-radius-7); font-size: var(--studio-compat-type-7); }
 .ard__finding-topic { color: var(--studio-accent-3-strong); font-family: ui-monospace, monospace; }
 .ard__finding-msg { color: var(--studio-fg); }
 
-.ard__followups li { padding: 8px 10px; background: var(--studio-card-muted-bg); border-radius: 6px; }
-.ard__followups li strong { color: var(--studio-fg); font-size: 0.9rem; }
-.ard__followup-prio { margin-left: 6px; padding: 1px 6px; border-radius: 3px; background: color-mix(in srgb, var(--studio-accent-3) 15%, transparent); color: var(--studio-accent-3-strong); font-size: 0.70rem; text-transform: uppercase; }
-.ard__followups li p { margin: 4px 0 4px; color: var(--studio-fg-dim); font-size: 0.82rem; }
+.ard__followups li { padding: var(--studio-spacing-2) var(--studio-compat-space-5); background: var(--studio-card-muted-bg); border-radius: var(--studio-compat-radius-7); }
+.ard__followups li strong { color: var(--studio-fg); font-size: var(--studio-compat-type-22); }
+.ard__followup-prio { margin-left: var(--studio-compat-space-2); padding: var(--studio-compat-space-6) var(--studio-compat-space-2); border-radius: var(--studio-compat-radius-9); background: color-mix(in srgb, var(--studio-accent-3) 15%, transparent); color: var(--studio-accent-3-strong); font-size: var(--studio-compat-type-67); text-transform: uppercase; }
+.ard__followups li p { margin: var(--studio-spacing-1) 0 var(--studio-spacing-1); color: var(--studio-fg-dim); font-size: var(--studio-compat-type-7); }
 
 .ard__refs li {
   display: flex;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
   align-items: baseline;
-  padding: 4px 8px;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
   background: var(--studio-card-muted-bg);
-  border-radius: 6px;
-  font-size: 0.80rem;
+  border-radius: var(--studio-compat-radius-7);
+  font-size: var(--studio-compat-type-68);
 }
 .ard__ref-kind {
   color: var(--studio-accent-teal);
   text-transform: uppercase;
-  font-size: 0.70rem;
+  font-size: var(--studio-compat-type-67);
   letter-spacing: 0.04em;
   min-width: 90px;
 }
@@ -84,7 +84,7 @@
   @include m.deck-panel;
   @include m.deck-panel-muted;
   margin: 0;
-  font-size: 0.80rem;
+  font-size: var(--studio-compat-type-68);
   color: var(--studio-fg);
   max-height: 360px;
   overflow: auto;
@@ -93,14 +93,14 @@
 }
 .ard__json { font-family: ui-monospace, monospace; }
 
-.ard__actions { display: flex; gap: 6px; margin-top: 16px; flex-wrap: wrap; }
+.ard__actions { display: flex; gap: var(--studio-compat-space-2); margin-top: var(--studio-spacing-4); flex-wrap: wrap; }
 .ard__btn {
   background: var(--studio-card-muted-bg);
   color: var(--studio-fg);
   border: 1px solid var(--studio-card-muted-border);
-  border-radius: 5px;
-  padding: 4px 10px;
-  font-size: 0.82rem;
+  border-radius: var(--studio-compat-radius-13);
+  padding: var(--studio-spacing-1) var(--studio-compat-space-5);
+  font-size: var(--studio-compat-type-7);
   cursor: pointer;
 }
 .ard__btn:hover { background: var(--studio-bg-hover); }

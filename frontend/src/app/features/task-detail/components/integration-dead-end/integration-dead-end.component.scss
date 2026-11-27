@@ -6,7 +6,7 @@
   width: 100%;
   padding: var(--studio-spacing-3);
   @include section.surface(var(--studio-warn));
-  font-size: 0.75rem;
+  font-size: var(--studio-compat-type-11);
 }
 .dead-end > app-status-indicator { justify-self: start; }
 .dead-end p { margin: 0; overflow-wrap: anywhere; }

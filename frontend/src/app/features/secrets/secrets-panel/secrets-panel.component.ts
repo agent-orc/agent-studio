@@ -6,7 +6,7 @@ import { AuthSessionState } from '../../../services/auth.service';
 import type { WatchPathEntry } from '../../../models/task.model';
 import { SecretsService, environmentLabel, type SecretEnvironment, type SecretMetadata, type SecretScopeKey } from '../secrets.service';
 import { SecretBackendSettingsComponent } from '../secret-backend-settings/secret-backend-settings.component';
-import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * Secrets section of the Access area in Settings. People pick a scope

@@ -21,7 +21,7 @@
 .feed-burst__time,
 .feed-burst__span {
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -37,13 +37,13 @@
   flex: 0 0 auto;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   box-shadow: 0 0 0 1px var(--studio-tab-dot-ring);
 }
 .feed-burst__kind {
   min-width: 0;
   color: var(--studio-fg-strong);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -54,7 +54,7 @@
   align-items: baseline;
   gap: var(--studio-spacing-2);
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 .feed-burst__count {
   flex: 0 0 auto;

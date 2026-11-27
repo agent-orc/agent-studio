@@ -18,7 +18,7 @@
 }
 
 .backup-status h4 {
-  font-size: 1em;
+  font-size: var(--studio-compat-type-27);
 }
 
 .backup-status h5 {
@@ -112,7 +112,7 @@
   color: inherit;
   cursor: pointer;
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-surface);
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
 }

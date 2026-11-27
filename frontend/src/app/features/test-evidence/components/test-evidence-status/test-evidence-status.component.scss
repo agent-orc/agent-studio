@@ -2,13 +2,13 @@
 
 /* The state, its tone icon and colour come from the shared status indicator
    (AGT-3403); the strip and rows stay quiet so the tone is not encoded twice. */
-.test-evidence { display: flex; align-items: center; gap: var(--studio-spacing-2); min-width: 0; margin-top: var(--studio-card-section-gap); padding: var(--studio-spacing-2); border-radius: 7px; background: var(--studio-card-muted-bg); color: var(--studio-fg-dim); }
+.test-evidence { display: flex; align-items: center; gap: var(--studio-spacing-2); min-width: 0; margin-top: var(--studio-card-section-gap); padding: var(--studio-spacing-2); border-radius: var(--studio-compat-radius-1); background: var(--studio-card-muted-bg); color: var(--studio-fg-dim); }
 .test-evidence__copy { display: grid; justify-items: start; min-width: 0; gap: var(--studio-spacing-1); }
-.test-evidence__copy small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-fg-muted); font-size: 10px; }
+.test-evidence__copy small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-fg-muted); font-size: var(--studio-compat-type-1); }
 
 .test-evidence-sources { display: grid; gap: var(--studio-spacing-2); min-width: 0; }
-.test-evidence-source { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--studio-spacing-2); min-width: 0; padding: var(--studio-spacing-2) var(--studio-spacing-3); border-radius: 7px; background: var(--studio-card-muted-bg); color: var(--studio-fg-dim); }
+.test-evidence-source { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--studio-spacing-2); min-width: 0; padding: var(--studio-spacing-2) var(--studio-spacing-3); border-radius: var(--studio-compat-radius-1); background: var(--studio-card-muted-bg); color: var(--studio-fg-dim); }
 .test-evidence-source__copy { display: grid; justify-items: start; min-width: 0; gap: var(--studio-spacing-1); }
-.test-evidence-source__copy small { color: var(--studio-fg-muted); font-size: 10px; line-height: 1.4; }
+.test-evidence-source__copy small { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-1); line-height: 1.4; }
 .test-evidence-source__links { display: flex; align-items: center; gap: var(--studio-spacing-2); }
-.test-evidence-source__report { color: inherit; font-size: 10px; font-weight: 600; text-underline-offset: 2px; }
+.test-evidence-source__report { color: inherit; font-size: var(--studio-compat-type-1); font-weight: 600; text-underline-offset: 2px; }

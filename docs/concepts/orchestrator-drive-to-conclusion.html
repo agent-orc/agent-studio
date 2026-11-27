@@ -386,6 +386,20 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-rt6-legacy-canary-red-develop">
+          <td>2026-11-27</td>
+          <td><code>AGT-4046</code><br><span class="small">rt6-legacy-canary-red-develop</span></td>
+          <td>No CLI crashed. The post-merge base suite failed the new test-envelope canary after AGT-4007 integrated.</td>
+          <td>The older post-merge worker did not declare a run-owned HOME or processor count, so a canary added to the base suite failed before that worker could be upgraded.</td>
+          <td>The canary accepts a command with no envelope declaration for legacy compatibility and enforces the full envelope when any marker is present. The repair enters the normal review and integration pipeline.</td>
+        </tr>
+        <tr id="case-es1-strategy-handoff-replay">
+          <td>2026-11-26</td>
+          <td>AGT-4011 es1-strategy-handoff-replay</td>
+          <td>No CLI crash. Delivery replay conflicted with AGT-4038 in the batch-gate strategy handoff.</td>
+          <td>Retained the atomic strategy audit snapshot and the post-merge handoff guards. A strategy cancellation does not charge a failed gate verdict; pending members retain integration evidence without claiming a full-suite pass.</td>
+          <td>The handoff still targets Human Review after integration. This recovery ends in delivery for the normal review and acceptance lanes.</td>
+        </tr>
         <tr id="case-rt6-integration-recovery">
           <td>2026-11-26</td>
           <td><code>AGT-4007</code><br><span class="small">rt6-integration-recovery</span></td>
@@ -3422,6 +3436,19 @@
             restores the delivery patch and verifies the build, focused classes,
             guard filters and lint. Publication and integration remain owned by
             the pipeline.</td>
+        </tr>
+        <tr>
+          <td>2026-11-26</td>
+          <td><code>AGT-4050</code><br><span class="small">review-follow-up-before-parent-integration</span></td>
+          <td>No CLI crash is established. Follow-ups reportedly spent a run
+            reporting an absent parent implementation and required manual restart.</td>
+          <td>Review follow-up creation recorded a provenance link without a
+            scheduling dependency. Agent-reported integration blockers used the
+            generic escalation path.</td>
+          <td>New follow-ups publish a dependency with their creation. Recognized
+            integration blockers return to Ready under the same dependency hold;
+            current-delivery integration releases pickup without a human round.
+            Unknown or ambiguous blockers retain escalation.</td>
         </tr>
       </tbody>
     </table>

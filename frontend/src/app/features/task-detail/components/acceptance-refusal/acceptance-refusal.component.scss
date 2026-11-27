@@ -31,7 +31,7 @@
 .acceptance-refusal__reason {
   min-width: 0;
   max-width: 280px;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 
 // Narrow toolbars keep the icon (its tooltip carries the reason) and the action.
@@ -52,7 +52,7 @@
   box-sizing: border-box;
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .acceptance-refusal__label { color: var(--studio-fg-strong); font-weight: 600; }
@@ -128,9 +128,9 @@
 // `.studio button` reset (0,1,1) outranks the single-class modifier, so the
 // primary fill is restated at a higher specificity.
 .acceptance-refusal .studio-tab-action--primary {
-  padding: 0 10px;
+  padding: 0 var(--studio-compat-space-5);
   border: 1px solid var(--studio-accent);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: var(--studio-accent);
   color: var(--studio-on-accent);
   font-weight: 600;

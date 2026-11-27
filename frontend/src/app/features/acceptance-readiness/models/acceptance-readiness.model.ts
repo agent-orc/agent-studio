@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Readiness classes of `POST /api/tasks/acceptance-readiness` (AGT-3564). */
 export type AcceptanceReadinessClass =
@@ -35,6 +35,11 @@ export interface AcceptanceReadinessItem {
   aspect: string | null;
   contentStatus: string | null;
   concern: string | null;
+  /** Source of the content verdict used by completion, rather than the overall attempt outcome. */
+  reviewAttemptId?: string | null;
+  reviewedAtUtc?: string | null;
+  runAttemptId?: string | null;
+  reportRef?: string | null;
   missing: string | null;
   latestResultRef: string | null;
   round: AcceptanceReadinessRound | null;

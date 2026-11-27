@@ -8,7 +8,7 @@ import { of, throwError } from 'rxjs';
 
 import { ReleaseGateSectionComponent } from './release-gate-section.component';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskSelectionService } from '../../state/task-selection.service';
 import { TaskState } from '../../../../models/task.model';
 import type { TaskInfo, TaskReferenceLink } from '../../../../models/task.model';

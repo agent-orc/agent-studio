@@ -8,7 +8,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   git rev-parse HEAD
   git diff --binary HEAD -- \
     backend contracts retention cli-hosting tools scripts \
-    frontend/src frontend/e2e frontend/scripts \
+    frontend/src frontend/projects/studio-ui frontend/projects/studio-ui-catalogue/src frontend/e2e frontend/scripts \
     frontend/angular.json frontend/ngsw-config.json frontend/package.json frontend/package-lock.json \
     'frontend/tsconfig*.json' 'frontend/playwright*.ts' 'frontend/vitest*.ts' \
     Directory.Build.props Directory.Build.targets Directory.Packages.props global.json
@@ -17,6 +17,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     git hash-object -- "${file}"
   done < <(git ls-files --others --exclude-standard -z -- \
     backend contracts retention cli-hosting tools scripts \
-    frontend/src frontend/e2e frontend/scripts \
+    frontend/src frontend/projects/studio-ui frontend/projects/studio-ui-catalogue/src frontend/e2e frontend/scripts \
     'frontend/*.ts' 'frontend/*.json' | sort -z)
 ) | sha256sum | cut -d ' ' -f 1

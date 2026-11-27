@@ -266,6 +266,9 @@ public sealed class HumanReviewEscalation
         string? expectedSourceState = null,
         string? parkDetail = null)
     {
+        var integrationWait = await _transitions.TryWaitForIntegrationAsync(
+            jobId, watchPath, category, reason, ct, authorityWrite, expectedSourceState);
+        if (integrationWait is not null) return integrationWait;
         category = ResolveCategory(jobId, watchPath, category);
         var beforeFolder = ResolveSourceFolder(jobId, watchPath);
         // Write the Result scaffold before the lane mutation. The folder moves
@@ -313,6 +316,9 @@ public sealed class HumanReviewEscalation
         string jobId, string watchPath, string project,
         string category, string reason)
     {
+        var integrationWait = _transitions.TryWaitForIntegrationAsync(
+            jobId, watchPath, category, reason, CancellationToken.None, null, null).GetAwaiter().GetResult();
+        if (integrationWait is not null) return integrationWait;
         category = ResolveCategory(jobId, watchPath, category);
         var beforeFolder = ResolveSourceFolder(jobId, watchPath);
         if (!string.IsNullOrWhiteSpace(beforeFolder))

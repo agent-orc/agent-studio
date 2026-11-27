@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import type { RemoteDispatchRejection } from '../../../../models/task.model';
-import { NotificationComponent } from '../../../../components/notification/notification.component';
+import { NotificationComponent } from '@studio/ui/components/notification/notification.component';
 
 interface RemoteQueueStarvationItem {
   taskKey: string;

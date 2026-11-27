@@ -19,7 +19,7 @@ const baseline = JSON.parse(
 
 const limits = baseline.limits;
 const baselineComponents = baseline.components ?? {};
-const roots = ['src/app', 'src/mockups'];
+const roots = ['src/app', 'src/mockups', 'projects/studio-ui/src', 'projects/studio-ui-catalogue/src'];
 const errors = [];
 const scanned = new Map();
 

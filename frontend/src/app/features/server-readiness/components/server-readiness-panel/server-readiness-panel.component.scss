@@ -3,7 +3,7 @@
 .readiness {
   min-width: 0;
   font-variant-numeric: tabular-nums;
-  h2 { margin: 0; font-size: 1rem; }
+  h2 { margin: 0; font-size: var(--studio-compat-type-23); }
   h2 small { font-weight: normal; color: var(--studio-text-secondary); }
   p { margin: 0; color: var(--studio-text-secondary); }
 }
@@ -21,8 +21,8 @@
     color: inherit;
     background: var(--studio-surface);
     border: 1px solid var(--studio-border);
-    border-radius: .4rem;
-    padding: .35rem .75rem;
+    border-radius: var(--studio-compat-radius-17);
+    padding: var(--studio-compat-space-39) var(--studio-compat-space-40);
     cursor: pointer;
     &:disabled { cursor: progress; color: var(--studio-text-secondary); }
   }
@@ -35,7 +35,7 @@
 .readiness__table-wrap {
   overflow-x: auto;
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
 }
 .readiness table {
   width: 100%;
@@ -48,7 +48,7 @@
     border-bottom: 1px solid var(--studio-border);
     vertical-align: top;
   }
-  thead { color: var(--studio-text-secondary); font-size: 0.76rem; }
+  thead { color: var(--studio-text-secondary); font-size: var(--studio-compat-type-17); }
   thead th:nth-child(1) { width: 7.5rem; }
   thead th:nth-child(2) { width: 15rem; }
   tbody th { font-weight: 500; }
@@ -57,13 +57,13 @@
   tr[data-state='fail'] { background: color-mix(in srgb, var(--studio-error) 8%, var(--studio-surface)); }
   tr[data-state='warn'] { background: color-mix(in srgb, var(--studio-warn) 8%, var(--studio-surface)); }
   code {
-    font-size: 0.8rem;
+    font-size: var(--studio-compat-type-12);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
 }
 .readiness__group th {
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
   font-weight: 600;
   color: var(--studio-text-secondary);
   background: var(--studio-bg-surface);

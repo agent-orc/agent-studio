@@ -3,9 +3,9 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, output, signal } from '@angular/core';
 import { firstValueFrom, Subscription, take } from 'rxjs';
 import { AuthService } from '../../../../services/auth.service';
-import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
-import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/pending-button.directive';
+import { LoadingSurfaceComponent } from '@studio/ui/components/async-feedback/index';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { OperationsCardLookupService, type OperationsCardTarget } from '../../state/operations-card-lookup.service';
 import { OperationsSecurityFactsComponent } from '../operations-security-facts/operations-security-facts';
 import {

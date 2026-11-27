@@ -1,0 +1,42 @@
+@use '../../styles/mixins' as m;
+
+/* The doubled class beats `.studio button` and light `.panel button`
+ * regardless of stylesheet order. Both reset rules otherwise remove the
+ * option padding or override its foreground and thumb background. */
+.segmented.segmented {
+  @include m.segmented-track;
+}
+
+.segmented.segmented .segmented__option {
+  @include m.segmented-option;
+}
+
+.segmented.segmented .segmented__option:hover:not(:disabled):not(.segmented__option--active) {
+  background: color-mix(in srgb, var(--studio-fg) 7%, transparent);
+  color: var(--studio-fg);
+}
+
+.segmented.segmented .segmented__option:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 1px;
+}
+
+.segmented.segmented .segmented__option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.segmented.segmented .segmented__option.segmented__option--active,
+.segmented.segmented .segmented__option.segmented__option--active:hover {
+  @include m.segmented-thumb;
+}
+
+.segmented__icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .segmented.segmented .segmented__option { transition: none; }
+}

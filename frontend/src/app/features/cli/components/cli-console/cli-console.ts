@@ -1,4 +1,4 @@
-import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, ElementRef, ViewChild, input, signal, computed, effect, OnDestroy } from '@angular/core';
 import { CliOutputLine } from '../../../../models/task.model';
 

@@ -9,6 +9,25 @@ namespace AgentStudio.Runner;
 /// <summary>Host boundary for the shared decision library. No transition rules belong here.</summary>
 public static class MonolithTransitionAdapter
 {
+    public static bool PostMergeDeadlineReached(DateTimeOffset? opened, int minutes, DateTimeOffset now)
+        => PostMergeSchedulingPolicy.DeadlineReached(opened, minutes, now);
+
+    public static bool PostMergeNeedsOwner(DateTimeOffset? opened, int minutes, DateTimeOffset now)
+        => PostMergeSchedulingPolicy.NeedsOwner(opened, minutes, now);
+
+    public static bool PostMergeMaySupersede(string phase) => PostMergeSchedulingPolicy.MaySupersede(phase);
+    public static bool PostMergeMayShareGateLane(string? active, string? candidate)
+        => PostMergeSchedulingPolicy.MayShareGateLane(active, candidate);
+    public static int PostMergeQueuePriority(string? kind) => PostMergeSchedulingPolicy.QueuePriority(kind);
+
+    public static bool MayWaitForIntegration(IntegrationBlockerFacts facts)
+        => IntegrationBlockerPolicy.MayWait(facts);
+
+    public static string IntegrationBlockerWaitLane => IntegrationBlockerPolicy.WaitLane;
+
+    public static string? IntegrationBlockerDependency(string category, string reason)
+        => IntegrationBlockerPolicy.Dependency(category, reason);
+
     public static int DispatchWaveOrder(int requested, int allocated, string? wave)
         => DispatchWavePolicy.InitialOrder(requested, allocated, wave);
     public static bool DispatchNeedsWave(int count) => DispatchWavePolicy.NeedsWave(count);
@@ -80,6 +99,16 @@ public static class MonolithTransitionAdapter
         => EngineDeliveryIntegrationPolicy.IsPublishedOutcome(integrationOutcome);
 
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
+    public static string RedRepairCreationLane => RedDevelopRepairPolicy.CreationLane;
+    public static RedTestModelRung SharedRedRepairRung(RedTestModelRung requested, IEnumerable<RedTestModelRung> active)
+        => RedDevelopRepairPolicy.SharedRepairRung(requested, active);
+    public static bool QueuedRedRepair(string lane) => RedDevelopRepairPolicy.QueuedRepair(lane);
+    public static bool SameRedRepair(IReadOnlyCollection<string> previous, IReadOnlyCollection<string> current)
+        => RedDevelopRepairPolicy.SameRedState(previous, current);
+    public static bool CloseUnusedRedRepair(string lane, bool hasRun)
+        => RedDevelopRepairPolicy.CloseUnusedOnGreen(lane, hasRun);
+    public static bool RedRepairPickupOverdue(TimeSpan age, string? lane)
+        => RedDevelopRepairPolicy.PickupOverdue(age, lane);
     public static RedDevelopRepairDecision RedDevelopRepair(RedDevelopRepairFacts facts)
         => RedDevelopRepairPolicy.Decide(facts);
     public static RecurringRepairCardAction RecurringRepairCard(string? lane)

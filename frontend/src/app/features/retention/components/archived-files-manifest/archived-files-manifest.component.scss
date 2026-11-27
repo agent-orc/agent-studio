@@ -7,4 +7,4 @@ p { font-size: var(--studio-font-size-xs); margin: var(--studio-spacing-1) 0 0; 
 table { border-collapse: collapse; font-size: var(--studio-font-size-xs); width: 100%; }
 th, td { border-top: 1px solid var(--studio-border); padding: var(--studio-space-2); text-align: left; }
 th { color: var(--studio-fg-muted); font-weight: 500; }
-code { color: var(--studio-fg-dim); font-size: 10px; }
+code { color: var(--studio-fg-dim); font-size: var(--studio-compat-type-1); }

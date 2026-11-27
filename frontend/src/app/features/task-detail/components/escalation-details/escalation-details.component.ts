@@ -13,7 +13,7 @@ import type { CodeReviewListEntry } from '../../../../services/task.service';
 import { TaskService } from '../../../../services/task.service';
 import { FileSourceHistoryComponent } from '../../../../components/file-source-history/file-source-history.component';
 import { formatDateTimeUtc } from '../../../../services/format.util';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import { CouncilReviewReactionComponent } from '../protocol-pane/council-review-reaction/council-review-reaction.component';
 import type {
   EscalationGateItem,
@@ -22,7 +22,7 @@ import type {
 } from '../escalation-summary/escalation-summary.util';
 import { parseFollowUp } from './follow-up-parser';
 import { aspectToneStatusTone } from '../../../../components/aspect-findings';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 interface ReviewRound {
   entry: CodeReviewListEntry;

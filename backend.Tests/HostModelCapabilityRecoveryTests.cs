@@ -52,9 +52,10 @@ public sealed class HostModelCapabilityRecoveryTests
             registry.ModelAdmission("runner-a", "instance-a", "codex", "gpt-6-sol"));
         Assert.True(registry.AcceptsModel("runner-a", "instance-a", "codex", "gpt-6-sol"));
 
+        // Keep provider evidence fresh beyond the model-verdict startup grace.
         registry.AdvertiseCapabilities("runner-a", new Contract.CapabilityAdvertisementRequest(
-            "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, 1,
-            [new Contract.AdvertisedCapabilityDto(
+            "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 600, 1,
+            [.. ReadyProvider(), new Contract.AdvertisedCapabilityDto(
                 Contract.CapabilityProtocol.ModelAcceptance("codex", "gpt-6-luna"),
                 "model-acceptance", "unknown")]));
         Assert.Equal(Contract.ModelAcceptanceAdmission.Pending,
@@ -63,8 +64,8 @@ public sealed class HostModelCapabilityRecoveryTests
         Assert.Equal(Contract.ModelAcceptanceAdmission.Refused,
             registry.ModelAdmission("runner-a", "instance-a", "codex", "gpt-6-sol"));
         registry.AdvertiseCapabilities("runner-a", new Contract.CapabilityAdvertisementRequest(
-            "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, 2,
-            [new Contract.AdvertisedCapabilityDto(
+            "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 600, 2,
+            [.. ReadyProvider(), new Contract.AdvertisedCapabilityDto(
                 Contract.CapabilityProtocol.CodingExecutor, "executor", "ready")]));
         Assert.Equal(Contract.ModelAcceptanceAdmission.Refused,
             registry.ModelAdmission("runner-a", "instance-a", "codex", "gpt-6-sol"));
@@ -108,29 +109,67 @@ public sealed class HostModelCapabilityRecoveryTests
         clock.Advance(TimeSpan.FromSeconds(1));
         var delayed = Advertise(2, "ready", 4);
         Assert.False(registry.AcceptsModel("runner-a", "instance-a", "codex", "gpt-6-sol"));
-        Assert.Equal("unavailable", Assert.Single(delayed.Capabilities).AdvertisedStatus);
+        Assert.Equal("unavailable", ModelVerdict(delayed).AdvertisedStatus);
 
         clock.Advance(TimeSpan.FromSeconds(1));
         Advertise(3, "unavailable", 5);
         clock.Advance(TimeSpan.FromSeconds(1));
         var replayed = Advertise(4, "ready", 5);
-        Assert.Equal("unavailable", Assert.Single(replayed.Capabilities).AdvertisedStatus);
+        Assert.Equal("unavailable", ModelVerdict(replayed).AdvertisedStatus);
 
         clock.Advance(TimeSpan.FromSeconds(1));
         var recovered = Advertise(5, "ready", 6);
         Assert.True(registry.AcceptsModel("runner-a", "instance-a", "codex", "gpt-6-sol"));
-        Assert.Equal("ready", Assert.Single(recovered.Capabilities).AdvertisedStatus);
+        Assert.Equal("ready", ModelVerdict(recovered).AdvertisedStatus);
+
+        static Contract.CapabilityHealthDto ModelVerdict(Contract.RunnerCapabilitySnapshotDto snapshot)
+            => Assert.Single(snapshot.Capabilities, capability => capability.Key ==
+                Contract.CapabilityProtocol.ModelAcceptance("codex", "gpt-6-sol"));
 
         Contract.RunnerCapabilitySnapshotDto Advertise(long generation, string status, long sequence)
             => registry.AdvertiseCapabilities("runner-a", new Contract.CapabilityAdvertisementRequest(
                 "runner-a", "instance-a", Contract.CapabilityProtocol.CurrentSchemaVersion,
                 clock.GetUtcNow().UtcDateTime, 180, generation,
-                [new Contract.AdvertisedCapabilityDto(
+                [.. ReadyProvider(), new Contract.AdvertisedCapabilityDto(
                     Contract.CapabilityProtocol.ModelAcceptance("codex", "gpt-6-sol"), "model-acceptance", status,
                     CredentialGeneration: "login-a",
                     CredentialObservedAt: clock.GetUtcNow().UtcDateTime + runnerAhead,
                     ProbeSequence: sequence)]));
     }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void A_ready_model_still_requires_cli_and_provider_readiness(bool cliReady, bool authReady)
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var registry = new V1ReviewExecutorRegistry(clock);
+        registry.Register("runner-a", new Contract.RegisterRunnerRequest(
+            "runner-a", "host-a", "instance-a", "test", Contract.TaskServerProtocol.Current,
+            [Contract.ReviewCapabilities.CodingExecutor]));
+        var capabilities = new List<Contract.AdvertisedCapabilityDto>
+        {
+            new(Contract.CapabilityProtocol.ModelAcceptance("codex", "gpt-6-sol"), "model-acceptance", "ready"),
+        };
+        var provider = ReadyProvider();
+        if (cliReady) capabilities.Add(provider[0]);
+        if (authReady) capabilities.Add(provider[1]);
+        registry.AdvertiseCapabilities("runner-a", new Contract.CapabilityAdvertisementRequest(
+            "runner-a", "instance-a", Contract.CapabilityProtocol.CurrentSchemaVersion,
+            clock.GetUtcNow().UtcDateTime, 180, 1, capabilities));
+
+        Assert.Equal(cliReady && authReady
+                ? Contract.ModelAcceptanceAdmission.Accepted : Contract.ModelAcceptanceAdmission.Unavailable,
+            registry.ModelAdmission("runner-a", "instance-a", "codex", "gpt-6-sol"));
+    }
+
+    private static Contract.AdvertisedCapabilityDto[] ReadyProvider() =>
+    [
+        new(Contract.CapabilityProtocol.CliExecution("codex"), "cli", "ready"),
+        new(Contract.CapabilityProtocol.ProviderAuthentication("codex"), "provider-auth", "ready"),
+    ];
 
     [Theory]
     [InlineData(null, null, "instance-a", "ready", 9L, false, null, null)]

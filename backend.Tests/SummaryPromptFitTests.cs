@@ -74,6 +74,105 @@ public sealed class SummaryPromptFitTests : IDisposable
         Assert.Contains("shortenedTotal=1", shortened, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(false, "")]
+    [InlineData(true, "short log\n")]
+    public async Task Fixed_evidence_fits_with_terminal_facts_current_identity_and_named_omissions(
+        bool manyRecords, string log)
+    {
+        var task = WriteCard(log, "# Small task");
+        task = task with
+        {
+            State = TaskStates.Completed,
+            IntegrationRecords = Enumerable.Range(0, manyRecords ? 600 : 1)
+                .Select(i => new TaskIntegrationRecord
+                {
+                    Classification = IntegrationRecordClasses.IntegratedVerified,
+                    IntegrationSha = $"merge-{i}",
+                    SourceSha = $"result-{i}",
+                    CommitShas = Enumerable.Range(0, 200).Select(c => $"commit-{i}-{c}").ToList(),
+                }).ToList(),
+        };
+        IntegrationVerificationStore.Write(task.FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = "current-verified-tree",
+            Evidence = manyRecords ? "gate-passed"
+                : string.Concat(Enumerable.Repeat("verification 🚀 \"details\"\n", 20_000)),
+        });
+        var evidence = SummaryEvidenceAssembler.ReadFromFolder(task, null, null, "Success");
+        // The old serializer alone exceeded the complete prompt boundary, even without a log.
+        Assert.True(Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(evidence)) >
+            OrchestratorPromptBoundary.MaxPromptBytes);
+        var inner = new CapturingOneShot(SummaryMarkdown);
+        var service = Service(Boundary(inner), new CapturingLogger<SummaryGenerationService>());
+
+        var outcome = await service.FinalizeAsync(task, Success());
+
+        Assert.True(outcome.Generated);
+        Assert.Equal(1, inner.Calls);
+        var prompt = Assert.Single(inner.Prompts);
+        Assert.InRange(Encoding.UTF8.GetByteCount(prompt), 1, OrchestratorPromptBoundary.MaxPromptBytes);
+        Assert.Null(OrchestratorPromptBoundary.Check(PipelineCatalogue.SummaryAssessmentStepId, prompt).Failure);
+        Assert.Contains("current-verified-tree", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"state\": \"" + IntegrationVerificationStates.Verified + "\"", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"lane\": \"" + TaskStates.Completed + "\"", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"runOutcome\": \"Success\"", prompt, StringComparison.Ordinal);
+        Assert.Contains(manyRecords ? "result-599" : "result-0", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"omissions\"", prompt, StringComparison.Ordinal);
+        if (!manyRecords) Assert.Contains("integrationVerification.evidence", prompt, StringComparison.Ordinal);
+        Assert.Contains("integrationRecords[].commitShas", prompt, StringComparison.Ordinal);
+        if (manyRecords) Assert.Contains("integrationRecords: ", prompt, StringComparison.Ordinal);
+        // Prompt fitting must not change the bundle consumed by deterministic assessment.
+        if (!manyRecords) Assert.True(evidence.IntegrationVerification!.Evidence.Length > 100_000);
+        Assert.Equal(200, evidence.IntegrationRecords[^1].CommitShas.Count);
+    }
+
+    [Fact]
+    public void Evidence_budget_shrinks_collections_and_text_without_changing_terminal_scalars()
+    {
+        var evidence = new SummaryEvidenceBundle
+        {
+            TaskKey = "AGT-4095",
+            Lane = TaskStates.Completed,
+            RunOutcome = "Success",
+            Pipeline = new SummaryPipelineEvidence(3, true,
+                Enumerable.Range(0, 80).Select(i => new SummaryStepEvidence(
+                    $"step-{i}", "failed", new string('x', 1_000), "terminal-code", "concerns")).ToList()),
+            IntegrationVerification = new SummaryVerificationEvidence(
+                IntegrationVerificationStates.Verified, "current-tree", new string('x', 40_000)),
+        };
+
+        var json = SummaryEvidenceAssembler.ToPromptJson(evidence, 2_000);
+
+        Assert.InRange(Encoding.UTF8.GetByteCount(json), 1, 2_000);
+        using var parsed = JsonDocument.Parse(json);
+        Assert.Equal(3, parsed.RootElement.GetProperty("pipeline").GetProperty("attempt").GetInt32());
+        Assert.True(parsed.RootElement.GetProperty("pipeline").GetProperty("completed").GetBoolean());
+        Assert.Contains("step-79", json, StringComparison.Ordinal);
+        Assert.Contains("terminal-code", json, StringComparison.Ordinal);
+        Assert.Contains("concerns", json, StringComparison.Ordinal);
+        Assert.Contains("pipeline.steps: ", json, StringComparison.Ordinal);
+        Assert.Contains("pipeline.steps[].reason: ", json, StringComparison.Ordinal);
+        Assert.Contains("current-tree", json, StringComparison.Ordinal);
+        Assert.Equal(80, evidence.Pipeline.Steps.Count);
+    }
+
+    [Fact]
+    public async Task Unusable_essential_metadata_still_degrades_after_one_boundary_refusal()
+    {
+        var task = WriteCard("", "# Small task") with { TaskType = new string('x', 40_000) };
+        var inner = new CapturingOneShot(SummaryMarkdown);
+        var service = Service(Boundary(inner), new CapturingLogger<SummaryGenerationService>());
+
+        var outcome = await service.FinalizeAsync(task, Success());
+
+        Assert.Equal(TaskSummaryStatus.Degraded, outcome.Status);
+        Assert.Equal(1, outcome.Attempt);
+        Assert.Equal(0, inner.Calls);
+        Assert.Contains("oversize-orchestrator-prompt", outcome.Error, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task A_refused_prompt_is_not_retried_and_the_degraded_count_is_logged_with_the_size()
     {

@@ -23,24 +23,24 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
+  gap: var(--studio-spacing-2);
+  margin-bottom: var(--studio-compat-space-2);
 }
 .md-editor__bar--compact {
   min-height: 28px;
-  margin-bottom: 4px;
+  margin-bottom: var(--studio-spacing-1);
 }
 .md-editor__bar-start {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
   min-width: 0;
   flex: 1 1 auto;
 }
 .md-editor__bar-end {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
   flex: 0 0 auto;
 }
 
@@ -51,14 +51,14 @@
  */
 .md-editor__icon-btn {
   @include m.icon-button(22px);
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: var(--studio-compat-radius-7);
+  font-size: var(--studio-font-size-md);
 }
 
 .md-editor__status {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--studio-spacing-1);
 }
 .md-editor__content {
   display: flex;
@@ -74,43 +74,43 @@
   // background painted a grey wash on the light shell that wrapped every
   // heading / list in the rendered prose; the studio editor token follows
   // the active theme so the editor surface blends with the pane instead.
-  border: 1px solid var(--studio-border, rgba(255,255,255,0.06));
-  border-radius: 10px;
-  background: var(--studio-bg-editor, rgba(0,0,0,0.18));
-  color: var(--studio-fg, #cbd5e1);
+  border: 1px solid var(--studio-border, var(--studio-compat-border-7));
+  border-radius: var(--studio-compat-radius-3);
+  background: var(--studio-bg-editor, var(--studio-compat-surface-5));
+  color: var(--studio-fg, var(--studio-compat-ink-9));
   overflow: auto;
-  transition: border-color 200ms ease, box-shadow 200ms ease;
+  transition: border-color var(--studio-compat-duration-6) ease, box-shadow var(--studio-compat-duration-6) ease;
 }
 /* Source-mode textarea still uses the mono font; the rich-mode contenteditable
  * inherits typography from the global `.markdown-body` class applied via
  * TipTap's `editorProps.attributes`. */
 .md-editor__source {
-  font: 14px/1.65 var(--font-mono, 'Consolas', monospace);
+  font: var(--studio-font-size-lg)/1.65 var(--font-mono, 'Consolas', monospace);
 }
 .md-editor--dirty .md-editor__rich,
 .md-editor--dirty .md-editor__source {
-  border-color: rgba(139,92,246,0.55);
-  box-shadow: 0 0 0 1px rgba(139,92,246,0.25);
+  border-color: var(--studio-compat-border-8);
+  box-shadow: var(--studio-compat-elevation-2);
 }
 .md-editor--saved .md-editor__rich,
 .md-editor--saved .md-editor__source {
-  border-color: rgba(34,197,94,0.65);
-  box-shadow: 0 0 0 1px rgba(34,197,94,0.30);
+  border-color: var(--studio-compat-border-9);
+  box-shadow: var(--studio-compat-elevation-3);
 }
 .md-editor--drag .md-editor__rich,
 .md-editor--drag .md-editor__source {
-  border-color: rgba(56,189,248,0.85);
-  box-shadow: 0 0 0 2px rgba(56,189,248,0.35);
+  border-color: var(--studio-compat-border-10);
+  box-shadow: var(--studio-compat-elevation-4);
 }
 .md-editor__rich {
-  padding: 12px 14px;
+  padding: var(--studio-spacing-3) var(--studio-compat-space-3);
 }
 .md-editor__rich--hidden {
   display: none;
 }
 .md-editor__source {
   flex: 1;
-  padding: 12px 14px;
+  padding: var(--studio-spacing-3) var(--studio-compat-space-3);
   resize: none;
 }
 /* Read-only reason and upload error: the shared status indicator carries
@@ -118,12 +118,12 @@
 .md-editor__lock {
   display: flex;
   min-width: 0;
-  margin-bottom: 6px;
+  margin-bottom: var(--studio-compat-space-2);
 }
 .md-editor__error {
   display: flex;
   min-width: 0;
-  margin-top: 6px;
+  margin-top: var(--studio-compat-space-2);
 }
 .md-editor__file {
   display: none;
@@ -144,7 +144,7 @@
 :host ::ng-deep .ProseMirror img {
   max-height: 360px;
   display: block;
-  margin: 6px 0;
+  margin: var(--studio-compat-space-2) 0;
 }
 /* In read-only mode (CLI running), a click anywhere on an inline image
  * opens the shared media lightbox. Mirror that affordance in the cursor. */
@@ -155,6 +155,6 @@
 /* Editable mode keeps single-click for TipTap selection; double-click
  * opens the lightbox - hint that with a softer cursor on hover. */
 :host ::ng-deep .ProseMirror img:hover {
-  outline: 1px dashed rgba(137, 220, 235, 0.5);
+  outline: 1px dashed var(--studio-compat-border-11);
   outline-offset: 2px;
 }

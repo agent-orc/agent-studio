@@ -2,7 +2,7 @@ import { DatePipe } from '@angular/common';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/pending-button.directive';
 import type { HostReleaseDriftSnapshot } from '../../models/host-release-drift';
 import { reviewHeartbeatProvesUpdate, reviewUpdateStepFromStatus,
   type ReviewDrainStatus, type ReviewUpdateTarget } from '../../models/review-host-update';
