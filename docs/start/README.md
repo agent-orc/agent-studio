@@ -59,6 +59,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Managed PostgreSQL databases for hosted apps: project.yml `databases`, run-zone provisioning, generated credentials, retention and owner deletion (IP-D5 option B, AGT-3877); backups, restore runbook, liveness, size and connection metrics (AGT-3878) | [operations/managed-databases/](../operations/managed-databases/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
 | [CLI rollout](../operations/cli-rollout.md) | German operator runbook for CLI rollout, legacy launcher adoption, KORI image pins, drift alerts, and rollback. |
+| [Operator-Handbuch](../operations/operator-handbuch.md) | Twelve German recipes from the November 2026 operator log, covering integration, deployment, capacity, review and operator decisions. |
 | Server-first networked deploy, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
 | Deploy without lost work: host drain, quiet point, server then hosts one by one, resume; review relaunch and gate refund across restarts (AGT-3647) | [operations/deploy-drain-procedure.md](../operations/deploy-drain-procedure.md) |
 | Report Studio deploys to the Studio: deploy reporter token, `curl` recipe for start, steps and end, live release and "integrated, not live yet" in Bereitstellung (AGT-3879) | [operations/instance-deploy-records.md](../operations/instance-deploy-records.md) |
