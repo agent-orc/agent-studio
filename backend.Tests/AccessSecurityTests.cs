@@ -5,6 +5,8 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -317,6 +319,68 @@ public sealed class AccessSecurityTests : IDisposable
         var claimDenied = await Invoke(config, store, "POST", "/api/runner/claim", bearer: runner.Secret);
         Assert.True(logAllowed.Called.Value);
         Assert.Equal(StatusCodes.Status403Forbidden, claimDenied.Context.Response.StatusCode);
+    }
+
+    public static TheoryData<string, string, string> RunnerRouteShapes => new()
+    {
+        { "GET", "/api/runner/{projectName}/orchestrator-log", "/api/runner/PROJ-001/orchestrator-log" },
+        { "GET", "/api/runner/{projectName}/orchestrator-chat", "/api/runner/PROJ-001/orchestrator-chat" },
+        { "POST", "/api/runner/{projectName}/orchestrator-chat", "/api/runner/PROJ-001/orchestrator-chat" },
+        { "GET", "/api/runner/project:{projectId}/orchestrator-chat", "/api/runner/project:PROJ-001/orchestrator-chat" },
+        { "POST", "/api/runner/project:{projectId}/orchestrator-chat", "/api/runner/project:PROJ-001/orchestrator-chat" },
+        { "GET", "/api/runner/task:{projectId}/{taskKey}/orchestrator-chat", "/api/runner/task:PROJ-001/AGT-missing/orchestrator-chat" },
+        { "POST", "/api/runner/task:{projectId}/{taskKey}/orchestrator-chat", "/api/runner/task:PROJ-001/AGT-missing/orchestrator-chat" },
+        { "GET", "/api/runner/workbench:{projectId}/{workbenchKey}/orchestrator-chat", "/api/runner/workbench:PROJ-001/DOS-missing/orchestrator-chat" },
+        { "POST", "/api/runner/workbench:{projectId}/{workbenchKey}/orchestrator-chat", "/api/runner/workbench:PROJ-001/DOS-missing/orchestrator-chat" },
+        { "GET", "/api/runner/global/orchestrator-session", "/api/runner/global/orchestrator-session" },
+    };
+
+    [Theory]
+    [MemberData(nameof(RunnerRouteShapes))]
+    public async Task Runner_route_shapes_preserve_member_scope_and_credential_boundaries(string method, string pattern, string path)
+    {
+        var (store, config, _) = NewStore();
+        store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", null));
+        (StudioUser User, string SessionToken, string CsrfToken) Member(string project)
+        {
+            var invite = store.InviteUser(new InviteUserRequest("member-" + project, "Operator", "", null,
+                [new IamGrantRequest(IamRoles.Admin, IamScope.ForProject(project))]));
+            return store.AcceptInvitation(new AcceptInvitationRequest(invite.Token, "accepted pass phrase!"));
+        }
+        var member = Member("PROJ-001");
+        var foreign = Member("PROJ-002");
+        var runner = store.EnrollRunner(store.CreateEnrollment(new RunnerEnrollmentRequest(
+            "runner", [RunnerScopes.Logs], null, null, ["PROJ-001"])).Code);
+        var isGlobal = path.StartsWith("/api/runner/global/", StringComparison.Ordinal);
+
+        // Missing task and Dossier keys deliberately have no resolver. Only
+        // the project in the address may decide admission at this boundary.
+        foreach (var routed in new[] { false, true })
+        {
+            var endpoint = routed ? new RouteEndpoint(_ => Task.CompletedTask, RoutePatternFactory.Parse(pattern), 0,
+                new EndpointMetadataCollection(new HttpMethodMetadata([method])), pattern) : null;
+            var principals = new[]
+            {
+                (Name: "member", Session: member.SessionToken, Csrf: member.CsrfToken, Bearer: (string?)null, Status: isGlobal ? 403 : 200),
+                (Name: "foreign member", Session: foreign.SessionToken, Csrf: foreign.CsrfToken, Bearer: (string?)null, Status: 403),
+                (Name: "runner", Session: (string?)null, Csrf: (string?)null, Bearer: runner.Secret, Status: routed ? 401 : 404),
+                (Name: "anonymous", Session: (string?)null, Csrf: (string?)null, Bearer: (string?)null, Status: 401),
+            };
+            foreach (var principal in principals)
+            {
+                var result = await Invoke(config, store, method, path, principal.Session, principal.Csrf, principal.Bearer,
+                    endpoint: endpoint);
+                Assert.True(result.Context.Response.StatusCode == principal.Status,
+                    $"{principal.Name}: {method} {path}, routed={routed}, expected {principal.Status}, got {result.Context.Response.StatusCode}.");
+                Assert.Equal(principal.Status == 200, result.Called.Value);
+                if (principal.Status == 403)
+                {
+                    result.Context.Response.Body.Position = 0;
+                    using var error = await JsonDocument.ParseAsync(result.Context.Response.Body);
+                    Assert.Equal("project-scope-denied", error.RootElement.GetProperty("error").GetString());
+                }
+            }
+        }
     }
 
     // AGT-3055: a gate host claims and reports batch suites on the monolith
@@ -760,7 +824,7 @@ public sealed class AccessSecurityTests : IDisposable
 
     private static async Task<(DefaultHttpContext Context, BoolBox Called)> Invoke(
         IConfiguration config, AccessSecurityStore store, string method, string path,
-        string? sessionToken = null, string? csrf = null, string? bearer = null, string scheme = "https")
+        string? sessionToken = null, string? csrf = null, string? bearer = null, string scheme = "https", Endpoint? endpoint = null)
     {
         var called = new BoolBox();
         var middleware = new AccessSecurityMiddleware(ctx => { called.Value = true; return Task.CompletedTask; }, config, store);
@@ -768,6 +832,7 @@ public sealed class AccessSecurityTests : IDisposable
         context.Request.Method = method;
         context.Request.Path = path;
         context.Request.Scheme = scheme;
+        if (endpoint is not null) context.SetEndpoint(endpoint);
         if (sessionToken is not null)
         {
             context.Request.Headers.Cookie = new StringValues($"{AccessSecurityStore.SessionCookieName}={sessionToken}");
