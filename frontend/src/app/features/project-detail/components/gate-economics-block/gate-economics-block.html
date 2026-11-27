@@ -44,6 +44,22 @@
         }
       </tbody>
     </table></div>
+    <div class="ge__subhead">Integration stages · last 50 completed attempts across visible projects · Unknown means no measurement</div>
+    <div class="ge__scroll"><table class="ge__narrow" data-testid="integration-stage-metrics">
+      <thead><tr><th scope="col">Project / stage</th><th scope="col">Median</th><th scope="col">p90</th><th scope="col">Measured attempts</th></tr></thead>
+      <tbody>
+        @for (project of projection.rows.slice(0, 1); track project.project) {
+          @for (stage of project.integrationStages ?? []; track stage.stage) {
+            <tr [attr.data-project]="project.project" [attr.data-stage]="stage.stage">
+              <th scope="row">{{ project.project }} · {{ stageNames[stage.stage] || stage.stage }}</th>
+              <td>{{ format(stage.medianMs === null ? null : stage.medianMs / 1000, ' s') }}</td>
+              <td>{{ format(stage.p90Ms === null ? null : stage.p90Ms / 1000, ' s') }}</td>
+              <td>{{ stage.samples }}</td>
+            </tr>
+          }
+        }
+      </tbody>
+    </table></div>
     <div class="ge__subhead">Delivery-target baseline · {{ projection.window === '30d' ? '30 days' : '7 days' }} · Unknown means the input is missing</div>
     <div class="ge__scroll"><table data-testid="pipeline-baseline-metrics">
       <thead><tr><th scope="col">Project</th><th scope="col">Lead time to develop median / p90</th><th scope="col">Cards measured / unknown</th><th scope="col">Gate minutes per card median / p90</th><th scope="col">Cards measured / unknown</th><th scope="col">Full-suite runs</th><th scope="col">Full-suite runs per day</th><th scope="col">Red develop median / p90</th><th scope="col">Gate source median / p90</th><th scope="col">Source transfer median / p90</th><th scope="col">Source runs measured</th></tr></thead>

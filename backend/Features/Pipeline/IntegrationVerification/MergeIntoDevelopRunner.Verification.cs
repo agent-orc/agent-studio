@@ -140,7 +140,9 @@ public sealed partial class MergeIntoDevelopRunner
             if (!releaseGate)
                 IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-finished",
                     level: "full", durationMs: gate.DurationMs, queueWaitMs: gate.GateQueueWaitMs,
-                    outcome: gate.Verdict.ToString(), collisionDetected: gate.GateCollisionDetected);
+                    outcome: gate.Verdict.ToString(), collisionDetected: gate.GateCollisionDetected,
+                    stageDurationsMs: gate.StageDurationsMs, gateAttempts: gate.GateAttempts,
+                    gateRetryReasons: gate.GateRetryReasons, stageTimingsIncomplete: gate.StageTimingsIncomplete);
             decision = IntegrationVerificationPolicy.Decide(facts with { GateRun = gate });
         }
 

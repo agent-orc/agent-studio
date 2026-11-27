@@ -292,6 +292,8 @@ public sealed record ProjectExecutionDefinition(
     public ProjectDeploymentDefinition? Deployment { get; init; }
     public ProjectStructureDefinition? Structure { get; init; }
     public IReadOnlyList<ProjectTestSelectionArea> TestSelection { get; init; } = [];
+    /// <summary>Optional path-scoped build and preparation commands for integration compile checks only.</summary>
+    public IReadOnlyList<ProjectTestSelectionArea> IntegrationBuild { get; init; } = [];
     public string? DeliveryFullSuite { get; init; }
 
     /// <summary>
@@ -370,7 +372,7 @@ public static partial class ProjectDefinitionReader
             "schemaVersion", "stack", "toolVersions", "commands", "testSuites",
             "cachePaths", "capabilities", "environment", "devServer", "image", "release",
             "project", "quality", "pipeline", "artifacts", "environments", "lifecycles", "deploy",
-            "variables", "tenants", "channels", "runbooks", "databases", "delivery", "structure", "testSelection",
+            "variables", "tenants", "channels", "runbooks", "databases", "delivery", "structure", "testSelection", "integrationBuild",
         };
         foreach (var line in lines.Where(line => line.Indent == 0))
         {
@@ -425,6 +427,7 @@ public static partial class ProjectDefinitionReader
             Deployment = ParseDeployment(lines, issues, structure ?? ProjectStructureDefinition.Empty),
             Structure = structure,
             TestSelection = ParseTestSelection(lines, issues),
+            IntegrationBuild = ParseTestSelection(lines, issues, "integrationBuild"),
             DeliveryFullSuite = fullSuite,
             DeliveryDeployAfterGreenWindow = deployAfterGreenWindow == "true",
         };
@@ -578,11 +581,11 @@ public static partial class ProjectDefinitionReader
     }
 
     private static IReadOnlyList<ProjectTestSelectionArea> ParseTestSelection(
-        IReadOnlyList<YamlLine> lines, List<ProjectDefinitionIssue> issues)
+        IReadOnlyList<YamlLine> lines, List<ProjectDefinitionIssue> issues, string section = "testSelection")
     {
-        var header = lines.FirstOrDefault(line => line.Indent == 0 && KeyValue(line.Text).Key == "testSelection");
+        var header = lines.FirstOrDefault(line => line.Indent == 0 && KeyValue(line.Text).Key == section);
         if (header is not null && KeyValue(header.Text).Value is not ("" or "[]"))
-            issues.Add(new("testSelection", "selection-shape-invalid", "Test selection must be an array of rows."));
+            issues.Add(new(section, "selection-shape-invalid", "Test selection must be an array of rows."));
         var rows = new List<ProjectTestSelectionArea>();
         Dictionary<string, string>? fields = null;
         void Add()
@@ -593,12 +596,12 @@ public static partial class ProjectDefinitionReader
             IReadOnlyList<int> Indices(string key) => List(key).Select(value =>
                 int.TryParse(value, out var index) ? index : -1).ToArray();
             if (fields.Keys.Any(key => key is not ("paths" or "suites" or "build" or "lint" or "prepare")))
-                issues.Add(new("testSelection", "unknown-field", "Test selection contains an unsupported field."));
+                issues.Add(new(section, "unknown-field", "Test selection contains an unsupported field."));
             if (fields.Values.Any(value => !value.StartsWith('[') || !value.EndsWith(']')))
-                issues.Add(new("testSelection", "selection-shape-invalid", "Test selection fields must be inline lists."));
+                issues.Add(new(section, "selection-shape-invalid", "Test selection fields must be inline lists."));
             rows.Add(new(List("paths"), List("suites"), Indices("build"), Indices("lint")) { Prepare = List("prepare") });
         }
-        foreach (var line in Section(lines, "testSelection"))
+        foreach (var line in Section(lines, section))
         {
             if (line.Indent == 2 && line.Text.StartsWith("- ", StringComparison.Ordinal))
             {
@@ -612,7 +615,7 @@ public static partial class ProjectDefinitionReader
                 var pair = KeyValue(line.Text);
                 fields[pair.Key] = pair.Value;
             }
-            else issues.Add(new("testSelection", "selection-shape-invalid",
+            else issues.Add(new(section, "selection-shape-invalid",
                 "Test selection rows use inline paths, suites, build, lint and prepare lists."));
         }
         Add();

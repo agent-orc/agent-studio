@@ -365,9 +365,14 @@ public sealed class RemoteDeliveryIntegrationCoordinator
 
         var reenter = discardCompletedReplay && IntegrationLaneEvents.Read(request.JobFolderPath)
             .Any(e => e.Kind == "ejected" && e.Outcome is ("AgentRoundRequired" or "Conflict"));
+        var reviewTiming = ReviewVerificationStore.Read(request.JobFolderPath);
         IntegrationLaneEvents.Append(request.JobFolderPath, request.Project, request.JobId,
             reenter ? "agent-round-re-entry" : "enqueued",
-            sequence: sequence, deliveredAtUtc: request.DeliveredAtUtc);
+            sequence: sequence, deliveredAtUtc: request.DeliveredAtUtc,
+            reviewPassedAtUtc: reviewTiming is { Outcome: "Pass" } && reviewTiming.VerifiedAtUtc != default
+                && reviewTiming.AttemptId == request.ReviewAttemptId
+                && string.Equals(reviewTiming.ResultSha, request.ReviewedResultSha, StringComparison.OrdinalIgnoreCase)
+                ? reviewTiming.VerifiedAtUtc : null);
         if (startDrain) _ = DrainProjectAsync(request.Project, projectQueue);
         return completion.Task;
     }
