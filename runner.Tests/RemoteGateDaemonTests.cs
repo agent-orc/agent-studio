@@ -579,3 +579,159 @@ public sealed class RemoteGateDaemonTests
 
     private sealed record ApiErrorBody(string Code, string Message);
 }
+
+public sealed class RemoteGateDaemonFlightTests
+{
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Failed_flight_is_observed_once_then_claim_recovery_resumes_polling(bool unauthorized)
+    {
+        using var scenario = new FlightScenario();
+        var failures = new List<string>();
+        var executions = 0;
+        var daemon = scenario.Daemon(message =>
+        {
+            failures.Add(message);
+            // Bound the broken implementation by observations, without a timing race.
+            if (failures.Count == 3) scenario.Shutdown.Cancel();
+        }, (_, _) =>
+        {
+            executions++;
+            Assert.True(File.Exists(scenario.ClaimPath));
+            return Task.FromException<bool>(unauthorized
+                ? new UnauthorizedAccessException("one-time post-merge fault")
+                : new IOException("one-time post-merge fault"));
+        });
+
+        var failure = await Record.ExceptionAsync(() => daemon.RunAsync(scenario.Shutdown.Token));
+
+        Assert.Null(failure);
+        Assert.Equal(1, executions);
+        Assert.Equal(1, failures.Count(message => message.Contains("one-time post-merge fault", StringComparison.Ordinal)));
+        Assert.Equal(2, scenario.Server.ContainmentRequests);
+        Assert.Equal(2, scenario.Server.ClaimRequests);
+        Assert.False(File.Exists(scenario.ClaimPath));
+    }
+
+    [Fact]
+    public async Task Shutdown_observes_a_pending_flight_fault_and_retains_its_claim()
+    {
+        using var scenario = new FlightScenario();
+        var flight = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var messages = new List<string>();
+        scenario.Server.OnOrdinaryPoll = () =>
+        {
+            scenario.Shutdown.Cancel();
+            flight.SetException(new IOException("shutdown post-merge fault"));
+        };
+        var daemon = scenario.Daemon(messages.Add, (_, _) => flight.Task);
+
+        var failure = await Record.ExceptionAsync(() => daemon.RunAsync(scenario.Shutdown.Token));
+
+        Assert.Null(failure);
+        Assert.Single(messages, message => message.Contains("shutdown post-merge fault", StringComparison.Ordinal));
+        Assert.True(File.Exists(scenario.ClaimPath));
+        Assert.Equal(0, scenario.Server.ContainmentRequests);
+    }
+
+    private sealed class FlightScenario : IDisposable
+    {
+        private readonly string _root = Path.Combine(Path.GetTempPath(), "gate-flight-test-" + Guid.NewGuid().ToString("N"));
+        private readonly TaskServerClient _client;
+        public CancellationTokenSource Shutdown { get; } = new();
+        public FlightServer Server { get; }
+        public string ClaimPath => Path.Combine(_root, "state", "gate-post-merge-claim.json");
+        private RunnerOptions Options => new()
+        {
+            ServerUrl = "http://task-server", RunnerId = "gate-a", RunnerName = "gate-a",
+            Hostname = "host-a", Role = "gate", BackendName = "test", BaseBranch = "main",
+            WorkDir = Path.Combine(_root, "work"),
+            ReviewWorkDir = Path.Combine(_root, "review"), StateDir = Path.Combine(_root, "state"),
+        };
+
+        public FlightScenario()
+        {
+            Server = new FlightServer(ClaimPath, Shutdown);
+            _client = new TaskServerClient(new HttpClient(Server) { BaseAddress = new Uri("http://task-server") },
+                "gate-a", options: Options, runnerInstanceId: "instance-1");
+        }
+
+        public RemoteGateDaemon Daemon(Action<string> log,
+            Func<GateClaimResponse, CancellationToken, Task<bool>> execute) => new(Options, _client, log)
+        {
+            PostMergeExecutor = execute,
+            PollDelay = _ => Task.CompletedTask,
+        };
+
+        public void Dispose()
+        {
+            _client.Dispose();
+            Shutdown.Dispose();
+            if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+        }
+    }
+
+    private sealed class FlightServer(string claimPath, CancellationTokenSource shutdown) : HttpMessageHandler
+    {
+        private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+        private static readonly DateTime Now = new(2026, 11, 27, 0, 0, 0, DateTimeKind.Utc);
+        private static readonly GatePlan Plan = new("post-build-test-gate", 1, [], "", 30, [], 1024, "remove");
+        private static readonly GateSubject Subject = new("subject-1", "AGT-test", "run-1", "repository",
+            null, new string('a', 40), null, null, null, GateRules.PlanHash(Plan), "policy", "version", "selection",
+            Plan, Now, Now.AddMinutes(5), 2, Kind: GateSubjectKinds.PostMerge);
+        private static readonly GateAttempt Attempt = new("attempt-1", "subject-1", 1, GateStates.Claimed,
+            "gate-a", "host-a", null, null, Now, Now, null, null, 7, Now.AddMinutes(3));
+        private static readonly GateLease Lease = new("lease-1", "attempt-1", "gate-a", "instance-1",
+            "host-a", 7, 1, Now, Now.AddMinutes(3), "gate-attempt-1-f7", 30000);
+        public int ClaimRequests { get; private set; }
+        public int ContainmentRequests { get; private set; }
+        public Action? OnOrdinaryPoll { get; set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/clients/register")
+                return Ok(new ClientRegisterResponse("gate-a", "gate-a", "gate-executor"));
+            if (path == "/api/v1/gates/claims")
+            {
+                var claim = JsonSerializer.Deserialize<GateClaimRequest>(await request.Content!.ReadAsStringAsync(ct), Json)!;
+                ClaimRequests++;
+                if (ClaimRequests == 1) return Ok(new GateClaimResponse("claimed", Subject, Attempt, Lease));
+                if (OnOrdinaryPoll is not null)
+                {
+                    Assert.True(claim.ExcludePostMerge);
+                    OnOrdinaryPoll();
+                }
+                else
+                {
+                    Assert.False(claim.ExcludePostMerge);
+                    Assert.False(File.Exists(claimPath));
+                    shutdown.Cancel();
+                }
+                return Ok(new GateClaimResponse("idle", null, null, null));
+            }
+            if (path == "/api/v1/gates/subjects/subject-1")
+            {
+                Assert.True(File.Exists(claimPath));
+                return Ok(new GateStatus(Subject, [Attempt], null, 0, "host-a", Attempt.State,
+                    1, Attempt.Deadline, null, null, false));
+            }
+            if (path.EndsWith("/containment", StringComparison.Ordinal))
+            {
+                Assert.True(File.Exists(claimPath));
+                ContainmentRequests++;
+                // A rejected acknowledgement must retain the durable claim for another poll.
+                if (ContainmentRequests == 1) return new(HttpStatusCode.ServiceUnavailable);
+                return Ok(new GateStatus(Subject, [Attempt], null, 0, null, GateStates.Queued,
+                    1, null, null, null, false));
+            }
+            throw new InvalidOperationException($"Unexpected request: {path}");
+        }
+
+        private static HttpResponseMessage Ok<T>(T value) => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(value, Json), Encoding.UTF8, "application/json"),
+        };
+    }
+}
