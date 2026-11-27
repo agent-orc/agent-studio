@@ -2,18 +2,18 @@
   &__form {
     display: flex;
     flex-direction: column;
-    gap: 0.6rem;
+    gap: var(--studio-compat-space-20);
     min-width: 24rem;
   }
 
   &__field {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    gap: var(--studio-compat-space-28);
   }
 
   &__label {
-    font-size: 0.78rem;
+    font-size: var(--studio-compat-type-13);
     color: var(--app-muted-text);
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -22,11 +22,11 @@
   &__input {
     background: var(--app-input-bg, var(--studio-bg-hover));
     border: 1px solid var(--app-input-border, var(--studio-border-strong));
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
     color: var(--app-text, var(--studio-fg));
     font: inherit;
-    padding: 0.45rem 0.6rem;
-    transition: border-color 0.12s ease;
+    padding: var(--studio-compat-space-21) var(--studio-compat-space-20);
+    transition: border-color var(--studio-compat-duration-3) ease;
 
     &:focus {
       outline: none;
@@ -40,7 +40,7 @@
   }
 
   &__hint {
-    font-size: 0.78rem;
+    font-size: var(--studio-compat-type-13);
     color: var(--app-muted-text, var(--studio-fg-muted));
     margin: 0;
     line-height: 1.4;
@@ -48,8 +48,8 @@
     code {
       font-family: var(--app-font-mono, monospace);
       background: var(--studio-bg-hover);
-      padding: 0 0.25rem;
-      border-radius: 3px;
+      padding: 0 var(--studio-compat-space-24);
+      border-radius: var(--studio-compat-radius-9);
     }
 
     &--error {
@@ -60,16 +60,16 @@
   &__actions {
     display: flex;
     justify-content: flex-end;
-    gap: 0.5rem;
+    gap: var(--studio-compat-space-19);
   }
 
   &__btn {
     cursor: pointer;
-    border-radius: 4px;
-    padding: 0.5rem 1rem;
+    border-radius: var(--studio-compat-radius-6);
+    padding: var(--studio-compat-space-19) var(--studio-compat-space-41);
     font: inherit;
     border: 1px solid transparent;
-    transition: background-color 0.12s ease, border-color 0.12s ease;
+    transition: background-color var(--studio-compat-duration-3) ease, border-color var(--studio-compat-duration-3) ease;
 
     &:disabled {
       cursor: not-allowed;

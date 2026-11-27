@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { OnDemandPostStepAttempt, PostStepActivation } from '../../../../task-pipeline';
 import { TaskPipelinePollService } from '../../../../polling/services/task-pipeline-poll.service';
 import { StudioTabStateService } from '../../../../studio-shell/services/studio-tab-state.service';
-import { NotificationService } from '../../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from '../../../../../services/task.service';
 import { PostStepControlsComponent } from './post-step-controls.component';
 

@@ -6,7 +6,7 @@
   background: var(--studio-bg);
   color: var(--studio-fg);
   border-bottom: 1px solid var(--studio-border);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 .dossier-cards__toggle { @include m.disclosure-control; }
 .dossier-cards__empty { display: flex; gap: var(--studio-spacing-2); align-items: baseline; margin: 0; padding: var(--studio-spacing-1) var(--studio-spacing-2); }

@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { NotificationComponent } from '../../../../components/notification/notification.component';
+import { NotificationComponent } from '@studio/ui/components/notification/notification.component';
 import { BoardFiltersService } from '../../../board';
 
 const DISPLAYED_TASK_LIMIT = 10;

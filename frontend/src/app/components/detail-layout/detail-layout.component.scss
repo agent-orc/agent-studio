@@ -21,7 +21,7 @@
   border: 1px solid var(--studio-border);
   border-left: 0;
   outline: none;
-  animation: detail-layout-in 0.18s ease;
+  animation: detail-layout-in var(--studio-compat-duration-4) ease;
 }
 .detail-layout__panel:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
 .detail-layout__body { display: flex; flex-direction: column; gap: var(--studio-spacing-5); min-width: 0; }
@@ -52,5 +52,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .detail-layout__panel { animation-duration: 0s; }
+  .detail-layout__panel { animation-duration: var(--studio-compat-duration-2); }
 }

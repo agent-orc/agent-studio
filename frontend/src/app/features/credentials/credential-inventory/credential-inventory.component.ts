@@ -6,7 +6,7 @@ import { CodexSignInDialogService } from '../../remote-hosts/services/codex-sign
 import { ProviderAuthStatusService } from '../../remote-hosts/services/provider-auth-status.service';
 import type { CredentialInventoryItem } from '../credential-inventory.service';
 import type { ProviderAuthBadge } from '../../remote-hosts/models/provider-auth.model';
-import { StatusIndicatorComponent, type StatusTone } from '../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 type CredentialState = CredentialInventoryItem['state'];
 

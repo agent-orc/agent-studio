@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { ModalStackService } from '../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { DetailLayoutComponent } from './detail-layout.component';
 
 /* eslint-disable @angular-eslint/component-max-inline-declarations */

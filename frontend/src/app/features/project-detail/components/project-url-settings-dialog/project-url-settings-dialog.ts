@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, effect, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { DialogComponent } from '../../../../components/dialog/dialog.component';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import type { ProjectUrlStartRule, RegistryProjectUrl } from '../../../../models/task.model';
 
 export interface ProjectUrlSettingsValue {

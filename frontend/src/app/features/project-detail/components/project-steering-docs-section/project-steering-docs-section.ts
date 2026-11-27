@@ -12,11 +12,11 @@ import {
 } from '../../../../models/steering-docs.model';
 import { TaskState } from '../../../../models/task.model';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { STEERING_ACTIONS, steeringWarningSeverityTone, type SteeringAction } from './project-steering-docs-status';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 /**
  * Project-level Steering Docs surface. Shows the agent-facing
  * instruction sources for a watched project (README, AGENTS, ROADMAP,

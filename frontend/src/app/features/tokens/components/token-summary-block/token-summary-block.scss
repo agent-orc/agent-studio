@@ -1,30 +1,30 @@
 :host { display: block; }
 .tok-sum {
-  padding: 10px 14px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: rgba(15, 23, 42, 0.45);
-  margin-bottom: 12px;
+  padding: var(--studio-compat-space-5) var(--studio-compat-space-3);
+  border-radius: var(--studio-compat-radius-5);
+  border: 1px solid var(--studio-compat-border-40);
+  background: var(--studio-compat-surface-51);
+  margin-bottom: var(--studio-spacing-3);
 }
 .tok-sum__head {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  margin-bottom: 8px;
+  gap: var(--studio-compat-space-5);
+  margin-bottom: var(--studio-spacing-2);
 }
 .tok-sum__title {
   margin: 0;
-  font-size: 0.78rem;
-  color: rgba(255,255,255,0.55);
+  font-size: var(--studio-compat-type-13);
+  color: var(--studio-compat-ink-61);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
-.tok-sum__sub { color: rgba(255,255,255,0.55); font-size: 0.75rem; }
+.tok-sum__sub { color: var(--studio-compat-ink-61); font-size: var(--studio-compat-type-11); }
 .tok-sum__amounts {
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
-  margin-bottom: 8px;
+  gap: var(--studio-compat-space-3);
+  margin-bottom: var(--studio-spacing-2);
 }
 .tok-sum__metric {
   display: flex;
@@ -33,14 +33,14 @@
   cursor: help;
 }
 .tok-sum__metric-num {
-  color: #cdd6f4;
-  font-size: 1.05rem;
+  color: var(--studio-compat-ink-28);
+  font-size: var(--studio-compat-type-9);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 .tok-sum__metric-label {
-  color: rgba(255,255,255,0.50);
-  font-size: 0.66rem;
+  color: var(--studio-compat-ink-62);
+  font-size: var(--studio-compat-type-63);
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -48,24 +48,24 @@
 .tok-sum__cost {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: rgba(249, 226, 175, 0.06);
-  border: 1px dashed rgba(249, 226, 175, 0.30);
-  margin-bottom: 8px;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-compat-space-2) var(--studio-spacing-2);
+  border-radius: var(--studio-compat-radius-7);
+  background: var(--studio-compat-surface-52);
+  border: 1px dashed var(--studio-compat-border-41);
+  margin-bottom: var(--studio-spacing-2);
 }
 .tok-sum__cost-label {
-  color: rgba(249, 226, 175, 0.85);
-  font-size: 0.78rem;
+  color: var(--studio-compat-ink-63);
+  font-size: var(--studio-compat-type-13);
 }
 .tok-sum__cost-amount {
-  color: #fcd34d;
-  font-size: 1.0rem;
+  color: var(--studio-compat-ink-64);
+  font-size: var(--studio-compat-type-109);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.tok-sum__cost-amount--partial { color: #fde68a; }
+.tok-sum__cost-amount--partial { color: var(--studio-compat-ink-33); }
 .tok-sum__cost-button,
 .tok-sum__table-cost {
   padding: 0;
@@ -79,47 +79,47 @@
   text-underline-offset: 3px;
   cursor: pointer;
 }
-.tok-sum__partial { font-weight: 400; font-size: 0.74rem; color: rgba(255,255,255,0.50); }
+.tok-sum__partial { font-weight: 400; font-size: var(--studio-compat-type-14); color: var(--studio-compat-ink-62); }
 
-.tok-sum__breakdown { margin-bottom: 8px; }
+.tok-sum__breakdown { margin-bottom: var(--studio-spacing-2); }
 .tok-sum__breakdown summary {
   cursor: pointer;
-  color: rgba(255,255,255,0.60);
-  font-size: 0.78rem;
+  color: var(--studio-compat-ink-65);
+  font-size: var(--studio-compat-type-13);
   user-select: none;
 }
-.tok-sum__breakdown summary:hover { color: #cdd6f4; }
+.tok-sum__breakdown summary:hover { color: var(--studio-compat-ink-28); }
 .tok-sum__table {
   width: 100%;
   border-collapse: collapse;
-  margin-top: 6px;
-  font-size: 0.78rem;
+  margin-top: var(--studio-compat-space-2);
+  font-size: var(--studio-compat-type-13);
 }
 .tok-sum__table th, .tok-sum__table td {
-  padding: 4px 6px;
+  padding: var(--studio-spacing-1) var(--studio-compat-space-2);
   text-align: left;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 1px solid var(--studio-compat-border-7);
   font-variant-numeric: tabular-nums;
 }
 .tok-sum__table th {
-  color: rgba(255,255,255,0.50);
+  color: var(--studio-compat-ink-62);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  font-size: 0.66rem;
+  font-size: var(--studio-compat-type-63);
 }
 .tok-sum__table td code {
-  font-size: 0.74rem;
-  background: rgba(255,255,255,0.06);
-  padding: 1px 4px;
-  border-radius: 3px;
+  font-size: var(--studio-compat-type-14);
+  background: var(--studio-compat-surface-16);
+  padding: var(--studio-compat-space-6) var(--studio-spacing-1);
+  border-radius: var(--studio-compat-radius-9);
 }
-.tok-sum__na { color: rgba(255,255,255,0.40); font-style: italic; }
+.tok-sum__na { color: var(--studio-compat-ink-66); font-style: italic; }
 
 .tok-sum__disclaimer {
-  margin: 4px 0 0;
-  font-size: 0.74rem;
-  color: rgba(255,255,255,0.55);
+  margin: var(--studio-spacing-1) 0 0;
+  font-size: var(--studio-compat-type-14);
+  color: var(--studio-compat-ink-61);
   line-height: 1.4;
   font-style: italic;
 }

@@ -6,7 +6,7 @@ import { ModelMigrationBadgeComponent } from './model-migration-badge.component'
 import { ModelMigrationCatalogStore, type ModelMigrationEntry } from '../../features/cli/model-migrations';
 import { CliCatalogStore } from '../../features/cli/catalog';
 import type { CliModelInfo } from '../../features/cli';
-import { NotificationService } from '../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from '../../services/task.service';
 
 /** AGT-2903: proposal-only GPT-6 migration with the mapped-level note on the card badge. */

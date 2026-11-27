@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
-import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../../components/menu';
+import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '@studio/ui/components/menu/index';
 
 /** One open editor tab as the overflow menu lists it. */
 export interface StudioTabOverflowEntry { readonly key: string; readonly label: string; }

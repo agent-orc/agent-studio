@@ -1144,11 +1144,16 @@ public sealed class RemoteReviewWorkspace
             var parallelism = _options.ReviewAspectParallelism;
             try
             {
-                var lead = aspects[0];
+                // Codex receives the stable prefix on stdin, but lead scheduling
+                // remains Claude-only until usage receipt cohorts confirm reads.
+                var lead = aspects.FirstOrDefault(candidate =>
+                    string.Equals(candidate.CliType, "claude", StringComparison.OrdinalIgnoreCase)
+                    && _agentCommands.SharesReviewPrefix(candidate)
+                    && aspects.Any(sibling => !ReferenceEquals(candidate, sibling)
+                        && CompatibleCacheGroup(candidate, sibling)
+                        && _agentCommands.SharesReviewPrefix(sibling)));
                 TaskCompletionSource? released = null;
-                if (aspects.Count > 1
-                    && lead.Prompt?.Contains(SharedMaterialMarker, StringComparison.Ordinal) == true
-                    && _agentCommands.SharesReviewPrefix(lead))
+                if (lead is not null)
                 {
                     // AGT-3971: the lead writes the shared prefix to the provider
                     // cache; a cache entry is readable once its response streams.
@@ -1189,10 +1194,11 @@ public sealed class RemoteReviewWorkspace
                     },
                     ct,
                     released?.Task,
-                    // The provider cache is per model: an aspect on another model
-                    // or CLI cannot read the lead's entry and starts at once.
-                    aspect => string.Equals(aspect.CliType, lead.CliType, StringComparison.OrdinalIgnoreCase)
-                              && string.Equals(aspect.Model, lead.Model, StringComparison.OrdinalIgnoreCase));
+                    // Only a compatible evidence group waits. Other models,
+                    // settings, overrides and activity scopes start immediately.
+                    aspect => lead is not null && !ReferenceEquals(aspect, lead)
+                        && CompatibleCacheGroup(lead, aspect)
+                        && _agentCommands.SharesReviewPrefix(aspect));
             }
             catch (ReviewInfrastructureException exception) when (exception.Evidence is not null)
             {
@@ -1300,6 +1306,25 @@ public sealed class RemoteReviewWorkspace
         if (outcome != "ReviewInfra")
             DiscardStoredVerifyResults();
         return new ReviewExecutionEvidence(outcome, proof, commands, artifacts, verdicts);
+    }
+
+    private static bool CompatibleCacheGroup(ReviewCommandDto lead, ReviewCommandDto sibling)
+    {
+        if (!string.Equals(lead.CliType, sibling.CliType, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(lead.Model, sibling.Model, StringComparison.Ordinal)
+            || !string.Equals(lead.ThinkingLevel, sibling.ThinkingLevel, StringComparison.Ordinal)
+            || !string.Equals(lead.FileName, sibling.FileName, StringComparison.Ordinal)
+            || !string.Equals(lead.WorkingSubdir, sibling.WorkingSubdir, StringComparison.Ordinal)
+            || !lead.Arguments.SequenceEqual(sibling.Arguments, StringComparer.Ordinal))
+            return false;
+        // Compare the bounded evidence that will actually reach the CLI, including
+        // the optional activity group. The authoritative material is common to
+        // this workspace and is inserted at the same marker for every aspect.
+        var left = ReviewAspectInputBudget.Compose(lead.Prompt ?? "", "", "");
+        var right = ReviewAspectInputBudget.Compose(sibling.Prompt ?? "", "", "");
+        return left.SharedPrefixLength > 0 && right.SharedPrefixLength > 0
+            && left.Prompt.AsSpan(0, left.SharedPrefixLength)
+                .SequenceEqual(right.Prompt.AsSpan(0, right.SharedPrefixLength));
     }
 
     /// <summary>

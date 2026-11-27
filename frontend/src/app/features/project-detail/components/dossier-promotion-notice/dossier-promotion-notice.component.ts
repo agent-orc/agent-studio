@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import { map } from 'rxjs';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import type { WorkbenchDocument, WorkbenchPromotion } from '../../../../models/project-docs.model';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { TaskService } from '../../../../services/task.service';

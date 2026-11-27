@@ -6,10 +6,10 @@ import { AuthSessionState } from '../../../services/auth.service';
 import { JobsHubClient, type StructureSubscription } from '../../../services/jobs-hub-client.service';
 import { studioProjectSlug } from '../../../services/studio-project-slug.util';
 import { replaceStudioRouteQuery } from '../../studio-shell/services/studio-route';
-import { DisclosureMarkerComponent } from '../../../components/disclosure-marker/disclosure-marker.component';
-import { SegmentedControlComponent } from '../../../components/segmented-control/segmented-control.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { LAYOUT, layoutStructure, leafDetail, type LayoutBox, type RoutedLink } from '../structure-layout';
-import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { applyStructureDelta, factLines, isGroup, isPlacement, isStructuralDelta, isUndeclared, kindText, observationGlyph, observationText,
   observationWord, projectStructure, summaryText, visibleBoxes,
   type StructureBox, type StructureData, type StructureDelta, type StructureObservation } from '../structure.model';

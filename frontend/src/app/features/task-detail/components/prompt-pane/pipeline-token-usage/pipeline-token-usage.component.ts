@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { DisclosureMarkerComponent } from '../../../../../components/disclosure-marker/disclosure-marker.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import type {
   PipelineModelTokenUsage,
   PipelineModelUsageSummary,

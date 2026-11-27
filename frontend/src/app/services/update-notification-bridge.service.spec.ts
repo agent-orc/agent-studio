@@ -1,9 +1,9 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { NotificationState } from '../models/app-dialog.model';
+import type { NotificationState } from '@studio/ui/models/app-dialog.model';
 import type { UpdateStatus } from '../models/update-service.model';
-import { NotificationService } from './notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { UpdateClientService } from './update.service';
 import { UpdateNotificationBridge } from './update-notification-bridge.service';
 

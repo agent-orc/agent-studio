@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
 import type { ConceptPromotionRecovery, PromoteConceptResponse, PromoteConceptTasksResponse, TaskInfo } from '../../../../../models/task.model';
 import { TaskService } from '../../../../../services/task.service';
-import { NotificationService } from '../../../../../services/notification.service';
-import { PendingButtonDirective } from '../../../../../components/async-feedback';
+import { NotificationService } from '@studio/ui/services/notification.service';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import { serverErrorMessage } from '../../../../../utils/server-error-message';
 
 type Promotion =

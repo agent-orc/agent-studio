@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, signal, type TemplateRef } from '@angular/core';
 import { DatePipe, NgTemplateOutlet } from '@angular/common';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { EnvironmentHealthService } from '../../services/environment-health.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import {

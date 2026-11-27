@@ -1,11 +1,11 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { TaskState, type TaskInfo } from '../../../../models/task.model';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from '../../../../services/task.service';
 import { stateLabel } from '../../../../services/format.util';
 import { TaskSelectionService } from '../../../task-detail/runtime';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** AGT-3403: an open follow-up still needs attention; a closed one is settled (R4). */
 export const INTERVENTION_STATE_TONES: Readonly<Record<'open' | 'closed', StatusTone>> = {

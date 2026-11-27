@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
-import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { dossierSlicePosition } from '../../models/dossier-presentation';
 import type { TaskDossier } from '../../models/task.model';
 import { DossierCatalogueService } from '../../services/dossier-catalogue.service';

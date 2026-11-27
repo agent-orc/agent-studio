@@ -27,20 +27,20 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   color: var(--studio-accent-3);
   background: color-mix(in srgb, var(--studio-accent-3) 14%, transparent);
 }
 .wsearch__head-copy { min-width: 0; }
 .wsearch__title {
   margin: 0;
-  font-size: 0.98rem;
+  font-size: var(--studio-compat-type-81);
   font-weight: 700;
   color: var(--studio-fg);
 }
 .wsearch__query {
   margin: 0;
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   color: var(--studio-fg-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -63,12 +63,12 @@
   align-items: center;
   gap: var(--studio-spacing-1);
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   border: 1px solid color-mix(in srgb, var(--studio-fg) 16%, transparent);
   background: color-mix(in srgb, var(--studio-fg) 4%, transparent);
   color: var(--studio-fg);
   font: inherit;
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   font-weight: 600;
   cursor: pointer;
 }
@@ -83,10 +83,10 @@
 .wsearch__spinner {
   width: 11px;
   height: 11px;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   border: 2px solid color-mix(in srgb, var(--studio-fg) 25%, transparent);
   border-top-color: var(--studio-accent-3);
-  animation: wsearch-spin 0.8s linear infinite;
+  animation: wsearch-spin var(--studio-compat-duration-20) linear infinite;
 }
 @keyframes wsearch-spin { to { transform: rotate(360deg); } }
 
@@ -100,10 +100,10 @@
   gap: var(--studio-spacing-1);
 }
 .wsearch__term {
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   font-weight: 600;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: color-mix(in srgb, var(--studio-accent-3) 14%, transparent);
   color: var(--studio-fg);
 }
@@ -150,7 +150,7 @@
   min-width: 0;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--studio-fg) 4%, transparent);
   color: var(--studio-fg);
   font: inherit;
@@ -172,7 +172,7 @@
   color: var(--studio-fg-muted);
 }
 .wsearch__group-label {
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   font-weight: 600;
   font-family: var(--font-mono, monospace);
   overflow: hidden;
@@ -183,8 +183,8 @@
 .wsearch__group-count {
   flex-shrink: 0;
   padding: 0 var(--studio-spacing-1);
-  border-radius: 999px;
-  font-size: 0.66rem;
+  border-radius: var(--studio-compat-radius-2);
+  font-size: var(--studio-compat-type-63);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.6;
@@ -210,7 +210,7 @@
   margin-top: var(--studio-spacing-1);
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: transparent;
   color: var(--studio-fg-muted);
   cursor: pointer;
@@ -237,7 +237,7 @@
   text-align: left;
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: transparent;
   color: var(--studio-fg);
   cursor: pointer;
@@ -259,7 +259,7 @@
   min-width: 0;
 }
 .wsearch__row-title {
-  font-size: 0.84rem;
+  font-size: var(--studio-compat-type-71);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -268,11 +268,11 @@
 .wsearch__row-top time {
   margin-left: auto;
   flex-shrink: 0;
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   color: var(--studio-fg-muted);
 }
 .wsearch__path {
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   font-family: var(--font-mono, monospace);
   color: var(--studio-fg-muted);
   overflow: hidden;
@@ -280,7 +280,7 @@
   white-space: nowrap;
 }
 .wsearch__snippet {
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   color: var(--studio-fg-muted);
   overflow-wrap: anywhere;
 }
@@ -290,5 +290,5 @@
   font-weight: 700;
   color: var(--studio-fg);
   background: color-mix(in srgb, var(--studio-accent-3) 18%, transparent);
-  border-radius: 3px;
+  border-radius: var(--studio-compat-radius-9);
 }

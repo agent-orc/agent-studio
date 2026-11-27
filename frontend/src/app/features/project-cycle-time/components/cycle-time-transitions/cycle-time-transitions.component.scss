@@ -25,7 +25,7 @@
 .ctt__title,
 .ctt__subtitle {
   margin: 0 0 var(--studio-spacing-2);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 650;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -35,7 +35,7 @@
 
 .ctt__summary {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   color: var(--studio-fg-dim);
   font-variant-numeric: tabular-nums;
 }
@@ -45,7 +45,7 @@
 .ctt__empty,
 .ctt__note {
   margin: var(--studio-spacing-2) 0 0;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   line-height: 1.45;
   color: var(--studio-fg-dim);
   max-width: 76ch;
@@ -63,7 +63,7 @@
 .ctt__matrix {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -90,7 +90,7 @@
   height: 30px;
   background: var(--studio-surface-muted);
   color: var(--studio-fg-muted);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   font-weight: 650;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -117,7 +117,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--studio-fg-dim);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 
 .ctt__table--causes { max-width: 90rem; }
@@ -151,7 +151,7 @@
 .ctt__cell--backward { color: var(--studio-fg-strong); }
 // The mark is the non-color carrier of "backward"; it inherits the cell text
 // color so it keeps the cell's contrast on the darkest ramp step.
-.ctt__cell-back { color: inherit; font-size: 10px; margin-right: 2px; }
+.ctt__cell-back { color: inherit; font-size: var(--studio-compat-type-1); margin-right: var(--studio-compat-space-4); }
 
 // ---- side by side ----------------------------------------------------------
 
@@ -170,7 +170,7 @@
   color: var(--studio-accent-3-strong);
   font: inherit;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   cursor: pointer;
 }
 .ctt__link:hover { text-decoration: underline; }

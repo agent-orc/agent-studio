@@ -12,7 +12,7 @@
   background: var(--studio-bg-elevated);
   color: var(--studio-text-primary);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;

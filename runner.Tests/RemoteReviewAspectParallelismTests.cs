@@ -396,6 +396,161 @@ public sealed class RemoteReviewAspectParallelismTests : IDisposable
         await attempt.WaitAsync(Patience);
     }
 
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task A_claude_group_after_a_codex_aspect_starts_its_own_lead()
+    {
+        var runner = new FakeAspectRunner(_time) { SharesPrefix = _ => true };
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        runner.Work = (_, ct) => release.Task.WaitAsync(ct);
+        var plan = ClaudeAspects(3);
+        plan[0] = plan[0] with { CliType = "codex", FileName = "codex", Model = "gpt-5.4-mini" };
+        var workspace = await PreparedAsync("attempt-mixed-cli-lead", plan, runner);
+        var attempt = workspace.ExecutePlanAsync(default);
+        try
+        {
+            await runner.InFlightReached(2).WaitAsync(Patience);
+            Assert.Equal(["aspect-1", "aspect-2"], runner.Started.Order());
+        }
+        finally
+        {
+            release.TrySetResult();
+            await attempt.WaitAsync(Patience);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Codex_layout_does_not_enable_lead_scheduling_without_cache_receipt_evidence()
+    {
+        var runner = new FakeAspectRunner(_time) { SharesPrefix = _ => true };
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        runner.Work = (_, ct) => release.Task.WaitAsync(ct);
+        var plan = ClaudeAspects(4).Select(command => command with
+        {
+            CliType = "codex", FileName = "codex", Model = "gpt-5.4-mini",
+        }).ToArray();
+        var workspace = await PreparedAsync("attempt-codex-no-lead", plan, runner);
+        var attempt = workspace.ExecutePlanAsync(default);
+        try
+        {
+            await runner.InFlightReached(4).WaitAsync(Patience);
+            Assert.Equal(4, runner.MaxInFlight);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await attempt.WaitAsync(Patience);
+        }
+    }
+
+    [Theory]
+    [InlineData("level")]
+    [InlineData("arguments")]
+    [InlineData("executable")]
+    [InlineData("directory")]
+    [InlineData("prefix")]
+    [InlineData("override")]
+    [InlineData("cli")]
+    [InlineData("activity")]
+    [Trait("Category", "MachineBound")]
+    public async Task Incompatible_aspects_do_not_wait_for_the_lead(string difference)
+    {
+        var runner = new FakeAspectRunner(_time) { SharesPrefix = _ => true };
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        runner.Work = (_, ct) => release.Task.WaitAsync(ct);
+        var plan = ClaudeAspects(3);
+        plan[2] = difference switch
+        {
+            "level" => plan[2] with { ThinkingLevel = "low" },
+            "arguments" => plan[2] with { Arguments = ["--tools", ""] },
+            "executable" => plan[2] with { FileName = "/other/claude" },
+            "directory" => plan[2] with { WorkingSubdir = "docs" },
+            "prefix" => plan[2] with { Prompt = "Different brief\n<!-- remote-review-shared-material-v1 -->\nAspect 3" },
+            "override" => plan[2] with { Prompt = "Authored override." },
+            "activity" => plan[2] with { Prompt = plan[2].Prompt!.Replace("\nAspect",
+                "\n## Recent log\nExtra activity\n<!-- remote-review-aspect-instructions-v1 -->\nAspect", StringComparison.Ordinal) },
+            _ => plan[2] with { CliType = "codex", Model = "gpt-5.4-mini" },
+        };
+        var workspace = await PreparedAsync("attempt-incompatible-" + difference, plan, runner);
+
+        var attempt = workspace.ExecutePlanAsync(default);
+        try
+        {
+            await runner.InFlightReached(2).WaitAsync(Patience);
+            Assert.Equal(["aspect-1", "aspect-3"], runner.Started.Order());
+        }
+        finally
+        {
+            release.TrySetResult();
+            await attempt.WaitAsync(Patience);
+        }
+    }
+
+    [Fact]
+    public void Stock_sized_delivery_evidence_and_instructions_fit_without_new_omissions()
+    {
+        var common = "## Task body (`prompt.md`)\n" + new string('b', 64_000)
+            + "\n## results/ folder inventory\n" + new string('r', 24_000)
+            + "\n## Status summary (the agent's own report)\n" + new string('s', 16_000) + "STATUS-END\n";
+        var activity = "## Recent log (last lines)\n" + new string('l', 5_000);
+        var result = ReviewAspectInputBudget.Compose(common + RemoteReviewWorkspace.SharedMaterialMarker
+            + activity + "<!-- remote-review-aspect-instructions-v1 -->" + new string('i', 5_000),
+            "Authoritative diff", "");
+
+        Assert.Equal("No review input omitted.", result.Report);
+        Assert.Contains(common, result.Prompt[..result.SharedPrefixLength]);
+        Assert.Contains(activity, result.Prompt[..result.SharedPrefixLength]);
+    }
+
+    [Fact]
+    public void Large_shared_context_is_bounded_independently_of_aspect_instructions()
+    {
+        var prefix = "## Status summary\n" + new string('s', 110_000);
+        var activity = "## Recent log (last lines)\n" + new string('l', 20_000);
+        var prompts = new[] { "Short verdict", new string('i', 80_000) + "Verdict tail" }
+            .Select(instructions => ReviewAspectInputBudget.Compose(prefix
+                + RemoteReviewWorkspace.SharedMaterialMarker + activity
+                + "<!-- remote-review-aspect-instructions-v1 -->" + instructions,
+                "Authoritative diff\n[[REVIEW_DIFF_TRUNCATED: file limit]]", "")).ToArray();
+
+        Assert.True(prompts[0].SharedPrefixLength > 0);
+        Assert.Equal(prompts[0].Prompt[..prompts[0].SharedPrefixLength],
+            prompts[1].Prompt[..prompts[1].SharedPrefixLength]);
+        Assert.All(prompts, result =>
+        {
+            Assert.True(result.Prompt.Length <= ReviewAspectInputBudget.MaximumCharacters);
+            Assert.Contains("Shared review context", result.Report);
+            Assert.Contains("Recent activity", result.Report);
+            Assert.Contains("[[REVIEW_DIFF_TRUNCATED: file limit]]", result.Prompt);
+            Assert.DoesNotContain("remote-review-", result.Prompt);
+        });
+        Assert.Contains("Verdict tail", prompts[1].Prompt);
+        Assert.Contains("Aspect instructions", prompts[1].Report);
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void Activity_is_shared_only_by_consumers_and_overrides_keep_their_layout(string newline)
+    {
+        const string marker = "<!-- remote-review-aspect-instructions-v1 -->";
+        var common = "Delivery context\n## Status summary\nAgent report\n";
+        var activity = "## Recent log (last lines)\nActivity evidence\n";
+        var results = Enumerable.Range(0, 4).Select(index => ReviewAspectInputBudget.Compose(
+            (common + RemoteReviewWorkspace.SharedMaterialMarker + (index == 2 ? "" : activity)
+                + marker + "Aspect " + index).ReplaceLineEndings(newline), "Authoritative diff", "")).ToArray();
+        var shared = results.Select(result => result.Prompt[..result.SharedPrefixLength]).ToArray();
+        Assert.All(shared, prefix => Assert.StartsWith(shared[2], prefix));
+        Assert.Equal(shared[0], shared[1]);
+        Assert.Equal(shared[0], shared[3]);
+        Assert.DoesNotContain("Activity evidence", results[2].Prompt);
+        Assert.All(results, result => Assert.Equal(1, result.Prompt.Split("Agent report").Length - 1));
+        var authored = ReviewAspectInputBudget.Compose("Explicit override instructions.", "Authoritative diff", "");
+        Assert.Equal(0, authored.SharedPrefixLength);
+        Assert.StartsWith("Explicit override instructions.", authored.Prompt);
+    }
+
     [Theory]
     [InlineData(-3, 1)]
     [InlineData(0, 1)]

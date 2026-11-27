@@ -35,7 +35,7 @@
     h1 {
       margin: 0;
       color: var(--studio-fg-strong);
-      font-size: 14px;
+      font-size: var(--studio-font-size-lg);
     }
   }
 
@@ -43,8 +43,8 @@
   &__branch {
     padding: 0 var(--studio-spacing-1);
     border: 1px solid var(--studio-border);
-    border-radius: 4px;
-    font: 700 9px/1.4 var(--font-mono);
+    border-radius: var(--studio-compat-radius-6);
+    font: 700 var(--studio-compat-type-4)/1.4 var(--font-mono);
   }
 
   &__readonly {
@@ -64,7 +64,7 @@
     margin-top: var(--studio-spacing-1);
     overflow: hidden;
     color: var(--studio-fg-dim);
-    font: 10px/1.4 var(--font-mono);
+    font: var(--studio-compat-type-1)/1.4 var(--font-mono);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -73,10 +73,10 @@
     flex: 0 0 auto;
     padding: var(--studio-spacing-1) var(--studio-spacing-2);
     border: 1px solid var(--studio-border);
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
     background: transparent;
     color: var(--studio-fg);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     cursor: pointer;
   }
 
@@ -159,23 +159,23 @@
     margin: 0;
     padding: var(--studio-spacing-2);
     border: 1px solid var(--severity-high);
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
     background: var(--studio-surface);
     color: var(--severity-high);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
   }
 
   &__message,
   &__empty {
     padding: var(--studio-spacing-5);
     border: 1px solid var(--studio-border);
-    border-radius: 6px;
+    border-radius: var(--studio-compat-radius-7);
     background: var(--studio-bg-elevated);
   }
 
   &__message {
     color: var(--studio-fg-dim);
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
   }
 
   &__empty {
@@ -190,13 +190,13 @@
 
     h2 {
       color: var(--studio-fg-strong);
-      font-size: 14px;
+      font-size: var(--studio-font-size-lg);
     }
 
     p,
     code {
       color: var(--studio-fg-dim);
-      font-size: 12px;
+      font-size: var(--studio-font-size-sm);
     }
   }
 }

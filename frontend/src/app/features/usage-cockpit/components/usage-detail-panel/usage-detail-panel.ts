@@ -1,8 +1,8 @@
 import { usageStateTone } from '../usage-cost-detail/usage-detail-status';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, computed, inject, input, signal } from '@angular/core';
 import { RemoteHostsService } from '../../../remote-hosts/services/remote-hosts.service';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 
 import { UsageCapacityDetailComponent } from '../usage-capacity-detail/usage-capacity-detail';
 import { UsageCostDetailComponent } from '../usage-cost-detail/usage-cost-detail';

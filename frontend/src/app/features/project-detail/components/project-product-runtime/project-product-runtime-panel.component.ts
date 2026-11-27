@@ -21,7 +21,7 @@ import {
   RuntimeEventParseWarning,
 } from '../../../../models/product-runtime.model';
 import { TaskDetailLatencyComponent } from '../task-detail-latency/task-detail-latency.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { LEVEL_RANK, runtimeLevelTone, runtimeStatusTone } from './product-runtime-status';
 
 interface FilterState {

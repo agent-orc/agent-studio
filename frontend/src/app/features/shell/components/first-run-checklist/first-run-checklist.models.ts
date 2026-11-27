@@ -1,5 +1,5 @@
 import type { DeviceLoginStatusResponse, ProviderAuthBadge } from '../../../remote-hosts/models/provider-auth.model';
-import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { ProjectRegistryEntry } from '../../../remote-hosts/models/deployment-checkpoints';
 
 export interface Probe<T> { value: T | null; error: boolean }

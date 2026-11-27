@@ -19,12 +19,12 @@ import { DossierSliceLinkComponent } from '../../../../../../components/dossier-
 import { laneTone } from '../../../../../../models/lane-presentation';
 import { copyTextToClipboard } from '../../../../../../services/clipboard.util';
 import { lifecyclePhaseLabel } from '../../../../../../services/lifecycle-phase.util';
-import { NotificationService } from '../../../../../../services/notification.service';
-import { ModalStackService } from '../../../../../../services/modal-stack.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { projectIdentity } from '../../../../../../services/project-identity.util';
 import { TaskService } from '../../../../../../services/task.service';
 import { laneLabel } from '../overview-pane-formatters';
-import { StatusIndicatorComponent } from '../../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { lifecyclePhaseTone } from './lifecycle-phase-tone';
 
 /** Short unique id for a seeded create-modal attachment (mirrors the dialog's own). */

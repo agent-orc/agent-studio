@@ -3,8 +3,8 @@
   display: inline-flex;
   align-items: center;
   min-width: 0;
-  border-radius: 999px;
-  font-size: 0.66rem;
+  border-radius: var(--studio-compat-radius-2);
+  font-size: var(--studio-compat-type-63);
   font-variant-numeric: tabular-nums;
 }
 .review-tag:focus-visible { outline: 2px solid var(--studio-accent-3-strong); outline-offset: 2px; }

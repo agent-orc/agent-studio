@@ -1,6 +1,6 @@
 import { effect, inject, Injectable } from '@angular/core';
 import { UpdateClientService } from './update.service';
-import { NotificationService } from './notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 
 /** localStorage key holding dismissed run IDs so a click-away survives F5. */
 const DISMISSED_STORAGE_KEY = 'atp.update.dismissedRuns';

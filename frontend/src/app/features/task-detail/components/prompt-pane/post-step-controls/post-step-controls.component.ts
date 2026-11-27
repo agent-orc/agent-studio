@@ -3,15 +3,15 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import type { OnDemandPostStepAttempt, PostStepActivation } from '../../../../task-pipeline';
 import { TaskPipelinePollService } from '../../../../polling/services/task-pipeline-poll.service';
 import { StudioTabStateService } from '../../../../studio-shell/services/studio-tab-state.service';
-import { PendingButtonDirective } from '../../../../../components/async-feedback';
-import { NotificationService } from '../../../../../services/notification.service';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from '../../../../../services/task.service';
 import {
   PipelineStepResultComponent,
   type PipelineStepResultHeader,
 } from '../pipeline-step-result/pipeline-step-result.component';
 import { postStepAttemptTone } from '../pipeline-step-result/step-status-tone';
-import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 const SUPPORTED_STEP_IDS = new Set([
   'post-wiki-maintenance',

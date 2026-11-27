@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { WatchdogPillState } from '../watchdog-state';
 
 /** Claude session continuity after the last CLI invocation. */

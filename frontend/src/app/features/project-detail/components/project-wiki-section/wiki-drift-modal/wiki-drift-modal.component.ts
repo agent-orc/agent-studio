@@ -6,9 +6,9 @@ import { DriftReport, DriftReportDetailResponse } from '../../../../../models/dr
 import { DriftService } from '../../../../../services/drift.service';
 import { TaskService } from '../../../../../services/task.service';
 import { CliCatalogStore } from '../../../../cli';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
-import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
-import { OverlayPortalDirective } from '../../../../../directives/overlay-portal.directive';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { OverlayPortalDirective } from '@studio/ui/directives/overlay-portal.directive';
 import { copyTextToClipboard } from '../../../../../services/clipboard.util';
 import {
   wikiBasename,

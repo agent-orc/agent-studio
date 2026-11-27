@@ -5,7 +5,7 @@
 .ov-value {
   &--mono {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
   }
 
   &--strong {
@@ -17,7 +17,7 @@
 .ov-cost-incomplete {
   color: var(--studio-fg-muted);
   font-family: var(--font-sans);
-  font-size: 9px;
+  font-size: var(--studio-compat-type-4);
   font-weight: 600;
   line-height: 1.25;
   white-space: normal;
@@ -25,27 +25,27 @@
 
 .ov-token-modal {
   display: grid;
-  gap: 12px;
+  gap: var(--studio-spacing-3);
   color: var(--studio-fg);
-  font-size: 13px;
+  font-size: var(--studio-font-size-md);
 
   &__summary {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 8px;
+    gap: var(--studio-spacing-2);
   }
 
   &__metric,
   &__panel {
     border: 1px solid var(--studio-border);
     background: var(--studio-bg-hover);
-    border-radius: 8px;
+    border-radius: var(--studio-compat-radius-5);
   }
 
   &__metric {
     display: grid;
-    gap: 4px;
-    padding: 10px 12px;
+    gap: var(--studio-spacing-1);
+    padding: var(--studio-compat-space-5) var(--studio-spacing-3);
     min-width: 0;
 
     &--primary {
@@ -59,7 +59,7 @@
   &__table th,
   &__facts dt {
     color: var(--studio-fg-muted);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 750;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -68,7 +68,7 @@
   &__value {
     min-width: 0;
     color: var(--studio-fg-strong);
-    font-size: 13px;
+    font-size: var(--studio-font-size-md);
     font-weight: 700;
   }
 
@@ -77,26 +77,26 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
   }
 
   &__panel {
-    padding: 10px 12px;
+    padding: var(--studio-compat-space-5) var(--studio-spacing-3);
     min-width: 0;
   }
 
   &__panel-title {
-    margin: 0 0 8px;
+    margin: 0 0 var(--studio-spacing-2);
   }
 
   &__table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
 
     th,
     td {
-      padding: 6px 7px;
+      padding: var(--studio-compat-space-2) var(--studio-compat-space-11);
       text-align: left;
       vertical-align: top;
       border-bottom: 1px solid var(--studio-border);
@@ -121,13 +121,13 @@
 
   &__facts {
     display: grid;
-    gap: 7px;
+    gap: var(--studio-compat-space-11);
     margin: 0;
 
     div {
       display: grid;
       grid-template-columns: 74px 1fr;
-      gap: 8px;
+      gap: var(--studio-spacing-2);
       align-items: baseline;
       min-width: 0;
     }
@@ -141,9 +141,9 @@
   }
 
   &__note {
-    margin: 8px 0 0;
+    margin: var(--studio-spacing-2) 0 0;
     color: var(--studio-fg-dim);
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     line-height: 1.45;
   }
 }

@@ -6,7 +6,7 @@ import {
   ProjectUrlContextService,
   type ProjectUrlRepositoryContext,
 } from '../../services/project-url-context.service';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Integration line of the preview source: aligned is good, drift needs attention, no comparison is a fact. */
 export function integrationStatus(

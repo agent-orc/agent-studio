@@ -3,7 +3,7 @@ import { UsageCockpitService } from '../../../usage-cockpit/services/usage-cockp
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { QuotaApiService } from '../../../quota';
 import type { ActiveModelSwitch, EffectiveModelSelection, ModelSelectionEvent, SelectionRoute } from '../../../quota/services/quota-api.service';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 
 export type SelectionPeriod = '24h' | '7d' | '30d' | 'custom';
 export interface SelectionFilters {

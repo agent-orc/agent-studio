@@ -3,8 +3,8 @@ import { Observable, switchMap, throwError } from 'rxjs';
 import { QuotaApiService } from '../../../../quota';
 import { CLI_TYPES, type CliType } from '../../../../../models/task.model';
 import { CliModelSelectorComponent } from '../../../../../components/cli-model-selector';
-import { AppTooltipDirective } from '../../../../../components/tooltip/app-tooltip.directive';
-import { ConfirmDialogService } from '../../../../../services/confirm-dialog.service';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 import type { PipelineAdminRow } from '../pipeline-config.util';
 
 export interface AspectAgentSelection { cliType: CliType; model: string; thinkingLevel: string | null }

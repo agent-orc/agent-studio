@@ -24,7 +24,7 @@ import { seedRemoteHosts } from './remote-hosts.seed';
 import { projectRunHost } from '../models/run-host';
 import type { RunHostStatus } from '../../../models/run-host.model';
 import { ProviderAuthStatusService } from './provider-auth-status.service';
-import { NotificationService } from '../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { AuthSessionState } from '../../../services/auth.service';
 
 function sameRelease(left: HostReleaseIdentity | null | undefined,

@@ -1,5 +1,5 @@
 import { DestroyRef, Injector, Signal, afterNextRender, effect, inject } from '@angular/core';
-import { ModalStackService } from '../../../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 
 /**
  * Keyboard focus helpers for the Dossier decision surfaces (AGT-3829). A

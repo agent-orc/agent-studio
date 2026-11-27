@@ -9,7 +9,7 @@
 .result {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--studio-compat-space-5);
   // Tone accent resolved once per case, consumed by the outcome + overview.
   --result-tone: var(--studio-fg-muted);
 
@@ -42,7 +42,7 @@
   flex: 0 0 auto;
   gap: var(--studio-spacing-1);
   color: var(--result-tone);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 650;
   line-height: 1.4;
   white-space: nowrap;
@@ -61,7 +61,7 @@
   width: 6px;
   height: 6px;
   flex: none;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   background: currentColor;
 }
 
@@ -74,7 +74,7 @@
   border: 0;
   background: transparent;
   color: var(--studio-fg-dim, var(--studio-fg));
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -121,7 +121,7 @@
   max-width: min(260px, 26vw);
   overflow: hidden;
   color: var(--studio-fg-dim);
-  font-size: 10.5px;
+  font-size: var(--studio-compat-type-44);
   white-space: nowrap;
   cursor: help;
 }
@@ -141,11 +141,11 @@
   padding: 0 var(--studio-spacing-1);
   place-items: center;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: transparent;
   color: var(--studio-fg-dim);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   cursor: pointer;
 
   &:hover,
@@ -159,7 +159,7 @@
 
 .result__scan-hint {
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   line-height: 1.4;
 }
 
@@ -169,13 +169,13 @@
 .result__inconsistencies {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: var(--studio-compat-space-2);
+  padding: var(--studio-spacing-2) var(--studio-compat-space-5);
   border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 35%, transparent);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--studio-accent-warn) 9%, transparent);
   color: var(--studio-fg);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   line-height: 1.45;
 }
 
@@ -183,7 +183,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
   margin: 0;
   color: var(--studio-fg-strong, var(--studio-fg));
   font-weight: 600;
@@ -197,7 +197,7 @@
 .result__inconsistencies-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -207,7 +207,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
 }
 
 .result__inconsistency-signal {
@@ -216,11 +216,11 @@
 
 .result__inconsistency-vs {
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 
 .result__inconsistency-explanation {
-  margin: 2px 0 0;
+  margin: var(--studio-compat-space-4) 0 0;
   color: var(--studio-fg-muted);
 }
 
@@ -229,7 +229,7 @@
 .result__overview {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
   padding: var(--studio-spacing-3) 0;
   border-top: 1px solid var(--studio-border);
 
@@ -243,17 +243,17 @@
 .result__overview-flow {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
 }
 
 .result__overview-row {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
 }
 
 .result__overview-label {
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -263,7 +263,7 @@
 .result__overview-text {
   margin: 0;
   color: var(--studio-fg-strong, var(--studio-fg));
-  font-size: 13px;
+  font-size: var(--studio-font-size-md);
   line-height: 1.5;
   word-break: break-word;
 }
@@ -278,7 +278,7 @@
   display: none;
   align-self: center;
   color: var(--result-tone);
-  font-size: 14px;
+  font-size: var(--studio-font-size-lg);
   line-height: 1;
   opacity: 0.7;
 }
@@ -286,14 +286,14 @@
 .result__overview-blurb {
   margin: 0;
   color: var(--studio-fg-dim, var(--studio-fg-muted));
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   line-height: 1.4;
 }
 
 .result__overview-hint {
   margin: 0;
   color: var(--studio-fg-muted);
-  font-size: 10.5px;
+  font-size: var(--studio-compat-type-44);
   font-style: italic;
 }
 
@@ -309,7 +309,7 @@
   flex-direction: row;
   flex-wrap: wrap;
   align-items: stretch;
-  gap: 10px;
+  gap: var(--studio-compat-space-5);
 
   .result__overview-row { flex: 1 1 140px; }
   .result__overview-connector { display: block; align-self: center; }
@@ -319,8 +319,8 @@
 // callout so a partial/blocked run never reads like a clean landing.
 .result__overview[data-layout="blocker"] {
   .result__overview-row--solution {
-    padding: 6px 8px;
-    border-radius: 5px;
+    padding: var(--studio-compat-space-2) var(--studio-spacing-2);
+    border-radius: var(--studio-compat-radius-13);
     background: color-mix(in srgb, var(--result-tone) 12%, transparent);
   }
 }
@@ -329,16 +329,16 @@
 .result__detail {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
   padding-top: var(--studio-spacing-3);
   border-top: 1px solid var(--studio-border);
 }
 
 .result__detail-title {
   margin: 0;
-  padding-bottom: 4px;
+  padding-bottom: var(--studio-spacing-1);
   color: var(--studio-fg-dim, var(--studio-fg));
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -351,13 +351,13 @@
 
 @media (prefers-reduced-motion: reduce) {
   .result__metric--link,
-  .result__action { transition-duration: 0s; }
+  .result__action { transition-duration: var(--studio-compat-duration-2); }
 }
 /* AGT-3689: a quiet tinted note, never a coloured edge (R1). */
 .result__grading-release {
   margin: var(--studio-spacing-3) 0 0;
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: var(--notify-warning-tint);
   color: var(--studio-fg);
   font-size: var(--studio-font-size-sm);

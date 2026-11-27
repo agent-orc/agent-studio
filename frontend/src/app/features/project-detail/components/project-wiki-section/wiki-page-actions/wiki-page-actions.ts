@@ -13,7 +13,7 @@ import {
   derivePageType,
   pageExcerpt,
 } from '../../../../../models/page-context.model';
-import { NotificationService } from '../../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { ProjectDocsService } from '../../../../../services/project-docs.service';
 import { PageActionBarComponent } from '../../page-action-bar/page-action-bar';
 

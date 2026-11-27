@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { AuthoritativeRunOutcomeStatus, ProtocolVerdict } from '../protocol-verdict';
 
 const VERDICT_TONES: Readonly<Record<AuthoritativeRunOutcomeStatus, StatusTone>> = {

@@ -7,7 +7,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TaskCardComponent } from './task-card.component';
 import { buildVisibleDependencyChip } from './task-card-view-model';
 import { ClientService } from '../../../../services/client.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from '../../../../services/task.service';
 import { TaskSelectionService } from '../../../task-detail/runtime';
 import type { ClientSummary, DecisionContent, TaskInfo } from '../../../../models/task.model';

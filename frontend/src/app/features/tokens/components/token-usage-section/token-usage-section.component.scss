@@ -15,14 +15,14 @@
   gap: var(--studio-spacing-1);
   padding: var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-elevated);
 }
 
 .token-usage__tree-group {
   margin: var(--studio-spacing-2) var(--studio-spacing-2) var(--studio-spacing-1);
   color: var(--studio-fg-muted);
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -33,7 +33,7 @@
   gap: var(--studio-spacing-1);
   padding: var(--studio-spacing-2);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: transparent;
   color: var(--studio-fg);
   text-align: left;
@@ -47,13 +47,13 @@
   color: var(--studio-nav-active-fg);
   box-shadow: inset 3px 0 0 0 var(--studio-nav-active-bar);
 }
-.token-usage__tree button span { color: var(--studio-fg-muted); font-size: 0.7rem; line-height: 1.35; }
+.token-usage__tree button span { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-18); line-height: 1.35; }
 .token-usage__page { min-width: 0; }
 .token-usage__page-head { margin-bottom: var(--studio-spacing-3); }
-.token-usage__page-head h2 { margin: var(--studio-spacing-1) 0; color: var(--studio-fg-strong); font-size: 1.1rem; }
-.token-usage__page-head p { margin: 0; color: var(--studio-fg-dim); font-size: 0.78rem; }
-.token-usage__scope { margin: 0 0 var(--studio-spacing-3); color: var(--studio-text-secondary); font-size: 0.78rem; }
-.token-usage__eyebrow { color: var(--studio-accent); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.token-usage__page-head h2 { margin: var(--studio-spacing-1) 0; color: var(--studio-fg-strong); font-size: var(--studio-compat-type-39); }
+.token-usage__page-head p { margin: 0; color: var(--studio-fg-dim); font-size: var(--studio-compat-type-13); }
+.token-usage__scope { margin: 0 0 var(--studio-spacing-3); color: var(--studio-text-secondary); font-size: var(--studio-compat-type-13); }
+.token-usage__eyebrow { color: var(--studio-accent); font-size: var(--studio-compat-type-15); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 
 .token-usage__detail-head {
   display: flex;
@@ -63,14 +63,14 @@
 
   h3 {
     margin: 0;
-    font-size: 0.95rem;
+    font-size: var(--studio-compat-type-16);
     font-weight: 600;
     color: var(--studio-fg);
   }
 }
 
 .token-usage__hint {
-  font-size: 0.75rem;
+  font-size: var(--studio-compat-type-11);
   color: var(--studio-fg-muted);
 }
 

@@ -22,12 +22,12 @@ import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { TaskService } from '../../../../services/task.service';
 import { CliCatalogStore } from '../../../cli';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { PublicDemoModeService } from '../../../../services/public-demo-mode.service';
-import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import {
   WikiFileSaveResult,
   WikiFileHistory,
@@ -41,10 +41,10 @@ import {
 } from '../../../../models/project-docs.model';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
 import { MarkdownRichEditorComponent } from '../../../../components/markdown-rich-editor/markdown-rich-editor';
-import { MenuComponent } from '../../../../components/menu/menu.component';
-import { MenuItem, MenuItemClickEvent } from '../../../../components/menu/menu.types';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
-import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
+import { MenuComponent } from '@studio/ui/components/menu/menu.component';
+import { MenuItem, MenuItemClickEvent } from '@studio/ui/components/menu/menu.types';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import type { StudioIconName } from '@studio/ui/components/studio-icon/studio-icon.component';
 import {
   PageType,
   derivePageType,
@@ -100,7 +100,7 @@ import {
 } from './wiki-state.util';
 import { WikiClassMeta, classificationBadges, classificationMeta, classificationStatusTone } from './wiki-classification';
 import { driftScoreBandTone } from './wiki-drift-band';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { withRouteSegment } from '../../../../services/url-hash.util';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { ClientService } from '../../../../services/client.service';

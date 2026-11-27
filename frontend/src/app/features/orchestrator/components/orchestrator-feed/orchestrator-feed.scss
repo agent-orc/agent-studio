@@ -38,21 +38,21 @@
   gap: var(--studio-spacing-2);
   flex-wrap: wrap;
 }
-.orch-feed__title { margin: 0; color: var(--studio-fg-strong); font-size: 18px; font-weight: 650; }
+.orch-feed__title { margin: 0; color: var(--studio-fg-strong); font-size: var(--studio-font-size-xl); font-weight: 650; }
 .orch-feed__sub {
   margin: var(--studio-spacing-1) 0 0;
   color: var(--studio-fg-dim);
-  font-size: 13px;
+  font-size: var(--studio-font-size-md);
   font-variant-numeric: tabular-nums;
 }
 
 .orch-feed__scope {
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 700;
   letter-spacing: .04em;
   text-transform: uppercase;
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: var(--studio-compat-space-4) var(--studio-spacing-2);
+  border-radius: var(--studio-compat-radius-2);
   border: 1px solid transparent;
   white-space: nowrap;
 }
@@ -67,9 +67,9 @@
   background: var(--studio-bg-hover);
   color: var(--studio-fg);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
-  padding: 6px 11px;
-  font-size: 12px;
+  border-radius: var(--studio-compat-radius-7);
+  padding: var(--studio-compat-space-2) var(--studio-compat-space-10);
+  font-size: var(--studio-font-size-sm);
   cursor: pointer;
 }
 .orch-feed__refresh:hover:not(:disabled) { background: var(--studio-bg-selected); }
@@ -79,8 +79,8 @@
   background: var(--notify-error-tint);
   border: 1px solid var(--notify-error-border);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
-  border-radius: 7px;
-  font-size: 13px;
+  border-radius: var(--studio-compat-radius-1);
+  font-size: var(--studio-font-size-md);
 }
 
 .orch-feed__global {
@@ -113,7 +113,7 @@
 .orch-feed__filter-group label {
   margin: var(--studio-spacing-2) 0 var(--studio-spacing-1);
   color: var(--studio-fg-dim);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   text-transform: uppercase;
   letter-spacing: .06em;
 }
@@ -132,13 +132,13 @@
   align-items: center;
   min-height: var(--studio-row-min-h-interactive);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: transparent;
   color: var(--studio-fg-dim);
-  padding: 7px var(--studio-spacing-2);
+  padding: var(--studio-compat-space-11) var(--studio-spacing-2);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 .orch-feed__filter:hover { background: var(--studio-bg-hover); color: var(--studio-fg-strong); }
 .orch-feed__filter--active {
@@ -160,13 +160,13 @@
   flex: 0 0 auto;
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   box-shadow: 0 0 0 1px var(--studio-tab-dot-ring);
 }
 .orch-feed__quiet-note {
   margin: auto 0 0;
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   line-height: 1.4;
 }
 
@@ -206,28 +206,28 @@
   background: color-mix(in srgb, var(--studio-bg-editor) 94%, transparent);
   border-bottom: 1px solid var(--studio-border);
   color: var(--studio-fg-dim);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 650;
 }
 .orch-feed__kind {
   flex: 0 0 auto;
   font-weight: 700;
   color: var(--studio-fg-strong);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 .orch-feed__topic {
   flex: 0 1 auto;
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding: var(--studio-compat-space-6) var(--studio-compat-space-2);
+  border-radius: var(--studio-compat-radius-6);
   background: var(--studio-bg-hover);
   color: var(--studio-fg-dim);
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 .orch-feed__empty {
   color: var(--studio-fg-dim);
   padding: var(--studio-spacing-5);
-  font-size: 13px;
+  font-size: var(--studio-font-size-md);
 }
 
 .orch-feed__load-older {
@@ -235,12 +235,12 @@
   margin: 0 var(--studio-spacing-2) var(--studio-spacing-2);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-hover);
   color: var(--studio-fg);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .orch-feed__load-older:hover {
@@ -256,10 +256,10 @@
   align-items: center;
   margin-bottom: var(--studio-spacing-2);
 }
-.orch-feed__detail h3 { margin: 0 0 10px; color: var(--studio-fg-strong); font-size: 16px; line-height: 1.35; }
+.orch-feed__detail h3 { margin: 0 0 var(--studio-compat-space-5); color: var(--studio-fg-strong); font-size: var(--studio-compat-type-31); line-height: 1.35; }
 .orch-feed__meta {
   display: grid;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
   margin: 0 0 var(--studio-spacing-3);
 }
 .orch-feed__meta div { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: var(--studio-spacing-2); }
@@ -287,23 +287,23 @@
   margin-bottom: var(--studio-spacing-3);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-nav-active-bg);
   color: var(--studio-nav-active-fg);
   cursor: pointer;
   font-weight: 650;
 }
-.orch-feed__detail-section h4 { margin: 0 0 5px; color: var(--studio-fg-strong); font-size: 12px; }
-.orch-feed__detail-section p { margin: 0; color: var(--studio-fg); font-size: 13px; }
+.orch-feed__detail-section h4 { margin: 0 0 var(--studio-compat-space-7); color: var(--studio-fg-strong); font-size: var(--studio-font-size-sm); }
+.orch-feed__detail-section p { margin: 0; color: var(--studio-fg); font-size: var(--studio-font-size-md); }
 
 .orch-feed__override {
   margin-top: var(--studio-spacing-2);
   background: transparent;
   border: 1px dashed color-mix(in srgb, var(--studio-accent-warn) 45%, transparent);
   color: var(--studio-accent-warn-strong);
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 12px;
+  border-radius: var(--studio-compat-radius-7);
+  padding: var(--studio-compat-space-2) var(--studio-compat-space-5);
+  font-size: var(--studio-font-size-sm);
   cursor: pointer;
 }
 .orch-feed__override:hover { background: color-mix(in srgb, var(--studio-accent-warn) 10%, transparent); }
@@ -311,10 +311,10 @@
   margin-top: var(--studio-spacing-2);
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: var(--studio-compat-space-11);
   padding: var(--studio-spacing-2);
   border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 45%, transparent);
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: color-mix(in srgb, var(--studio-accent-warn) 8%, transparent);
 }
 .orch-feed__override-input {
@@ -323,18 +323,18 @@
   background: var(--studio-bg-surface);
   color: var(--studio-fg);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
-  padding: 7px var(--studio-spacing-2);
+  border-radius: var(--studio-compat-radius-7);
+  padding: var(--studio-compat-space-11) var(--studio-spacing-2);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--studio-font-size-md);
   resize: vertical;
 }
 .orch-feed__override-actions { display: flex; gap: var(--studio-spacing-2); justify-content: flex-end; }
 .orch-feed__override-cancel,
 .orch-feed__override-submit {
-  border-radius: 6px;
-  padding: 5px 11px;
-  font-size: 12px;
+  border-radius: var(--studio-compat-radius-7);
+  padding: var(--studio-compat-space-7) var(--studio-compat-space-10);
+  font-size: var(--studio-font-size-sm);
   cursor: pointer;
   border: 1px solid transparent;
 }

@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
 import { CliSettings } from '../../../../models/task.model';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** CLI path availability: found is success, not found is danger (AGT-3403). */
 export function cliAvailabilityTone(available: boolean | null | undefined): StatusTone {

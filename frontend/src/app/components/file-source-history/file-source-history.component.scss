@@ -22,7 +22,7 @@
   overflow: hidden;
   color: var(--studio-fg-dim);
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -34,7 +34,7 @@
 
 .fsh__state {
   border: 1px dashed var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   padding: var(--studio-spacing-3);
 }
 
@@ -71,7 +71,7 @@
 
 .fsh__timeline-head {
   color: var(--studio-fg-muted);
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   font-weight: 700;
   letter-spacing: 0.04em;
   padding: 0 var(--studio-spacing-2);
@@ -81,7 +81,7 @@
 .fsh__timeline-button {
   width: 100%;
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
   cursor: pointer;
@@ -105,7 +105,7 @@
 .fsh__time,
 .fsh__version-meta {
   color: var(--studio-fg-dim);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   font-variant-numeric: tabular-nums;
 }
 
@@ -127,7 +127,7 @@
   gap: var(--studio-spacing-2);
   min-width: 0;
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-editor);
   padding: var(--studio-spacing-3);
 }

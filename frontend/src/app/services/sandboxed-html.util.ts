@@ -1,4 +1,4 @@
-import type { ConfirmDialogService } from './confirm-dialog.service';
+import type { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 
 /**
  * `extraImgOrigin` lets the host's own origin serve `img-src` requests, so

@@ -5,7 +5,7 @@ import { of } from 'rxjs';
 import { AcceptanceNextStepsComponent } from './acceptance-next-steps.component';
 import { AcceptanceReadinessStore, type AcceptanceRoundDraft } from '../../state/acceptance-readiness.store';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import type { TaskDeliveryClaimAnswer } from '../../../../models/task.model';
 import type { AcceptanceReadinessItem } from '../../models/acceptance-readiness.model';
 import { readinessItem, reviewCard } from '../../testing/acceptance-readiness.fixtures';

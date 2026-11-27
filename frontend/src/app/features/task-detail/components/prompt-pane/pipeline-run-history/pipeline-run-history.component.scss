@@ -8,11 +8,11 @@
   padding-block: 0;
   padding-inline: var(--studio-spacing-2);
   border: 1px solid color-mix(in srgb, var(--studio-accent-4) 40%, transparent);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: color-mix(in srgb, var(--studio-accent-4) 18%, var(--studio-bg-elevated));
   color: var(--studio-fg-strong);
   font: inherit;
-  font-size: 9.5px;
+  font-size: var(--studio-compat-type-42);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;

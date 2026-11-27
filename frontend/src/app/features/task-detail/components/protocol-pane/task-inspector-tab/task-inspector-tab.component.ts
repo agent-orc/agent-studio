@@ -3,7 +3,7 @@ import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
 import type { PromptEnrichmentReport } from '../../../../../models/task.model';
 import type { TaskRefinementEntry } from '../../../../run-timeline';
 import { resolveProtocolImageSrc } from '../protocol-image-resolver';
-import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { enrichmentStatusTone } from './task-inspector-status';
 
 const ENRICHMENT_EXPANDED_KEY = 'taskboard.taskInspector.enrichmentExpanded';

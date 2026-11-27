@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
-import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
-import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
+import { EmptyStateComponent } from '@studio/ui/components/empty-state/empty-state.component';
+import { LoadingSurfaceComponent } from '@studio/ui/components/async-feedback/index';
 import { ProjectPipelineDiagramComponent } from '../project-pipeline-diagram/project-pipeline-diagram';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
 import type { DeployPanel } from '../../state/deploy-area.model';

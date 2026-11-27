@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, ElementRef, computed, effect, inject, input, output } from '@angular/core';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { LiveGlyphComponent } from '../live-glyph/live-glyph.component';
 import { LIVE_KIND_LABEL, type LiveNode, type LiveScene } from '../live-structure.model';
 

@@ -20,7 +20,8 @@ public sealed record CompletionContentFacts(
     string? RunAttemptId = null,
     string? ReviewAttemptId = null,
     DateTime? ReviewedAtUtc = null,
-    string? ReportRef = null);
+    string? ReportRef = null,
+    string? AdmissionProblem = null);
 
 /// <summary>
 /// Why no settled remote review report backs the content check (AGT-3467):
@@ -71,6 +72,7 @@ public static class CompletionContentPolicy
     {
         var gaps = new List<string>();
         var expectedAspect = TaskModes.IsConcept(facts.Mode) ? "concept-fit" : "requirement-fit";
+        if (facts.AdmissionProblem is { } admissionProblem) gaps.Add(admissionProblem);
         if (!string.Equals(facts.RequiredAspect, expectedAspect, StringComparison.OrdinalIgnoreCase))
             gaps.Add($"content aspect must be {expectedAspect}, not {facts.RequiredAspect}");
         if (string.IsNullOrWhiteSpace(facts.DeliveryBriefVersion))

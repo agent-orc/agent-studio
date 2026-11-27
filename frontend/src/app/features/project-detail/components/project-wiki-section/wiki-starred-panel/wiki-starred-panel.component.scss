@@ -26,7 +26,7 @@
 
 .wstar__count {
   margin-left: auto;
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   font-variant-numeric: tabular-nums;
   color: var(--pwiki-paper-muted, var(--studio-fg-muted));
 }
@@ -56,7 +56,7 @@
   text-align: left;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: transparent;
   color: var(--pwiki-paper-fg, var(--studio-fg));
   font: inherit;
@@ -74,7 +74,7 @@
 }
 
 .wstar__label {
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -82,7 +82,7 @@
 }
 
 .wstar__path {
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   font-family: var(--font-mono, monospace);
   color: var(--pwiki-paper-muted, var(--studio-fg-muted));
   overflow: hidden;
@@ -99,7 +99,7 @@
   height: 26px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: transparent;
   color: var(--studio-accent-3);
   cursor: pointer;

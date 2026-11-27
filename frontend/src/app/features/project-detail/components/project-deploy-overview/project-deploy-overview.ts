@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
-import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
-import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { EmptyStateComponent } from '@studio/ui/components/empty-state/empty-state.component';
+import { LoadingSurfaceComponent } from '@studio/ui/components/async-feedback/index';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { DeployEnvironmentCardComponent } from '../deploy-environment-card/deploy-environment-card';
 import type { RollbackOffer } from '../../state/rollback-offer.model';
 import { ProjectDeployStepsFormComponent } from '../project-deploy-steps-form/project-deploy-steps-form';

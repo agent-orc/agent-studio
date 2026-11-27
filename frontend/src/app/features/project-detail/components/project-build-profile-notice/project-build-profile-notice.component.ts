@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, DOCUMENT, computed, inject, input } from '@angular/core';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { ServerCheckoutStore } from '../../../server-checkout';
 
 /** One command list where the central BuildProfile disagrees with the repository's own `.agent-studio/project.yml`. */

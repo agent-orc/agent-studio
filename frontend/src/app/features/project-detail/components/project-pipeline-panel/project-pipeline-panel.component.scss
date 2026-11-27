@@ -52,7 +52,7 @@
   @include m.deck-panel-attention;
 
   color: var(--severity-high);
-  font-size: 0.85rem;
+  font-size: var(--studio-compat-type-26);
 }
 
 /* Empty state: solid muted panel — the contract has no dashed variant. */
@@ -62,7 +62,7 @@
 
   margin: 0;
   color: var(--studio-fg-muted);
-  font-size: 0.85rem;
+  font-size: var(--studio-compat-type-26);
 }
 
 .pp__group {
@@ -113,7 +113,7 @@
   color: var(--studio-fg-muted);
   font-size: var(--studio-card-meta-size);
   line-height: 1;
-  transition: transform 0.12s ease;
+  transition: transform var(--studio-compat-duration-3) ease;
 }
 
 .pp__group:not([open]) .pp__group-caret,
@@ -179,7 +179,7 @@
   min-height: var(--pp-row-min);
   padding: var(--studio-card-compact-padding-block) var(--studio-card-compact-padding-inline);
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background var(--studio-compat-duration-3) ease;
 }
 
 .pp__summary:hover {
@@ -264,7 +264,7 @@
   align-items: center;
   justify-content: center;
   border: 1px solid color-mix(in srgb, var(--pipeline-step-color) 32%, var(--studio-card-muted-border));
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   background: color-mix(in srgb, var(--pipeline-step-color) 8%, transparent);
   color: var(--pipeline-step-color);
   cursor: help;
@@ -456,7 +456,7 @@
   .pp__group-caret,
   .pp__summary-caret,
   .pp__summary {
-    transition-duration: 0s;
+    transition-duration: var(--studio-compat-duration-2);
   }
 }
 

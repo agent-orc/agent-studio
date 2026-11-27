@@ -37,7 +37,7 @@
   background: var(--studio-bg-sidebar);
   border-right: 1px solid var(--studio-border);
   overflow: hidden;
-  transition: width 160ms ease;
+  transition: width var(--studio-compat-duration-18) ease;
 }
 
 .proj-shell__rail--collapsed {
@@ -102,7 +102,7 @@
   width: 1px;
   min-width: 1px;
   /* stylelint-disable-next-line declaration-property-unit-disallowed-list -- 1px overlap prevents a double divider beside the splitter. */
-  margin-left: -1px;
+  margin-left: var(--studio-compat-space-36);
   align-self: stretch;
   display: grid;
   place-items: center;
@@ -114,7 +114,7 @@
   outline: 0;
   touch-action: none;
   user-select: none;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background var(--studio-compat-duration-1) ease, border-color var(--studio-compat-duration-1) ease;
 }
 
 .proj-shell__splitter::before {
@@ -125,7 +125,7 @@
   left: -3px;
   right: -3px;
   cursor: col-resize;
-  transition: background 120ms ease;
+  transition: background var(--studio-compat-duration-1) ease;
   z-index: 1;
 }
 
@@ -239,7 +239,7 @@
 }
 .proj-shell__panel-title {
   margin: 0 0 var(--studio-spacing-1);
-  font-size: 1.05rem;
+  font-size: var(--studio-compat-type-9);
   font-weight: 600;
   color: var(--studio-fg-strong);
   display: flex;
@@ -249,7 +249,7 @@
 .proj-shell__panel-desc {
   margin: 0;
   color: var(--studio-fg-dim);
-  font-size: 0.85rem;
+  font-size: var(--studio-compat-type-26);
 }
 
 @media (max-width: 56.25rem) {
@@ -299,7 +299,7 @@
     height: 1px;
     min-height: 1px;
     /* stylelint-disable-next-line declaration-property-unit-disallowed-list -- 1px overlap prevents a double divider beside the splitter. */
-    margin-top: -1px;
+    margin-top: var(--studio-compat-space-36);
     margin-left: 0;
     border-left: 0;
     border-right: 0;

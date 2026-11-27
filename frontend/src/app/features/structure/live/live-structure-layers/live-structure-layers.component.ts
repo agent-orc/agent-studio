@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { LiveGlyphComponent } from '../live-glyph/live-glyph.component';
 import { LIVE_LAYERS, type LiveLayer } from '../live-structure.model';
 

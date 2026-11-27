@@ -3,7 +3,7 @@
 .prompt-review,
 .prompt-overrides {
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-surface-muted);
   padding: var(--studio-spacing-3);
 }
@@ -16,17 +16,17 @@
   gap: var(--studio-spacing-2);
 }
 
-.prompt-review__muted { color: var(--studio-fg-muted); font-size: 11px; }
+.prompt-review__muted { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-6); }
 
 .prompt-review__button {
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .prompt-review__button:disabled { opacity: 0.5; cursor: wait; }
@@ -41,19 +41,19 @@
   list-style: none;
 }
 
-.prompt-review__findings li { display: flex; align-items: baseline; gap: var(--studio-spacing-2); font-size: 12px; }
+.prompt-review__findings li { display: flex; align-items: baseline; gap: var(--studio-spacing-2); font-size: var(--studio-font-size-sm); }
 
 .prompt-overrides {
   flex: 0 0 auto;
   overflow-x: auto;
 }
-.prompt-overrides__head { margin-bottom: var(--studio-spacing-2); color: var(--studio-fg); font-size: 11px; }
-.prompt-overrides table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.prompt-overrides th { color: var(--studio-fg-muted); font-size: 10px; font-weight: 600; text-align: left; text-transform: uppercase; }
+.prompt-overrides__head { margin-bottom: var(--studio-spacing-2); color: var(--studio-fg); font-size: var(--studio-compat-type-6); }
+.prompt-overrides table { width: 100%; border-collapse: collapse; font-size: var(--studio-font-size-sm); }
+.prompt-overrides th { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-1); font-weight: 600; text-align: left; text-transform: uppercase; }
 .prompt-overrides th,
 .prompt-overrides td { padding: var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border); vertical-align: top; }
 .prompt-overrides code,
 .prompt-overrides pre { font-family: var(--font-mono); }
 .prompt-overrides summary { color: var(--studio-accent-strong); cursor: pointer; }
-.prompt-overrides pre { max-height: 18rem; overflow: auto; white-space: pre-wrap; color: var(--studio-fg-dim); font-size: 11px; }
+.prompt-overrides pre { max-height: 18rem; overflow: auto; white-space: pre-wrap; color: var(--studio-fg-dim); font-size: var(--studio-compat-type-6); }
 .prompt-overrides__diff { color: var(--studio-fg-muted); font-family: var(--font-mono); }

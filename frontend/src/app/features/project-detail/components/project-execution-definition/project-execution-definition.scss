@@ -32,18 +32,18 @@ p {
 
 h3 {
   color: var(--studio-fg-strong);
-  font-size: 0.95rem;
+  font-size: var(--studio-compat-type-16);
 }
 
 .execution__head p,
 .execution__muted {
   color: var(--studio-fg-dim);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
 }
 
 .execution__summary {
   color: var(--studio-fg-muted);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
 }
 
 .execution__details,
@@ -90,7 +90,7 @@ textarea {
   border: 1px solid var(--studio-border);
   background: var(--studio-bg-surface);
   color: var(--studio-fg);
-  font: 0.76rem/1.5 var(--studio-mono);
+  font: var(--studio-compat-type-17)/1.5 var(--studio-mono);
 }
 
 pre {
@@ -105,7 +105,7 @@ label {
   gap: var(--studio-spacing-1);
   margin-top: var(--studio-spacing-3);
   color: var(--studio-fg-muted);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
 }
 
 textarea {
@@ -128,7 +128,7 @@ textarea {
   padding: var(--studio-spacing-3);
   background: color-mix(in srgb, var(--studio-warn) 12%, var(--studio-bg-elevated));
   color: var(--studio-fg);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
 }
 
 .execution__warnings li {
@@ -146,7 +146,7 @@ textarea {
   grid-template-columns: minmax(7rem, 1fr) auto minmax(7rem, auto);
   align-items: center;
   gap: var(--studio-spacing-2);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
 }
 
 .execution__metric,

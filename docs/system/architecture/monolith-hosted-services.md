@@ -170,6 +170,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | BackupHostedService | not Test | infra | Authority host (AGT-3574 scheduled encrypted installation backups, retention, restore verification and off-host copy; no lane decision) |
 | CardPreviewSweep | !PD, not Test | infra | Authority host. Reconciles green deliveries, integration and expiry into fenced preview deploy and removal jobs; it does not move cards. |
 | InstanceDeployWorker | !PD, not Test | infra | Authority host (AGT-3879). Records the running version as the live instance release on first start and refreshes the git-derived instance deploy facts; it does not move cards. |
+| StudioReleasesWorker | !PD, not Test | infra | Authority host (AGT-4055). Refreshes the Studio release read model and remembers running revisions absent from deploy reports; no card, deploy or lane transition. |
 | DeploymentInterventionWorker | !PD, not Test | infra | Authority host. Runs deployment intervention timeout reconciliation each minute; it does not move task lanes. |
 | OrphanReaperHostedService | !PD | infra | Authority host |
 | CleanContextRetentionHostedService | !PD | infra | Authority host |

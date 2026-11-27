@@ -7,7 +7,7 @@ import {
   output,
   signal,
 } from '@angular/core';
-import { NotificationService } from '../../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from '../../../../../services/task.service';
 import type { PipelineStepConfig } from '../../../../task-pipeline';
 

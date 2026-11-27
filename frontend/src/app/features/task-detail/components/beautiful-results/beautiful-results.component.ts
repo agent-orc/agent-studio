@@ -16,7 +16,7 @@ import { applyHighlighting } from './beautiful-results.highlight';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
 import { MarkdownImageLightboxDirective } from 'coding-agent-chat/shared';
 import { perfMark, perfMeasure } from '../../../../utils/perf-tracker';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 interface SentinelMeta {
   kind: SentinelBanner['kind'];

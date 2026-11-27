@@ -6,8 +6,8 @@ import {
   deliveryHealthLabel,
   deliveryRunLabel,
 } from '../../../../models/delivery-presentation';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { deliveryStatusTone } from './delivery-status-tone';
 import { DeliveryColumnsService } from '../../../deployments/services/delivery-columns.service';
 import { LaneCollapseService } from '../../state/lane-collapse.service';

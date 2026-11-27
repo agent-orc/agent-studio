@@ -1,7 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, effect, input, output, signal } from '@angular/core';
-import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
-import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
+import { EmptyStateComponent } from '@studio/ui/components/empty-state/empty-state.component';
+import { LoadingSurfaceComponent } from '@studio/ui/components/async-feedback/index';
 import {
   ALL_DEPLOY_RUNS,
   DEPLOYMENT_STATES,
@@ -15,7 +15,7 @@ import {
   type DeployRunFilter,
 } from '../../state/deploy-area.model';
 import { historyRunStateTone } from '../../state/deploy-status-tone';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { PrincipalNamePipe } from '../../../../pipes/principal-name.pipe';
 
 const PERIODS: readonly { value: DeployPeriod; label: string }[] = [

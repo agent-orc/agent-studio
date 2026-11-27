@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
-import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
-import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { WikiLifecycleItem, WikiNodeType, WikiPulse, WikiPulseDriftArea, WikiPulseFeedItem, WorkbenchListItem } from '../../../../../models/project-docs.model';
 import { WorkbenchInboxComponent } from './workbench-inbox/workbench-inbox.component';

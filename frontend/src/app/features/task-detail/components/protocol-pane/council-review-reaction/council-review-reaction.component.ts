@@ -4,7 +4,7 @@ import { councilFindingAction, councilReactionDisposition } from '../../../../..
 import type { TaskInfo } from '../../../../../models/task.model';
 import type { CouncilReviewReaction } from '../../../../../services/task.service';
 import { taskNavigationHref } from '../../../state/task-url';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Tone of a per-finding orchestrator action; unknown actions read as Accept, like the label. */
 export function councilActionTone(action: string): StatusTone {

@@ -12,7 +12,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { ConceptKey, getConceptEntry } from '../../concept-docs/concept-doc-registry';
-import { ModalStackService } from '../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { ConnectedOverlayDirective } from '../../directives/connected-overlay.directive';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';

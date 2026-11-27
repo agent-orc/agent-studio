@@ -31,7 +31,7 @@
       min-width: 0;
       margin: 0;
       color: var(--studio-fg-strong);
-      font-size: 1rem;
+      font-size: var(--studio-compat-type-23);
       font-weight: 620;
       line-height: 1.35;
     }
@@ -50,7 +50,7 @@
     align-items: center;
     gap: var(--studio-spacing-1) var(--studio-spacing-3);
     color: var(--studio-fg-dim);
-    font-size: 0.72rem;
+    font-size: var(--studio-compat-type-10);
     line-height: 1.4;
     time,
     .workbench-overview__open-count {
@@ -67,7 +67,7 @@
       width: 0.5rem;
       height: 0.5rem;
       border: 1px solid color-mix(in srgb, var(--studio-fg) 42%, transparent);
-      border-radius: 50%;
+      border-radius: var(--studio-compat-radius-4);
       background: var(--workbench-project);
     }
   }
@@ -87,8 +87,8 @@
   }
   &__references {
     color: var(--studio-fg-dim);
-    font-size: 0.72rem;
-    transition: opacity 120ms ease;
+    font-size: var(--studio-compat-type-10);
+    transition: opacity var(--studio-compat-duration-1) ease;
     &--loading {
       opacity: 0.52;
     }
@@ -100,7 +100,7 @@
     margin: 0;
     overflow: hidden;
     color: var(--studio-fg-muted);
-    font-size: 0.8rem;
+    font-size: var(--studio-compat-type-12);
     line-height: 1.55;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 8;
@@ -130,7 +130,7 @@
       min-height: 1.75rem;
       padding: 0 var(--studio-spacing-2);
       font: inherit;
-      font-size: 0.74rem;
+      font-size: var(--studio-compat-type-14);
       cursor: pointer;
       &:focus-visible {
         outline: 2px solid var(--studio-accent-3-strong);
@@ -149,7 +149,7 @@
     background: transparent;
     color: var(--studio-fg-muted);
     font: inherit;
-    font-size: 0.74rem;
+    font-size: var(--studio-compat-type-14);
     cursor: pointer;
     &:hover {
       color: var(--studio-fg);
@@ -203,6 +203,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .workbench-overview__references {
-    transition-duration: 0s;
+    transition-duration: var(--studio-compat-duration-2);
   }
 }

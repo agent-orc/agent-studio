@@ -10,7 +10,7 @@ section {
   margin-bottom: var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
   color: var(--studio-fg);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 p { margin: var(--studio-spacing-1) 0; color: var(--studio-fg-muted); }
 span { color: var(--studio-fg-muted); font-variant-numeric: tabular-nums; }

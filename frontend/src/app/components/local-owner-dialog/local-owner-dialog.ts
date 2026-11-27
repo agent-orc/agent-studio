@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
-import { DialogComponent } from '../dialog/dialog.component';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
 import { LocalOwnerSignInComponent } from '../local-owner-sign-in/local-owner-sign-in';
 import { LocalOwnerSessionService } from '../../services/local-owner-session.service';
 

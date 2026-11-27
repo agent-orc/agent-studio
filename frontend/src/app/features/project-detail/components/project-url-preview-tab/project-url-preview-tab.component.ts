@@ -14,10 +14,10 @@ import {
 import { HttpErrorResponse } from '@angular/common/http';
 import { DomSanitizer, type SafeResourceUrl } from '@angular/platform-browser';
 import { finalize } from 'rxjs';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
-import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../../components/menu';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '@studio/ui/components/menu/index';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { TaskService } from '../../../../services/task.service';
 import { AuthService } from '../../../../services/auth.service';
 import {
@@ -39,7 +39,7 @@ import {
 } from '../project-url-settings-dialog/project-url-settings-dialog';
 import { buildEmbedMenuItems, httpErrorMessage, projectPreviewProxyUrl, type StartFailure } from './project-url-preview-tab.helpers';
 import { diagnosticText, presentProjectUrlDiagnosis, projectUrlDiagnosisTone } from './project-url-diagnostic.model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import {
   previewPillTone, previewStateBadgeLabel, previewStateBadgeStatus, type PreviewPill, type PreviewStateBadgeInput,
 } from './project-url-preview-status';

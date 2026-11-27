@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, ViewEncapsulation, input, output } from '@angular/core';
-import { StudioIconComponent, StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
+import { StudioIconComponent, StudioIconName } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 
 /**

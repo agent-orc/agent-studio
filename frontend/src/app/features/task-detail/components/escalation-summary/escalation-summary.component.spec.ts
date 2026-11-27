@@ -11,7 +11,7 @@ import { TaskTimelinePollService } from '../../../polling/services/task-timeline
 import { RunTimelinePollService } from '../../../polling/services/run-timeline-poll.service';
 import type { TaskDetail, ReviewProjectionView } from '../../../../models/task.model';
 import type { TaskTimelineEvent } from '../../../task-timeline';
-import { ModalStackService } from '../../../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 
 /** localStorage key the component persists per-task collapse under. */
 const COLLAPSE_KEY = 'taskboard.escalation.collapsed';

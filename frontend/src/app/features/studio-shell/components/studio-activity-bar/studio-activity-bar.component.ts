@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import type { StudioActivityItemKey } from './studio-activity-bar.active-key';
 
 export type StudioActivityPanelKey = 'explorer' | 'filters' | 'cli' | 'activity';

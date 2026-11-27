@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import { TaskState, type TaskInfo } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { NotificationService } from '@studio/ui/services/notification.service';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * AGT-3845: a Human Review card whose latest Remote Review grade came from a

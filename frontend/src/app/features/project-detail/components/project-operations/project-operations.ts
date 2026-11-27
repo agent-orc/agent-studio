@@ -1,13 +1,13 @@
 import { IsolatedTestsComponent } from '../isolated-tests/isolated-tests';
 import { historyRunStateTone } from '../../state/deploy-status-tone';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { DatePipe } from '@angular/common';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, HostListener, computed, effect, inject, input, output, signal, type WritableSignal } from '@angular/core';
 import { take } from 'rxjs';
 import { hostStateLabel, hostStateTone, metric, ratio, type OperationsLogResult, type OperationsTrace, type OperationsSpan, type ProjectOperations } from './project-operations.model';
 import { OperationsTrendComponent } from '../operations-trend/operations-trend';
-import { LoadingSurfaceComponent, PendingButtonDirective } from '../../../../components/async-feedback';
+import { LoadingSurfaceComponent, PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 import type { PostMergeCoverage, ProjectTesting } from '../../../../models/task.model';
 

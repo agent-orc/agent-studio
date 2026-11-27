@@ -17,9 +17,9 @@ import type { TaskDetail } from '../../../../models/task.model';
 import { TaskState } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
 import { ErrorDialogService } from '../../../../services/error-dialog.service';
-import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { needsPlanningAcceptWarning } from '../../state/triage-actions.model';
 import { buildIsolatedHtmlSrcdoc } from '../../../../services/sandboxed-html.util';
 import {

@@ -15,7 +15,7 @@ label {
   display: grid;
   gap: var(--studio-spacing-1);
   color: var(--studio-fg-dim);
-  font-size: 0.875rem;
+  font-size: var(--studio-compat-type-3);
 }
 
 input {

@@ -12,10 +12,10 @@ import {
 
 import type { TaskScreenshot } from '../../../../features/screenshots';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
-import { ModalStackService } from '../../../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Screenshot test status to status tone (AGT-3403); unknown states are neutral. */
 const SCREENSHOT_STATUS_TONES: Readonly<Record<string, StatusTone>> = {

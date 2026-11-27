@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import type { Subscription } from 'rxjs';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { laneTone } from '../../../../models/lane-presentation';
 import { RemoteHostsService } from '../../../remote-hosts';
 import { FlowHealthService, hostPlaneSlots, type FlowHealthLoad } from '../../services/flow-health.service';

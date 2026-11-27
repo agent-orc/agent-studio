@@ -7,10 +7,10 @@
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   background: color-mix(in srgb, var(--studio-accent-3) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--studio-accent-3) 42%, transparent);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   color: var(--studio-fg);
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 .picker--open { border-color: var(--studio-accent); }
 .picker__input {
@@ -37,13 +37,13 @@
   list-style: none;
   background: var(--studio-bg-elevated);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+  border-radius: var(--studio-compat-radius-5);
+  box-shadow: var(--studio-compat-elevation-7);
   z-index: 30;
 }
 .picker__option {
   padding: var(--studio-spacing-2);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   color: var(--studio-fg);
   font-weight: 500;
   cursor: pointer;

@@ -1,5 +1,5 @@
-import type { StudioIconName } from '../components/studio-icon/studio-icon.component';
-import type { StatusTone } from '../components/status-indicator/status-indicator.component';
+import type { StudioIconName } from '@studio/ui/components/studio-icon/studio-icon.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { ArticlePattern, WorkbenchStatus } from './project-docs.model';
 
 /**

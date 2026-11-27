@@ -6,7 +6,7 @@
 .trend__title {
   margin: 0 0 var(--studio-spacing-2);
   color: var(--studio-fg-muted);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -16,10 +16,10 @@
   @include m.deck-panel-attention;
   margin-bottom: var(--studio-spacing-2);
   color: var(--studio-fg);
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
 }
 .trend__warning strong { color: var(--severity-high); }
-.trend__empty { margin: var(--studio-spacing-1) 0 0; color: var(--studio-fg-muted); font-size: 0.82rem; }
+.trend__empty { margin: var(--studio-spacing-1) 0 0; color: var(--studio-fg-muted); font-size: var(--studio-compat-type-7); }
 .trend__legend {
   display: flex;
   flex-wrap: wrap;
@@ -31,20 +31,20 @@
   display: inline-flex;
   align-items: baseline;
   gap: var(--studio-spacing-1);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
 }
 .trend__legend-total {
   margin-left: auto;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--studio-surface-muted);
   font-weight: 600;
 }
 .trend__swatch {
   width: 9px;
   height: 9px;
-  border-radius: 2px;
+  border-radius: var(--studio-compat-radius-8);
   align-self: center;
 }
 .trend__legend-label { color: var(--studio-fg-muted); }
@@ -55,14 +55,14 @@
   color: var(--studio-fg);
   font-variant-numeric: tabular-nums;
 }
-.trend__legend-tokens { color: var(--studio-fg-muted); font-size: 0.68rem; font-variant-numeric: tabular-nums; }
-.trend__incomplete { color: var(--studio-fg-muted); font-size: 0.62rem; font-weight: 600; line-height: 1.25; }
+.trend__legend-tokens { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-15); font-variant-numeric: tabular-nums; }
+.trend__incomplete { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-65); font-weight: 600; line-height: 1.25; }
 .trend__bars {
   @include m.deck-panel(4px 4px 18px);
   display: flex;
   align-items: flex-end;
   height: 72px;
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
 }
 .trend__column {
   position: relative;
@@ -79,7 +79,7 @@
   flex-direction: column-reverse;
   min-height: 1px;
   overflow: hidden;
-  border-radius: 2px 2px 0 0;
+  border-radius: var(--studio-compat-radius-8) var(--studio-compat-radius-8) 0 0;
 }
 .trend__segment { display: block; width: 100%; min-height: 1px; }
 .trend__day {
@@ -88,7 +88,7 @@
   left: 50%;
   transform: translateX(-50%);
   color: var(--studio-fg-muted);
-  font-size: 0.62rem;
+  font-size: var(--studio-compat-type-65);
 }
 .trend__swatch--core, .trend__segment--core { background: var(--severity-info); }
 .trend__swatch--aspect, .trend__segment--aspect { background: var(--severity-pass); }
@@ -97,7 +97,7 @@
 .trend__swatch--module, .trend__segment--module { background: var(--studio-fg-muted); }
 
 // AGT-3015: cost of deciding and the decision-step table.
-.trend__legend-runs { color: var(--studio-fg-muted); font-size: 0.68rem; font-variant-numeric: tabular-nums; }
+.trend__legend-runs { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-15); font-variant-numeric: tabular-nums; }
 .trend__num { font-variant-numeric: tabular-nums; }
 .trend__deciding {
   display: flex;
@@ -106,7 +106,7 @@
   gap: var(--studio-spacing-1) var(--studio-spacing-3);
   margin-bottom: var(--studio-spacing-2);
   color: var(--studio-fg-dim);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
 
   strong { color: var(--studio-fg); font-weight: 600; }
 }
@@ -114,7 +114,7 @@
   width: 100%;
   margin-bottom: var(--studio-spacing-2);
   border-collapse: collapse;
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 
   th {
     padding: var(--studio-spacing-1);
@@ -124,7 +124,7 @@
   }
 
   td {
-    padding: 2px var(--studio-spacing-1);
+    padding: var(--studio-compat-space-4) var(--studio-spacing-1);
     border-top: 1px solid var(--studio-border);
     color: var(--studio-fg);
   }
@@ -133,5 +133,5 @@
   td.trend__num { text-align: right; }
 }
 .trend__step-id,
-.trend__step-model { font-family: var(--font-mono); font-size: 0.68rem; }
+.trend__step-model { font-family: var(--font-mono); font-size: var(--studio-compat-type-15); }
 .trend__step-model { color: var(--studio-fg-dim); }

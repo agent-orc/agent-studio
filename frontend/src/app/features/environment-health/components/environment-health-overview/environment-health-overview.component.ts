@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { formatDate } from '@angular/common';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { EnvironmentHealthService } from '../../services/environment-health.service';
 import {
   HEALTH_STATUS_LABEL, latencyLabel, uptimeLabel, type EnvironmentHealth, type EnvironmentHealthResponse, type HealthStatus,

@@ -11,7 +11,7 @@
  * Dependency-free so the ordering and the cost wording are unit-tested
  * against fixtures, apart from the host component.
  */
-import type { StatusTone } from '../../../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type {
   PipelineExecutionRecord,
   PipelineStepExecution,

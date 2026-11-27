@@ -1,20 +1,20 @@
 :host {
   display: block;
-  margin-top: 2px;
+  margin-top: var(--studio-compat-space-4);
 }
 
 .awd-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--studio-compat-space-7);
   // ADM-17 hit area: the label row, not the marker alone.
   min-height: 24px;
-  padding: 1px 0;
+  padding: var(--studio-compat-space-6) 0;
   background: none;
   border: none;
   cursor: pointer;
   color: var(--studio-fg-dim);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 500;
 
   &:hover { color: var(--studio-fg); }
@@ -26,12 +26,12 @@
 }
 
 .awd-body {
-  margin-top: 4px;
+  margin-top: var(--studio-spacing-1);
 }
 
 .awd-note {
-  margin: 2px 0;
-  font-size: 11px;
+  margin: var(--studio-compat-space-4) 0;
+  font-size: var(--studio-compat-type-6);
   color: var(--studio-fg-dim);
 }
 
@@ -50,15 +50,15 @@
   &__head {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--studio-compat-space-2);
     width: 100%;
     min-height: 24px;
-    padding: 3px 2px;
+    padding: var(--studio-compat-space-1) var(--studio-compat-space-4);
     background: none;
     border: none;
     cursor: pointer;
     color: var(--studio-fg);
-    font-size: 11.5px;
+    font-size: var(--studio-compat-type-19);
     text-align: left;
 
     &:hover { background: var(--studio-bg-hover); }
@@ -74,22 +74,22 @@
   &__count {
     margin-left: auto;
     font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: var(--studio-compat-type-44);
     color: var(--studio-fg-dim);
   }
 }
 
 .awd-calls {
-  padding: 1px 0 4px 16px;
+  padding: var(--studio-compat-space-6) 0 var(--studio-spacing-1) var(--studio-spacing-4);
 }
 
 .awd-call {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  padding: 1px 2px;
-  font-size: 11px;
-  border-radius: 3px;
+  gap: var(--studio-compat-space-2);
+  padding: var(--studio-compat-space-6) var(--studio-compat-space-4);
+  font-size: var(--studio-compat-type-6);
+  border-radius: var(--studio-compat-radius-9);
   cursor: default;
 
   &:hover { background: var(--studio-bg-hover); }
@@ -100,7 +100,7 @@
     flex: 1 1 auto;
     min-width: 0;
     font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: var(--studio-compat-type-44);
     color: var(--studio-fg);
     white-space: nowrap;
     overflow: hidden;
@@ -110,7 +110,7 @@
   &__time {
     flex: none;
     font-family: var(--font-mono);
-    font-size: 9.5px;
+    font-size: var(--studio-compat-type-42);
     color: var(--studio-fg-dim);
   }
 
@@ -119,7 +119,7 @@
   &--more {
     color: var(--studio-fg-dim);
     font-style: italic;
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     cursor: default;
   }
 }

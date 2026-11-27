@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
-import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../menu';
-import { StudioIconComponent } from '../studio-icon/studio-icon.component';
+import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '@studio/ui/components/menu/index';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 
 /**
  * The context menu of one row or object: a "more" button that opens the

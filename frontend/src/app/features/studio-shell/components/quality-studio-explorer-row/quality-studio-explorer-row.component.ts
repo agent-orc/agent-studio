@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input } from '@angular/core';
-import { TreeRowComponent } from '../../../../components/tree-row/tree-row.component';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { TreeRowComponent } from '@studio/ui/components/tree-row/tree-row.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { AuthSessionState } from '../../../../services/auth.service';
 import { QualityStudioService } from '../../../../services/quality-studio.service';
 

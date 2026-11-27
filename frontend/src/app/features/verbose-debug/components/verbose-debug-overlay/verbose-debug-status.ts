@@ -1,5 +1,5 @@
 import type { ToolFamily } from 'coding-agent-chat/core';
-import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Warning-density row threshold tone. */
 export type WarningRowTone = 'info' | 'warn' | 'danger';

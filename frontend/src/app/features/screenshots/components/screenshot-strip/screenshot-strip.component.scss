@@ -7,7 +7,7 @@
 
 .strip {
   display: block;
-  padding: 8px 4px 6px;
+  padding: var(--studio-spacing-2) var(--studio-spacing-1) var(--studio-compat-space-2);
   border-bottom: 1px solid color-mix(in srgb, var(--studio-accent-3) 15%, transparent);
   background: linear-gradient(180deg, color-mix(in srgb, var(--studio-accent-3) 6%, transparent), transparent 80%);
 }
@@ -15,9 +15,9 @@
 .strip__rail {
   display: flex;
   flex-wrap: nowrap;
-  gap: 10px;
+  gap: var(--studio-compat-space-5);
   overflow-x: auto;
-  padding-bottom: 4px;
+  padding-bottom: var(--studio-spacing-1);
   scrollbar-width: thin;
 }
 
@@ -29,14 +29,14 @@
   align-items: stretch;
   background: var(--studio-bg-elevated);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   padding: 0;
   overflow: hidden;
   cursor: pointer;
   color: inherit;
   font: inherit;
   text-align: left;
-  transition: border-color 100ms ease, transform 100ms ease;
+  transition: border-color var(--studio-compat-duration-24) ease, transform var(--studio-compat-duration-24) ease;
   width: 180px;
 
   &:hover {
@@ -66,7 +66,7 @@
   justify-content: center;
   background: var(--studio-surface-muted);
   color: var(--studio-fg-muted);
-  font-size: 0.75rem;
+  font-size: var(--studio-compat-type-11);
   text-align: center;
 }
 
@@ -77,18 +77,18 @@
   top: 4px;
   right: 4px;
   display: inline-flex;
-  padding: 0 6px;
-  border-radius: 9999px;
+  padding: 0 var(--studio-compat-space-2);
+  border-radius: var(--studio-compat-radius-16);
   background: var(--studio-surface);
 }
 
 .strip__caption {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 5px 8px 7px;
+  gap: var(--studio-compat-space-6);
+  padding: var(--studio-compat-space-7) var(--studio-spacing-2) var(--studio-compat-space-11);
   background: var(--studio-bg-elevated);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   line-height: 1.25;
 }
 
@@ -107,7 +107,7 @@
 
 .strip__caption-project {
   color: var(--studio-accent-3-strong);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -118,7 +118,7 @@
    emphasis so a reviewer notices a non-live shot. */
 .strip__caption-source {
   color: var(--studio-fg-dim);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   letter-spacing: 0.02em;
   white-space: nowrap;
 
@@ -131,12 +131,12 @@
 .lightbox {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.82);
+  background: var(--studio-compat-surface-29);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 9000;
-  padding: 32px;
+  padding: var(--studio-spacing-6);
 }
 
 .lightbox__close {
@@ -145,56 +145,56 @@
   right: 20px;
   background: transparent;
   border: 0;
-  color: #cdd6f4;
-  font-size: 32px;
+  color: var(--studio-compat-ink-28);
+  font-size: var(--studio-compat-type-94);
   line-height: 1;
   cursor: pointer;
-  padding: 6px 12px;
-  border-radius: 6px;
+  padding: var(--studio-compat-space-2) var(--studio-spacing-3);
+  border-radius: var(--studio-compat-radius-7);
 
-  &:hover { background: rgba(255, 255, 255, 0.08); }
+  &:hover { background: var(--studio-compat-surface-30); }
 }
 
 .lightbox__nav {
-  background: rgba(30, 30, 46, 0.7);
-  border: 1px solid rgba(180, 190, 254, 0.25);
-  color: #cdd6f4;
-  font-size: 32px;
+  background: var(--studio-compat-surface-31);
+  border: 1px solid var(--studio-compat-border-23);
+  color: var(--studio-compat-ink-28);
+  font-size: var(--studio-compat-type-94);
   line-height: 1;
   width: 48px;
   height: 64px;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   cursor: pointer;
   flex: 0 0 auto;
 
-  &:hover { background: rgba(45, 45, 70, 0.85); border-color: rgba(180, 190, 254, 0.55); }
+  &:hover { background: var(--studio-compat-surface-32); border-color: var(--studio-compat-border-24); }
 }
 
 .lightbox__figure {
-  margin: 0 16px;
+  margin: 0 var(--studio-spacing-4);
   max-width: calc(100vw - 192px);
   max-height: calc(100vh - 96px);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: var(--studio-spacing-3);
 }
 
 .lightbox__img {
   max-width: 100%;
   max-height: calc(100vh - 196px);
   object-fit: contain;
-  border-radius: 6px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-  background: #11111b;
+  border-radius: var(--studio-compat-radius-7);
+  box-shadow: var(--studio-compat-elevation-9);
+  background: var(--studio-compat-surface-15);
 }
 
 .lightbox__caption {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  color: #cdd6f4;
-  font-size: 0.92rem;
+  gap: var(--studio-compat-space-2);
+  color: var(--studio-compat-ink-28);
+  font-size: var(--studio-compat-type-8);
   text-align: center;
   max-width: 100%;
 }
@@ -202,7 +202,7 @@
 .lightbox__caption-main {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--studio-spacing-3);
   flex-wrap: wrap;
   justify-content: center;
 }
@@ -215,54 +215,54 @@
    sits on an opaque surface backing that follows the active theme tokens. */
 .lightbox__status {
   display: inline-flex;
-  border-radius: 9999px;
+  border-radius: var(--studio-compat-radius-16);
   background: var(--studio-surface);
 }
 
 /* Text-only provenance label in the lightbox; no fill, matching the strip. */
 .lightbox__source {
-  color: #a6adc8;
-  font-size: 0.78rem;
+  color: var(--studio-compat-ink-29);
+  font-size: var(--studio-compat-type-13);
   letter-spacing: 0.02em;
 
-  &[data-source="mocked"] { color: #f9e2af; }
+  &[data-source="mocked"] { color: var(--studio-compat-ink-30); }
 }
 
 .lightbox__index {
-  color: #a6adc8;
+  color: var(--studio-compat-ink-29);
   font-variant-numeric: tabular-nums;
 }
 
 .lightbox__caption-meta {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
   flex-wrap: wrap;
   justify-content: center;
-  color: #a6adc8;
-  font-size: 0.84rem;
+  color: var(--studio-compat-ink-29);
+  font-size: var(--studio-compat-type-71);
 }
 
 .lightbox__task-link {
-  color: #89b4fa;
+  color: var(--studio-compat-ink-31);
   cursor: pointer;
   text-decoration: underline;
 
-  &:hover { color: #b4befe; }
+  &:hover { color: var(--studio-compat-ink-32); }
 }
 
 .lightbox__path-btn {
   background: transparent;
-  border: 1px solid rgba(180, 190, 254, 0.3);
-  color: #cdd6f4;
-  padding: 2px 10px;
-  border-radius: 4px;
+  border: 1px solid var(--studio-compat-border-25);
+  color: var(--studio-compat-ink-28);
+  padding: var(--studio-compat-space-4) var(--studio-compat-space-5);
+  border-radius: var(--studio-compat-radius-6);
   cursor: pointer;
   font: inherit;
-  font-size: 0.84rem;
+  font-size: var(--studio-compat-type-71);
 
   &:hover {
-    border-color: rgba(180, 190, 254, 0.6);
-    background: rgba(180, 190, 254, 0.1);
+    border-color: var(--studio-compat-border-26);
+    background: var(--studio-compat-surface-33);
   }
 }

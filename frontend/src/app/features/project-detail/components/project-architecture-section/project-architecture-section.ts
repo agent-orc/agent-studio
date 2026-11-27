@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, effect, inject, input, signal } fro
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { ArchitectureOverview } from '../../../../models/project-docs.model';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 type AdrStatusClass = 'accepted' | 'superseded' | 'deprecated' | 'other';
 

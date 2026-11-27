@@ -42,7 +42,7 @@
     width: 100%;
     margin-left: 0;
     border: 0;
-    border-radius: 6px;
+    border-radius: var(--studio-compat-radius-7);
     background: transparent;
     color: inherit;
     font: inherit;
@@ -83,7 +83,7 @@
     width: 8px;
     height: 8px;
     justify-self: center;
-    border-radius: 999px;
+    border-radius: var(--studio-compat-radius-2);
     background: var(--studio-fg-muted);
     opacity: 0.7;
 
@@ -113,7 +113,7 @@
   }
 
   &__sum-title {
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     overflow: visible;
@@ -129,7 +129,7 @@
   }
 
   &__run-name {
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
   }
 
   &__scope {
@@ -137,7 +137,7 @@
     min-width: 0;
     overflow: hidden;
     color: var(--studio-fg-muted);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 600;
     letter-spacing: 0.02em;
     text-overflow: ellipsis;
@@ -149,7 +149,7 @@
     position: relative;
     height: 6px;
     overflow: hidden;
-    border-radius: 999px;
+    border-radius: var(--studio-compat-radius-2);
     background: var(--studio-surface-muted);
   }
 
@@ -175,7 +175,7 @@
   &__run-duration {
     overflow: hidden;
     color: var(--studio-fg-muted);
-    font-size: 10.5px;
+    font-size: var(--studio-compat-type-44);
     text-align: right;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -203,10 +203,10 @@
     min-height: calc(var(--studio-row-min-h) + var(--studio-row-gap));
     margin: var(--studio-spacing-2) 0 0;
     padding: var(--studio-row-pad-block) var(--studio-spacing-2);
-    border-radius: 6px;
+    border-radius: var(--studio-compat-radius-7);
     background: var(--studio-bg-hover);
     color: var(--studio-fg-strong);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 800;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -214,7 +214,7 @@
 
   &__title-sub {
     color: var(--studio-fg-muted);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 600;
     letter-spacing: 0.02em;
     text-transform: none;
@@ -224,10 +224,10 @@
     display: inline-flex;
     align-items: center;
     padding: 0 var(--studio-spacing-1);
-    border-radius: 999px;
+    border-radius: var(--studio-compat-radius-2);
     background: color-mix(in srgb, var(--studio-accent) 18%, transparent);
     color: var(--studio-accent-strong);
-    font-size: 9px;
+    font-size: var(--studio-compat-type-4);
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -240,7 +240,7 @@
   &__model-row {
     min-height: var(--studio-row-min-h);
     color: var(--studio-fg-dim);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
 
     &:hover {
       background: var(--studio-bg-hover);
@@ -262,7 +262,7 @@
     margin: 0 0 0 var(--ov-pipeline-step-indent);
     padding: 0 var(--studio-spacing-2);
     color: var(--studio-fg-muted);
-    font-size: 9.5px;
+    font-size: var(--studio-compat-type-42);
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -273,7 +273,7 @@
     min-width: 0;
     overflow: hidden;
     color: var(--studio-fg-muted);
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -282,7 +282,7 @@
     margin: 0 0 0 var(--ov-pipeline-step-indent);
     padding: var(--studio-spacing-2);
     color: var(--studio-fg-muted);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
   }
 
   &__num {
@@ -293,7 +293,7 @@
   &__mono {
     color: var(--studio-fg);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
   }
 
   &__strong {
@@ -308,7 +308,7 @@
 
   &__incomplete {
     font-family: var(--font-sans);
-    font-size: 9px;
+    font-size: var(--studio-compat-type-4);
     font-weight: 600;
     line-height: 1.25;
     white-space: normal;
@@ -384,7 +384,7 @@
   background: none;
   color: var(--studio-tooltip-link);
   font: inherit;
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   cursor: pointer;
 }
 

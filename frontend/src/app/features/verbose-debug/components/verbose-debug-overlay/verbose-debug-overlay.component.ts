@@ -9,7 +9,7 @@ import {
   signal,
 } from '@angular/core';
 
-import { ModalStackService } from '../../../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import type { CliOutputLine, TaskInfo } from '../../../../models/task.model';
 import type { RunRecord, RunTimeline } from '../../../../features/run-timeline';
 import type { TaskScreenshot } from '../../../../features/screenshots';
@@ -31,8 +31,8 @@ import {
 } from 'coding-agent-chat/composer';
 import { formatTokens as fmtTokens } from '../../../../services/format.util';
 
-import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { OverlayPortalDirective } from '@studio/ui/directives/overlay-portal.directive';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { TOOL_LABELS, artifactStatusTone, debugRunStatusTone, decisionSeverityTone, warningRowTone } from './verbose-debug-status';
 export type VerboseDebugTab =
   | 'overview'

@@ -53,11 +53,11 @@
 .pickup-hold__mechanism {
   flex: 0 0 auto;
   /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- A 1px optical inset on a 9px pill; the smallest spacing token is 4px and doubles the chip height. */
-  padding: 1px var(--studio-spacing-2);
-  border-radius: 999px;
+  padding: var(--studio-compat-space-6) var(--studio-spacing-2);
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-hold-mechanism-bg);
   color: var(--studio-fg-dim);
-  font-size: 9px;
+  font-size: var(--studio-compat-type-4);
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -68,7 +68,7 @@
   flex: 0 0 auto;
   margin-inline-start: auto;
   color: var(--studio-hold-muted-fg);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -77,13 +77,13 @@
   margin: 0;
   min-width: 0;
   color: var(--studio-hold-muted-fg);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
 .pickup-hold--detail .pickup-hold__reason {
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .pickup-hold__ways-out {
@@ -94,7 +94,7 @@
 
 .pickup-hold__ways-out-label {
   color: var(--studio-hold-muted-fg);
-  font-size: 9px;
+  font-size: var(--studio-compat-type-4);
   font-weight: 800;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -113,14 +113,14 @@
   gap: var(--studio-spacing-1);
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: color-mix(in srgb, var(--studio-fg-dim) 3%, var(--studio-bg-elevated));
 }
 
 .pickup-hold__position {
   display: inline-block;
   color: var(--studio-fg-dim);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-variant-numeric: tabular-nums;
   margin-block-end: var(--studio-spacing-1);
 }

@@ -9,11 +9,11 @@
 .quality-connection label { display: grid; gap: var(--studio-spacing-1); }
 .quality-connection input {
   width: min(100%, 42rem); color: var(--studio-fg); background: var(--studio-bg-elevated);
-  border: 1px solid var(--studio-border-strong); border-radius: 4px; padding: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border-strong); border-radius: var(--studio-compat-radius-6); padding: var(--studio-spacing-2);
 }
 .quality-connection button {
   justify-self: start; color: var(--studio-fg); background: var(--studio-bg-elevated);
-  border: 1px solid var(--studio-border-strong); border-radius: 4px;
+  border: 1px solid var(--studio-border-strong); border-radius: var(--studio-compat-radius-6);
   padding: var(--studio-spacing-2) var(--studio-spacing-3); cursor: pointer;
 }
 .quality-connection button:disabled { opacity: .55; cursor: default; }

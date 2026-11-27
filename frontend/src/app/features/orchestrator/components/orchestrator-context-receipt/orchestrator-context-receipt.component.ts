@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { OrchestratorContextReceipt, OrchestratorContextSourceReceipt } from '../../models/orchestrator.model';
 
 /** Context source status to indicator tone; a status the backend adds later stays neutral. */

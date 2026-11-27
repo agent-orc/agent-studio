@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
-import { CountBadgeComponent } from '../count-badge/count-badge.component';
+import { CountBadgeComponent } from '@studio/ui/components/count-badge/count-badge.component';
 
 /**
  * The frame of one section on a settings or admin page: a heading, one

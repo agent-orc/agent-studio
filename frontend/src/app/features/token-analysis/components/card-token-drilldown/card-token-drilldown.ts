@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, input, output } from '@an
 import { browserTimeZone, formatZonedWithUtc } from '../../../../services/usage-time.util';
 import { formatCompactTokens, formatCompactUsd } from '../../../tokens/token-number-format.util';
 import type { TokenAnalysisCardDetail } from '../../models/token-analysis.model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { cardOutcomeTone, stepResultTone } from '../../token-analysis-status';
 import { eventShares, formatDuration, kindColor, kindLabel, kindTotals } from '../../token-analysis.util';
 

@@ -8,7 +8,7 @@ import type {
   ToolBurstBin,
 } from '../activity-log.parser';
 import type { ParsedRuntimeSentinels } from '../runtime-sentinel.parser';
-import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * Live activity kind to status tone (AGT-3403): every live kind is work in

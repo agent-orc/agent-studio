@@ -3,52 +3,52 @@
 .wdh {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--studio-spacing-3);
 }
 
 .wdh__prov {
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
+  gap: var(--studio-spacing-1);
+  padding: var(--studio-compat-space-5) var(--studio-spacing-3);
   background: color-mix(in srgb, var(--studio-fg) 4%, transparent);
   border: 1px solid color-mix(in srgb, var(--studio-fg) 10%, transparent);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
 }
 .wdh__row {
   display: grid;
   grid-template-columns: 72px 1fr;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
   align-items: baseline;
 }
 .wdh__row dt {
   margin: 0;
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--studio-fg-muted);
 }
 .wdh__row dd {
   margin: 0;
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   color: var(--studio-fg);
   min-width: 0;
   overflow-wrap: anywhere;
 }
 .wdh__badge {
   display: inline-block;
-  padding: 1px 8px;
-  border-radius: 999px;
-  font-size: 0.74rem;
+  padding: var(--studio-compat-space-6) var(--studio-spacing-2);
+  border-radius: var(--studio-compat-radius-2);
+  font-size: var(--studio-compat-type-14);
   background: color-mix(in srgb, var(--studio-accent-3) 16%, transparent);
   border: 1px solid color-mix(in srgb, var(--studio-accent-3) 45%, transparent);
   color: var(--studio-fg);
 }
 
-.wdh__commits { display: flex; flex-direction: column; gap: 6px; }
+.wdh__commits { display: flex; flex-direction: column; gap: var(--studio-compat-space-2); }
 .wdh__commits-label {
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--studio-fg-muted);
@@ -59,24 +59,24 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--studio-spacing-1);
   max-height: 40vh;
   overflow-y: auto;
 }
 .wdh__commit {
-  padding: 6px 9px;
+  padding: var(--studio-compat-space-2) var(--studio-compat-space-12);
   border: 1px solid color-mix(in srgb, var(--studio-fg) 8%, transparent);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: color-mix(in srgb, var(--studio-fg) 2%, transparent);
 }
 .wdh__commit-top {
   display: flex;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
   align-items: baseline;
   justify-content: space-between;
 }
 .wdh__subject {
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   color: var(--studio-fg);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -85,7 +85,7 @@
 .wdh__sha {
   flex-shrink: 0;
   font-family: var(--font-mono, monospace);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   color: var(--studio-accent-4-strong);
 }
 .wdh__view {
@@ -93,18 +93,18 @@
   background: color-mix(in srgb, var(--studio-fg) 6%, transparent);
   color: var(--studio-fg);
   border: 1px solid color-mix(in srgb, var(--studio-fg) 14%, transparent);
-  border-radius: 4px;
-  padding: 1px 8px;
-  font-size: 0.7rem;
+  border-radius: var(--studio-compat-radius-6);
+  padding: var(--studio-compat-space-6) var(--studio-spacing-2);
+  font-size: var(--studio-compat-type-18);
   font-family: inherit;
   cursor: pointer;
 }
 .wdh__view:hover { background: color-mix(in srgb, var(--studio-fg) 12%, transparent); }
 .wdh__commit-meta {
   display: flex;
-  gap: 12px;
-  margin-top: 2px;
-  font-size: 0.72rem;
+  gap: var(--studio-spacing-3);
+  margin-top: var(--studio-compat-space-4);
+  font-size: var(--studio-compat-type-10);
   color: var(--studio-fg-muted);
   font-variant-numeric: tabular-nums;
 }

@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Colours and fonts of the canvas. Every entry is read from a Studio token; none is defined here. */
 export interface LivePalette {

@@ -1,7 +1,2 @@
-export { MenuComponent } from './menu.component';
-export type {
-  MenuItem,
-  MenuRow,
-  MenuItemClickEvent,
-  MenuPlacement,
-} from './menu.types';
+// Compatibility path. New consumers import @studio/ui.
+export * from '@studio/ui/components/menu/index';

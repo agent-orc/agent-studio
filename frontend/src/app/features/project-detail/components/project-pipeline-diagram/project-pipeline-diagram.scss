@@ -21,10 +21,10 @@
   min-width: 0;
   padding: var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-surface-muted);
   color: var(--studio-fg);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 /* The connector is a glyph between nodes, not an edge bar on a node. */
@@ -35,7 +35,7 @@
   right: calc(-1 * var(--studio-spacing-4));
   transform: translateY(-50%);
   color: var(--studio-accent-3-strong);
-  font-size: 1rem;
+  font-size: var(--studio-compat-type-23);
 }
 
 .pipeline-diagram__node[data-issues='true'] {
@@ -49,14 +49,14 @@
 
 .pipeline-diagram__kind {
   color: var(--studio-fg-dim);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .pipeline-diagram__name {
   color: var(--studio-fg-strong);
-  font-size: 0.9rem;
+  font-size: var(--studio-compat-type-22);
 }
 
 .pipeline-diagram__entry,
@@ -75,10 +75,10 @@
 .pipeline-diagram__badge {
   align-self: flex-start;
   padding: 0 var(--studio-spacing-2);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-card-muted-bg);
   color: var(--studio-fg-muted);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
 }
 
 .pipeline-diagram__issues { align-self: flex-start; }
@@ -123,7 +123,7 @@
 code {
   overflow-wrap: anywhere;
   color: var(--studio-fg);
-  font: 0.72rem/1.4 var(--studio-mono);
+  font: var(--studio-compat-type-10)/1.4 var(--studio-mono);
 }
 
 @media (max-width: 900px) {

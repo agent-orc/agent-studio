@@ -10,17 +10,17 @@
 .protocol-verdict {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-compat-space-2) var(--studio-compat-space-5);
   // Inset horizontally to share the inspector's 10px content edge so the
   // verdict banner, the model/provenance line, and the "What Was Done" body
   // all line up on one left edge.
-  margin: 6px 10px;
-  border-radius: 4px;
-  border: 1px solid var(--studio-border, rgba(255,255,255,0.08));
-  background: var(--studio-bg-elevated, rgba(120, 120, 140, 0.08));
+  margin: var(--studio-compat-space-2) var(--studio-compat-space-5);
+  border-radius: var(--studio-compat-radius-6);
+  border: 1px solid var(--studio-border, var(--studio-compat-border-13));
+  background: var(--studio-bg-elevated, var(--studio-compat-surface-50));
   color: var(--studio-fg);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 
   &[data-kind="ok"] {
     background: var(--notify-success-tint);
@@ -59,7 +59,7 @@
     min-width: 0;
     display: inline-flex;
     align-items: baseline;
-    gap: 4px;
+    gap: var(--studio-spacing-1);
     padding: 0;
     border: none;
     background: none;
@@ -97,19 +97,19 @@
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
-    gap: 3px;
-    padding-left: 8px;
+    gap: var(--studio-compat-space-1);
+    padding-left: var(--studio-spacing-2);
     margin-left: auto;
-    border-left: 1px solid var(--studio-border, rgba(255, 255, 255, 0.12));
+    border-left: 1px solid var(--studio-border, var(--studio-compat-border-39));
     color: var(--studio-fg-dim, var(--lane-backlog));
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
     cursor: help;
   }
 
   &__duration-icon {
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     line-height: 1;
     opacity: 0.85;
   }
@@ -130,18 +130,18 @@
     min-height: 24px;
     padding: 0 var(--studio-spacing-2);
     border: 1px solid var(--studio-border-strong);
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
     background: var(--studio-bg-elevated);
     color: var(--studio-fg-dim);
     font: inherit;
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     cursor: pointer;
   }
 
   &__dismiss {
     width: 24px;
     padding: 0;
-    font-size: 16px;
+    font-size: var(--studio-compat-type-31);
   }
 
   &__interim:hover:not(:disabled),
@@ -162,7 +162,7 @@
   margin: calc(-1 * var(--studio-spacing-1)) var(--studio-spacing-3) var(--studio-spacing-2);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: var(--studio-bg-elevated);
 
   &__list {
@@ -179,7 +179,7 @@
     align-items: baseline;
     gap: var(--studio-spacing-1);
     color: var(--studio-fg-dim);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
   }
 
   &__source {

@@ -4,8 +4,8 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { EMPTY, Observable, catchError, finalize, map, of, switchMap, tap, throwError } from 'rxjs';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import { CliCatalogStore } from '../../../cli';
 import { ActionPanelCoordinator, closeWhenAnotherPanelOpens } from '../../../../services/action-panel-coordinator.service';

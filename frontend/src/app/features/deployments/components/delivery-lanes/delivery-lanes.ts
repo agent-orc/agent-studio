@@ -3,7 +3,7 @@ import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { catchError, forkJoin, map, of, switchMap, timer } from 'rxjs';
 import { BoardFiltersService, flattenGrouped } from '../../../board';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 
 interface DeliveryCard { key: string; title: string; releaseVersion: string | null; deployedAtUtc: string | null }
 interface DeliveryLane { environmentId: string | null; name: string; order: number; cards: DeliveryCard[] }

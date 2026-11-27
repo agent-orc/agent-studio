@@ -1,4 +1,4 @@
-import type { StatusTone } from '../status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 export type EditorState = 'idle' | 'dirty' | 'saved';
 

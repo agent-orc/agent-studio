@@ -1,11 +1,11 @@
-import { SegmentedControlComponent } from '../segmented-control/segmented-control.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
 import type { TaskFileHistoryEntry, TaskFileSourceScope } from '../../models/task.model';
 import { TaskService } from '../../services/task.service';
 import { formatDateTimeUtc, formatRelativeTime } from '../../services/format.util';
 import { NowTickService } from '../../services/now-tick.service';
-import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 type PaneMode = 'file' | 'history';
 type LoadState = 'idle' | 'loading' | 'loaded' | 'error';

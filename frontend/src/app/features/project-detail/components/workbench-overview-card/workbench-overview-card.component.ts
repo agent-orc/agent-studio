@@ -6,12 +6,12 @@ import {
   TaskReferenceMicrocardComponent,
   type TaskReferenceStatus,
 } from '../../../../components/task-reference-microcard/task-reference-microcard';
-import { StudioIconComponent, type StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
+import { StudioIconComponent, type StudioIconName } from '@studio/ui/components/studio-icon/studio-icon.component';
 import type { ArticlePattern, WorkbenchOverviewItem } from '../../../../models/project-docs.model';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { WorkbenchReviewTagComponent } from '../workbench-review-tag/workbench-review-tag.component';
 import { dossierStatusLabel, dossierStatusTone } from '../../../../models/dossier-presentation';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 type OverviewCardMode = 'decision' | 'current' | 'invalid' | 'history';
 

@@ -10,11 +10,11 @@ import {
   WORKBENCH_DECISION_CHANGE_MESSAGE,
   WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE,
 } from '../../../../services/sandboxed-html.util';
-import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
 import { TaskService } from '../../../../services/task.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { WorkbenchDecisionDraftStore } from '../../state/workbench-decision-draft.store';
 import { WorkbenchViewerComponent } from './workbench-viewer.component';
 import { preserveOwnProperty } from '../../../../../testing/preserve-own-property';

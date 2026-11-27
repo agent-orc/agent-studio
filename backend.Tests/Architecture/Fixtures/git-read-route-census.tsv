@@ -296,6 +296,8 @@
 /api/projects/{projectName}/steering	free	-	-	-
 /api/projects/{projectName}/steering/files/{**relPath}	free	-	-	-
 /api/projects/{projectName}/steering/read-analytics	free	-	-	-
+/api/projects/{projectName}/studio-releases/	free	-	-	-
+/api/projects/{projectName}/studio-releases/cards/{key}	free	-	-	-
 /api/projects/{projectName}/style-guides	free	-	-	-
 /api/projects/{projectName}/tags	free	-	-	-
 /api/projects/{projectName}/testing	free	-	-	-

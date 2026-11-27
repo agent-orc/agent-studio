@@ -10,24 +10,24 @@
 .quota-forecast__error {
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--notify-error-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--notify-error-tint);
   color: var(--notify-error-icon-fg);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .quota-forecast__empty {
   padding: var(--studio-spacing-3) var(--studio-spacing-4);
   border: 1px dashed var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   color: var(--studio-fg-dim);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .quota-forecast__cli {
   padding: var(--studio-spacing-3) var(--studio-spacing-4);
   border: 1px solid var(--studio-border);
-  border-radius: 10px;
+  border-radius: var(--studio-compat-radius-3);
   background: var(--studio-bg-hover);
 }
 
@@ -41,9 +41,9 @@
   border-bottom: 1px dashed var(--studio-border);
 }
 
-.quota-forecast__icon { font-size: 16px; }
-.quota-forecast__name { font-size: 13px; font-weight: 600; color: var(--studio-fg-strong); }
-.quota-forecast__note { margin: 0; font-size: 12px; color: var(--studio-fg-dim); }
+.quota-forecast__icon { font-size: var(--studio-compat-type-31); }
+.quota-forecast__name { font-size: var(--studio-font-size-md); font-weight: 600; color: var(--studio-fg-strong); }
+.quota-forecast__note { margin: 0; font-size: var(--studio-font-size-sm); color: var(--studio-fg-dim); }
 
 // Session window: a compact meter on the header row.
 .session-gauge {
@@ -52,7 +52,7 @@
   align-items: center;
   gap: var(--studio-spacing-2);
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   color: var(--studio-fg-dim);
 }
 
@@ -63,7 +63,7 @@
   position: relative;
   width: 96px;
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--studio-compat-radius-9);
   background: color-mix(in srgb, var(--gauge-fill) 18%, transparent);
   overflow: hidden;
 }
@@ -71,7 +71,7 @@
 .session-gauge__fill {
   position: absolute;
   inset: 0 auto 0 0;
-  border-radius: 3px;
+  border-radius: var(--studio-compat-radius-9);
   background: var(--gauge-fill);
 }
 
@@ -95,7 +95,7 @@
   margin-bottom: var(--studio-spacing-2);
 }
 
-.weekly__label { font-size: 12px; font-weight: 600; color: var(--studio-fg); }
+.weekly__label { font-size: var(--studio-font-size-sm); font-weight: 600; color: var(--studio-fg); }
 
 .weekly__stats {
   display: grid;
@@ -105,7 +105,7 @@
 }
 
 .weekly__stats dt {
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--studio-fg-dim);
@@ -113,7 +113,7 @@
 
 .weekly__stats dd {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--studio-font-size-md);
   font-weight: 600;
   color: var(--studio-fg-strong);
   font-variant-numeric: tabular-nums;
@@ -121,7 +121,7 @@
 
 .weekly__sentence {
   margin: 0 0 var(--studio-spacing-2);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   color: var(--studio-fg-dim);
 }
 
@@ -133,9 +133,9 @@
   margin-top: var(--studio-spacing-2);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--notify-warning-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--notify-warning-tint);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .fallback__state { flex: 0 0 auto; }

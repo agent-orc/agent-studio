@@ -1,3 +1,5 @@
+import { catchError, of, startWith, switchMap, timer } from 'rxjs';
+import { StudioReleaseStateComponent } from '../../../studio-releases';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -18,7 +20,7 @@ import {
 import { TaskService } from '../../../../services/task.service';
 import { IntegrationDeadEndComponent } from '../integration-dead-end/integration-dead-end.component';
 import { AcceptanceAttemptGapNoticeComponent } from '../acceptance-attempt-gap-notice/acceptance-attempt-gap-notice.component';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { reviewBuildTestsGap, taskFileHref } from '../../../test-evidence/components/test-evidence-status/test-evidence-status.component';
 import { AcceptanceNextStepsComponent } from '../../../acceptance-readiness/lazy';
 import { acceptanceRefusalFor } from '../../state/acceptance-refusal.model';
@@ -97,7 +99,7 @@ const DELIVERED_LANES: readonly string[] = [
   selector: 'app-delivery-claim-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, IntegrationDeadEndComponent, AcceptanceAttemptGapNoticeComponent, StatusIndicatorComponent, AcceptanceNextStepsComponent],
+  imports: [StudioReleaseStateComponent, TooltipDirective, IntegrationDeadEndComponent, AcceptanceAttemptGapNoticeComponent, StatusIndicatorComponent, AcceptanceNextStepsComponent],
   templateUrl: './delivery-claim-panel.component.html',
   styleUrl: './delivery-claim-panel.component.scss',
 })
@@ -117,14 +119,13 @@ export class DeliveryClaimPanelComponent {
     const job = this.job();
     this.answer.set(null);
     if (job.mode === 'concept' || !DELIVERED_LANES.includes(job.state)) return;
-    const subscription = this.tasks
-      .getDeliveryClaim(job.id, job.watchPath ?? undefined)
-      .subscribe({
-        next: (answer) => this.answer.set(answer),
-        // A failed lookup leaves the panel on the board projection and on
-        // "not checked yet"; it never invents a negative.
-        error: () => this.answer.set(null),
-      });
+    const subscription = timer(30000, 30000).pipe(
+      startWith(0),
+      switchMap(() => this.tasks.getDeliveryClaim(job.id, job.watchPath ?? undefined).pipe(
+        // A failed lookup never invents a negative, and the next poll retries.
+        catchError(() => of(null)),
+      )),
+    ).subscribe(answer => this.answer.set(answer));
     onCleanup(() => subscription.unsubscribe());
   });
 

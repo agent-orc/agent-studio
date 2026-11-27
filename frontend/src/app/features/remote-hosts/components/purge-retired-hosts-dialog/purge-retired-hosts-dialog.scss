@@ -11,7 +11,7 @@
   height: 32px;
   padding: 0 var(--studio-spacing-2);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg);
   color: var(--studio-fg);
   font: inherit;
@@ -58,7 +58,7 @@
   min-height: 32px;
   padding: 0 var(--studio-spacing-3);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-hover);
   color: var(--studio-fg-strong);
   cursor: pointer;

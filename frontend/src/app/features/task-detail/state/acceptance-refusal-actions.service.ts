@@ -1,8 +1,8 @@
 import { Injectable, inject } from '@angular/core';
 import type { TaskInfo } from '../../../models/task.model';
-import type { NotificationAction } from '../../../models/app-dialog.model';
+import type { NotificationAction } from '@studio/ui/models/app-dialog.model';
 import { TaskService } from '../../../services/task.service';
-import { NotificationService } from '../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { serverErrorMessage } from '../../../utils/server-error-message';
 import { AcceptanceReadinessStore } from '../../acceptance-readiness';
 import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';

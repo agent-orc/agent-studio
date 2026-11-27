@@ -12,14 +12,14 @@
   border-radius: var(--studio-radius-md);
   background: color-mix(in srgb, var(--studio-accent-warn) 8%, var(--studio-bg-elevated));
   color: var(--studio-fg);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 .decision-blocked__body { display: grid; gap: var(--studio-spacing-1); min-width: 0; }
 .decision-blocked__line,
 .decision-blocked__hint { margin: 0; }
 .decision-blocked__line { color: var(--studio-fg-strong); font-weight: 600; }
-.decision-blocked__hint { color: var(--studio-fg-muted); font-size: 0.72rem; }
+.decision-blocked__hint { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-10); }
 .decision-blocked__title { margin-left: var(--studio-spacing-1); color: var(--studio-fg); font-weight: 400; }
 
 .decision-blocked__link {

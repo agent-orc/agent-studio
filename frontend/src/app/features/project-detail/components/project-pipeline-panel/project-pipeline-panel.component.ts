@@ -36,7 +36,7 @@ import { GateSlotBoardComponent } from '../gate-slot-board/gate-slot-board';
 import { PipelineStepExecutionComponent } from './pipeline-step-execution/pipeline-step-execution.component';
 import { PipelineTypePickerComponent } from './pipeline-type-picker/pipeline-type-picker.component';
 import { PipelineStepRowStateComponent } from './pipeline-step-row-state/pipeline-step-row-state.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { PipelineStepEffectiveRouteComponent } from './pipeline-step-effective-route/pipeline-step-effective-route.component';
 import { AspectModelBulkApplyComponent, type AspectAgentSelection } from './aspect-model-bulk-apply/aspect-model-bulk-apply.component';
 type StepPatch = Partial<{ enabled: boolean; economyModel: boolean; cliType: string; model: string; thinkingLevel: string | null;

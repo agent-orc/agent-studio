@@ -43,6 +43,18 @@ direction first, desktop and phone screenshots in both themes, a rubric
 critique, and at least one iteration. The hard rules above and the
 Playwright rules below still apply inside this app.
 
+## Studio UI library
+
+Shared generic primitives and tokens live in
+[`projects/studio-ui`](projects/studio-ui/README.md), consumed through `@studio/ui`.
+Use the component README and adjacent `*.catalogue.ts` state data before adding a
+local control. Existing `app-` selectors and source re-exports remain compatible;
+new component templates use `sui-`. The library cannot import the Studio app or
+chat implementation. Host-only help and legacy tooltip renderers enter through
+providers. The Components catalogue runs independently with `npm run ui:catalogue:check`;
+`ui:test` and `ui:lint` also need no backend. The generated API declaration report
+and shrinking raw-colour/font-size baseline are checked by lint.
+
 ## UI Verification — Playwright is mandatory after visual changes
 
 After **every** frontend change under `frontend/src/` that touches layout, spacing, styling, component templates, or interaction states, you must verify with Playwright before declaring the task done. Static type-checks and unit tests do not catch UI regressions; the E2E suite does.
@@ -94,7 +106,7 @@ When changing run history or pipeline display code, keep the Run-Switcher backed
 
 ## Spacing: tokens, never raw px
 
-New SCSS reads `padding`, `margin`, and `gap` from the design-token scale in [`src/styles/_tokens-semantic.scss`](src/styles/_tokens-semantic.scss); raw px in those properties is forbidden. The base scale lives at the top of that file as `--studio-spacing-1` … `--studio-spacing-7` (4 / 8 / 12 / 16 / 24 / 32 / 48 px). Semantic aliases sit alongside it: `--studio-rail-*` (collapsed lane-rail), `--studio-modal-padding-*`, `--studio-row-*` (density rows). Reach for an existing alias before introducing a new one.
+New SCSS reads `padding`, `margin`, and `gap` from the design-token scale in [`projects/studio-ui/src/styles/_tokens-semantic.scss`](projects/studio-ui/src/styles/_tokens-semantic.scss); raw px in those properties is forbidden. The base scale lives at the top of that file as `--studio-spacing-1` … `--studio-spacing-7` (4 / 8 / 12 / 16 / 24 / 32 / 48 px). Semantic aliases sit alongside it: `--studio-rail-*` (collapsed lane-rail), `--studio-modal-padding-*`, `--studio-row-*` (density rows). Reach for an existing alias before introducing a new one.
 
 Why: the lane-rail bug (operator 2026-05-28) was a symptom of per-element intrinsic sizing. Without a token vocabulary the rhythm drifts every time someone tweaks a single child; with tokens every consumer shares the same scale and `_tokens-semantic.scss` is the only place the px number is written.
 

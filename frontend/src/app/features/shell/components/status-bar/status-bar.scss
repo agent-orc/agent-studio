@@ -9,7 +9,7 @@ app-status-bar {
   --statusbar-bar-height: 32px;
   --statusbar-item-height: 28px;
   --statusbar-item-pad-x: 8px;
-  --statusbar-item-radius: 5px;
+  --statusbar-item-radius: var(--studio-compat-radius-13);
   --statusbar-item-gap-inner: 5px;
   --statusbar-font-size: 11px;
   --statusbar-icon-size: 12px;
@@ -83,7 +83,7 @@ app-status-bar {
 .statusbar__item--btn {
   cursor: pointer;
   text-decoration: none;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background var(--studio-compat-duration-3) ease, color var(--studio-compat-duration-3) ease;
 }
 .statusbar__item--btn:hover {
   background: var(--studio-bg-hover);
@@ -117,7 +117,7 @@ app-status-bar {
 }
 .statusbar__icon--pulse {
   color: var(--severity-pass);
-  animation: statusbar-pulse 1.4s infinite;
+  animation: statusbar-pulse var(--studio-compat-duration-15) infinite;
 }
 .statusbar__warning {
   display: inline-flex;
@@ -149,7 +149,7 @@ app-status-bar {
   position: absolute;
   inset: 1px;
   border: 1px solid color-mix(in srgb, var(--severity-warn) 52%, transparent);
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   content: '';
 }
 
@@ -160,15 +160,15 @@ app-status-bar {
 
 @media (prefers-reduced-motion: reduce) {
   .statusbar__icon--pulse {
-    animation-duration: 0s;
+    animation-duration: var(--studio-compat-duration-2);
   }
 }
 
 .statusbar__caret {
-  font-size: 8px;
+  font-size: var(--studio-compat-type-96);
   line-height: 1;
   opacity: 0.7;
-  margin-left: 1px;
+  margin-left: var(--studio-compat-space-6);
 }
 
 .statusbar__sep {

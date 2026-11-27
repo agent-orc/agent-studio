@@ -2,8 +2,8 @@ import { ChangeDetectionStrategy, Component, effect, inject, input, output, sign
 import type { ResultHistoryDocument, ResultHistoryEntry, ResultHistoryLegacyState } from '../../../../../models/task.model';
 import { TaskService } from '../../../../../services/task.service';
 import { formatDateTimeUtc } from '../../../../../services/format.util';
-import { DisclosureMarkerComponent } from '../../../../../components/disclosure-marker/disclosure-marker.component';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * Tone of a historical status.md result (AGT-3403). These are past results,

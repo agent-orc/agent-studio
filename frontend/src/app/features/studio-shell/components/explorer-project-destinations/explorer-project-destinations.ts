@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
-import { TreeRowComponent } from '../../../../components/tree-row/tree-row.component';
+import { TreeRowComponent } from '@studio/ui/components/tree-row/tree-row.component';
 import { ExplorerLaneDashboardComponent } from '../explorer-lane-dashboard/explorer-lane-dashboard.component';
 import { ExplorerWorkbenchListComponent } from '../explorer-workbench-list/explorer-workbench-list.component';
 import { QualityStudioExplorerRowComponent } from '../quality-studio-explorer-row/quality-studio-explorer-row.component';

@@ -7,7 +7,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { AcceptanceReadinessStore } from '../../../acceptance-readiness';
 import { AcceptanceRefusalComponent } from './acceptance-refusal.component';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import type { TaskInfo } from '../../../../models/task.model';
 import { AcceptanceRefusalStore, acceptanceRefusalFor, serverAcceptanceRefusal,
   type AcceptanceRefusal } from '../../state/acceptance-refusal.model';

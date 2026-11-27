@@ -1,4 +1,4 @@
-import type { MenuItem } from '../../../../components/menu';
+import type { MenuItem } from '@studio/ui/components/menu/index';
 import type { ProjectUrlProcessSnapshot, RegistryProjectUrl } from '../../../../models/task.model';
 
 /** Backend refusal (or readiness timeout) surfaced on the state card. */

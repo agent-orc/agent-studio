@@ -4,11 +4,11 @@ import type { Editor } from '@tiptap/core';
 import { htmlToMarkdown, markdownToHtml, MarkdownImageOptions } from 'coding-agent-chat/markdown';
 import { shouldEmitEditorSave } from './markdown-rich-editor.guard';
 import { sessionFetch } from '../../services/session-fetch';
-import { MediaLightboxService } from '../../services/media-lightbox.service';
+import { MediaLightboxService } from '@studio/ui/services/media-lightbox.service';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { MenuComponent, MenuItem, MenuItemClickEvent } from '../menu';
-import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
+import { MenuComponent, MenuItem, MenuItemClickEvent } from '@studio/ui/components/menu/index';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { DEFAULT_EDITOR_LOCK_REASON, editorSaveState, resolveEditorState, type EditorState } from './markdown-rich-editor-status';
 
 const ATTACHMENTS_PREFIX = 'attachments/';

@@ -11,11 +11,11 @@
     padding-bottom: var(--studio-spacing-1);
     border-bottom: 1px solid var(--studio-border);
     color: var(--studio-fg-strong);
-    font-size: 0.95rem;
+    font-size: var(--studio-compat-type-16);
     font-weight: 600;
   }
-  h4 { color: var(--studio-fg-strong); font-size: 0.85rem; font-weight: 600; }
-  code { font-size: 0.78rem; overflow-wrap: anywhere; }
+  h4 { color: var(--studio-fg-strong); font-size: var(--studio-compat-type-26); font-weight: 600; }
+  code { font-size: var(--studio-compat-type-13); overflow-wrap: anywhere; }
 }
 
 .security-facts__pairs {
@@ -29,7 +29,7 @@
   dd { margin: 0; color: var(--studio-fg-strong); font-weight: 600; overflow-wrap: anywhere; }
 }
 
-.security-facts__note { color: var(--studio-text-secondary); font-size: 0.85rem; }
+.security-facts__note { color: var(--studio-text-secondary); font-size: var(--studio-compat-type-26); }
 
 .security-facts__rows {
   display: grid;
@@ -47,7 +47,7 @@
     min-width: 0;
   }
   li:last-child { border-bottom: 0; }
-  small { color: var(--studio-text-secondary); font-size: 0.8rem; overflow-wrap: anywhere; }
+  small { color: var(--studio-text-secondary); font-size: var(--studio-compat-type-12); overflow-wrap: anywhere; }
 }
 
 .security-facts__routes {
@@ -62,7 +62,7 @@
 .security-facts__table {
   overflow-x: auto;
 
-  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  table { width: 100%; border-collapse: collapse; font-size: var(--studio-compat-type-26); }
   th, td {
     padding: var(--studio-spacing-2);
     border-bottom: 1px solid var(--studio-border);

@@ -74,7 +74,7 @@
       gap: var(--studio-spacing-2);
     }
     .orch-feed__title-block { grid-column: 1 / -1; }
-    .orch-feed__title { font-size: 16px; }
+    .orch-feed__title { font-size: var(--studio-compat-type-31); }
     .orch-feed__sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .orch-feed__refresh { margin: 0; white-space: nowrap; }
     .orch-feed__filters { gap: var(--studio-spacing-2); }

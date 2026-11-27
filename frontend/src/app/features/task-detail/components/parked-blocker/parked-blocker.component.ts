@@ -1,4 +1,4 @@
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, signal } from '@angular/core';
 import { forkJoin, type Subscription } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -16,7 +16,7 @@ import { formatDateTimeUtc } from '../../../../services/format.util';
 import { NowTickService } from '../../../../services/now-tick.service';
 import { TaskService } from '../../../../services/task.service';
 import { TaskSectionAccessService } from '../../../../services/task-section-access.service';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
 import { laneActionsFor } from '../../state/triage-actions.model';

@@ -16,7 +16,7 @@
  * surface reads findings the same way and the tones come from one place.
  */
 
-import type { StatusTone } from '../status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** One parsed aspect finding: which aspect, its verdict token, and why. */
 export interface AspectFinding {

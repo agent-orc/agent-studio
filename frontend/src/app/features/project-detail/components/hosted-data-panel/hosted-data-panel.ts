@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, effect, inject, input, signal, untr
 import { HttpClient } from '@angular/common/http';
 import { DatePipe } from '@angular/common';
 import { forkJoin, map, of, Subscription, switchMap } from 'rxjs';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 interface Volume { name: string; mountPath: string }
 interface Backup { id: string; createdAt: string; bytes: number; sha256: string }

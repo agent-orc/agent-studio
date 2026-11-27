@@ -10,10 +10,10 @@ import {
   signal,
   untracked,
 } from '@angular/core';
-import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
-import { CountBadgeComponent } from '../../../../components/count-badge/count-badge.component';
+import { LoadingSurfaceComponent } from '@studio/ui/components/async-feedback/index';
+import { CountBadgeComponent } from '@studio/ui/components/count-badge/count-badge.component';
 import type { TaskReferenceStatus } from '../../../../components/task-reference-microcard/task-reference-microcard';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import { dossierStatusLabel } from '../../../../models/dossier-presentation';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';

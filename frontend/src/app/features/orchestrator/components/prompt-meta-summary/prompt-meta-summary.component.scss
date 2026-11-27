@@ -5,19 +5,19 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
   gap: var(--studio-spacing-4);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-surface-muted);
   padding: var(--studio-spacing-3);
 }
 
 .prompt-meta__column { min-width: 0; }
-.prompt-meta__heading { margin-bottom: var(--studio-spacing-1); color: var(--studio-fg-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.prompt-meta__heading { margin-bottom: var(--studio-spacing-1); color: var(--studio-fg-dim); font-size: var(--studio-compat-type-6); text-transform: uppercase; letter-spacing: 0.04em; }
 .prompt-meta__slots { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-1); }
-.prompt-meta__slot { border: 1px solid color-mix(in srgb, var(--studio-accent-3) 30%, transparent); border-radius: 5px; background: color-mix(in srgb, var(--studio-accent-3) 12%, transparent); color: var(--studio-accent-3-strong); padding: 0 var(--studio-spacing-2); font-family: var(--font-mono); font-size: 11.5px; }
-.prompt-meta__muted { color: var(--studio-fg-muted); font-size: 11px; }
-.prompt-meta__usage { width: 100%; border-collapse: collapse; font-size: 12px; }
+.prompt-meta__slot { border: 1px solid color-mix(in srgb, var(--studio-accent-3) 30%, transparent); border-radius: var(--studio-compat-radius-13); background: color-mix(in srgb, var(--studio-accent-3) 12%, transparent); color: var(--studio-accent-3-strong); padding: 0 var(--studio-spacing-2); font-family: var(--font-mono); font-size: var(--studio-compat-type-19); }
+.prompt-meta__muted { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-6); }
+.prompt-meta__usage { width: 100%; border-collapse: collapse; font-size: var(--studio-font-size-sm); }
 .prompt-meta__usage td { padding: var(--studio-spacing-1) var(--studio-spacing-2) var(--studio-spacing-1) 0; vertical-align: top; }
-.prompt-meta__usage code { color: var(--studio-fg-strong); font-family: var(--font-mono); font-size: 11.5px; }
+.prompt-meta__usage code { color: var(--studio-fg-strong); font-family: var(--font-mono); font-size: var(--studio-compat-type-19); }
 
 @media (max-width: 51.25rem) {
   .prompt-meta { grid-template-columns: 1fr; }

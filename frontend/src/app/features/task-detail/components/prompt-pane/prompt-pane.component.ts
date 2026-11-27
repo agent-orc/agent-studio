@@ -11,8 +11,8 @@ import { ReviewEvidencePanelComponent } from '../protocol-pane/review-evidence-p
 import { QualityPanelComponent } from './quality-panel/quality-panel.component';
 import { CodeReviewPanelComponent } from '../protocol-pane/code-review-panel/code-review-panel.component';
 import { resolveProtocolImageSrc } from '../protocol-pane/protocol-image-resolver';
-import { PaneHeaderComponent } from '../../../../components/pane-header/pane-header.component';
-import { PaneTabsComponent, type PaneTabDef } from '../../../../components/pane-tabs/pane-tabs.component';
+import { PaneHeaderComponent } from '@studio/ui/components/pane-header/pane-header.component';
+import { PaneTabsComponent, type PaneTabDef } from '@studio/ui/components/pane-tabs/pane-tabs.component';
 import { FilesPaneComponent } from './files-pane/files-pane.component';
 import { OverviewPaneComponent } from './overview-pane/overview-pane.component';
 import { TaskTimelinePaneComponent } from '../../../task-timeline/components/task-timeline-pane/task-timeline-pane.component';

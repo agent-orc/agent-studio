@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { AspectFindingsListComponent } from '../../../../components/aspect-findings';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { verdictLabel, type CompletionLoopVerdict } from '../../models/task-timeline.model';
 
 const LOOP_VERDICT_TONES: Readonly<Record<CompletionLoopVerdict, StatusTone>> = {

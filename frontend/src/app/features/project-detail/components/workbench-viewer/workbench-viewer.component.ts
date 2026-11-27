@@ -10,8 +10,8 @@ import {
   WorkbenchDocument,
   DocumentWorkbenchResult,
 } from '../../../../models/project-docs.model';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { WorkbenchViewerHeaderComponent } from '../workbench-viewer-header/workbench-viewer-header.component';
 import {
   ISOLATED_HTML_LINK_MESSAGE,
@@ -30,14 +30,14 @@ import {
 } from '../../../../services/workbench-decision-markup.util';
 import { WorkbenchDecisionDraftStore } from '../../state/workbench-decision-draft.store';
 import { PublicDemoModeService } from '../../../../services/public-demo-mode.service';
-import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/workbench-decision-panel';
 import { tabbableIn } from '../workbench-decision-panel/workbench-decision-focus.util';
 import { carryRecordedSelections, hasUnsavedAnswers } from '../workbench-decision-panel/workbench-decision-panel.util';
 import { DossierCardListComponent } from '../dossier-card-list/dossier-card-list.component';
 import { ConceptPromotionComponent } from '../../../../components/concept-promotion/concept-promotion.component';
 import { ActionPanelCoordinator } from '../../../../services/action-panel-coordinator.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { DossierPromotionNoticeComponent } from '../dossier-promotion-notice/dossier-promotion-notice.component';
 import { ThemeService } from '../../../studio-shell/services/theme.service';
 

@@ -6,15 +6,15 @@
 .auto-review-indicator {
   display: inline-flex;
   align-items: center;
-  gap: var(--header-btn-gap, 6px);
+  gap: var(--header-btn-gap, var(--studio-compat-space-2));
   height: var(--header-btn-height, 28px);
   max-width: 240px;
-  padding: 0 var(--header-btn-padding-x, 10px);
-  border-radius: var(--header-btn-radius, 6px);
-  border: 1px solid rgba(245, 158, 11, 0.36);
-  background: rgba(245, 158, 11, 0.12);
-  color: #fde68a;
-  font-size: 12px;
+  padding: 0 var(--header-btn-padding-x, var(--studio-compat-space-5));
+  border-radius: var(--header-btn-radius, var(--studio-compat-radius-7));
+  border: 1px solid var(--studio-compat-border-27);
+  background: var(--studio-compat-surface-34);
+  color: var(--studio-compat-ink-33);
+  font-size: var(--studio-font-size-sm);
   font-weight: 650;
   line-height: 1;
   letter-spacing: 0;
@@ -25,7 +25,7 @@
 .auto-review-indicator__dot {
   width: 7px;
   height: 7px;
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: currentColor;
   flex: 0 0 auto;
 }
@@ -36,25 +36,25 @@
 }
 
 .auto-review-indicator--active .auto-review-indicator__dot {
-  animation: auto-review-pulse 1.2s infinite;
+  animation: auto-review-pulse var(--studio-compat-duration-25) infinite;
 }
 
 .auto-review-indicator--idle {
-  border-color: rgba(148, 163, 184, 0.25);
-  background: rgba(148, 163, 184, 0.10);
-  color: #cbd5e1;
+  border-color: var(--studio-compat-border-28);
+  background: var(--studio-compat-surface-35);
+  color: var(--studio-compat-ink-9);
 }
 
 .auto-review-indicator--stale {
-  border-color: rgba(248, 113, 113, 0.34);
-  background: rgba(248, 113, 113, 0.12);
-  color: #fecaca;
+  border-color: var(--studio-compat-border-29);
+  background: var(--studio-compat-surface-6);
+  color: var(--studio-compat-ink-34);
 }
 
 .auto-review-indicator--alert {
-  border-color: rgba(248, 113, 113, 0.50);
-  background: rgba(248, 113, 113, 0.16);
-  color: #fecaca;
+  border-color: var(--studio-compat-border-30);
+  background: var(--studio-compat-surface-36);
+  color: var(--studio-compat-ink-34);
 }
 
 @keyframes auto-review-pulse {

@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import type { UsageCostDetailView } from '../../usage-detail.util';
 import { ReviewStatisticsComponent } from '../../../tokens/components/review-statistics/review-statistics';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { liveRunInclusionTone, usageStateTone } from './usage-detail-status';
 
 /** Cost breakdown shared by the desktop popover and phone sheet. */

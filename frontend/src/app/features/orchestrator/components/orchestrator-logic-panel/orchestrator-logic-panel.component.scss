@@ -3,7 +3,7 @@
 .logic {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--studio-spacing-3);
   min-height: 0;
   color: var(--studio-fg);
 }
@@ -12,24 +12,24 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--studio-spacing-3);
   border-bottom: 1px solid var(--studio-border-muted);
-  padding-bottom: 10px;
+  padding-bottom: var(--studio-compat-space-5);
 }
-.logic__head h2 { margin: 0; font-size: 18px; }
-.logic__head p { margin: 3px 0 0; color: var(--studio-fg-dim); font-size: 13px; }
+.logic__head h2 { margin: 0; font-size: var(--studio-font-size-xl); }
+.logic__head p { margin: var(--studio-compat-space-1) 0 0; color: var(--studio-fg-dim); font-size: var(--studio-font-size-md); }
 
 .logic__refresh,
 .logic__save,
 .logic__ghost {
   border: 1px solid color-mix(in srgb, var(--studio-fg-dim) 25%, transparent);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--studio-fg-dim) 10%, transparent);
   color: var(--studio-fg);
-  padding: 6px 11px;
+  padding: var(--studio-compat-space-2) var(--studio-compat-space-10);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 .logic__save {
   background: color-mix(in srgb, var(--studio-accent-3) 24%, transparent);
@@ -43,13 +43,13 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
   border: 1px solid var(--studio-border-muted);
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: var(--studio-surface-muted);
-  padding: 8px 10px;
+  padding: var(--studio-spacing-2) var(--studio-compat-space-5);
   color: var(--studio-text-secondary);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 .logic__banner--err {
   color: var(--notify-error-icon-fg);
@@ -64,41 +64,41 @@
 
 .logic__group {
   border: 1px solid var(--studio-border-muted);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   overflow: hidden;
   background: var(--studio-card-muted-bg);
 }
 .logic__group h3 {
   margin: 0;
-  padding: 9px 12px;
+  padding: var(--studio-compat-space-12) var(--studio-spacing-3);
   background: color-mix(in srgb, var(--studio-fg-dim) 8%, transparent);
   color: var(--studio-fg-strong);
-  font-size: 13px;
+  font-size: var(--studio-font-size-md);
 }
 .logic__row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(150px, auto);
-  gap: 14px;
-  padding: 11px 12px;
+  gap: var(--studio-compat-space-3);
+  padding: var(--studio-compat-space-10) var(--studio-spacing-3);
   border-top: 1px solid color-mix(in srgb, var(--studio-fg-dim) 13%, transparent);
 }
-.logic__main strong { display: block; font-size: 13px; color: var(--studio-fg-strong); }
-.logic__main p { margin: 3px 0 6px; color: var(--studio-fg-dim); font-size: 12px; }
+.logic__main strong { display: block; font-size: var(--studio-font-size-md); color: var(--studio-fg-strong); }
+.logic__main p { margin: var(--studio-compat-space-1) 0 var(--studio-compat-space-2); color: var(--studio-fg-dim); font-size: var(--studio-font-size-sm); }
 .logic__meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
   align-items: center;
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 .logic__pill {
   border: 1px solid color-mix(in srgb, var(--studio-accent-4-strong) 28%, transparent);
   background: color-mix(in srgb, var(--studio-accent-4-strong) 10%, transparent);
   color: var(--studio-accent-4-strong);
-  border-radius: 999px;
-  padding: 1px 7px;
-  font-size: 11px;
+  border-radius: var(--studio-compat-radius-2);
+  padding: var(--studio-compat-space-6) var(--studio-compat-space-11);
+  font-size: var(--studio-compat-type-6);
 }
 .logic__control {
   display: flex;
@@ -108,27 +108,27 @@
 .logic__toggle {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
   color: var(--studio-text-secondary);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 .logic__number,
 .logic__select {
   width: 150px;
   min-height: 30px;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   border: 1px solid color-mix(in srgb, var(--studio-fg-dim) 25%, transparent);
   background: var(--studio-bg-surface);
   color: var(--studio-fg);
-  padding: 4px 8px;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
 }
 .logic__foot {
   position: sticky;
   bottom: 0;
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  padding-top: 8px;
+  gap: var(--studio-spacing-2);
+  padding-top: var(--studio-spacing-2);
   background: var(--studio-bg-overlay);
 }
 

@@ -21,7 +21,7 @@ import { CLAUDE_FALLBACK_MODEL_ID } from '../../../../cli';
 import { generatedFileProvenance } from '../../generated-file-provenance.util';
 import { ModelPriceStore } from '../../../../tokens/model-prices';
 import { codeReviewVerdictTone, type CodeReviewVerdictTone } from '../../code-review-verdict.util';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 const CODE_REVIEW_STATUS_TONES: Readonly<Record<CodeReviewVerdictTone, StatusTone>> = {
   pass: 'success',

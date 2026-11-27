@@ -34,7 +34,7 @@ import {
   ChatModelSelection,
   ChatSubmitEvent,
 } from 'coding-agent-chat/core';
-import { SidesheetComponent } from '../../../../components/sidesheet/sidesheet.component';
+import { SidesheetComponent } from '@studio/ui/components/sidesheet/sidesheet.component';
 import { OrchestratorContextHeaderComponent } from '../orchestrator-context-header/orchestrator-context-header.component';
 import { OrchestratorPanelHeaderComponent } from '../orchestrator-panel-header/orchestrator-panel-header.component';
 import { OrchestratorJumpLatestComponent } from '../orchestrator-jump-latest/orchestrator-jump-latest.component';
@@ -52,7 +52,7 @@ import {
   contextFreshnessTone,
   sameOrchestratorChatTurns,
 } from './orchestrator-side-sheet.util';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import {
   buildNavigationContextKey,
   buildWorkbenchContextKey,

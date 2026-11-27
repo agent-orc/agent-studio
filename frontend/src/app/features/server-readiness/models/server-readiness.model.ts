@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { RemedyAction } from '../../../models/remedy-action.model';
 
 /** Server readiness report (AGT-3412): `GET /api/system/readiness`. */

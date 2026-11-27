@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import { DatePipe, formatDate } from '@angular/common';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import {
   backupKind, backupPolicy, backupStatus, formatBytes, operationKind, operationState,
   type DatabaseBackup, type DatabaseOperation, type DatabaseOperationRequest, type ManagedDatabase,

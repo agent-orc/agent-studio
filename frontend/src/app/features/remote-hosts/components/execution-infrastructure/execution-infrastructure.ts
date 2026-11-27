@@ -3,7 +3,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, input, si
 import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import type { OneShotClaimRouteCondition, RemoteHost } from '../../models/remote-host.model';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 interface ExecutionInfrastructure {
   gate: { host: string | null; transport?: 'pull' | 'ssh'; busy: number; total: number; reachability: string;

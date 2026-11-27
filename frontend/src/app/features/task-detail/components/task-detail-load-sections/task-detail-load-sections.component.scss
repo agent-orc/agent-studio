@@ -60,7 +60,7 @@
 
 .task-load-head__project {
   color: var(--studio-fg-dim);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
 }
 
 .task-load-head__title-row {
@@ -74,7 +74,7 @@
 .task-load-head__lane {
   color: var(--studio-fg-dim);
   font-family: var(--font-mono, monospace);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   font-variant-numeric: tabular-nums;
 }
 
@@ -82,7 +82,7 @@
   overflow: hidden;
   margin: 0;
   color: var(--studio-fg-strong);
-  font-size: 0.95rem;
+  font-size: var(--studio-compat-type-16);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -114,20 +114,20 @@
 .task-core__section h2 {
   margin: 0 0 var(--studio-spacing-3);
   color: var(--studio-fg-strong);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
 }
 
 .task-core__section p {
   margin: 0 0 var(--studio-spacing-2);
   color: var(--studio-fg-dim);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 .task-core__section pre {
   margin: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-  font: 0.78rem/1.5 var(--font-mono, monospace);
+  font: var(--studio-compat-type-13)/1.5 var(--font-mono, monospace);
 }
 
 
@@ -152,7 +152,7 @@
 .task-load-section__header h2 {
   margin: 0;
   color: var(--studio-fg-strong);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
   font-weight: 600;
 }
 
@@ -160,7 +160,7 @@
   display: grid;
   gap: var(--studio-spacing-3);
   visibility: hidden;
-  animation: task-section-reveal 0s linear 200ms forwards;
+  animation: task-section-reveal var(--studio-compat-duration-2) linear var(--studio-compat-duration-6) forwards;
 }
 
 .task-load-section__line {
@@ -168,7 +168,7 @@
   width: 78%;
   height: 0.75rem;
   background: var(--studio-bg-elevated);
-  animation: task-section-pulse 1.2s ease-in-out 200ms infinite alternate;
+  animation: task-section-pulse var(--studio-compat-duration-25) ease-in-out var(--studio-compat-duration-6) infinite alternate;
 }
 
 .task-load-section__line--wide {
@@ -181,9 +181,9 @@
 
 .task-load-section__hint {
   color: var(--studio-fg-dim);
-  font-size: 0.75rem;
+  font-size: var(--studio-compat-type-11);
   opacity: 0;
-  animation: task-section-context 0s linear 1s forwards;
+  animation: task-section-context var(--studio-compat-duration-2) linear var(--studio-compat-duration-30) forwards;
 }
 
 .task-load-section__error {
@@ -195,7 +195,7 @@
 .task-load-section__error p {
   margin: 0 0 var(--studio-spacing-3);
   color: var(--studio-fg-dim);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
 }
 
 .task-load-section__error button {

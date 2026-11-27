@@ -16,5 +16,5 @@
 .outline__name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .outline__value { flex: none; color: var(--studio-fg-muted); font-family: var(--font-mono); font-size: var(--studio-font-size-sm); font-variant-numeric: tabular-nums; }
 .outline__warnings { flex: none; color: var(--studio-status-warning); font-family: var(--font-mono); font-size: var(--studio-font-size-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
-.outline__warnings::before { content: '\25B2\00A0'; font-size: 9px; }
+.outline__warnings::before { content: '\25B2\00A0'; font-size: var(--studio-compat-type-4); }
 .outline__health { flex: none; }

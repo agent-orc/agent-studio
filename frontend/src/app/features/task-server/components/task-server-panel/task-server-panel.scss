@@ -20,13 +20,13 @@
 }
 .ts__title {
   margin: 0 0 var(--studio-spacing-1);
-  font-size: 18px;
+  font-size: var(--studio-font-size-xl);
   font-weight: 700;
   color: var(--studio-fg-strong);
 }
 .ts__subtitle {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   color: var(--studio-fg-dim);
   max-width: 68ch;
   line-height: 1.45;
@@ -38,9 +38,9 @@
   border: 1px solid var(--studio-border-strong);
   color: var(--studio-fg);
   padding: var(--studio-spacing-1) var(--studio-spacing-3);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   display: inline-flex;
   align-items: center;
   gap: var(--studio-spacing-2);
@@ -54,8 +54,8 @@
   border: 1px solid var(--notify-error-border);
   color: var(--notify-error-icon-fg);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
-  border-radius: 6px;
-  font-size: 12px;
+  border-radius: var(--studio-compat-radius-7);
+  font-size: var(--studio-font-size-sm);
   margin-bottom: var(--studio-spacing-3);
 }
 
@@ -68,18 +68,18 @@
   border: 1px solid var(--studio-border);
   color: var(--studio-fg);
   padding: var(--studio-spacing-3) var(--studio-spacing-4);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   margin-bottom: var(--studio-spacing-3);
 }
 .ts__unavailable-title {
   margin: 0 0 var(--studio-spacing-1);
   color: var(--studio-fg-strong);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 .ts__unavailable-reason {
   margin: 0;
   color: var(--studio-fg-dim);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   line-height: 1.4;
 }
 .ts__sign-in {
@@ -88,9 +88,9 @@
   border: 1px solid var(--studio-accent);
   color: var(--studio-on-accent);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 600;
 }
 .ts__sign-in:hover { background: color-mix(in srgb, var(--studio-accent) 90%, var(--studio-fg-strong)); }
@@ -101,7 +101,7 @@
   align-items: center;
   gap: var(--studio-spacing-2);
   margin-bottom: var(--studio-spacing-4);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   color: var(--studio-fg-dim);
 }
 .ts__count strong { color: var(--studio-fg-strong); font-weight: 700; }
@@ -116,7 +116,7 @@
 }
 .ts__block {
   border: 1px solid var(--studio-border);
-  border-radius: 10px;
+  border-radius: var(--studio-compat-radius-3);
   background: var(--studio-bg-hover);
   padding: var(--studio-spacing-4);
 }
@@ -133,7 +133,7 @@
 }
 .ts__block-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--studio-font-size-md);
   font-weight: 700;
   color: var(--studio-fg-strong);
 }
@@ -141,12 +141,12 @@
 .ts__badge {
   margin-left: auto;
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   font-weight: 600;
   letter-spacing: 0.03em;
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   // stylelint-disable-next-line declaration-property-unit-disallowed-list -- 1px pill inset is sub-scale
-  padding: 1px var(--studio-spacing-2);
+  padding: var(--studio-compat-space-6) var(--studio-spacing-2);
   background: var(--studio-bg-selected);
   color: var(--studio-fg-dim);
 }
@@ -162,7 +162,7 @@
   grid-template-columns: 96px 1fr;
   gap: var(--studio-spacing-2);
   align-items: baseline;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 .ts__row dt {
   color: var(--studio-fg-muted);
@@ -195,23 +195,23 @@
 }
 .ts__section-title {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--studio-font-size-lg);
   font-weight: 700;
   color: var(--studio-fg-strong);
 }
-.ts__section-count { font-size: 11px; color: var(--studio-fg-dim); }
+.ts__section-count { font-size: var(--studio-compat-type-6); color: var(--studio-fg-dim); }
 .ts__section-count strong { color: var(--studio-fg-strong); font-weight: 700; }
 .ts__section-desc {
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   color: var(--studio-fg-dim);
   max-width: 64ch;
   line-height: 1.4;
 }
 
 .ts__empty {
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   color: var(--studio-fg-dim);
   padding: var(--studio-spacing-4);
   border: 1px dashed var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
 }

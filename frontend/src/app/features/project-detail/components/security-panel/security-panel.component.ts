@@ -17,7 +17,7 @@ import {
   SecurityReviewSummary,
 } from './security-panel.types';
 import { ConceptHelpComponent } from '../../../../components/concept-help/concept-help.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { baselineTone, historyVerdictTone, verdictTone } from './security-panel-status';
 
 /**

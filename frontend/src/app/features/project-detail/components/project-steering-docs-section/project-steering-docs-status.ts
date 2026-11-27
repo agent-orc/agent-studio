@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { SteeringDocsWarningSeverity } from '../../../../models/steering-docs.model';
 
 export interface SteeringAction {

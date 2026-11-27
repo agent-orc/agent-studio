@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, signal, untracked } from '@angular/core';
-import { DialogComponent } from '../../../../components/dialog/dialog.component';
-import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/pending-button.directive';
 import { AcceptanceReadinessStore, type AcceptanceRoundDraft } from '../../state/acceptance-readiness.store';
 
 /**

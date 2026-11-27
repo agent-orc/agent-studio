@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, ElementRef, ViewChild, AfterViewInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
-import { DialogComponent } from '../../../../components/dialog/dialog.component';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 
 /**

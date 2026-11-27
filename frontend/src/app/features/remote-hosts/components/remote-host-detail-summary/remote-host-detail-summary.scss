@@ -37,5 +37,5 @@ button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 
 }
 
 @media (prefers-reduced-motion: reduce) {
-  i { transition-duration: 0s; }
+  i { transition-duration: var(--studio-compat-duration-2); }
 }

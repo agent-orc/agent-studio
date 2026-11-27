@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { backupOperationLabel, backupOutcomeLabel, backupOutcomeTone } from '../../models/backup-activity.model';
 import { formatAuditTime } from '../../models/operator-agent.model';
 import { BackupActivityService } from '../../services/backup-activity.service';

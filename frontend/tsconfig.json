@@ -4,6 +4,7 @@
   "compileOnSave": false,
   "compilerOptions": {
     "strict": true,
+    "paths": { "@studio/ui": ["./projects/studio-ui/src/public-api.ts"], "@studio/ui/*": ["./projects/studio-ui/src/*"] },
     "noImplicitOverride": true,
     "noPropertyAccessFromIndexSignature": true,
     "noImplicitReturns": true,

@@ -1,5 +1,5 @@
 import { WikiClassification } from '../../../../models/project-docs.model';
-import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Visual tone of a classification badge in the tree / folder table. */
 export type WikiClassBadgeTone = 'stale' | 'superseded' | 'muted';

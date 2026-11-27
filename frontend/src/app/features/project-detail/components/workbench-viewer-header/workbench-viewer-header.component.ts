@@ -16,8 +16,8 @@ import {
   TaskReferenceMicrocardComponent,
   TaskReferenceStatus,
 } from '../../../../components/task-reference-microcard/task-reference-microcard';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import {
   WorkbenchDecisionPoint,
   WorkbenchDecisionResponse,
@@ -31,7 +31,7 @@ import { TaskService } from '../../../../services/task.service';
 import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/workbench-decision-panel';
 import { focusLost } from '../workbench-decision-panel/workbench-decision-focus.util';
 import { WorkbenchReviewTagComponent } from '../workbench-review-tag/workbench-review-tag.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 import {
   conceptCardKeys,

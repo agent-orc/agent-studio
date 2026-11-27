@@ -9,7 +9,7 @@ import {
 import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from '../../../../utils/visible-interval';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { reportSeverityTone } from '../analysis-report-drilldown/analysis-report-status';
 /**
  * Project-level Analysis Reports surface (ROADMAP "Analysis Reports and

@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, afterRenderEffect, inject, input, output } from '@angular/core';
 import type { TaskInfo } from '../../../../models/task.model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { resourcePhaseTone } from '../task-resource-status/resource-phase-tone';
 import { laneLabelFor } from '../../state/triage-actions.model';
 import type { TaskCore } from '../../../../models/task-core.model';

@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, afterNextRender, computed, effect, inject, signal, viewChild } from '@angular/core';
-import { DialogComponent } from '../../../../components/dialog/dialog.component';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
-import { ModalStackService } from '../../../../services/modal-stack.service';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { BatchPanelComponent } from '../../../batch-gate/batch-panel/batch-panel';
@@ -20,7 +20,7 @@ import {
 import { WorkspaceOverlaysService, type WorkspaceSettingsSection } from '../../../shell';
 import { StudioPanelStateService } from '../../services/studio-panel-state.service';
 import { StudioTabStateService } from '../../services/studio-tab-state.service';
-import { nameWithVisibleText } from '../../../../utils/accessible-name';
+import { nameWithVisibleText } from '@studio/ui/utils/accessible-name';
 
 /**
  * The header entry that answers "what needs me" (AGT-3576). It opens one list

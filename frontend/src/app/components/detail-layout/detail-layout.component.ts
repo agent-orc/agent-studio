@@ -1,8 +1,8 @@
 import {
   ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterNextRender, effect, inject, input, output, signal, untracked, viewChild,
 } from '@angular/core';
-import { ModalStackService } from '../../services/modal-stack.service';
-import { SidesheetComponent } from '../sidesheet/sidesheet.component';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
+import { SidesheetComponent } from '@studio/ui/components/sidesheet/sidesheet.component';
 
 /**
  * Master and detail on one page: the main column with its grids, and one

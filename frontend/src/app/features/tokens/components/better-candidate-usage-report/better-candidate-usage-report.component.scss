@@ -6,13 +6,13 @@
   margin-top: var(--studio-spacing-3);
   padding: var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: color-mix(in srgb, var(--severity-info) 7%, transparent);
 
   h3 {
     margin: 0 0 var(--studio-spacing-1);
     color: var(--studio-fg-strong);
-    font-size: 0.82rem;
+    font-size: var(--studio-compat-type-7);
   }
 }
 
@@ -22,7 +22,7 @@
   gap: var(--studio-spacing-3);
   align-items: baseline;
   color: var(--studio-fg-dim);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 
   strong { color: var(--studio-fg); }
 }

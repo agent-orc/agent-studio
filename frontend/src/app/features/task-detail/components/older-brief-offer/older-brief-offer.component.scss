@@ -7,21 +7,21 @@
   background: var(--studio-bg-elevated);
   color: var(--studio-fg-strong);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
 }
 
 .older-brief-offer > app-status-indicator { justify-self: start; }
-.older-brief-offer p { margin: 0; color: var(--studio-fg-dim); font-size: 0.82rem; }
+.older-brief-offer p { margin: 0; color: var(--studio-fg-dim); font-size: var(--studio-compat-type-7); }
 .older-brief-offer__reference code { overflow-wrap: anywhere; color: var(--studio-fg-strong); }
 .older-brief-offer__actions { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
 .older-brief-offer__actions button {
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   min-height: 34px;
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-editor);
   color: var(--studio-fg-strong);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
   font-weight: 600;
   cursor: pointer;
 }

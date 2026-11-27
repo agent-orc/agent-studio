@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { ResourcePhase } from '../../state/task-resource-states';
 
 /**

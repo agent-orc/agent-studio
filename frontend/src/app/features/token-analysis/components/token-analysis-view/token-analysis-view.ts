@@ -3,7 +3,7 @@ import {
 } from '@angular/core';
 import type { Subscription } from 'rxjs';
 import { kvValueOf, withKvSegment } from '../../../../services/url-hash.util';
-import { SegmentedControlComponent, type SegmentedOption } from '../../../../components/segmented-control/segmented-control.component';
+import { SegmentedControlComponent, type SegmentedOption } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { formatCompactTokens, formatCompactUsd } from '../../../tokens/token-number-format.util';
 import type { TokenAnalysisCardDetail, TokenAnalysisResponse } from '../../models/token-analysis.model';
 import { TokenAnalysisApiService } from '../../services/token-analysis-api.service';

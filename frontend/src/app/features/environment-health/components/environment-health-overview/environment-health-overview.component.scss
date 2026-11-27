@@ -1,14 +1,14 @@
 .health-overview {
   min-width: 0;
   font-variant-numeric: tabular-nums;
-  h2 { margin: 0 0 var(--studio-spacing-2); font-size: 1rem; }
+  h2 { margin: 0 0 var(--studio-spacing-2); font-size: var(--studio-compat-type-23); }
   h2 small { font-weight: normal; color: var(--studio-text-secondary); }
   p { margin: 0; color: var(--studio-text-secondary); }
 }
 .health-overview__table-wrap {
   overflow-x: auto;
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
 }
 .health-overview table {
   width: 100%;
@@ -20,7 +20,7 @@
     white-space: nowrap;
     border-bottom: 1px solid var(--studio-border);
   }
-  thead { color: var(--studio-text-secondary); font-size: 0.76rem; }
+  thead { color: var(--studio-text-secondary); font-size: var(--studio-compat-type-17); }
   tbody th { font-weight: 500; }
   tbody th small { color: var(--studio-text-secondary); }
   tr[data-status='down'] { background: color-mix(in srgb, var(--studio-error) 8%, var(--studio-surface)); }

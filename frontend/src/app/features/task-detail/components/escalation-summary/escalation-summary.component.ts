@@ -1,4 +1,4 @@
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import {
   ChangeDetectionStrategy, Component, computed, effect,
   inject, input, output, signal,
@@ -6,8 +6,8 @@ import {
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { TaskState } from '../../../../models/task.model';
 import { ServerCheckoutRemedyComponent } from '../server-checkout-remedy/server-checkout-remedy.component';
-import { ModalFocusDirective } from '../../../../directives/modal-focus.directive';
-import { bindOpenToModalStack } from '../../../../services/modal-stack.service';
+import { ModalFocusDirective } from '@studio/ui/directives/modal-focus.directive';
+import { bindOpenToModalStack } from '@studio/ui/services/modal-stack.service';
 import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
 import { CodeReviewListEntry, TaskService } from '../../../../services/task.service';
 import { BatchGateService } from '../../../../services/batch-gate.service';
@@ -22,8 +22,8 @@ import {
   type SteeringInfo,
 } from '../../../../components/steering-detail';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import { EscalationDetailsComponent } from '../escalation-details/escalation-details.component';
 import { GateQueueReleaseComponent } from '../gate-queue-release/gate-queue-release.component';
 import {

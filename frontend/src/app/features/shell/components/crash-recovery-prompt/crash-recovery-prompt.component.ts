@@ -1,10 +1,10 @@
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, DestroyRef, OnInit, computed, effect, inject, signal } from '@angular/core';
-import { DialogComponent } from '../../../../components/dialog/dialog.component';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import type { CrashRecoveryPending } from '../../../../models/task.model';
-import { ModalStackService } from '../../../../services/modal-stack.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from '../../../../services/task.service';
 
 @Component({

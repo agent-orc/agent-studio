@@ -25,22 +25,22 @@
   --md-line-height: 1.65;
 
   /* -- Palette (Catppuccin Mocha) ---------------------------------- */
-  --md-fg:           #cdd6f4;            /* text       */
-  --md-fg-strong:   #f5e0dc;            /* rosewater  */
-  --md-fg-em:        #f2cdcd;            /* flamingo   */
-  --md-fg-muted:     #a6adc8;            /* subtext0   */
-  --md-fg-link:      #89dceb;            /* sky        */
-  --md-fg-link-hov:  #74c7ec;            /* sapphire   */
-  --md-fg-code:      #fab387;            /* peach      */
-  --md-fg-h3:        #b4befe;            /* lavender   */
-  --md-fg-h4:        #89b4fa;            /* blue       */
-  --md-marker:       #cba6f7;            /* mauve      */
-  --md-border-soft:  rgba(127, 132, 156, 0.30);
-  --md-border:       rgba(127, 132, 156, 0.45);
-  --md-rule:         rgba(127, 132, 156, 0.40);
-  --md-surface-soft: rgba(49, 50, 68, 0.45);
-  --md-surface:      rgba(49, 50, 68, 0.70);
-  --md-code-bg:      #181825;            /* mantle     */
+  --md-fg:           var(--studio-compat-ink-28);            /* text       */
+  --md-fg-strong:   var(--studio-compat-ink-68);            /* rosewater  */
+  --md-fg-em:        var(--studio-compat-ink-69);            /* flamingo   */
+  --md-fg-muted:     var(--studio-compat-ink-29);            /* subtext0   */
+  --md-fg-link:      var(--studio-compat-ink-70);            /* sky        */
+  --md-fg-link-hov:  var(--studio-compat-ink-71);            /* sapphire   */
+  --md-fg-code:      var(--studio-compat-ink-72);            /* peach      */
+  --md-fg-h3:        var(--studio-compat-ink-32);            /* lavender   */
+  --md-fg-h4:        var(--studio-compat-ink-31);            /* blue       */
+  --md-marker:       var(--studio-compat-ink-73);            /* mauve      */
+  --md-border-soft:  var(--studio-compat-border-43);
+  --md-border:       var(--studio-compat-border-44);
+  --md-rule:         var(--studio-compat-ink-74);
+  --md-surface-soft: var(--studio-compat-surface-55);
+  --md-surface:      var(--studio-compat-surface-56);
+  --md-code-bg:      var(--studio-compat-ink-75);            /* mantle     */
 
   color: var(--md-fg);
   font-family: var(--font-ui);
@@ -58,7 +58,7 @@
 
 /* -- Paragraphs --------------------------------------------------- */
 .markdown-body p {
-  margin: 0 0 0.85em;
+  margin: 0 0 var(--studio-compat-space-55);
 }
 
 /* -- Headings ----------------------------------------------------- */
@@ -72,7 +72,7 @@
   line-height: 1.25;
   letter-spacing: -0.01em;
   color: var(--md-fg-strong);
-  margin: 1.6em 0 0.45em;
+  margin: var(--studio-compat-space-56) 0 var(--studio-compat-space-57);
 }
 .markdown-body > h1:first-child,
 .markdown-body > h2:first-child,
@@ -83,27 +83,27 @@
   margin-top: 0;
 }
 .markdown-body h1 {
-  font-size: 1.6em;
-  padding-bottom: 0.3em;
+  font-size: var(--studio-compat-type-110);
+  padding-bottom: var(--studio-compat-space-32);
   border-bottom: 1px solid var(--md-rule);
 }
 .markdown-body h2 {
-  font-size: 1.32em;
-  padding-bottom: 0.22em;
+  font-size: var(--studio-compat-type-111);
+  padding-bottom: var(--studio-compat-space-58);
   border-bottom: 1px solid var(--md-border-soft);
 }
 .markdown-body h3 {
-  font-size: 1.15em;
+  font-size: var(--studio-compat-type-112);
   color: var(--md-fg-h3);
 }
 .markdown-body h4 {
-  font-size: 1em;
+  font-size: var(--studio-compat-type-27);
   color: var(--md-fg-h4);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.markdown-body h5 { font-size: 0.98em; }
-.markdown-body h6 { font-size: 0.92em; color: var(--md-fg-muted); }
+.markdown-body h5 { font-size: var(--studio-compat-type-113); }
+.markdown-body h6 { font-size: var(--studio-compat-type-114); color: var(--md-fg-muted); }
 
 /* -- Emphasis ----------------------------------------------------- */
 .markdown-body strong,
@@ -116,40 +116,40 @@
  * :has() is widely shipped now; older browsers fall back to the
  * default paragraph rhythm. */
 .markdown-body p:has(> strong:only-child) {
-  margin-top: 1.3em;
-  margin-bottom: 0.4em;
+  margin-top: var(--studio-compat-space-59);
+  margin-bottom: var(--studio-compat-space-33);
   color: var(--md-fg-strong);
-  font-size: 1.02em;
+  font-size: var(--studio-compat-type-115);
 }
 .markdown-body > p:first-child:has(> strong:only-child) { margin-top: 0; }
 
 /* -- Lists -------------------------------------------------------- */
 .markdown-body ul,
 .markdown-body ol {
-  margin: 0 0 0.9em;
-  padding-left: 1.7em;
+  margin: 0 0 var(--studio-compat-space-60);
+  padding-left: var(--studio-compat-space-61);
 }
-.markdown-body li { margin: 0.25em 0; }
+.markdown-body li { margin: var(--studio-compat-space-62) 0; }
 .markdown-body li::marker { color: var(--md-marker); }
-.markdown-body li > p { margin: 0.2em 0; }
+.markdown-body li > p { margin: var(--studio-compat-space-63) 0; }
 .markdown-body li > ul,
-.markdown-body li > ol { margin: 0.25em 0; }
+.markdown-body li > ol { margin: var(--studio-compat-space-62) 0; }
 
 /* GFM task lists ([ ] / [x]) render as <li><input type=checkbox>…  */
 .markdown-body li > input[type='checkbox'] {
-  margin-right: 6px;
+  margin-right: var(--studio-compat-space-2);
   vertical-align: middle;
   accent-color: var(--md-marker);
 }
 
 /* -- Blockquote --------------------------------------------------- */
 .markdown-body blockquote {
-  margin: 0.9em 0;
-  padding: 0.5em 1em;
+  margin: var(--studio-compat-space-60) 0;
+  padding: var(--studio-compat-space-64) var(--studio-compat-space-65);
   border: 1px solid var(--md-border-soft);
   background: var(--md-surface-soft);
   color: var(--md-fg-muted);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   font-style: italic;
 }
 .markdown-body blockquote > :first-child { margin-top: 0; }
@@ -160,18 +160,18 @@
   border: 0;
   height: 1px;
   background: var(--md-rule);
-  margin: 1.4em 0;
+  margin: var(--studio-compat-space-66) 0;
 }
 
 /* -- Links -------------------------------------------------------- */
 .markdown-body a {
   color: var(--md-fg-link);
   text-decoration: underline;
-  text-decoration-color: rgba(137, 220, 235, 0.45);
+  text-decoration-color: var(--studio-compat-ink-76);
   text-underline-offset: 2px;
   word-break: break-word;
   overflow-wrap: anywhere;
-  transition: color 0.12s ease, text-decoration-color 0.12s ease;
+  transition: color var(--studio-compat-duration-3) ease, text-decoration-color var(--studio-compat-duration-3) ease;
 }
 .markdown-body a:hover {
   color: var(--md-fg-link-hov);
@@ -180,12 +180,12 @@
 
 /* -- Inline code (anything not nested in <pre>) ------------------- */
 .markdown-body :not(pre) > code {
-  padding: 1px 6px;
+  padding: var(--studio-compat-space-6) var(--studio-compat-space-2);
   background: var(--md-surface);
   border: 1px solid var(--md-border-soft);
-  border-radius: 3px;
+  border-radius: var(--studio-compat-radius-9);
   font-family: var(--font-mono);
-  font-size: 0.88em;
+  font-size: var(--studio-compat-type-116);
   color: var(--md-fg-code);
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -197,14 +197,14 @@
  * pre+code path here is the chat / activity-log / prompt-history
  * fallback. */
 .markdown-body pre {
-  margin: 0.85em 0;
-  padding: 12px 14px;
+  margin: var(--studio-compat-space-55) 0;
+  padding: var(--studio-spacing-3) var(--studio-compat-space-3);
   background: var(--md-code-bg);
   border: 1px solid var(--md-border-soft);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   overflow-x: auto;
   font-family: var(--font-mono);
-  font-size: 0.85em;
+  font-size: var(--studio-compat-type-102);
   line-height: 1.55;
   max-height: 480px;
   overflow-y: auto;
@@ -225,10 +225,10 @@
   top: 2px;
   right: 8px;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--studio-compat-type-4);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--md-fg-meta, rgba(148, 163, 184, 0.65));
+  color: var(--md-fg-meta, var(--studio-compat-ink-77));
   opacity: 0.65;
   pointer-events: none;
 }
@@ -268,7 +268,7 @@
 /* Numbered fenced blocks (markdown-utils' opt-in numbered shape used by
  * the chat surface). Keep the grid here so the surface CSS stays slim. */
 .markdown-body pre.md-code--numbered {
-  padding: 8px 0;
+  padding: var(--studio-spacing-2) 0;
 }
 .markdown-body pre.md-code--numbered code {
   display: block;
@@ -277,18 +277,18 @@
 .markdown-body .md-code-row {
   display: grid;
   grid-template-columns: 36px 1fr;
-  column-gap: 12px;
+  column-gap: var(--studio-spacing-3);
 }
 .markdown-body .md-code-num {
   text-align: right;
-  color: rgba(148, 163, 184, 0.55);
+  color: var(--studio-compat-ink-78);
   user-select: none;
   font-variant-numeric: tabular-nums;
-  padding-right: 2px;
-  border-right: 1px solid rgba(148, 163, 184, 0.12);
+  padding-right: var(--studio-compat-space-4);
+  border-right: 1px solid var(--studio-compat-border-45);
 }
 .markdown-body .md-code-text {
-  padding-left: 8px;
+  padding-left: var(--studio-spacing-2);
   white-space: pre;
   color: var(--md-fg);
 }
@@ -297,15 +297,15 @@
 .markdown-body table {
   width: 100%;
   border-collapse: collapse;
-  margin: 0.9em 0;
-  font-size: 0.93em;
+  margin: var(--studio-compat-space-60) 0;
+  font-size: var(--studio-compat-type-117);
   border: 1px solid var(--md-border-soft);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   overflow: hidden;
 }
 .markdown-body th,
 .markdown-body td {
-  padding: 0.5em 0.8em;
+  padding: var(--studio-compat-space-64) var(--studio-compat-space-67);
   text-align: left;
   border-bottom: 1px solid var(--md-border-soft);
   vertical-align: top;
@@ -323,7 +323,7 @@
 .markdown-body img {
   max-width: 100%;
   height: auto;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   border: 1px solid var(--md-border-soft);
 }
 
@@ -332,7 +332,7 @@
  * `role="button"`; these rules make the affordance visible. */
 .markdown-body img.md-image-zoomable {
   cursor: zoom-in;
-  transition: outline-color 0.15s ease, transform 0.15s ease;
+  transition: outline-color var(--studio-compat-duration-9) ease, transform var(--studio-compat-duration-9) ease;
 }
 .markdown-body img.md-image-zoomable:hover {
   transform: translateY(-1px);
@@ -354,10 +354,10 @@
   border-bottom: 0;
   padding-bottom: 0;
 }
-.markdown-body.markdown-body--dense h1 { font-size: 1.3em; }
-.markdown-body.markdown-body--dense h2 { font-size: 1.18em; }
-.markdown-body.markdown-body--dense h3 { font-size: 1.08em; }
-.markdown-body.markdown-body--dense h4 { font-size: 0.98em; }
+.markdown-body.markdown-body--dense h1 { font-size: var(--studio-compat-type-118); }
+.markdown-body.markdown-body--dense h2 { font-size: var(--studio-compat-type-119); }
+.markdown-body.markdown-body--dense h3 { font-size: var(--studio-compat-type-120); }
+.markdown-body.markdown-body--dense h4 { font-size: var(--studio-compat-type-113); }
 
 /* -- Editor variant (TipTap ProseMirror) ------------------------- *
  * The contenteditable surface gets a small min-height so it doesn't
@@ -372,7 +372,7 @@
   outline: none;
 }
 .markdown-body.markdown-body--editor img.ProseMirror-selectednode {
-  outline: 2px solid #818cf8;
+  outline: 2px solid var(--studio-compat-border-46);
   outline-offset: 2px;
 }
 
@@ -383,20 +383,20 @@
  * pastels on white — barely legible. Swap them for a contrast-safe
  * palette while keeping the studio brand orange visible. */
 html[data-studio-theme='light'] .markdown-body {
-  --md-fg:           #1a1a1a;
-  --md-fg-strong:    #1a1a1a;
-  --md-fg-em:        #1a1a1a;
-  --md-fg-muted:     #4a4a4a;
-  --md-fg-link:      #1d4ed8;
-  --md-fg-link-hov:  #1e40af;
-  --md-fg-code:      #a8472d;
-  --md-fg-h3:        #1a1a1a;
-  --md-fg-h4:        #1a1a1a;
-  --md-marker:       #d97757;
-  --md-border-soft:  rgba(0, 0, 0, 0.10);
-  --md-border:       rgba(0, 0, 0, 0.16);
-  --md-rule:         rgba(0, 0, 0, 0.12);
-  --md-surface-soft: rgba(0, 0, 0, 0.04);
-  --md-surface:      rgba(0, 0, 0, 0.06);
-  --md-code-bg:      rgba(0, 0, 0, 0.06);
+  --md-fg:           var(--studio-compat-ink-35);
+  --md-fg-strong:    var(--studio-compat-ink-35);
+  --md-fg-em:        var(--studio-compat-ink-35);
+  --md-fg-muted:     var(--studio-compat-ink-79);
+  --md-fg-link:      var(--studio-compat-ink-80);
+  --md-fg-link-hov:  var(--studio-compat-ink-81);
+  --md-fg-code:      var(--studio-compat-ink-82);
+  --md-fg-h3:        var(--studio-compat-ink-35);
+  --md-fg-h4:        var(--studio-compat-ink-35);
+  --md-marker:       var(--studio-compat-ink-83);
+  --md-border-soft:  var(--studio-compat-border-47);
+  --md-border:       var(--studio-compat-border-48);
+  --md-rule:         var(--studio-compat-ink-84);
+  --md-surface-soft: var(--studio-compat-surface-57);
+  --md-surface:      var(--studio-compat-surface-58);
+  --md-code-bg:      var(--studio-compat-ink-85);
 }

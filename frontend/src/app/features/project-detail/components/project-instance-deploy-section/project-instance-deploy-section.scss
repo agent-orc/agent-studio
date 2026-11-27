@@ -1,7 +1,7 @@
 :host { display: block; min-width: 0; }
 
 .instance-deploy-section__notice {
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: color-mix(in srgb, var(--studio-warn) 10%, var(--studio-surface));
   padding: var(--studio-spacing-3);
 }

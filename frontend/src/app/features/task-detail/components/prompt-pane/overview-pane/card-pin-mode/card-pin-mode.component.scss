@@ -1,4 +1,4 @@
 :host { display: block; min-width: 0; }
-label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--studio-spacing-3); padding: var(--studio-spacing-2) 0; color: var(--studio-fg-muted); font-size: 12px; }
+label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--studio-spacing-3); padding: var(--studio-spacing-2) 0; color: var(--studio-fg-muted); font-size: var(--studio-font-size-sm); }
 select { color: var(--studio-fg); background: var(--studio-bg-hover); border: 1px solid var(--studio-border); padding: var(--studio-spacing-1) var(--studio-spacing-2); min-width: 0; }
-p { color: var(--studio-fg); font-size: 12px; }
+p { color: var(--studio-fg); font-size: var(--studio-font-size-sm); }

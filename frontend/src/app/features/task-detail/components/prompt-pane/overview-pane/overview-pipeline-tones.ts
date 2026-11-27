@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { AspectVerdictTone } from '../../../../../components/aspect-findings/aspect-findings.model';
 import type { PipelineGroupTone } from './pipeline-groups.util';
 import type { PipelineRowVm } from './pipeline-row.vm';

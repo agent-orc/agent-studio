@@ -12,7 +12,7 @@
   padding: 0 var(--studio-spacing-3);
   border-bottom: 1px solid var(--studio-border);
   color: var(--studio-fg-muted);
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -39,7 +39,7 @@
 .war__info dt {
   margin: 0;
   color: var(--studio-fg-muted);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -48,7 +48,7 @@
   min-width: 0;
   margin: 0;
   color: var(--studio-fg);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
   overflow-wrap: anywhere;
 }
 
@@ -67,7 +67,7 @@
   gap: var(--studio-spacing-2);
   min-width: 0;
   color: var(--studio-fg-muted);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 }
 
 .war__recent time {

@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { DataGridComponent, GridCellDirective } from '../../../../components/data-grid';
-import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
-import type { MenuItem } from '../../../../components/menu';
+import { EmptyStateComponent } from '@studio/ui/components/empty-state/empty-state.component';
+import type { MenuItem } from '@studio/ui/components/menu/index';
 import { OverflowMenuComponent } from '../../../../components/overflow-menu/overflow-menu.component';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { AccessUser } from '../../models/access.model';
 import { accessColumns, formatAccessDate, grantsOf, personStatus, personTone, type GrantView, type PersonStatus } from '../../models/access-view.model';
 import { AccessSelectionService } from '../../services/access-selection.service';

@@ -5,7 +5,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { AcceptanceReadinessBarComponent } from './acceptance-readiness-bar.component';
 import { AcceptanceReadinessStore } from '../../state/acceptance-readiness.store';
-import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 import { readinessItem, reviewCard } from '../../testing/acceptance-readiness.fixtures';
 
 describe('AcceptanceReadinessBarComponent', () => {

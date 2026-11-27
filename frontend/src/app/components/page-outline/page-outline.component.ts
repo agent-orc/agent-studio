@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, effect, inject, input, signal } from '@angular/core';
-import { CountBadgeComponent } from '../count-badge/count-badge.component';
+import { CountBadgeComponent } from '@studio/ui/components/count-badge/count-badge.component';
 
 export interface OutlineItem {
   /** Element id of the section, the `anchor` of its `<app-page-section>`. */

@@ -5,7 +5,7 @@ import { Subject, of, throwError } from 'rxjs';
 import { CliModelSelectorComponent } from './cli-model-selector.component';
 import type { CliModelInfo } from '../../features/cli';
 import { CliCatalogStore } from '../../features/cli';
-import { ModalStackService } from '../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { ModelPriceStore } from '../../features/tokens/model-prices';
 
 /**
