@@ -1906,18 +1906,8 @@ public static class ProjectSettingsEndpoints
         starvationMinutes = projectSettings.DispatchOverlapStarvationMinutes,
     };
 
-    /// <summary>
-    /// AGT-2827: a build-profile or pipeline-step edit lands here so every
-    /// ReviewAttempt still queued for this project gets its frozen Plan rebuilt
-    /// from the settings that were just written, instead of running the plan
-    /// frozen at its creation. Rebuilds the plan the exact way the original
-    /// creation path does (<see cref="RemoteReviewPlanBuilder.Build"/> over the
-    /// task's resolved repository path and baseline ref) so a re-plan can never
-    /// diverge from what a fresh ReviewAttempt would have received.
-    /// </summary>
-    /// <summary>The testing answer of the settings routes (AGT-3965).</summary>
     // Method group (not a run-time delegate) so the request delegate generator intercepts both routes (AGT-4242).
-private static async Task<IResult> SetTestingStrategyAsync(
+    private static async Task<IResult> SetTestingStrategyAsync(
         string projectName,
         HttpContext context,
         ControlPlaneAuditLog audit,
@@ -1981,6 +1971,16 @@ private static async Task<IResult> SetTestingStrategyAsync(
         finally { TestingStrategyElevation.MutationGate.Release(); }
     }
 
+    /// <summary>
+    /// AGT-2827: a build-profile or pipeline-step edit lands here so every
+    /// ReviewAttempt still queued for this project gets its frozen Plan rebuilt
+    /// from the settings that were just written, instead of running the plan
+    /// frozen at its creation. Rebuilds the plan the exact way the original
+    /// creation path does (<see cref="RemoteReviewPlanBuilder.Build"/> over the
+    /// task's resolved repository path and baseline ref) so a re-plan can never
+    /// diverge from what a fresh ReviewAttempt would have received.
+    /// </summary>
+    /// <summary>The testing answer of the settings routes (AGT-3965).</summary>
     private static object TestingView(string projectName, ProjectSettingsService settings,
         PostMergeModeService postMergeMode, PostMergeCoverageService coverage, GateStrategyTransition? transition = null)
     {
