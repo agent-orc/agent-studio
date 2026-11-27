@@ -2189,6 +2189,7 @@ public static class V1ReviewPlaneEndpoints
                 // qualifier: the integration outcome behind the park.
                 string? integrationOutcome = null;
                 string? integrationParkReason = null;
+                RemoteDeliverySettlementRecord? deliverySettlement = null;
                 // AGT-2839: record what this review actually verified - the
                 // integration ref, the merge base on it, and the immutable
                 // result SHA - beside the task, synchronously, before any
@@ -2229,14 +2230,26 @@ public static class V1ReviewPlaneEndpoints
                     // before the first side effect is what lets a restarted
                     // backend finish the sequence instead of demanding a second
                     // 45-minute review of an already passed subject.
+                    if (authority.GetTaskProjection(settled.ReviewAttempt.TaskKey).CurrentReviewAttempt?.AttemptId
+                        != attemptId)
+                        return Results.Conflict(new Contract.ApiError("superseded-review-generation",
+                            "A successor review generation owns this task."));
                     var existingSettlement = RemoteDeliverySettlementStore.Read(task.FolderPath);
+                    deliverySettlement = existingSettlement;
                     if (!RemoteDeliverySettlementStore.MatchesAttempt(existingSettlement, attemptId))
                     {
                         if (preparedDelivery is null)
                             return Results.Json(new Contract.ApiError("review-settlement-repair-required",
                                 "The delivery decision is missing from the report journal."),
                                 statusCode: StatusCodes.Status503ServiceUnavailable);
-                        try { RemoteDeliverySettlementStore.Write(task.FolderPath, preparedDelivery); }
+                        try
+                        {
+                            deliverySettlement = RemoteDeliverySettlementStore.TryWrite(
+                                task.FolderPath, existingSettlement, preparedDelivery);
+                            if (deliverySettlement is null)
+                                return Results.Conflict(new Contract.ApiError("superseded-delivery-settlement",
+                                    "The delivery settlement changed while the report was being recorded."));
+                        }
                         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                         {
                             logger.LogError(ex, "review-delivery-settlement-write-failed attempt={AttemptId}", attemptId);
@@ -2257,6 +2270,17 @@ public static class V1ReviewPlaneEndpoints
                         var integrated = await remoteIntegration.EnqueueAsync(integrationRequest).ConfigureAwait(false);
                         integrationOutcome = integrated.Outcome.ToString();
                         integrationParkReason = RemoteDeliveryParkReason.For(integrated);
+                        deliverySettlement = AdvanceDeliverySettlement(
+                            task.FolderPath,
+                            deliverySettlement!,
+                            RemoteDeliverySettlementStage.IntegrationSettled,
+                            integrationOutcome,
+                            integrationParkReason,
+                            logger);
+                        if (deliverySettlement is null)
+                            return Results.Json(new Contract.ApiError("review-settlement-repair-required",
+                                "The delivery settlement changed or could not be persisted. Recovery will reconcile it."),
+                                statusCode: StatusCodes.Status503ServiceUnavailable);
                         if (reviewInputDecisions.EngineDecides
                             && integrated.AutomaticRecoveryBudgetUsed is { } used
                             && integrated.AutomaticRecoveryBudgetLimit is { } limit
@@ -2281,6 +2305,14 @@ public static class V1ReviewPlaneEndpoints
                                 request.Fence, request.AuthorityEpoch, signal));
                             EngineDecisionWaitMarker.Write(task.FolderPath, pending.RunId);
                             integrationParkReason = $"Waiting for engine decision {pending.RunId}.";
+                            deliverySettlement = AdvanceDeliverySettlement(
+                                task.FolderPath, deliverySettlement,
+                                RemoteDeliverySettlementStage.IntegrationSettled,
+                                integrationOutcome, integrationParkReason, logger);
+                            if (deliverySettlement is null)
+                                return Results.Json(new Contract.ApiError("review-settlement-repair-required",
+                                    "The delivery settlement changed or could not be persisted. Recovery will reconcile it."),
+                                    statusCode: StatusCodes.Status503ServiceUnavailable);
                         }
                     }
                     else
@@ -2292,13 +2324,18 @@ public static class V1ReviewPlaneEndpoints
                             ? AcceptedIntegrationFailureCodes.VerifyDefinitionMissing
                             : AcceptedIntegrationFailureCodes.DeliveryGateFailed;
                         integrationParkReason = RemoteDeliveryParkReason.ForCode(integrationOutcome);
+                        deliverySettlement = AdvanceDeliverySettlement(
+                            task.FolderPath,
+                            deliverySettlement!,
+                            RemoteDeliverySettlementStage.IntegrationSettled,
+                            integrationOutcome,
+                            integrationParkReason,
+                            logger);
+                        if (deliverySettlement is null)
+                            return Results.Json(new Contract.ApiError("review-settlement-repair-required",
+                                "The delivery settlement changed or could not be persisted. Recovery will reconcile it."),
+                                statusCode: StatusCodes.Status503ServiceUnavailable);
                     }
-                    AdvanceDeliverySettlement(
-                        task.FolderPath,
-                        RemoteDeliverySettlementStage.IntegrationSettled,
-                        integrationOutcome,
-                        integrationParkReason,
-                        logger);
                 }
 
                 if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase)
@@ -2366,8 +2403,9 @@ public static class V1ReviewPlaneEndpoints
                     else
                     {
                         taskState = TaskStates.HumanReview;
-                        AdvanceDeliverySettlement(
+                        if (deliverySettlement is not null) AdvanceDeliverySettlement(
                             moved.NewFolderPath ?? task.FolderPath,
+                            deliverySettlement,
                             RemoteDeliverySettlementStage.LaneSettled,
                             integrationOutcome,
                             integrationParkReason,
@@ -2545,8 +2583,9 @@ public static class V1ReviewPlaneEndpoints
             ["review-plane", "capability-advertisement", "orchestration-plane"]);
     }
 
-    private static void AdvanceDeliverySettlement(
+    private static RemoteDeliverySettlementRecord? AdvanceDeliverySettlement(
         string jobFolderPath,
+        RemoteDeliverySettlementRecord expected,
         RemoteDeliverySettlementStage stage,
         string? integrationOutcome,
         string? integrationDetail,
@@ -2554,11 +2593,11 @@ public static class V1ReviewPlaneEndpoints
     {
         try
         {
-            RemoteDeliverySettlementStore.Advance(
-                jobFolderPath,
-                stage,
-                integrationOutcome,
-                integrationDetail);
+            return stage == RemoteDeliverySettlementStage.IntegrationSettled && integrationOutcome is not null
+                ? RemoteDeliverySettlementStore.RecordIntegration(
+                    jobFolderPath, expected, integrationOutcome, integrationDetail)
+                : RemoteDeliverySettlementStore.Advance(
+                    jobFolderPath, expected, stage, integrationOutcome, integrationDetail);
         }
         catch (Exception ex)
         {
@@ -2567,6 +2606,7 @@ public static class V1ReviewPlaneEndpoints
                 "remote-delivery-settlement-advance-failed stage={Stage} job={JobFolder}",
                 stage,
                 jobFolderPath);
+            return null;
         }
     }
 

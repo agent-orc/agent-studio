@@ -235,8 +235,9 @@ public sealed class AutoReviewDeliveryResumeService
                 && !RemoteReviewSettlementPolicy.MatchesAcceptedReview(journalEntry, review))
                 return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
                     "review-settlement-repair-required", Resumed: false, "review-journal-authority-mismatch");
-            if (journal.Entry is { } restorable)
-                RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task, restorable);
+            if (journal.Entry is { } restorable
+                && RemoteReviewSettlementPolicy.WouldRestoreDeliverySidecar(task, restorable))
+                RemoteDeliverySettlementStore.TryWrite(task.FolderPath, recorded, restorable.Delivery!);
         }
         var settlement = RemoteDeliverySettlementStore.Read(task.FolderPath);
         if (!RemoteDeliverySettlementStore.MatchesAttempt(settlement, review?.AttemptId))
@@ -261,6 +262,14 @@ public sealed class AutoReviewDeliveryResumeService
             return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
         if (Superseded(task, review!) is { } superseded)
             return superseded;
+
+        if (decision.Reason == AutoReviewResumePolicy.Reasons.OperatorReentry && settlement is not null)
+        {
+            settlement = RemoteDeliverySettlementStore.ReopenForRetry(task.FolderPath, settlement);
+            if (settlement is null)
+                return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                    "superseded-delivery-settlement", Resumed: false);
+        }
 
         // A changed integration or settlement verdict is fresh progress. In
         // particular, a later gate ladder rung or push backstop must be able
@@ -362,26 +371,35 @@ public sealed class AutoReviewDeliveryResumeService
                         AutoReviewResumePolicy.Reasons.OutsideAutoReview, Resumed: false);
                 integrationOutcome = result.Outcome.ToString();
                 integrationDetail = RemoteDeliveryParkReason.For(result);
-                RemoteDeliverySettlementStore.RecordIntegration(
+                settlement = RemoteDeliverySettlementStore.RecordIntegration(
                     task.FolderPath,
+                    settlement!,
                     integrationOutcome,
                     integrationDetail);
+                if (settlement is null)
+                    return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                        "superseded-delivery-settlement", Resumed: false);
             }
             else if (decision.Reason == AutoReviewResumePolicy.Reasons.DeliveryGateFailed)
             {
                 _integration.RecordGateFailure(
                     BuildIntegrationRequest(task, settlement!, review!),
                     settlement!.GateReason);
-                RemoteDeliverySettlementStore.Advance(
+                settlement = RemoteDeliverySettlementStore.Advance(
                     task.FolderPath,
+                    settlement!,
                     RemoteDeliverySettlementStage.IntegrationSettled,
                     integrationOutcome);
+                if (settlement is null)
+                    return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                        "superseded-delivery-settlement", Resumed: false);
             }
 
             var completed = await CompleteTransitionAsync(
                     task,
                     review,
                     decision,
+                    settlement,
                     integrationOutcome,
                     integrationDetail,
                     source,
@@ -495,6 +513,7 @@ public sealed class AutoReviewDeliveryResumeService
         TaskInfo task,
         ReviewAttemptDto review,
         AutoReviewResumeDecision decision,
+        RemoteDeliverySettlementRecord? settlement,
         string? integrationOutcome,
         string? integrationDetail,
         string source,
@@ -556,8 +575,9 @@ public sealed class AutoReviewDeliveryResumeService
                 .GetTaskProjection(review.TaskKey, includeArchived: true)
                 .ReviewAttempts
                 .Select(ReviewAttemptChainEntry.From)));
-        RemoteDeliverySettlementStore.Advance(
+        if (settlement is not null) RemoteDeliverySettlementStore.Advance(
             folder,
+            settlement,
             RemoteDeliverySettlementStage.LaneSettled,
             integrationOutcome,
             integrationDetail);

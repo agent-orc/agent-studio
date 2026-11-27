@@ -111,6 +111,9 @@ public sealed class MonolithOrchestrationApplier(
                 candidate.ProjectName == occurrence.Run.ProjectId
                 && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId));
         if (task is null) throw new OrchestrationSourceStateMismatchException(null);
+        var deliverySettlement = RemoteDeliverySettlementStore.Read(task.FolderPath);
+        if (!RemoteDeliverySettlementStore.MatchesAttempt(deliverySettlement, occurrence.AuthorityAttemptId))
+            deliverySettlement = null;
         if (occurrence.Run.CurrentStage == OrchestrationStage.OperatorSweep)
         {
             await ApplySweepAsync(task, occurrence, completion, ct);
@@ -133,7 +136,7 @@ public sealed class MonolithOrchestrationApplier(
         if (decision?.Action is TransitionAction.AcceptAndIntegrate or TransitionAction.DegradeWithFollowUp
             && HandedToAgentRound(task, occurrence, firstPass: null))
         {
-            SettleAgentRoundHandoff(task, occurrence);
+            SettleAgentRoundHandoff(task, occurrence, deliverySettlement);
             return;
         }
         if (task.State != occurrence.ExpectedSourceState && !priorEngineMove)
@@ -226,6 +229,8 @@ public sealed class MonolithOrchestrationApplier(
         {
             var review = authority.GetReview(occurrence.AuthorityAttemptId)
                 ?? throw new InvalidOperationException("The reviewed attempt was not found.");
+            if (authority.GetTaskProjection(review.TaskKey).CurrentReviewAttempt?.AttemptId != review.AttemptId)
+                throw new OrchestrationApplicationRefusedException("A successor review generation owns this task.");
             var project = settings.Get(task.ProjectName);
             var subject = ReviewSubjectStore.Read(task.FolderPath);
             var request = new RemoteDeliveryIntegrationRequest(task.ProjectName, task.Id,
@@ -237,7 +242,7 @@ public sealed class MonolithOrchestrationApplier(
             var journal = RemoteDeliverySettlementStore.Read(task.FolderPath);
             if (journal?.ReviewAttemptId != review.AttemptId)
             {
-                RemoteDeliverySettlementStore.Write(task.FolderPath,
+                deliverySettlement = RemoteDeliverySettlementStore.TryWrite(task.FolderPath, journal,
                     new RemoteDeliverySettlementRecord
                     {
                         TaskKey = review.TaskKey,
@@ -255,15 +260,22 @@ public sealed class MonolithOrchestrationApplier(
                         RecordedAtUtc = DateTimeOffset.UtcNow,
                     });
             }
-            var settlement = RemoteDeliverySettlementStore.Read(task.FolderPath);
+            else deliverySettlement = journal;
+            var settlement = deliverySettlement;
+            if (!RemoteDeliverySettlementStore.MatchesAttempt(settlement, review.AttemptId))
+                throw new OrchestrationApplicationRefusedException("The delivery settlement changed during engine application.");
             // AGT-3883: develop already carries this delivery, for example as a
             // net-change publication after develop moved on. Integrating it
             // again would publish a second, empty net change.
             if (settlement?.Stage < RemoteDeliverySettlementStage.IntegrationSettled
                 && services.GetService<TaskIntegrationStatusService>()?.BuildLookup([task])
                     .Values.FirstOrDefault()?.Status == IntegrationStatuses.Integrated)
-                RemoteDeliverySettlementStore.RecordIntegration(task.FolderPath,
-                    nameof(MergeIntoIntegrationOutcome.AlreadyMerged), null);
+            {
+                deliverySettlement = RemoteDeliverySettlementStore.RecordIntegration(task.FolderPath,
+                    settlement, nameof(MergeIntoIntegrationOutcome.AlreadyMerged), null);
+                if (deliverySettlement is null)
+                    throw new OrchestrationApplicationRefusedException("The delivery settlement changed during integration.");
+            }
             else if (settlement?.Stage < RemoteDeliverySettlementStage.IntegrationSettled)
             {
                 // A retry the stranding watchdog reopened must not get the
@@ -274,6 +286,10 @@ public sealed class MonolithOrchestrationApplier(
                 // and its folder with it; read the card it left.
                 scanner.InvalidateCache();
                 task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+                deliverySettlement = RemoteDeliverySettlementStore.RecordIntegration(task.FolderPath,
+                    settlement, result.Outcome.ToString(), RemoteDeliveryParkReason.For(result));
+                if (deliverySettlement is null)
+                    throw new OrchestrationApplicationRefusedException("The delivery settlement changed during integration.");
                 var reviewInputs = services.GetRequiredService<ReviewInputDecisionGateway>();
                 if (reviewInputs.EngineDecides
                     && result.AutomaticRecoveryBudgetUsed is { } used
@@ -301,12 +317,9 @@ public sealed class MonolithOrchestrationApplier(
                         signal));
                     EngineDecisionWaitMarker.Write(task.FolderPath, pending.RunId);
                 }
-                RemoteDeliverySettlementStore.Advance(task.FolderPath,
-                    RemoteDeliverySettlementStage.IntegrationSettled,
-                    result.Outcome.ToString(), RemoteDeliveryParkReason.For(result));
                 if (HandedToAgentRound(task, occurrence, result))
                 {
-                    SettleAgentRoundHandoff(task, occurrence);
+                    SettleAgentRoundHandoff(task, occurrence, deliverySettlement);
                     return;
                 }
             }
@@ -386,6 +399,10 @@ public sealed class MonolithOrchestrationApplier(
         }
         else if (task.State != target)
             throw new OrchestrationSourceStateMismatchException(task.State);
+
+        if (deliverySettlement is not null && task.State != TaskStates.AutoReview)
+            RemoteDeliverySettlementStore.Advance(task.FolderPath,
+                deliverySettlement, RemoteDeliverySettlementStage.LaneSettled);
 
         if (target == TaskStates.HumanReview
             && HasPayloadProperty(occurrence.Run.PayloadJson, "reviewOutcome"))
@@ -502,9 +519,10 @@ public sealed class MonolithOrchestrationApplier(
     /// journal settles and the wait marker clears, as at a review-input handoff.
     /// </summary>
     private void SettleAgentRoundHandoff(AgentStudio.Shared.TaskInfo task,
-        MonolithOrchestrationOccurrence occurrence)
+        MonolithOrchestrationOccurrence occurrence, RemoteDeliverySettlementRecord? settlement)
     {
-        RemoteDeliverySettlementStore.Advance(task.FolderPath, RemoteDeliverySettlementStage.LaneSettled);
+        if (settlement is not null)
+            RemoteDeliverySettlementStore.Advance(task.FolderPath, settlement, RemoteDeliverySettlementStage.LaneSettled);
         EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
         scanner.InvalidateCache();
     }
