@@ -2852,12 +2852,6 @@ public sealed class RemoteReviewWorkspace
             ]);
     }
 
-    /// <summary>
-    /// Runs the planned command at the baseline SHA in a fresh same-host clone,
-    /// with fresh home, temp and cache directories and without restoring the
-    /// dependency cache. Its evidence carries phase <c>clean-repeat</c> and
-    /// workspace role <see cref="ReviewCachedBaselinePolicy.WorkspaceRole"/>.
-    /// </summary>
     private async Task<BaselineComparison> MeasureRepairedTargetAsync(
         ReviewCommandDto command, BaselineComparison comparison,
         ICollection<ReviewCommandEvidenceDto> commands, ICollection<ReviewArtifactEvidenceDto> artifacts,
@@ -2954,6 +2948,12 @@ public sealed class RemoteReviewWorkspace
         }
     }
 
+    /// <summary>
+    /// Runs the planned command at the baseline SHA in a fresh same-host clone,
+    /// with fresh home, temp and cache directories and without restoring the
+    /// dependency cache. Its evidence carries phase <c>clean-repeat</c> and
+    /// workspace role <see cref="ReviewCachedBaselinePolicy.WorkspaceRole"/>.
+    /// </summary>
     private async Task<(CommandExecution Execution, bool BlockedByBuild)> RunCleanBaselineAsync(
         ReviewCommandDto command,
         string baselineSha,

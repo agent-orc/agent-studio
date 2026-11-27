@@ -12,6 +12,7 @@ public static class ReviewBuildTestGateClasses
 {
     public const string Passed = "passed";
     public const string NotApplicable = "not-applicable";
+    public const string NonBlocking = "non-blocking";
     public const string Failed = "failed";
 }
 
