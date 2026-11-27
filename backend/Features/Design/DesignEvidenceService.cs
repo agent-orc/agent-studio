@@ -1,12 +1,15 @@
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using AgentStudio.Shared;
+using Microsoft.Win32.SafeHandles;
 
 namespace AgentStudio.Design;
 
 /// <summary>
 /// Read + accept surface for the project UX/UI panel (slice 6 of the
 /// quality-system mockup, docs/mockups/quality-system/). Each watched
-/// project has an optional <c>design/</c> folder under its workspace
-/// directory:
+/// project has an optional <c>design/</c> folder under its registered
+/// repository directory:
 /// <list type="bullet">
 ///   <item><c>design/brief.md</c> - Markdown brief, frontmatter contains status + last-updated.</item>
 ///   <item><c>design/references/&lt;slug&gt;.md</c> - kind=accepted|rejected|external + optional sibling image.</item>
@@ -41,8 +44,8 @@ public sealed class DesignEvidenceService
     {
         var entry = FindProject(projectName);
         if (entry is null) return null;
-        if (string.IsNullOrWhiteSpace(entry.Path)) return null;
-        return Path.Combine(entry.Path, "design");
+        var root = string.IsNullOrWhiteSpace(entry.RepositoryPath) ? entry.RootPath : entry.RepositoryPath;
+        return string.IsNullOrWhiteSpace(root) ? null : Path.Combine(Path.GetFullPath(root), "design");
     }
 
     /// <summary>
@@ -60,7 +63,7 @@ public sealed class DesignEvidenceService
                 projectName, string.Empty, false, "unknown",
                 null, null, 0, 0, 0, 0, 0, 0, false, null);
         }
-        if (!Directory.Exists(designDir))
+        if (!IsEvidenceDirectory(designDir, designDir))
         {
             return new DesignOverview(
                 projectName, designDir, false, "no iteration",
@@ -72,8 +75,8 @@ public sealed class DesignEvidenceService
         var status = !string.IsNullOrWhiteSpace(loopStatus) ? loopStatus
             : (!string.IsNullOrWhiteSpace(briefStatus) ? briefStatus : "no iteration");
 
-        var refs = ListReferencesInternal(designDir);
-        var council = ListCouncilNotesInternal(designDir);
+        var refs = ListReferencesInternal(designDir, out _);
+        var council = ListCouncilNotesInternal(designDir, out _);
 
         var accepted = 0;
         var rejected = 0;
@@ -119,10 +122,8 @@ public sealed class DesignEvidenceService
         if (designDir is null)
             return new DesignReferencesResponse(projectName, string.Empty, false, Array.Empty<DesignReferenceItem>());
         var refsDir = Path.Combine(designDir, "references");
-        if (!Directory.Exists(refsDir))
-            return new DesignReferencesResponse(projectName, refsDir, false, Array.Empty<DesignReferenceItem>());
-        var list = ListReferencesInternal(designDir);
-        return new DesignReferencesResponse(projectName, refsDir, true, list);
+        var list = ListReferencesInternal(designDir, out var exists);
+        return new DesignReferencesResponse(projectName, refsDir, exists, list);
     }
 
     public DesignCouncilResponse ListCouncilNotes(string projectName)
@@ -131,10 +132,8 @@ public sealed class DesignEvidenceService
         if (designDir is null)
             return new DesignCouncilResponse(projectName, string.Empty, false, Array.Empty<DesignCouncilNote>());
         var councilDir = Path.Combine(designDir, "council");
-        if (!Directory.Exists(councilDir))
-            return new DesignCouncilResponse(projectName, councilDir, false, Array.Empty<DesignCouncilNote>());
-        var list = ListCouncilNotesInternal(designDir);
-        return new DesignCouncilResponse(projectName, councilDir, true, list);
+        var list = ListCouncilNotesInternal(designDir, out var exists);
+        return new DesignCouncilResponse(projectName, councilDir, exists, list);
     }
 
     /// <summary>
@@ -147,25 +146,14 @@ public sealed class DesignEvidenceService
         if (!IsBareMarkdownName(fileName)) return null;
         var designDir = ResolveDesignDir(projectName);
         if (designDir is null) return null;
-        var councilDir = Path.Combine(designDir, "council");
-        var full = Path.GetFullPath(Path.Combine(councilDir, fileName));
-        var root = Path.GetFullPath(councilDir);
-        if (!IsUnderRoot(full, root)) return null;
-        if (!File.Exists(full)) return null;
-        return File.ReadAllText(full);
+        return ReadEvidence(designDir, Path.Combine(designDir, "council", fileName));
     }
 
     public string? ReadReference(string projectName, string fileName)
     {
         if (!IsBareMarkdownName(fileName)) return null;
         var designDir = ResolveDesignDir(projectName);
-        if (designDir is null) return null;
-        var refsDir = Path.Combine(designDir, "references");
-        var full = Path.GetFullPath(Path.Combine(refsDir, fileName));
-        var root = Path.GetFullPath(refsDir);
-        if (!IsUnderRoot(full, root)) return null;
-        if (!File.Exists(full)) return null;
-        return File.ReadAllText(full);
+        return designDir is null ? null : ReadEvidence(designDir, Path.Combine(designDir, "references", fileName));
     }
 
     /// <summary>
@@ -178,39 +166,41 @@ public sealed class DesignEvidenceService
         if (!IsBareMarkdownName(fileName)) return null;
         var designDir = ResolveDesignDir(projectName);
         if (designDir is null) return null;
-        var councilDir = Path.Combine(designDir, "council");
-        var full = Path.GetFullPath(Path.Combine(councilDir, fileName));
-        var root = Path.GetFullPath(councilDir);
-        if (!IsUnderRoot(full, root)) return null;
-        if (!File.Exists(full)) return null;
+        var full = Path.Combine(designDir, "council", fileName);
+        var root = Path.GetDirectoryName(designDir)!;
 
         var stamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
-        string text;
-        try { text = File.ReadAllText(full); }
-        catch (Exception ex)
+        try
         {
-            _logger.LogWarning(ex, "Failed to read council note {File} for accept stamp", full);
+            using var directory = EvidenceDirectory.Open(root, Path.GetDirectoryName(full)!);
+            using var file = directory.OpenRead(fileName);
+            using var reader = new StreamReader(file);
+            var updated = StampAcceptedAt(reader.ReadToEnd(), stamp);
+            BeforeAcceptReplace?.Invoke();
+            directory.Replace(fileName, updated, file.SafeFileHandle);
+            var parse = DesignEvidenceParser.Parse(updated);
+            return new AcceptCouncilNoteResponse(fileName, stamp, parse.ParseOk);
+        }
+        catch (Exception ex) when (IsFileBoundaryFailure(ex))
+        {
+            _logger.LogWarning(ex, "Failed to safely stamp council note {File}", full);
             return null;
         }
-        var updated = StampAcceptedAt(text, stamp);
-        try { File.WriteAllText(full, updated); }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to write accepted-at into council note {File}", full);
-            return null;
-        }
-        var parse = DesignEvidenceParser.Parse(updated);
-        return new AcceptCouncilNoteResponse(fileName, stamp, parse.ParseOk);
     }
 
-    private List<DesignReferenceItem> ListReferencesInternal(string designDir)
+    // Deterministic substitution seams for the filesystem regression tests.
+    internal Action? BeforeAcceptReplace { get; set; }
+    internal Action? BeforeEvidenceOpen { get; set; }
+
+    private List<DesignReferenceItem> ListReferencesInternal(string designDir, out bool exists)
     {
         var refsDir = Path.Combine(designDir, "references");
         var items = new List<DesignReferenceItem>();
-        if (!Directory.Exists(refsDir)) return items;
-        foreach (var path in Directory.EnumerateFiles(refsDir, "*.md", SearchOption.TopDirectoryOnly))
+        foreach (var path in ListEvidenceFiles(designDir, refsDir, out exists))
         {
-            try { items.Add(BuildReferenceItem(designDir, refsDir, path)); }
+            var text = ReadEvidence(designDir, path);
+            if (text is null) continue;
+            try { items.Add(BuildReferenceItem(designDir, refsDir, path, text)); }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to read design reference {File}", path);
@@ -231,14 +221,15 @@ public sealed class DesignEvidenceService
         return items;
     }
 
-    private List<DesignCouncilNote> ListCouncilNotesInternal(string designDir)
+    private List<DesignCouncilNote> ListCouncilNotesInternal(string designDir, out bool exists)
     {
         var councilDir = Path.Combine(designDir, "council");
         var items = new List<DesignCouncilNote>();
-        if (!Directory.Exists(councilDir)) return items;
-        foreach (var path in Directory.EnumerateFiles(councilDir, "*.md", SearchOption.TopDirectoryOnly))
+        foreach (var path in ListEvidenceFiles(designDir, councilDir, out exists))
         {
-            try { items.Add(BuildCouncilNote(designDir, councilDir, path)); }
+            var text = ReadEvidence(designDir, path);
+            if (text is null) continue;
+            try { items.Add(BuildCouncilNote(designDir, path, text)); }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to read council note {File}", path);
@@ -268,17 +259,16 @@ public sealed class DesignEvidenceService
         return items;
     }
 
-    private DesignReferenceItem BuildReferenceItem(string designDir, string refsDir, string filePath)
+    private static DesignReferenceItem BuildReferenceItem(string designDir, string refsDir, string filePath, string text)
     {
         var fi = new FileInfo(filePath);
-        var text = File.ReadAllText(filePath);
         var parse = DesignEvidenceParser.Parse(text);
         var rawKind = DesignEvidenceParser.GetString(parse.Fields, "kind")
             ?? DesignEvidenceParser.GetString(parse.Fields, "category");
         var kind = DesignEvidenceParser.NormaliseKind(rawKind);
         var screenshot = DesignEvidenceParser.GetString(parse.Fields, "screenshot")
             ?? DesignEvidenceParser.GetString(parse.Fields, "image")
-            ?? GuessSiblingImage(refsDir, fi.Name);
+            ?? GuessSiblingImage(designDir, refsDir, fi.Name);
         var screenshotRel = ResolveDesignRelPath(designDir, refsDir, screenshot);
         return new DesignReferenceItem(
             FileName: fi.Name,
@@ -292,10 +282,9 @@ public sealed class DesignEvidenceService
             ParseError: parse.ParseError);
     }
 
-    private DesignCouncilNote BuildCouncilNote(string designDir, string councilDir, string filePath)
+    private static DesignCouncilNote BuildCouncilNote(string designDir, string filePath, string text)
     {
         var fi = new FileInfo(filePath);
-        var text = File.ReadAllText(filePath);
         var parse = DesignEvidenceParser.Parse(text);
         var dateFromName = ExtractDateFromFileName(fi.Name);
         return new DesignCouncilNote(
@@ -321,10 +310,10 @@ public sealed class DesignEvidenceService
     private (bool exists, string? summary, string? status) ReadBrief(string designDir)
     {
         var briefPath = Path.Combine(designDir, "brief.md");
-        if (!File.Exists(briefPath)) return (false, null, null);
         try
         {
-            var text = File.ReadAllText(briefPath);
+            var text = ReadEvidence(designDir, briefPath);
+            if (text is null) return (false, null, null);
             var parse = DesignEvidenceParser.Parse(text);
             return (
                 true,
@@ -341,10 +330,10 @@ public sealed class DesignEvidenceService
     private (string? status, string? detail, string? lastReview) ReadLoop(string designDir)
     {
         var loopPath = Path.Combine(designDir, "loop.md");
-        if (!File.Exists(loopPath)) return (null, null, null);
         try
         {
-            var text = File.ReadAllText(loopPath);
+            var text = ReadEvidence(designDir, loopPath);
+            if (text is null) return (null, null, null);
             var parse = DesignEvidenceParser.Parse(text);
             return (
                 DesignEvidenceParser.GetString(parse.Fields, "status"),
@@ -360,13 +349,14 @@ public sealed class DesignEvidenceService
         }
     }
 
-    private static string? GuessSiblingImage(string refsDir, string mdFileName)
+    private static string? GuessSiblingImage(string designDir, string refsDir, string mdFileName)
     {
         var stem = Path.GetFileNameWithoutExtension(mdFileName);
         foreach (var ext in new[] { ".png", ".jpg", ".jpeg", ".webp", ".gif" })
         {
             var candidate = Path.Combine(refsDir, stem + ext);
-            if (File.Exists(candidate)) return Path.GetFileName(candidate);
+            if (FilesystemPathBoundary.IsRegularFileUnder(Path.GetDirectoryName(designDir)!, candidate))
+                return Path.GetFileName(candidate);
         }
         return null;
     }
@@ -380,17 +370,13 @@ public sealed class DesignEvidenceService
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
         var trimmed = raw.Replace('\\', '/').Trim('/');
-        // If frontmatter already gave a design-relative path, keep it.
+        // Explicit metadata is a path hint, including before its image exists.
         if (trimmed.StartsWith("references/", StringComparison.OrdinalIgnoreCase)
             || trimmed.StartsWith("council/", StringComparison.OrdinalIgnoreCase))
             return trimmed;
-        // Bare name: assume sibling of the .md file.
         var sibling = Path.Combine(refsDir, trimmed);
-        if (File.Exists(sibling))
-        {
-            return Path.GetRelativePath(designDir, sibling).Replace('\\', '/');
-        }
-        return trimmed;
+        return File.Exists(sibling)
+            ? Path.GetRelativePath(designDir, sibling).Replace('\\', '/') : trimmed;
     }
 
     private static string ExtractDateFromFileName(string fileName)
@@ -407,10 +393,197 @@ public sealed class DesignEvidenceService
         return name.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsUnderRoot(string full, string root)
+    private static bool IsEvidenceDirectory(string designDir, string path)
     {
-        if (string.Equals(full, root, StringComparison.OrdinalIgnoreCase)) return true;
-        return full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        try
+        {
+            using var directory = EvidenceDirectory.Open(Path.GetDirectoryName(designDir)!, path);
+            return true;
+        }
+        catch (Exception ex) when (IsFileBoundaryFailure(ex)) { return false; }
+    }
+
+    private string? ReadEvidence(string designDir, string path)
+    {
+        var root = Path.GetDirectoryName(designDir)!;
+        try
+        {
+            using var directory = EvidenceDirectory.Open(root, Path.GetDirectoryName(path)!);
+            BeforeEvidenceOpen?.Invoke();
+            using var file = directory.OpenRead(Path.GetFileName(path));
+            using var reader = new StreamReader(file);
+            return reader.ReadToEnd();
+        }
+        catch (Exception ex) when (IsFileBoundaryFailure(ex))
+        {
+            _logger.LogWarning(ex, "Failed to safely read design evidence {File}", path);
+            return null;
+        }
+    }
+
+    private static string[] ListEvidenceFiles(string designDir, string path, out bool exists)
+    {
+        exists = false;
+        try
+        {
+            using var directory = EvidenceDirectory.Open(Path.GetDirectoryName(designDir)!, path);
+            var files = Directory.GetFiles(directory.IoPath, "*.md", SearchOption.TopDirectoryOnly)
+                .Select(file => Path.Combine(path, Path.GetFileName(file))).ToArray();
+            exists = true;
+            return files;
+        }
+        catch (Exception ex) when (IsFileBoundaryFailure(ex)) { return []; }
+    }
+
+    private static bool IsFileBoundaryFailure(Exception ex)
+        => ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
+
+    // Linux ARM uses different O_DIRECTORY/O_NOFOLLOW bits from x86.
+    // Keep the ABI selection in one place and refuse unrecognised platforms.
+    internal static (int Directory, int NoFollow, int CloseOnExec, int NonBlock) UnixOpenFlags(
+        bool macOS, Architecture architecture) => (macOS, architecture) switch
+        {
+            (true, Architecture.X64 or Architecture.Arm64) => (0x100000, 0x100, 0x1000000, 4),
+            (false, Architecture.X64 or Architecture.X86) => (0x10000, 0x20000, 0x80000, 0x800),
+            (false, Architecture.Arm or Architecture.Arm64) => (0x4000, 0x8000, 0x80000, 0x800),
+            _ => throw new PlatformNotSupportedException("Design evidence file ABI is not supported."),
+        };
+
+    /// <summary>
+    /// Pins every directory below the repository. Unix I/O uses the open parent
+    /// descriptor; Windows directory handles deny rename/deletion until disposal.
+    /// This complements the shared path check across check/open/replace races.
+    /// </summary>
+    private sealed class EvidenceDirectory : IDisposable
+    {
+        private readonly List<SafeFileHandle> _handles = [];
+        public string IoPath { get; private set; } = "";
+        private int Descriptor => _handles[^1].DangerousGetHandle().ToInt32();
+
+        public static EvidenceDirectory Open(string root, string path)
+        {
+            if (!FilesystemPathBoundary.IsPathUnderWithoutLinks(root, path))
+                throw new IOException("Design evidence directory rejected.");
+            var result = new EvidenceDirectory();
+            try
+            {
+                var current = Path.GetFullPath(root);
+                var segments = Path.GetRelativePath(current, path)
+                    .Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+                result.PinDirectory(current, -100);
+                foreach (var segment in segments)
+                {
+                    if (segment == ".") continue;
+                    current = Path.Combine(current, segment);
+                    result.PinDirectory(OperatingSystem.IsWindows() ? current : segment,
+                        OperatingSystem.IsWindows() ? -1 : result.Descriptor);
+                }
+                result.IoPath = OperatingSystem.IsWindows() ? current
+                    : (OperatingSystem.IsMacOS() ? "/dev/fd/" : "/proc/self/fd/") + result.Descriptor;
+                return result;
+            }
+            catch { result.Dispose(); throw; }
+        }
+
+        private void PinDirectory(string path, int parent)
+        {
+            SafeFileHandle handle;
+            if (OperatingSystem.IsWindows())
+                handle = CreateFile(path, 0x80, FileShare.ReadWrite, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+            else
+            {
+                // macOS AT_FDCWD differs from Linux.
+                if (OperatingSystem.IsMacOS() && parent == -100) parent = -2;
+                var flags = UnixOpenFlags(OperatingSystem.IsMacOS(), RuntimeInformation.ProcessArchitecture);
+                handle = UnixOpen(parent, path, flags.Directory | flags.NoFollow | flags.CloseOnExec);
+            }
+            _handles.Add(handle);
+            if (handle.IsInvalid || (File.GetAttributes(handle) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
+                throw new IOException("Design evidence directory rejected.");
+        }
+
+        public FileStream OpenRead(string name)
+        {
+            SafeFileHandle handle;
+            if (OperatingSystem.IsWindows())
+                handle = CreateFile(Path.Combine(IoPath, name), 0x80000000, FileShare.Read | FileShare.Delete,
+                    IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
+            else
+            {
+                var flags = UnixOpenFlags(OperatingSystem.IsMacOS(), RuntimeInformation.ProcessArchitecture);
+                handle = UnixOpen(Descriptor, name, flags.NoFollow | flags.CloseOnExec | flags.NonBlock);
+            }
+            try
+            {
+                if (handle.IsInvalid || (File.GetAttributes(handle) & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
+                    throw new IOException("Design evidence file rejected.");
+                if (!OperatingSystem.IsWindows() && !IsUnixRegularFile(handle))
+                    throw new IOException("Design evidence must be a regular file.");
+                var stream = new FileStream(handle, FileAccess.Read);
+                if (stream.CanSeek) return stream;
+                stream.Dispose();
+                throw new IOException("Design evidence must be a regular file.");
+            }
+            catch { handle.Dispose(); throw; }
+        }
+
+        public void Replace(string name, string text, SafeFileHandle source)
+        {
+            var temporary = Path.Combine(IoPath, ".accepted-" + Guid.NewGuid().ToString("N") + ".tmp");
+            try
+            {
+                using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(output.SafeFileHandle, File.GetUnixFileMode(source));
+                    using var writer = new StreamWriter(output, leaveOpen: true);
+                    writer.Write(text);
+                    writer.Flush();
+                    output.Flush(flushToDisk: true);
+                }
+                // Rename replaces the directory entry itself, never a substituted
+                // leaf link's target. Both paths use the same pinned parent.
+                File.Move(temporary, Path.Combine(IoPath, name), overwrite: true);
+            }
+            finally { File.Delete(temporary); }
+        }
+
+        public void Dispose()
+        {
+            for (var i = _handles.Count - 1; i >= 0; i--) _handles[i].Dispose();
+        }
+
+        private static SafeFileHandle UnixOpen(int parent, string name, int flags)
+            => new((nint)OpenAt(parent, name, flags), ownsHandle: true);
+
+        private static bool IsUnixRegularFile(SafeFileHandle handle)
+        {
+            var descriptor = handle.DangerousGetHandle().ToInt32();
+            if (OperatingSystem.IsMacOS())
+                return MacStat(descriptor, out var status) == 0 && (status.Mode & 0xf000) == 0x8000;
+            return LinuxStat(descriptor, "", 0x1000, 1, out var linuxStatus) == 0
+                && (linuxStatus.Mode & 0xf000) == 0x8000;
+        }
+
+        // statx with AT_EMPTY_PATH checks the open Linux handle, including on
+        // arm64. Darwin's fstat has a different layout and mode offset.
+        [StructLayout(LayoutKind.Explicit, Size = 256)]
+        private struct LinuxFileStatus { [FieldOffset(28)] public ushort Mode; }
+
+        [StructLayout(LayoutKind.Explicit, Size = 144)]
+        private struct MacFileStatus { [FieldOffset(4)] public ushort Mode; }
+
+        [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
+        private static extern int LinuxStat(int descriptor, string path, int flags, uint mask, out LinuxFileStatus status);
+
+        [DllImport("libc", EntryPoint = "fstat", SetLastError = true)]
+        private static extern int MacStat(int descriptor, out MacFileStatus status);
+
+        [DllImport("libc", EntryPoint = "openat", SetLastError = true)]
+        private static extern int OpenAt(int directory, string name, int flags);
+
+        [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFile(string path, uint access, FileShare share,
+            IntPtr security, uint disposition, uint flags, IntPtr template);
     }
 
     /// <summary>
