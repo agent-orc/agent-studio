@@ -61,7 +61,13 @@ public sealed partial class PostMergeIncidentService
                 ?? throw new InvalidOperationException("A persisted receipt is required.");
             var test = run.TestVerdicts?.FirstOrDefault(t => t.Test == testId)
                 ?? throw new InvalidOperationException("The test is absent from the receipt.");
-            var fingerprint = Fingerprint(run, test);
+            // Diagnostics can change while triage retains the incident's identity.
+            // Read that receipt's journal association, including older receipts.
+            var fingerprint = _quarantines.Read(project.Id).IncidentLog
+                .LastOrDefault(log => log.RunId == run.Id && log.Test == testId)?.IncidentFingerprint
+                ?? state.Incidents?.LastOrDefault(item => item.TestId == testId
+                    && item.LatestEvidenceRunId == run.Id)?.Fingerprint
+                ?? Fingerprint(run, test);
             var incident = state.Incidents?.LastOrDefault(i => i.TestId == testId && i.Fingerprint == fingerprint);
             var facts = Facts(project, run, test, fingerprint, incident);
             return _guardian.Request(project.Id, GuardianIncidentKey(testId, fingerprint, incident?.FirstRedAtUtc ?? run.FinishedAtUtc ?? run.StartedAtUtc),
@@ -167,6 +173,8 @@ public sealed partial class PostMergeIncidentService
                 if (incident is null) continue;
                 fingerprint = incident.Fingerprint;
             }
+            // Queue recovery must also run when this receipt was already journaled.
+            if (incident is not null) ReadyQueuedRepair(project, incident.RepairCardId);
             var key = run.Id + ":" + test.Test + ":" + fingerprint
                 + (overdue ? ":ladder:" + (int)(_clock.GetUtcNow() - (incident?.FirstRedAtUtc ?? _clock.GetUtcNow())).TotalHours : "");
             var prior = logs.FirstOrDefault(log => log.DecisionId == key);

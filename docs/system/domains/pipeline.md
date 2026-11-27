@@ -834,7 +834,10 @@ the local baseline cannot establish a production incident budget.
 
 AGT-4051: automatic repair creation lands first in Ready, resolving the
 project's coding model at creation with medium reasoning. The RT model ladder
-can still raise a later repair rung. Compatibility receipts reuse an open repair
+can still raise a later repair rung. Periodic typed-incident checks also recover
+existing repairs from Preparation into Ready, including after a restart without
+a new receipt. Progress, review and settled lanes remain unchanged.
+Compatibility receipts reuse an open repair
 when the failing-test sets overlap by a majority of the smaller set, including
 supersets; they refresh the tests, tip and suspects without resetting the first
 red clock. RT receipts retain their per-test incident and quarantine identity
@@ -4924,7 +4927,10 @@ Its `/role` subroute exposes the charter and rights catalogue.
 `PUT /api/projects/{name}/line-guardian/mode` accepts `{ "live": true }` or
 `{ "live": false }` from the owner only. `POST /api/projects/{name}/line-guardian/requests` takes
 `runId`, `test`, and `operation`; it collects policy facts from a persisted
-receipt. Owner items also appear through the existing post-merge Needs you
+receipt. Requests reuse the recorded per-test incident's stored fingerprint even
+when later diagnostic logs change their fingerprint, so their authority facts
+and owner item retain the same quarantine identity.
+Owner items also appear through the existing post-merge Needs you
 fact source. One closed-incident feed observation is emitted on an evidence
 or owner lift. The weekly criteria projection and switch UI remain RT-9.
 
