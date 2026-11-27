@@ -46,6 +46,7 @@ public sealed partial class MergeIntoDevelopRunner
     private readonly AgentStudio.Tasks.TimelineLog? _timeline;
     private readonly RefMutationLeaseService? _refMutationLeases;
     private readonly InterruptedIntegrationGateRecoveryService? _interruptedGateRecovery;
+    private readonly StartupRepairAdmission? _startupRepairs;
     private readonly BatchIntegrationReservationService? _batchReservations;
     private readonly BatchGateStore? _batchGates;
     private readonly PipelineHealthService? _pipelineHealth;
@@ -124,8 +125,10 @@ public sealed partial class MergeIntoDevelopRunner
         PostMergeModeService? postMergeMode = null,
         AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness? hostCredentials = null,
         ProjectRegistry? projectRegistry = null,
-        InterruptedIntegrationGateRecoveryService? interruptedGateRecovery = null)
+        InterruptedIntegrationGateRecoveryService? interruptedGateRecovery = null,
+        StartupRepairAdmission? startupRepairs = null)
     {
+        _startupRepairs = startupRepairs;
         _hostCredentials = hostCredentials;
         _projectRegistry = projectRegistry;
         _gateTime = timeProvider ?? TimeProvider.System;
@@ -263,8 +266,8 @@ public sealed partial class MergeIntoDevelopRunner
             await WaitForHostGitCredentialsAsync(project, jobId, ct).ConfigureAwait(false);
             var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
                 ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
-            if (_interruptedGateRecovery is not null)
-                await _interruptedGateRecovery.WaitForStartupRecoveryAsync(reservationRepo, ct).ConfigureAwait(false);
+            await WaitForStartupAdmissionAsync(StartupAdmission.Integration, project, jobId, jobFolderPath,
+                reservationRepo, ct).ConfigureAwait(false);
             // Deliberately NOT the caller's token. Merge + gate + rollback form
             // one consistency boundary after acceptance is already durable.
             var mergeWait = System.Diagnostics.Stopwatch.StartNew();
@@ -2424,6 +2427,41 @@ public sealed partial class MergeIntoDevelopRunner
            && IntegrationPushEnabled(project, pipelineType);
 
     /// <summary>
+    /// Start-up repairs close integration and push admission until they end
+    /// (AGT-4115, AGT-4239). A caller that has to wait says why, once, in the
+    /// log and on the card's integration lane, then proceeds when it opens.
+    /// </summary>
+    private async Task WaitForStartupAdmissionAsync(StartupAdmission admission, string project, string jobId,
+        string jobFolderPath, string? repoRoot, CancellationToken ct)
+    {
+        var operation = admission == StartupAdmission.Push ? "push" : "integration";
+        if (_startupRepairs?.WaitingReason(admission) is { } repairReason)
+            await WaitVisiblyAsync(operation, repairReason, project, jobId, jobFolderPath,
+                () => _startupRepairs.WaitAsync(admission, ct)).ConfigureAwait(false);
+        if (_interruptedGateRecovery is null) return;
+        var status = string.IsNullOrWhiteSpace(repoRoot) ? "ready" : _interruptedGateRecovery.GetStartupRecoveryStatus(repoRoot);
+        if (status == "ready")
+        {
+            await _interruptedGateRecovery.WaitForStartupRecoveryAsync(repoRoot, ct).ConfigureAwait(false);
+            return;
+        }
+        await WaitVisiblyAsync(operation, "interrupted-integration-repair:" + status, project, jobId, jobFolderPath,
+            () => _interruptedGateRecovery.WaitForStartupRecoveryAsync(repoRoot, ct)).ConfigureAwait(false);
+    }
+
+    private async Task WaitVisiblyAsync(string operation, string reason, string project, string jobId,
+        string jobFolderPath, Func<Task> wait)
+    {
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        _logger.LogWarning("{Operation}-admission-waiting project={Project} job={JobId} reason={Reason}",
+            operation, project, jobId, reason);
+        IntegrationLaneEvents.Append(jobFolderPath, project, jobId, operation + "-admission-waiting", reason: reason);
+        await wait().ConfigureAwait(false);
+        _logger.LogInformation("{Operation}-admission-open project={Project} job={JobId} reason={Reason} waitedMs={WaitedMs}",
+            operation, project, jobId, reason, waited.ElapsedMilliseconds);
+    }
+
+    /// <summary>
     /// Pushes the integration branch to <c>origin</c> and records the deferred
     /// <see cref="PipelineCatalogue.MergeIntoDevelopPushStepId"/> step outcome.
     /// This is the offloaded body the <see cref="IntegrationPushWorker"/> runs
@@ -2453,8 +2491,8 @@ public sealed partial class MergeIntoDevelopRunner
         deliverySequence ??= IntegrationLaneEvents.PublicationSequence(jobFolderPath, approvedSha);
         var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
             ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
-        if (_interruptedGateRecovery is not null)
-            await _interruptedGateRecovery.WaitForStartupRecoveryAsync(reservationRepo, ct).ConfigureAwait(false);
+        await WaitForStartupAdmissionAsync(StartupAdmission.Push, project, jobId, jobFolderPath,
+            reservationRepo, ct).ConfigureAwait(false);
         using var batchReservation = _batchReservations is null
             || string.IsNullOrWhiteSpace(reservationRepo)
             || IsDocumentationDelivery(reservationRepo, integrationBranch,

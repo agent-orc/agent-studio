@@ -79,6 +79,20 @@ public sealed class ReviewTestReportPolicyTests
     }
 
     [Fact]
+    public void Playwright_summary_is_a_parseable_report_when_the_spec_file_list_changed()
+    {
+        // AGT-4239: the product-start base suite ends with a Playwright run.
+        var command = new ReviewCommandDto("verify-8", "build-tests", "sh",
+            ["-lc", "bash scripts/base-product-start.sh"], CompareToBaseline: true);
+        var passed = new ProcessResult(0, "Running 1 test using 1 worker\n\n  1 passed (24.1s)\n", string.Empty);
+        Assert.False(ReviewTestReportPolicy.Missing(command, passed, setupChanged: true));
+        Assert.False(ReviewTestReportPolicy.Missing(command, new ProcessResult(0,
+            "\u001b[32m  1 passed\u001b[39m\u001b[2m (24.1s)\u001b[22m\n", string.Empty), setupChanged: true));
+        Assert.True(ReviewTestReportPolicy.Missing(command,
+            new ProcessResult(0, "  0 passed (0.1s)\n", string.Empty), setupChanged: true));
+    }
+
+    [Fact]
     public void Missing_vitest_file_report_path_is_named_in_diagnostic()
     {
         var result = new ProcessResult(2, string.Empty,

@@ -275,6 +275,10 @@ if (hostTimeline.IsEnabled)
         hostTimeline,
         new ServiceProviderOptions { ValidateScopes = developmentValidation, ValidateOnBuild = developmentValidation }));
 }
+// AGT-4239: one log line per start-up phase with its elapsed time, and a
+// watchdog thread that names any phase still running after 30 seconds, so a
+// start-up that never becomes healthy names the phase it is stuck in.
+var startupPhases = new StartupPhaseLog(hostTimeline, TimeProvider.System);
 builder.Services.AddSingleton<PublicDemoViewerSessionStore>();
 
 // Rolling backend file logger + crash marker (see Services/Diagnostics).
@@ -1489,6 +1493,9 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.GateFailureRouter>();
 // Merge and push await its repository completion signals; registration order
 // and yielding are not readiness guarantees.
 builder.Services.AddSingleton<AgentStudio.Pipeline.InterruptedIntegrationGateRecoveryService>();
+// AGT-4239: Git-backed commit and attribution repairs run after the host has
+// started and keep only integration and push admission closed until they end.
+builder.Services.AddSingleton<AgentStudio.Pipeline.StartupRepairAdmission>();
 if (!publicDemoExecutionProfile)
 {
     builder.Services.AddHostedService<AgentStudio.Pipeline.InterruptedIntegrationGateRecoveryHostedService>();
@@ -1876,7 +1883,7 @@ if (connectorProfile)
 if (underTestHost && !builder.Configuration.GetValue("Startup:HostedServices", false))
     builder.Services.RemoveAll<IHostedService>();
 
-hostTimeline.Checkpoint("entryToBuild");
+startupPhases.Checkpoint("entryToBuild");
 // Short-lived test hosts must not leave HttpClientFactory handler-expiry timers
 // behind after their service providers have been disposed.
 if (builder.Environment.IsEnvironment("Test"))
@@ -1887,8 +1894,9 @@ var app = builder.Build();
 // Test-host overrides and deployment configuration are final only after Build().
 // Reject a mistyped public-edge setting before the host accepts requests.
 _ = SecurityProfiles.PublicCloudflareEdgeEnabled(app.Configuration);
-hostTimeline.Checkpoint("build");
+startupPhases.Checkpoint("build");
 hostTimeline.Attach(app.Services);
+startupPhases.Attach(app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("AgentStudio.StartupPhases"));
 // Capture the secrets key-encryption key now, before any hosted service starts
 // a child process: the source removes the variable from the process
 // environment so CLI runs, build gates and project processes never inherit it.
@@ -2079,20 +2087,20 @@ if (!networkedSecurityProfile) app.UseClientIdentity();
 // Management intent is authoritative for admission. Reads, recovery controls,
 // and the bounded set of writes needed to drain an existing Runner remain live.
 app.UseManagementMode();
-hostTimeline.Checkpoint("middleware");
+startupPhases.Checkpoint("middleware");
 
 // Touch the identity store at boot so the bootstrap "local-default" identity
 // is created before any caller looks at it.
-hostTimeline.Sweep("ClientIdentityStore.EnsureLoaded",
+startupPhases.Run("ClientIdentityStore.EnsureLoaded",
     () => app.Services.GetRequiredService<ClientIdentityStore>().EnsureLoaded());
 
 // Ensure state folders exist and migrate legacy flat jobs
-hostTimeline.Sweep("TaskStateMachine.EnsureStateFoldersAndMigrate",
+startupPhases.Run("TaskStateMachine.EnsureStateFoldersAndMigrate",
     () => app.Services.GetRequiredService<TaskStateMachine>().EnsureStateFoldersAndMigrate());
 // Clear abandoned integration-slot index locks before boot recovery invokes git.
 if (!publicDemoExecutionProfile) try
 {
-    hostTimeline.Sweep("IntegrationWorktreeStartupLockSweep",
+    startupPhases.Run("IntegrationWorktreeStartupLockSweep",
         () => app.Services.GetRequiredService<AgentStudio.Git.IntegrationWorktreeStartupLockSweep>().RunOnce());
 }
 catch (Exception ex)
@@ -2114,7 +2122,7 @@ var runRepairSweeps = !(underTestHost || app.Environment.IsEnvironment("Test") |
 // client defaults. Idempotent; no-op once all jobs are already migrated.
 if (runRepairSweeps)
 {
-    var backfillCount = hostTimeline.Sweep("BackfillAgentDefaults",
+    var backfillCount = startupPhases.Run("BackfillAgentDefaults",
         () => app.Services.GetRequiredService<TaskMutationService>().BackfillAgentDefaults());
     if (backfillCount > 0)
         app.Services.GetRequiredService<ILogger<Program>>()
@@ -2126,7 +2134,7 @@ if (runRepairSweeps)
 // The pass does not move or rename watched project data.
 try
 {
-    hostTimeline.Sweep("RegistryBootstrap", () => AgentStudio.Registry.RegistryBootstrap.Run(
+    startupPhases.Run("RegistryBootstrap", () => AgentStudio.Registry.RegistryBootstrap.Run(
         app.Services.GetRequiredService<AgentStudio.Registry.WorkspaceRegistry>(),
         app.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>(),
         app.Services.GetRequiredService<TaskScannerService>(),
@@ -2148,7 +2156,7 @@ catch (Exception ex)
 if (runRepairSweeps)
 {
     var mutations = app.Services.GetRequiredService<TaskMutationService>();
-    var keyCount = hostTimeline.Sweep("BackfillTaskKeys", mutations.BackfillTaskKeys);
+    var keyCount = startupPhases.Run("BackfillTaskKeys", mutations.BackfillTaskKeys);
     if (keyCount > 0)
         app.Services.GetRequiredService<ILogger<Program>>()
             .LogInformation("Backfilled task keys on {Count} job(s)", keyCount);
@@ -2157,12 +2165,12 @@ if (runRepairSweeps)
     // sweep is idempotent and a no-op once every key is unique; it keeps the
     // oldest task on the contested key and re-keys the namesakes. Runs after
     // the backfill so freshly stamped jobs are part of the uniqueness check.
-    var dedupCount = hostTimeline.Sweep("DeduplicateTaskKeys", mutations.DeduplicateTaskKeys);
+    var dedupCount = startupPhases.Run("DeduplicateTaskKeys", mutations.DeduplicateTaskKeys);
     if (dedupCount > 0)
         app.Services.GetRequiredService<ILogger<Program>>()
             .LogWarning("Resolved duplicate task keys by re-keying {Count} task(s)", dedupCount);
 
-    hostTimeline.Sweep("WarnDuplicateIds", () => TaskProjectionCards.WarnDuplicateIds(
+    startupPhases.Run("WarnDuplicateIds", () => TaskProjectionCards.WarnDuplicateIds(
         app.Services.GetRequiredService<TaskScannerService>().ScanAllJobsWithArchive(),
         app.Services.GetRequiredService<ILogger<Program>>()));
 }
@@ -2172,7 +2180,7 @@ if (runRepairSweeps)
 // before any Remote Review Executor can poll this process.
 if (runRepairSweeps) try
 {
-    var repaired = hostTimeline.Sweep("ReviewAttemptTaskLifecycle.BootSweep",
+    var repaired = startupPhases.Run("ReviewAttemptTaskLifecycle.BootSweep",
         () => app.Services.GetRequiredService<ReviewAttemptTaskLifecycleService>().SweepUnclaimableAttempts());
     if (repaired > 0)
     {
@@ -2193,7 +2201,7 @@ catch (Exception ex)
 // so historical and new live observations cannot race each other.
 if (runRepairSweeps) try
 {
-    hostTimeline.Sweep("WikiAgentReadBackfill",
+    startupPhases.Run("WikiAgentReadBackfill",
         () => app.Services.GetRequiredService<AgentStudio.Docs.WikiAgentReadService>().EnsureBackfilled());
 }
 catch (Exception ex)
@@ -2201,50 +2209,60 @@ catch (Exception ex)
     crashRecorder.Record("WikiAgentReadBackfill", ex);
 }
 
+// AGT-4239: the Git-backed commit and attribution repairs below are one-time,
+// idempotent and marker-gated, but each one reads Git per card and, before the
+// task index cache is bound, walked the whole task tree per card. On a 4,000-card
+// workspace that kept the host unhealthy past the deploy window. They now run
+// after the listener, in this order, on one dedicated thread once the first
+// task index publication exists, and each keeps only integration and push
+// admission closed until it ends (MergeIntoDevelopRunner logs the waiting
+// reason). Hosts that do not run hosted services (plain test hosts) keep the
+// synchronous order so their assertions still see the repaired state.
+var startupRepairs = app.Services.GetRequiredService<AgentStudio.Pipeline.StartupRepairAdmission>();
+var deferStartupRepairs = !underTestHost || app.Configuration.GetValue("Startup:HostedServices", false);
+void StartupRepair(string name, Action repair)
+{
+    void Guarded()
+    {
+        try { repair(); }
+        catch (Exception ex) { crashRecorder.Record(name, ex); throw; }
+    }
+    if (deferStartupRepairs)
+    {
+        startupRepairs.Enqueue(name,
+            AgentStudio.Pipeline.StartupAdmission.Integration | AgentStudio.Pipeline.StartupAdmission.Push, Guarded);
+        return;
+    }
+    try { startupPhases.Run(name, Guarded); }
+    catch (Exception ex) { SilentCatch.Note(ex, "synchronous start-up repair failed; recorded by the crash recorder"); }
+}
+
 // One-time migration from the legacy [repository] commit-subject convention to
 // the structured repository field used by multi-repository delivery status.
-if (runRepairSweeps) try
-{
-    hostTimeline.Sweep("CommitRepositoryBackfill",
+if (runRepairSweeps)
+    StartupRepair("CommitRepositoryBackfill",
         () => app.Services.GetRequiredService<TaskMutationService>().BackfillLegacyCommitRepositories());
-}
-catch (Exception ex)
-{
-    crashRecorder.Record("CommitRepositoryBackfill", ex);
-}
 
 // One-time, idempotent repair of Git-derived commit file metadata on live
 // cards. The sweep reads Git and writes only task.json through the owning
 // mutation service; entries with complete metadata make later boots a no-op.
-if (runRepairSweeps) try
-{
-    hostTimeline.Sweep("CommitMetadataBackfill",
+if (runRepairSweeps)
+    StartupRepair("CommitMetadataBackfill",
         () => app.Services.GetRequiredService<TaskMutationService>().BackfillMissingCommitMetadata());
-}
-catch (Exception ex)
-{
-    crashRecorder.Record("CommitMetadataBackfill", ex);
-}
 
 // One-time, conservative repair of historical rebase/steer generations. The
 // persisted report is also the completion marker. Ambiguous file-breadth cases
 // remain untouched and visible in that report.
-if (runRepairSweeps) try
-{
-    hostTimeline.Sweep("SupersededCommitSweep",
+if (runRepairSweeps)
+    StartupRepair("SupersededCommitSweep",
         () => app.Services.GetRequiredService<SupersededCommitSweep>().RunOnce());
-}
-catch (Exception ex)
-{
-    crashRecorder.Record("SupersededCommitSweep", ex);
-}
 
 // AGT-2818: announce every card currently held in a pickup lane, so the backlog
 // that accumulated while the state was invisible becomes visible once. Purely a
 // report; nothing here changes what the pickup gate admits.
 if (runRepairSweeps) try
 {
-    hostTimeline.Sweep("PickupHoldSweep",
+    startupPhases.Run("PickupHoldSweep",
         () => app.Services.GetRequiredService<AgentStudio.Tasks.PickupHoldSweep>().RunOnce());
 }
 catch (Exception ex)
@@ -2256,52 +2274,28 @@ catch (Exception ex)
 // already advanced to the result SHA and therefore collapsed commits[] to an
 // empty merge-base range. The same pass materializes missing remote token
 // receipts from the durable CLI log.
-if (runRepairSweeps) try
-{
-    hostTimeline.Sweep("RemoteCompletionAttributionSweep",
+if (runRepairSweeps)
+    StartupRepair("RemoteCompletionAttributionSweep",
         () => app.Services.GetRequiredService<RemoteCompletionAttributionSweep>().RunOnce());
-}
-catch (Exception ex)
-{
-    crashRecorder.Record("RemoteCompletionAttributionSweep", ex);
-}
 
 // AGT-3717: one-time re-attribution of deliveries whose own runner salvage
 // commit named a related card in its subject, which the attribution guard
 // rejected before it exempted that commit.
-if (runRepairSweeps) try
-{
-    hostTimeline.Sweep("SalvageSubjectAttributionRepair",
+if (runRepairSweeps)
+    StartupRepair("SalvageSubjectAttributionRepair",
         () => app.Services.GetRequiredService<RemoteCompletionAttributionSweep>().RunSalvageSubjectRepairOnce());
-}
-catch (Exception ex)
-{
-    crashRecorder.Record("SalvageSubjectAttributionRepair", ex);
-}
 
 // Repair passing reviewed deliveries escalated after an integration merge
 // imported another card's commit into their fenced result range.
-if (runRepairSweeps) try
-{
-    hostTimeline.Sweep("IntegrationHistoryAttributionRepair",
+if (runRepairSweeps)
+    StartupRepair("IntegrationHistoryAttributionRepair",
         () => app.Services.GetRequiredService<RemoteCompletionAttributionSweep>().RunIntegrationHistoryRepairOnce());
-}
-catch (Exception ex)
-{
-    crashRecorder.Record("IntegrationHistoryAttributionRepair", ex);
-}
 
 // Repair passing reviewed deliveries escalated because the subject guard read a
 // finding id or a key the card references as another card's work (AGT-3854).
-if (runRepairSweeps) try
-{
-    hostTimeline.Sweep("CommitSubjectKeyAttributionRepair",
+if (runRepairSweeps)
+    StartupRepair("CommitSubjectKeyAttributionRepair",
         () => app.Services.GetRequiredService<RemoteCompletionAttributionSweep>().RunCommitSubjectKeyRepairOnce());
-}
-catch (Exception ex)
-{
-    crashRecorder.Record("CommitSubjectKeyAttributionRepair", ex);
-}
 
 // Cap legacy durable CLI logs after the one-time full-history wiki read
 // backfill but before CLI reattachment can append new output. The sweep also
@@ -2309,7 +2303,7 @@ catch (Exception ex)
 // It is idempotent and cheap once every active/rotated file is bounded.
 if (runRepairSweeps) try
 {
-    hostTimeline.Sweep("CliOutputLogMaintenance",
+    startupPhases.Run("CliOutputLogMaintenance",
         () => app.Services.GetRequiredService<CliOutputLogMaintenanceService>().Run());
 }
 catch (Exception ex)
@@ -2324,7 +2318,7 @@ catch (Exception ex)
 // no-ops because existing non-empty Result documents are never overwritten.
 if (runRepairSweeps) try
 {
-    hostTimeline.Sweep("ResultDocumentBackfill",
+    startupPhases.Run("ResultDocumentBackfill",
         () => app.Services.GetRequiredService<TaskTransitionService>().BackfillMissingResultDocuments());
 }
 catch (Exception ex)
@@ -2337,7 +2331,7 @@ catch (Exception ex)
 // receipts and leaves genuinely newer queued follow-ups untouched.
 if (runRepairSweeps) try
 {
-    hostTimeline.Sweep("PendingIntentReconciliation",
+    startupPhases.Run("PendingIntentReconciliation",
         () => app.Services.GetRequiredService<TaskTransitionService>().ReconcilePendingIntents());
 }
 catch (Exception ex)
@@ -2370,7 +2364,7 @@ catch (Exception ex)
 // intentional: the runner must see the adopted state on its first scan.
 if (!publicDemoExecutionProfile) try
 {
-    hostTimeline.Sweep("RunLivenessMonitor.AdoptOnBoot",
+    startupPhases.Run("RunLivenessMonitor.AdoptOnBoot",
         () => app.Services.GetRequiredService<RunLivenessMonitor>().AdoptOnBootAsync().GetAwaiter().GetResult());
 }
 catch (Exception ex)
@@ -2380,7 +2374,7 @@ catch (Exception ex)
 
 if (!publicDemoExecutionProfile) try
 {
-    hostTimeline.Sweep("CrashRecoveryService",
+    startupPhases.Run("CrashRecoveryService",
         () => app.Services.GetRequiredService<CrashRecoveryService>().RecoverAsync().GetAwaiter().GetResult());
 }
 catch (Exception ex)
@@ -2396,20 +2390,20 @@ catch (Exception ex)
 if (!publicDemoExecutionProfile) try
 {
     var archiver = app.Services.GetRequiredService<StaleProgressArchiver>();
-    hostTimeline.Sweep("StaleProgressArchiver.Sweep", () => archiver.SweepAsync().GetAwaiter().GetResult());
+    startupPhases.Run("StaleProgressArchiver.Sweep", () => archiver.SweepAsync().GetAwaiter().GetResult());
     // Failed-pickup-elimination (supersedes ADR-0028/0029): drain any folders
     // that linger in the retired 3a-failed-pickup lane from before this change
     // - real tasks back to 2-ready, debris to 7-archive - after the sweep so a
     // folder requeued from 3-progress is never also drained. Idempotent once
     // the lane is empty.
-    hostTimeline.Sweep("StaleProgressArchiver.DrainFailedPickupLane",
+    startupPhases.Run("StaleProgressArchiver.DrainFailedPickupLane",
         () => archiver.DrainFailedPickupLaneAsync().GetAwaiter().GetResult());
 }
 catch (Exception ex)
 {
     crashRecorder.Record("StaleProgressArchiver", ex);
 }
-hostTimeline.Checkpoint("bootSweeps");
+startupPhases.Checkpoint("bootSweeps");
 
 // Wire the aggregation cache onto the bus store. Every successful append
 // updates the per-project tallies in O(1), so /token-aggregate requests
@@ -2541,7 +2535,7 @@ workbenchHubBroadcaster.Attach(
 // start it is a synchronous read before the listener, as before. The host's
 // other lifecycle calls (ReloadProjectAsync, ShutdownAsync) are wired through
 // the typed interface and used by callers, not at startup.
-_ = hostTimeline.Sweep("TaskAccessHost.Boot", () => app.Services.GetRequiredService<AgentStudio.TaskAccess.ITaskAccessHost>()
+_ = startupPhases.Run("TaskAccessHost.Boot", () => app.Services.GetRequiredService<AgentStudio.TaskAccess.ITaskAccessHost>()
     .BootAsync());
 workbenchHubBroadcaster.InitializeSnapshotsAfterBoot(jobIndexCache);
 
@@ -2578,7 +2572,7 @@ workbenchHubBroadcaster.InitializeSnapshotsAfterBoot(jobIndexCache);
         var failures = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.Ordinal);
         try
         {
-            hostTimeline.Sweep("BusProjectionWarmup", () => Parallel.ForEach(projects, project =>
+            startupPhases.Run("BusProjectionWarmup", () => Parallel.ForEach(projects, project =>
             {
                 try
                 {
@@ -2735,7 +2729,7 @@ else
     WindowsWorktreeOrphanSweeper.Sweep(worktreeOrphanLogger);
 }
 
-hostTimeline.Checkpoint("wiring");
+startupPhases.Checkpoint("wiring");
 
 // Wire up Runner status → SignalR push
 var taskRunner = app.Services.GetRequiredService<TaskRunnerService>();
@@ -2748,6 +2742,32 @@ app.MapHub<TaskHub>("/hubs/jobs");
 PublicDemoExecutionRouteInventory.ValidateStartup(
     app,
     app.Services.GetRequiredService<StartupExecutionAdmission>());
-hostTimeline.Checkpoint("mapEndpoints");
+startupPhases.Checkpoint("mapEndpoints");
+
+// AGT-4239: deferred repairs start now, beside the hosted services, on their own
+// thread. They wait only for the first task index publication (started by the
+// TaskAccess boot above), never for the host to report started, so a hosted
+// service that awaits a merge during its start cannot deadlock against them.
+var startupStopping = app.Lifetime.ApplicationStopping;
+var startupRepairDrain = Task.Factory.StartNew(() =>
+{
+    try
+    {
+        startupRepairs.Drain(startupPhases,
+            ct => app.Services.GetRequiredService<TaskScannerService>().WaitForFirstPublicationAsync(ct),
+            startupStopping);
+    }
+    catch (Exception ex)
+    {
+        crashRecorder.Record("StartupRepairDrain", ex);
+    }
+}, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+var hostStartPhase = startupPhases.Begin("HostStart");
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    hostStartPhase.Dispose();
+    _ = startupRepairDrain.ContinueWith(_ => startupPhases.Finish(), TaskScheduler.Default);
+});
+app.Lifetime.ApplicationStopped.Register(startupPhases.Dispose);
 
 app.Run();

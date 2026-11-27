@@ -631,7 +631,7 @@ Agent Studio's base suite (measured on 22 November 2026 on agent-runner-01, 376 
 |---|---|---|
 | `backend-base` | Backend tests filtered to `.Architecture.`, `Category=Guard`, `TransitionDecisionBoundaryTests`, `MonolithDecisionBoundaryTests`, `LocalStateStartupTests`, `TaskListProjectFilterEndpointTests` and `IntegrationReleaseServiceTests` (265 tests) | 55 s |
 | `frontend-unit-base` | `test:ci` with `--include` for the app, the studio shell, the task service, the core routes and task detail (5 files, 100 tests) | 198 s |
-| `product-start` | `scripts/base-product-start.sh`: publishes the Debug build without rebuilding, starts backend and frontend on isolated ports, and runs `e2e/system/base-product-start.spec.ts` (health, create a card through the API, the board shows it) | 123 s (78 s of it a frontend rebuild that a clean post-merge checkout skips) |
+| `product-start` | `scripts/base-product-start.sh`: first `scripts/product-start-fixture-check.sh` starts the Debug build with the production start path (Production environment, networked profile, hosted services and repair sweeps on) on the production-shaped workspace of `scripts/startup-fixture.sh` (2,000 cards with commits, an interrupted integration journal, conflict receipts, an applying orchestration occurrence) and fails with the stuck start-up phase when `/healthz` does not answer within 90 s (AGT-4239); then it publishes the Debug build without rebuilding, starts backend and frontend on isolated ports, and runs `e2e/system/base-product-start.spec.ts` (health, create a card through the API, the board shows it) | 123 s (78 s of it a frontend rebuild that a clean post-merge checkout skips) plus about 25 s for the fixture start |
 
 #### Stage deploy after a green window
 

@@ -18,7 +18,8 @@ internal static partial class ReviewBaselineTestResultPolicy
                || DotNetPassed().IsMatch(output)
                || NodeTotal().IsMatch(output)
                || JestOrVitestPassed().IsMatch(output)
-               || VitestFilesPassed().IsMatch(output);
+               || VitestFilesPassed().IsMatch(output)
+               || PlaywrightPassed().IsMatch(output);
     }
 
     [GeneratedRegex(@"\bTotal(?: tests)?:\s*[1-9]\d*\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
@@ -35,4 +36,10 @@ internal static partial class ReviewBaselineTestResultPolicy
 
     [GeneratedRegex(@"\bTest Files\s+[1-9]\d*\s+passed\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex VitestFilesPassed();
+
+    // Playwright's list and line reporters end with "  1 passed (12.3s)"
+    // (AGT-4239: the product-start base suite runs a Playwright spec), with
+    // color codes around the count when FORCE_COLOR is set.
+    [GeneratedRegex(@"(?m)^(?:\s|\x1b\[[0-9;]*m)*[1-9]\d*\s+passed(?:\x1b\[[0-9;]*m)*\s+\(\d", RegexOptions.CultureInvariant)]
+    private static partial Regex PlaywrightPassed();
 }
