@@ -26,6 +26,17 @@
       (valueChange)="setActivityBarSide($event)" />
   </div>
   <div class="appearance__row">
+    <span class="appearance__copy">
+      <span class="appearance__label">Surface density</span>
+      <span class="appearance__hint">Row and section spacing. Compact is the initial setting; local row variants take precedence.</span>
+    </span>
+    <app-segmented-control
+      ariaLabel="Surface density"
+      [options]="surfaceDensityOptions"
+      [value]="uiPrefs.surfaceDensity()"
+      (valueChange)="uiPrefs.setSurfaceDensity($event)" />
+  </div>
+  <div class="appearance__row">
     <span class="appearance__label" id="appearance-tree-metrics-label">Tree view</span>
     <app-segmented-control
       ariaLabel="Tree view: active work visualization"

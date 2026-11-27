@@ -8,19 +8,9 @@ import { ThemeService } from '../../services/theme.service';
 import { StudioPanelStateService } from '../../services/studio-panel-state.service';
 // WorkspaceOverlaysComponent imports this component and is itself exported by
 // the shell barrel. Read the leaf service directly to avoid that barrel cycle.
-import { UiPreferencesService } from '../../../shell/state/ui-preferences.service';
+import { UiPreferencesService, SurfaceDensity } from '../../../shell/state/ui-preferences.service';
 
-/**
- * AGT-2035 — Appearance section of the consolidated Workspace-settings view.
- *
- * Holds the two user-level layout preferences that survived the settings
- * clean-up: **Theme** (now global-only, shared with the titlebar quick-toggle
- * via {@link ThemeService}) and **Activity bar** side. The former sibling
- * controls "Project chat rail" and "Card density" were removed (dead features).
- *
- * These are per-user preferences, so this component lives in the "Global"
- * rail group; it is rendered by `WorkspaceOverlaysComponent`.
- */
+/** User-level appearance preferences, rendered in Global settings. */
 @Component({
   selector: 'app-appearance-settings',
   standalone: true,
@@ -45,6 +35,11 @@ export class AppearanceSettingsComponent {
   readonly activityBarSideOptions: readonly SegmentedOption<'left' | 'right'>[] = [
     { value: 'left', label: 'Left', testid: 'settings-activitybar-left' },
     { value: 'right', label: 'Right', testid: 'settings-activitybar-right' },
+  ];
+  readonly surfaceDensityOptions: readonly SegmentedOption<SurfaceDensity>[] = [
+    { value: 'compact', label: 'Compact', testid: 'settings-density-compact' },
+    { value: 'default', label: 'Default', testid: 'settings-density-default' },
+    { value: 'cozy', label: 'Cozy', testid: 'settings-density-cozy' },
   ];
   readonly treeMetricViewOptions: readonly SegmentedOption<'numbers' | 'dots'>[] = [
     { value: 'numbers', label: 'Numbers', testid: 'settings-tree-metrics-numbers' },

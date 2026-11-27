@@ -957,7 +957,8 @@ export declare class ResizableSplitterDirective implements OnInit {
  *   </app-row>
  *
  * `variant`:
- *   - compact (default) — operator surfaces (Overview, Explorer, Activity)
+ *   - omitted           - inherit the root or containing surface density
+ *   - compact           - explicit compact override
  *   - default           — mid-density panels
  *   - cozy              — empty states, Welcome cards
  *
@@ -967,7 +968,7 @@ export declare class ResizableSplitterDirective implements OnInit {
  *                         to the WCAG-AA touch target (32/36/40px)
  */
 export declare class RowComponent {
-    readonly variant: import("@angular/core").InputSignal<"default" | "compact" | "cozy">;
+    readonly variant: import("@angular/core").InputSignal<"default" | "compact" | "cozy" | undefined>;
     readonly interactive: import("@angular/core").InputSignal<boolean>;
 }
 ```
