@@ -1,5 +1,6 @@
 using AgentStudio.OrchestrationDecisions;
 using System.Diagnostics;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
@@ -243,6 +244,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private readonly QuotaAdmissionService? _quotaAdmission;
     private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
     private readonly ReportContentReviewService _reportReview;
+    private readonly V1ReviewExecutorRegistry? _blockerExecutors;
+    private readonly IHttpClientFactory? _blockerHttpClients;
+    internal Func<TaskInfo, TaskIntegrationStatus?>? MachineBlockerIntegrationReader { get; set; }
 
     /// <summary>
     /// Stable prefix on the <c>Reason</c> field of every
@@ -304,7 +308,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         ReviewInputDecisionGateway? reviewInputDecisions = null,
         QuotaAdmissionService? quotaAdmission = null,
         ReportContentReviewService? reportReview = null,
-        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null)
+        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
+        V1ReviewExecutorRegistry? blockerExecutors = null,
+        IHttpClientFactory? blockerHttpClients = null)
     {
         _scanner = scanner;
         _stateMachine = stateMachine;
@@ -347,6 +353,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _reviewInputDecisions = reviewInputDecisions;
         _quotaAdmission = quotaAdmission;
         _workspaceQuota = workspaceQuota;
+        _blockerExecutors = blockerExecutors;
+        _blockerHttpClients = blockerHttpClients;
         _reportReview = reportReview
             ?? new ReportContentReviewService(aspectRunner, configuration, projectSettings, attemptAuthority);
 
@@ -622,23 +630,14 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
                         if (pending.Kind == ReviewSignalKind.Blocked)
                         {
-                            // BLOCKED is also deterministic: the agent has
-                            // declared it cannot proceed, so we always
-                            // escalate to a human-decision intake rather
-                            // than spending a fast-model call to re-decide.
+                            // Resolve machine prerequisites before human intake, without a model call.
                             await ProcessBlockedAsync(workspace, entry, pending, ct);
-                            _statusSnapshot.RecordEscalate();
                             continue;
                         }
 
-                        if (!RateLimitOk(maxPerHour))
-                        {
-                            _logger.LogInformation(
-                                "ReviewDecisionOrchestrator rate limit reached ({MaxPerHour}/h); deferring {JobId}",
-                                maxPerHour, pending.Job.Id);
-                            return;
-                        }
-
+                        if (!RateLimitOk(maxPerHour)
+                            && MonolithTransitionAdapter.IntegrationBlockerDependency("needs-human-input", pending.Reason ?? "") is null
+                            && !MonolithTransitionAdapter.IsVerificationBlocker(pending.Reason ?? "")) return;
                         await ProcessNeedsInputAsync(workspace, entry, pending, cliBinary, model, ct);
                     }
                     catch (Exception ex)
@@ -971,8 +970,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
             case ReviewSignalKind.Blocked:
                 await ProcessBlockedAsync(workspace, entry, pending, ct);
-                _statusSnapshot.RecordEscalate();
-                return PostProcessingCardResult.Decided("blocked-sentinel");
+                return _scanner.FindJob(pending.Job.Id, entry.Path)?.State == TaskStates.AutoReview
+                    ? PostProcessingCardResult.Deferred("machine-blocker-wait")
+                    : PostProcessingCardResult.Decided("blocked-sentinel");
 
             case ReviewSignalKind.Done:
                 if (TaskModes.IsConcept(pending.Job.Mode))
@@ -1001,16 +1001,14 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     await ProcessConceptAsync(workspace, entry, pending, ct);
                     return PostProcessingCardResult.Decided("concept");
                 }
-                if (!RateLimitOk(maxPerHour))
-                {
-                    _logger.LogInformation(
-                        "ReviewDecisionOrchestrator rate limit reached ({MaxPerHour}/h); deferring {JobId} to next tick",
-                        maxPerHour, pending.Job.Id);
-                    // Budget exhaustion is a clock problem, not a card problem.
+                if (!RateLimitOk(maxPerHour)
+                    && MonolithTransitionAdapter.IntegrationBlockerDependency("needs-human-input", pending.Reason ?? "") is null
+                    && !MonolithTransitionAdapter.IsVerificationBlocker(pending.Reason ?? ""))
                     return PostProcessingCardResult.Deferred("rate-limit-reached");
-                }
                 await ProcessNeedsInputAsync(workspace, entry, pending, cliBinary, model, ct);
-                return PostProcessingCardResult.Decided("needs-input");
+                return _scanner.FindJob(pending.Job.Id, entry.Path)?.State == TaskStates.AutoReview
+                    ? PostProcessingCardResult.Deferred("needs-input-wait")
+                    : PostProcessingCardResult.Decided("needs-input");
         }
 
         return PostProcessingCardResult.Blocked("unhandled-signal-kind:" + pending.Kind);
@@ -1463,6 +1461,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string model,
         CancellationToken ct)
     {
+        if (await TryResolveMachineBlockerAsync(workspace, entry, pending, pending.Reason ?? string.Empty, ct))
+            return;
         if (_reviewInputDecisions?.EngineDecides == true)
         {
             var logPath = TaskPaths.CliOutputLog(pending.Job.FolderPath);
@@ -1478,6 +1478,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             EngineDecisionWaitMarker.Write(pending.Job.FolderPath, run.RunId);
             return;
         }
+        if (!RateLimitOk(_configuration.GetValue("ReviewDecisionOrchestrator:CallsPerHour", DefaultCallsPerHour)))
+            return;
         var prompt = BuildPrompt(entry, pending, workspace);
         string response = string.Empty;
         StepModelUsage? decisionUsage = null;
@@ -2052,12 +2054,253 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         return Task.CompletedTask;
     }
 
-    private Task ProcessBlockedAsync(
+    // One receipt per source generation. An unchanged wait never rewrites its deadline.
+    private sealed record MachineBlockerReceipt(
+        string Subject, string Kind, string Reference, DateTimeOffset OpenedAt,
+        DateTimeOffset Deadline, MachineBlockerAction Action, string Reason,
+        string? RepairKey = null, IReadOnlyList<string>? CapableHosts = null, IReadOnlyList<string>? Evidence = null);
+
+    private static readonly JsonSerializerOptions MachineBlockerJson = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+
+    private static string MachineBlockerPath(TaskInfo task)
+        => Path.Combine(TaskPaths.LogsDir(task.FolderPath), "machine-blocker.json");
+
+    private static MachineBlockerReceipt? ReadMachineBlocker(TaskInfo task)
+    {
+        var path = MachineBlockerPath(task);
+        return File.Exists(path) ? JsonSerializer.Deserialize<MachineBlockerReceipt>(File.ReadAllText(path), MachineBlockerJson) : null;
+    }
+
+    private static void WriteMachineBlocker(TaskInfo task, MachineBlockerReceipt receipt)
+        => new AgentStudio.Persistence.AtomicJsonFileWriter().Write(MachineBlockerPath(task),
+            JsonSerializer.Serialize(receipt, MachineBlockerJson));
+
+    private async Task<IReadOnlyList<RunnerCapabilitySnapshotDto>?> ReadBlockerHostFactsAsync(CancellationToken ct)
+    {
+        if (!AgentStudio.Host.TaskServerPlaneProxy.IsConfigured(_configuration))
+            return _blockerExecutors?.ListCapabilitySnapshots();
+        if (_blockerHttpClients is null) return null;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            return await _blockerHttpClients.CreateClient(AgentStudio.Host.TaskServerPlaneProxy.ClientName)
+                .GetFromJsonAsync<RunnerCapabilitySnapshotDto[]>("/api/v1/management/remote-hosts", deadline.Token);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException && !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Machine blocker capability inventory unavailable; the bounded wait retains unknown feasibility");
+            return null;
+        }
+    }
+
+    private async Task<bool> TryResolveMachineBlockerAsync(
+        string workspace, WatchPathEntry entry, PendingDecision pending, string reason,
+        CancellationToken ct)
+    {
+        var dependency = MonolithTransitionAdapter.IntegrationBlockerDependency("needs-human-input", reason);
+        var verification = MonolithTransitionAdapter.IsVerificationBlocker(reason);
+        if (dependency is null && !verification) return false;
+        var current = _scanner.FindJob(pending.Job.Id, entry.Path);
+        if (current is null || current.State != TaskStates.AutoReview
+            || CurrentReviewCycleEpoch(current) != CurrentReviewCycleEpoch(pending.Job)) return true;
+
+        var source = ReviewSubjectStore.Read(current.FolderPath);
+        // Do not act on a subject that belongs to an earlier delivery or on an active review lease.
+        if (source is not null && _attemptAuthority is not null
+            && !ReviewSubjectStore.TryValidateCurrentAttempt(current.FolderPath, source, _attemptAuthority, out _)) return true;
+        var review = _attemptAuthority?.GetTaskProjection(current.Key ?? current.TaskKey).CurrentReviewAttempt;
+        if (review?.State == AttemptLifecycleState.Leased) return true;
+        var choiceMessage = pending.Kind == ReviewSignalKind.Blocked
+            ? ReviewDecisionEvidenceReader.ReadBlockedMessage(current.FolderPath)
+            : NeedsInputArtifact.TryRead(current.FolderPath)?.Message;
+        var ownerHold = HasLatestOperatorLaneVerdict(current)
+            || BlockedForkReader.Read(pending.Reason, choiceMessage) is not null
+            || current.References.DependsOn.Any(edge => edge.ReleaseGate || edge.RequiresCompletion);
+        var now = _gateTime.GetUtcNow();
+        var reference = dependency ?? review?.Subject.SubjectId ?? "unreconstructed-verification";
+        var subject = $"{source?.RunAttemptId ?? review?.SourceRunAttemptId}:{source?.ResultSha ?? review?.Subject.ExpectedResultSha}:{CurrentReviewCycleEpoch(current):O}:{pending.LineNumber}:{reference}";
+        var prior = ReadMachineBlocker(current);
+        if (prior?.Subject != subject) prior = null;
+        var receipt = prior ?? new MachineBlockerReceipt(subject, dependency is null ? "verification-capability" : "integration-dependency",
+            reference, now, now + (dependency is null ? IntegrationBlockerPolicy.CapabilityWait : IntegrationBlockerPolicy.DependencyWait),
+            MachineBlockerAction.Wait, reason);
+        MachineBlockerDisposition disposition;
+        IReadOnlyList<string> capableHosts = [];
+        if (dependency is not null)
+        {
+            var index = _scanner.GetReferenceIndex();
+            var parent = index.Resolve(dependency);
+            var proposed = current.References with
+            {
+                DependsOn = current.References.DependsOn.Any(edge => edge.Key.Equals(dependency, StringComparison.OrdinalIgnoreCase))
+                    ? current.References.DependsOn : [.. current.References.DependsOn, new TaskDependencyReference(dependency)],
+            };
+            var valid = TaskReferenceValidator.Validate(current.Key ?? current.Id, proposed, index.KnownKeys,
+                index.DependsOnGraph, current.References.Workbenches.ToHashSet(StringComparer.OrdinalIgnoreCase)).IsValid;
+            var integration = parent is null ? null : MachineBlockerIntegrationReader is { } read
+                ? read(parent) : _integrationStatus?.BuildLookup([parent]).GetValueOrDefault(parent.TaskKey);
+            var branch = TaskIntegrationBranch.Resolve(current, _projectSettings?.Get(entry.Name)?.IntegrationBranch ?? "develop");
+            var integrated = integration?.Status == IntegrationStatuses.Integrated
+                && string.Equals(integration.IntegrationBranch, branch, StringComparison.OrdinalIgnoreCase);
+            receipt = receipt with { Evidence = [$"dependency={dependency}; status={integration?.Status ?? "unavailable"}; "
+                + $"delivery={integration?.DeliveryRef}; target={branch}; targetFingerprint={integration?.TargetRefFingerprint}; "
+                + $"pendingRecovery={parent is not null && OverlapComparisonSet.IsDeliveryRecovery(parent)}"] };
+            disposition = MonolithTransitionAdapter.ResolveIntegrationBlocker(new(
+                parent is not null, parent is not null && !TaskModes.IsReadOnly(parent.Mode) && !TaskKinds.IsDecision(parent.Kind),
+                valid, integrated, integration?.Status == IntegrationStatuses.ConflictSkipped
+                    && parent is not null && !OverlapComparisonSet.IsDeliveryRecovery(parent),
+                ownerHold, now, receipt.Deadline,
+                CardRoundBudget.Evaluate(ReviewDecisionLog.ReadAll(workspace, entry.Name),
+                    _timeline?.ReadAll(current.FolderPath) ?? [], current.Id,
+                    CardRoundBudget.ResolveAllowed(_configuration)).Exhausted));
+        }
+        else
+        {
+            var plan = review?.Subject.Plan;
+            var observedHosts = await ReadBlockerHostFactsAsync(ct);
+            now = _gateTime.GetUtcNow();
+            if (review is not null)
+            {
+                var live = _attemptAuthority!.GetTaskProjection(review.TaskKey).CurrentReviewAttempt;
+                if (live?.AttemptId != review.AttemptId || live.State != AttemptLifecycleState.Pending
+                    || live.LastFence != review.LastFence || live.AuthorityEpoch != review.AuthorityEpoch) return true;
+            }
+            var hosts = observedHosts ?? [];
+            capableHosts = plan is null ? [] : EvidenceGate.CapableVerificationHosts(plan, hosts, now.UtcDateTime, review?.Subject.CodingHostId);
+            ownerHold |= plan is not null && capableHosts.Count == 0
+                && EvidenceGate.HasOwnerHeldVerificationHost(plan, hosts, review?.Subject.CodingHostId);
+            receipt = receipt with { Evidence = [
+                $"inventory={(observedHosts is null ? "unavailable" : "observed")}; sourceFinding={reason}; review={review?.AttemptId}; result={review?.Subject.ExpectedResultSha}; "
+                    + $"requirements={string.Join(",", plan is null ? [] : ReviewLibraryStepPolicy.ExecutionCapabilities(plan))}",
+                .. hosts.Select(host => $"host={host.HostId}; instance={host.InstanceId}; heartbeat={host.LastSeenAt:O}; "
+                    + $"admission={host.HostAdmission.AdmissionState}; "
+                    + string.Join(",", host.Capabilities.Select(capability =>
+                        $"{capability.Key}:{capability.AdvertisedStatus}:{capability.HealthState}:{capability.FreshUntil:O}"))) ] };
+            disposition = MonolithTransitionAdapter.ResolveVerificationBlocker(new(
+                plan is not null && review is not null && pending.LineNumber == -2
+                    && _attemptAuthority!.IsReviewedDeliveryCurrent(review.AttemptId),
+                plan is null || EvidenceGate.CapableVerificationHosts(plan with
+                {
+                    Commands = plan.Commands.Where(command => command.Required).ToArray(),
+                }, hosts, now.UtcDateTime, review?.Subject.CodingHostId).Count == 0, capableHosts.Count > 0,
+                ownerHold, now, receipt.Deadline));
+        }
+        if (disposition.Action == MachineBlockerAction.HumanChoice) return pending.LineNumber == -2;
+        receipt = receipt with { Action = disposition.Action, Reason = disposition.Reason, CapableHosts = capableHosts };
+        if (JsonSerializer.Serialize(receipt, MachineBlockerJson) != JsonSerializer.Serialize(prior, MachineBlockerJson))
+            WriteMachineBlocker(current, receipt);
+        if (disposition.Action is MachineBlockerAction.Wait or MachineBlockerAction.PlaceVerification)
+            return true; // The normal review claim route owns placement; this handler never executes hardware itself.
+
+        if (disposition.Action == MachineBlockerAction.Requeue)
+        {
+            var followUp = $"Platform correction for {dependency}: {disposition.Reason}\n"
+                + $"Target branch: {TaskIntegrationBranch.Resolve(current, _projectSettings?.Get(entry.Name)?.IntegrationBranch ?? "develop")}.\n"
+                + "Use the platform-assigned current integration base. Preserve the prior immutable result as evidence. "
+                + "Do not repeat the agent-reported missing-integration assumption or perform platform-owned git operations.";
+            followUp = await WriteFollowUpFileAsync(current, followUp, ct);
+            var moved = MoveReissueToReadyTop(current, entry, "machine-integration-resolved", workspace, alreadyCharged: true);
+            if (moved is null) return true;
+            WriteMachineBlocker(moved, receipt);
+            AppendReviewDecision(workspace, new ReviewDecisionRecord(now.UtcDateTime, current.Id, entry.Name,
+                ReviewDecisionKind.Reissue, "machine-blocker: " + dependency + ": " + disposition.Reason,
+                "(platform integration facts)", "(no model call)", followUp), current.FolderPath, moved.FolderPath);
+            _chatLog.AppendSupervisor(moved, "reissue", disposition.Reason);
+            return true;
+        }
+
+        var repairKey = receipt.RepairKey;
+        if (string.IsNullOrWhiteSpace(repairKey))
+        {
+            if (_failureInterventions is not null)
+            {
+                var fingerprint = AttemptAuthorityService.Hash(entry.Name + ":" + receipt.Kind + ":" + reference);
+                var repair = _failureInterventions.RaiseCause(current,
+                    new FailureCommandEvidence(receipt.Kind, StderrTail: reason + "\n" + disposition.Reason,
+                        EvidencePointers: ["logs/machine-blocker.json"], OccurredAt: receipt.OpenedAt.UtcDateTime),
+                    new FailureClassificationResult(FailureDomains.Infrastructure, receipt.Kind, fingerprint,
+                        reference, true, disposition.Reason));
+                repairKey = repair.Intervention.FollowUpKey;
+            }
+            else
+            {
+                // A deterministic creation identity also makes recovery safe in minimal hosts.
+                var repairId = "machine-repair-" + AttemptAuthorityService.Hash(entry.Name + ":" + receipt.Kind + ":" + reference)[..20];
+                var existing = _taskAccess.FindJob(repairId, entry.Path);
+                if (existing is null)
+                {
+                    var created = await _taskAccess.MutateAsync(new TaskMutationRequest
+                    {
+                        Kind = TaskMutationKind.Create,
+                        CreateRequest = new AgentStudio.Shared.CreateTaskRequest
+                        {
+                            Id = repairId, Title = $"Repair {receipt.Kind}: {reference}", WatchPath = entry.Path,
+                            TargetState = TaskStates.Preparation, CreationSource = TimelineActors.Orchestrator,
+                            CreatedBy = "Orchestrator", NoBranchExpected = true, RequiresIntegration = false,
+                            PromptMarkdown = $"# Repair {receipt.Kind}\n\nSource: {current.Key ?? current.Id}.\n\n{reason}\n\n{disposition.Reason}\n\n"
+                                + "Reconstruct the source finding and platform facts. Restore integration or verification capability. "
+                                + "Do not fabricate mandatory evidence. The original delivery is quarantined; do not repeatedly retry it.",
+                        },
+                    }, ct);
+                    if (created.Status != TaskMutationStatus.Applied) return true;
+                    existing = created.Job;
+                }
+                repairKey = existing?.Key ?? repairId;
+            }
+            receipt = receipt with { RepairKey = repairKey };
+            WriteMachineBlocker(current, receipt);
+        }
+        // Unknown source evidence and unavailable mandatory proof both fail closed.
+        // An optional check can only be removed from a still-pending authoritative plan.
+        if (disposition.Action == MachineBlockerAction.RecordUnavailable && review?.Subject.Plan is { } optionalPlan)
+        {
+            var replanned = _attemptAuthority!.ReplanPendingReview(review.AttemptId,
+                RemoteReviewPlanBuilder.WithoutUnavailableOptionalCommands(optionalPlan, disposition.Reason));
+            if (replanned.Status != AttemptWriteStatus.Accepted) return true;
+            return true;
+        }
+        var quarantineReason = HumanReviewEscalation.FormatReason(IntegrationBlockerPolicy.QuarantineCategory,
+            $"{disposition.Reason} Repair: {repairKey}. This is a machine-owned quarantine; acceptance evidence is unsatisfied.");
+        MoveJobOutcome? move = null;
+        void ApplyQuarantine() => move = GuardedMoveJob(current.Id, TaskStates.Escalated, entry.Path, reason: quarantineReason,
+            expectedSourceState: TaskStates.AutoReview, transitionCause: LaneChangeCauses.Escalated,
+            transitionDetail: IntegrationBlockerPolicy.QuarantineCategory);
+        if (review is not null)
+        {
+            // Revocation and claims serialize at the authority. The continuation fence then
+            // orders the lane effect against a new review or coding generation for this task.
+            var revoked = _attemptAuthority!.SupersedeOpenReviewAttempts(key =>
+            {
+                if (key != review.TaskKey) return null;
+                var live = _attemptAuthority.GetTaskProjection(key).CurrentReviewAttempt;
+                return live?.AttemptId == review.AttemptId && live.State == AttemptLifecycleState.Pending
+                    && live.LastFence == review.LastFence && live.AuthorityEpoch == review.AuthorityEpoch
+                    ? quarantineReason : null;
+            });
+            if (!revoked.Any(attempt => attempt.AttemptId == review.AttemptId)
+                || !_attemptAuthority.TryApplyForCurrentReviewedDelivery(review.AttemptId, ApplyQuarantine)) return true;
+        }
+        else ApplyQuarantine();
+        if (move is null) return true;
+        if (move.Status != MoveJobStatus.Success) return true;
+        var quarantined = current with { FolderPath = move.NewFolderPath ?? current.FolderPath, State = TaskStates.Escalated };
+        WriteMachineBlocker(quarantined, receipt);
+        AppendReviewDecision(workspace, new ReviewDecisionRecord(now.UtcDateTime, current.Id, entry.Name,
+            ReviewDecisionKind.Escalate, quarantineReason, "(platform blocker facts)", "(no model call)",
+            $"repair {repairKey}"), current.FolderPath, quarantined.FolderPath);
+        _chatLog.AppendSupervisor(quarantined, "machine-quarantine", quarantineReason);
+        return true;
+    }
+
+    private async Task ProcessBlockedAsync(
         string workspace,
         WatchPathEntry entry,
         PendingDecision pending,
         CancellationToken ct)
     {
+        if (await TryResolveMachineBlockerAsync(workspace, entry, pending, pending.Reason ?? string.Empty, ct))
+            return;
         var current = _scanner.FindJob(pending.Job.Id, entry.Path) ?? pending.Job;
         var detail = string.IsNullOrWhiteSpace(pending.Reason)
             ? "Agent emitted [[TASK_BLOCKED]] without further detail; user attention required."
@@ -2066,19 +2309,21 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             HumanReviewEscalationCategories.AgentBlocked,
             detail);
 
-        _chatLog.AppendSupervisor(current, "escalate",
-            $"Orchestrator escalated BLOCKED for human decision. Reason: {reason}. Promoted to {TaskStates.Escalated}.");
-
         // BLOCKED escalations move to the decision lane, not acceptance review.
         var move = GuardedMoveJob(
-            current.Id, TaskStates.Escalated, entry.Path,
+            current.Id, TaskStates.Escalated, entry.Path, reason: reason,
+            expectedSourceState: TaskStates.AutoReview,
             transitionCause: LaneChangeCauses.Escalated, transitionDetail: "agent-blocked");
         if (move.Status != MoveJobStatus.Success)
         {
             _logger.LogWarning(
                 "ReviewDecisionOrchestrator: failed to move {JobId} to escalated after BLOCKED: {Status} {Message}",
                 current.Id, move.Status, move.Message);
+            return;
         }
+        _statusSnapshot.RecordEscalate();
+        _chatLog.AppendSupervisor(current with { FolderPath = move.NewFolderPath ?? current.FolderPath }, "escalate",
+            $"Orchestrator escalated BLOCKED for human decision. Reason: {reason}. Promoted to {TaskStates.Escalated}.");
 
         // ADR-0049: the lane move + this timeline event are the handover -
         // no wrapper card.
@@ -2103,7 +2348,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             current.FolderPath,
             move.NewFolderPath);
 
-        return Task.CompletedTask;
+        return;
     }
 
     /// <summary>
@@ -8004,7 +8249,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             moved.FolderPath);
     }
 
-    private Task HandleEscalateAsync(
+    private async Task HandleEscalateAsync(
         string workspace,
         WatchPathEntry entry,
         PendingDecision pending,
@@ -8014,6 +8259,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string cliBinary,
         CancellationToken ct)
     {
+        if (await TryResolveMachineBlockerAsync(workspace, entry, pending,
+                pending.Reason + "\n" + verdict.Reason, ct)) return;
         var current = _scanner.FindJob(pending.Job.Id, entry.Path) ?? pending.Job;
         var escalationReason = HumanReviewEscalation.FormatReason(
             HumanReviewEscalationCategories.NeedsHumanInput,
@@ -8026,14 +8273,15 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // is the explanation. No sibling human-decision-needed-<slug> card is
         // spawned: the wrapper-card pattern (ASS-30) is the bug this ADR ends.
         var move = GuardedMoveJob(
-            current.Id, TaskStates.Escalated, entry.Path,
+            current.Id, TaskStates.Escalated, entry.Path, reason: escalationReason,
+            expectedSourceState: TaskStates.AutoReview,
             transitionCause: LaneChangeCauses.Escalated, transitionDetail: "needs-input-escalate");
         if (move.Status != MoveJobStatus.Success)
         {
             _logger.LogWarning(
                 "ReviewDecisionOrchestrator: failed to move {JobId} to escalated after escalate: {Status} {Message}",
                 current.Id, move.Status, move.Message);
-            return Task.CompletedTask;
+            return;
         }
 
         // Pin the chat-log line to the post-move folder via MoveJob's
@@ -8069,7 +8317,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             current.FolderPath,
             movedFolderPath);
 
-        return Task.CompletedTask;
+        return;
     }
 
     private void HandleAcceptAsDone(
@@ -8380,6 +8628,18 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     .FirstOrDefault(value => !_attemptAuthority.GetTaskProjection(value!).LegacyTask);
             if (authorityKey is not null)
             {
+                var canonicalReview = _attemptAuthority!.GetTaskProjection(authorityKey).CurrentReviewAttempt;
+                if (_blockerExecutors is not null && canonicalReview is { State: AttemptLifecycleState.Pending, Subject.Plan: { } plan }
+                    && !HasLatestOperatorLaneVerdict(info)
+                    && !info.References.DependsOn.Any(edge => edge.ReleaseGate || edge.RequiresCompletion)
+                    && (AgentStudio.Host.TaskServerPlaneProxy.IsConfigured(_configuration)
+                        || EvidenceGate.CapableVerificationHosts(plan, _blockerExecutors.ListCapabilitySnapshots(), _gateTime.GetUtcNow().UtcDateTime, canonicalReview.Subject.CodingHostId).Count == 0
+                        || ReadMachineBlocker(info) is { Action: MachineBlockerAction.Wait }))
+                {
+                    yield return new PendingDecision(info, ReviewSignalKind.Blocked, -2,
+                        "verification-capability-unavailable: " + string.Join(", ", ReviewLibraryStepPolicy.ExecutionCapabilities(plan)), null);
+                    continue;
+                }
                 if (onSkipped is null)
                 {
                     _logger.LogDebug(

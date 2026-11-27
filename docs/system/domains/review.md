@@ -2145,3 +2145,34 @@ mode. An absent artifact does not become a pass. The durable outbox sends a
 present document to Quality Studio's versioned `PUT .../change-reviews` route,
 replays the same key across restarts, and emits an operator-feed event after
 seven days without delivery.
+
+## Feasible verification before human intake (AGT-4098)
+
+A pending canonical review's sealed requirements and live host capability
+advertisements are authoritative for verification placement. With a standalone
+Task Server, the configured authority supplies the inventory; the local registry
+is not an empty-fleet fallback. A failed inventory read records unknown
+feasibility under the same deadline. A matching review
+host claims the same immutable result through the existing review admission;
+this preflight never grants a lease or manufactures verification evidence.
+Expired advertisements, stale heartbeats and drained or unhealthy capabilities
+do not establish feasibility. Provider authentication, CLI routing and model quota
+retain their existing recovery authority and do not count as absent verification
+hardware. An explicit operator drain of a known matching verification host keeps
+its human hold; the capability preflight does not replace it with quarantine.
+Capability waits carry a fixed 15-minute deadline
+in `logs/machine-blocker.json`, with the requirement source and host observations.
+An unavailable capability creates a deduplicated repair. Mandatory unsatisfied
+proof ends in `machine-blocker-quarantine` with acceptance still unsatisfied.
+Only explicitly optional commands in a still-pending authoritative plan may be
+removed and recorded as unavailable, without recording a pass. Preparation and
+mandatory commands are retained.
+
+An agent's hardware assertion alone cannot establish an acceptance requirement.
+An explicit unavailable hardware verification report without its authoritative
+source is quarantined with a repair to reconstruct that finding. Product and
+scope questions keep their human decision path. F07 from AGT-4077 remains a
+suspected incident: neither its original finding nor its host capability snapshot
+was supplied to AGT-4098. Current plans do not define a general hardware acceptance
+requirement field; synthetic hardware policy fixtures prove the conservative
+boundary, not the occurrence of that incident.

@@ -79,7 +79,9 @@ public static class ParkedBlockerCatalog
         _ => new ParkedBlockerCondition
         {
             Kind = ParkedBlockerConditionKinds.Manual,
-            Description = "Only a person can clear this park; no automatic precondition is recorded.",
+            Description = IsMachineOwnedQuarantine(blockerType)
+                ? "Machine-owned quarantine. The repair is linked in the reason; mandatory acceptance evidence remains unsatisfied."
+                : "Only a person can clear this park; no automatic precondition is recorded.",
         },
     };
 
@@ -99,6 +101,10 @@ public static class ParkedBlockerCatalog
         HumanReviewEscalationCategories.HumanDecisionNeeded,
         HumanReviewEscalationCategories.SteerUnanswered,
     };
+
+    /// <summary>A machine disposition preserves failed evidence without asking for a product decision.</summary>
+    public static bool IsMachineOwnedQuarantine(string? blockerType)
+        => blockerType == AgentStudio.OrchestrationDecisions.IntegrationBlockerPolicy.QuarantineCategory;
 
     /// <summary>True when this park waits for a person's choice.</summary>
     public static bool RequiresDecisionCard(string? blockerType)

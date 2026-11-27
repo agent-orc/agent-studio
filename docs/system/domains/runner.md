@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-11-26
+Version: 2026-11-27
 Status: System-of-record map for runner-side changes.
 
 Review role release drift becomes operator attention as soon as that role has
@@ -3199,3 +3199,27 @@ an inconclusive receipt without merge attribution. See the
 [shared test envelope](pipeline.md#shared-test-envelope-rt-6) for the allowlist,
 canary and reference contract.
 See [host setup and legacy timer retirement](../../operations/setup/linux-runner-host.md#post-merge-develop-checks).
+
+## Agent blocker fact resolution (AGT-4098)
+
+Legacy BLOCKED and NEEDS_INPUT processing resolves an unambiguous implementation
+integration prerequisite through the archive-inclusive platform index and the
+current-delivery integration projection before human intake. AGT-4050's existing
+Ready dependency admission remains unchanged. This preflight keeps a newly
+observed pending prerequisite in Auto Review with a typed
+`logs/machine-blocker.json` receipt and a fixed 30-minute deadline. The ordinary
+review sweep rechecks it after restart. Integration into the successor's target
+branch writes a corrected continuation before requeueing on the platform's
+current base. Missing cards, recorded integration failures, expired waits and
+spent automatic recovery budgets create one deduplicated repair and quarantine
+the original card. They do not create an owner decision. The shared decision
+library owns these dispositions; hosts collect facts and apply existing task
+mutation and lane effects. No Git mutation is assigned to the run agent.
+
+A real question, explicit owner lane verdict, completion gate
+or release gate retains human authority. A new delivery or leased review
+supersedes the old blocker observation. The receipt binds the source run, result,
+review-cycle epoch and source line; it does not replace the immutable result.
+`machine-blocker-quarantine` is a terminal machine disposition in Escalated with
+a linked repair, rather than a product decision in Needs you. A later owner park
+uses its own blocker category and remains visible normally.

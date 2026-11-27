@@ -18,5 +18,5 @@ public sealed class IntegrationBlockerPolicyTests
     [Fact]
     public void Does_not_reinterpret_an_operator_question()
         => Assert.Null(IntegrationBlockerPolicy.Dependency("needs-human-input",
-            "agt-3973-implementation-not-integrated"));
+            "Should we change scope while agt-3973-implementation-not-integrated?"));
 }
