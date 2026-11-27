@@ -514,9 +514,45 @@ exact-tip rule, using AGT-3232 class partitions across free local host slots.
 T3 treats a suite without `shards` as `auto`; a declared shard count still
 controls that suite. T1's opt-in sharding policy is unchanged.
 The timers use a dedicated checkout and a local exclusive claim file; the
-server fences the active run ID. A second claim waits, and an abandoned server
-claim expires after four hours for windows or fourteen hours for the nightly
-suite. Prepare, build, test discovery, shards, retries, and attribution commands
+server fences the active run ID. A second claim waits. AGT-4117 adds durable
+host custody in `.post-merge-journal.json` in that dedicated checkout. The host
+flushes the identity before admission, each completed command result before
+continuing, and the exact terminal receipt before delivery. The exclusive
+checkout claim covers recovery and outbox replay as well as execution. A pending
+outbox is delivered before fetching or admitting a successor, including after
+all three HTTP attempts failed or the receipt acknowledgement was lost.
+
+New hosts send `X-Post-Merge-Owner` and `X-Post-Merge-Fence` on run receipts.
+The authority atomically stores custody alongside project state and returns the
+fence on admission. The owner renews a two-minute lease every thirty seconds
+through the existing `/runs` route with `X-Post-Merge-Operation: renew`;
+renewal failure cancels command execution. Recovery uses the same route with
+`X-Post-Merge-Operation: recover` and `X-Post-Merge-Recovery-Id`. Recovery presents
+the persisted owner, fence and recovery request ID, advances the fence, and
+retries the same recovery request idempotently if its acknowledgement was lost.
+If that replayed lease has expired, the host obtains fresh custody before
+executing a command. Older owners and unfenced receipts cannot settle a fenced active run. An exact
+terminal replay remains acceptable after lease expiry while its run is still
+current, and after successful settlement. It does not require waiting four or
+fourteen hours. A changed terminal receipt cannot replace recorded evidence.
+
+Recovery reconstructs the original plan and per-test ledger from saved raw
+command results. It reuses completed commands only when the saved workspace
+content digest (including ignored outputs and detached HEAD) and command inputs
+(command text, source SHA, declared environment and test-envelope fingerprint) still match.
+An incomplete command or changed workspace settles as `inconclusive`, retaining
+finished evidence, rather than attributing a product regression. Such a receipt
+does not advance the completed-window tip. Raw inconclusive evidence remains
+under `.post-merge-evidence/`; accepted delivery removes the isolated command
+home and temp files. Linux recovery reaps orphan command
+groups in the dedicated checkout before settling an incomplete command. Other
+hosts retain the journal and refuse automatic recovery of an incomplete command. No real restart drill is part of the routine
+tests; reconstructed-service fault injection covers this boundary.
+
+The legacy four-hour window and fourteen-hour nightly takeover bounds remain
+fallback policy for absent host evidence. A renewed lease prevents takeover even
+after that bound. Expired fallback evidence is `inconclusive`, with the existing
+expiry reason. Prepare, build, test discovery, shards, retries, and attribution commands
 use the shared [test envelope](#shared-test-envelope-rt-6). Repository fetches
 keep their separate credential routing. Real cgroup tests are
 `MachineBound` and require an explicitly owned transient test scope, rather

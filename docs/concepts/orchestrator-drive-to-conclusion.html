@@ -3511,6 +3511,13 @@
             tests, guards and lint. The terminal is a new delivery for pipeline-owned
             integration and publication.</td>
         </tr>
+        <tr>
+          <td>2026-11-27</td>
+          <td><code>AGT-4117</code><br><span class="small">post-merge-restart-custody</span></td>
+          <td>A host restart lost in-memory post-merge command evidence and an undelivered terminal receipt left develop running.</td>
+          <td>Post-merge execution had no host journal or recoverable renewable owner; replacement waited for the fixed four/fourteen-hour bound.</td>
+          <td>Flushed command checkpoints reconstruct the same run; a durable terminal outbox replays before a successor. Invalid or incomplete work settles inconclusive with retained evidence, and a new fence rejects the previous owner.</td>
+        </tr>
       </tbody>
     </table>
 

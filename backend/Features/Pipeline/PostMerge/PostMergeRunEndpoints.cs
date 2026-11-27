@@ -106,7 +106,7 @@ public static class PostMergeRunEndpoints
         });
         app.MapPost("/api/runner/post-merge/projects/{project}/runs", (string project,
             PostMergeRunRecord run, ProjectRegistry registry, PostMergeRunStore store,
-            PostMergeIncidentService incidents) =>
+            PostMergeIncidentService incidents, HttpContext context, TimeProvider clock) =>
         {
             var record = registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project);
             if (record is null) return Results.NotFound();
@@ -139,6 +139,22 @@ public static class PostMergeRunEndpoints
                 || run.Verdicts.Any(verdict => verdict.DurationMs < 0)
                 || !ValidRt3Evidence(run))
                 return Results.BadRequest(new { error = "invalid post-merge run" });
+            var owner = context.Request.Headers["X-Post-Merge-Owner"].FirstOrDefault();
+            var fenceText = context.Request.Headers["X-Post-Merge-Fence"].FirstOrDefault();
+            var fence = 0L;
+            if (owner is not null && (owner.Length != 32 || !owner.All(Uri.IsHexDigit)
+                || !long.TryParse(fenceText, out fence) || fence < 0)) return Results.BadRequest();
+            var operation = context.Request.Headers["X-Post-Merge-Operation"].FirstOrDefault();
+            if (operation is not null)
+            {
+                var recovery = context.Request.Headers["X-Post-Merge-Recovery-Id"].FirstOrDefault();
+                if (operation is not ("renew" or "recover") || owner is null || fence < 1 || run.Status != "running"
+                    || operation == "recover" && (recovery is not { Length: 32 } || !recovery.All(Uri.IsHexDigit)))
+                    return Results.BadRequest();
+                var renewedCustody = store.RenewCustody(record.Id, run.Id, owner, fence, clock.GetUtcNow(),
+                    operation == "recover", recovery);
+                return renewedCustody is null ? Results.Conflict() : Results.Ok(renewedCustody);
+            }
             var safe = run with
             {
                 Verdicts = run.Verdicts.Select(verdict => verdict with
@@ -148,7 +164,9 @@ public static class PostMergeRunEndpoints
                 Failure = run.Failure is null ? null : run.Failure with
                 { LogExcerpt = CredentialRedactor.Redact(run.Failure.LogExcerpt) },
             };
-            var state = store.Record(record.Id, safe);
+            var state = store.Record(record.Id, safe, owner, fence, clock.GetUtcNow());
+            if (state is not null && owner is not null && store.ReadCustody(record.Id) is { } custody)
+                context.Response.Headers["X-Post-Merge-Fence"] = custody.Fence.ToString(System.Globalization.CultureInfo.InvariantCulture);
             if (state is not null) incidents.Apply(record, safe);
             return state is null ? Results.Conflict(new { error = "post-merge run already claimed or stale" })
                 : Results.Ok(store.Read(record.Id) with { Quarantines = incidents.ActiveQuarantines(record), Holds = incidents.ActiveHolds(record) });

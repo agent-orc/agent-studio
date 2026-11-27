@@ -9,6 +9,18 @@ namespace AgentStudio.Runner;
 /// <summary>Host boundary for the shared decision library. No transition rules belong here.</summary>
 public static class MonolithTransitionAdapter
 {
+    public static bool PostMergeCustodyMayWrite(string? owner, long fence, string currentOwner,
+        long currentFence, DateTimeOffset expires, DateTimeOffset now, bool acquiring, bool settling = false)
+        => PostMergeCustodyPolicy.MayWrite(owner, fence, currentOwner, currentFence, expires, now, acquiring, settling);
+    public static bool PostMergeCustodyMayRecover(string owner, long fence, string currentOwner, long currentFence)
+        => PostMergeCustodyPolicy.MayRecover(owner, fence, currentOwner, currentFence);
+    public static bool PostMergeCustodyMayReplace(DateTimeOffset started, string kind,
+        DateTimeOffset? expires, DateTimeOffset now)
+        => PostMergeCustodyPolicy.MayReplace(started, kind, expires, now);
+    public static bool PostMergeCustodyNeedsVerdict(string status) => PostMergeCustodyPolicy.NeedsVerdict(status);
+    public static bool PostMergeCustodyAdvancesWindow(string status, string kind)
+        => PostMergeCustodyPolicy.AdvancesWindow(status, kind);
+
     public static bool PostMergeDeadlineReached(DateTimeOffset? opened, int minutes, DateTimeOffset now)
         => PostMergeSchedulingPolicy.DeadlineReached(opened, minutes, now);
 
