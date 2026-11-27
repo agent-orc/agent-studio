@@ -1705,7 +1705,7 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
     /// only on the delivery is still the card's.
     /// </summary>
     [Theory]
-    [InlineData(1, "ReviewInfra")]
+    [InlineData(1, "IntegrationBranchDefect")]
     [InlineData(0, "ProductFailure")]
     public async Task A_lint_gate_failing_on_the_merge_base_is_an_integration_branch_defect(
         int baselineExitCode,
@@ -1767,6 +1767,93 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
             default);
 
         Assert.Equal(expectedOutcome, report.Outcome);
+    }
+
+    [Fact]
+    public async Task Unattributed_test_concern_settles_pass_and_has_matching_delivery_admission()
+    {
+        using var temp = _fixture.CreateDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto([new("tests", "build-tests", "sh", ["tests.sh"],
+            CompareToBaseline: true, BaselineMode: ReviewBaselineModes.TestFailures)], ["build-tests"],
+            IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(new("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim);
+        var diagnosis = new DeliveryFailureDiagnosisResult(DeliveryFailureDiagnosis.Environment, 1,
+            [ReviewUnattributedTestFailurePolicy.EvidencePrefix + "candidate and baseline failed different tests"]);
+        var candidate = request.Commands[0] with
+        {
+            ExitCode = 1, BaselineSha = new string('c', 40), BaselineExitCode = 1,
+            NewFailures = ["Product.Tests.Candidate"], PreExistingFailures = [],
+            RetryPerformed = true, Diagnosis = diagnosis,
+        };
+        request = request with
+        {
+            Commands = [candidate, candidate with { Phase = "clean-repeat", WorkspaceRole = "clean-repeat" }],
+            Verdicts = [new("build-tests", "concerns", DeliveryFailureDiagnosis.Environment,
+                "Candidate and baseline failed different tests; failed-tests=Product.Tests.Candidate",
+                "command:tests", "none", diagnosis)],
+        };
+        var report = await store.ReportReviewAsync(claim.Attempt!.AttemptId, request, "review-a", default);
+        Assert.Equal("Pass", report.Outcome);
+        var admission = AgentStudio.OrchestrationDecisions.RemoteDeliveryIntegrationPolicy.Decide(
+            true, report.Outcome, claim.Subject!.Plan, request.Verdicts);
+        Assert.True(admission.ShouldIntegrate, admission.Reason);
+        Assert.Equal(AgentStudio.OrchestrationDecisions.RemoteBuildTestGateClass.NonBlocking, admission.BuildTestGate);
+        Assert.Contains("Product.Tests.Candidate", report.Summary, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("valid", "Pass")]
+    [InlineData("resumed-without-global-tip", "Pass")]
+    [InlineData("inconsistent-repeat", "ReviewInfra")]
+    [InlineData("wrong-target", "ReviewInfra")]
+    [InlineData("wrong-head", "ReviewInfra")]
+    [InlineData("duplicate", "ReviewInfra")]
+    [InlineData("candidate-role", "ReviewInfra")]
+    public async Task Target_merge_evidence_keeps_the_delivery_head_and_binds_the_fetched_target(string variant, string expected)
+    {
+        using var temp = _fixture.CreateDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto([new("lint", "lint", "sh", ["lint.sh"],
+            CompareToBaseline: true, BaselineMode: ReviewBaselineModes.ExitStatus)], ["lint"],
+            IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(new("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim);
+        var target = new string('c', 40);
+        var merge = request.Commands[0] with
+        {
+            Phase = "target-merge", WorkspaceRole = "target-merge",
+            TreeBefore = new string('d', 40), BaselineSha = target,
+        };
+        merge = variant switch
+        {
+            "wrong-target" => merge with { BaselineSha = new string('f', 40) },
+            "wrong-head" => merge with { HeadBefore = target },
+            "candidate-role" => merge with { WorkspaceRole = "candidate" },
+            _ => merge,
+        };
+        request = request with
+        {
+            Workspace = request.Workspace with { IntegrationTipSha = variant == "resumed-without-global-tip" ? null : target },
+            Commands = [.. request.Commands, merge,
+                merge with
+                {
+                    WorkspaceRole = variant == "duplicate" ? "target-merge" : "target-merge-repeat",
+                    TreeBefore = variant == "inconsistent-repeat" ? new string('e', 40) : merge.TreeBefore,
+                }],
+        };
+        var report = await store.ReportReviewAsync(claim.Attempt!.AttemptId, request, "review-a", default);
+        Assert.Equal(expected, report.Outcome);
+        if (variant == "duplicate") Assert.Equal("DuplicateCommandEvidence", report.FailureClassification);
+        if (variant is "wrong-target" or "wrong-head" or "candidate-role" or "inconsistent-repeat")
+            Assert.Equal("CommandSubjectMismatch", report.FailureClassification);
     }
 
     [Theory]

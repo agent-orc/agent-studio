@@ -1970,7 +1970,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         var evidence = await workspace.ExecutePlanAsync(default);
 
-        Assert.Equal("ReviewInfra", evidence.Outcome);
+        Assert.Equal("IntegrationBranchDefect", evidence.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.Equal(1, commandEvidence.ExitCode);
         Assert.Equal(1, commandEvidence.BaselineExitCode);
@@ -1978,7 +1978,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.True(commandEvidence.RetryPerformed);
         var verdict = Assert.Single(evidence.Verdicts);
         Assert.Equal("pass", verdict.Status);
-        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
+        Assert.Equal("IntegrationBranchDefect", verdict.Classification);
     }
 
     [Fact]
