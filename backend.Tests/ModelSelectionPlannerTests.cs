@@ -264,6 +264,33 @@ public sealed class ModelSelectionPlannerTests
             ModelSelectionPlanner.SiblingChain(rules, rule => (rule.From, rule.To), ModelIds.Gpt6Sol));
     }
 
+    [Fact]
+    public void DisplayedProbeErrorReproducesTheLegacyWaitButAbsentQuotaDoesNot()
+    {
+        var old = Snapshot(CliTypes.Claude, 0) with
+        {
+            FetchedAt = Now.AddDays(-1),
+            ProbeFailedAt = Now.AddDays(-1),
+            Error = "A claude host quota probe failed.",
+        };
+        var facts = Facts(30) with
+        {
+            Routing = null,
+            SnapshotFor = _ => old,
+        };
+        var legacy = ModelSelectionPlanner.Plan(Request(), facts);
+        Assert.Equal(SelectionOutcome.Wait, legacy.Outcome);
+        Assert.Equal(Now.AddMinutes(2), legacy.RetryAt);
+        var retried = ModelSelectionPlanner.Plan(Request(), facts with { NowUtc = Now.AddMinutes(2) });
+        Assert.Equal(Now.AddMinutes(4), retried.RetryAt);
+
+        // The planner trusts its input. Admission must exclude display errors
+        // before supplying snapshots; absent quota is not a provider outage.
+        var withoutDisplayError = ModelSelectionPlanner.Plan(Request(), facts with { SnapshotFor = _ => null });
+        Assert.Equal(SelectionOutcome.Primary, withoutDisplayError.Outcome);
+        Assert.Null(withoutDisplayError.RetryAt);
+    }
+
     private static SelectionRequest Request() => new()
     {
         Consumer = SelectionConsumers.Coding,
