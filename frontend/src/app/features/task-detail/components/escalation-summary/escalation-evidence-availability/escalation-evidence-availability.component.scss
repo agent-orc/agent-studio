@@ -8,11 +8,11 @@
   flex-wrap: wrap;
   gap: var(--studio-spacing-1) var(--studio-spacing-3);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   overflow-wrap: anywhere;
 
   strong { @include section.heading; }
   a { color: var(--studio-accent); text-underline-offset: 2px; }
 }
 
-p { margin: 0; color: var(--studio-fg-dim); font-size: 11px; }
+p { margin: 0; color: var(--studio-fg-dim); font-size: var(--studio-compat-type-6); }

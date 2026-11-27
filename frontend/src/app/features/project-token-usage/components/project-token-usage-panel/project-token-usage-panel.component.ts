@@ -13,7 +13,7 @@ import type { ProjectExpensiveJob, ProjectExpensiveJobsResponse, ProjectJobToken
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { ProjectPipelineCostTrendComponent } from '../project-pipeline-cost-trend/project-pipeline-cost-trend.component';
 import { ReviewObservationTableComponent } from '../review-observation-table/review-observation-table.component';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Tone of the "Data as of" freshness line (AGT-3403); an unknown status stays neutral. */
 const FRESHNESS_TONES: Readonly<Record<ProjectTokenDataFreshness['status'], StatusTone>> = {

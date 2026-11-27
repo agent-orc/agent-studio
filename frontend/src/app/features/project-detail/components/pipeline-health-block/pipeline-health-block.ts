@@ -5,7 +5,7 @@ import type { PipelineHealthAlert, PipelineHealthSnapshot, PipelineLaneDrainHeal
 import { OperatorSweepsBlockComponent } from '../operator-sweeps-block/operator-sweeps-block';
 import { GateEconomicsBlockComponent } from '../gate-economics-block/gate-economics-block';
 import type { GateEconomicsResponse } from '../../../task-pipeline/models/gate-economics.model';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Pipeline health header status onto the shared tones (AGT-3403); unknown values read as healthy, as before. */
 const PIPELINE_HEALTH_STATUS: Readonly<Record<string, { tone: StatusTone; label: string }>> = {

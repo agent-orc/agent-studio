@@ -1,8 +1,8 @@
-import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, model } from '@angular/core';
 import type { TaskMode } from '../../../../models/task.model';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { RovingFocusDirective } from '../../../../directives/roving-focus.directive';
+import { RovingFocusDirective } from '@studio/ui/directives/roving-focus.directive';
 
 interface ModeOption {
   readonly value: TaskMode;

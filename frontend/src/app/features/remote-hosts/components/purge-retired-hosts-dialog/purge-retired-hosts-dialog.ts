@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { DialogComponent } from '../../../../components/dialog/dialog.component';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
 import { RemoteHostsService } from '../../services/remote-hosts.service';
 import { purgeRefusalLabel, type PurgeRetiredClientCandidate } from '../../models/remote-host.model';
 

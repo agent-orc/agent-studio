@@ -4,12 +4,12 @@ import { BatchMoveJobResponse, TaskInfo, TaskState } from '../../../models/task.
 import { laneName } from '../../../models/lane-presentation';
 import { TaskService } from '../../../services/task.service';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
-import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 import { UndoController } from '../../../services/undo.service';
 import { TaskSelectionService } from '../../task-detail/state/task-selection.service';
 import { AcceptanceRefusalActions } from '../../task-detail/runtime';
 import { laneLabelFor } from '../../task-detail/state/triage-actions.model';
-import { NotificationService } from '../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { describeMoveRefusal, laneMoveRefusal, laneMoveRefusalText } from '../../../models/lane-move-guard';
 import { confirmTaskDelete } from '../../../services/task-delete-confirm.util';
 import { readyQueueReorder, type QueueEdge } from './ready-queue-order';

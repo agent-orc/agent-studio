@@ -10,7 +10,7 @@
 .ownership h2,
 .ownership p { margin: 0; }
 .ownership header { display: flex; align-items: start; justify-content: space-between; gap: var(--studio-spacing-4); }
-.ownership__eyebrow { color: var(--studio-fg-muted); font-size: 12px; text-transform: uppercase; }
+.ownership__eyebrow { color: var(--studio-fg-muted); font-size: var(--studio-font-size-sm); text-transform: uppercase; }
 .ownership__message,
 .ownership__card {
   @include m.deck-panel;
@@ -23,14 +23,14 @@
 .ownership__card { display: grid; gap: var(--studio-spacing-4); }
 .ownership__card-head { display: flex; justify-content: space-between; gap: var(--studio-spacing-4); }
 .ownership__card-head div { display: grid; gap: var(--studio-spacing-1); }
-.ownership__card-head span { color: var(--studio-fg-muted); font-size: 12px; }
+.ownership__card-head span { color: var(--studio-fg-muted); font-size: var(--studio-font-size-sm); }
 .ownership__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--studio-spacing-3); }
-.ownership__grid label { display: grid; gap: var(--studio-spacing-1); color: var(--studio-fg-muted); font-size: 12px; }
+.ownership__grid label { display: grid; gap: var(--studio-spacing-1); color: var(--studio-fg-muted); font-size: var(--studio-font-size-sm); }
 .ownership input,
 .ownership textarea {
   padding: var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-editor);
   color: var(--studio-fg);
   font: inherit;

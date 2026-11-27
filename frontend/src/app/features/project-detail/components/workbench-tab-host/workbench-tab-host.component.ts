@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject, input, output } from '@angular/core';
-import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
+import { LoadingSurfaceComponent } from '@studio/ui/components/async-feedback/index';
 import type { WorkbenchDocument, WorkbenchOverviewItem } from '../../../../models/project-docs.model';
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
 import { studioTabKey } from '../../../studio-shell/studio-shell.types';

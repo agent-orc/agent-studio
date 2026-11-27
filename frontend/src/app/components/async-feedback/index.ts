@@ -1,2 +1,2 @@
-export { LoadingSurfaceComponent, type LoadingSurfaceKind } from './loading-surface/loading-surface.component';
-export { PendingButtonDirective } from './pending-button.directive';
+// Compatibility path. New consumers import @studio/ui.
+export * from '@studio/ui/components/async-feedback/index';

@@ -1,4 +1,4 @@
-import type { StatusTone } from '../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Reachability of a run host as `GET /api/deploy/run-hosts` reports it (F4). */
 export type RunHostState = 'reachable' | 'unreachable' | 'no-contact' | 'not-enrolled';

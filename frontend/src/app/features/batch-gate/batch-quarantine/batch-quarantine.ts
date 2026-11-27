@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
-import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { BatchQuarantinedRecord } from '../../../models/batch-gate.model';
 
 /**

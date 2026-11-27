@@ -5,7 +5,7 @@ import { TaskService } from '../../../../services/task.service';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 /**
  * Flat status header for the singleton session that spans all projects.
  * The feed is about events, so the closed state stays to one operational

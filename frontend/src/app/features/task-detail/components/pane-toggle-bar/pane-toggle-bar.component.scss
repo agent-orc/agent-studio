@@ -3,10 +3,10 @@
 .detail__panes-toolbar--icons {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 0 4px;
+  gap: var(--studio-spacing-1);
+  padding: var(--studio-compat-space-4) 0 var(--studio-spacing-1);
   border-bottom: 1px solid var(--studio-border);
-  margin-bottom: 6px;
+  margin-bottom: var(--studio-compat-space-2);
   min-height: 26px;
 }
 
@@ -18,14 +18,14 @@
   width: 24px;
   height: 24px;
   padding: 0;
-  border-radius: 3px;
+  border-radius: var(--studio-compat-radius-9);
   border: 1px solid var(--studio-border);
   background: var(--studio-bg-hover);
   color: var(--studio-fg-dim);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--studio-font-size-lg);
   line-height: 1;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  transition: background var(--studio-compat-duration-3) ease, border-color var(--studio-compat-duration-3) ease, color var(--studio-compat-duration-3) ease;
 }
 .pane-toggle:hover {
   background: var(--studio-bg-elevated);
@@ -59,11 +59,11 @@
   right: -4px;
   min-width: 14px;
   height: 14px;
-  padding: 0 4px;
+  padding: 0 var(--studio-spacing-1);
   background: var(--studio-accent);
   color: var(--studio-on-accent);
-  border-radius: 7px;
-  font-size: 9px;
+  border-radius: var(--studio-compat-radius-1);
+  font-size: var(--studio-compat-type-4);
   font-weight: 700;
   display: grid;
   place-items: center;

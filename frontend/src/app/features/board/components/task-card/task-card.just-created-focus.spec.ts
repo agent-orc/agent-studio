@@ -6,7 +6,7 @@ import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TaskCardComponent } from './task-card.component';
 import type { TaskInfo } from '../../../../models/task.model';
-import { returnFocusToOpener } from '../../../../directives/modal-focus.directive';
+import { returnFocusToOpener } from '@studio/ui/directives/modal-focus.directive';
 
 /**
  * AGT-3834: after Create the dialog closes and focus fell to the body. The

@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, computed, effect, inject, input, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { TestQuarantine } from '../../../../models/test-quarantine.model';
 
 interface DevelopStateRow {

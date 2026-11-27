@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { DatePipe } from '@angular/common';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { formatAge } from '../../state/deploy-area.model';
 import { runtimeHealth, type RollbackOffer } from '../../state/rollback-offer.model';
 

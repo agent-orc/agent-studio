@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import type { TaskInfo } from '../../../../models/task.model';
 import type { AcceptanceRefusal } from '../../state/acceptance-refusal.model';
 import { taskPhoneLayout } from '../../state/phone-layout';

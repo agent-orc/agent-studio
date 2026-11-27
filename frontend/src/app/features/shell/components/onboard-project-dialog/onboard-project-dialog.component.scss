@@ -19,7 +19,7 @@
   gap: var(--studio-spacing-3);
   padding: var(--studio-spacing-4);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 10px;
+  border-radius: var(--studio-compat-radius-3);
   background: var(--studio-bg-hover);
 }
 
@@ -35,7 +35,7 @@
   flex: 0 0 auto;
   width: 28px;
   height: 28px;
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: color-mix(in srgb, var(--studio-accent) 18%, var(--studio-bg-elevated));
   color: var(--studio-accent-strong);
   font-weight: 700;
@@ -44,14 +44,14 @@
 .opd__section-title {
   margin: 0;
   color: var(--studio-fg-strong);
-  font-size: 0.95rem;
+  font-size: var(--studio-compat-type-16);
   font-weight: 650;
 }
 
 .opd__section-desc {
   margin: var(--studio-spacing-1) 0 0;
   color: var(--studio-fg-dim);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 .opd__field {
@@ -61,7 +61,7 @@
 
 .opd__label {
   color: var(--studio-fg);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
   font-weight: 650;
 }
 
@@ -70,7 +70,7 @@
   width: 100%;
   min-height: 36px;
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-surface);
   color: var(--studio-fg);
   padding: 0 var(--studio-spacing-2);
@@ -85,14 +85,14 @@
 
 .opd__hint {
   color: var(--studio-fg-muted);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
 }
 
 .opd__preview,
 .opd__error {
   margin: 0;
   padding: var(--studio-spacing-3);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg-dim);
 }
@@ -115,7 +115,7 @@
 
 .opd__btn {
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-surface);
   color: var(--studio-fg);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);

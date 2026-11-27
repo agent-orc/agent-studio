@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { BuildProfileContradiction } from '../project-build-profile-notice/project-build-profile-notice.component';
 
 const FIELD_LABELS: Record<string, string> = {

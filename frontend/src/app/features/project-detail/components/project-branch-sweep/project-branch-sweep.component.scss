@@ -12,7 +12,7 @@
   gap: var(--studio-spacing-2);
   color: var(--studio-fg);
   border: 1px solid var(--studio-border);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: var(--studio-bg-elevated);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   min-width: 0;
@@ -47,16 +47,16 @@
   }
 
   &__title {
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     font-weight: 600;
   }
 
   &__pill {
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     color: var(--studio-fg-dim);
     background: var(--studio-bg);
-    padding: 1px 8px;
-    border-radius: 999px;
+    padding: var(--studio-compat-space-6) var(--studio-spacing-2);
+    border-radius: var(--studio-compat-radius-2);
   }
 
   &__body {
@@ -69,11 +69,11 @@
 
   &__lead,
   &__note {
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     color: var(--studio-fg-dim);
     margin: 0;
 
-    code { font-size: 11px; }
+    code { font-size: var(--studio-compat-type-6); }
   }
 
   &__note--error { color: var(--studio-error); }
@@ -88,7 +88,7 @@
   &__spacer { flex: 1; }
 
   &__label {
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--studio-fg-dim);
@@ -96,11 +96,11 @@
 
   &__table {
     border-collapse: collapse;
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
 
     th,
     td {
-      padding: 2px var(--studio-spacing-2);
+      padding: var(--studio-compat-space-4) var(--studio-spacing-2);
       text-align: end;
       border-bottom: 1px solid var(--studio-border);
     }
@@ -110,7 +110,7 @@
   }
 
   &__caption {
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--studio-fg-dim);
@@ -120,7 +120,7 @@
   &__hist {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--studio-compat-space-4);
   }
 
   &__hist-row {
@@ -128,7 +128,7 @@
     grid-template-columns: minmax(4.5rem, 8rem) minmax(2rem, 1fr) minmax(2rem, 4rem);
     align-items: center;
     gap: var(--studio-spacing-2);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
   }
 
   &__hist-label { color: var(--studio-fg-dim); }
@@ -136,7 +136,7 @@
   &__hist-track {
     display: block;
     block-size: 8px;
-    border-radius: 999px;
+    border-radius: var(--studio-compat-radius-2);
     // The track has to read as an empty bar at 0 %, so it carries its own
     // outline instead of relying on the fill for contrast.
     border: 1px solid var(--studio-border);
@@ -148,7 +148,7 @@
     display: block;
     block-size: 100%;
     background: var(--studio-accent);
-    transition: inline-size 0.2s ease;
+    transition: inline-size var(--studio-compat-duration-14) ease;
   }
 
   &__bar {
@@ -179,7 +179,7 @@
   }
 
   &__confirm-text {
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     color: var(--studio-warn);
   }
 
@@ -187,7 +187,7 @@
     display: flex;
     align-items: center;
     gap: var(--studio-spacing-2);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
 
     .swp__hist-track { flex: 1; min-inline-size: 6rem; }
   }
@@ -197,22 +197,22 @@
   &__link {
     font: inherit;
     cursor: pointer;
-    border-radius: 3px;
+    border-radius: var(--studio-compat-radius-9);
 
     &:disabled { opacity: 0.5; cursor: default; }
   }
 
   &__action {
-    font-size: 12px;
-    padding: 3px 10px;
+    font-size: var(--studio-font-size-sm);
+    padding: var(--studio-compat-space-1) var(--studio-compat-space-5);
     border: 1px solid var(--studio-border);
     background: var(--studio-bg);
     color: var(--studio-fg);
   }
 
   &__danger {
-    font-size: 12px;
-    padding: 3px 12px;
+    font-size: var(--studio-font-size-sm);
+    padding: var(--studio-compat-space-1) var(--studio-spacing-3);
     border: 1px solid var(--studio-error);
     background: none;
     color: var(--studio-error);
@@ -220,7 +220,7 @@
   }
 
   &__link {
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     padding: 0;
     border: none;
     background: none;
@@ -234,16 +234,16 @@
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--studio-compat-space-4);
   }
 
   &__row {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     align-items: baseline;
-    gap: 2px var(--studio-spacing-2);
+    gap: var(--studio-compat-space-4) var(--studio-spacing-2);
     padding: var(--studio-spacing-1) var(--studio-spacing-2);
-    border-radius: 3px;
+    border-radius: var(--studio-compat-radius-9);
 
     &:hover { background: var(--studio-bg); }
     &--kept { opacity: 0.72; }
@@ -264,7 +264,7 @@
   }
 
   &__row-name {
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     color: var(--studio-fg-strong);
     min-width: 0;
     max-width: 100%;
@@ -275,23 +275,23 @@
 
   &__tag,
   &__age {
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     color: var(--studio-fg-dim);
     background: var(--studio-bg);
-    padding: 1px 6px;
-    border-radius: 3px;
+    padding: var(--studio-compat-space-6) var(--studio-compat-space-2);
+    border-radius: var(--studio-compat-radius-9);
   }
 
 
   &__reason {
     grid-column: 2;
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     color: var(--studio-fg-dim);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .swp__hist-fill {
-    transition-duration: 0s;
+    transition-duration: var(--studio-compat-duration-2);
   }
 }

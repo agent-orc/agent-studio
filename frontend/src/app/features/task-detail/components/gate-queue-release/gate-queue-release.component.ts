@@ -4,8 +4,8 @@ import type { TaskInfo } from '../../../../models/task.model';
 import { TaskState } from '../../../../models/task.model';
 import { isGateQueueOverrunReason } from '../../../../models/batch-gate.model';
 import { BatchGateService } from '../../../../services/batch-gate.service';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Release outcome tone: all released is success, any refusal needs attention (AGT-3403). */
 export function queueReleaseOutcomeTone(refused: number): StatusTone {

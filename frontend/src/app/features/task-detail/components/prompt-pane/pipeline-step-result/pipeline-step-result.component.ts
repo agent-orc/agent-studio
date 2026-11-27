@@ -10,7 +10,7 @@ import { TaskService } from '../../../../../services/task.service';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { FileSourceHistoryComponent } from '../../../../../components/file-source-history/file-source-history.component';
 import { cleanStepResultMarkdown } from './pipeline-step-result.util';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { stepVerdictTone } from './step-status-tone';
 
 /**

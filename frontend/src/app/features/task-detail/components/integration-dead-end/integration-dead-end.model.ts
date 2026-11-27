@@ -1,6 +1,6 @@
 import type { TaskIntegrationStatus } from '../../../git';
 import type { ReviewProjectionView } from '../../../../models/task.model';
-import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * Dead-end kind to shared status tone (AGT-3403). Blocked reach, review

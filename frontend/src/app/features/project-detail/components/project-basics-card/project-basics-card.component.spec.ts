@@ -7,7 +7,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { of } from 'rxjs';
 import type { RegistryProjectSummary, RegistryWorkspaceListItem } from '../../../../models/task.model';
 import { CliCatalogStore } from '../../../cli';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { TaskService } from '../../../../services/task.service';
 import { WorkspaceManagerService } from '../../../shell';

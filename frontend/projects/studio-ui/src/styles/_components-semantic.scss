@@ -1,0 +1,144 @@
+/*
+ * Shared display primitives.
+ *
+ * These are the standard components for compact metrics, label/value rows,
+ * badges, panels, helper copy, and mono/hash values. Contrast/style fixes for
+ * these element types belong here plus _tokens-semantic.scss, not in local
+ * component colour recipes.
+ */
+
+/* Acute Progress-lane stall treatment. The uniform ring/tint intentionally
+   avoids the forbidden one-edge status bar. Kept global so the legacy-sized
+   board components do not grow beyond their component budgets. */
+html .task-card.task-card--stalled[data-stalled] {
+  background: color-mix(in srgb, var(--studio-accent-warn) 8%, var(--studio-bg-elevated));
+  border-color: color-mix(in srgb, var(--studio-accent-warn) 62%, var(--studio-card-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--studio-accent-warn) 42%, transparent), var(--studio-card-shadow);
+}
+
+html .task-card.task-card--stalled[data-stalled]:hover {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--studio-accent-warn) 58%, transparent), var(--studio-card-shadow-hover);
+}
+
+.column__count { gap: var(--studio-spacing-1); }
+
+.studio-panel {
+  background: var(--studio-surface);
+  color: var(--studio-text-secondary);
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  padding: var(--studio-spacing-3);
+}
+
+.studio-panel--muted {
+  background: var(--studio-surface-muted);
+  border-color: var(--studio-border-muted);
+}
+
+.studio-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--studio-spacing-2);
+}
+
+.studio-metric {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-1);
+  min-width: 0;
+  padding: var(--studio-spacing-2);
+  border-radius: 6px;
+  background: var(--studio-surface-muted);
+  border: 1px solid var(--studio-border-muted);
+}
+
+.studio-metric__label,
+.studio-label {
+  color: var(--studio-text-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.studio-metric__value {
+  color: var(--studio-text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.studio-label-value {
+  display: grid;
+  grid-template-columns: minmax(88px, max-content) minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: var(--studio-spacing-2);
+  min-width: 0;
+}
+
+.studio-label-value__value {
+  color: var(--studio-text-secondary);
+  min-width: 0;
+}
+
+.studio-badge,
+.studio-pill,
+.studio-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 18px;
+  padding: 0 var(--studio-spacing-2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--studio-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--studio-accent) 36%, transparent);
+  color: var(--studio-accent-strong);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.studio-count-badge {
+  min-width: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.studio-badge--success,
+.studio-pill--success {
+  background: color-mix(in srgb, var(--studio-success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--studio-success) 34%, transparent);
+  color: var(--studio-success);
+}
+
+.studio-badge--warn,
+.studio-pill--warn {
+  background: color-mix(in srgb, var(--studio-warn) 14%, transparent);
+  border-color: color-mix(in srgb, var(--studio-warn) 34%, transparent);
+  color: var(--studio-warn);
+}
+
+.studio-badge--error,
+.studio-pill--error {
+  background: color-mix(in srgb, var(--studio-error) 12%, transparent);
+  border-color: color-mix(in srgb, var(--studio-error) 34%, transparent);
+  color: var(--studio-error);
+}
+
+.studio-helper {
+  color: var(--studio-text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.studio-mono,
+.studio-hash {
+  font-family: var(--font-mono);
+  color: var(--studio-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.studio-hash {
+  color: var(--studio-hash);
+}

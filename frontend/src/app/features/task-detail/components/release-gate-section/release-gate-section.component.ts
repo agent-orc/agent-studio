@@ -8,9 +8,9 @@ import {
   signal,
 } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { TaskInfo, TaskReferenceLink, WaitsOnItem } from '../../../../models/task.model';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from '../../../../services/task.service';
 import { TaskSelectionService } from '../../state/task-selection.service';
 import {

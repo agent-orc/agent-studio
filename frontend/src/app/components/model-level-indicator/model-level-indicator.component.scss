@@ -13,11 +13,11 @@
   max-width: 100%;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--model-level-color) 55%, var(--studio-border));
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   color: var(--model-level-color);
   background: color-mix(in srgb, var(--model-level-color) 13%, var(--studio-bg-elevated));
   font-family: var(--font-mono, monospace);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   font-weight: 800;
   line-height: 1;
   letter-spacing: 0.035em;
@@ -51,7 +51,7 @@
   padding: 0 var(--studio-spacing-1);
   border-inline-start: 1px solid color-mix(in srgb, var(--model-level-color) 38%, transparent);
   background: color-mix(in srgb, var(--model-level-color) 10%, transparent);
-  font-size: 9px;
+  font-size: var(--studio-compat-type-4);
   text-transform: lowercase;
   letter-spacing: 0;
 }

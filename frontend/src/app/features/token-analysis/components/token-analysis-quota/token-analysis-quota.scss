@@ -6,7 +6,7 @@
 .qc__legend { @include ta.legend; }
 .qc__swatch { @include ta.swatch; }
 .qc__num { @include ta.numeric; text-align: right; }
-.qc__empty { margin: 0; color: var(--studio-fg-muted); font-size: 0.78rem; }
+.qc__empty { margin: 0; color: var(--studio-fg-muted); font-size: var(--studio-compat-type-13); }
 
 .qc__plot {
   position: relative;
@@ -24,7 +24,7 @@
   position: absolute;
   left: 0;
   color: var(--studio-fg-muted);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   line-height: 1;
 }
 
@@ -51,7 +51,7 @@
   width: 100%;
   border-collapse: collapse;
   color: var(--studio-fg);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 
   caption {
     margin-bottom: var(--studio-spacing-1);

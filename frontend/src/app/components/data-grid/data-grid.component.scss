@@ -46,7 +46,7 @@ td[data-role='actions'] { position: relative; z-index: 1; overflow: visible; }
 .grid__numeric { font-variant-numeric: tabular-nums; }
 
 .grid__row { position: relative; }
-.grid__row--selectable { transition: background 0.12s ease; }
+.grid__row--selectable { transition: background var(--studio-compat-duration-3) ease; }
 .grid__row--selectable:hover { background: var(--studio-bg-hover); }
 .grid__row[data-selected='true'] { background: var(--studio-bg-selected); }
 .grid__row--muted td { color: var(--studio-fg-muted); }
@@ -118,5 +118,5 @@ td[data-role='actions'] { position: relative; z-index: 1; overflow: visible; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .grid__row--selectable { transition-duration: 0s; }
+  .grid__row--selectable { transition-duration: var(--studio-compat-duration-2); }
 }

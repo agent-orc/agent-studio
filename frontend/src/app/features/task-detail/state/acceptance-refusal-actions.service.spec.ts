@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
 import type { TaskDetail, TaskInfo } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
-import { NotificationService } from '../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { AcceptanceReadinessStore } from '../../acceptance-readiness';
 import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';
 import { TaskSelectionService } from './task-selection.service';

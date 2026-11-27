@@ -1,5 +1,5 @@
 .batch-isolation { display: grid; gap: var(--studio-spacing-2); margin-block: var(--studio-spacing-2) var(--studio-spacing-3); }
-.batch-isolation h5 { margin: 0; font-size: .82rem; }
+.batch-isolation h5 { margin: 0; font-size: var(--studio-compat-type-28); }
 .batch-isolation__rows { display: grid; gap: var(--studio-spacing-2); margin: 0; padding: 0; list-style: none; }
 .batch-isolation__row {
   display: grid;

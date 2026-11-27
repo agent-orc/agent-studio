@@ -1,7 +1,7 @@
 import type { PhysicalHostGroup } from './physical-host-group';
 import type { RemoteHost } from './remote-host.model';
 import type { CredentialInventory } from '../../credentials/credential-inventory.service';
-import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 export interface EnvironmentSnapshot {
   controlHost: string;

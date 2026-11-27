@@ -1,20 +1,20 @@
 @use '../../../../../styles/mixins' as m;
 
 :host { display: block; }
-.parch__icon { margin-right: 6px; }
+.parch__icon { margin-right: var(--studio-compat-space-2); }
 .parch__count {
   display: inline-block;
-  margin-left: 8px;
-  padding: 1px 8px;
-  border-radius: 999px;
+  margin-left: var(--studio-spacing-2);
+  padding: var(--studio-compat-space-6) var(--studio-spacing-2);
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-card-muted-bg);
   color: var(--studio-fg-dim);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-.parch__list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.parch__list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--studio-spacing-1); }
 .parch__item { background: none; }
 .parch__btn {
   width: 100%;
@@ -27,15 +27,15 @@
   grid-template-areas:
     "id title status date"
     "note note note note";
-  column-gap: 12px;
-  row-gap: 6px;
+  column-gap: var(--studio-spacing-3);
+  row-gap: var(--studio-compat-space-2);
   align-items: baseline;
-  padding: 7px 10px;
+  padding: var(--studio-compat-space-11) var(--studio-compat-space-5);
   background: var(--studio-card-muted-bg);
   border: 1px solid var(--studio-card-muted-border);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   color: var(--studio-fg);
-  font-size: 0.84rem;
+  font-size: var(--studio-compat-type-71);
   cursor: pointer;
   text-align: left;
 }
@@ -50,7 +50,7 @@
   grid-area: status;
   justify-self: end;
 }
-.parch__date { grid-area: date; color: var(--studio-fg-muted); font-size: 0.74rem; font-variant-numeric: tabular-nums; }
+.parch__date { grid-area: date; color: var(--studio-fg-muted); font-size: var(--studio-compat-type-14); font-variant-numeric: tabular-nums; }
 
 // Full-width second line for long, free-form status prose. Wraps within the
 // row instead of clipping.
@@ -58,11 +58,11 @@
   grid-area: note;
   min-width: 0;
   overflow-wrap: anywhere;
-  padding: 6px 10px;
-  border-radius: 4px;
+  padding: var(--studio-compat-space-2) var(--studio-compat-space-5);
+  border-radius: var(--studio-compat-radius-6);
   background: var(--studio-card-muted-bg);
   color: var(--studio-fg-dim);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   font-weight: 400;
   line-height: 1.5;
   white-space: normal;
@@ -72,36 +72,36 @@
 .parch__viewer {
   @include m.deck-panel;
 
-  margin-top: 4px;
+  margin-top: var(--studio-spacing-1);
 }
 .parch__body {
   color: var(--studio-fg);
-  font-size: 0.88rem;
+  font-size: var(--studio-compat-type-69);
   line-height: 1.55;
 }
 .parch__body :global(h1),
 .parch__body :global(h2),
-.parch__body :global(h3) { color: var(--studio-fg-strong); margin: 0.6em 0 0.3em; }
-.parch__body :global(p)  { margin: 0.4em 0; }
+.parch__body :global(h3) { color: var(--studio-fg-strong); margin: var(--studio-compat-space-31) 0 var(--studio-compat-space-32); }
+.parch__body :global(p)  { margin: var(--studio-compat-space-33) 0; }
 .parch__body :global(strong) { color: var(--studio-fg-strong); }
-.parch__body :global(code) { background: var(--studio-card-muted-bg); padding: 1px 4px; border-radius: 3px; }
+.parch__body :global(code) { background: var(--studio-card-muted-bg); padding: var(--studio-compat-space-6) var(--studio-spacing-1); border-radius: var(--studio-compat-radius-9); }
 
-.parch__notes { margin-top: 10px; }
-.parch__notes summary { cursor: pointer; color: var(--studio-fg-muted); font-size: 0.78rem; }
+.parch__notes { margin-top: var(--studio-compat-space-5); }
+.parch__notes summary { cursor: pointer; color: var(--studio-fg-muted); font-size: var(--studio-compat-type-13); }
 .parch__notes-area {
-  margin-top: 6px;
+  margin-top: var(--studio-compat-space-2);
   width: 100%;
   box-sizing: border-box;
   background: var(--studio-bg-overlay);
   color: var(--studio-fg);
   border: 1px solid var(--studio-card-muted-border);
-  border-radius: 4px;
-  padding: 6px 8px;
+  border-radius: var(--studio-compat-radius-6);
+  padding: var(--studio-compat-space-2) var(--studio-spacing-2);
   font-family: inherit;
-  font-size: 0.84rem;
+  font-size: var(--studio-compat-type-71);
   resize: vertical;
 }
 
-.parch__source { margin: 10px 0 0; color: var(--studio-fg-muted); font-size: 0.74rem; }
+.parch__source { margin: var(--studio-compat-space-5) 0 0; color: var(--studio-fg-muted); font-size: var(--studio-compat-type-14); }
 .parch__source code { color: var(--studio-accent-4-strong); }
   

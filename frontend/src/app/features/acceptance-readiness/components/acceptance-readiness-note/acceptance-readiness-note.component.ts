@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { TaskState, type TaskInfo } from '../../../../models/task.model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { withRouteSegment } from '../../../../services/url-hash.util';
 import { AcceptanceReadinessStore } from '../../state/acceptance-readiness.store';
 import { readinessPresentation } from '../../models/acceptance-readiness.model';

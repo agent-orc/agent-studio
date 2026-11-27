@@ -5,7 +5,7 @@
 .consumer-policy {
   margin-bottom: var(--studio-spacing-4);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-hover);
 }
 .consumer-policy header {
@@ -14,8 +14,8 @@
   padding: var(--studio-spacing-3);
   border-bottom: 1px solid var(--studio-border);
 }
-.consumer-policy header strong { color: var(--studio-fg-strong); font-size: 12px; }
-.consumer-policy header small { color: var(--studio-fg-muted); font-size: 10px; }
+.consumer-policy header strong { color: var(--studio-fg-strong); font-size: var(--studio-font-size-sm); }
+.consumer-policy header small { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-1); }
 .consumer-policy__scroll {
   overflow-x: auto;
 
@@ -24,7 +24,7 @@
     outline-offset: -2px;
   }
 }
-.consumer-policy table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.consumer-policy table { width: 100%; border-collapse: collapse; font-size: var(--studio-font-size-sm); }
 .consumer-policy th, .consumer-policy td {
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border-bottom: 1px solid var(--studio-border);
@@ -33,14 +33,14 @@
 }
 .consumer-policy th { color: var(--studio-fg-muted); }
 .consumer-policy td { color: var(--studio-fg); }
-.consumer-policy td small { display: block; font-size: 11px; color: var(--studio-fg-muted); }
+.consumer-policy td small { display: block; font-size: var(--studio-compat-type-6); color: var(--studio-fg-muted); }
 .consumer-policy select {
   width: 100%;
   min-width: 0;
   color: var(--studio-fg);
   background: var(--studio-bg-selected);
   border: 1px solid var(--studio-border);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
 }
 .consumer-policy p { padding: var(--studio-spacing-3); color: var(--studio-fg); }

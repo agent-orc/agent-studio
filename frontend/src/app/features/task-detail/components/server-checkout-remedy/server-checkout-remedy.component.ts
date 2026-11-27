@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 
-import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import { laneName } from '../../../../models/lane-presentation';
 import type { TaskInfo } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';

@@ -14,7 +14,7 @@
 
 .embed-settings label span {
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 600;
 }
 
@@ -22,10 +22,10 @@
   min-width: 0;
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--studio-bg-editor);
   color: var(--studio-fg);
-  font: 12px var(--font-mono);
+  font: var(--studio-font-size-sm) var(--font-mono);
 }
 
 .embed-settings input:focus {
@@ -36,10 +36,10 @@
 .embed-settings__error {
   margin: 0;
   padding: var(--studio-spacing-2);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--notify-error-tint);
   color: var(--notify-error-icon-fg);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 
 .embed-settings__actions {
@@ -50,7 +50,7 @@
 .embed-settings__actions button {
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
   cursor: pointer;

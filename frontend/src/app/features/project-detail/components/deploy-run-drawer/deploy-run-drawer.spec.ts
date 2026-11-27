@@ -3,7 +3,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { DeployRunDrawerComponent, type DeployRunActionState } from './deploy-run-drawer';
-import { ModalStackService } from '../../../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { ClientService } from '../../../../services/client.service';
 import type { DeployPanel, DeployRun, DeploymentLogLine } from '../../state/deploy-area.model';
 import { deployRunsFixture, deploymentLogFixture } from '../../testing/deploy-fixtures';

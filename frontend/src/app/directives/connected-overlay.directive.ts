@@ -6,7 +6,7 @@ import {
   OverlayPlacement,
   OverlayPortalRef,
   OverlayPortalService,
-} from '../services/overlay-portal.service';
+} from '@studio/ui/services/overlay-portal.service';
 
 /**
  * Body-portaled, anchor-positioned overlay primitive.

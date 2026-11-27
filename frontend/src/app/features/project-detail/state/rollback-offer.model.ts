@@ -1,5 +1,5 @@
-import type { ConfirmDialogOptions } from '../../../models/app-dialog.model';
-import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
+import type { ConfirmDialogOptions } from '@studio/ui/models/app-dialog.model';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { formatAge, type EnvironmentStatus, type Release } from './deploy-area.model';
 
 /** Runtime health of a release while it ran, from the backend ledger (F13). */

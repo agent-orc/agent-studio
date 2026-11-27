@@ -4,7 +4,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import type { TaskInfo } from '../../../../models/task.model';
 import { RemoteHostsService } from '../../../remote-hosts/services/remote-hosts.service';
 import { hostStatusIndicatorTone, type RemoteHost } from '../../../remote-hosts/models/remote-host.model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { freshHostTelemetry } from '../../../remote-hosts/models/running-truth';
 import { hostZonePolicy } from '../../../remote-hosts/models/zone-policy';
 import type { WatcherCase } from '../../../watcher/models/watcher.model';

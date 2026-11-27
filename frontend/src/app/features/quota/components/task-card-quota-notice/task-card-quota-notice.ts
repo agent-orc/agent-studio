@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, input } from '@an
 
 import { isTerminalTaskState, type TaskInfo } from '../../../../models/task.model';
 import { WorkspaceQuotaBoardState } from '../../state/workspace-quota-board-state.service';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Card-level quota refusal: shown only on cards that still wait for admission (not running, not finished). */
 @Component({

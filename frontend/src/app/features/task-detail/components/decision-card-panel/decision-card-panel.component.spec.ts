@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
 import { DecisionCardPanelComponent } from './decision-card-panel.component';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { ClientService } from '../../../../services/client.service';
 import { PublicDemoModeService } from '../../../../services/public-demo-mode.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';

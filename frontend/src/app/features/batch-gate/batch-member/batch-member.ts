@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input } from '@angular/core';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { batchEjectionLabel, batchFallbackWaitLabel, batchMemberFor, type BatchMemberState, type BatchMemberStatus } from '../../../models/batch-gate.model';
-import { StatusIndicatorComponent, type StatusTone } from '../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 @Component({
   selector: 'app-batch-member',

@@ -1,5 +1,5 @@
 import { Injectable, computed, signal } from '@angular/core';
-import type { MenuItem } from '../../../components/menu';
+import type { MenuItem } from '@studio/ui/components/menu/index';
 
 /** Open project right-click menu: the targeted row plus the click point. */
 export interface ProjectMenuContext {

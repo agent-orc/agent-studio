@@ -14,7 +14,7 @@
   border: 1px solid color-mix(in srgb, var(--studio-error) 55%, var(--studio-card-border));
   border-radius: var(--studio-action-radius-sm);
   background: color-mix(in srgb, var(--studio-error) 8%, var(--studio-card-bg));
-  animation: inline-confirm-in 0.14s ease;
+  animation: inline-confirm-in var(--studio-compat-duration-5) ease;
 }
 
 .inline-confirm__message { margin: 0; color: var(--studio-fg-strong); font-size: var(--studio-font-size-sm); line-height: 1.45; }
@@ -26,7 +26,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .inline-confirm { animation-duration: 0s; }
+  .inline-confirm { animation-duration: var(--studio-compat-duration-2); }
 }
 
 // Narrow screens are touch screens: the actions get the coarse target height.

@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, input, signal } from '@angular/core';
 import type { TaskInfo } from '../../../../../models/task.model';
 import type { RunRecord } from '../../../../run-timeline';
-import { DialogComponent } from '../../../../../components/dialog/dialog.component';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
 import { RunTimelineComponent } from '../../protocol-pane/run-timeline/run-timeline.component';
 import { TooltipDirective, type StructuredTooltip } from 'coding-agent-chat/shared';
 

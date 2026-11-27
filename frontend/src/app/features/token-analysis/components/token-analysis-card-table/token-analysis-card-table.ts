@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { laneName } from '../../../../models/lane-presentation';
 import { formatCompactTokens, formatCompactUsd } from '../../../tokens/token-number-format.util';
 import type { TokenAnalysisCard, TokenAnalysisProjectRemainder } from '../../models/token-analysis.model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { cardOutcomeTone } from '../../token-analysis-status';
 import type { AnalysisMeasure } from '../../token-analysis.util';
 import { cardId, dominant, kindColor, kindLabel, kindTotals } from '../../token-analysis.util';

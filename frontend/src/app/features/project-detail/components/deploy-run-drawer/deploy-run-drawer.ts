@@ -1,7 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterNextRender, computed, effect, inject, input, output, signal } from '@angular/core';
-import { ModalStackService } from '../../../../services/modal-stack.service';
-import { SidesheetComponent } from '../../../../components/sidesheet/sidesheet.component';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
+import { SidesheetComponent } from '@studio/ui/components/sidesheet/sidesheet.component';
 import {
   RUN_STATE_LABEL,
   STEP_STATE_LABEL,
@@ -18,7 +18,7 @@ import {
 } from '../../state/deploy-area.model';
 import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
 import { runStateTone } from '../../state/deploy-status-tone';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
 import type { RollbackOffer } from '../../state/rollback-offer.model';
 import { PrincipalNamePipe, principalName } from '../../../../pipes/principal-name.pipe';

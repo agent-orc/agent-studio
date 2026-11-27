@@ -2,7 +2,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
-import { NotificationService } from '../../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from '../../../../../services/task.service';
 import type { PipelineStepConfig } from '../../../../task-pipeline';
 import { PipelineStepToggleComponent } from './pipeline-step-toggle.component';

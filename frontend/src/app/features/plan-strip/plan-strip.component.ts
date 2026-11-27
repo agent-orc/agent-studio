@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { NowTickService } from '../../services/now-tick.service';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { StatusIndicatorComponent, type StatusTone } from '../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { TaskPlanView, TaskPlanItemView, TaskPlanSubAction } from './plan.model';
 
 /** A ticker mark with a flag for whether it sits past the soft-estimate band. */

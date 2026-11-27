@@ -13,7 +13,7 @@
   border-radius: var(--studio-radius-md);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 .round__head {
@@ -26,7 +26,7 @@
 .round__title { color: var(--studio-fg-strong); font-weight: 600; }
 
 .round__form { display: grid; gap: var(--studio-spacing-1); min-width: 0; }
-.round__label { margin-top: var(--studio-spacing-1); color: var(--studio-fg); font-size: 0.72rem; font-weight: 600; }
+.round__label { margin-top: var(--studio-spacing-1); color: var(--studio-fg); font-size: var(--studio-compat-type-10); font-weight: 600; }
 .round__input {
   width: 100%;
   box-sizing: border-box;

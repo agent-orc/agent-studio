@@ -9,7 +9,7 @@
   display: inline-flex;
   max-width: 100%;
   vertical-align: baseline;
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   line-height: 1;
 }
 
@@ -21,7 +21,7 @@
   gap: var(--studio-spacing-1);
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid color-mix(in srgb, var(--task-ref-project) 42%, var(--studio-border));
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: color-mix(in srgb, var(--task-ref-project) 10%, var(--studio-bg-elevated));
   color: var(--studio-fg);
   text-decoration: none;
@@ -42,7 +42,7 @@
 .task-ref__lane-dot {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   background: var(--lane-tone-fg);
 }
 .task-ref--ghost .task-ref__lane-dot {
@@ -60,7 +60,7 @@ a.task-ref__link:focus-visible {
 .task-ref__project {
   width: 0.45rem;
   height: 0.45rem;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   background: var(--task-ref-project);
 }
 .task-ref__title {
@@ -95,7 +95,7 @@ a.task-ref__link:focus-visible {
   width: 1rem;
   height: 1rem;
   border: 1px solid var(--studio-card-muted-border);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   color: var(--studio-fg-dim);
   background: var(--studio-card-muted-bg);
   font-style: normal;

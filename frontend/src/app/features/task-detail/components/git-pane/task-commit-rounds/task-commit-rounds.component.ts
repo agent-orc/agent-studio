@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, input, output, signal } f
 import { commitSupersessionState, isReplacedCommit, type TaskCommitInfo } from '../../../../git';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { formatCompactDateTime, formatDateTime } from '../../../../../services/format.util';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * AGT-2817 - this block used to be the only place a card's supersession was

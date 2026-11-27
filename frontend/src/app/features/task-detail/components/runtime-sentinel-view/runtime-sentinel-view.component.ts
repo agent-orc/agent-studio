@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { AspectSentinelStatus, ParsedRuntimeSentinels, ParsedTerminalSentinel } from '../runtime-sentinel.parser';
 import { terminalSentinelLabel } from '../runtime-sentinel.parser';
 

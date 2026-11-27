@@ -2,8 +2,8 @@ import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { QualityStudioService } from '../../../../services/quality-studio.service';
-import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
-import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
+import { EmptyStateComponent } from '@studio/ui/components/empty-state/empty-state.component';
+import { LoadingSurfaceComponent } from '@studio/ui/components/async-feedback/index';
 import { ProjectDeployReleaseNotesComponent } from '../project-deploy-release-notes/project-deploy-release-notes';
 import { DeployActionsComponent } from '../deploy-actions/deploy-actions';
 import {
@@ -18,7 +18,7 @@ import {
 } from '../../state/deploy-area.model';
 import { ProjectDeployDataService, serverMessage } from '../../services/project-deploy-data.service';
 import { DeploySecretGapsComponent } from '../deploy-secret-gaps/deploy-secret-gaps';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Pre-delivery full-suite verdict (raw wire value) onto the shared tones; anything else stays neutral. */
 const VERDICT_TONE: Readonly<Record<string, StatusTone>> = { green: 'success', red: 'danger' };

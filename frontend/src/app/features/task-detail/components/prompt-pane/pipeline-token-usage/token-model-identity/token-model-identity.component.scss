@@ -13,7 +13,7 @@
     overflow: hidden;
     color: var(--studio-fg);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -22,7 +22,7 @@
   &__level {
     flex: 0 0 auto;
     color: var(--studio-fg-muted);
-    font-size: 10.5px;
+    font-size: var(--studio-compat-type-44);
     white-space: nowrap;
   }
 
@@ -36,10 +36,10 @@
   &__steps {
     flex: 0 0 auto;
     padding: 0 var(--studio-spacing-1);
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
     background: var(--studio-bg-hover);
     color: var(--studio-fg-muted);
-    font-size: 9.5px;
+    font-size: var(--studio-compat-type-42);
     font-weight: 600;
   }
 }

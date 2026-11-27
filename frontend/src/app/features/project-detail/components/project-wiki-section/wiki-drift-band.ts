@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { DriftScoreBand } from '../../../../models/drift.model';
 
 /** Status-indicator tone of a drift report score band (AGT-3403); unknown bands stay neutral. */

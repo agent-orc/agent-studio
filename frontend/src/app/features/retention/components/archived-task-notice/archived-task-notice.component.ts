@@ -3,7 +3,7 @@ import { ChangeDetectionStrategy, Component, effect, inject, input, output, sign
 import { firstValueFrom } from 'rxjs';
 import { formatRetentionBytes, type RetentionArchiveManifest } from '../../models/retention.model';
 import { RetentionService } from '../../services/retention.service';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 @Component({
   selector: 'app-archived-task-notice',

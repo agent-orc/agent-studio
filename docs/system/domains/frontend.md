@@ -29,6 +29,32 @@ Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
 
+## Studio UI library and Components catalogue
+
+Generic shared primitives and overlay services live in
+[`frontend/projects/studio-ui`](../../../frontend/projects/studio-ui/README.md).
+The app imports their source through `@studio/ui`; old component paths are
+export-only compatibility shims. New templates use `sui-` selectors, while
+existing `app-` aliases keep the same implementation and appearance. Domain
+components remain in the app. Help Markdown and legacy tooltip rendering enter
+through host providers so the library imports no app or chat code.
+
+The token entry is `projects/studio-ui/src/styles/_tokens-semantic.scss`.
+The historical `src/styles` imports forward to that source. Theme semantics,
+the primitive palette and exact-value compatibility scales are owned together;
+compatibility scales preserve legacy values and do not imply a new design.
+
+`npm run ui:catalogue:build` builds the separate Components app. Each component
+has a README and adjacent `*.catalogue.ts` state data. `npm run ui:test`,
+`npm run ui:lint` and `npm run ui:catalogue:check` run without a backend.
+Catalogue screenshots cover recorded states at 1440 and 390 px in both themes.
+`npm run ui:inventory -- /absolute/report.json` reports raw values, per-file
+counts, control recipe implementations and pages ranked by one-off selectors.
+`npm run lint:tokens` rejects new raw colours, font sizes and unknown token
+references, including literal inline style bindings. Existing debt lives in
+`scripts/style-token-baseline.json`; `--shrink` only removes debt, and the guard
+rejects growth against the checked-in baseline.
+
 ## Phone navigation and theme
 
 At 390 px the Studio board shows one lane at a time. The Board lane picker

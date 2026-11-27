@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { provideHttpClient } from '@angular/common/http';
 import { By } from '@angular/platform-browser';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { HostTelemetryHistoryComponent } from '../host-telemetry-history/host-telemetry-history';
 import { RemoteHostCardComponent } from './remote-host-card';
 import type { RemoteHost } from '../../models/remote-host.model';

@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { TaskDetail } from '../../../../models/task.model';
 
 export type IncidentAction = 'Open Operations' | 'Roll back' | 'Run runbook';

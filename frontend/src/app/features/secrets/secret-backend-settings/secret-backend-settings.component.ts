@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { SecretsService, type SecretBackendBinding } from '../secrets.service';
-import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Scope-specific storage selection. Credentials remain in the built-in store or process environment. */
 @Component({

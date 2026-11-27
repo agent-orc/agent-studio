@@ -1,6 +1,6 @@
 import { hostStatusIndicatorTone } from '../../../remote-hosts/models/remote-host.model';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
-import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 import {
   ChangeDetectionStrategy,
   Component,

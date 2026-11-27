@@ -23,15 +23,15 @@ import { AccessAreaComponent } from '../../../access/lazy';
 import { FirstRunChecklistComponent } from '../first-run-checklist/first-run-checklist.component';
 import { GitHubAppPanelComponent } from '../../../github-app/github-app-panel/github-app-panel.component';
 import type { TaskScreenshot } from '../../../../features/screenshots';
-import { ModalStackService } from '../../../../services/modal-stack.service';
-import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
+import { OverlayPortalDirective } from '@studio/ui/directives/overlay-portal.directive';
 import type { WatchPathEntry } from '../../../../models/task.model';
-import { SectionHeaderComponent } from '../../../../components/section-header/section-header.component';
-import { TreeRowComponent } from '../../../../components/tree-row/tree-row.component';
+import { SectionHeaderComponent } from '@studio/ui/components/section-header/section-header.component';
+import { TreeRowComponent } from '@studio/ui/components/tree-row/tree-row.component';
 import {
   StudioIconComponent,
   type StudioIconName,
-} from '../../../../components/studio-icon/studio-icon.component';
+} from '@studio/ui/components/studio-icon/studio-icon.component';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
 

@@ -1,8 +1,8 @@
 import { HostNamePipe } from '../../../components/identity-chip/host-name.pipe';
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { DisclosureMarkerComponent } from '../../../components/disclosure-marker/disclosure-marker.component';
-import { StatusIndicatorComponent, type StatusTone } from '../../../components/status-indicator/status-indicator.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { GitHubAppService, type GitHubAppCoverageState } from '../github-app.service';
 
 /** Repository access per coverage state; tones follow docs/quality/design/status-indicator.md. */

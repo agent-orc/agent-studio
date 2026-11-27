@@ -3,11 +3,11 @@
 .aspect-findings {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 3px;
+  gap: var(--studio-spacing-1);
+  margin-top: var(--studio-compat-space-1);
 
   &__lead {
-    font-size: 10px;
+    font-size: var(--studio-compat-type-1);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -20,15 +20,15 @@
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: var(--studio-compat-space-1);
   }
 
   &__item {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 6px;
-    font-size: 12px;
+    gap: var(--studio-compat-space-2);
+    font-size: var(--studio-font-size-sm);
     line-height: 1.4;
   }
 

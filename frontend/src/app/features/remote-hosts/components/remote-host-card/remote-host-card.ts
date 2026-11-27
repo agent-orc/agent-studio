@@ -3,7 +3,7 @@ import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import type { CliType } from '../../../../models/task.model';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { CapabilityHealthComponent } from '../capability-health/capability-health';
 import { GitTokenCapabilityComponent } from '../git-token-capability/git-token-capability';
 import { HostWorkloadSummaryComponent } from '../host-workload-summary/host-workload-summary';
@@ -56,7 +56,7 @@ import {
 import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 import { ClaudeSignInDialogService } from '../../services/claude-sign-in-dialog.service';
 import { HostCredentialBadgeComponent } from '../../../credentials/host-credential-badge/host-credential-badge.component';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { hostReadiness, hostReadinessTone } from '../../models/host-readiness';
 /** One meter row (RAM / CPU / Disk) resolved for the template. */
 interface Meter {

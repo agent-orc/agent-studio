@@ -2,8 +2,8 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, u
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { HttpClient } from '@angular/common/http';
-import { DialogComponent } from '../../../../components/dialog/dialog.component';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import { ProjectBasicsFormComponent } from '../../../../components/project-basics-form';
 import type { CliType, RegistryWorkspaceListItem } from '../../../../models/task.model';
 import {
@@ -13,7 +13,7 @@ import {
   type ProjectBasicsValue,
 } from '../../../../models/project-basics.model';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { CliCatalogStore } from '../../../cli';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { RemoteHostsService, codingLocationUnavailableReason, type RemoteHost } from '../../../remote-hosts';

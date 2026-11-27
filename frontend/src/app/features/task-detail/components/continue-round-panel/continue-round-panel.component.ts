@@ -2,12 +2,12 @@ import { ChangeDetectionStrategy, Component, computed, inject, input, output, si
 import type { ContinueMode, ContinueRoundBase, ContinueTaskResponse, TaskInfo } from '../../../../models/task.model';
 import { TaskState } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { NotificationService } from '@studio/ui/services/notification.service';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import {
   SegmentedControlComponent,
   type SegmentedOption,
-} from '../../../../components/segmented-control/segmented-control.component';
+} from '@studio/ui/components/segmented-control/segmented-control.component';
 import { serverErrorMessage } from '../../../../utils/server-error-message';
 import { ContinueModeRefusalComponent } from './continue-mode-refusal/continue-mode-refusal.component';
 import { BatchGateService } from '../../../../services/batch-gate.service';

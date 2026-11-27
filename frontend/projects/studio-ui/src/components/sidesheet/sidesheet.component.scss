@@ -1,0 +1,109 @@
+@use '../../styles/mixins' as m;
+
+/*
+ * Sidesheet skeleton — flush-right panel pinned to the viewport edge.
+ * Used for kanban filter, CLI usage, orchestrator chat, etc.
+ *
+ * Modal dialogs (error / confirm / create-job / media-lightbox /
+ * verbose-debug) are a different shape and keep their own components
+ * — see the docstring on SidesheetComponent for the rationale.
+ *
+ * Tokens come from studio-shell (see docs/quality/frontend/audits/scss-quality.md).
+ * Light theme inherits the var() flip automatically.
+ *
+ * ViewEncapsulation is None so the inner BEM survives content
+ * projection — callers can target `.sidesheet__body` from their own
+ * SCSS if they need to. The selectors are scoped via the `.sidesheet`
+ * root so no global leak.
+ */
+
+.sidesheet {
+  display: flex;
+  flex-direction: column;
+  background: var(--studio-bg-editor);
+  color: var(--studio-fg);
+  border-left: 1px solid var(--studio-border);
+  overflow: hidden;
+  min-height: 0;
+  font-size: 13px;
+  /* Width defaults to 100% so the caller's outer host (the
+     `<app-orchestrator-side-sheet>`,
+     `<app-kanban-filter-sidesheet>`, …) drives the visible panel
+     width via its own `:host(.is-open) { width: ... }` rule. The
+     previous fixed `width: 360px` was a dead default — no caller
+     actually wanted 360px and the mismatch left a transparent gap
+     between the open host and the inner panel (visible as
+     unreadable empty space and broken theming on the right side
+     of the orchestrator sheet). Callers that DO want an explicit
+     px width can still drive it via the `[width]` input, which
+     wins through `[style.width.px]` in the template. */
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+}
+
+.sidesheet__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--studio-bg-sidebar);
+  border-bottom: 1px solid var(--studio-border);
+  flex-shrink: 0;
+}
+
+.sidesheet__title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sidesheet__eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--studio-fg-muted);
+}
+
+.sidesheet__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--studio-fg-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidesheet__subtitle {
+  font-size: 11px;
+  color: var(--studio-fg-muted);
+  line-height: 1.4;
+}
+
+.sidesheet__close {
+  @include m.icon-button(26px);
+  flex-shrink: 0;
+}
+
+.sidesheet__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidesheet__footer {
+  flex-shrink: 0;
+  // Hide an empty footer so call sites that don't project anything
+  // get an exact-fit panel without an empty bottom strip.
+  &:empty { display: none; }
+  padding: 10px 14px;
+  border-top: 1px solid var(--studio-border);
+  background: var(--studio-bg-sidebar);
+}

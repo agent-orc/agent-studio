@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, HostListener, computed, effect, inject, output, signal } from '@angular/core';
 import { ProjectOverlaysService } from '../../state/project-overlays.service';
-import { ModalStackService } from '../../../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { OrchestratorFeedComponent, PromptAdminPanelComponent } from '../../../orchestrator/lazy';
 import { ProjectDetailComponent } from '../project-detail/project-detail';
 import { ProjectOverviewDashboardComponent } from '../project-overview-dashboard/project-overview-dashboard';
@@ -25,7 +25,7 @@ import { ProjectRailKey, resolveProjectSection } from '../project-shell/project-
 import { WorkspaceScreenshotsComponent } from '../../../screenshots';
 import type { TaskScreenshot } from '../../../screenshots';
 import { RegressionRadarComponent } from '../../../regression-radar';
-import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
+import { OverlayPortalDirective } from '@studio/ui/directives/overlay-portal.directive';
 import { TASK_REFERENCE_CHAT_PROVIDER } from '../../../../services/task-reference-chat.provider';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';

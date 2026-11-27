@@ -21,7 +21,7 @@
     h1 {
       margin: 0;
       color: var(--studio-fg-strong);
-      font-size: 1.35rem;
+      font-size: var(--studio-compat-type-25);
       font-weight: 650;
       line-height: 1.2;
     }
@@ -42,7 +42,7 @@
     margin: 0;
     gap: var(--studio-spacing-2);
     color: var(--studio-fg-muted);
-    font-size: 0.8rem;
+    font-size: var(--studio-compat-type-12);
     strong,
     [data-testid='workbench-overview-history-count'] {
       font-variant-numeric: tabular-nums;
@@ -52,7 +52,7 @@
     max-width: 40rem;
     margin: 0;
     color: var(--studio-fg-dim);
-    font-size: 0.78rem;
+    font-size: var(--studio-compat-type-13);
     line-height: 1.55;
     text-align: right;
   }
@@ -88,18 +88,18 @@
     }
     h2 {
       color: var(--studio-fg-strong);
-      font-size: 0.95rem;
+      font-size: var(--studio-compat-type-16);
       font-weight: 650;
     }
     p {
       margin-top: var(--studio-spacing-1);
       color: var(--studio-fg-dim);
-      font-size: 0.74rem;
+      font-size: var(--studio-compat-type-14);
       line-height: 1.45;
     }
     > span {
       color: var(--studio-fg-dim);
-      font-size: 0.75rem;
+      font-size: var(--studio-compat-type-11);
       font-variant-numeric: tabular-nums;
     }
     &:hover {
@@ -155,7 +155,7 @@
     margin: 0;
     padding: var(--studio-spacing-3) var(--studio-spacing-4);
     color: var(--studio-fg-dim);
-    font-size: 0.76rem;
+    font-size: var(--studio-compat-type-17);
   }
   &__state,
   &__empty {

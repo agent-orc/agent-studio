@@ -25,7 +25,7 @@ import { ProjectDeployDataService, serverMessage } from '../../services/project-
 import { ServerCheckoutStore } from '../../../server-checkout/server-checkout.store';
 import { LocalOwnerSessionService } from '../../../../services/local-owner-session.service';
 import { ProjectDeployEnvironmentActions } from '../../services/project-deploy-environment-actions.service';
-import { LoadingSurfaceComponent, PendingButtonDirective } from '../../../../components/async-feedback';
+import { LoadingSurfaceComponent, PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
 import { LocalOwnerDialogComponent } from '../../../../components/local-owner-dialog/local-owner-dialog';
 import { RollbackOfferComponent } from '../rollback-offer/rollback-offer';
 import { DeployRollbackFlow } from '../../state/deploy-rollback-flow';

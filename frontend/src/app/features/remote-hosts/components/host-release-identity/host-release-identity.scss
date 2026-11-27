@@ -20,7 +20,7 @@
   text-overflow: ellipsis;
   margin-top: var(--studio-spacing-1);
   padding: 0 var(--studio-spacing-1);
-  border-radius: 3px;
+  border-radius: var(--studio-compat-radius-9);
   background: var(--studio-surface-muted);
   color: var(--studio-fg-dim);
   font-size: var(--studio-font-size-sm);

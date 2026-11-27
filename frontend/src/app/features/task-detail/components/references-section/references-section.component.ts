@@ -20,7 +20,7 @@ import {
   taskDependencyRequiresRelease,
 } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { TaskSelectionService } from '../../state/task-selection.service';
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';

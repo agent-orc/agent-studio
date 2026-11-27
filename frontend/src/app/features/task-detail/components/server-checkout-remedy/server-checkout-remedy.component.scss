@@ -16,7 +16,7 @@
     background: var(--studio-accent);
     color: var(--studio-on-accent);
     font: inherit;
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
     font-weight: 600;
     line-height: 1;
     cursor: pointer;

@@ -11,8 +11,8 @@
   width: 100%;
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-surface-muted);
   color: var(--studio-fg-dim);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }

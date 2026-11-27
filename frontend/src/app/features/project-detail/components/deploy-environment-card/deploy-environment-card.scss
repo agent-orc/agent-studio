@@ -16,7 +16,7 @@
   justify-content: space-between;
   gap: var(--studio-spacing-3);
 
-  h3 { margin: 0; color: var(--studio-fg-strong); font-size: 1.05rem; font-weight: 600; }
+  h3 { margin: 0; color: var(--studio-fg-strong); font-size: var(--studio-compat-type-9); font-weight: 600; }
 }
 
 .env-card__health { margin: 0; }
@@ -43,7 +43,7 @@
   margin: 0;
   border: 0;
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--studio-accent) 10%, var(--studio-surface));
   color: var(--studio-fg);
   font: inherit;
@@ -62,7 +62,7 @@
 .env-card__problem {
   margin: 0;
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--studio-status-warning) 12%, var(--studio-surface));
   color: var(--studio-fg);
   overflow-wrap: anywhere;

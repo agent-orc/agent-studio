@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Subject, of, throwError, type Observable } from 'rxjs';
 import { ContinueRoundPanelComponent } from './continue-round-panel.component';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import type { TaskInfo } from '../../../../models/task.model';
 import { BatchGateService } from '../../../../services/batch-gate.service';
 import { redHalvingState } from '../../../batch-gate/testing/batch-fixtures';

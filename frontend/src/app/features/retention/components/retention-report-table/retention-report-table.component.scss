@@ -1,8 +1,8 @@
 :host { display: block; min-width: 0; }
 .report { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+table { width: 100%; border-collapse: collapse; font-size: var(--studio-compat-type-13); }
 th, td { padding: var(--studio-row-pad-block) var(--studio-row-pad-inline); border-bottom: 1px solid var(--studio-border); text-align: left; }
-th { color: var(--studio-fg-muted); font-size: 0.68rem; text-transform: uppercase; }
+th { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-15); text-transform: uppercase; }
 th button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-transform: inherit; cursor: pointer; }
 td { min-height: var(--studio-row-min-h); }
 td small { display: block; color: var(--studio-fg-dim); }

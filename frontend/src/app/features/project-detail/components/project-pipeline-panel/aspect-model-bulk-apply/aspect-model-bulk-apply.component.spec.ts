@@ -4,7 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { of } from 'rxjs';
-import { ConfirmDialogService } from '../../../../../services/confirm-dialog.service';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 import type { PipelineAdminRow } from '../pipeline-config.util';
 import { AspectModelBulkApplyComponent, type AspectAgentSelection } from './aspect-model-bulk-apply.component';
 

@@ -3,7 +3,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import type { MenuItem } from '../menu';
+import type { MenuItem } from '@studio/ui/components/menu/index';
 import { OverflowMenuComponent } from './overflow-menu.component';
 
 const settle = () => new Promise<void>(resolve => queueMicrotask(resolve));

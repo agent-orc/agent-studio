@@ -5,7 +5,7 @@
 .operational-stalls li div { display: grid; gap: var(--studio-spacing-1); }
 .operational-stalls li small { color: var(--studio-fg-dim); }
 .operational-stalls li p { margin: var(--studio-spacing-1) 0 0; }
-.operational-stalls__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--severity-warn); }
+.operational-stalls__dot { width: 7px; height: 7px; border-radius: var(--studio-compat-radius-4); background: var(--severity-warn); }
 .operational-stalls--settled { margin-top: var(--studio-spacing-3); }
 .operational-stalls__settled { padding: var(--studio-spacing-2) 0; border-bottom: 1px solid var(--studio-border); }
 .operational-stalls__error { margin: var(--studio-spacing-2) 0 0; color: var(--studio-error); }

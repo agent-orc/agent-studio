@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
-import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { formatCompactTokens, formatCompactUsd } from '../../../tokens/token-number-format.util';
 import type { KindCostBreakdown } from '../../token-analysis.util';
 

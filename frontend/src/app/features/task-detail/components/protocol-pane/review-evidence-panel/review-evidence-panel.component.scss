@@ -11,10 +11,10 @@
 }
 .evidence-panel {
   border: 1px solid var(--studio-border);
-  border-radius: 10px;
+  border-radius: var(--studio-compat-radius-3);
   background: var(--studio-bg-hover);
-  padding: 10px 12px;
-  margin: 8px 0 12px;
+  padding: var(--studio-compat-space-5) var(--studio-spacing-3);
+  margin: var(--studio-spacing-2) 0 var(--studio-spacing-3);
   display: flex;
   flex-direction: column;
   // When the panel itself flexes (empty-state mode without entries) we
@@ -38,36 +38,36 @@
 .evidence-panel__header {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  margin-bottom: 8px;
+  gap: var(--studio-compat-space-5);
+  margin-bottom: var(--studio-spacing-2);
 }
 .evidence-panel__title {
   margin: 0;
-  font-size: 0.92rem;
+  font-size: var(--studio-compat-type-8);
   color: var(--studio-fg-strong);
   display: inline-flex;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
   align-items: center;
 }
-.evidence-panel__icon { font-size: 0.95rem; }
+.evidence-panel__icon { font-size: var(--studio-compat-type-16); }
 .evidence-panel__count {
   color: var(--studio-fg-muted);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 .evidence-panel__empty {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 4px;
+  gap: var(--studio-spacing-1);
+  padding: var(--studio-compat-space-5) var(--studio-spacing-1);
   color: var(--studio-fg-muted);
-  font-size: 0.83rem;
+  font-size: var(--studio-compat-type-107);
 }
-.evidence-panel__empty-hint { font-size: 0.78rem; opacity: 0.8; }
+.evidence-panel__empty-hint { font-size: var(--studio-compat-type-13); opacity: 0.8; }
 .evidence-panel__empty-hint code {
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding: var(--studio-compat-space-6) var(--studio-spacing-1);
+  border-radius: var(--studio-compat-radius-9);
 }
 .evidence-list {
   list-style: none;
@@ -76,14 +76,14 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
 }
 .evidence-row {
   min-width: 0;
   max-width: 100%;
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
-  padding: 8px 10px;
+  border-radius: var(--studio-compat-radius-5);
+  padding: var(--studio-spacing-2) var(--studio-compat-space-5);
   background: var(--studio-bg-editor);
 }
 .evidence-row[data-severity="high"] { background: color-mix(in srgb, var(--severity-high) 9%, var(--studio-bg-editor)); }
@@ -93,9 +93,9 @@
 .evidence-row__head {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
   align-items: center;
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   color: var(--studio-fg-dim);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -113,13 +113,13 @@
   letter-spacing: 0;
 }
 .evidence-row__title {
-  margin: 6px 0 2px;
-  font-size: 0.92rem;
+  margin: var(--studio-compat-space-2) 0 var(--studio-compat-space-4);
+  font-size: var(--studio-compat-type-8);
   color: var(--studio-fg-strong);
   font-weight: 600;
 }
 .evidence-row__body {
-  font-size: 0.85rem;
+  font-size: var(--studio-compat-type-26);
   color: var(--studio-fg);
   white-space: pre-wrap;
   word-break: break-word;
@@ -127,31 +127,31 @@
 .evidence-row__refs {
   list-style: none;
   padding: 0;
-  margin: 6px 0 0;
+  margin: var(--studio-compat-space-2) 0 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
 }
 .evidence-row__ref {
   display: inline-flex;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
   align-items: center;
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
   color: var(--studio-fg-dim);
 }
 .evidence-row__ref code {
   min-width: 0;
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-size: 0.78rem;
+  padding: var(--studio-compat-space-6) var(--studio-compat-space-7);
+  border-radius: var(--studio-compat-radius-9);
+  font-size: var(--studio-compat-type-13);
   overflow-wrap: anywhere;
 }
 .evidence-row__ref-icon {
   // Keep the type glyph from stretching the row; some are text glyphs (〈〉).
   flex: 0 0 auto;
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   line-height: 1;
 }
 
@@ -162,10 +162,10 @@
 .evidence-row__thumbs {
   list-style: none;
   padding: 0;
-  margin: 6px 0 0;
+  margin: var(--studio-compat-space-2) 0 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
 }
 .evidence-row__thumb-item {
   display: flex;
@@ -173,12 +173,12 @@
 .evidence-row__thumb {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--studio-spacing-1);
   align-items: stretch;
   max-width: 180px;
-  padding: 4px;
+  padding: var(--studio-spacing-1);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-elevated);
   cursor: pointer;
   color: var(--studio-fg-dim);
@@ -199,12 +199,12 @@
   width: auto;
   height: auto;
   object-fit: contain;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   // A neutral backdrop so transparent PNGs stay legible in either theme.
   background: var(--studio-bg-editor);
 }
 .evidence-row__thumb-name {
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   color: var(--studio-fg-dim);
   text-align: center;
   overflow-wrap: anywhere;
@@ -212,17 +212,17 @@
 }
 .evidence-row__actions {
   display: flex;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--studio-spacing-2);
+  margin-top: var(--studio-spacing-2);
   flex-wrap: wrap;
 }
 .evidence-btn {
   background: var(--studio-bg-hover);
   color: var(--studio-fg);
   border: 1px solid var(--studio-border);
-  padding: 4px 10px;
-  border-radius: 6px;
-  font-size: 0.78rem;
+  padding: var(--studio-spacing-1) var(--studio-compat-space-5);
+  border-radius: var(--studio-compat-radius-7);
+  font-size: var(--studio-compat-type-13);
   cursor: pointer;
 }
 .evidence-btn:hover:not(:disabled) {
@@ -233,6 +233,6 @@
 .evidence-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .evidence-btn--primary {
   background: var(--studio-accent);
-  color: var(--studio-on-accent, #1a1a1a);
+  color: var(--studio-on-accent, var(--studio-compat-ink-35));
   border-color: var(--studio-accent);
 }

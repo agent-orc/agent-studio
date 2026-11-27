@@ -1,5 +1,5 @@
 import type { ProjectUrlDiagnostic, ProjectUrlDiagnosisClass } from '../../../../models/task.model';
-import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 export interface ProjectUrlDiagnosisPresentation {
   status: string;

@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, effect, input, output, signal } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { DisclosureMarkerComponent } from '../../../../../components/disclosure-marker/disclosure-marker.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import type { ProtocolVerdict } from '../protocol-verdict';
-import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { protocolSignalTone, protocolVerdictTone } from './protocol-verdict-tone';
 /**
  * The single run outcome banner plus its raw-signal disclosure.

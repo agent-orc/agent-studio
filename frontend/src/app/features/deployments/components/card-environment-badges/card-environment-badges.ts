@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import type { TaskInfo } from '../../../../models/task.model';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { CardEnvironmentBadge } from '../../models/card-deployment.model';
 import { CardDeploymentService } from '../../services/card-deployment.service';
 

@@ -15,14 +15,14 @@
   min-width: 0;
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-elevated);
 }
 
 .docs-index__label {
   flex: 0 0 auto;
   color: var(--studio-fg-dim);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -40,11 +40,11 @@
   flex: 0 0 auto;
   padding: calc(var(--studio-spacing-1) / 2) var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-bg);
   color: var(--studio-fg-dim);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   cursor: pointer;
 
   &:hover,
@@ -58,7 +58,7 @@
 .file-card {
   border: 1px solid var(--studio-border);
   background: var(--studio-bg-editor);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   overflow: visible;
   display: flex;
   flex-direction: column;
@@ -85,13 +85,13 @@
 .file-card__head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
   cursor: pointer;
   user-select: none;
   background: var(--studio-bg-hover);
   border-bottom: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   min-width: 0;
   outline: none;
 
@@ -105,24 +105,24 @@
 
   .file-card--expanded > & {
     border-bottom-color: var(--studio-border);
-    border-radius: 7px 7px 0 0;
+    border-radius: var(--studio-compat-radius-1) var(--studio-compat-radius-1) 0 0;
   }
 }
 
 .file-card__caret {
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   color: var(--studio-fg-dim);
   width: 12px;
   text-align: center;
 }
 
 .file-card__icon {
-  font-size: 13px;
+  font-size: var(--studio-font-size-md);
   line-height: 1;
 }
 
 .file-card__topic {
-  font-size: 13px;
+  font-size: var(--studio-font-size-md);
   font-weight: 600;
   color: var(--studio-fg-strong);
   overflow: hidden;
@@ -142,7 +142,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--studio-fg-dim);
-  font-size: 10.5px;
+  font-size: var(--studio-compat-type-44);
 }
 
 .file-card__spacer {
@@ -150,9 +150,9 @@
 }
 
 .file-card__chip {
-  font-size: 10px;
-  padding: 1px 7px;
-  border-radius: 999px;
+  font-size: var(--studio-compat-type-1);
+  padding: var(--studio-compat-space-6) var(--studio-compat-space-11);
+  border-radius: var(--studio-compat-radius-2);
   font-weight: 500;
   letter-spacing: 0.04em;
   text-transform: lowercase;
@@ -184,9 +184,9 @@
 
 .file-card__action {
   margin-left: var(--studio-spacing-2);
-  font-size: 11px;
-  padding: 3px 10px;
-  border-radius: 4px;
+  font-size: var(--studio-compat-type-6);
+  padding: var(--studio-compat-space-1) var(--studio-compat-space-5);
+  border-radius: var(--studio-compat-radius-6);
   border: 1px solid var(--studio-border);
   background: var(--studio-bg);
   color: var(--studio-fg-strong);
@@ -206,9 +206,9 @@
 }
 
 .file-card__body {
-  padding: 10px 14px 12px;
+  padding: var(--studio-compat-space-5) var(--studio-compat-space-3) var(--studio-spacing-3);
   background: var(--studio-bg-editor);
-  border-radius: 0 0 7px 7px;
+  border-radius: 0 0 var(--studio-compat-radius-1) var(--studio-compat-radius-1);
 }
 
 .file-card__raw {
@@ -217,11 +217,11 @@
   padding: var(--studio-spacing-3);
   overflow: auto;
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg);
   color: var(--studio-fg);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   line-height: 1.55;
   white-space: pre-wrap;
 }
@@ -235,7 +235,7 @@
   width: 100%;
   min-height: 520px;
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-editor);
 }
 
@@ -250,26 +250,26 @@
 }
 
 .file-card__preview {
-  padding: 8px 14px 10px;
+  padding: var(--studio-spacing-2) var(--studio-compat-space-3) var(--studio-compat-space-5);
   background: var(--studio-bg-editor);
   cursor: pointer;
   position: relative;
-  border-radius: 0 0 7px 7px;
+  border-radius: 0 0 var(--studio-compat-radius-1) var(--studio-compat-radius-1);
 }
 
 .file-card__preview-rendered {
   max-height: 14em;
   overflow: hidden;
-  mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
+  mask-image: linear-gradient(to bottom, var(--studio-compat-ink-38) 70%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, var(--studio-compat-ink-38) 70%, transparent 100%);
 }
 
 .file-card__expand-link {
-  margin-top: 6px;
+  margin-top: var(--studio-compat-space-2);
   background: transparent;
   border: none;
   padding: 0;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   color: var(--studio-accent);
   cursor: pointer;
   text-decoration: underline;
@@ -281,7 +281,7 @@
 
 .file-card__preview-empty,
 .file-card__state {
-  padding: 6px 0;
+  padding: var(--studio-compat-space-2) 0;
 }
 
 .file-card__state--error {
@@ -293,12 +293,12 @@
 .files-pane__hint {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: var(--studio-compat-space-5);
+  padding: var(--studio-spacing-3) var(--studio-compat-space-3);
   border: 1px dashed var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: color-mix(in srgb, var(--studio-accent) 6%, transparent);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   color: var(--studio-fg-dim);
   line-height: 1.55;
 
@@ -306,13 +306,13 @@
     font-family: var(--font-mono);
     background: var(--studio-bg-hover);
     color: var(--studio-fg-strong);
-    padding: 1px 4px;
-    border-radius: 3px;
+    padding: var(--studio-compat-space-6) var(--studio-spacing-1);
+    border-radius: var(--studio-compat-radius-9);
   }
 }
 
 .files-pane__hint-icon {
-  font-size: 14px;
+  font-size: var(--studio-font-size-lg);
   line-height: 1.55;
 }
 
@@ -323,5 +323,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .docs-index__link { transition-duration: 0s; }
+  .docs-index__link { transition-duration: var(--studio-compat-duration-2); }
 }

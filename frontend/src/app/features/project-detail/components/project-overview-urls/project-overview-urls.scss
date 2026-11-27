@@ -20,12 +20,12 @@
 .overview-urls__head h2 {
   margin: var(--studio-spacing-1) 0 0;
   color: var(--studio-fg-strong);
-  font-size: 0.98rem;
+  font-size: var(--studio-compat-type-81);
 }
 .overview-urls__eyebrow {
   margin: 0;
   color: var(--studio-fg-muted);
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -39,7 +39,7 @@
   color: var(--studio-accent);
   cursor: pointer;
   font: inherit;
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 .overview-urls__details:hover,
 .overview-urls__more:hover { color: var(--studio-fg-strong); }
@@ -50,10 +50,10 @@
   gap: var(--studio-spacing-2);
   padding-bottom: var(--studio-spacing-3);
   color: var(--studio-fg-muted);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
   font-variant-numeric: tabular-nums;
 }
-.overview-urls__summary strong { color: var(--studio-fg-strong); font-size: 1.15rem; }
+.overview-urls__summary strong { color: var(--studio-fg-strong); font-size: var(--studio-compat-type-33); }
 
 .overview-urls__list {
   display: grid;
@@ -69,7 +69,7 @@
   gap: var(--studio-spacing-2);
   min-height: 36px;
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: var(--studio-card-muted-bg);
 }
 .overview-urls__link {
@@ -82,12 +82,12 @@
   cursor: pointer;
   text-align: left;
 }
-.overview-urls__link strong { font-size: 0.8rem; }
+.overview-urls__link strong { font-size: var(--studio-compat-type-12); }
 .overview-urls__link span {
   overflow: hidden;
   color: var(--studio-fg-muted);
   font-family: var(--font-mono, monospace);
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -97,12 +97,12 @@
 .overview-urls__start {
   padding: var(--studio-spacing-1) var(--studio-spacing-3);
   border: 1px solid var(--studio-accent);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--studio-accent) 12%, transparent);
   color: var(--studio-accent-strong);
   cursor: pointer;
   font: inherit;
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   font-weight: 600;
 }
 .overview-urls__start:disabled { cursor: wait; opacity: 0.65; }
@@ -110,10 +110,10 @@
 
 .overview-urls__empty {
   padding: var(--studio-spacing-4);
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: var(--studio-card-muted-bg);
   color: var(--studio-fg-muted);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 .overview-urls__empty--error { color: var(--studio-accent-warn); }
 

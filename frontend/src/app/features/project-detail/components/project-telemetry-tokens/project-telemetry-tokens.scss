@@ -9,8 +9,8 @@
 .telemetry-tokens__signals { display: flex; gap: var(--studio-spacing-3); margin: 0; padding: 0; border: 0; }
 .telemetry-tokens__signals legend { padding: 0; margin-bottom: var(--studio-spacing-1); }
 .telemetry-tokens__signals label { display: flex; align-items: center; gap: var(--studio-spacing-1); }
-.telemetry-tokens__created { display: grid; gap: var(--studio-spacing-3); padding: var(--studio-spacing-4); background: var(--studio-surface-muted); border: 1px solid var(--studio-border); border-radius: 8px; }
-.telemetry-tokens__created pre { overflow-x: auto; padding: var(--studio-spacing-3); background: var(--studio-surface); border: 1px solid var(--studio-border); border-radius: 6px; font-family: var(--font-mono); white-space: pre; }
+.telemetry-tokens__created { display: grid; gap: var(--studio-spacing-3); padding: var(--studio-spacing-4); background: var(--studio-surface-muted); border: 1px solid var(--studio-border); border-radius: var(--studio-compat-radius-5); }
+.telemetry-tokens__created pre { overflow-x: auto; padding: var(--studio-spacing-3); background: var(--studio-surface); border: 1px solid var(--studio-border); border-radius: var(--studio-compat-radius-7); font-family: var(--font-mono); white-space: pre; }
 .telemetry-tokens__actions, .telemetry-tokens__row-actions { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
 .telemetry-tokens__table-wrap { overflow-x: auto; }
 .telemetry-tokens table { width: 100%; border-collapse: collapse; }
@@ -19,13 +19,13 @@
 .telemetry-tokens th[scope='row'] small { display: block; margin-top: var(--studio-spacing-1); font-weight: 400; }
 .telemetry-tokens tr[data-state='revoked'], .telemetry-tokens tr[data-state='expired'] { color: var(--studio-fg-dim); }
 .telemetry-tokens__state { display: inline-flex; align-items: center; gap: var(--studio-spacing-1); }
-.telemetry-tokens__state::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--studio-fg-dim); }
+.telemetry-tokens__state::before { content: ''; width: 8px; height: 8px; border-radius: var(--studio-compat-radius-4); background: var(--studio-fg-dim); }
 .telemetry-tokens__state[data-state='active']::before { background: var(--studio-success); }
 .telemetry-tokens__error { padding: var(--studio-spacing-2); background: var(--notify-error-tint); }
 .telemetry-tokens__sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.telemetry-tokens input, .telemetry-tokens select { padding: var(--studio-spacing-1) var(--studio-spacing-2); color: inherit; font: inherit; background: var(--studio-surface); border: 1px solid var(--studio-border); border-radius: 6px; }
+.telemetry-tokens input, .telemetry-tokens select { padding: var(--studio-spacing-1) var(--studio-spacing-2); color: inherit; font: inherit; background: var(--studio-surface); border: 1px solid var(--studio-border); border-radius: var(--studio-compat-radius-7); }
 .telemetry-tokens input[type='checkbox'] { padding: 0; }
-.telemetry-tokens button { padding: var(--studio-spacing-1) var(--studio-spacing-3); color: var(--studio-fg); font: inherit; background: var(--studio-surface); border: 1px solid var(--studio-border); border-radius: 6px; cursor: pointer; }
+.telemetry-tokens button { padding: var(--studio-spacing-1) var(--studio-spacing-3); color: var(--studio-fg); font: inherit; background: var(--studio-surface); border: 1px solid var(--studio-border); border-radius: var(--studio-compat-radius-7); cursor: pointer; }
 .telemetry-tokens button.telemetry-tokens__primary { color: var(--studio-on-accent); background: var(--studio-accent); border-color: var(--studio-accent); }
 .telemetry-tokens button.telemetry-tokens__danger { color: var(--studio-error); background: color-mix(in srgb, var(--studio-error) 10%, var(--studio-surface)); border-color: color-mix(in srgb, var(--studio-error) 55%, var(--studio-border)); }
 .telemetry-tokens button.telemetry-tokens__ghost { background: transparent; border-color: transparent; }

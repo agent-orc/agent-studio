@@ -5,8 +5,8 @@
 .wss {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 16px;
+  gap: var(--studio-spacing-4);
+  padding: var(--studio-spacing-4);
   color: var(--studio-fg);
 }
 
@@ -14,20 +14,20 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--studio-spacing-3);
   flex-wrap: wrap;
 }
 
 .wss__title {
-  margin: 0 0 4px 0;
-  font-size: 1.25rem;
+  margin: 0 0 var(--studio-spacing-1) 0;
+  font-size: var(--studio-compat-type-73);
   color: var(--studio-fg-strong);
 }
 
 .wss__sub {
   margin: 0;
   color: var(--studio-fg-dim);
-  font-size: 0.92rem;
+  font-size: var(--studio-compat-type-8);
 }
 
 .wss__sub-stats { color: var(--studio-fg); }
@@ -35,7 +35,7 @@
 .wss__controls {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--studio-spacing-2);
   flex-wrap: wrap;
 }
 
@@ -43,18 +43,18 @@
   background: var(--studio-bg-hover);
   border: 1px solid var(--studio-border-strong);
   color: var(--studio-fg);
-  padding: 5px 8px;
-  border-radius: 6px;
+  padding: var(--studio-compat-space-7) var(--studio-spacing-2);
+  border-radius: var(--studio-compat-radius-7);
   font: inherit;
-  font-size: 0.84rem;
+  font-size: var(--studio-compat-type-71);
 }
 
 .wss__refresh {
   background: var(--studio-bg-hover);
   border: 1px solid var(--studio-border-strong);
   color: var(--studio-fg);
-  padding: 5px 10px;
-  border-radius: 6px;
+  padding: var(--studio-compat-space-7) var(--studio-compat-space-5);
+  border-radius: var(--studio-compat-radius-7);
   cursor: pointer;
   font: inherit;
 }
@@ -79,17 +79,17 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 4px 6px;
+  padding: var(--studio-spacing-1) var(--studio-spacing-1) var(--studio-compat-space-2);
 }
 
 .wss__bucket-title {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: var(--studio-compat-type-16);
   color: var(--studio-fg);
   font-variant-numeric: tabular-nums;
 }
 
 .wss__bucket-count {
   color: var(--studio-fg-dim);
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
 }

@@ -6,7 +6,7 @@ import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { WorkspaceManagementComponent } from './workspace-management.component';
 import type { RegistryProjectSummary, RegistryWorkspaceListItem } from '../../../../models/task.model';
-import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 
 /**
  * AGT-2035 smoke. Compiles + instantiates the standalone component,

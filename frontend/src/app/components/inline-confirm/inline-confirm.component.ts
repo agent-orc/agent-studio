@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, effect, inject, input, model, output, untracked, viewChild } from '@angular/core';
-import { ModalStackService } from '../../services/modal-stack.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 
 /**
  * A destructive action that is confirmed in place. At rest it is one quiet

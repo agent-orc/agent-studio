@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
 import type { EnvironmentCause } from '../../models/environment-attention';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 
 @Component({ selector: 'app-environment-attention', standalone: true,
   imports: [DisclosureMarkerComponent],

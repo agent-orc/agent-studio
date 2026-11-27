@@ -5,9 +5,9 @@
   border-bottom: 1px solid var(--studio-border); background: var(--studio-bg-surface); overflow-x: auto; }
 .layers__title { @include m.type-label; align-self: center; padding-right: var(--studio-spacing-1); }
 .layers__switch { --layer-hue: var(--studio-fg); display: flex; align-items: center; gap: var(--studio-spacing-2); flex: 1 1 0; min-width: 0;
-  min-height: 44px; padding: var(--studio-spacing-1) var(--studio-spacing-3); border: 1px solid var(--studio-border); border-radius: 6px;
+  min-height: 44px; padding: var(--studio-spacing-1) var(--studio-spacing-3); border: 1px solid var(--studio-border); border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-surface); color: var(--studio-fg-muted); font: inherit; text-align: left; cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease; }
+  transition: background var(--studio-compat-duration-3) ease, border-color var(--studio-compat-duration-3) ease; }
 .layers__switch[data-layer='perf'] { --layer-hue: var(--studio-accent-teal); }
 .layers__switch[data-layer='network'] { --layer-hue: var(--studio-accent-3-strong); }
 .layers__switch[data-layer='storage'] { --layer-hue: var(--studio-accent-4-strong); }
@@ -24,8 +24,8 @@
 .layers__fact { font-size: var(--studio-font-size-sm); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .layers__state { display: flex; align-items: center; gap: var(--studio-spacing-1); flex: none; font-size: var(--studio-font-size-sm); font-weight: 600; }
 .layers__word { min-width: 2.2ch; }
-.layers__track { display: inline-flex; align-items: center; width: 24px; height: 14px; border: 1px solid var(--studio-fg-muted); border-radius: 7px; }
-.layers__thumb { width: 8px; height: 8px; border-radius: 50%; background: var(--studio-fg-muted); transform: translateX(2px); transition: transform 0.12s ease; }
+.layers__track { display: inline-flex; align-items: center; width: 24px; height: 14px; border: 1px solid var(--studio-fg-muted); border-radius: var(--studio-compat-radius-1); }
+.layers__thumb { width: 8px; height: 8px; border-radius: var(--studio-compat-radius-4); background: var(--studio-fg-muted); transform: translateX(2px); transition: transform var(--studio-compat-duration-3) ease; }
 .layers__switch[aria-checked='true'] .layers__track { border-color: var(--layer-hue); background: var(--layer-hue); }
 .layers__switch[aria-checked='true'] .layers__thumb { background: var(--studio-bg-surface); transform: translateX(12px); }
 

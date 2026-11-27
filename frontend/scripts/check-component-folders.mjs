@@ -24,7 +24,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { execSync } from 'node:child_process';
 
-const root = 'src/app';
+const root = 'src/app projects/studio-ui/src projects/studio-ui-catalogue/src';
 const files = execSync(`git ls-files --cached --others --exclude-standard ${root}`, { encoding: 'utf8' })
   .split('\n')
   .filter(existsSync)

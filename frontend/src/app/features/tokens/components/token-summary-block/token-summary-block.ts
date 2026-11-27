@@ -7,7 +7,7 @@ import type { TokenSummaryByModel } from '../../models/tokens.model';
 import { formatCompactTokens, formatCompactUsd } from '../../token-number-format.util';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 /**
  * Per-project token rollup block. Three rows:
  *

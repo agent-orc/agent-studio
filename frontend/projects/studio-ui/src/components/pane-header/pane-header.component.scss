@@ -1,0 +1,107 @@
+@use '../../styles/mixins' as m;
+
+/*
+ * Pane header — shared chrome for the prompt / protocol / git panes.
+ * Reads only studio-shell tokens so it inherits theme flipping for
+ * free.
+ */
+.pane-header {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 6px 0 0;
+  overflow: hidden;
+  background: transparent;
+  border-bottom: 1px solid var(--studio-border);
+  font-size: 12px;
+  color: var(--studio-fg-dim);
+}
+
+.pane-header__title-block {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.pane-header__icon {
+  color: var(--studio-fg-dim);
+  flex-shrink: 0;
+}
+
+.pane-header__icon-emoji {
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.15));
+}
+
+/*
+ * Brand-tinted wash for the protocol pane. Reads `--studio-accent` so it
+ * flips with the theme. Kept here (not in protocol-pane.scss) so any
+ * future pane that wants the same identity can opt in via
+ * [modifier]="'cool'" without copying SCSS.
+ */
+.pane-header--cool {
+  background: transparent;
+}
+
+.pane-header__title {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--studio-fg-strong);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pane-header__subtitle {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--studio-fg-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.pane-header__spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* A projected tab strip already is the header's flexible content. Let it own
+ * the complete space before the fixed actions; the generic title-header
+ * spacer must not compete for that width. The sibling selector keeps this
+ * coordination in shared chrome instead of duplicating it in prompt/protocol
+ * callers. */
+.pane-header > :is(sui-pane-tabs, app-pane-tabs).pane-tabs-host--header {
+  flex: 1 1 auto;
+}
+
+.pane-header > :is(sui-pane-tabs, app-pane-tabs).pane-tabs-host--header ~ .pane-header__spacer {
+  flex: 0 0 0;
+}
+
+.pane-header__btn {
+  @include m.icon-button(24px);
+  align-self: center;
+  flex: 0 0 auto;
+
+  // Blockify the inline expand/close SVG so its baseline descender gap
+  // doesn't lift the glyph off the header's mid-axis — this keeps the two
+  // trailing buttons flush with the tab-strip icons on one centre line.
+  :is(sui-studio-icon, app-studio-icon) {
+    display: flex;
+    align-items: center;
+  }
+
+  &--active {
+    background: var(--studio-bg-selected, var(--studio-bg-elevated));
+    color: var(--studio-fg-strong);
+  }
+}

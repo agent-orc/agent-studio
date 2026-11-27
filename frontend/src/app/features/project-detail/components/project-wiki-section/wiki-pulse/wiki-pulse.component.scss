@@ -33,10 +33,10 @@
 .wpulse__badge {
   margin-left: auto;
   padding: 0 var(--studio-spacing-2);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--pwiki-paper-soft);
   color: var(--pwiki-paper-muted);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 18px;
@@ -58,10 +58,10 @@
   margin-left: var(--studio-spacing-1);
   padding: 0 var(--studio-spacing-2);
   border: 1px solid var(--pwiki-paper-border);
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--pwiki-paper-bg);
   color: var(--pwiki-paper-muted);
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   font-weight: 600;
   font-family: inherit;
   letter-spacing: normal;
@@ -91,35 +91,35 @@
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--pwiki-paper-border);
   border-top-width: 3px;
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: var(--pwiki-paper-bg);
 }
 
 .wpulse__seg-title {
   overflow: hidden;
   color: var(--pwiki-paper-fg);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .wpulse__seg-grade {
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
   font-weight: 700;
   letter-spacing: 0.03em;
 }
 
 .wpulse__seg-count {
   color: var(--pwiki-paper-muted);
-  font-size: 0.66rem;
+  font-size: var(--studio-compat-type-63);
   font-variant-numeric: tabular-nums;
 }
 
 .wpulse__hint {
   margin: 0;
   color: var(--pwiki-paper-muted);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
 }
 
 /* ---- lists and rows ---- */
@@ -141,7 +141,7 @@
   gap: var(--studio-spacing-1);
   padding: var(--studio-spacing-2);
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: transparent;
   color: var(--pwiki-paper-fg);
   font: inherit;
@@ -173,10 +173,10 @@
   max-width: 100%;
   overflow: hidden;
   padding: 0 var(--studio-spacing-2);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: color-mix(in srgb, var(--studio-accent-3) 14%, transparent);
   color: var(--pwiki-paper-fg);
-  font-size: 0.64rem;
+  font-size: var(--studio-compat-type-80);
   font-weight: 600;
   line-height: 16px;
   text-overflow: ellipsis;
@@ -185,10 +185,10 @@
 
 .wpulse__task {
   padding: 0 var(--studio-spacing-2);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: color-mix(in srgb, var(--studio-accent-4-strong) 14%, transparent);
   color: var(--pwiki-paper-fg);
-  font-size: 0.64rem;
+  font-size: var(--studio-compat-type-80);
   font-weight: 700;
   font-family: var(--font-mono, monospace);
   letter-spacing: 0.02em;
@@ -198,14 +198,14 @@
 .wpulse__kind {
   margin-left: auto;
   color: var(--pwiki-paper-muted);
-  font-size: 0.6rem;
+  font-size: var(--studio-compat-type-64);
   font-weight: 700;
   letter-spacing: 0.05em;
 }
 
 .wpulse__row-title {
   overflow: hidden;
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -217,7 +217,7 @@
   gap: var(--studio-spacing-2);
   min-width: 0;
   color: var(--pwiki-paper-muted);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
 }
 
 .wpulse__author {
@@ -236,14 +236,14 @@
   flex-direction: column;
   gap: var(--studio-spacing-1);
   padding: var(--studio-spacing-2);
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: color-mix(in srgb, var(--studio-warn) 8%, transparent);
 }
 
 .wpulse__signal-kind,
 .wpulse__action {
   color: var(--pwiki-paper-fg);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 }
 
 .wpulse__sub {
@@ -255,7 +255,7 @@
 .wpulse__sub-title {
   margin: 0;
   color: var(--pwiki-paper-muted);
-  font-size: 0.66rem;
+  font-size: var(--studio-compat-type-63);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -263,14 +263,14 @@
 
 .wpulse__reason {
   color: var(--pwiki-paper-muted);
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
 }
 
 .wpulse__path {
   overflow: hidden;
   background: transparent;
   color: var(--pwiki-paper-muted);
-  font-size: 0.68rem;
+  font-size: var(--studio-compat-type-15);
   font-family: var(--font-mono, monospace);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -279,7 +279,7 @@
 .wpulse__empty {
   margin: 0;
   color: var(--pwiki-paper-muted);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
 }
 
 /* ---- activity card ---- */
@@ -289,13 +289,13 @@
   flex-direction: column;
   gap: var(--studio-spacing-1);
   padding: var(--studio-spacing-2);
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: color-mix(in srgb, var(--studio-accent-3) 8%, transparent);
 }
 
 .wpulse__live-run > span {
   color: var(--pwiki-paper-muted);
-  font-size: 0.7rem;
+  font-size: var(--studio-compat-type-18);
 }
 
 /* ---- tones (drift segments, run status) ---- */
@@ -325,4 +325,4 @@
 // Dead-link/warning rows are buttons now: full-width reset in card look.
 .wpulse__warning-open { --wpulse-warning-stack-gap: 2px; display: flex; flex-direction: column; gap: var(--wpulse-warning-stack-gap); width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .wpulse__warning-open:hover .wpulse__row-title { text-decoration: underline; }
-.wpulse__warning-doc { font-family: var(--studio-font-mono, monospace); font-size: 10px; color: var(--studio-fg-muted); overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.wpulse__warning-doc { font-family: var(--studio-font-mono, monospace); font-size: var(--studio-compat-type-1); color: var(--studio-fg-muted); overflow: hidden; text-overflow: ellipsis; max-width: 100%; }

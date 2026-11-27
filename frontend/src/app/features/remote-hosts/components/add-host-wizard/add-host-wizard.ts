@@ -5,7 +5,7 @@ import type { ChatMessage, ChatSubmitEvent } from 'coding-agent-chat/core';
 import { Subscription } from 'rxjs';
 import { ProviderAuthStatusService } from '../../services/provider-auth-status.service';
 import { RunHostEnrollmentComponent } from '../run-host-enrollment/run-host-enrollment';
-import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 
 export interface ProvisionedHostDraft {
   name: string;

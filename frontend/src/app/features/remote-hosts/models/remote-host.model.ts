@@ -1,7 +1,7 @@
 import type { CliType } from '../../../models/task.model';
 import type { RunnerProjectPreflight } from '../../../models/task.model';
 import type { HostReleaseDrift, HostReleaseIdentity } from './host-release-drift';
-import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * Remote-hosts registry model (AGT-1921).

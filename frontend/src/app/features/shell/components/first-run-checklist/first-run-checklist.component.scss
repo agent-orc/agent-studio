@@ -15,7 +15,7 @@
 .first-run p { color: var(--studio-fg-muted); }
 .first-run button {
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-surface);
   color: var(--studio-fg);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
@@ -31,22 +31,22 @@
   gap: var(--studio-spacing-3);
   padding: var(--studio-spacing-4);
   border: 1px solid var(--studio-border);
-  border-radius: 12px;
+  border-radius: var(--studio-compat-radius-15);
   background: var(--studio-bg-surface);
 }
 .first-run__steps > li[data-state="ready"] { background: var(--studio-bg-success, var(--studio-bg-surface)); }
 .first-run__number { font-variant-numeric: tabular-nums; color: var(--studio-fg-muted); }
-.first-run__steps h3 { font-size: 1rem; }
+.first-run__steps h3 { font-size: var(--studio-compat-type-23); }
 .first-run__steps p { margin-top: var(--studio-spacing-2); }
 .first-run__steps button { margin-top: var(--studio-spacing-2); }
 .first-run__state { justify-self: end; }
 .first-run__subrow { display: flex; align-items: center; gap: var(--studio-spacing-3); }
 .first-run__form { display: flex; flex-wrap: wrap; align-items: end; gap: var(--studio-spacing-3); margin-top: var(--studio-spacing-3); }
 .first-run__form label { display: grid; gap: var(--studio-spacing-1); }
-.first-run__form input, .first-run__form select { border: 1px solid var(--studio-border); border-radius: 8px; background: var(--studio-bg-surface); color: var(--studio-fg); padding: var(--studio-spacing-2); }
+.first-run__form input, .first-run__form select { border: 1px solid var(--studio-border); border-radius: var(--studio-compat-radius-5); background: var(--studio-bg-surface); color: var(--studio-fg); padding: var(--studio-spacing-2); }
 .first-run__form p, .first-run__form code { width: 100%; }
 .first-run__demo-confirm { display: flex; align-items: center; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-3); }
 .first-run code { display: block; overflow-wrap: anywhere; margin-top: var(--studio-spacing-2); }
 .first-run__project { display: grid; justify-items: start; gap: var(--studio-spacing-1); color: var(--studio-fg); }
-.first-run__project select { border: 1px solid var(--studio-border); border-radius: 8px; background: var(--studio-bg-surface); color: var(--studio-fg); padding: var(--studio-spacing-2); min-width: 16rem; max-width: 100%; }
+.first-run__project select { border: 1px solid var(--studio-border); border-radius: var(--studio-compat-radius-5); background: var(--studio-bg-surface); color: var(--studio-fg); padding: var(--studio-spacing-2); min-width: 16rem; max-width: 100%; }
 .first-run__checkout { margin-top: var(--studio-spacing-3); }

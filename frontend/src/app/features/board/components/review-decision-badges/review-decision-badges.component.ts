@@ -3,7 +3,7 @@ import { TaskState, type TaskInfo } from '../../../../models/task.model';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { buildDecisionDamBadge, buildHumanReviewBadge } from '../task-card/task-card-view-model';
 import { buildParkedBadge, type ParkedBoardBadge } from '../../../../models/parked-blocker-presentation';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * AGT-3403: a decision park waits for a person to choose (info); a failure park

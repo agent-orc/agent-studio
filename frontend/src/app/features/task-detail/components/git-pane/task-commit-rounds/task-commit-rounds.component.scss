@@ -7,13 +7,13 @@
   flex-direction: column;
   gap: var(--studio-spacing-1);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   padding: var(--studio-spacing-1);
   background: var(--studio-bg-hover);
 }
 
 .commit-group--collapsed {
-  padding: 2px var(--studio-spacing-1);
+  padding: var(--studio-compat-space-4) var(--studio-spacing-1);
 }
 
 .commit-group__toggle {
@@ -24,12 +24,12 @@
   min-width: 0;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: transparent;
   color: var(--studio-fg);
   text-align: left;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .commit-group__toggle:hover {
@@ -50,7 +50,7 @@
 
 .commit-group__caret {
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 
 .commit-group__title {
@@ -85,7 +85,7 @@
 
 .commit-chain__item--all {
   padding-bottom: var(--studio-spacing-1);
-  margin-bottom: 2px;
+  margin-bottom: var(--studio-compat-space-4);
   border-bottom: 1px solid var(--studio-border);
 }
 
@@ -100,13 +100,13 @@
   flex: 1 1 auto;
   min-width: 0;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   border: 1px solid transparent;
   background: transparent;
   color: var(--studio-fg);
   text-align: left;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .commit-chain__button:hover {
@@ -124,7 +124,7 @@
 .commit-chain__meta {
   color: var(--studio-fg-muted);
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   flex: 0 0 auto;
   white-space: nowrap;
 }
@@ -147,7 +147,7 @@
   border-top: 1px solid var(--studio-border);
   padding: var(--studio-spacing-2);
   color: var(--studio-fg-dim);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .superseded summary {
@@ -159,7 +159,7 @@
 .superseded__round {
   margin-top: var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-elevated);
 }
 
@@ -167,7 +167,7 @@
   margin: 0;
   padding: var(--studio-spacing-2);
   color: var(--studio-fg-strong);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .commit-chain__item--superseded:not(.commit-chain__item--selected) {

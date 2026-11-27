@@ -10,7 +10,7 @@
   flex: 0 1 auto;
   overflow: hidden;
   color: var(--studio-fg-strong);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -24,7 +24,7 @@
   background: transparent;
   color: var(--studio-fg-muted);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   text-overflow: ellipsis;
 
   &::placeholder {

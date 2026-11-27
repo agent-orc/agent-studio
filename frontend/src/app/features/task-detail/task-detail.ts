@@ -11,8 +11,8 @@ import {
   OnDestroy,
   ViewChild, ViewEncapsulation,
 } from '@angular/core';
-import { ModalStackService } from '../../services/modal-stack.service';
-import { NotificationService } from '../../services/notification.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { FormsModule } from '@angular/forms';
 import type {
   TaskDetail,

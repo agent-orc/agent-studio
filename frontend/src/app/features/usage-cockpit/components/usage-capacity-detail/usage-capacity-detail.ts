@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, computed, inject, input } from '@angular/core';
 
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { clearVisibleInterval, setVisibleInterval } from '../../../../utils/visible-interval';
 import { CliCatalogStore } from '../../../cli/catalog';
 import type { CliType } from '../../../../models/task.model';

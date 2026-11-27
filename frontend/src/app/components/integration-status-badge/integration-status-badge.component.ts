@@ -3,9 +3,9 @@ import type { HttpErrorResponse } from '@angular/common/http';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { isMergedIntegrationStatus } from '../../features/git';
 import type { IntegrationVerificationState, TaskIntegrationStatus } from '../../features/git';
-import { PendingButtonDirective } from '../async-feedback';
-import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
-import { NotificationService } from '../../services/notification.service';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from '../../services/task.service';
 
 /**

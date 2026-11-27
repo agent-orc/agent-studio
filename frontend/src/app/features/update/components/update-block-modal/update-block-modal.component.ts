@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 
 import { UpdateClientService } from '../../../../services/update.service';
 import { UpdatePhase } from '../../../../models/update-service.model';
-import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
+import { OverlayPortalDirective } from '@studio/ui/directives/overlay-portal.directive';
 
 /**
  * Full-screen, click-blocking modal that takes over the UI while an update

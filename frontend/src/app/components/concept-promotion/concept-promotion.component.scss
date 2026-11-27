@@ -5,7 +5,7 @@
   gap: var(--studio-spacing-2);
   min-width: 0;
   color: var(--studio-fg);
-  font-size: 0.75rem;
+  font-size: var(--studio-compat-type-11);
 }
 
 .promotion__bar {
@@ -31,7 +31,7 @@
 }
 
 .promotion__head { display: grid; gap: var(--studio-spacing-1); }
-.promotion__head strong { color: var(--studio-fg-strong); font-size: 0.8rem; }
+.promotion__head strong { color: var(--studio-fg-strong); font-size: var(--studio-compat-type-12); }
 .promotion__head span,
 .promotion__state { margin: 0; color: var(--studio-fg-dim); }
 

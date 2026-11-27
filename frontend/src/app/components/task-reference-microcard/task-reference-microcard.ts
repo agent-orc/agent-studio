@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
 import { projectIdentity } from '../../services/project-identity.util';
-import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
-import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { laneName, laneSentence, laneTone } from '../../models/lane-presentation';
 import { TaskState } from '../../models/task.model';
 

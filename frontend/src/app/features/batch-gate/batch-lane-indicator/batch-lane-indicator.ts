@@ -2,7 +2,7 @@ import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import type { TaskInfo } from '../../../models/task.model';
 import { BatchGateService } from '../../../services/batch-gate.service';
-import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { batchAlert, batchShortId, batchWaitingCards, type BatchAlert } from '../../../models/batch-gate.model';
 import { BatchPanelComponent } from '../batch-panel/batch-panel';
 

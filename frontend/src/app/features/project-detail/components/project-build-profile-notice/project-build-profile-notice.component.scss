@@ -6,10 +6,10 @@
   gap: var(--studio-spacing-2);
   padding: var(--studio-spacing-3);
   border: 1px solid var(--studio-card-muted-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-card-muted-bg);
   color: var(--studio-fg-dim);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
 }
 
 .verify-notice__dot {
@@ -17,7 +17,7 @@
   height: 8px;
   flex: 0 0 auto;
   margin-top: var(--studio-spacing-1);
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   background: var(--studio-fg-muted);
 }
 
@@ -31,10 +31,10 @@
   margin: 0;
   padding: var(--studio-spacing-2);
   border: 1px solid var(--studio-card-muted-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   color: var(--studio-fg);
   font-family: var(--studio-font-mono, monospace);
-  font-size: 0.75rem;
+  font-size: var(--studio-compat-type-11);
   white-space: pre;
   overflow-x: auto;
 }

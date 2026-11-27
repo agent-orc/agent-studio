@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import type { TaskExecutionLocation } from '../../models/task.model';
-import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * The durable reason a runner refused an offered task.

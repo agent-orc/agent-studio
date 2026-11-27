@@ -12,7 +12,7 @@
   border-bottom: 1px solid var(--studio-border);
   background: var(--studio-bg-surface);
   color: var(--studio-fg-dim);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 
   &__identity,
   &__integration,
@@ -40,7 +40,7 @@
   &__label {
     flex: 0 0 auto;
     color: var(--studio-fg-muted);
-    font-size: 9px;
+    font-size: var(--studio-compat-type-4);
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -52,7 +52,7 @@
     overflow: hidden;
     color: var(--studio-fg);
     font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: var(--studio-compat-type-44);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -60,19 +60,19 @@
   &__sha {
     flex: 0 0 auto;
     padding: var(--studio-spacing-1) var(--studio-spacing-2);
-    border-radius: 5px;
+    border-radius: var(--studio-compat-radius-13);
     background: var(--studio-card-muted-bg);
     font-variant-numeric: tabular-nums;
   }
 
   &__badge {
     flex: 0 0 auto;
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
   }
 
   &__integration-state {
     min-width: 0;
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
   }
 
   &__integration { max-width: 360px; }
@@ -81,7 +81,7 @@
   &__tasks summary {
     min-height: 28px;
     padding: 0 var(--studio-spacing-2);
-    border-radius: 5px;
+    border-radius: var(--studio-compat-radius-13);
     cursor: pointer;
     list-style: none;
 
@@ -116,7 +116,7 @@
       width: 100%;
       padding: var(--studio-spacing-2);
       border: 0;
-      border-radius: 5px;
+      border-radius: var(--studio-compat-radius-13);
       background: transparent;
       color: var(--studio-fg);
       font: inherit;

@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { DatePipe } from '@angular/common';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { environmentReleaseDisplay, type EnvironmentCardView } from '../../state/deploy-area.model';
 import { environmentHealthDisplay } from '../../state/deploy-status-tone';
 

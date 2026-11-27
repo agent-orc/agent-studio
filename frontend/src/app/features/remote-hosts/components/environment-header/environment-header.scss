@@ -3,7 +3,7 @@
 .rh__intro { flex: 1 1 0; min-width: 0; }
 .rh__title { margin: 0; font-size: var(--studio-font-size-2xl); font-weight: 700; color: var(--studio-fg-strong); }
 .rh__actions { margin-left: auto; display: flex; gap: var(--studio-spacing-2); }
-.rh__refresh, .rh__add { flex: 0 0 auto; background: var(--studio-bg-hover); border: 1px solid var(--studio-border-strong); color: var(--studio-fg); padding: var(--studio-spacing-1) var(--studio-spacing-3); border-radius: 6px; cursor: pointer; font-size: var(--studio-font-size-sm); display: inline-flex; align-items: center; gap: var(--studio-spacing-2); }
+.rh__refresh, .rh__add { flex: 0 0 auto; background: var(--studio-bg-hover); border: 1px solid var(--studio-border-strong); color: var(--studio-fg); padding: var(--studio-spacing-1) var(--studio-spacing-3); border-radius: var(--studio-compat-radius-7); cursor: pointer; font-size: var(--studio-font-size-sm); display: inline-flex; align-items: center; gap: var(--studio-spacing-2); }
 .rh__add { background: var(--studio-accent); border-color: var(--studio-accent); color: var(--studio-on-accent); font-weight: 700; }
 .rh__add:hover { filter: brightness(1.08); }
 .rh__refresh:hover:not(:disabled) { background: var(--studio-bg-selected); }

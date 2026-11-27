@@ -13,8 +13,8 @@ import { TaskTimelinePollService } from '../../../../polling/services/task-timel
 import type { PipelineExecutionRecord, PipelineStep, TaskPipelineResponse } from '../../../../task-pipeline';
 import { ClientService } from '../../../../../services/client.service';
 import { CliModelSelectorComponent } from '../../../../../components/cli-model-selector';
-import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
-import { DisclosureMarkerComponent } from '../../../../../components/disclosure-marker/disclosure-marker.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import { RegressionRadarComponent } from '../../../../regression-radar';
 import type { PipelineStepResultHeader } from '../pipeline-step-result/pipeline-step-result.component';
 import { ReferencesSectionComponent } from '../../references-section/references-section.component';
@@ -32,8 +32,8 @@ import {
   formatTokenCostDisplay,
   incompleteTokenCostLabel,
 } from '../../../../tokens';
-import { NotificationService } from '../../../../../services/notification.service';
-import { ModalStackService } from '../../../../../services/modal-stack.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import {
   buildPipelineGroups,
   groupAriaLabel,
@@ -74,7 +74,7 @@ import {
   decisionBadgeStatusTone, historicalRowLabel, pipelineGroupStatusTone, rowReviewRoundTone, rowStepVerdictTone, runOutcomeCounterTone,
 } from './overview-pipeline-tones';
 import { pipelineStepStatusTone } from '../pipeline-step-result/step-status-tone';
-import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { ProtocolVerdict } from '../../protocol-pane/protocol-verdict';
 import { outcomeDecisionBadge, type DecisionBadgeVm } from './outcome-decision-badge.util';
 import { PipelineAspectResultComponent } from './pipeline-aspect-result/pipeline-aspect-result.component';

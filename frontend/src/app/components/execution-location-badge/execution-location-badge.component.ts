@@ -4,7 +4,7 @@ import { isRawRunnerId } from '../identity-chip/identity-display';
 import { HostAliasService } from '../identity-chip/host-alias.service';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import type { TaskExecutionLocation } from '../../models/task.model';
-import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 type ExecutionState = TaskExecutionLocation['state'];
 

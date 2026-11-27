@@ -3,9 +3,9 @@ import type { TaskInfo } from '../../models/task.model';
 import { laneName, laneTone as laneToneFor } from '../../models/lane-presentation';
 import { projectIdentity } from '../../services/project-identity.util';
 import { cliTypeLabel } from '../../services/format.util';
-import { InfoButtonComponent } from '../info-button/info-button.component';
+import { InfoButtonComponent } from '@studio/ui/components/info-button/info-button.component';
 import { laneDocTopic } from '../info-button/lane-doc-topic';
-import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 const RUN_STATUS_TONES: Readonly<Record<string, StatusTone>> = {
   running: 'running',

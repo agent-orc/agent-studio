@@ -1,5 +1,5 @@
 import { laneName } from '../../../../../models/lane-presentation';
-import type { StudioIconName } from '../../../../../components/studio-icon/studio-icon.component';
+import type { StudioIconName } from '@studio/ui/components/studio-icon/studio-icon.component';
 import type { PipelineStepStatus, StepKind } from '../../../../task-pipeline';
 import type { PipelineRowVm } from './pipeline-row.vm';
 

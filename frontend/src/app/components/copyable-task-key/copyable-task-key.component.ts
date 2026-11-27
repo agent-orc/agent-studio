@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, input, signal } from '@angular/core';
 import { copyTextToClipboard } from '../../services/clipboard.util';
-import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 
 export type CopyableTaskKeyVariant = 'card' | 'detail' | 'reference';
 

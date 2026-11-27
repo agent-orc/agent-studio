@@ -1,4 +1,4 @@
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -19,8 +19,8 @@ import type { RegistryProjectSummary, RegistryWorkspaceListItem } from '../../..
 import { TaskService } from '../../../../services/task.service';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { ProjectLifecycleDialogService } from '../../../../services/project-lifecycle-dialog.service';
-import { SectionHeaderComponent } from '../../../../components/section-header/section-header.component';
-import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../../components/menu';
+import { SectionHeaderComponent } from '@studio/ui/components/section-header/section-header.component';
+import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '@studio/ui/components/menu/index';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { WorkspaceSettingsService } from '../../state/workspace-settings.service';
 import { WorkspaceQuotaDisclosureComponent } from '../../../quota/lazy';

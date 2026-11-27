@@ -1,0 +1,5 @@
+@if (renderer(); as component) {
+  <ng-container *ngComponentOutlet="component; inputs: { source: source() }" />
+} @else {
+  <pre>{{ source() }}</pre>
+}

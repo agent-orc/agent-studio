@@ -13,7 +13,7 @@ import { claudeSignInTarget, providerAuthTone, signInTarget, type ProviderAuthBa
 import { latestRepositoryProbes, normalizeProjectRegistryEntries } from '../../../remote-hosts/models/deployment-checkpoints';
 import type { InstallationIdentity, ProjectRegistryEntry, ProjectRegistryRead, RepositoryStatus } from '../../../remote-hosts/models/deployment-checkpoints';
 import { credentialFreeRepositoryUrl, deviceLoginTone, downloadTextFile, gitSetupTone, pickProject, providerBadgeReady, providerBadgeWaitReason, savedProof, type DeviceLogin, type GitSetup, type HostJoinToken, type NetworkProof, type Probe, type ProofCard } from './first-run-checklist.models';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { readInstallationIdentity } from './first-run-installation';
 import { ServerCheckoutNoticeComponent, ServerCheckoutStore } from '../../../server-checkout';
 import { LocalOwnerSignInComponent } from '../../../../components/local-owner-sign-in/local-owner-sign-in';

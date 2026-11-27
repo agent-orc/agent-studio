@@ -10,7 +10,7 @@ import {
 } from './task-card-view-model';
 import { TaskState } from '../../../../models/task.model';
 import type { TaskInfo } from '../../../../models/task.model';
-import type { MenuItem, MenuRow } from '../../../../components/menu';
+import type { MenuItem, MenuRow } from '@studio/ui/components/menu/index';
 
 /**
  * AGT-2020: Delete moved off the hover trash button into the card context menu.

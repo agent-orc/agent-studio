@@ -1,6 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { TaskService } from '../../../services/task.service';
-import { NotificationService } from '../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { WorkspaceManagerService } from './workspace-manager.service';
 import { ProjectLifecycleDialogService } from '../../../services/project-lifecycle-dialog.service';
 import type { RegistryProjectSummary } from '../../../models/task.model';

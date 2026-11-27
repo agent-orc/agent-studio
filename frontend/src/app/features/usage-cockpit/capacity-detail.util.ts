@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import type { CapacityQueuedCard, OperatorCapacityResponse } from './models/operator-capacity.model';
 import { formatCountdown, instantView, UNKNOWN, type UsageInstantView } from './usage-detail.util';
 

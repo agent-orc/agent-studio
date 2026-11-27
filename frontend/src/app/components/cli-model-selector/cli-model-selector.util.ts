@@ -1,5 +1,5 @@
 import type { CliModelInfo } from '../../features/cli';
-import type { StatusTone } from '../status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { mapThinkingLevel, mappedThinkingLevelNote } from '../../features/cli/thinking-levels';
 
 /** Same rule as the backend: an unoffered known rung maps to the highest offered rung below it. */

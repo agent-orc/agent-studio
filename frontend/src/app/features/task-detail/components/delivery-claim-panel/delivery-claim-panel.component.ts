@@ -18,7 +18,7 @@ import {
 import { TaskService } from '../../../../services/task.service';
 import { IntegrationDeadEndComponent } from '../integration-dead-end/integration-dead-end.component';
 import { AcceptanceAttemptGapNoticeComponent } from '../acceptance-attempt-gap-notice/acceptance-attempt-gap-notice.component';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { reviewBuildTestsGap, taskFileHref } from '../../../test-evidence/components/test-evidence-status/test-evidence-status.component';
 import { AcceptanceNextStepsComponent } from '../../../acceptance-readiness/lazy';
 import { acceptanceRefusalFor } from '../../state/acceptance-refusal.model';

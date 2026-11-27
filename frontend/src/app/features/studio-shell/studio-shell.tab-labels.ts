@@ -4,7 +4,7 @@
  * its baseline budget, same reason as studio-shell.menu-builders.ts.
  */
 import type { StudioTab } from './studio-shell.types';
-import { nameWithVisibleText } from '../../utils/accessible-name';
+import { nameWithVisibleText } from '@studio/ui/utils/accessible-name';
 
 /** Keep compact tab titles readable by cutting at a word boundary. */
 export function truncateTabTitle(title: string, maxCharacters = 38): string {

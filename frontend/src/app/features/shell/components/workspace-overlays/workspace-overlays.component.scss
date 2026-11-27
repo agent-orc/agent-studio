@@ -20,7 +20,7 @@
   background: var(--studio-bg-titlebar);
   color: var(--studio-fg);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 12px;
+  border-radius: var(--studio-compat-radius-15);
   box-shadow: var(--elevation-modal);
   overflow: hidden;
 }
@@ -50,15 +50,15 @@
 }
 .ws-settings__title {
   margin: 0;
-  font-size: 1.15rem;
+  font-size: var(--studio-compat-type-33);
   color: var(--studio-fg-strong);
   font-weight: 600;
 }
 .ws-settings__chip {
-  font-size: 0.72rem;
+  font-size: var(--studio-compat-type-10);
   letter-spacing: 0.02em;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-bg-selected);
   color: var(--studio-fg);
   text-transform: uppercase;
@@ -70,10 +70,10 @@
   border: 1px solid transparent;
   width: 30px;
   height: 30px;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   cursor: pointer;
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--studio-compat-type-26);
 }
 .ws-settings__close:hover { background: var(--studio-bg-selected); color: var(--studio-fg-strong); }
 
@@ -119,14 +119,14 @@
 }
 .ws-settings__panel-title {
   margin: 0 0 var(--studio-spacing-1);
-  font-size: 1.05rem;
+  font-size: var(--studio-compat-type-9);
   font-weight: 600;
   color: var(--studio-fg-strong);
 }
 .ws-settings__panel-desc {
   margin: 0;
   color: var(--studio-fg-dim);
-  font-size: 0.85rem;
+  font-size: var(--studio-compat-type-26);
   max-width: 64ch;
 }
 
@@ -145,7 +145,7 @@
   color: var(--studio-fg);
   background: var(--studio-bg-hover);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   cursor: pointer;
 }
@@ -165,7 +165,7 @@
   row-gap: var(--studio-spacing-1);
   align-items: start;
   padding: var(--studio-spacing-3) var(--studio-spacing-4);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   border: 1px solid var(--studio-border-strong);
   background: var(--studio-bg-hover);
   color: var(--studio-fg);
@@ -185,12 +185,12 @@
 .ws-settings__card-title {
   font-weight: 600;
   color: var(--studio-fg-strong);
-  font-size: 0.92rem;
+  font-size: var(--studio-compat-type-8);
 }
 .ws-settings__card-desc {
   grid-column: 2;
   color: var(--studio-fg-dim);
-  font-size: 0.8rem;
+  font-size: var(--studio-compat-type-12);
 }
 
 .ws-settings--inline .ws-settings__head {

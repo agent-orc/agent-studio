@@ -1,9 +1,9 @@
 import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, signal } from '@angular/core';
 import { forkJoin } from 'rxjs';
-import { LoadingSurfaceComponent, PendingButtonDirective } from '../../../../components/async-feedback';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { LoadingSurfaceComponent, PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { clearVisibleInterval, setVisibleInterval, type VisibleIntervalHandle } from '../../../../utils/visible-interval';
 import { historyRunStateTone } from '../../state/deploy-status-tone';
 import { PrincipalNamePipe } from '../../../../pipes/principal-name.pipe';

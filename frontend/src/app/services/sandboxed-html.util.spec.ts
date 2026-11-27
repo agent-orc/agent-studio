@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ConfirmDialogOptions } from '../models/app-dialog.model';
+import type { ConfirmDialogOptions } from '@studio/ui/models/app-dialog.model';
 import {
   ISOLATED_HTML_ACTIVE_ANCHOR_MESSAGE,
   ISOLATED_HTML_ANCHORS_READY_MESSAGE,

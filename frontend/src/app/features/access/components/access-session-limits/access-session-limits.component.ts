@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, OnInit, effect, inject, signal } from '@angular/core';
-import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/pending-button.directive';
 import { OperatorAgentsService } from '../../services/operator-agents.service';
 import { OperatorSessionLimitsService, SESSION_LIFETIMES, lifetimeLabel, type OperatorSessionLimits } from '../../services/operator-session-limits.service';
 

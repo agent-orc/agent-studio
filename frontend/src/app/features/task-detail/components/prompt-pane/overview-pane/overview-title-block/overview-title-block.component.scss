@@ -15,14 +15,14 @@
   flex-direction: column;
   width: 100%;
   min-width: 0;
-  gap: 2px;
+  gap: var(--studio-compat-space-4);
 }
 
 // Hero title block. Sits above the first column-group.
 .ov-title-block {
-  gap: 2px;
-  padding-top: 2px;
-  padding-bottom: 4px;
+  gap: var(--studio-compat-space-4);
+  padding-top: var(--studio-compat-space-4);
+  padding-bottom: var(--studio-spacing-1);
   border-bottom: 1px solid var(--studio-border);
 }
 
@@ -33,22 +33,22 @@
 
 // Promote-to-coding affordance: only rendered on a finished planning task.
 .ov-promote {
-  margin-top: 6px;
+  margin-top: var(--studio-compat-space-2);
 
   &__btn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--studio-compat-space-2);
     font: inherit;
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     font-weight: 600;
     color: var(--studio-on-accent);
     background: var(--studio-accent);
     border: 1px solid transparent;
-    border-radius: 6px;
-    padding: 5px 12px;
+    border-radius: var(--studio-compat-radius-7);
+    padding: var(--studio-compat-space-7) var(--studio-spacing-3);
     cursor: pointer;
-    transition: filter 0.12s, opacity 0.12s;
+    transition: filter var(--studio-compat-duration-3), opacity var(--studio-compat-duration-3);
 
     &:hover {
       filter: brightness(1.08);
@@ -66,14 +66,14 @@
   }
 
   &__icon {
-    font-size: 13px;
+    font-size: var(--studio-font-size-md);
     line-height: 1;
   }
 }
 
 .ov-title {
   margin: 0;
-  font-size: 1.5em;
+  font-size: var(--studio-compat-type-99);
   font-weight: 600;
   line-height: 1.3;
   color: var(--studio-fg-strong);
@@ -87,7 +87,7 @@
 
   &:focus-visible {
     box-shadow: 0 0 0 2px var(--studio-accent);
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
   }
 
   &:hover .ov-title__edit-affordance,
@@ -101,14 +101,14 @@
 
   &__edit-affordance {
     all: unset;
-    margin-left: 8px;
-    font-size: 11px;
+    margin-left: var(--studio-spacing-2);
+    font-size: var(--studio-compat-type-6);
     font-weight: 500;
     text-transform: lowercase;
     letter-spacing: 0.04em;
     color: var(--studio-fg-dim);
     opacity: 0;
-    transition: opacity 0.15s;
+    transition: opacity var(--studio-compat-duration-9);
     cursor: pointer;
     vertical-align: middle;
     user-select: none;
@@ -126,14 +126,14 @@
   width: 100%;
   margin: 0;
   font-family: inherit;
-  font-size: 1.5em;
+  font-size: var(--studio-compat-type-99);
   font-weight: 600;
   line-height: 1.3;
   color: var(--studio-fg-strong);
   background: var(--studio-bg-hover);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
-  padding: 6px 10px;
+  border-radius: var(--studio-compat-radius-7);
+  padding: var(--studio-compat-space-2) var(--studio-compat-space-5);
 
   &:focus {
     outline: 2px solid var(--studio-accent);
@@ -146,8 +146,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: var(--studio-compat-space-2);
+  font-size: var(--studio-compat-type-6);
   color: var(--studio-fg-dim);
 
   &__lane {
@@ -156,24 +156,24 @@
 
   &__sep {
     color: var(--studio-fg-muted);
-    font-size: 11px;
+    font-size: var(--studio-compat-type-6);
   }
 
   &__project {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    font-size: 11px;
+    gap: var(--studio-spacing-1);
+    font-size: var(--studio-compat-type-6);
     color: var(--studio-fg);
   }
 
   &__project-disk {
     width: 14px;
     height: 14px;
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
     background: var(--project-color, var(--studio-fg-dim));
     color: var(--studio-on-accent);
-    font-size: 9px;
+    font-size: var(--studio-compat-type-4);
     font-weight: 700;
     display: inline-flex;
     align-items: center;
@@ -189,11 +189,11 @@
 .ov-lane-pill {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--studio-spacing-1);
   font-weight: 600;
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 999px;
+  font-size: var(--studio-compat-type-6);
+  padding: var(--studio-compat-space-4) var(--studio-spacing-2);
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-bg-hover);
 
   // AGT-2715: one tone per lane, resolved from data-lane-tone rather than the
@@ -203,15 +203,15 @@
   color: var(--lane-tone-fg);
 
   &__dot {
-    font-size: 0.65em;
+    font-size: var(--studio-compat-type-100);
     line-height: 1;
   }
 }
 
 .ov-phase-chip {
-  font-size: 10px;
-  padding: 1px 7px;
-  border-radius: 10px;
+  font-size: var(--studio-compat-type-1);
+  padding: var(--studio-compat-space-6) var(--studio-compat-space-11);
+  border-radius: var(--studio-compat-radius-3);
   font-weight: 500;
   background: var(--studio-bg-hover);
   color: var(--studio-fg-dim);

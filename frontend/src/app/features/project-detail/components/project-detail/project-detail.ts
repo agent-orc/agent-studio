@@ -1,4 +1,4 @@
-import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { TaskService } from '../../../../services/task.service';
@@ -23,7 +23,7 @@ import { AnalysisReport } from '../../../../models/analysis-report.model';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { ProjectWorkflowSectionComponent } from '../project-workflow-section/project-workflow-section';
 import { ProjectCliEnvironmentSectionComponent } from '../project-cli-environment-section/project-cli-environment-section';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * Live pending decision chip (AGT-3403): a blocked agent is blocked right now

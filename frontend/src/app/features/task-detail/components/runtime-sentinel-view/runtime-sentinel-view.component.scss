@@ -31,7 +31,7 @@
   display: grid;
   gap: var(--studio-spacing-1);
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .runtime-terminal {

@@ -45,7 +45,7 @@
 
 .instance-deploy__count {
   padding: 0 var(--studio-spacing-2);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-surface-muted);
   color: var(--studio-fg-dim);
   font-weight: 500;
@@ -76,7 +76,7 @@
   min-width: 0;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: transparent;
   color: var(--studio-fg);
   font: inherit;

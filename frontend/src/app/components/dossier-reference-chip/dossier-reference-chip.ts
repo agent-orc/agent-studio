@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
-import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
-import { StudioIconComponent } from '../studio-icon/studio-icon.component';
+import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { dossierPatternIcon, dossierStatusLabel, dossierStatusTone } from '../../models/dossier-presentation';
-import { StatusIndicatorComponent } from '../status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { DossierReferenceNavigationService } from '../../services/dossier-reference-navigation.service';
 import type { DossierReference } from '../../services/dossier-reference.util';
 

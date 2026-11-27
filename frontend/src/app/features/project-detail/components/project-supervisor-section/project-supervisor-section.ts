@@ -8,7 +8,7 @@ import {
   SupervisorObservation,
 } from '../../../../models/supervisor.model';
 import { ConceptHelpComponent } from '../../../../components/concept-help/concept-help.component';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { findingSeverityTone } from '../analysis-report-drilldown/analysis-report-status';
 
 type SupervisorStatus = 'live' | 'idle' | 'paused' | 'error' | 'unknown';

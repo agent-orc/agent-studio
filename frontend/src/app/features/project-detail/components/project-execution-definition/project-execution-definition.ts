@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, OnInit, effect, inject, input, signal, untracked } from '@angular/core';
-import { PendingButtonDirective } from '../../../../components/async-feedback';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { PendingButtonDirective } from '@studio/ui/components/async-feedback/index';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { ProjectPipelineDefinitionComponent } from '../project-pipeline-definition/project-pipeline-definition';
 
 interface DefinitionIssue {

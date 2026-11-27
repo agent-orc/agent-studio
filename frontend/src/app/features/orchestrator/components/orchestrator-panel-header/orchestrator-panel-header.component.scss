@@ -29,7 +29,7 @@
 }
 
 .panel-head__type {
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 600;
 }
 
@@ -41,7 +41,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--studio-fg-strong);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -57,11 +57,11 @@
   height: 28px;
   padding: 0 var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -107,7 +107,7 @@
 .panel-head__execution-copy strong {
   flex: 0 1 auto;
   color: var(--studio-fg-strong);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   font-weight: 650;
 }
 
@@ -116,7 +116,7 @@
   min-width: 0;
   color: var(--studio-fg-muted);
   font-family: var(--studio-font-mono, var(--font-mono));
-  font-size: 9px;
+  font-size: var(--studio-compat-type-4);
 }
 
 .panel-head__open-chats {
@@ -127,11 +127,11 @@
   height: 28px;
   padding: 0 var(--studio-spacing-2);
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: transparent;
   color: var(--studio-fg-muted);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   cursor: pointer;
 }
 

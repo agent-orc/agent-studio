@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, input
 import { OrchestratorFeedStore } from '../../../orchestrator/state/orchestrator-feed.store';
 import { StallInterventionsService } from '../../services/stall-interventions.service';
 import { StallInterventionReceiptComponent } from '../stall-intervention-receipt/stall-intervention-receipt';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 const RECENT_INTERVENTIONS = 5;
 const REFRESH_MS = 30_000;

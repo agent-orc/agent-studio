@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { Observable, from, switchMap } from 'rxjs';
-import { NotificationService } from './notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from './task.service';
 import { ErrorDialogService } from './error-dialog.service';
 

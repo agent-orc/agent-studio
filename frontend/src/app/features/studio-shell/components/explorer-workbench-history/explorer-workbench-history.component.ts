@@ -8,8 +8,8 @@ import {
   output,
   viewChildren,
 } from '@angular/core';
-import { TreeRowComponent } from '../../../../components/tree-row/tree-row.component';
-import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
+import { TreeRowComponent } from '@studio/ui/components/tree-row/tree-row.component';
+import type { StudioIconName } from '@studio/ui/components/studio-icon/studio-icon.component';
 import type { ArticlePattern, WorkbenchListItem } from '../../../../models/project-docs.model';
 
 @Component({

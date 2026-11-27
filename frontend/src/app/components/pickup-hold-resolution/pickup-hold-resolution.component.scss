@@ -6,7 +6,7 @@
 
 .hold-way__label {
   color: var(--studio-fg);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   font-weight: 600;
 }
 
@@ -14,7 +14,7 @@
 .hold-way__notice {
   margin: 0;
   color: var(--studio-hold-muted-fg);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   line-height: 1.4;
 }
 
@@ -34,7 +34,7 @@
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .hold-way__button {
@@ -74,5 +74,5 @@
 .hold-way__error {
   margin: 0;
   color: var(--studio-danger);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }

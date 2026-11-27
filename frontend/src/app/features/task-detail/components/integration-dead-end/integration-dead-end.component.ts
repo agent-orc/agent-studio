@@ -2,10 +2,10 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, input, ou
 import type { TaskIntegrationStatus } from '../../../git';
 import type { FailureContinuationCheck, ReviewProjectionView } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { serverErrorMessage } from '../../../../utils/server-error-message';
 import { integrationDeadEnd, integrationDeadEndTone } from './integration-dead-end.model';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 @Component({
   selector: 'app-integration-dead-end',

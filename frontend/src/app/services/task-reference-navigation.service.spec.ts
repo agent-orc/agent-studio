@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { TaskInfo } from '../models/task.model';
 import { TaskSelectionService } from '../features/task-detail/state/task-selection.service';
 import { StudioTabStateService } from '../features/studio-shell/services/studio-tab-state.service';
-import { NotificationService } from './notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import { TaskService } from './task.service';
 import { DecisionFocusRequestService } from './decision-focus-request.service';
 import { TaskReferenceNavigationService } from './task-reference-navigation.service';

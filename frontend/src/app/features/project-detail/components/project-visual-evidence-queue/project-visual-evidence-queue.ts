@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, effect, inject, input, output, sign
 import { timeout } from 'rxjs';
 import type { ProjectVisualEvidenceItem, ProjectVisualEvidenceQueue } from '../../../../models/project-overview.model';
 import { TaskService } from '../../../../services/task.service';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Settled review state shown instead of the "Mark reviewed" button (AGT-3403). */
 export function evidenceReviewIndicator(item: Pick<ProjectVisualEvidenceItem, 'reviewStatus'>): { tone: StatusTone; label: string } {

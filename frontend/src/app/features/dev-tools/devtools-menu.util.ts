@@ -6,7 +6,7 @@
  * header it introduces was to mount the whole application. It is a pure
  * function of the flags, so it lives next to the dev-tools feature it describes.
  */
-import type { MenuItem } from '../../components/menu';
+import type { MenuItem } from '@studio/ui/components/menu/index';
 import type { DevToolsFlags } from '../../services/dev-tools.service';
 
 /** Ids the shell dispatches on; the menu never invents an id the shell cannot route. */

@@ -12,7 +12,7 @@ import { WikiStarsService } from './wiki-stars.service';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { DossierReferenceHydratorService } from '../../../../services/dossier-reference-hydrator.service';
-import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 import {
   DOSSIER_FIXTURE_KEY,
   dossierChipsIn,

@@ -26,8 +26,8 @@ import {
   wikiLinkedElementTitle,
 } from '../wiki-linked-element';
 import { WikiRelatedTasksComponent } from '../wiki-related-tasks/wiki-related-tasks.component';
-import { MenuComponent, type MenuItemClickEvent } from '../../../../../components/menu';
-import { StatusIndicatorComponent } from '../../../../../components/status-indicator/status-indicator.component';
+import { MenuComponent, type MenuItemClickEvent } from '@studio/ui/components/menu/index';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 type WikiAnchorState = 'pending' | 'available' | 'missing' | 'active';
 

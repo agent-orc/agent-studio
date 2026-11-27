@@ -3,7 +3,7 @@ import { TaskService } from '../../../../services/task.service';
 import type { CliCompletionContract } from '../../models/cli.model';
 import type { CliType } from '../../../../models/task.model';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /** Completion detection shown per CLI: a typed adapter is the wanted state, exit-based needs attention. */
 export function completionDetectionStatus(typed: boolean): { tone: StatusTone; label: string } {

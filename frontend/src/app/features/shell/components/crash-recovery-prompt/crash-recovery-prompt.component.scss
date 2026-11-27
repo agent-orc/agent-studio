@@ -10,7 +10,7 @@
   min-height: var(--statusbar-item-height);
   padding: 0 var(--studio-spacing-2);
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--studio-compat-radius-13);
   background: var(--notify-warning-tint);
   color: var(--studio-fg-strong);
   font: inherit;
@@ -28,7 +28,7 @@
   min-width: 1.25rem;
   min-height: 1.25rem;
   place-items: center;
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   background: var(--studio-bg-selected);
   color: var(--studio-fg-strong);
   font-variant-numeric: tabular-nums;
@@ -49,10 +49,10 @@
   margin: 0;
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid color-mix(in srgb, var(--studio-danger, var(--severity-high)) 40%, transparent);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--studio-danger, var(--severity-high)) 12%, transparent);
   color: var(--studio-danger, var(--severity-high));
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
 }
 
 .crp__item {
@@ -61,7 +61,7 @@
   gap: var(--studio-spacing-3);
   padding: var(--studio-spacing-4);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-hover);
 }
 
@@ -82,7 +82,7 @@
 
 .crp__project {
   color: var(--studio-fg-strong);
-  font-size: 0.94rem;
+  font-size: var(--studio-compat-type-95);
   font-weight: 600;
 }
 
@@ -92,16 +92,16 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border-radius: 999px;
+  border-radius: var(--studio-compat-radius-2);
   border: 1px solid var(--studio-border-muted);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg-dim);
-  font-size: 0.75rem;
+  font-size: var(--studio-compat-type-11);
 }
 
 .crp__time {
   color: var(--studio-fg-muted);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
 }
 
 .crp__timestamps {
@@ -115,7 +115,7 @@
 .crp__reason {
   margin: 0;
   color: var(--studio-fg-dim);
-  font-size: 0.84rem;
+  font-size: var(--studio-compat-type-71);
 }
 
 .crp__meta {
@@ -134,7 +134,7 @@
 
 .crp__meta dt {
   color: var(--studio-fg-muted);
-  font-size: 0.74rem;
+  font-size: var(--studio-compat-type-14);
 }
 
 .crp__meta dd {
@@ -143,7 +143,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--studio-fg);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 .crp__meta code {
@@ -153,7 +153,7 @@
 
 .crp__files {
   border: 1px solid var(--studio-border-muted);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: color-mix(in srgb, var(--studio-fg-dim) 5%, transparent);
 }
 
@@ -161,7 +161,7 @@
   cursor: pointer;
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   color: var(--studio-fg);
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   font-weight: 600;
 }
 
@@ -180,14 +180,14 @@
   padding: var(--studio-spacing-1) 0;
   color: var(--studio-fg-dim);
   font-family: var(--app-font-mono, monospace);
-  font-size: 0.76rem;
+  font-size: var(--studio-compat-type-17);
 }
 
 .crp__empty {
   margin: 0;
   padding: 0 var(--studio-spacing-3) var(--studio-spacing-3);
   color: var(--studio-fg-muted);
-  font-size: 0.78rem;
+  font-size: var(--studio-compat-type-13);
 }
 
 .crp__actions,
@@ -204,10 +204,10 @@
   gap: var(--studio-spacing-2);
   min-height: 2rem;
   padding: var(--studio-spacing-1) var(--studio-spacing-3);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   border: 1px solid var(--studio-border-strong);
   font: inherit;
-  font-size: 0.82rem;
+  font-size: var(--studio-compat-type-7);
   cursor: pointer;
 }
 

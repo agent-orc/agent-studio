@@ -10,10 +10,10 @@ import {
 } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import type { RegressionRadarResult, RegressionRadarTaskGroup, SpecChangeCategory, SpecChangeEntry } from '../../models/regression-radar.model';
-import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { TaskService } from '../../../../services/task.service';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { InfoButtonComponent } from '../../../../components/info-button/info-button.component';
+import { InfoButtonComponent } from '@studio/ui/components/info-button/info-button.component';
 
 /** Spec file category on the shared indicator: drift is a regression, at risk needs review. */
 export const SPEC_CATEGORY_DISPLAY: Readonly<Record<SpecChangeCategory, { tone: StatusTone; label: string }>> = {

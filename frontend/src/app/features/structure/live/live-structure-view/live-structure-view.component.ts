@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterNextRender, computed, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
-import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
-import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
-import { ModalStackService } from '../../../../services/modal-stack.service';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
+import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
+import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import type { StructureData } from '../../structure.model';
 import { LiveStructureDetailsComponent } from '../live-structure-details/live-structure-details.component';
 import { LiveStructureJumpComponent } from '../live-structure-jump/live-structure-jump.component';

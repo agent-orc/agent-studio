@@ -2,7 +2,7 @@ import { DatePipe } from '@angular/common';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { take } from 'rxjs';
-import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
+import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { recoveryHandoff, recoveryInputs, recoveryRunbookUrl } from '../recovery-handoff';
 import {
   formatAge, formatBytes, isBackupOverview, itemOffHostLabel, offHostLabel, offHostListingSummary, offHostTone, overviewLabel, overviewTone,

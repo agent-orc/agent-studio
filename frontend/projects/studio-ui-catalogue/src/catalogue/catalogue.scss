@@ -1,0 +1,27 @@
+:host { display: block; color: var(--studio-fg); background: var(--studio-bg-editor); min-height: 100vh; }
+header { display: flex; align-items: center; gap: var(--studio-spacing-4); padding: var(--studio-spacing-4); border-bottom: 1px solid var(--studio-border); }
+h1 { font-size: var(--studio-font-size-2xl); }
+h1, h2 { overflow-wrap: anywhere; }
+h2 { font-size: var(--studio-font-size-xl); margin-block: var(--studio-spacing-4); }
+header span { flex: 1; color: var(--studio-fg-dim); }
+button, select { color: var(--studio-fg); background: var(--studio-bg-elevated); border: 1px solid var(--studio-border-strong); padding: var(--studio-spacing-2) var(--studio-spacing-3); border-radius: var(--studio-card-compact-radius); font: inherit; }
+.catalogue-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); }
+nav { padding: var(--studio-spacing-3); border-right: 1px solid var(--studio-border); }
+a { color: var(--studio-fg); text-decoration: none; }
+a:hover { background: var(--studio-bg-hover); }
+a[aria-current] { color: var(--studio-accent); background: var(--studio-bg-selected); }
+main { min-width: 0; padding: var(--studio-spacing-4); }
+.states { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
+.states a { padding: var(--studio-spacing-2); border: 1px solid var(--studio-border); border-radius: var(--studio-card-compact-radius); }
+.specimen { padding: var(--studio-spacing-5); margin-top: var(--studio-spacing-4); min-height: 160px; border-block: 1px solid var(--studio-border); overflow-wrap: anywhere; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--studio-fg-dim); font: inherit; line-height: 1.6; }
+.mobile-picker { display: none; }
+.split-example { display: grid; grid-template-columns: minmax(0, 1fr) var(--studio-spacing-3) minmax(0, 1fr); min-height: 120px; }
+[role='separator'] { background: var(--studio-border); cursor: col-resize; }
+@media (width <= 760px) {
+  .catalogue-layout { grid-template-columns: minmax(0, 1fr); }
+  nav, header span { display: none; }
+  .mobile-picker { display: flex; align-items: center; gap: var(--studio-spacing-2); }
+  select { min-width: 0; flex: 1; }
+  .specimen { padding: var(--studio-spacing-3); }
+}

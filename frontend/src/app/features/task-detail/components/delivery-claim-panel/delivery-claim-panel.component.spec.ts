@@ -7,7 +7,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { readinessItem } from '../../../acceptance-readiness/testing/acceptance-readiness.fixtures';
 import { DeliveryClaimPanelComponent } from './delivery-claim-panel.component';
 import { TaskService } from '../../../../services/task.service';
-import { NotificationService } from '../../../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 import {
   TaskState,
   type TaskDeliveryClaimAnswer,

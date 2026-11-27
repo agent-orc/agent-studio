@@ -22,7 +22,7 @@
 .quota-curve__axis,
 .quota-curve__marker-label {
   fill: var(--studio-fg-muted);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   font-variant-numeric: tabular-nums;
 }
 
@@ -69,10 +69,10 @@
   gap: var(--studio-spacing-2);
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   pointer-events: none;
@@ -83,7 +83,7 @@
 .quota-curve__tooltip-key {
   width: 12px;
   height: 2px;
-  border-radius: 1px;
+  border-radius: var(--studio-compat-radius-14);
   background: var(--studio-accent);
 }
 

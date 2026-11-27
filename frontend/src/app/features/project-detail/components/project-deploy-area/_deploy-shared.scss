@@ -26,7 +26,7 @@
 @mixin button {
   padding: var(--studio-spacing-1) var(--studio-spacing-3);
   border: 1px solid var(--studio-border-strong);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-surface-muted);
   color: var(--studio-fg);
   font: inherit;

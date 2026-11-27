@@ -6,7 +6,7 @@ import { vi } from 'vitest';
 import type { TaskIntegrationStatus, IntegrationStatusValue } from '../../features/git';
 import { IntegrationStatusBadgeComponent, integrationKindTone } from './integration-status-badge.component';
 import { TaskService } from '../../services/task.service';
-import { NotificationService } from '../../services/notification.service';
+import { NotificationService } from '@studio/ui/services/notification.service';
 
 function integration(
   status: IntegrationStatusValue,

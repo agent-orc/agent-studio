@@ -1,4 +1,4 @@
-import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
  * Status tones of the repository deployment views (AGT-3403). Raw wire values
