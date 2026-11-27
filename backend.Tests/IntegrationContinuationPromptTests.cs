@@ -15,6 +15,8 @@ public sealed class IntegrationContinuationPromptTests
 
         Assert.Contains("Do not merge develop yourself", prompt);
         Assert.Contains("runner merges current develop at the start of the round", prompt);
+        Assert.Contains("keep both sides", prompt);
+        Assert.Contains("medium reasoning", prompt);
         Assert.DoesNotContain("merging 'origin/develop'", prompt);
     }
 

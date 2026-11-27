@@ -5,7 +5,7 @@ import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator
 import { AppTooltipDirective } from '@studio/ui/components/tooltip/app-tooltip.directive';
 import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
-import { ProjectLookupService } from '../../../../services/project-lookup.service';
+import { NowTickService } from '../../../../services/now-tick.service';
 import { BatchPanelComponent } from '../../../batch-gate/batch-panel/batch-panel';
 import { readinessPresentation } from '../../../acceptance-readiness';
 import {
@@ -39,29 +39,34 @@ import { nameWithVisibleText } from '@studio/ui/utils/accessible-name';
 export class AttentionControlComponent {
   readonly attention = inject(OperatorAttentionService);
   private readonly references = inject(TaskReferenceNavigationService);
-  private readonly projects = inject(ProjectLookupService);
+  private readonly clock = inject(NowTickService);
   private readonly overlays = inject(WorkspaceOverlaysService);
   private readonly tabs = inject(StudioTabStateService);
   private readonly panels = inject(StudioPanelStateService);
   private readonly modalStack = inject(ModalStackService);
   private readonly injector = inject(Injector);
   private readonly trigger = viewChild<ElementRef<HTMLButtonElement>>('trigger');
+  private cancelBackupHandoff: (() => void) | null = null;
   private releaseModal: (() => void) | null = null;
 
   readonly overlapPending = signal<string | null>(null);
   readonly overlapError = signal<string | null>(null);
   readonly open = signal(false);
   readonly batchProject = signal<string | null>(null);
-  readonly now = signal(Date.now());
+  private readonly openedAt = signal(Date.now());
+  // Dynamic dependencies detach the shared clock while the list is closed.
+  readonly now = computed(() => this.open() ? Math.max(this.openedAt(), this.clock.now()) : this.openedAt());
   readonly count = this.attention.count;
   readonly reviewHostDrift = computed(() => this.attention.items().some(item => item.type === 'review-host.drift'));
   readonly groups = this.attention.groups;
   readonly readinessPresentation = readinessPresentation;
   readonly triggerLabel = computed(() => {
     const count = this.count();
-    if (count === 0) return 'Nothing needs you';
+    const coverage = this.attention.coverageLabel();
+    if (count === 0) return coverage || 'Nothing needs you';
     const label = `${count} ${count === 1 ? 'item needs' : 'items need'} you`;
-    return this.reviewHostDrift() ? `${label}; review host differs from Stable` : label;
+    const detail = this.reviewHostDrift() ? `${label}; review host differs from Stable` : label;
+    return coverage ? `${detail}; ${coverage}` : detail;
   });
   /** Starts with the visible "Needs you <count>" (WCAG 2.5.3). */
   readonly accessibleName = computed(() => nameWithVisibleText(`Needs you ${this.count()}`, this.triggerLabel()));
@@ -80,6 +85,7 @@ export class AttentionControlComponent {
     });
     inject(DestroyRef).onDestroy(() => {
       this.attention.stop();
+      this.cancelBackupHandoff?.();
       this.releaseModal?.();
     });
   }
@@ -89,7 +95,8 @@ export class AttentionControlComponent {
       this.close();
       return;
     }
-    this.now.set(Date.now());
+    this.cancelBackupHandoff?.();
+    this.openedAt.set(Date.now());
     this.attention.setReadinessActive(true);
     this.attention.refresh();
     this.open.set(true);
@@ -149,10 +156,8 @@ export class AttentionControlComponent {
         this.panels.noteEditorActivation();
         return;
       case 'backups':
-        if (this.projects.allProjects()[0]?.displayName) {
-          this.tabs.open({ kind: 'hub', projectName: this.projects.allProjects()[0].displayName, section: 'operations' });
-          this.panels.noteEditorActivation();
-        } else this.openActivity();
+        this.openSettings('operations');
+        this.revealBackups();
         return;
       case 'credentials':
         this.openSettings('credentials');
@@ -187,6 +192,29 @@ export class AttentionControlComponent {
     this.close(false);
     this.tabs.open({ kind: 'feed' });
     this.panels.noteEditorActivation();
+  }
+
+  /** Operations and its backup block are deferred; wait for their DOM, with bounded cleanup. */
+  private revealBackups(): void {
+    this.cancelBackupHandoff?.();
+    const reveal = (): boolean => {
+      const panel = document.querySelector<HTMLElement>('[data-testid="operations-backups"]');
+      if (!panel) return false;
+      panel.scrollIntoView({ block: 'start' });
+      // Security loads above this block; reveal it again after that layout settles.
+      return !panel.closest('[data-testid="workspace-operations"]')?.querySelector('app-loading-surface');
+    };
+    if (reveal()) return;
+    const observer = new MutationObserver(() => {
+      if (reveal()) this.cancelBackupHandoff?.();
+    });
+    const timeout = setTimeout(() => this.cancelBackupHandoff?.(), 15_000);
+    this.cancelBackupHandoff = () => {
+      observer.disconnect();
+      clearTimeout(timeout);
+      this.cancelBackupHandoff = null;
+    };
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   private openSettings(section: WorkspaceSettingsSection): void {

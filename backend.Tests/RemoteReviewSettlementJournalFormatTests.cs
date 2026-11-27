@@ -1,6 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text;
+using System.Runtime.InteropServices;
+using AgentStudio.Persistence;
+using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using AgentStudio.Tasks;
 using AgentStudio.Tests.Architecture;
@@ -403,6 +406,214 @@ public sealed class RemoteReviewSettlementJournalFormatTests : IDisposable
         File.Delete(Path.Combine(folder, RemoteReviewReportEvidence.EvidenceFileName(RecordedAttempt)));
         RemoteReviewSettlementJournal.Write(folder, entry with { EvidenceComplete = true });
         Assert.False(TaskDetailResources.ReviewEvidencePending(folder, RecordedAttempt));
+    }
+
+    [Fact]
+    public void PrepareAndSettle_WriterFailure_NeverCallsAuthority()
+    {
+        var (folder, entry) = UnacceptedEntry();
+        var settled = false;
+        var writer = new SettlementWriter((_, _) => throw new IOException("injected writer failure"));
+
+        Assert.Throws<IOException>(() => RemoteReviewSettlementJournal.PrepareAndSettle(folder, entry,
+            () => null, () => { settled = true; return new(AttemptWriteStatus.Accepted, entry.AttemptId); }, writer));
+
+        Assert.False(settled);
+        Assert.Equal(RemoteReviewSettlementReadStatus.Missing,
+            RemoteReviewSettlementJournal.Read(folder, entry.AttemptId).Status);
+    }
+
+    [Theory]
+    [InlineData("open")]
+    [InlineData("fsync")]
+    public void PrepareAndSettle_DirectoryFailure_RequiresDurabilityAgainOnReplay(string operation)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (folder, entry) = UnacceptedEntry();
+        var settled = false;
+        AttemptWriteResult Settle()
+        {
+            settled = true;
+            return new(AttemptWriteStatus.Accepted, entry.AttemptId);
+        }
+        var flushAttempts = 0;
+        using (AtomicJsonFileWriter.OverrideDirectoryOperationsForTests(
+            _ => { flushAttempts++; return operation == "open" ? NativeFailure(13) : 42; },
+            _ => NativeFailure(5), _ => { }))
+        {
+            Assert.Throws<DirectoryDurabilityException>(() => RemoteReviewSettlementJournal.PrepareAndSettle(
+                folder, entry, () => null, Settle));
+            Assert.False(settled);
+            // Visibility is insufficient: the same process and a restarted one
+            // can read the renamed journal after the failed durability operation.
+            Assert.Equal(RemoteReviewSettlementReadStatus.Ready,
+                RemoteReviewSettlementJournal.Read(folder, entry.AttemptId).Status);
+            Assert.Throws<DirectoryDurabilityException>(() => RemoteReviewSettlementJournal.PrepareAndSettle(
+                folder, entry, () => null, Settle));
+            Assert.False(settled);
+            Assert.Equal(2, flushAttempts);
+        }
+
+        var events = new List<string>();
+        var writer = new SettlementWriter((path, content) =>
+        {
+            new AtomicJsonFileWriter().Write(path, content);
+            events.Add("durable-journal");
+        });
+        Assert.True(RemoteReviewSettlementJournal.PrepareAndSettle(folder, entry, () => null, () =>
+        {
+            events.Add("authority-commit");
+            Assert.Equal(entry.ReportSha256,
+                RemoteReviewSettlementJournal.ReportHash(RemoteReviewSettlementJournal.Read(folder, entry.AttemptId).Entry!));
+            return Settle();
+        }, writer).Accepted);
+        Assert.Equal(["durable-journal", "authority-commit"], events);
+    }
+
+    [Theory]
+    [InlineData("before-authority")]
+    [InlineData("after-authority")]
+    [InlineData("after-evidence")]
+    [InlineData("IntegrationPending")]
+    [InlineData("IntegrationSettled")]
+    [InlineData("LaneSettled")]
+    public void PrepareAndSettle_ReplaysEveryHandoffInterruptionWithoutChangingWireFormat(string point)
+    {
+        var (folder, entry) = UnacceptedEntry();
+        string? accepted = null;
+        Assert.Throws<IOException>(() => RemoteReviewSettlementJournal.PrepareAndSettle(folder, entry,
+            () => accepted, () =>
+            {
+                if (point == "before-authority") throw new IOException("authority not committed");
+                accepted = entry.IdempotencyKey;
+                if (point == "after-evidence")
+                {
+                    var stored = RemoteReviewSettlementJournal.Read(folder, entry.AttemptId).Entry!;
+                    RemoteReviewSettlementJournal.Write(folder, stored with { EvidenceComplete = true });
+                }
+                if (Enum.TryParse<RemoteDeliverySettlementStage>(point, out var stage))
+                {
+                    RemoteDeliverySettlementStore.Write(folder, entry.Delivery! with { Stage = stage });
+                }
+                throw new IOException("handoff interrupted");
+            }));
+        var path = RemoteReviewSettlementJournal.PathFor(folder, entry.AttemptId);
+        var before = File.ReadAllBytes(path);
+        var writes = 0;
+        var writer = new SettlementWriter((target, content) =>
+        {
+            writes++;
+            new AtomicJsonFileWriter().Write(target, content);
+        });
+        var replay = RemoteReviewSettlementJournal.PrepareAndSettle(folder, entry, () => accepted, () =>
+        {
+            var duplicate = accepted is not null;
+            accepted = entry.IdempotencyKey;
+            return new(duplicate ? AttemptWriteStatus.Duplicate : AttemptWriteStatus.Accepted, entry.AttemptId);
+        }, writer);
+
+        Assert.Equal(point == "before-authority" ? AttemptWriteStatus.Accepted : AttemptWriteStatus.Duplicate, replay.Status);
+        Assert.Equal(point == "before-authority" ? 1 : 0, writes);
+        Assert.Equal(before, File.ReadAllBytes(path));
+        var ready = RemoteReviewSettlementJournal.Read(folder, entry.AttemptId);
+        Assert.Equal(RemoteReviewSettlementReadStatus.Ready, ready.Status);
+        Assert.Equal(RemoteReviewSettlementJournal.CurrentVersion, ready.Entry!.Version);
+        Assert.Equal(point == "after-evidence", ready.Entry.EvidenceComplete);
+        // Rewriting a current entry retains all wire members and their digests.
+        RemoteReviewSettlementJournal.Write(folder, ready.Entry);
+        Assert.Equal(before, File.ReadAllBytes(path));
+        if (Enum.TryParse<RemoteDeliverySettlementStage>(point, out var expectedStage))
+            Assert.Equal(expectedStage, RemoteDeliverySettlementStore.Read(folder)!.Stage);
+    }
+
+    [Theory]
+    [InlineData("subject", "open")]
+    [InlineData("subject", "fsync")]
+    [InlineData("review", "open")]
+    [InlineData("review", "fsync")]
+    [InlineData("delivery", "open")]
+    [InlineData("delivery", "fsync")]
+    [InlineData("integration", "open")]
+    [InlineData("integration", "fsync")]
+    public void HandoffSidecars_RequireDirectoryDurabilityAndPreserveWireFormat(string kind, string operation)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var folder = Path.Combine(_root, kind);
+        Directory.CreateDirectory(TaskPaths.LogsDir(folder));
+        var json = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
+        string path;
+        string expected;
+        Action write;
+        switch (kind)
+        {
+            case "subject":
+                var subject = new ReviewSubjectRecord
+                {
+                    TaskKey = "AGT-1", RunAttemptId = "run-1", AttemptChainId = "chain-1", ResultSha = new string('a', 40),
+                };
+                path = ReviewSubjectStore.PathFor(folder);
+                expected = JsonSerializer.Serialize(subject, json);
+                write = () => ReviewSubjectStore.Write(folder, subject);
+                break;
+            case "review":
+                var review = new ReviewVerificationRecord { TaskKey = "AGT-1", AttemptId = "review-1" };
+                path = ReviewVerificationStore.PathFor(folder);
+                expected = JsonSerializer.Serialize(review, json);
+                write = () => ReviewVerificationStore.Write(folder, review);
+                break;
+            case "delivery":
+                var delivery = new RemoteDeliverySettlementRecord { TaskKey = "AGT-1", ReviewAttemptId = "review-1" };
+                path = RemoteDeliverySettlementStore.PathFor(folder);
+                expected = JsonSerializer.Serialize(delivery, json);
+                write = () => RemoteDeliverySettlementStore.Write(folder, delivery);
+                break;
+            default:
+                var integration = new IntegrationVerificationRecord { State = IntegrationVerificationStates.Verified };
+                path = IntegrationVerificationStore.PathFor(folder);
+                expected = JsonSerializer.Serialize(integration, json);
+                write = () => IntegrationVerificationStore.Write(folder, integration);
+                break;
+        }
+        var generation = IntegrationVerificationStore.ChangesSince(long.MaxValue).Generation;
+        using (AtomicJsonFileWriter.OverrideDirectoryOperationsForTests(
+            _ => operation == "open" ? NativeFailure(13) : 42, _ => NativeFailure(5), _ => { }))
+        {
+            Assert.Throws<DirectoryDurabilityException>(write);
+            if (kind == "delivery")
+                Assert.Throws<DirectoryDurabilityException>(() => RemoteDeliverySettlementStore.Advance(
+                    folder, RemoteDeliverySettlementStage.IntegrationPending));
+        }
+        Assert.Equal(expected, File.ReadAllText(path));
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, "*.tmp"));
+        Assert.DoesNotContain(IntegrationVerificationStore.ChangesSince(generation).Changes,
+            item => item.Folder == folder);
+        write();
+        Assert.Equal(expected, File.ReadAllText(path));
+    }
+
+    private (string Folder, RemoteReviewSettlementEntry Entry) UnacceptedEntry()
+    {
+        var folder = Seed(ReleaseFixture, ReleaseAttempt);
+        var entry = RemoteReviewSettlementJournal.Read(folder, ReleaseAttempt).Entry!;
+        RemoteReviewSettlementJournal.Release(folder, ReleaseAttempt);
+        return (folder, entry with
+        {
+            Version = RemoteReviewSettlementJournal.CurrentVersion,
+            AcceptedReportSha256 = null,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(entry.Report),
+            EvidenceComplete = false,
+        });
+    }
+
+    private static int NativeFailure(int errno)
+    {
+        Marshal.SetLastPInvokeError(errno);
+        return -1;
+    }
+
+    private sealed class SettlementWriter(Action<string, string> write) : IAtomicJsonFileWriter
+    {
+        public void Write(string path, string content) => write(path, content);
     }
 
     private string Seed(string fixture, string attemptId)

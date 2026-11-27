@@ -33,6 +33,7 @@ public sealed class HostedVolumeBackupService(
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<HostedVolumeKey, SemaphoreSlim> _volumeGates = new();
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _scheduleReadFailures = new();
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public async Task<HostedVolumeState?> ReadAsync(string project, CancellationToken cancellationToken)
@@ -237,9 +238,24 @@ public sealed class HostedVolumeBackupService(
         foreach (var file in Directory.EnumerateFiles(root, "*.json"))
         {
             var project = Path.GetFileNameWithoutExtension(file);
-            var state = await ReadAsync(project, cancellationToken);
+            HostedVolumeState? state;
+            try { state = await ReadAsync(project, cancellationToken); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+            {
+                var failedAt = clock.GetUtcNow();
+                var firstFailedAt = _scheduleReadFailures.GetOrAdd(project, failedAt);
+                // The worker retries on its five-minute sweep; keep the original incident start.
+                logger.LogWarning(ex,
+                    "Hosted volume schedule read failed for {Project}; first failed at {FirstFailedAt}, retry at {RetryAt}",
+                    project, firstFailedAt, failedAt.AddMinutes(5));
+                continue;
+            }
             if (state is null) continue;
             var now = clock.GetUtcNow();
+            if (_scheduleReadFailures.TryRemove(project, out var recoveredFrom))
+                logger.LogInformation(
+                    "Hosted volume schedule read recovered for {Project}; first failed at {FirstFailedAt}, recovered at {RecoveredAt}",
+                    project, recoveredFrom, now);
             foreach (var schedule in state.Schedules.Where(item => HostedVolumeSchedulePolicy.IsDue(item, now)))
                 due.Add((project, schedule));
         }

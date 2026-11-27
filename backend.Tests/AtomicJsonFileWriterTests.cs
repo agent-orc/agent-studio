@@ -1,5 +1,8 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Runtime.InteropServices;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
 
@@ -304,6 +307,121 @@ public sealed class AtomicJsonFileWriterTests : IDisposable
         using var document = JsonDocument.Parse(File.ReadAllText(path));
         Assert.Equal(2, document.RootElement.GetProperty("version").GetInt32());
         Assert.Equal(["state.json"], Directory.GetFiles(Path.GetDirectoryName(path)!).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void FlushDirectory_MissingDirectory_ReportsNativeOpenFailure()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var path = Path.Combine(_dir, "missing", "state.json");
+
+        var failure = Assert.Throws<DirectoryDurabilityException>(() => AtomicJsonFileWriter.FlushDirectory(path));
+
+        Assert.Equal("open", failure.Operation);
+        Assert.Equal(2, failure.Errno); // ENOENT
+        Assert.Equal(path, failure.FilePath);
+        Assert.Equal(Path.GetDirectoryName(path), failure.DirectoryPath);
+        Assert.True(failure.CommitUncertain);
+    }
+
+    [Theory]
+    [InlineData("open", "text")]
+    [InlineData("fsync", "text")]
+    [InlineData("open", "json")]
+    [InlineData("fsync", "json")]
+    [InlineData("open", "replace")]
+    [InlineData("fsync", "replace")]
+    public void Write_DirectoryFailure_IsAnExplicitUncertainCommit(string operation, string mode)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var path = Path.Combine(_dir, "state.json");
+        var writer = new AtomicJsonFileWriter();
+        writer.Write(path, "{\"version\":1}");
+        var closed = 0;
+        using var fault = AtomicJsonFileWriter.OverrideDirectoryOperationsForTests(
+            _ => operation == "open" ? NativeFailure(13) : 42,
+            _ => NativeFailure(5),
+            _ => closed++);
+
+        var failure = Assert.Throws<DirectoryDurabilityException>(() =>
+        {
+            if (mode == "json") writer.WriteJson(path, new { version = 2 });
+            else if (mode == "replace") writer.ReplaceExisting(path, "{\"version\":2}");
+            else writer.Write(path, "{\"version\":2}");
+        });
+
+        Assert.Equal(operation, failure.Operation);
+        Assert.Equal(operation == "open" ? 13 : 5, failure.Errno);
+        Assert.Contains($"errno={failure.Errno}", failure.Message);
+        Assert.Contains(path, failure.Message);
+        Assert.Contains(_dir, failure.Message);
+        Assert.True(failure.CommitUncertain);
+        Assert.Equal(operation == "open" ? 0 : 1, closed);
+        // Rename already happened. A failed write must not be assumed rolled back.
+        Assert.Equal("{\"version\":2}", File.ReadAllText(path));
+        Assert.Equal(["state.json"], Directory.GetFiles(_dir).Select(Path.GetFileName));
+    }
+
+    [Theory]
+    [InlineData("open")]
+    [InlineData("fsync")]
+    public void Backup_DirectoryFailure_DoesNotReplaceThePrimary(string operation)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var path = Path.Combine(_dir, "state.json");
+        var writer = AtomicJsonFileWriter.KeepingLastGoodBackup();
+        writer.Write(path, "{\"version\":1}");
+        using var fault = AtomicJsonFileWriter.OverrideDirectoryOperationsForTests(
+            _ => operation == "open" ? NativeFailure(13) : 42, _ => NativeFailure(5), _ => { });
+
+        Assert.Throws<DirectoryDurabilityException>(() => writer.Write(path, "{\"version\":2}"));
+
+        Assert.Equal("{\"version\":1}", File.ReadAllText(path));
+        Assert.Equal("{\"version\":1}", File.ReadAllText(path + ".bak"));
+        Assert.Empty(Directory.GetFiles(_dir, "*.tmp"));
+    }
+
+    [Theory]
+    [InlineData("open")]
+    [InlineData("fsync")]
+    public void Authority_RecoversDiskStateAfterPostRenameFailureBeforeRetry(string operation)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskRepository"] = _dir }).Build();
+        // An adapter selects the existing snapshot persistence path. Its inner
+        // writer still executes the real file flush and rename before the fault.
+        var writer = new SnapshotWriter();
+        var service = new AttemptAuthorityService(configuration,
+            NullLogger<AttemptAuthorityService>.Instance, writer: writer);
+        var first = service.AcquireRun("AGT-1", "PROJ-1", null, "runner", "host", 60, "first").RunAttempt!;
+        using (AtomicJsonFileWriter.OverrideDirectoryOperationsForTests(
+            _ => operation == "open" ? NativeFailure(13) : 42, _ => NativeFailure(5), _ => { }))
+        {
+            Assert.Throws<DirectoryDurabilityException>(() =>
+                service.AcquireRun("AGT-2", "PROJ-1", null, "runner", "host", 60, "second"));
+        }
+
+        var recovered = service.GetTaskProjection("AGT-2").CurrentRunAttempt!;
+        Assert.NotNull(recovered);
+        var restarted = new AttemptAuthorityService(configuration,
+            NullLogger<AttemptAuthorityService>.Instance, writer: writer);
+        Assert.Equal(recovered.AttemptId, restarted.GetTaskProjection("AGT-2").CurrentRunAttempt!.AttemptId);
+        Assert.Equal(first.AttemptId, service.GetTaskProjection("AGT-1").CurrentRunAttempt!.AttemptId);
+        var retry = service.AcquireRun("AGT-2", "PROJ-1", null, "runner", "host", 60, "second");
+        Assert.Equal(AttemptWriteStatus.Duplicate, retry.Status);
+        Assert.Equal(recovered.AttemptId, retry.AttemptId);
+    }
+
+    private static int NativeFailure(int errno)
+    {
+        Marshal.SetLastPInvokeError(errno);
+        return -1;
+    }
+
+    private sealed class SnapshotWriter : IAtomicJsonFileWriter
+    {
+        public void Write(string path, string content) => new AtomicJsonFileWriter().Write(path, content);
     }
 
     private static bool IsSharingViolation(IOException exception)

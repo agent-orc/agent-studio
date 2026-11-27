@@ -24,7 +24,8 @@ public sealed class BatchGatePilotFaultInjectionTests : BatchGatePilotServiceTes
     // isolation's flaky-suspect mark and its one same-code re-gate child
     // before the reproduced red reaches the per-card suite.
     private const int PublicationWrites = 52;
-    private const int BaseMoveWrites = 59;
+    // Publication recovery now records the abandoned predecessor's settlement.
+    private const int BaseMoveWrites = 60;
     private const int IsolationWrites = 95;
 
     // Each scenario's crash points are their own test class, so the gate runs

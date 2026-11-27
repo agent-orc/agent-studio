@@ -106,6 +106,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     private readonly Func<IReadOnlyList<RemoteDeliveryIntegrationRequest>, Task>? _planTrain;
     private readonly DeliveryIntegrationQueueBoard _board;
     private long _sequence;
+    private readonly IntegrationConflictRecovery? _conflictRecovery;
 
     /// <summary>Error prefix of a review-driven delivery refused at dequeue because its card was reissued (AGT-3091).</summary>
     public const string ReviewedDeliverySupersededError = "reviewed-delivery-superseded";
@@ -156,7 +157,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             request => ReclaimBranchesAfterIntegration(request, scanner, git, branchReclaim),
             configuration: null,
             planTrain: queue => PlanTrainAsync(runner, queue),
-            queueBoard: queueBoard)
+            queueBoard: queueBoard,
+            conflictRecovery: git is null ? null : new IntegrationConflictRecovery(git, scanner))
     {
     }
 
@@ -217,8 +219,10 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         Action<RemoteDeliveryIntegrationRequest>? reclaimAfterIntegration = null,
         IConfiguration? configuration = null,
         Func<IReadOnlyList<RemoteDeliveryIntegrationRequest>, Task>? planTrain = null,
-        DeliveryIntegrationQueueBoard? queueBoard = null)
+        DeliveryIntegrationQueueBoard? queueBoard = null,
+        IntegrationConflictRecovery? conflictRecovery = null)
     {
+        _conflictRecovery = conflictRecovery;
         _planTrain = planTrain;
         _board = queueBoard ?? new DeliveryIntegrationQueueBoard();
         _integrate = integrate;
@@ -289,6 +293,20 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     {
         ArgumentNullException.ThrowIfNull(request);
         var deliveryKey = DeliveryKey(request);
+        DeliveryReplay? conflictReplay = null;
+        if (!discardCompletedReplay && _conflictRecovery is not null)
+        {
+            lock (_gate)
+            {
+                if (_deliveryReplays.TryGetValue(deliveryKey, out var cached)
+                    && cached.CompletedAtUtc is not null && cached.Completion.Task.IsCompletedSuccessfully
+                    && cached.Completion.Task.Result.Outcome is (MergeIntoIntegrationOutcome.Conflict or MergeIntoIntegrationOutcome.AgentRoundRequired))
+                    conflictReplay = cached;
+            }
+        }
+        // Git can wait on a repository. Never hold the shared queue lock while
+        // collecting retry facts, and only retire the replay we inspected.
+        var changedConflict = conflictReplay is not null && _conflictRecovery!.Replay(request) is null;
         ProjectQueue projectQueue;
         var startDrain = false;
         TaskCompletionSource<MergeIntoIntegrationResult> completion;
@@ -296,9 +314,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         lock (_gate)
         {
             PruneCompletedReplays(DateTimeOffset.UtcNow);
-            if (discardCompletedReplay
-                && _deliveryReplays.TryGetValue(deliveryKey, out var finished)
-                && finished.CompletedAtUtc is not null)
+            if (_deliveryReplays.TryGetValue(deliveryKey, out var finished)
+                && finished.CompletedAtUtc is not null
+                && (discardCompletedReplay || changedConflict && ReferenceEquals(finished, conflictReplay)))
             {
                 _deliveryReplays.Remove(deliveryKey);
             }
@@ -336,13 +354,14 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 deliveryKey,
                 sequence,
                 completion));
+            projectQueue.Revision++;
             if (!projectQueue.Running)
             {
                 projectQueue.Running = true;
                 startDrain = true;
             }
-            PublishBoard(request.Project, projectQueue);
         }
+        PublishBoard(request.Project, projectQueue);
 
         var reenter = discardCompletedReplay && IntegrationLaneEvents.Read(request.JobFolderPath)
             .Any(e => e.Kind == "ejected" && e.Outcome is ("AgentRoundRequired" or "Conflict"));
@@ -359,6 +378,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         {
             QueuedDelivery? delivery;
             TimeSpan wait = TimeSpan.Zero;
+            QueuedDelivery[] candidates;
+            long revision;
             lock (_gate)
             {
                 if (projectQueue.Pending.Count == 0)
@@ -374,19 +395,33 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     return;
                 }
 
+                revision = projectQueue.Revision;
+                candidates = projectQueue.Pending.Where(item => item.NotBeforeUtc <= DateTimeOffset.UtcNow)
+                    .OrderBy(item => item, QueuedDeliveryComparer.Instance).ToArray();
+            }
+            // File admission can invoke Git. Recheck the snapshot after that
+            // work so an enqueue during the read participates in selection.
+            var eligible = _conflictRecovery?.Eligible(candidates.Select(item => item.Request).ToArray());
+            lock (_gate)
+            {
+                if (revision != projectQueue.Revision) continue;
                 var now = DateTimeOffset.UtcNow;
-                delivery = projectQueue.Pending.Where(item => item.NotBeforeUtc <= now)
-                    .OrderBy(item => item, QueuedDeliveryComparer.Instance).FirstOrDefault();
+                delivery = eligible is null ? candidates.FirstOrDefault()
+                    : candidates.FirstOrDefault(item => ReferenceEquals(item.Request, eligible.FirstOrDefault()));
                 if (delivery is null)
+                {
                     wait = projectQueue.Pending.Min(item => item.NotBeforeUtc) - now;
+                    if (wait <= TimeSpan.Zero) wait = HoldRetryDelay;
+                }
                 else
                 {
                     projectQueue.Pending.Remove(delivery);
+                    projectQueue.Revision++;
                     projectQueue.Current = delivery;
                     projectQueue.CurrentSinceUtc = now;
                 }
-                PublishBoard(project, projectQueue);
             }
+            PublishBoard(project, projectQueue);
             if (delivery is null)
             {
                 await Task.Delay(wait > TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : wait).ConfigureAwait(false);
@@ -433,7 +468,21 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 await PlanTrainBehindAsync(project, projectQueue, delivery).ConfigureAwait(false);
                 MergeIntoIntegrationResult result;
                 using (IntegrationLaneEvents.BeginDelivery(delivery.Sequence))
-                    result = await _integrate(delivery.Request).ConfigureAwait(false);
+                {
+                    var replay = _conflictRecovery?.Replay(delivery.Request);
+                    result = replay ?? await _integrate(delivery.Request).ConfigureAwait(false);
+                    if (replay is null && _conflictRecovery?.Record(delivery.Request, result) is { } persistenceError)
+                    {
+                        _recordFailure(delivery.Request, AcceptedIntegrationFailureCodes.IntegrationError,
+                            "The integration conflict recovery receipt could not be saved.", persistenceError);
+                        result = result with
+                        {
+                            Outcome = MergeIntoIntegrationOutcome.Error,
+                            FailureCode = AcceptedIntegrationFailureCodes.IntegrationError,
+                            Error = persistenceError,
+                        };
+                    }
+                }
                 if (MonolithTransitionAdapter.IntegrationResult(result.Outcome.ToString(), 0).Action
                     == AgentStudio.OrchestrationDecisions.IntegrationResultAction.Requeue)
                 {
@@ -446,9 +495,10 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                         {
                             NotBeforeUtc = DateTimeOffset.UtcNow + HoldRetryDelay,
                         });
+                        projectQueue.Revision++;
                         projectQueue.Current = null;
-                        PublishBoard(project, projectQueue);
                     }
+                    PublishBoard(project, projectQueue);
                     continue;
                 }
                 // The runner's publication fence already decided a merge; its
@@ -637,23 +687,47 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     private sealed class ProjectQueue
     {
         public List<QueuedDelivery> Pending { get; } = [];
+        public long Revision { get; set; }
         public bool Running { get; set; }
         public QueuedDelivery? Current { get; set; }
         public DateTimeOffset? CurrentSinceUtc { get; set; }
         public string CurrentActivity { get; set; } = DeliveryIntegrationQueueBoard.Integrating;
     }
 
-    /// <summary>Called under <c>_gate</c>: the board shows the running delivery first, then the queue in drain order.</summary>
+    /// <summary>
+    /// Called outside <c>_gate</c>: reservation scans can wait on task folders
+    /// and receipts. Publish only a current snapshot, with the running delivery
+    /// first and the pending deliveries in recovery order.
+    /// </summary>
     private void PublishBoard(string project, ProjectQueue queue)
     {
-        var rows = new List<DeliveryIntegrationQueueRow>();
-        if (queue.Current is { } current)
-            rows.Add(new DeliveryIntegrationQueueRow(current.Request.JobId, queue.CurrentActivity,
-                queue.CurrentSinceUtc));
-        rows.AddRange(queue.Pending.OrderBy(item => item, QueuedDeliveryComparer.Instance)
-            .Select(item => new DeliveryIntegrationQueueRow(item.Request.JobId,
-                DeliveryIntegrationQueueBoard.Waiting, item.Request.DeliveredAtUtc)));
-        _board.Publish(project, rows);
+        while (true)
+        {
+            long revision;
+            RemoteDeliveryIntegrationRequest[] pending;
+            var rows = new List<DeliveryIntegrationQueueRow>();
+            lock (_gate)
+            {
+                if (!_projectQueues.TryGetValue(project, out var active) || !ReferenceEquals(active, queue)) return;
+                revision = queue.Revision;
+                if (queue.Current is { } current)
+                    rows.Add(new DeliveryIntegrationQueueRow(current.Request.JobId, queue.CurrentActivity,
+                        queue.CurrentSinceUtc));
+                pending = queue.Pending.OrderBy(item => item, QueuedDeliveryComparer.Instance)
+                    .Select(item => item.Request).ToArray();
+            }
+
+            if (_conflictRecovery is not null) pending = _conflictRecovery.Order(pending).ToArray();
+            rows.AddRange(pending.Select(request => new DeliveryIntegrationQueueRow(request.JobId,
+                DeliveryIntegrationQueueBoard.Waiting, request.DeliveredAtUtc)));
+            lock (_gate)
+            {
+                if (!_projectQueues.TryGetValue(project, out var active) || !ReferenceEquals(active, queue)) return;
+                if (revision != queue.Revision) continue;
+                _board.Publish(project, rows);
+                return;
+            }
+        }
     }
 
     /// <summary>
@@ -676,12 +750,14 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 .ToArray();
         }
         behind = behind.Where(request => request.ReviewAttemptId is null || _isAdmissibleDelivery(request)).ToArray();
+        if (_conflictRecovery is not null) behind = _conflictRecovery.Eligible(behind).ToArray();
         if (behind.Length == 0) return;
         lock (_gate)
         {
             projectQueue.CurrentActivity = DeliveryIntegrationQueueBoard.CompilingTrain(behind.Length + 1);
-            PublishBoard(project, projectQueue);
+            projectQueue.Revision++;
         }
+        PublishBoard(project, projectQueue);
         try
         {
             await _planTrain([head.Request, .. behind]).ConfigureAwait(false);
@@ -697,8 +773,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             lock (_gate)
             {
                 projectQueue.CurrentActivity = DeliveryIntegrationQueueBoard.Integrating;
-                PublishBoard(project, projectQueue);
+                projectQueue.Revision++;
             }
+            PublishBoard(project, projectQueue);
         }
     }
 

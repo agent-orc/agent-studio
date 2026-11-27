@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.Persistence;
 
 namespace AgentStudio.Pipeline;
 
@@ -100,24 +101,7 @@ public static class ReviewVerificationStore
         ArgumentNullException.ThrowIfNull(record);
 
         var path = PathFor(taskFolder);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
-        try
-        {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(record, Json));
-            File.Move(temporary, path, overwrite: true);
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(temporary)) File.Delete(temporary);
-            }
-            catch (Exception ex)
-            {
-                SilentCatch.Note(ex, "ReviewVerificationStore: temporary file cleanup");
-            }
-        }
+        new AtomicJsonFileWriter().Write(path, JsonSerializer.Serialize(record, Json));
     }
 
     /// <summary>

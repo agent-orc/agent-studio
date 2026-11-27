@@ -56,12 +56,11 @@ public sealed class BatchGatePilotFlakySuspectTests : BatchGatePilotServiceTests
 
         using var state = JsonDocument.Parse(await client.GetStringAsync(
             $"/api/projects/{ProjectName}/batch-gate/state"));
-        var row = state.RootElement.GetProperty("batches").EnumerateArray()
-            .Single(batch => batch.GetProperty("batchId").GetString() == parent.BatchId);
-        var mark = row.GetProperty("flakySuspect");
-        Assert.True(mark.GetProperty("active").GetBoolean());
-        Assert.Equal(UnstableTest, Assert.Single(mark.GetProperty("failedTests").EnumerateArray()).GetString());
-        Assert.Equal("passed", mark.GetProperty("regate").GetProperty("outcome").GetString());
+        Assert.DoesNotContain(state.RootElement.GetProperty("batches").EnumerateArray(),
+            batch => batch.GetProperty("batchId").GetString() == parent.BatchId);
+        // Settled cohorts leave the active response; the durable suspect and
+        // failed-test ranking retain the diagnosis after integration.
+        Assert.NotNull(store.ReadFlakySuspect(ProjectName, parent.BatchId));
         using var ranking = JsonDocument.Parse(await client.GetStringAsync(
             $"/api/projects/{ProjectName}/batch-gate/failed-tests"));
         var test = Assert.Single(ranking.RootElement.GetProperty("tests").EnumerateArray());

@@ -73,13 +73,6 @@ public static class WorkContainerLaunchPlanner
     // A secret travels as a file in the tmpfs mount (DP-S5), never as a value.
     private static readonly string[] SecretNameFragments = ["TOKEN", "SECRET", "PASSWORD", "PASSWD", "API_KEY", "PRIVATE_KEY", "CREDENTIAL"];
 
-    // Host paths that would hand the container a runtime, a login or a key.
-    private static readonly string[] ForbiddenSourceFragments =
-    [
-        "docker.sock", "podman.sock", "containerd.sock", "/.docker", "/.codex", "/.claude", "/.config/gh",
-        "/.ssh", "/.git-credentials", "/.gnupg", "/.aws", "/.kube",
-    ];
-
     /// <summary>
     /// SM-11: caches are per repository. One shared mirror volume would show
     /// every attempt the mirrors, and so the source, of every other project.
@@ -174,7 +167,7 @@ public static class WorkContainerLaunchPlanner
 
         var arguments = new List<string>
         {
-            "create", "--name", stem,
+            "create", "--entrypoint", "/usr/bin/env", "--name", stem,
             "--user", user,
             "--read-only",
             "--cap-drop", "ALL",
@@ -206,7 +199,7 @@ public static class WorkContainerLaunchPlanner
         {
             "run", "--rm", "--user", "0:0", "--network", "none", "--read-only", "--cap-drop", "ALL",
             "--cap-add", "CHOWN", "--cap-add", "FOWNER", "--security-opt", "no-new-privileges",
-            "--name", stem + "-prepare",
+            "--name", stem + "-prepare", "--entrypoint", "/usr/bin/env",
         };
         // No grant label: the ownership step reserves no share of the host grant.
         foreach (var (name, value) in labels.Where(label => label.Key != GrantLabel))
@@ -323,21 +316,13 @@ public static class WorkContainerLaunchPlanner
     {
         if (mount.Type == "bind")
         {
-            var source = mount.Source.Replace('\\', '/');
-            if (!mount.ReadOnly)
-                throw new ArgumentException("Host bind mounts into a work container must be read-only.");
-            if (source is "/" or "/home" or "/root" or "/etc" or "/var/run" or "/run" or "/proc" or "/sys" or "/dev"
-                || source.StartsWith("/run/", StringComparison.Ordinal)
-                || source.StartsWith("/var/run/", StringComparison.Ordinal)
-                || source.StartsWith("/proc/", StringComparison.Ordinal)
-                || source.EndsWith(".sock", StringComparison.Ordinal)
-                || ForbiddenSourceFragments.Any(fragment => source.Contains(fragment, StringComparison.Ordinal)))
-                throw new ArgumentException($"Host path '{mount.Source}' may not be mounted into a work container.");
+            if (!mount.ReadOnly || mount.Target != SourceMountTarget || !RoleImageManifest.CanonicalSource(mount.Source))
+                throw new ArgumentException("Host binds require a canonical, read-only bare repository source at /mnt/source; the privileged launcher must approve the exact source.");
         }
         else if (mount.Type != "volume")
             throw new ArgumentException($"Unsupported mount type '{mount.Type}'.");
-        if (mount.Target.StartsWith(SecretDirectory, StringComparison.Ordinal))
-            throw new ArgumentException("The secret directory is a tmpfs mount only.");
+        else if (mount.ReadOnly || mount.Target is not (WorkDirectory or "/cache/npm" or "/cache/nuget" or "/cache/repo"))
+            throw new ArgumentException("Volumes may target only /work and the three fixed cache directories.");
     }
 
     public static void ValidateEnvironment(string name)

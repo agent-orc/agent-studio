@@ -1,13 +1,16 @@
 import { InjectionToken } from '@angular/core';
+import { PREVIEW_TOKEN_SETS } from './preview-token-sets';
 
 export type ThemeMode = 'light' | 'dark';
 export type ThemePreference = ThemeMode | 'system';
-export type ThemeTokenValues = Readonly<Record<`--studio-${string}`, string>>;
+export type ThemeTokenValues = Readonly<Record<`--studio-${string}` | `--font-${string}` | `--elevation-${string}` | `--model-family-${string}` | `--lane-${string}`, string>>;
 
 /** A palette family has both modes. Theme preference always chooses the mode. */
 export interface ThemeTokenSet {
   readonly id: string;
   readonly label: string;
+  readonly description?: string;
+  readonly preview?: boolean;
   readonly light: ThemeTokenValues;
   readonly dark: ThemeTokenValues;
 }
@@ -32,7 +35,7 @@ export const DEFAULT_THEME_TOKEN_SET: ThemeTokenSet = Object.freeze({
 
 /** Optional centrally supplied prototypes, registered before restoring the id. */
 export const THEME_TOKEN_SETS = new InjectionToken<readonly ThemeTokenSet[]>('Studio token sets', {
-  providedIn: 'root', factory: () => [],
+  providedIn: 'root', factory: () => PREVIEW_TOKEN_SETS,
 });
 
 /** Snapshot trusted application configuration, never arbitrary stored CSS. */
@@ -46,13 +49,13 @@ export function snapshotTokenSet(set: ThemeTokenSet): ThemeTokenSet {
       throw new Error('Token sets require light and dark token maps.');
     }
     for (const [name, value] of Object.entries(tokens)) {
-      if (!/^--studio-[a-z0-9-]+$/.test(name) || typeof value !== 'string' || !value.trim()) {
+      if (!/^--(?:studio|font|elevation|model-family|lane)-[a-z0-9-]+$/.test(name) || typeof value !== 'string' || !value.trim()) {
         throw new Error('Token set overrides must use central Studio aliases and nonempty CSS values.');
       }
     }
     return Object.freeze({ ...tokens });
   };
-  return Object.freeze({ id: set.id, label: set.label, light: snapshot(set.light), dark: snapshot(set.dark) });
+  return Object.freeze({ id: set.id, label: set.label, description: set.description, preview: set.preview, light: snapshot(set.light), dark: snapshot(set.dark) });
 }
 
 export function restoreTokenSetId(raw: string | null, sets: readonly ThemeTokenSet[]): string {

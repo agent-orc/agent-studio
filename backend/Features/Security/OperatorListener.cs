@@ -38,7 +38,8 @@ public static class OperatorListener
                 known ? RoutePermissionCatalog.Resolve(endpoint!, context.Request.Method)?.Permission : null,
                 context.Connection.LocalPort,
                 operatorPort,
-                context.Request.Headers.Origin.FirstOrDefault());
+                context.Request.Headers.Origin.FirstOrDefault(),
+                known && endpoint!.Metadata.GetMetadata<LocalOperationEffectMetadata>() is not null);
             if (refusal is null)
             {
                 await next();
@@ -55,17 +56,17 @@ public static class OperatorListener
 
     /// <summary>Why this request is refused, or null when it may pass.</summary>
     internal static (string Code, string Message)? Decide(
-        string method, string? path, bool knownRoute, string? permission, int localPort, int? operatorPort, string? origin)
+        string method, string? path, bool knownRoute, string? permission, int localPort, int? operatorPort, string? origin, bool localEffect = false)
     {
         var safe = HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method);
         var sensitiveRead = safe && permission == IamPermissions.WorkspaceAdminister;
         // DNS rebinding: a website that resolves to this machine still names itself.
-        if ((!safe || sensitiveRead) && !string.IsNullOrEmpty(origin) && !IsLoopbackOrigin(origin))
+        if ((!safe || sensitiveRead || localEffect) && !string.IsNullOrEmpty(origin) && !IsLoopbackOrigin(origin))
             return ("cross-origin-denied", "This change is only possible from this Studio's own page.");
         if (operatorPort is not { } port || localPort == port) return null;
         // An unknown route answers 404 or 405 by itself; nothing runs.
         if (!knownRoute) return null;
-        if (safe ? !sensitiveRead : HostMayWrite(method, path, permission)) return null;
+        if (!localEffect && (safe ? !sensitiveRead : HostMayWrite(method, path, permission))) return null;
         return ("operator-listener-required",
             $"This change is only possible through the operator port {port}: the browser or a script on the Studio machine.");
     }
@@ -97,3 +98,11 @@ public static class OperatorListener
     private static bool IsLoopbackOrigin(string origin)
         => Uri.TryCreate(origin, UriKind.Absolute, out var uri) && uri.IsLoopback;
 }
+
+/// <summary>
+/// This local route can start a process or change local state even when its
+/// HTTP method or catalog permission looks like a read. Operator admission and
+/// foreign-Origin checks apply before its handler, regardless of HostMayWrite.
+/// This metadata does not change networked IAM permissions or Owner floors.
+/// </summary>
+public sealed class LocalOperationEffectMetadata { }

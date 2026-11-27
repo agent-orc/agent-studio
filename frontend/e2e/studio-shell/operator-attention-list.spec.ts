@@ -62,6 +62,136 @@ async function screenshot(page: Page, name: string): Promise<void> {
 }
 
 test.describe('Operator attention list', () => {
+  test('coverage survives failed polls, recovers, and ages retained and new rows while open', async ({ page }) => {
+    test.setTimeout(120_000);
+    const start = Date.now();
+    await page.clock.install({ time: start });
+    let fail = true;
+    let items: object[] = [];
+    let backupFail = false;
+    let backupState = 'ok';
+    await page.route('**/api/workbenches', route => route.fulfill({ json: { items: [] } }));
+    await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
+      json: { generatedAt: new Date(start).toISOString(), items: [] },
+    }));
+    await page.route('**/api/operator/backups', route => route.fulfill(backupFail
+      ? { status: 503, json: {} }
+      : { json: { state: backupState, stale: false, generatedAt: new Date(start).toISOString(),
+        warnings: [], backups: [], offHost: {} } }));
+    await page.route('**/api/operator/attention', route => route.fulfill(fail
+      ? { status: 503, json: {} } : { json: { items, count: items.length } }));
+    await gotoStudio(page);
+    const trigger = page.getByTestId('studio-attention-trigger');
+    await expect(trigger).toHaveAccessibleName(/Partial coverage/);
+    await expect(page.getByTestId('attention-trigger-coverage')).toHaveText('Partial');
+    await expect(page.getByTestId('studio-attention-count')).toHaveText('0');
+    await trigger.click();
+    await expect(page.getByTestId('attention-list-coverage')).toContainText('Attention: unavailable');
+    await expect(page.getByTestId('attention-list-empty')).toHaveCount(0);
+    await expect(page.getByTestId('attention-row')).toHaveCount(0);
+    for (const viewport of VIEWPORTS) {
+      await page.setViewportSize(viewport);
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await screenshot(page, `attention-unavailable-${viewport.width}-${theme}--mocked`);
+        await page.keyboard.press('Escape');
+        await screenshot(page, `attention-partial-trigger-${viewport.width}-${theme}--mocked`);
+        await trigger.click();
+        await expect(page.getByTestId('attention-list-coverage')).toBeVisible();
+      }
+    }
+    await page.keyboard.press('Escape');
+    fail = false;
+    await trigger.click();
+    await expect(page.getByTestId('attention-list-empty')).toBeVisible();
+    await expect(trigger).toHaveAccessibleName(/Nothing needs you/);
+    await screenshot(page, 'attention-clear-390-dark--mocked');
+    await page.keyboard.press('Escape');
+    // A failed read after an empty successful snapshot is still incomplete.
+    fail = true;
+    await trigger.click();
+    await expect(page.getByTestId('attention-list-coverage')).toContainText('Attention: stale');
+    await expect(page.getByTestId('studio-attention-count')).toHaveText('0');
+    await expect(page.getByTestId('attention-list-empty')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    const fact = (id: string, observedAt: number) => ({ id, type: 'decision-card.opened',
+      project: 'alpha', cardKey: id, cards: [id], title: `Decision ${id}`, reason: 'Choose the storage location.',
+      observedAt: new Date(observedAt).toISOString(), suggestedOperations: [] });
+    fail = false;
+    backupState = 'disabled';
+    const ageStart = await page.evaluate(() => Date.now());
+    items = [fact('AGT-9001', ageStart)];
+    await openAndReconcile(page);
+    await page.keyboard.press('Escape');
+    fail = true;
+    backupFail = true;
+    await openAndReconcile(page);
+    await expect(page.getByTestId('attention-list-coverage')).toContainText('Backups: stale');
+    await expect(page.getByTestId('studio-attention-count')).toHaveText('2');
+    await expect(page.getByTestId('attention-group-installation')).toContainText('Backups off');
+    for (const viewport of VIEWPORTS) {
+      await page.setViewportSize(viewport);
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await expect(page.getByTestId('attention-row')).toHaveCount(2);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await screenshot(page, `attention-stale-${viewport.width}-${theme}--mocked`);
+      }
+    }
+    await page.clock.fastForward(ageStart + 125_000 - await page.evaluate(() => Date.now()));
+    const retained = page.getByTestId('attention-row').filter({ hasText: 'AGT-9001' });
+    await expect(retained.getByTestId('attention-row-age')).toHaveText('2 min');
+    const addedAt = await page.evaluate(() => Date.now());
+    items = [fact('AGT-9001', ageStart), fact('AGT-9002', addedAt)];
+    fail = false;
+    backupFail = false;
+    backupState = 'ok';
+    await page.clock.fastForward(15_000);
+    const added = page.getByTestId('attention-row').filter({ hasText: 'AGT-9002' });
+    await expect(added.getByTestId('attention-row-age')).toHaveText('just now');
+    await page.clock.fastForward(60_000);
+    await expect(added.getByTestId('attention-row-age')).toHaveText('1 min');
+    await expect(retained.getByTestId('attention-row-age')).toHaveText('3 min');
+    await expect(page.getByTestId('attention-list-coverage')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('studio-attention-list')).toBeHidden();
+  });
+
+  test('backup action opens installation Operations and scrolls to the backup block', async ({ page }) => {
+    test.setTimeout(120_000);
+    await page.route('**/api/workbenches', route => route.fulfill({ json: { items: [] } }));
+    await page.route('**/api/operator/attention', route => route.fulfill({ json: { items: [], count: 0 } }));
+    await page.route('**/api/operator/backups', route => route.fulfill({ json: {
+      state: 'disabled', stale: false, generatedAt: new Date().toISOString(), warnings: [], backups: [], offHost: {},
+    } }));
+    // Hold the real Security response so its later expansion cannot be hidden by a fast read.
+    let releaseSecurity!: () => void;
+    const securityReady = new Promise<void>(resolve => { releaseSecurity = resolve; });
+    await page.route('**/api/security/posture', async route => {
+      const response = await route.fetch();
+      await securityReady;
+      await route.fulfill({ response });
+    });
+    await gotoStudio(page);
+    for (const viewport of VIEWPORTS) {
+      await page.setViewportSize(viewport);
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await openAndReconcile(page);
+        await page.getByTestId('attention-row').filter({ hasText: 'Backups off' })
+          .getByTestId('attention-row-action').click();
+        await expect(page).toHaveURL(/workspace\/settings\/operations/);
+        const panel = page.getByTestId('operations-backups');
+        await expect(panel).toBeVisible();
+        await expect(page.getByTestId('operations-backups-state')).toBeVisible();
+        releaseSecurity();
+        await expect(page.getByTestId('operations-security-summary')).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Installation backups', exact: true })).toBeInViewport();
+        await screenshot(page, `attention-backup-destination-${viewport.width}-${theme}--mocked`);
+      }
+    }
+  });
+
   test('shows an open environment incident first with its two destinations in both themes and on a phone', async ({ page }) => {
     const [watch] = await api<WatchPath[]>('/api/watch-paths?includeFixtures=true');
     const project = watch.name ?? 'alpha';
@@ -83,7 +213,7 @@ test.describe('Operator attention list', () => {
         await expect(row).toContainText('HTTP 503');
         await expect(row.getByTestId('attention-row-action')).toHaveText('Open incident card');
         await expect(row.getByTestId('attention-open-operations')).toBeVisible();
-        await screenshot(page, `incident-${name}-${theme}`);
+        await screenshot(page, `incident-${name}-${theme}--mocked`);
         await page.getByTestId('studio-attention-list').getByRole('button', { name: 'Close' }).click();
       }
     }

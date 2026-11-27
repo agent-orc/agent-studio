@@ -202,6 +202,9 @@ export class GitPaneService implements OnDestroy {
    * file list lives on {@link commitDetail}.
    */
   readonly aggregateFiles = signal<GitFileChange[]>([]);
+  /** Only a completed file read can establish that a commit has no files. */
+  readonly commitFilesState = signal<'idle' | 'loading' | 'error' | 'loaded'>('idle');
+  private commitFilesRequest = 0;
 
   /** Commit-history view is active whenever the task carries any commit. */
   readonly viewMode = computed<'commit' | 'worktree'>(() =>
@@ -249,6 +252,7 @@ export class GitPaneService implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.commitFilesRequest++;
     this.stopAutoRefresh();
     this.clearProvenanceWait();
   }
@@ -288,6 +292,7 @@ export class GitPaneService implements OnDestroy {
       // new commit lands on the chain (continue-mode follow-up, recovery
       // commit, operator-driven steer).
       const chainChanged = oldChainSignature !== commitChainSignature(chain);
+      if (chainChanged) this.commitFilesRequest++;
       if (chainChanged && !visible) {
         this.resourcesPending = true;
         if (info.state === TaskState.HumanReview) this.loadProvenance();
@@ -309,6 +314,9 @@ export class GitPaneService implements OnDestroy {
       return;
     }
     this.currentJob = info ?? null;
+    this.commitFilesRequest++;
+    this.commitFilesState.set('idle');
+    this.selectedCommitSha.set(null);
     this.resourcesPending = !!info && !visible;
     this.status.set(null);
     this.commitDetail.set(null);
@@ -424,8 +432,14 @@ export class GitPaneService implements OnDestroy {
    */
   private applyCommitDefault(chain: TaskCommitInfo[]): void {
     if (chain.length === 0) {
+      this.commitFilesRequest++;
+      this.commitFilesState.set('idle');
       this.selectedCommitSha.set(null);
+      this.commitDetail.set(null);
       this.aggregateFiles.set([]);
+      this.selectedDiffPath.set(null);
+      this.diffText.set('');
+      this.resetPreview();
       return;
     }
     const active = chain.filter((commit) => !isSuperseded(commit));
@@ -447,9 +461,6 @@ export class GitPaneService implements OnDestroy {
   selectAllCommits(): void {
     if (this.selectedCommitSha() === null) return;
     this.selectedCommitSha.set(null);
-    this.selectedDiffPath.set(null);
-    this.diffText.set('');
-    this.commitDetail.set(null);
     this.loadAggregate();
   }
 
@@ -461,16 +472,13 @@ export class GitPaneService implements OnDestroy {
   private loadAggregate(): void {
     const info = this.currentJob;
     if (!info) return;
+    const stillSelected = this.beginCommitFiles(info, null);
     this.jobService.getJobCommitFilesAggregate(info.id, info.watchPath).subscribe({
       next: (res) => {
-        const files: GitFileChange[] = res?.files ?? [];
-        this.aggregateFiles.set(files);
-        this.selectedDiffPath.set(null);
-        this.diffText.set('');
-        const first = files[0]?.path ?? null;
-        if (first) this.selectDiffPath(first);
+        if (!stillSelected()) return;
+        this.settleCommitFiles(isGitFactsWarming(res) ? undefined : res?.files, null);
       },
-      error: () => this.aggregateFiles.set([]),
+      error: () => { if (stillSelected()) this.commitFilesState.set('error'); },
     });
   }
 
@@ -488,21 +496,30 @@ export class GitPaneService implements OnDestroy {
     if (!entry) return;
     if (this.selectedCommitSha() === sha) return;
     this.selectedCommitSha.set(sha);
-    this.selectedDiffPath.set(null);
-    this.diffText.set('');
-    // Compose a TaskCommitDetail header from the chain entry directly,
-    // then load the file list from the per-sha endpoint. We don't have
-    // a single "commit by sha" endpoint that returns both, so we shape
-    // the same object here for the template's sake.
-    this.commitDetail.set({ commit: entry, files: [] });
-    this.jobService.getJobCommitFilesBySha(info.id, sha, info.watchPath).subscribe({
+    this.loadChainCommit(entry);
+  }
+
+  /** Retry the current selection without changing its SHA or aggregate mode. */
+  retryCommitFiles(): void {
+    if (this.commitFilesState() !== 'error' || this.viewMode() !== 'commit') return;
+    const sha = this.selectedCommitSha();
+    if (sha === null) this.loadAggregate();
+    else {
+      const entry = this.commitChain().find(commit => commit.sha === sha);
+      if (entry) this.loadChainCommit(entry);
+    }
+  }
+
+  private loadChainCommit(entry: TaskCommitInfo): void {
+    const info = this.currentJob;
+    if (!info) return;
+    const stillSelected = this.beginCommitFiles(info, entry);
+    this.jobService.getJobCommitFilesBySha(info.id, entry.sha, info.watchPath).subscribe({
       next: (res) => {
-        const files: GitFileChange[] = res?.files ?? [];
-        this.commitDetail.set({ commit: entry, files });
-        const first = files[0]?.path ?? null;
-        if (first) this.selectDiffPath(first);
+        if (!stillSelected()) return;
+        this.settleCommitFiles(isGitFactsWarming(res) ? undefined : res?.files, entry);
       },
-      error: () => this.commitDetail.set({ commit: entry, files: [] }),
+      error: () => { if (stillSelected()) this.commitFilesState.set('error'); },
     });
   }
 
@@ -514,17 +531,48 @@ export class GitPaneService implements OnDestroy {
    */
   loadCommitDetail(): void {
     const info = this.currentJob;
-    if (!info) return;
+    const entry = this.commitChain().find(commit => commit.sha === this.selectedCommitSha());
+    if (!info || !entry) return;
+    const stillSelected = this.beginCommitFiles(info, entry);
     this.jobService.getJobCommit(info.id, info.watchPath).subscribe({
       next: (detail) => {
-        this.commitDetail.set(detail);
-        // Default-select the first changed file so the diff is visible at a
-        // glance — matches the user's intent of "show me the changes".
-        const first = detail?.files?.[0]?.path ?? null;
-        if (first) this.selectDiffPath(first);
+        if (!stillSelected()) return;
+        this.settleCommitFiles(isGitFactsWarming(detail) ? undefined : detail?.files,
+          detail?.commit?.sha === entry.sha ? detail.commit : entry);
       },
-      error: () => this.commitDetail.set(null),
+      error: () => { if (stillSelected()) this.commitFilesState.set('error'); },
     });
+  }
+
+  private beginCommitFiles(info: TaskInfo, entry: TaskCommitInfo | null): () => boolean {
+    const request = ++this.commitFilesRequest;
+    const mode = this.viewMode();
+    const sha = this.selectedCommitSha();
+    // Keep the known chain header while the files load, including on retry.
+    this.commitDetail.set(entry ? { commit: entry, files: [] } : null);
+    this.aggregateFiles.set([]);
+    this.selectedDiffPath.set(null);
+    this.diffText.set('');
+    this.resetPreview();
+    this.commitFilesState.set('loading');
+    // The generation also rejects A -> B -> A and leaving/reopening a task.
+    return () => request === this.commitFilesRequest
+      && sameJobIdentity(this.currentJob, info)
+      && this.viewMode() === mode
+      && this.selectedCommitSha() === sha;
+  }
+
+  private settleCommitFiles(files: GitFileChange[] | undefined, entry: TaskCommitInfo | null): void {
+    // A warming or missing payload has not confirmed an empty change set.
+    if (!Array.isArray(files)) {
+      this.commitFilesState.set('error');
+      return;
+    }
+    if (entry) this.commitDetail.set({ commit: entry, files });
+    else this.aggregateFiles.set(files);
+    this.commitFilesState.set('loaded');
+    const first = files[0]?.path;
+    if (first) this.selectDiffPath(first);
   }
 
   refresh(): void {

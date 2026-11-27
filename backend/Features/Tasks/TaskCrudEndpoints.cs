@@ -1015,15 +1015,21 @@ public static class TaskCrudEndpoints
             AgentStudio.Registry.ProjectRegistry projects, ILoggerFactory loggers) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var success = states.DeleteJob(jobId, watchPath);
-            // AGT-3624: deleting a card with unintegrated work carries the
-            // operator's written reason; the folder is gone, so the log keeps it.
-            if (success && !string.IsNullOrWhiteSpace(reason))
+            var outcome = states.DeleteJobChecked(jobId, watchPath);
+            // Draft deletion notes remain in the log. Protected work uses the
+            // archive route's authority, reason and retained evidence instead.
+            if (outcome.Status == DeleteJobStatus.Success && !string.IsNullOrWhiteSpace(reason))
                 loggers.CreateLogger("AgentStudio.Tasks.TaskDelete").LogWarning(
                     "task-deleted-with-reason job={JobId} watchPath={WatchPath} reason={Reason}",
                     jobId, watchPath, reason.Trim());
-            return success ? Results.Ok() : Results.NotFound();
-        });
+            return outcome.Status switch
+            {
+                DeleteJobStatus.Success => Results.Ok(),
+                DeleteJobStatus.NotFound => Results.NotFound(),
+                DeleteJobStatus.Conflict => Results.Conflict(new { error = outcome.Code, message = outcome.Message }),
+                _ => Results.Problem(outcome.Message),
+            };
+        }).WithDescription("Deletes an unstarted draft. Execution or delivery evidence returns 409 and must be retained through the guarded archive move. A DELETE reason does not bypass that protection.");
 
         async Task<IResult> CreateTask(
             CreateTaskRequest req,

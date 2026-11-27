@@ -15,16 +15,23 @@
     </p>
   </header>
 
-  @if (loadError(); as err) {
-    <div class="tup__error" data-testid="token-usage-load-error">
-      Could not load token usage: {{ err }}
-    </div>
-  }
+  <ng-template #readFeedback let-section let-label="label">
+    @if (sectionState(section) === 'loading') {
+      <sui-loading-surface [label]="'Loading ' + label + '…'" />
+    } @else if (sectionState(section) === 'error') {
+      <div class="tup__error" role="alert" [attr.data-testid]="section + '-error'">
+        Could not load {{ label }}.
+        <button type="button" class="tup__drill-close" [attr.aria-label]="'Retry ' + label"
+                (click)="retrySection(section)">Retry</button>
+      </div>
+    }
+  </ng-template>
+  <ng-container [ngTemplateOutlet]="readFeedback" [ngTemplateOutletContext]="{ $implicit: 'summary', label: 'token totals' }" />
 
   @if (tokenFreshness(); as freshness) {
     <div class="tup__freshness" data-testid="token-usage-as-of" [attr.data-freshness]="freshness.status">
       <app-status-indicator [tone]="freshnessTone(freshness.status)"
-                            [label]="'Data as of ' + (freshness.asOf ? formatTs(freshness.asOf) + ' UTC' : 'no readable activity timestamp')"
+                            [label]="'Data as of ' + (freshness.asOf ? formatTs(freshness.asOf) : 'no readable activity timestamp')"
                             [compact]="true"
                             testId="token-usage-freshness" />
     </div>
@@ -43,24 +50,26 @@
         the totals, heatmap, and expensive-tasks list will appear.
       </p>
     </div>
-  } @else {
+  } @else if (summary()) {
     <div class="tup__cards" data-testid="token-usage-cards">
       @for (card of cards(); track card.testid) {
         <article class="tup__card"
                  [class]="'tup__card--' + card.category"
                  [attr.data-testid]="card.testid">
           <h3 class="tup__card-title">{{ card.label }}</h3>
-          <p class="tup__card-value">{{ formatTokens(card.primary) }}</p>
+          <p class="tup__card-value" [attr.title]="fullTokens(card.primary)" [attr.aria-label]="fullTokens(card.primary)">{{ formatTokens(card.primary) }}</p>
           @if (card.secondary; as s) {
             <p class="tup__card-detail">
               <span class="tup__card-detail-label">{{ s.label }}:</span>
-              <span class="tup__card-detail-value">{{ formatTokens(s.value) }}</span>
+              <span class="tup__card-detail-value" [attr.title]="fullTokens(s.value)" [attr.aria-label]="fullTokens(s.value)">{{ formatTokens(s.value) }}</span>
             </p>
           }
         </article>
       }
     </div>
 
+  }
+  @if (readState().heatmap === 'ready') {
     <section class="tup__timeline" data-testid="token-usage-timeline" aria-label="Recent token spend">
       <h3 class="tup__section-title">Recent activity</h3>
       @if (timelineBuckets().length === 0) {
@@ -80,148 +89,156 @@
     </section>
   }
 
-  <app-project-pipeline-cost-trend [timeline]="pipelineCost()" />
+  <ng-container [ngTemplateOutlet]="readFeedback" [ngTemplateOutletContext]="{ $implicit: 'pipeline-cost', label: 'pipeline cost' }" />
+  @if (pipelineCost()) {
+    <app-project-pipeline-cost-trend [timeline]="pipelineCost()" />
+  }
   <app-review-observation-table [projectName]="projectName()" />
 
-  @if (summary()?.hasData !== false) {
-    <section class="tup__heatmap-section" aria-label="Per-task heatmap">
-      <h3 class="tup__section-title">Heatmap (top tasks × days)</h3>
-      @if (heatmap()?.hasData) {
-        <div class="tup__heatmap-scroll">
-          <table class="tup__heatmap" data-testid="token-usage-heatmap">
-            <thead>
-              <tr>
-                <th class="tup__heatmap-corner" scope="col">Task</th>
-                @for (day of heatmap()!.days; track day) {
-                  <th scope="col" class="tup__heatmap-day-th">{{ shortDay(day) }}</th>
+  <section class="tup__heatmap-section" aria-label="Per-task heatmap">
+    <h3 class="tup__section-title">Heatmap (top tasks × days)</h3>
+    <ng-container [ngTemplateOutlet]="readFeedback" [ngTemplateOutletContext]="{ $implicit: 'heatmap', label: 'daily activity' }" />
+    @if (heatmap()?.hasData) {
+      <div class="tup__heatmap-scroll">
+        <table class="tup__heatmap" data-testid="token-usage-heatmap">
+          <thead>
+            <tr>
+              <th class="tup__heatmap-corner" scope="col">Task</th>
+              @for (day of heatmap()!.days; track day) {
+                <th scope="col" class="tup__heatmap-day-th">{{ shortDay(day) }}</th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of heatmapTopRows(); track row.jobId) {
+              <tr [attr.data-testid]="'heatmap-row'"
+                  [attr.data-job-id]="row.jobId">
+                <th scope="row" class="tup__heatmap-row-th"
+                    [class.tup__heatmap-row-th--active]="row.jobId === selectedJobId()">
+                  <button type="button"
+                          class="tup__heatmap-row-btn"
+                          [attr.data-testid]="'heatmap-row-btn-' + row.jobId"
+                          [attr.aria-pressed]="row.jobId === selectedJobId()"
+                          (click)="onSelectJob(row.jobId)">
+                    <span class="tup__heatmap-row-cat"
+                          [class]="'tup__heatmap-row-cat--' + row.category">{{ catGlyph(row.category) }}</span>
+                    <span class="tup__heatmap-row-title">{{ row.title }}</span>
+                    <span class="tup__heatmap-row-total" [attr.title]="fullTokens(row.total)" [attr.aria-label]="fullTokens(row.total)">{{ formatTokens(row.total) }}</span>
+                  </button>
+                </th>
+                @for (cell of row.cells; track cell.day) {
+                  <td class="tup__heatmap-cell"
+                      [attr.data-testid]="'heatmap-cell'"
+                      [attr.data-job-id]="row.jobId"
+                      [attr.data-day]="cell.day"
+                      [attr.data-total]="cell.total"
+                      [class]="'tup__heatmap-cell--' + heatLevel(cell.total)"
+                      [cacTooltip]="row.title + ' · ' + cell.day + ': ' + fullTokens(cell.total)"
+                      (click)="onSelectJob(row.jobId)"></td>
                 }
               </tr>
-            </thead>
-            <tbody>
-              @for (row of heatmapTopRows(); track row.jobId) {
-                <tr [attr.data-testid]="'heatmap-row'"
-                    [attr.data-job-id]="row.jobId">
-                  <th scope="row" class="tup__heatmap-row-th"
-                      [class.tup__heatmap-row-th--active]="row.jobId === selectedJobId()">
-                    <button type="button"
-                            class="tup__heatmap-row-btn"
-                            [attr.data-testid]="'heatmap-row-btn-' + row.jobId"
-                            [attr.aria-pressed]="row.jobId === selectedJobId()"
-                            (click)="onSelectJob(row.jobId)">
-                      <span class="tup__heatmap-row-cat"
-                            [class]="'tup__heatmap-row-cat--' + row.category">{{ catGlyph(row.category) }}</span>
-                      <span class="tup__heatmap-row-title">{{ row.title }}</span>
-                      <span class="tup__heatmap-row-total">{{ formatTokens(row.total) }}</span>
-                    </button>
-                  </th>
-                  @for (cell of row.cells; track cell.day) {
-                    <td class="tup__heatmap-cell"
-                        [attr.data-testid]="'heatmap-cell'"
-                        [attr.data-job-id]="row.jobId"
-                        [attr.data-day]="cell.day"
-                        [attr.data-total]="cell.total"
-                        [class]="'tup__heatmap-cell--' + heatLevel(cell.total)"
-                        [cacTooltip]="row.title + ' · ' + cell.day + ': ' + formatTokens(cell.total) + ' tokens'"
-                        (click)="onSelectJob(row.jobId)"></td>
-                  }
-                </tr>
-              }
-            </tbody>
-          </table>
-        </div>
-      } @else {
-        <p class="tup__section-empty" data-testid="heatmap-empty">
-          No per-job activity in the last {{ heatmap()?.days?.length ?? 30 }} days.
-        </p>
-      }
-    </section>
+            }
+          </tbody>
+        </table>
+      </div>
+    } @else if (readState().heatmap === 'ready') {
+      <p class="tup__section-empty" data-testid="heatmap-empty">
+        No per-job activity in the last {{ heatmap()?.days?.length ?? 30 }} days.
+      </p>
+    }
+  </section>
 
-    <section class="tup__expensive-section" aria-label="Expensive tasks">
-      <h3 class="tup__section-title">Most expensive tasks</h3>
-      @if (expensive().length === 0) {
-        <p class="tup__section-empty" data-testid="expensive-empty">
-          No tasks have recorded token spend yet.
-        </p>
+  <section class="tup__expensive-section" aria-label="Expensive tasks">
+    <h3 class="tup__section-title">Most expensive tasks</h3>
+    <ng-container [ngTemplateOutlet]="readFeedback" [ngTemplateOutletContext]="{ $implicit: 'expensive', label: 'expensive tasks' }" />
+    @if (readState().expensive === 'ready' && expensive().length === 0) {
+      <p class="tup__section-empty" data-testid="expensive-empty">
+        No tasks have recorded token spend yet.
+      </p>
+    } @else if (readState().expensive === 'ready') {
+      <ul class="tup__expensive-list" data-testid="token-usage-expensive">
+        @for (j of expensive(); track j.jobId) {
+          <li class="tup__expensive-row"
+              [class.tup__expensive-row--active]="j.jobId === selectedJobId()"
+              [attr.data-testid]="'expensive-row'"
+              [attr.data-job-id]="j.jobId">
+            <button type="button"
+                    class="tup__expensive-btn"
+                    [attr.data-testid]="'expensive-btn-' + j.jobId"
+                    [attr.aria-current]="j.jobId === selectedJobId() ? 'true' : null"
+                    (click)="onSelectJob(j.jobId)">
+              <span class="tup__expensive-cat"
+                    [class]="'tup__expensive-cat--' + j.category">{{ j.category }}</span>
+              <span class="tup__expensive-title">{{ j.title }}</span>
+              <span class="tup__expensive-meta">
+                <span [attr.title]="fullTokens(j.totalTokens)" [attr.aria-label]="fullTokens(j.totalTokens)">{{ formatTokens(j.totalTokens) }}</span>
+                <span class="tup__expensive-meta-sep">·</span>
+                <span>{{ j.calls }} call{{ j.calls === 1 ? '' : 's' }}</span>
+              </span>
+            </button>
+          </li>
+        }
+      </ul>
+    }
+  </section>
+
+  @if (selectedJobId(); as jid) {
+    <section class="tup__drill" data-testid="token-usage-drill" aria-label="Per-run drill-down">
+      <header class="tup__drill-head">
+        <h3 class="tup__section-title">Drill-down: {{ drilldown()?.title ?? jid }}</h3>
+        <button type="button"
+                class="tup__drill-close"
+                data-testid="drill-close"
+                (click)="onClearSelection()">Close</button>
+      </header>
+      @if (drilldownError(); as err) {
+        <div class="tup__error" role="alert" data-testid="drill-error">{{ err }}
+          <button type="button" class="tup__drill-close" (click)="retryDrilldown()">Retry</button>
+        </div>
+      } @else if (!drilldown()) {
+        <div data-testid="drill-loading"><sui-loading-surface label="Loading task token usage…" /></div>
+      } @else if (drilldown()!.runs.length === 0) {
+        <p class="tup__section-empty" data-testid="drill-empty">No token calls recorded for this task.</p>
       } @else {
-        <ul class="tup__expensive-list" data-testid="token-usage-expensive">
-          @for (j of expensive(); track j.jobId) {
-            <li class="tup__expensive-row"
-                [class.tup__expensive-row--active]="j.jobId === selectedJobId()"
-                [attr.data-testid]="'expensive-row'"
-                [attr.data-job-id]="j.jobId">
-              <button type="button"
-                      class="tup__expensive-btn"
-                      [attr.data-testid]="'expensive-btn-' + j.jobId"
-                      (click)="onSelectJob(j.jobId)">
-                <span class="tup__expensive-cat"
-                      [class]="'tup__expensive-cat--' + j.category">{{ j.category }}</span>
-                <span class="tup__expensive-title">{{ j.title }}</span>
-                <span class="tup__expensive-meta">
-                  <span>{{ formatTokens(j.totalTokens) }}</span>
-                  <span class="tup__expensive-meta-sep">·</span>
-                  <span>{{ j.calls }} call{{ j.calls === 1 ? '' : 's' }}</span>
-                </span>
-              </button>
+        <div class="tup__drill-summary">
+          <span class="tup__drill-summary-cat"
+                [class]="'tup__drill-summary-cat--' + drilldown()!.category">{{ drilldown()!.category }}</span>
+          <span class="tup__drill-summary-total" [attr.title]="fullTokens(drilldown()!.totalTokens)" [attr.aria-label]="fullTokens(drilldown()!.totalTokens)">{{ formatTokens(drilldown()!.totalTokens) }} tokens</span>
+          <span class="tup__drill-summary-calls">· {{ drilldown()!.calls }} run{{ drilldown()!.calls === 1 ? '' : 's' }}</span>
+          @if (drilldown()!.lastModel; as m) {
+            <span class="tup__drill-summary-model">· {{ m }}</span>
+          }
+        </div>
+        <p class="tup__section-empty">Run times in UTC.</p>
+        <ol class="tup__drill-runs">
+          @for (r of drilldown()!.runs; track r.index) {
+            <li class="tup__drill-run" [attr.data-testid]="'drill-run'">
+              <span class="tup__drill-run-idx">#{{ r.index + 1 }}</span>
+              <time class="tup__drill-run-ts" [attr.datetime]="r.ts">{{ formatTs(r.ts) }}</time>
+              <span class="tup__drill-run-model">{{ r.model ?? '—' }}</span>
+              <span class="tup__drill-run-total" [attr.title]="fullTokens(r.total)" [attr.aria-label]="fullTokens(r.total)">{{ formatTokens(r.total) }}</span>
+              <span class="tup__drill-run-delta"
+                    [attr.title]="(r.deltaVsPrev === null || r.deltaVsPrev === undefined) ? null : fullTokens(r.deltaVsPrev)"
+                    [attr.aria-label]="(r.deltaVsPrev === null || r.deltaVsPrev === undefined) ? null : fullTokens(r.deltaVsPrev)"
+                    [class.tup__drill-run-delta--up]="(r.deltaVsPrev ?? 0) > 0"
+                    [class.tup__drill-run-delta--down]="(r.deltaVsPrev ?? 0) < 0">
+                @if (r.deltaVsPrev === null || r.deltaVsPrev === undefined) {
+                  first run
+                } @else {
+                  {{ r.deltaVsPrev > 0 ? '+' : '' }}{{ formatTokens(r.deltaVsPrev) }}
+                }
+              </span>
+              @if (r.summary; as s) {
+                <span class="tup__drill-run-summary">{{ s }}</span>
+              }
             </li>
           }
-        </ul>
+        </ol>
       }
     </section>
-
-    @if (selectedJobId(); as jid) {
-      <section class="tup__drill" data-testid="token-usage-drill" aria-label="Per-run drill-down">
-        <header class="tup__drill-head">
-          <h3 class="tup__section-title">Drill-down: {{ drilldown()?.title ?? jid }}</h3>
-          <button type="button"
-                  class="tup__drill-close"
-                  data-testid="drill-close"
-                  (click)="onClearSelection()">Close</button>
-        </header>
-        @if (drilldownError(); as err) {
-          <p class="tup__error" data-testid="drill-error">{{ err }}</p>
-        } @else if (!drilldown()) {
-          <p class="tup__section-empty" data-testid="drill-loading">Loading drill-down…</p>
-        } @else if (drilldown()!.runs.length === 0) {
-          <p class="tup__section-empty" data-testid="drill-empty">No token calls recorded for this task.</p>
-        } @else {
-          <div class="tup__drill-summary">
-            <span class="tup__drill-summary-cat"
-                  [class]="'tup__drill-summary-cat--' + drilldown()!.category">{{ drilldown()!.category }}</span>
-            <span class="tup__drill-summary-total">{{ formatTokens(drilldown()!.totalTokens) }} tokens</span>
-            <span class="tup__drill-summary-calls">· {{ drilldown()!.calls }} run{{ drilldown()!.calls === 1 ? '' : 's' }}</span>
-            @if (drilldown()!.lastModel; as m) {
-              <span class="tup__drill-summary-model">· {{ m }}</span>
-            }
-          </div>
-          <ol class="tup__drill-runs">
-            @for (r of drilldown()!.runs; track r.index) {
-              <li class="tup__drill-run" [attr.data-testid]="'drill-run'">
-                <span class="tup__drill-run-idx">#{{ r.index + 1 }}</span>
-                <span class="tup__drill-run-ts">{{ formatTs(r.ts) }}</span>
-                <span class="tup__drill-run-model">{{ r.model ?? '—' }}</span>
-                <span class="tup__drill-run-total">{{ formatTokens(r.total) }}</span>
-                <span class="tup__drill-run-delta"
-                      [class.tup__drill-run-delta--up]="(r.deltaVsPrev ?? 0) > 0"
-                      [class.tup__drill-run-delta--down]="(r.deltaVsPrev ?? 0) < 0">
-                  @if (r.deltaVsPrev === null || r.deltaVsPrev === undefined) {
-                    first run
-                  } @else {
-                    {{ r.deltaVsPrev > 0 ? '+' : '' }}{{ formatTokens(r.deltaVsPrev) }}
-                  }
-                </span>
-                @if (r.summary; as s) {
-                  <span class="tup__drill-run-summary">{{ s }}</span>
-                }
-              </li>
-            }
-          </ol>
-        }
-      </section>
-    }
   }
 
   @if (summary()?.disclaimer; as d) {
     <p class="tup__disclaimer">{{ d }}</p>
   }
 </section>
-  

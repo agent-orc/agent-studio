@@ -114,7 +114,7 @@
             }
           </div>
         }
-        <app-model-migration-badge [model]="primaryModel(g.cliType)" [pending]="savingCli() === g.cliType"
+        <app-model-migration-badge [model]="primaryModel(g.cliType)" [pending]="isSaving(g.cliType)"
           testId="cli-models-migration" (apply)="setPrimary(g.cliType, $event)" />
         <button class="cli-models__refresh"
                 type="button"
@@ -129,37 +129,51 @@
             <div class="cli-models__route" [attr.data-testid]="'cli-models-default-' + g.cliType">
               <label class="cli-models__route-line cli-models__route-line--primary">
                 <span class="cli-models__default-tag">primary</span>
-                <select [value]="primaryModel(g.cliType)"
+                <select [ngModel]="primaryModel(g.cliType)"
                         [attr.data-testid]="'cli-primary-' + g.cliType"
-                        (change)="setPrimary(g.cliType, $any($event.target).value)">
+                        [attr.aria-describedby]="routeErrors()[g.cliType] ? 'cli-route-error-' + g.cliType : null"
+                        (ngModelChange)="setPrimary(g.cliType, $event)">
                   @for (m of g.models; track m.id) { <option [value]="m.id">{{ modelPriceLabel(g.cliType, m) }}</option> }
                 </select>
               </label>
               <div class="cli-models__route-line cli-models__route-line--fallback">
                 <span class="cli-models__fallback-tag">fallback</span>
-                <select [value]="fallbackCli(g.cliType)"
+                <select [ngModel]="fallbackCli(g.cliType)"
                         [attr.aria-label]="'Fallback CLI for ' + g.label"
-                        (change)="setFallbackCli(g.cliType, $any($event.target).value)">
+                        [attr.aria-describedby]="routeErrors()[g.cliType] ? 'cli-route-error-' + g.cliType : null"
+                        (ngModelChange)="setFallbackCli(g.cliType, $event)">
                   @for (t of cliTypes; track t) {
                     <option [value]="t">{{ t }}</option>
                   }
                 </select>
-                <select [value]="routes()[g.cliType]?.fallbackModel ?? ''"
+                <select [ngModel]="routes()[g.cliType]?.fallbackModel ?? ''"
                         [attr.data-testid]="'cli-fallback-' + g.cliType"
-                        (change)="setFallbackModel(g.cliType, $any($event.target).value)">
+                        [attr.aria-describedby]="routeErrors()[g.cliType] ? 'cli-route-error-' + g.cliType : null"
+                        (ngModelChange)="setFallbackModel(g.cliType, $event)">
                   <option value="">Disabled</option>
                   @for (m of fallbackModels(g.cliType); track m.id) { <option [value]="m.id">{{ modelPriceLabel(fallbackCli(g.cliType), m) }}</option> }
                 </select>
                 @if (fallbackThinkingLevels(g.cliType).length) {
-                  <select [value]="routes()[g.cliType]?.fallbackThinkingLevel ?? ''"
+                  <select [ngModel]="routes()[g.cliType]?.fallbackThinkingLevel ?? ''"
                           aria-label="Fallback thinking level"
-                          (change)="setFallbackThinking(g.cliType, $any($event.target).value)">
+                          [attr.aria-describedby]="routeErrors()[g.cliType] ? 'cli-route-error-' + g.cliType : null"
+                          (ngModelChange)="setFallbackThinking(g.cliType, $event)">
                     <option value="">Model default</option>
                     @for (level of fallbackThinkingLevels(g.cliType); track level) { <option [value]="level">{{ level }}</option> }
                   </select>
                 }
-                @if (savingCli() === g.cliType) { <span class="cli-models__saving">saving...</span> }
+                @if (isSaving(g.cliType)) { <span class="cli-models__saving" role="status" [attr.data-testid]="'cli-route-saving-' + g.cliType">Saving...</span> }
               </div>
+              @if (routeErrors()[g.cliType]) {
+                <div class="cli-models__head" role="alert"
+                     [id]="'cli-route-error-' + g.cliType" [attr.data-testid]="'cli-route-error-' + g.cliType">
+                  <app-status-indicator tone="danger" [wrap]="true" label="Could not save routing. Previous settings restored." />
+                  <button type="button" class="cli-models__refresh"
+                          [attr.data-testid]="'cli-route-retry-' + g.cliType"
+                          [attr.aria-label]="'Retry routing save for ' + g.label"
+                          (click)="retryRoute(g.cliType)">Retry save</button>
+                </div>
+              }
               <p class="cli-models__route-help">Quota fallback is recorded on the task timeline and applies to this run only.</p>
             </div>
           } @else {

@@ -159,6 +159,11 @@ public sealed class BatchGatePublicationRecoveryTests : BatchGatePilotServiceTes
         await pilot.TickAsync(CancellationToken.None);
         Assert.Empty(store.ListPending());
         Assert.Single(store.ListManifests());
+        foreach (var member in manifest.Members)
+        {
+            var folder = Path.Combine(_watchPath, TaskStates.Completed, member.TaskKey);
+            Assert.Equal(member.RunAttempt, BatchGateOwnershipStore.Read(folder)?.Subject.RunAttempt);
+        }
         Assert.DoesNotContain("publication-recovery-failed", _errors.ToString());
     }
 

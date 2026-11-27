@@ -1945,7 +1945,7 @@ public sealed class RemoteReviewWorkspace
         return cache.QuarantinedPath;
     }
 
-    private async Task<ReviewCommandEvidenceDto> AddCommandEvidenceAsync(
+    internal async Task<ReviewCommandEvidenceDto> AddCommandEvidenceAsync(
         string stepId,
         string aspect,
         string fileName,
@@ -2030,7 +2030,7 @@ public sealed class RemoteReviewWorkspace
             _lease.ExecutorId,
             _lease.HostId,
             _lease.AttemptId,
-            agentUsage?.Model ?? plannedCommand?.Model,
+            plannedCommand?.Model ?? agentUsage?.PinnedModel ?? agentUsage?.Model,
             plannedCommand?.ThinkingLevel,
             agentUsage?.InputTokens ?? 0,
             agentUsage?.OutputTokens ?? 0,
@@ -2062,6 +2062,10 @@ public sealed class RemoteReviewWorkspace
             plannedCommand?.CliType,
             plannedCommand?.ModelSelection)
         {
+            PinnedModel = plannedCommand?.Model,
+            ModelMismatch = agentUsage?.ModelMismatch ?? false,
+            ModelSource = agentUsage?.ModelSource,
+            ModelUsage = agentUsage?.ModelUsage,
             Envelope = _lastEnvelope,
             QuarantinedFailures = QuarantinePartition(ParsedTestFailures(process)).Ignored,
         };
@@ -4547,12 +4551,18 @@ internal sealed record CommandExecution(
 internal sealed record IsolatedBuildResult(ReviewCommandDto Build, CommandExecution Execution);
 
 internal sealed record RemoteAgentUsage(
-    string Model,
+    string? Model,
     long InputTokens,
     long OutputTokens,
     long CacheReadTokens,
     long CacheCreationTokens,
-    bool? InputIncludesCached);
+    bool? InputIncludesCached)
+{
+    public string? PinnedModel { get; init; }
+    public bool ModelMismatch { get; init; }
+    public string? ModelSource { get; init; }
+    public IReadOnlyList<ReviewModelUsageDto>? ModelUsage { get; init; }
+}
 
 internal sealed record BaselineComparison(
     string BaselineSha,

@@ -42,6 +42,28 @@ so those hosts cannot reach the routes that decide who may reach what. In the `n
 management request requires a human owner or operator session; anonymous
 requests return `401` with the Studio login entry.
 
+Local operations that start a process or change local state carry explicit effect
+metadata even when exposed as GET. With `Security:OperatorListenerPort` set,
+the CLI probe, model discovery, model recommendations, quota reads that can
+refresh probes, and fixture scans require that listener. Foreign Origins are
+refused even on the operator port or without a configured split. Cached quota
+history remains a read on the ordinary listener.
+
+Stable updates use `POST /api/devtools/update-stable` on the operator listener
+with a registered `X-Client-Id`. The POST returns `202` with `operationId` and
+`streamUrl`; an update already running returns `409`. The existing
+`GET /api/devtools/update-stable/stream` only subscribes to the latest authorized
+operation, or to that operation with `?operationId=<id>`. Without an operation
+it returns `404`; it never starts a process. Read subscribers may use the
+ordinary listener without a client identity. Both routes still require
+`DevTools:UpdateStableEnabled=true`. Disconnecting a subscriber does not cancel
+the updater. Only the latest operation is retained in memory, with up to 2,048
+output events of at most 16,384 characters each; a backend restart clears it.
+The current update console's GET subscribes only; callers starting an update
+must migrate to the POST before opening the returned stream URL. These local
+routes remain absent from networked hosts. Existing Owner and token floors
+are unchanged.
+
 In the networked profile, checkout sync and runner-host provider authentication
 and sign-in are Owner-only. URL start rules run with a minimal child environment
 that excludes the Studio API's credentials and service configuration. Host Git
@@ -332,6 +354,19 @@ Every role reads the magazines it can see (`magazine.read`); Owner, Admin,
 Developer and Operator agent also publish (`magazine.write`). The
 installation and workspace magazines take writes only through a workspace
 binding ([magazine domain](../../system/domains/magazine.md#access)).
+
+Destructive project removal (`DELETE /api/projects/{projId}`) requires
+`workspace.administer`. Routine project settings updates continue to require
+`project.settings.write`; a project Admin cannot delete project storage.
+The DELETE request must carry a JSON body with `confirmation` equal to the
+exact project id and a nonblank `reason` of at most 1000 characters. Missing
+or incorrect confirmation returns 400. Active coding or review work returns
+409 `project-delete-active-work` before previews, storage, WatchPaths or the
+registry are changed. Drain that work before retrying. Accepted deletion
+permanently removes the project's tasks, logs and results; retain any needed
+evidence first. The control-plane audit records the authenticated actor,
+project id, written reason and deletion outcome outside project storage.
+Existing API-token scope limits and Owner-only floors remain in force.
 
 For human users, factor enrollment follows effective permissions from direct
 and group bindings. Any role granting `project.runs.operate`,

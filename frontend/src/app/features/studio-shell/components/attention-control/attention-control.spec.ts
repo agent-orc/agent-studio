@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
@@ -8,6 +8,8 @@ import { TaskReferenceNavigationService } from '../../../../services/task-refere
 import { WorkspaceOverlaysService } from '../../../shell';
 import { StudioTabStateService } from '../../services/studio-tab-state.service';
 import type { OperatorAttentionItem } from '../../../operator-attention';
+import { NowTickService } from '../../../../services/now-tick.service';
+import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { AttentionControlComponent } from './attention-control';
 import { CredentialInventoryService } from '../../../credentials/credential-inventory.service';
 
@@ -21,16 +23,18 @@ const items: OperatorAttentionItem[] = [
 ];
 
 describe('AttentionControlComponent', () => {
-  afterEach(() => TestBed.resetTestingModule());
+  afterEach(() => { TestBed.resetTestingModule(); vi.restoreAllMocks(); });
 
   async function setup(backupState: 'ok' | 'disabled' = 'ok', dossierCount = 0,
-    attentionItems: OperatorAttentionItem[] = items) {
+    attentionItems: OperatorAttentionItem[] = items, initialFailure = false) {
+    const now = signal(Date.now());
     const openReferenceOrNotify = vi.fn(() => true);
     const overlays = { open: vi.fn() };
     await TestBed.configureTestingModule({
       imports: [AttentionControlComponent],
       providers: [
         provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([]),
+        { provide: NowTickService, useValue: { now } },
         { provide: TaskReferenceNavigationService, useValue: { openReferenceOrNotify } },
         { provide: WorkspaceOverlaysService, useValue: overlays },
       ],
@@ -46,9 +50,12 @@ describe('AttentionControlComponent', () => {
     } }] : [] });
     http.expectOne('/api/operator/backups').flush({ state: backupState, stale: false,
       generatedAt: '2026-11-09T09:00:00Z', warnings: [], backups: [], offHost: {} });
-    http.expectOne('/api/operator/attention').flush({ items: attentionItems, count: attentionItems.length });
+    TestBed.inject(CredentialInventoryService).state.set('unsupported');
+    const main = http.expectOne('/api/operator/attention');
+    if (initialFailure) main.flush({}, { status: 503, statusText: 'Unavailable' });
+    else main.flush({ items: attentionItems, count: attentionItems.length });
     await fixture.whenStable();
-    return { fixture, http, openReferenceOrNotify, overlays, openTab };
+    return { fixture, http, openReferenceOrNotify, overlays, openTab, now };
   }
 
   function rows(): HTMLElement[] {
@@ -229,6 +236,7 @@ describe('AttentionControlComponent', () => {
 
   it('adds backup and credential warnings to the visible installation group', async () => {
     const { fixture, http, overlays } = await setup('disabled');
+    TestBed.inject(CredentialInventoryService).state.set('ready');
     TestBed.inject(CredentialInventoryService).inventory.set({
       generatedAt: '2026-11-09T09:00:00Z',
       items: [{ id: 'provider', label: 'Provider token', state: 'expiring', detail: 'Expires soon.' } as never],
@@ -293,17 +301,151 @@ describe('AttentionControlComponent', () => {
     expect(openTab).toHaveBeenCalledWith({ kind: 'workspace-settings' });
   });
 
-  it('says so when nothing needs the operator', async () => {
+  it.each([{ retained: [] }, { retained: [items[1], items[2]] }])('keeps visible facts after a failed subsequent read: %j', async ({ retained }) => {
+    const { fixture, http } = await setup('disabled', 0, retained);
+    fixture.componentInstance.toggle();
+    http.expectOne('/api/operator/attention').flush({}, { status: 503, statusText: 'Unavailable' });
+    http.expectOne('/api/operator/backups').flush({}, { status: 503, statusText: 'Unavailable' });
+    await fixture.whenStable();
+    expect(rows()).toHaveLength(retained.length + 1);
+    expect(fixture.componentInstance.count()).toBe(rows().length);
+    expect(document.querySelector('[data-testid="attention-list-coverage"]')?.textContent).toContain('stale');
+    expect(document.querySelector('[data-testid="attention-list-coverage"]')?.textContent).toContain('Backups');
+    expect(fixture.componentInstance.triggerLabel()).toContain('Partial coverage');
+    expect(document.querySelector('[data-testid="attention-list-empty"]')).toBeNull();
+    fixture.componentInstance.attention.refresh();
+    http.expectOne('/api/operator/attention').flush({ items: [], count: 999 });
+    http.expectOne('/api/operator/backups').flush({ state: 'ok', warnings: [], backups: [], offHost: {} });
+    await fixture.whenStable();
+    expect(rows()).toHaveLength(0);
+    expect(fixture.componentInstance.triggerLabel()).toBe('Nothing needs you');
+  });
+
+  it('shows checking coverage before any read completes', async () => {
     await TestBed.configureTestingModule({
       imports: [AttentionControlComponent],
       providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
     }).compileComponents();
-    const http = TestBed.inject(HttpTestingController);
     const fixture = TestBed.createComponent(AttentionControlComponent);
     fixture.detectChanges();
+    expect(fixture.componentInstance.triggerLabel()).toBe('Checking coverage');
+    fixture.componentInstance.toggle();
+    await fixture.whenStable();
+    expect(document.querySelector('[data-testid="attention-list-coverage"]')?.textContent).toContain('pending');
+    expect(document.querySelector('[data-testid="attention-list-empty"]')).toBeNull();
+    expect(fixture.componentInstance.count()).toBe(0);
+  });
+
+  it.each([false, true])('shows unavailable initial coverage with auxiliary facts: %s', async auxiliary => {
+    const { fixture, http } = await setup(auxiliary ? 'disabled' : 'ok', auxiliary ? 2 : 0, [], true);
+    expect(fixture.componentInstance.triggerLabel()).toContain('Partial coverage');
+    fixture.componentInstance.toggle();
+    http.expectOne('/api/operator/attention').flush({}, { status: 503, statusText: 'Unavailable' });
+    await fixture.whenStable();
+    expect(document.querySelector('[data-testid="attention-list-coverage"]')?.textContent).toContain('Attention: unavailable');
+    expect(rows()).toHaveLength(auxiliary ? 2 : 0);
+    expect(fixture.componentInstance.count()).toBe(rows().length);
+    expect(document.querySelector('[data-testid="attention-list-empty"]')).toBeNull();
+  });
+
+  it('waits for every source before declaring all clear and retains Dossier and credential facts', async () => {
+    const { fixture, http } = await setup('ok', 2, []);
+    const inventory = TestBed.inject(CredentialInventoryService);
+    inventory.state.set('ready');
+    inventory.inventory.set({ generatedAt: new Date().toISOString(), items: [
+      { id: 'provider', label: 'Provider', state: 'missing', detail: 'Missing.' } as never,
+    ] });
+    await fixture.whenStable();
+    inventory.inventory.set(null);
+    inventory.state.set('unavailable');
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31_000);
+    fixture.componentInstance.toggle();
+    http.expectOne('/api/workbenches').flush({}, { status: 503, statusText: 'Unavailable' });
+    http.expectOne('/api/operator/attention').flush({ items: [], count: 0 });
+    http.expectOne('/api/operator/backups').flush({});
+    await fixture.whenStable();
+    expect(rows()).toHaveLength(2);
+    expect(fixture.componentInstance.count()).toBe(2);
+    const coverage = document.querySelector('[data-testid="attention-list-coverage"]')?.textContent;
+    expect(coverage).toContain('Dossiers: stale');
+    expect(coverage).toContain('Credentials: stale');
+    expect(coverage).toContain('Backups: stale');
+    inventory.state.set('loading');
+    await fixture.whenStable();
+    expect(document.querySelector('[data-testid="attention-list-coverage"]')?.textContent).toContain('Credentials: stale');
+  });
+
+  it.each([0, 1, 3])('opens installation backups independently of %i projects', async count => {
+    const { fixture, http, overlays, openTab } = await setup('disabled', 0, []);
+    vi.spyOn(TestBed.inject(ProjectLookupService), 'allProjects').mockReturnValue(
+      Array.from({ length: count }, (_, index) => ({ displayName: `project-${index}` })) as never);
+    fixture.componentInstance.toggle();
     http.expectOne('/api/operator/attention').flush({ items: [], count: 0 });
     await fixture.whenStable();
-    (fixture.nativeElement.querySelector('[data-testid="studio-attention-trigger"]') as HTMLButtonElement).click();
+    document.querySelector<HTMLButtonElement>('[data-testid="attention-row-action"]')!.click();
+    expect(overlays.open).toHaveBeenCalledWith('operations');
+    expect(openTab).toHaveBeenCalledWith({ kind: 'workspace-settings' });
+    // The destination is deferred; the handoff must wait for its DOM.
+    const panel = document.createElement('section');
+    panel.dataset['testid'] = 'operations-backups';
+    const scroll = vi.fn();
+    panel.scrollIntoView = scroll;
+    document.body.append(panel);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(scroll).toHaveBeenCalledWith({ block: 'start' });
+    panel.remove();
+  });
+
+  it('keeps the backup handoff active while Operations content above it is loading', async () => {
+    const { fixture, http } = await setup('disabled', 0, []);
+    fixture.componentInstance.toggle();
+    http.expectOne('/api/operator/attention').flush({ items: [], count: 0 });
+    await fixture.whenStable();
+    const operations = document.createElement('section');
+    operations.dataset['testid'] = 'workspace-operations';
+    const loading = document.createElement('app-loading-surface');
+    const panel = document.createElement('section');
+    panel.dataset['testid'] = 'operations-backups';
+    panel.scrollIntoView = vi.fn();
+    operations.append(loading, panel);
+    document.body.append(operations);
+    try {
+      document.querySelector<HTMLButtonElement>('[data-testid="attention-row-action"]')!.click();
+      expect(panel.scrollIntoView).toHaveBeenCalledTimes(1);
+      loading.remove();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(panel.scrollIntoView).toHaveBeenCalledTimes(2);
+    } finally { operations.remove(); }
+  });
+
+  it('ages retained and newly polled rows on the shared clock only while open', async () => {
+    const start = Date.parse('2026-11-27T10:00:00Z');
+    vi.spyOn(Date, 'now').mockReturnValue(start);
+    const first = { ...items[1], observedAt: new Date(start).toISOString() };
+    const { fixture, http, now } = await setup('ok', 0, [first]);
+    fixture.componentInstance.toggle();
+    http.expectOne('/api/operator/attention').flush({ items: [first], count: 1 });
+    await fixture.whenStable();
+    expect(rows()[0].textContent).toContain('just now');
+    now.set(start + 120_000);
+    await fixture.whenStable();
+    expect(rows()[0].textContent).toContain('2 min');
+    fixture.componentInstance.attention.refresh();
+    const second = { ...items[2], observedAt: new Date(start + 120_000).toISOString() };
+    http.expectOne('/api/operator/attention').flush({ items: [first, second], count: 2 });
+    now.set(start + 180_000);
+    await fixture.whenStable();
+    expect(rows()[0].textContent).toContain('3 min');
+    expect(rows()[1].textContent).toContain('1 min');
+    fixture.componentInstance.close();
+    const closed = fixture.componentInstance.now();
+    now.set(start + 240_000);
+    expect(fixture.componentInstance.now()).toBe(closed);
+  });
+
+  it('says so when every source has completed and nothing needs the operator', async () => {
+    const { fixture, http } = await setup('ok', 0, []);
+    fixture.componentInstance.toggle();
     http.expectOne('/api/operator/attention').flush({ items: [], count: 0 });
     await fixture.whenStable();
     expect(document.querySelector('[data-testid="attention-list-empty"]')?.textContent).toContain('Nothing needs you');

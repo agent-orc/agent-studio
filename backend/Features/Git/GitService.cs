@@ -6658,10 +6658,20 @@ public partial class GitService
             {
                 var net = TryMechanicalNetChange(repoRoot, sourceRef, integrationTip, mergeBase);
                 if (!net.Success)
-                    return net.FailureKind == MechanicalRebaseFailureKind.Conflict
-                        ? MergeIntoIntegrationResult.RequiresAgentRound(net.ConflictedFiles,
-                            $"Net-change replay conflicted: {string.Join(", ", net.ConflictedFiles)}.")
-                        : MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: net.Error);
+                {
+                    if (net.FailureKind != MechanicalRebaseFailureKind.Conflict)
+                        return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: net.Error);
+                    var report = new IntegrationConflictReport
+                    {
+                        IntegrationBranch = integrationBranch, IntegrationTipSha = integrationTip,
+                        DeliverySha = deliveryTip, ConflictedFiles = net.ConflictedFiles.ToList(),
+                        ConflictedFileCount = net.ConflictedFiles.Count,
+                        Stages = [new() { Stage = "net-change-replay", Outcome = "conflict",
+                            ConflictedFileCount = net.ConflictedFiles.Count }],
+                    };
+                    return MergeIntoIntegrationResult.RequiresAgentRound(net.ConflictedFiles,
+                        $"Net-change replay conflicted: {string.Join(", ", net.ConflictedFiles)}.", report);
+                }
                 if (!string.Equals(GetBranchTip(repoRoot, integrationLine), integrationTip,
                         StringComparison.OrdinalIgnoreCase))
                     return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
@@ -6760,7 +6770,8 @@ public partial class GitService
                     mechanicalMerge.ConflictedFiles,
                     recovery, directMergeArgs, directMergeOutput + "\n" + directMergeError);
                 return MergeIntoIntegrationResult.RequiresAgentRound(
-                    report.ConflictedFiles,
+                    directConflicts.Concat(mechanicalMerge.ConflictedFiles).Concat(recovery.ConflictedFiles)
+                        .Distinct(StringComparer.Ordinal).ToArray(),
                     report.RenderDetail(),
                     report);
             }
@@ -6810,7 +6821,8 @@ public partial class GitService
                     mechanicalMerge.ConflictedFiles,
                     finalMergeConflict, directMergeArgs, directMergeOutput + "\n" + directMergeError);
                 return MergeIntoIntegrationResult.RequiresAgentRound(
-                    report.ConflictedFiles,
+                    directConflicts.Concat(mechanicalMerge.ConflictedFiles).Concat(conflicted)
+                        .Distinct(StringComparer.Ordinal).ToArray(),
                     report.RenderDetail(),
                     report);
             }
@@ -7406,6 +7418,7 @@ public partial class GitService
         if (mergeCode == 1)
         {
             var files = merged.Split('\0', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
+            TryCaptureIntegrationConflict(repoRoot, files);
             return files.Length > 0
                 ? MechanicalRebaseAttempt.Conflict(files, "Net-change replay conflicted.",
                     sourceRef, originals.Length, originals.Length)

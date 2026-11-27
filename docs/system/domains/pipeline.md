@@ -4002,9 +4002,11 @@ operator changes cause the step to fail before its writer runs.
   intent, supersedes the current delivery generation, moves the card to the
   front of Ready, and writes `Automatically started a new agent round to
   preserve unambiguous delivery SHA attribution.` to the timeline. This loop is
-  limited to one automatic round per fenced delivery chain. Re-reviewing one
-  delivery shares the budget across review epochs; a newly published delivery
-  starts a fresh budget. Repetition reaches Human Review with the failed step
+  limited to two automatic rounds per card and integration target. New
+  delivery SHAs and review epochs do not reset the budget. The third conflict
+  escalates with the prior conflict history. Individual integration retains
+  collision receipts across restarts and reserves shared files for the recovery;
+  see [integration conflict recovery](../contracts/integration-conflicts.md#automatic-individual-integration-recovery-agt-4048). Repetition reaches Human Review with the failed step
   and conflicted files visible. Every
   failed attempt leaves the integration working tree clean. Once
   merge/gate/rollback starts, host cancellation
