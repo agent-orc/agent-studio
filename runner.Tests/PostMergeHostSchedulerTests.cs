@@ -50,10 +50,11 @@ public sealed class PostMergeHostSchedulerTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false, 0, 0.1)]
-    [InlineData(true, 1, 0.1)]
-    [InlineData(true, 0, 2.0)]
-    public async Task HostDiscoversTwoProjectsCreatesClonesAndReportsBusyWindows(bool busy, int occupiedSlots, double load)
+    [InlineData(false, 0, 0.1, false)]
+    [InlineData(true, 1, 0.1, false)]
+    [InlineData(true, 0, 2.0, false)]
+    [InlineData(true, 10, 8.4, true)]
+    public async Task HostDiscoversTwoProjectsCreatesClonesAndReportsBusyWindows(bool busy, int occupiedSlots, double load, bool gate)
     {
         Directory.CreateDirectory(_root);
         var targets = new List<PostMergeProjectTarget>();
@@ -95,7 +96,7 @@ public sealed class PostMergeHostSchedulerTests : IDisposable
             await Git(repository, "commit", "--quiet", "-m", "integrated");
             targets.Add(new(id, id, repository, branch));
         }
-        var host = new FakeHost(targets) { HoldFirstRun = !busy };
+        var host = new FakeHost(targets) { HoldFirstRun = !busy, GateConnected = gate };
         using var http = new HttpClient(host) { BaseAddress = new Uri("http://fake/") };
         var stateRoot = Path.Combine(_root, "state");
         var logs = new List<string>();
@@ -132,9 +133,18 @@ public sealed class PostMergeHostSchedulerTests : IDisposable
             Assert.True(Directory.Exists(Path.Combine(stateRoot, "post-merge", target.ProjectId, ".git")));
             if (busy)
             {
-                Assert.True(host.Observations[target.Project].Starved);
-                Assert.Contains("occupied slots", host.Observations[target.Project].AdmissionReason);
-                Assert.Empty(host.Runs);
+                Assert.Equal(!gate, host.Observations[target.Project].Starved);
+                Assert.Contains(gate ? "gate capacity" : "occupied slots", host.Observations[target.Project].AdmissionReason);
+                if (gate) Assert.Empty(host.Runs);
+                else
+                {
+                    Assert.Contains(host.Runs, run => run.Project == target.Project && run.Kind == "window" && run.Status == "green");
+                    Assert.All(host.Runs.Where(run => run.Project == target.Project), run =>
+                    {
+                        Assert.Equal(occupiedSlots, run.StartOccupiedSlots);
+                        Assert.Equal(load, run.StartLoadPerCore);
+                    });
+                }
             }
             else
             {
@@ -182,6 +192,7 @@ public sealed class PostMergeHostSchedulerTests : IDisposable
     private sealed class FakeHost(IReadOnlyList<PostMergeProjectTarget> targets) : HttpMessageHandler
     {
         public bool HoldFirstRun { get; init; }
+        public bool GateConnected { get; init; }
         public TaskCompletionSource FirstRunStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseFirstRun { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public List<PostMergeRunRecord> Runs { get; } = [];
@@ -191,6 +202,8 @@ public sealed class PostMergeHostSchedulerTests : IDisposable
             var path = request.RequestUri!.AbsolutePath;
             if (path == "/api/runner/post-merge/projects") return Json(targets);
             var project = path.Split('/')[5];
+            if (path.EndsWith("/placement", StringComparison.Ordinal))
+                return Json(new PostMergePlacement(GateConnected ? "gate" : "run"));
             if (path.EndsWith("/escalation-check", StringComparison.Ordinal)) return new(HttpStatusCode.NoContent);
             if (path.EndsWith("/window", StringComparison.Ordinal))
             {
@@ -204,7 +217,7 @@ public sealed class PostMergeHostSchedulerTests : IDisposable
                 return Json(PostMergeProjectState.Empty(project) with { LastGreenSha = green?.TipSha,
                     ActiveRun = last?.Status == "running" ? last : null,
                     LastWindowTipSha = green?.TipSha, Runs = Runs.Where(run => run.Project == project).ToArray(),
-                    WindowMinutes = 0 });
+                    WindowMinutes = GateConnected ? 60 : 0, WindowMaxMerges = 1 });
             }
             Runs.Add((await request.Content!.ReadFromJsonAsync<PostMergeRunRecord>(ct))!);
             if (HoldFirstRun && Runs.Count == 1)
@@ -220,8 +233,8 @@ public sealed class PostMergeHostSchedulerTests : IDisposable
     private static async Task<string> Git(string directory, params string[] args)
     {
         var result = await ProcessRunner.RunAsync("git", args, directory,
-            environment: new Dictionary<string, string?> { ["GIT_AUTHOR_DATE"] = "2026-11-21T00:00:00Z",
-                ["GIT_COMMITTER_DATE"] = "2026-11-21T00:00:00Z" }, ct: CancellationToken.None);
+            environment: new Dictionary<string, string?> { ["GIT_AUTHOR_DATE"] = "2026-11-22T02:59:00Z",
+                ["GIT_COMMITTER_DATE"] = "2026-11-22T02:59:00Z" }, ct: CancellationToken.None);
         Assert.True(result.Success, result.StdErr);
         return result.StdOut;
     }

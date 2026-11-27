@@ -553,12 +553,11 @@ public sealed partial class RemoteReviewPlanBuilder
             if (isConcept && !prompt.Contains("## Published Dossier", StringComparison.Ordinal))
                 prompt += "\n\n## Published Dossier\n\n"
                     + ConceptDossierReviewMaterial.Render(repositoryPath, task.FolderPath);
-            // Version the prompt layout through its frozen prompt bytes. Only the
-            // four stock Claude aspects use the shared cache prefix; overrides
-            // and other CLIs retain their authored prompt.
-            if (!isConcept && string.Equals(cliType, "claude", StringComparison.OrdinalIgnoreCase)
-                && string.IsNullOrWhiteSpace(PipelineStepConfigResolver.ResolvePrompt(settings, step.Id)))
-                prompt = ReviewAspectCachePrompt.Compose(prompt, inputs);
+            // Frozen prompt bytes version the stock layout. Explicit overrides
+            // and specialised aspects retain their authored evidence and scope.
+            if (!isConcept)
+                prompt = ReviewAspectCachePrompt.ComposeStock(prompt, inputs, cliType, aspectId,
+                    PipelineStepConfigResolver.ResolvePrompt(settings, step.Id));
             // AGT-2820: the budget is derived from the toolchain, the model, the
             // thinking level, and the size of the prompt - not from a constant.
             // The executor re-derives it once it has appended the authoritative

@@ -45,6 +45,37 @@ public sealed class PostMergeRunStore
         }
     }
 
+    public void EndGateRun(string projectId, string id, DateTimeOffset now, string reason)
+    {
+        lock (_gate)
+        {
+            var state = ReadLocked(projectId);
+            if (state.ActiveRun is not { } active || active.Id != id) return;
+            WriteLocked(projectId, state with { ActiveRun = null,
+                PendingWindow = state.PendingWindow ?? new(active.TipSha,
+                    active.WindowOpenedAtUtc ?? active.StartedAtUtc, now, state.WindowMinutes ?? 30, reason),
+                DevelopState = state.LineStop is null ? "inconclusive" : "red",
+                Runs = [.. state.Runs.TakeLast(511), active with
+                    { Status = "inconclusive", FinishedAtUtc = now, Reason = reason }] });
+        }
+    }
+
+    public void SetGateSubject(string projectId, string? subjectId)
+    {
+        lock (_gate) WriteLocked(projectId, ReadLocked(projectId) with { GateSubjectId = subjectId });
+    }
+
+    public void CloseWindow(string projectId, string reason, DateTimeOffset now, string? expectedTip = null)
+    {
+        lock (_gate)
+        {
+            var state = ReadLocked(projectId);
+            if (state.PendingWindow is not { } pending || expectedTip is not null && pending.TipSha != expectedTip) return;
+            WriteLocked(projectId, state with { PendingWindow = null,
+                ClosedWindow = new(pending.TipSha, now, reason), GateSubjectId = null });
+        }
+    }
+
     public PostMergeProjectState UpdateIncidents(string projectId,
         Func<IReadOnlyList<PostMergeIncident>, IReadOnlyList<PostMergeIncident>> update)
     {
@@ -79,7 +110,7 @@ public sealed class PostMergeRunStore
                         Status = "red", FinishedAtUtc = run.StartedAtUtc,
                         Reason = "runner claim expired before a terminal receipt",
                     }] };
-                state = state with { DevelopState = state.LineStop is null ? "running" : "red", ActiveRun = run, PendingWindow = null };
+                state = state with { DevelopState = state.LineStop is null ? "running" : "red", ActiveRun = run, PendingWindow = state.PendingWindow?.TipSha == run.TipSha ? null : state.PendingWindow };
             }
             else if (run.Status == "skipped")
             {

@@ -127,7 +127,7 @@ public sealed class PostMergeHostScheduler(HttpClient http, string stateDirector
             var checkout = Path.Combine(stateDirectory, "post-merge", project.ProjectId);
             var options = new PostMergeRunOptions(project.Project, checkout, http.BaseAddress!.ToString(),
                 project.Branch, "origin", "", mode, PostMergeRunPlan.DefaultMaxMerges,
-                TimeSpan.FromMinutes(DefaultWindowMinutes), maxSlots, stateDirectories, false) { RepositoryUrl = project.RepositoryUrl, RecordSkips = false };
+                TimeSpan.FromMinutes(DefaultWindowMinutes), maxSlots, stateDirectories, false) { RepositoryUrl = project.RepositoryUrl, RecordSkips = false, UseGateCapacity = true };
             using var output = observeOnly ? TextWriter.Null
                 : TextWriter.Synchronized(new HostLogWriter(line => log($"post-merge project={project.ProjectId}: {line}")));
             CoverageHostLoad Admission()

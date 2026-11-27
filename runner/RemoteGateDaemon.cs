@@ -36,67 +36,103 @@ public sealed class RemoteGateDaemon
         await RecoverPreviousClaimAsync(shutdown);
         long generation = 0;
         var nextAdvertisement = DateTime.MinValue;
-        while (!shutdown.IsCancellationRequested)
+        Task? postMergeFlight = null;
+        try
         {
-            try
+            while (!shutdown.IsCancellationRequested)
             {
-                if (File.Exists(ClaimFile))
-                    await RecoverPreviousClaimAsync(shutdown);
-                if (DateTime.UtcNow >= nextAdvertisement)
+                try
                 {
-                    await _client.AdvertiseCapabilitiesAsync(
-                        RunnerCapabilityProbe.Advertise(_options, gitPushReady: false),
-                        RunnerCapabilityProbe.Telemetry(telemetry.SampleNow(0)), ++generation, shutdown);
-                    nextAdvertisement = DateTime.UtcNow.AddMinutes(1);
+                    if (postMergeFlight?.IsCompleted == true)
+                    {
+                        await postMergeFlight;
+                        postMergeFlight = null;
+                    }
+                    if (File.Exists(ClaimFile))
+                        await RecoverPreviousClaimAsync(shutdown);
+                    if (postMergeFlight is null && File.Exists(PostMergeClaimFile))
+                        await RecoverClaimFileAsync(PostMergeClaimFile, shutdown);
+                    if (DateTime.UtcNow >= nextAdvertisement)
+                    {
+                        await _client.AdvertiseCapabilitiesAsync(
+                            RunnerCapabilityProbe.Advertise(_options, gitPushReady: false),
+                            RunnerCapabilityProbe.Telemetry(telemetry.SampleNow(0)), ++generation, shutdown);
+                        nextAdvertisement = DateTime.UtcNow.AddMinutes(1);
+                    }
+                    var disk = diskAdmission.Observe();
+                    if (disk.Level == HostDiskPressureLevel.Critical)
+                    {
+                        _log($"gate claim paused on {_options.Hostname}: {disk.Reason}");
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown);
+                        continue;
+                    }
+                    var claim = await _client.ClaimGateAsync(new GateClaimRequest(
+                        _options.RunnerId, _client.RunnerInstanceId, 1, _options.TtlSeconds, ExcludePostMerge: postMergeFlight is not null), shutdown);
+                    if (claim.Status == "claimed" && claim.Subject is not null
+                        && claim.Attempt is not null && claim.Lease is not null)
+                    {
+                        if (claim.Subject.Kind == GateSubjectKinds.PostMerge)
+                        {
+                            SaveClaim(claim, PostMergeClaimFile);
+                            postMergeFlight = ExecutePostMergeAsync(claim, shutdown);
+                        }
+                        else
+                        {
+                            SaveClaim(claim);
+                            if (await ExecuteAsync(claim.Subject, claim.Attempt, claim.Lease, shutdown))
+                                File.Delete(ClaimFile);
+                        }
+                    }
+                    else
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown);
                 }
-                var disk = diskAdmission.Observe();
-                if (disk.Level == HostDiskPressureLevel.Critical)
+                catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
                 {
-                    _log($"gate claim paused on {_options.Hostname}: {disk.Reason}");
-                    await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown);
-                    continue;
+                    break;
                 }
-                var claim = await _client.ClaimGateAsync(new GateClaimRequest(
-                    _options.RunnerId, _client.RunnerInstanceId, 1, _options.TtlSeconds), shutdown);
-                if (claim.Status == "claimed" && claim.Subject is not null
-                    && claim.Attempt is not null && claim.Lease is not null)
+                catch (Exception exception)
                 {
-                    SaveClaim(claim);
-                    if (await ExecuteAsync(claim.Subject, claim.Attempt, claim.Lease, shutdown))
-                        File.Delete(ClaimFile);
+                    _log($"gate poll failed: {exception.GetType().Name}: {exception.Message}");
+                    try { await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown); }
+                    catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
                 }
-                else
-                    await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown);
             }
-            catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                _log($"gate poll failed: {exception.GetType().Name}: {exception.Message}");
-                try { await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown); }
-                catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
-            }
+        }
+        finally
+        {
+            if (postMergeFlight is not null) await postMergeFlight;
         }
     }
 
+    private async Task ExecutePostMergeAsync(GateClaimResponse claim, CancellationToken ct)
+    {
+        if (await ExecuteAsync(claim.Subject!, claim.Attempt!, claim.Lease!, ct))
+            File.Delete(PostMergeClaimFile);
+    }
+
+    private string PostMergeClaimFile => Path.Combine(_options.StateDir, "gate-post-merge-claim.json");
     private string ClaimFile => Path.Combine(_options.StateDir, "gate-claim.json");
+
+    internal Func<HttpClient>? PostMergeClientFactory { get; init; }
+    internal string? PostMergeGateLockPrefix { get; init; }
 
     internal TimeSpan RenewInterval { get; set; } = TimeSpan.FromSeconds(20);
 
-    private void SaveClaim(GateClaimResponse claim)
+    private void SaveClaim(GateClaimResponse claim, string? path = null)
     {
+        path ??= ClaimFile;
         Directory.CreateDirectory(_options.StateDir);
-        var temporary = ClaimFile + ".tmp";
+        var temporary = path + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(claim));
-        File.Move(temporary, ClaimFile, overwrite: true);
+        File.Move(temporary, path, overwrite: true);
     }
 
-    internal async Task RecoverPreviousClaimAsync(CancellationToken ct)
+    internal Task RecoverPreviousClaimAsync(CancellationToken ct) => RecoverClaimFileAsync(ClaimFile, ct);
+
+    private async Task RecoverClaimFileAsync(string path, CancellationToken ct)
     {
-        if (!File.Exists(ClaimFile)) return;
-        var claim = JsonSerializer.Deserialize<GateClaimResponse>(await File.ReadAllTextAsync(ClaimFile, ct));
+        if (!File.Exists(path)) return;
+        var claim = JsonSerializer.Deserialize<GateClaimResponse>(await File.ReadAllTextAsync(path, ct));
         if (claim?.Subject is null || claim.Attempt is null || claim.Lease is null)
             throw new InvalidDataException("Persisted gate claim is incomplete.");
         var status = await _client.GetGateStatusAsync(claim.Subject.SubjectId, ct);
@@ -104,7 +140,7 @@ public sealed class RemoteGateDaemon
         if (previous is null || (GateStates.IsTerminal(previous.State)
             && previous.CleanedAt is not null))
         {
-            File.Delete(ClaimFile);
+            File.Delete(path);
             return;
         }
         var syntheticSubject = new ReviewSubjectDto(claim.Subject.SubjectId,
@@ -125,14 +161,14 @@ public sealed class RemoteGateDaemon
         if (GateStates.IsTerminal(previous.State)
             || status!.Attempts.Any(item => item.AttemptNumber > previous.AttemptNumber))
         {
-            File.Delete(ClaimFile);
+            File.Delete(path);
             return;
         }
         await _client.ConfirmGateContainmentAsync(claim.Attempt.AttemptId,
             new GateContainmentRequest(_options.RunnerId, _client.RunnerInstanceId,
                 lease.HostId, lease.Fence, lease.ResourceNamespace,
                 NoProcesses: true, WorkspaceRemoved: true), ct);
-        File.Delete(ClaimFile);
+        File.Delete(path);
     }
 
     internal async Task<bool> ExecuteAsync(GateSubject subject, GateAttempt attempt, GateLease lease, CancellationToken shutdown)
@@ -196,8 +232,9 @@ public sealed class RemoteGateDaemon
                 clearEnvironment: true, ct: leaseLoss.Token);
             if (!objectType.Success || objectType.StdOut.Trim() != "commit")
                 throw new ReviewInfrastructureException("SnapshotUnavailable", "Gate source is not a commit object.");
-            await _client.AdvanceGateAsync(attempt.AttemptId,
-                new GatePhaseRequest(authority, GateStates.Running), leaseLoss.Token);
+            if (subject.Plan.PostMerge is null)
+                await _client.AdvanceGateAsync(attempt.AttemptId,
+                    new GatePhaseRequest(authority, GateStates.Running), leaseLoss.Token);
             foreach (var command in subject.Plan.Commands)
             {
                 var start = DateTime.UtcNow;
@@ -212,7 +249,28 @@ public sealed class RemoteGateDaemon
                 ProcessResult result;
                 try
                 {
-                    result = await ProcessRunner.RunAsync(command.FileName, command.Arguments,
+                    if (subject.Plan.PostMerge is { } postMerge)
+                    {
+                        using var machineSlot = await new AgentStudio.Pipeline.MachineGateSlots(
+                            PostMergeGateLockPrefix ?? Path.Combine(Path.GetTempPath(), "agentstudio-build-test-gate"))
+                            .AcquireAsync(postMerge.GateSlots, TimeSpan.FromMinutes(2), null,
+                                commandDeadline.Token, AgentStudio.Pipeline.GateDurationClass.Long);
+                        if (machineSlot is null) throw new ReviewInfrastructureException("ToolFailure", "Post-merge gate slot queue budget expired.");
+                        using var http = PostMergeClientFactory?.Invoke() ?? PostMergeHostScheduler.CreateClient(_options, _client.ClientId);
+                        var options = new PostMergeRunOptions(postMerge.Project, workspace.RepositoryPath,
+                            http.BaseAddress!.ToString(), postMerge.Branch, "origin", "", postMerge.Kind,
+                            6, TimeSpan.Zero, 1, [], false)
+                        { GateExecution = true, PinnedTipSha = subject.ExpectedSha, RunId = subject.SubjectId, RecordSkips = false };
+                        using var gateOutput = new PostMergeOutput();
+                        var worker = new PostMergeRunCommand(options, gateOutput, TimeProvider.System, http, hostOptions: _options)
+                        {
+                            BeforeTests = async token => { await _client.AdvanceGateAsync(attempt.AttemptId,
+                                new GatePhaseRequest(authority, GateStates.Running), token); },
+                        };
+                        var exit = await worker.ExecuteAsync(commandDeadline.Token);
+                        result = new ProcessResult(exit, gateOutput.ToString(), "");
+                    }
+                    else result = await ProcessRunner.RunAsync(command.FileName, command.Arguments,
                         workDir, environment: workspace.ProcessEnvironment(), clearEnvironment: true,
                         isolateProcessGroup: true, ct: commandDeadline.Token);
                 }
@@ -399,6 +457,23 @@ public sealed class RemoteGateDaemon
                 if (DateTime.UtcNow >= expiry) { execution.Cancel(); return; }
             }
         }
+    }
+
+    private sealed class PostMergeOutput : TextWriter
+    {
+        private readonly StringBuilder _tail = new();
+        private readonly object _gate = new();
+        public override Encoding Encoding => Encoding.UTF8;
+        public override void WriteLine(string? value)
+        {
+            lock (_gate)
+            {
+                var line = value ?? "";
+                _tail.AppendLine(line.Length > 32768 ? line[^32768..] : line);
+                if (_tail.Length > 32768) _tail.Remove(0, _tail.Length - 32768);
+            }
+        }
+        public override string ToString() { lock (_gate) return _tail.ToString(); }
     }
 
     private static string BoundedUtf8Tail(string output, int maximumBytes)

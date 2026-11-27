@@ -77,14 +77,25 @@ public static class ControlPlaneAuditIntegrityStates
 /// <summary>The outcome of one chain verification.</summary>
 public sealed record ControlPlaneAuditIntegrity(
     string State, DateTime? CheckedAt, long VerifiedThrough, string? Message, bool Alert,
-    bool SinkCompared = false, string? Problem = null, long? ProblemSequence = null);
+    bool SinkCompared = false, string? Problem = null, long? ProblemSequence = null)
+{
+    internal string? Occurrence { get; init; }
+    internal DateTime? OccurredAt { get; init; }
+    internal bool RecoveryPending { get; init; }
+    internal long RecoveryThrough { get; init; }
+    internal string? RecoveryMessage { get; init; }
+}
 
 public sealed record ControlPlaneAuditForwarding(
     string SinkKind, bool Configured, long HeadSequence, long ForwardedSequence, long Pending,
     DateTime? LastForwardedAt, DateTime? OldestPendingAt, string? LastError, bool Alert);
 
 /// <summary>One acute alert of the audit trail: a broken chain or a sink that stopped accepting entries.</summary>
-public sealed record ControlPlaneAuditAlert(string Code, string Message, DateTime RaisedAt, long? Sequence = null);
+public sealed record ControlPlaneAuditAlert(string Code, string Message, DateTime RaisedAt, long? Sequence = null)
+{
+    internal string? Occurrence { get; init; }
+    internal DateTime? OccurredAt { get; init; }
+}
 
 public sealed record ControlPlaneAuditEntryView(
     long Sequence, DateTime At, string Stream, string Actor, string? Session, string? DelegatedBy,
