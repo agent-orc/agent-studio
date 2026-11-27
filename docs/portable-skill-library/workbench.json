@@ -4,10 +4,10 @@
   "title": "Portable skill library: selection, prompt delivery and evidence",
   "summary": "A CLI-independent, versioned skills library built on pre-prompt-enrichment, with complete instruction delivery, per-invocation pins and receipts, reverse usage/outcome evidence, controlled quality comparisons and portable release bundles. Reconciles AGT-3465 and the prior skills architecture; thirteen sequential implementation slices.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-24T03:48:11Z",
+  "updatedAt": "2026-11-27T22:56:16Z",
   "sourceTaskKeys": [
     "AGT-4032"
   ],
@@ -408,5 +408,6 @@
       "promptMarkdown": "# SL-13: Compatibility rollout and documentation\n\nSource: docs/portable-skill-library/index.html (AGT-4032). Read the Dossier, its evidence register, AGENTS.md and the indexed domain contracts for the touched area. Use each recommendation as the working choice unless a recorded operator decision selects another option; record the implemented options. Load fitting available skills. This is one promoted implementation slice, not authority to implement the whole programme. Keep task/workspace mutations behind the application API and Git ownership with the platform. Orchestration transition rules remain in orchestration-decisions/ and hosts apply typed decisions through the existing boundary. Do not add em dashes. Update affected contracts and docs index rows where required; avoid unrelated restyling.\n\n## Scope\n\nEnable the managed skills path with measured legacy retirement.\n\nPrimary area: Pipeline feature rollout, live CLI compatibility probes, documentation index and legacy guide/native adapter migration.\n\n## Deliver\n\nRun the integration matrix for local and remote implementation, aspect review, fixes, concepts and role sessions across installed supported CLI versions. Record unavailable providers explicitly. Compare legacy selector and managed selector in shadow, reconcile required coverage and budget omissions, then enable managed delivery by reviewed project lock. Validate all three cost scenarios against real tokenizer counts and available usage telemetry, preserving unknown cache attribution. Publish an operator rollback procedure and domain documentation, update the earlier skills architecture and guide authoring contract, and retire only duplicate summary paths whose replacements are proven. Reconcile AGT-3465 acceptance mapping with the final implementation and the adopted Access/one-look standard. Keep direct CLI lookup working.\n\n## Acceptance\n\n- Every supported matrix cell has a full transport receipt and correct pinned skills, or a named unsupported state without an unenriched success claim.\n- Controlled pilot shows no missing mandatory guidance, unexplained omissions or billing double count.\n- Rollback restores a prior lock for new runs and leaves in-flight and historical receipts intact.\n- Documentation clearly states shipped capability, remaining limits, AGT-3465 disposition and how customers create and share skills.\n\n## Verification and result\n\nUse relevant deterministic contract/unit tests and meaningful integration cases. For behavioral or visual frontend work run relevant Playwright coverage and retain screenshots in the task results folder. Runtime prompt changes need the matching live probe or a precise limitation. Keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green if the decision boundary is touched. Report changed files, verification, documentation updates, selected Dossier options and remaining limits. Record this bounded slice in the Dossier implementation log.\n"
     }
   ],
-  "key": "AGT-W3470"
+  "key": "AGT-W3470",
+  "editedBy": "AGT-4032"
 }

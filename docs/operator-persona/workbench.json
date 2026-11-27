@@ -4,10 +4,10 @@
   "title": "Operator persona",
   "summary": "A bounded fleet operator in the existing persona team: 25 journal-derived situations with current code and gap evidence, explicit role and permission boundaries, a paired human/shadow record before operational effects, measured promotion, and thirteen dependency-ordered implementation slices.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-27T03:05:18Z",
+  "updatedAt": "2026-11-27T22:55:56Z",
   "sourceTaskKeys": [
     "AGT-4056"
   ],
@@ -210,5 +210,6 @@
       "promptMarkdown": "# Family-specific live admission and rollback\n\nSource: docs/operator-persona/index.html and workbench.json (AGT-4056). Read this Dossier, the related role Dossiers, active AGENTS.md and the owning domain contracts first. Use the named Dossier recommendation as the working choice unless a recorded Owner decision selects another option; record the selected option in the delivery report. Do not wait for another approval of a recommended implementation choice. This card authorizes implementation, not live promotion or external operational actions. Keep source, tests and documentation scoped to this slice. Runtime stores are application-owned; use APIs for task changes and leave Git/worktree management to the platform. Add any new docs page to docs/start/README.md in this implementation change.\n\nWorking decisions: FO-D2 B, FO-D3 B, FO-D5 B.\n\n## Entry points\nPersona activation/stop-all and scoped standing grants; FO-5 family eligibility, FO-7 permits, FO-8 continuation and FO-11 build retry; existing gateway/profile/appliers.\n\n## Deliver\nAdd Owner-only family enable/disable controls with a recorded evidence cohort, decision, expiry and specific operation scope. Default every family to shadow. Enforce seven days, thirty prospective cases, five per candidate family, 90 percent provenance, zero unsafe eligible advice and 90 percent useful/correct deferrals. A quiet or unmeasured family remains shadow. Add per-workspace four-effect/day and one-effect/case-without-new-facts ceilings with one active mutation per card/host; respect tighter platform limits. Gate approved continuation and artifact retry through existing authority and keyed appliers. Settings and deploy remain confirmed; cleanup remains a human plan. Any serious safety miss closes the affected family, preserving evidence and other scoped observations. Ship mechanisms and tests only; do not enable a real installation in this card.\n\n## Acceptance\n- Insufficient, retrospective or incomplete cohorts cannot enable a live family.\n- Duplicate/restarted/unknown-result requests are reconciled, revoked grants and stop-all close admission, and Owner takeover supersedes a pending effect.\n- Family rollback preserves case and audit history and never broadens another grant.\n- UI controls have real permission checks plus light/dark Playwright evidence; both transition-boundary suites pass.\n\n## Scope\nNo broad Admin mode, autonomous acceptance, new dispatcher, guardian or task-workspace engine. Live operation still requires a recorded Owner grant after delivery.\n\nDependencies are enforced by this Dossier\u0027s dependsOn list. Update owning contracts when public behavior changes. For UI changes, use relevant Playwright coverage with durable light/dark screenshots. For transition changes, keep TransitionDecisionBoundaryTests and MonolithDecisionBoundaryTests green. Report changed files, exact checks and remaining limits.\n"
     }
   ],
-  "key": "AGT-W3472"
+  "key": "AGT-W3472",
+  "editedBy": "AGT-4056"
 }
