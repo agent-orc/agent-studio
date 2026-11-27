@@ -2,8 +2,8 @@ namespace AgentRunner;
 
 /// <summary>
 /// Provider credentials that may cross the daemon-to-CLI process boundary.
-/// Values come only from the daemon's process environment. This class never
-/// reads credential files and never returns a secret for an unrelated CLI.
+/// Values come from the host's launch environment or the scoped sign-in probe.
+/// This class never reads credential files or selects auth for an unrelated CLI.
 /// </summary>
 internal static class ProviderAuthEnvironment
 {
@@ -43,6 +43,30 @@ internal static class ProviderAuthEnvironment
         if (string.IsNullOrWhiteSpace(token)) return false;
         value = token;
         return true;
+    }
+
+    /// <summary>Select auth from the launch environment, with the scoped Claude probe taking priority.</summary>
+    internal static KeyValuePair<string, string?>? SelectForWorker(
+        IDictionary<string, string?> environment, string? cliType)
+    {
+        string? Read(string name) => environment
+            .FirstOrDefault(pair => pair.Key.Equals(name, StringComparison.OrdinalIgnoreCase)).Value;
+        switch (CliSelection.NormalizeCliType(cliType))
+        {
+            case CliSelection.ClaudeCli:
+                var token = CandidateClaudeToken.Value;
+                if (string.IsNullOrWhiteSpace(token)) token = Read(ClaudeCodeOAuthToken);
+                if (!string.IsNullOrWhiteSpace(token)) return new(ClaudeCodeOAuthToken, token);
+                var apiKey = Read("ANTHROPIC_API_KEY");
+                return string.IsNullOrWhiteSpace(apiKey) ? null : new("ANTHROPIC_API_KEY", apiKey);
+            case CliSelection.CodexCli:
+                var codexKey = Read("CODEX_API_KEY");
+                if (!string.IsNullOrWhiteSpace(codexKey)) return new("CODEX_API_KEY", codexKey);
+                var openAiKey = Read("OPENAI_API_KEY");
+                return string.IsNullOrWhiteSpace(openAiKey) ? null : new("OPENAI_API_KEY", openAiKey);
+            default:
+                return null;
+        }
     }
 
     private sealed class CandidateScope : IDisposable
