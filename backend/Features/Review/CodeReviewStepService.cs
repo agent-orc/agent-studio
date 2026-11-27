@@ -88,6 +88,12 @@ public sealed class CodeReviewStepService
             request.Project, request.JobId, request.Model, request.Commit ?? "(HEAD)");
 
         var prompt = BuildPrompt(request);
+        if (request.Mode == CodeReviewMode.Grade && request.DeferGradeWrites)
+        {
+            // Admission may have selected a fallback, or an override may have
+            // changed after the no-call lookup. Bind evidence to dispatched bytes.
+            request = request with { InputKey = CodeReviewGradeReuse.ComputeInputKey(request, prompt) };
+        }
 
         // Raw-prompt capture provenance: the grade pass is the
         // post-code-review-grade pipeline step; the legacy verdict pass is the
@@ -314,7 +320,10 @@ public sealed class CodeReviewStepService
         _ => null
     };
 
-    private string BuildPrompt(CodeReviewStepRequest request)
+    /// <summary>Render the effective question for reuse lookup without dispatch telemetry.</summary>
+    public string RenderPromptForReuse(CodeReviewStepRequest request) => BuildPrompt(request, recordCall: false);
+
+    private string BuildPrompt(CodeReviewStepRequest request, bool recordCall = true)
     {
         var values = new Dictionary<string, string?>
         {
@@ -335,6 +344,7 @@ public sealed class CodeReviewStepService
         var template = request.Mode == CodeReviewMode.Grade ? GradePromptTemplate : PromptTemplate;
         try
         {
+            if (!recordCall) return _prompts.RenderUnrecorded(template, values);
             return _prompts.Render(
                 template,
                 values,
