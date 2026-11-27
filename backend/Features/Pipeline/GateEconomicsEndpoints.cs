@@ -24,7 +24,9 @@ public sealed record GateEconomicsRow(
     double ArrivalsPerHour, double MergesPerHour,
     string? ProjectShortCode = null, string? ProjectColor = null, PipelineBaseline? Baseline = null,
     string? DevelopState = null, string? LastGreenSha = null,
-    int BatchesClosed = 0, double? MeanBatchSize = null, int SoloGatedMerges = 0);
+    int BatchesClosed = 0, double? MeanBatchSize = null, int SoloGatedMerges = 0,
+    IReadOnlyList<IntegrationStageSummary>? IntegrationStages = null,
+    IReadOnlyList<IntegrationTimingRecord>? RecentIntegrations = null);
 
 /// <param name="BoardRead">
 /// Installation-wide board handler latency and git spawns over the last
@@ -106,6 +108,7 @@ public static class GateEconomicsEndpoints
     {
         var receipts = new List<GateReceiptMetric>();
         var events = new List<IntegrationLaneEvent>();
+        var timingEvents = new List<IntegrationLaneEvent>();
         var integratedReceipts = new List<GateReceiptMetric>();
         var baselineFolders = new List<BaselineFolder>();
         var laneSince = now.AddHours(-LaneWindowHours);
@@ -133,6 +136,7 @@ public static class GateEconomicsEndpoints
                     catch (IOException ex) { SilentCatch.Note(ex, "GateEconomics: receipt unavailable"); }
                 }
             var folderEvents = IntegrationLaneEvents.Read(folder);
+            timingEvents.AddRange(folderEvents.Where(row => row.AtUtc <= now));
             baselineFolders.Add(new BaselineFolder(folderEvents, folderReceipts,
                 PipelineBaselineMetrics.ReadReviews(folder, since)));
             events.AddRange(folderEvents.Where(e => e.AtUtc >= laneSince && e.AtUtc <= now));
@@ -234,6 +238,7 @@ public static class GateEconomicsEndpoints
         // A batch counts once, at the largest membership any of its runs carried.
         var closedBatches = batches.GroupBy(sample => sample.Fact.BatchId, StringComparer.Ordinal)
             .Select(batch => batch.Max(sample => sample.Members)).ToArray();
+        var recentIntegrations = IntegrationStageMetrics.Recent(timingEvents);
         return new GateEconomicsRow(name, gatedMerges,
             outcomes.Count(sample => sample.Verdict is "Ok" or "Warn"),
             outcomes.Count(sample => sample.Verdict == "Fail"),
@@ -268,7 +273,9 @@ public static class GateEconomicsEndpoints
             shortCode, color, baseline,
             BatchesClosed: closedBatches.Length,
             MeanBatchSize: closedBatches.Length == 0 ? null : closedBatches.Average(),
-            SoloGatedMerges: integratedReceipts.Count);
+            SoloGatedMerges: integratedReceipts.Count,
+            IntegrationStages: IntegrationStageMetrics.Summarize(recentIntegrations),
+            RecentIntegrations: recentIntegrations);
     }
 
     // A batch delivery handed to the per-task fallback continues under the

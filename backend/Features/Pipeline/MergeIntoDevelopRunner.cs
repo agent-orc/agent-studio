@@ -290,6 +290,8 @@ public sealed partial class MergeIntoDevelopRunner
                 // project reservation still excludes a batch publication.
                 for (var replay = 0; ; replay++)
                 {
+                    if (replay > 0) IntegrationLaneEvents.Append(jobFolderPath, project, jobId,
+                        "integration-cycle", reason: "origin advanced and rejected the prior push; reconstructing on the new base");
                     var outcome = await RunSerializedAsync(
                         project, jobId, jobFolderPath, watchPath,
                         integrationBranch, integrationStrategy, pipelineType, publicationFence,
@@ -1379,7 +1381,11 @@ public sealed partial class MergeIntoDevelopRunner
             PreMergeTip = _git.GetBranchTip(repoRoot, _git.IntegrationBaseRef(repoRoot, integrationBranch)),
             StartedAt = DateTimeOffset.UtcNow,
         });
+        var mergeTimer = System.Diagnostics.Stopwatch.StartNew();
         var result = merge();
+        IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "merge-finished",
+            durationMs: mergeTimer.ElapsedMilliseconds, outcome: result.Outcome.ToString(),
+            stageDurationsMs: new Dictionary<string, long> { ["merge"] = mergeTimer.ElapsedMilliseconds });
         if (!result.Outcome.IsSuccessfulIntegration())
         {
             IntegrationGateJournal.Clear(jobFolderPath);
@@ -1494,14 +1500,19 @@ public sealed partial class MergeIntoDevelopRunner
             && string.Equals(preMergeTip, replayGate.BaseSha, StringComparison.OrdinalIgnoreCase)
             && string.Equals(ReviewSubjectStore.Read(jobFolderPath)?.ResultSha,
                 replayGate.DeliverySha, StringComparison.OrdinalIgnoreCase)
-            && replayGate.Gate.Verdict == BuildTestGateVerdict.Ok)
+            && replayGate.Gate.Verdict == BuildTestGateVerdict.Ok
+            && replayGate.Gate.TestedSha is { Length: > 0 } priorTestedSha
+            && _git.GetCommitTree(repoRoot, priorTestedSha) is { Length: > 0 } priorTree
+            && string.Equals(_git.GetCommitTree(repoRoot, gatedSha), priorTree, StringComparison.OrdinalIgnoreCase))
         {
             var reused = replayGate.Gate with
             {
                 ExpectedSha = gatedSha,
                 TestedSha = gatedSha,
                 VerdictSource = GateVerdictSource.CacheHit,
-                Reason = "The published base moved only in files outside this delivery; the prior green gate covers the replay.",
+                StageDurationsMs = GateStageTimings.Reused(),
+                GateAttempts = 0, GateRetryReasons = [], StageTimingsIncomplete = false, StageTimingsVersion = 1,
+                Reason = "The reconstructed candidate has the exact tree already covered by the prior green gate.",
             };
             IntegrationGateReceipts.Record(jobFolderPath,
                 IntegrationGateJournal.PreDevelopBuildGateStep, reused, _timeline,
@@ -1558,6 +1569,8 @@ public sealed partial class MergeIntoDevelopRunner
             {
                 VerdictSource = GateVerdictSource.CacheHit,
                 OriginEvidencePath = perTask.EvidencePath,
+                StageDurationsMs = GateStageTimings.Reused(),
+                GateAttempts = 0, GateRetryReasons = [], StageTimingsIncomplete = false, StageTimingsVersion = 1,
                 ExpectedSha = gatedSha,
                 TestedSha = gatedSha,
             };
@@ -1566,7 +1579,7 @@ public sealed partial class MergeIntoDevelopRunner
                 mergeLockWaitMs: _mergeLockWaitMs.Value);
             IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-finished",
                 level: "per-task-verdict", durationMs: 0, outcome: reused.Verdict.ToString(),
-                reuseToken: "per-task-verdict", reason: perTask.Reason);
+                reuseToken: "per-task-verdict", reason: perTask.Reason, stageDurationsMs: reused.StageDurationsMs, gateAttempts: 0);
             IntegrationGateJournal.ClearOwned(jobFolderPath, journalOwner);
             _logger.LogInformation(
                 "merge-into-develop build gate reused the per-task verdict for project={Project} job={JobId} integration={Integration} merged={MergedSha} reason={Reason}",
@@ -1615,6 +1628,8 @@ public sealed partial class MergeIntoDevelopRunner
                 false, false)
             {
                 VerdictSource = GateVerdictSource.CacheHit,
+                StageDurationsMs = GateStageTimings.Reused(),
+                GateAttempts = 0, GateRetryReasons = [], StageTimingsIncomplete = false, StageTimingsVersion = 1,
                 ExpectedSha = gatedSha,
                 TestedSha = gatedSha,
             };
@@ -1623,7 +1638,8 @@ public sealed partial class MergeIntoDevelopRunner
                 mergeLockWaitMs: _mergeLockWaitMs.Value);
             IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-finished",
                 level: "post-merge-train", durationMs: 0, outcome: reused.Verdict.ToString(),
-                reuseToken: "post-merge-train", reason: reused.Reason, receipt: train.CompiledSha);
+                reuseToken: "post-merge-train", reason: reused.Reason, receipt: train.CompiledSha,
+                stageDurationsMs: reused.StageDurationsMs, gateAttempts: 0);
             IntegrationGateJournal.ClearOwned(jobFolderPath, journalOwner);
             RecordWindowCoverage(project, jobId, jobFolderPath, gatedSha, testingStrategy, postMergeLevel, train);
             _logger.LogInformation(
@@ -1632,11 +1648,12 @@ public sealed partial class MergeIntoDevelopRunner
             return (result with { GateVerdictReused = true }, reused);
         }
 
-        // AGT-2839: the Remote Review already built, tested, and linted this
-        // delivery. Reuse its verdict for the tests and lint - and only for them
-        // - when the merge landed on the exact integration tip and tree the review verified.
+        // The exact reviewed-tree proof can cover this final integration
+        // candidate, including its build. Stricter suite reuse also checks
+        // the integration tip and ancestry before skipping all commands.
         var reuse = DecideGateReuse(
-            project, repoRoot, integrationBranch, jobFolderPath, gatedSha, preMergeTip, result);
+            project, repoRoot, integrationBranch, jobFolderPath, gatedSha, preMergeTip, result,
+            postMergeLevel == TestExecutionLevels.CompileOnly);
 
         BuildTestGateResult gate;
         if (changedPaths is null)
@@ -1652,6 +1669,15 @@ public sealed partial class MergeIntoDevelopRunner
             {
                 ExpectedSha = gatedSha,
                 FailureKind = BuildTestGateFailureKind.MissingSource,
+            };
+        }
+        else if (reuse.Reused)
+        {
+            gate = new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 0, "", reuse.Reason, false, false)
+            {
+                ExpectedSha = gatedSha, TestedSha = gatedSha, VerdictSource = GateVerdictSource.CacheHit,
+                StageDurationsMs = GateStageTimings.Reused(),
+                GateAttempts = 0, GateRetryReasons = [], StageTimingsIncomplete = false, StageTimingsVersion = 1,
             };
         }
         else if (_preDevelopBuildGate is null)
@@ -1706,7 +1732,9 @@ public sealed partial class MergeIntoDevelopRunner
             level: postMergeLevel ?? (reuse.Reused ? "exact" : "full"), durationMs: gate.DurationMs,
             queueWaitMs: gate.GateQueueWaitMs, outcome: gate.Verdict.ToString(),
             reuseToken: reuse.Token, reason: reuse.Reason,
-            collisionDetected: gate.GateCollisionDetected);
+            collisionDetected: gate.GateCollisionDetected, stageDurationsMs: gate.StageDurationsMs,
+            gateAttempts: gate.GateAttempts, gateRetryReasons: gate.GateRetryReasons,
+            stageTimingsIncomplete: gate.StageTimingsIncomplete);
 
         // A red receipt is evidence for the retained rollback obligation.
         // Only a green verdict or a recorded successful reset releases custody.
@@ -1856,7 +1884,7 @@ public sealed partial class MergeIntoDevelopRunner
         string jobFolderPath,
         string gatedSha,
         string? preMergeTip,
-        MergeIntoIntegrationResult result)
+        MergeIntoIntegrationResult result, bool compileOnlyRequired = false)
     {
         var review = ReviewVerificationStore.Read(jobFolderPath);
         var replayed = result.Outcome == MergeIntoIntegrationOutcome.MergedAfterRebase
@@ -1873,7 +1901,7 @@ public sealed partial class MergeIntoDevelopRunner
                 && _git.IsAncestor(repoRoot, reviewedSha!, gatedSha),
             replayed,
             _git.GetCommitTree(repoRoot, gatedSha),
-            result.ConflictsResolved));
+            result.ConflictsResolved, compileOnlyRequired));
     }
 
     /// <summary>
@@ -2528,6 +2556,7 @@ public sealed partial class MergeIntoDevelopRunner
         bool recordSuccessfulStep = true)
     {
         var startedAt = DateTime.UtcNow;
+        var pushTimer = System.Diagnostics.Stopwatch.StartNew();
         GitPushResult result;
         var environmentalRetries = 0;
         string? releaseRoot = null;
@@ -2579,6 +2608,10 @@ public sealed partial class MergeIntoDevelopRunner
             result = new GitPushResult(false, string.Empty, "error", ex.Message);
         }
 
+        IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "push-finished",
+            sequence: IntegrationLaneEvents.CurrentSequence ?? IntegrationLaneEvents.PublicationSequence(jobFolderPath, approvedSha),
+            outcome: result.Status, receipt: result.Sha,
+            stageDurationsMs: new Dictionary<string, long> { ["push"] = pushTimer.ElapsedMilliseconds });
         _logger.LogInformation(
             "merge-into-develop-push project={Project} job={JobId} branch={Branch} status={Status} retries={Retries}",
             project, jobId, integrationBranch, result.Status, environmentalRetries);

@@ -1,4 +1,5 @@
 using Xunit;
+using AgentStudio.Pipeline;
 
 namespace AgentStudio.Tests;
 
@@ -13,6 +14,17 @@ public sealed class IntegrationGateReusePolicyTests
     private const string Base = "1111111111111111111111111111111111111111";
     private const string MovedBase = "2222222222222222222222222222222222222222";
     private const string Result = "3333333333333333333333333333333333333333";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Exact_reviewed_tree_reuses_the_build_even_after_mechanical_replay(bool replayed)
+    {
+        var input = Input() with { CompileOnlyRequired = true, DeliveryWasReplayed = replayed,
+            PreMergeTipSha = MovedBase, Review = Review() with { TestLevel = TestExecutionLevels.WorkPackage } };
+        Assert.True(IntegrationGateReusePolicy.Decide(input).Reused);
+        Assert.False(IntegrationGateReusePolicy.Decide(input with { MergeResultTreeSha = MovedBase }).Reused);
+    }
 
     [Fact]
     public void Unchanged_tip_reuses_the_review_verdict_and_names_the_attempt()

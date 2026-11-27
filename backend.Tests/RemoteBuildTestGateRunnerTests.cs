@@ -245,9 +245,49 @@ public sealed class RemoteBuildTestGateRunnerTests
             TimeSpan.FromMinutes(1), CancellationToken.None);
 
         Assert.Equal(2, transport.Calls);
+        Assert.Equal(2, result.GateAttempts);
+        Assert.Single(result.GateRetryReasons);
+        Assert.True(result.StageTimingsIncomplete);
         Assert.All(transport.Requests, actual => Assert.Same(request, actual));
         Assert.Equal(BuildTestGateVerdict.Ok, result.Verdict);
         Assert.Equal(Sha, result.TestedSha);
+    }
+
+    [Fact]
+    public async Task Transport_retry_sums_measured_stages_and_records_the_second_attempt_reason()
+    {
+        var request = Request();
+        var transport = new RecordingTransport
+        {
+            Result = Passed() with { StageDurationsMs = new Dictionary<string, long> { ["build"] = 5 }, StageTimingsVersion = 1 },
+            TransientResult = RemoteBuildTestGateRunner.Failure(request,
+                BuildTestGateFailureKind.Environment, "ECONNRESET") with
+                { StageDurationsMs = new Dictionary<string, long> { ["build"] = 12 }, StageTimingsVersion = 1 },
+        };
+        var result = await Runner(transport).RunAsync(request, [], null, PostStepMode.Fail,
+            TimeSpan.FromMinutes(1), CancellationToken.None);
+        Assert.Equal(2, result.GateAttempts);
+        Assert.Single(result.GateRetryReasons);
+        Assert.Equal(17, result.StageDurationsMs["build"]);
+        Assert.False(result.StageTimingsIncomplete);
+    }
+
+    [Fact]
+    public async Task Retry_with_legacy_bundle_only_evidence_does_not_invent_complete_build_totals()
+    {
+        var request = Request();
+        var transport = new RecordingTransport
+        {
+            Result = Passed() with { StageTimingsVersion = 1,
+                StageDurationsMs = new Dictionary<string, long> { ["build"] = 5 } },
+            TransientResult = RemoteBuildTestGateRunner.Failure(request,
+                BuildTestGateFailureKind.Environment, "ECONNRESET") with
+                { StageDurationsMs = new Dictionary<string, long> { ["bundleTransfer"] = 12 } },
+        };
+        var result = await Runner(transport).RunAsync(request, [], null, PostStepMode.Fail,
+            TimeSpan.FromMinutes(1), CancellationToken.None);
+        Assert.Equal(2, result.GateAttempts);
+        Assert.True(result.StageTimingsIncomplete);
     }
 
     [Fact]

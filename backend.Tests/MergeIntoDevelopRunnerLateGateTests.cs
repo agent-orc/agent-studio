@@ -117,16 +117,20 @@ public sealed partial class MergeIntoDevelopRunnerTests
     }
 
     [Fact]
-    public async Task Rejected_push_on_disjoint_origin_replays_under_the_green_gate()
+    [Trait("Category", "MachineBound")]
+    public async Task Rejected_push_on_disjoint_origin_rechecks_the_changed_final_tree()
     {
         var fixture = SeedLateGateFixture("rejected-push-disjoint", "replay", publishDelivery: false);
         var (repo, remote) = (fixture.Repo, RunGit(fixture.Repo, "remote get-url origin").Out.Trim());
         var publishedDuringGate = false;
-        var gate = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+        string? rejected = null;
+        CapturingBuildTestGateRunner? gate = null;
+        gate = new CapturingBuildTestGateRunner(new BuildTestGateResult(
             BuildTestGateVerdict.Ok, 0, 10, "", "green", true, false), duringRun: () =>
         {
             if (publishedDuringGate) return;
             publishedDuringGate = true;
+            rejected = gate!.Request!.ExpectedSha;
             File.WriteAllText(Path.Combine(repo, "batch.txt"), "batch publication");
             Commit(repo, "chore: publish unrelated batch file");
             RunGit(repo, "push -q origin develop");
@@ -137,8 +141,12 @@ public sealed partial class MergeIntoDevelopRunnerTests
             fixture.WatchPath, "develop", CancellationToken.None);
 
         Assert.True(result.Outcome.IsSuccessfulIntegration(), result.Error);
-        Assert.Equal(1, gate.Invocations);
-        var rejected = gate.Request!.ExpectedSha;
+        Assert.Equal(2, gate.Invocations);
+        Assert.NotNull(rejected);
+        Assert.NotEqual(rejected, result.MergedSha);
+        Assert.Equal(result.MergedSha, gate.Request!.ExpectedSha);
+        Assert.NotEqual(RunGit(repo, $"rev-parse {rejected}^{{tree}}").Out.Trim(),
+            RunGit(repo, $"rev-parse {result.MergedSha}^{{tree}}").Out.Trim());
         Assert.Equal(rejected, RunGit(repo,
             $"rev-parse {GitService.IntegrationLaneBackupRef("develop", rejected)}").Out.Trim());
         Assert.Equal(result.MergedSha, RemoteSha(remote, "develop"));

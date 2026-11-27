@@ -332,6 +332,10 @@ public static class IntegrationGateReceipts
                 ? "none"
                 : string.Join(", ", result.QuarantinedFailures.Select(hit => $"{hit.Test}@{hit.Card}<={hit.ExpiresOn:yyyy-MM-dd}"))) +
             "\n" +
+            $"gateAttempts={result.GateAttempts} stageTimingsIncomplete={result.StageTimingsIncomplete.ToString().ToLowerInvariant()}\n" +
+            "gateRetryReasons=" + System.Text.Json.JsonSerializer.Serialize(result.GateRetryReasons) + "\n" +
+            "--- stage-durations-ms.json ---\n" +
+            System.Text.Json.JsonSerializer.Serialize(result.StageDurationsMs) + "\n" +
             "--- dependency-cache-decision.json ---\n" +
             dependencyCacheDecision + "\n" +
             "--- dependency-cache.json ---\n" +

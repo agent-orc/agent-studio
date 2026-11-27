@@ -48,6 +48,8 @@ export interface GateEconomicsRow {
   meanBatchSize?: number | null;
   /** Gated merges integrated by a per-card gate, not a batch. */
   soloGatedMerges?: number;
+  integrationStages?: IntegrationStageSummary[] | null;
+  recentIntegrations?: IntegrationTimingRecord[] | null;
 }
 
 /** Null values are unknown inputs, never zero. */
@@ -89,4 +91,24 @@ export interface GateEconomicsResponse {
   laneWindowHours?: number;
   boardRead?: BoardReadMetric[] | null;
   boardReadWindowMinutes?: number | null;
+}
+
+export interface IntegrationStageSummary {
+  stage: string;
+  medianMs: number | null;
+  p90Ms: number | null;
+  samples: number;
+}
+
+export interface IntegrationTimingRecord {
+  project: string;
+  jobId: string;
+  sequence: number;
+  completedAtUtc: string;
+  sha: string | null;
+  outcome: string | null;
+  gateCycles: number;
+  secondCycleReasons: string[];
+  stagesMs: Record<string, number | null>;
+  hasIncompleteGateTimings?: boolean;
 }
