@@ -49,7 +49,8 @@ public static class RemoteDispatchEligibility
                && !TaskSlugs.IsHumanDecisionNeeded(task.Id)
                && (!project.IntakeEnabled.GetValueOrDefault()
                    || task.Phase == LifecyclePhases.IntakePassed)
-               && !references.EvaluateWaitsOn(task, integration, project.IntegrationBranch).Blocked;
+               && references.EvaluateWaitsOn(task, integration, project.IntegrationBranch)
+                   is { Blocked: false, CycleDetected: false };
     }
 
     public static bool IsClaimableReady(
