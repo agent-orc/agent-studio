@@ -38,3 +38,24 @@ hosts whose environment is `Test` or `Testing`.
 `AGENT_STUDIO_HOST_TIMELINE=<directory>` records one JSON line per disposed
 host with each hosted-service start, named sweep, and startup phase. Use an
 isolated directory per test process when measuring startup.
+
+## Local state isolation and startup cost
+
+The module initializer calls `TestTempRoot.Redirect()` before resolving any
+host state. In addition to temporary paths, this sets
+`AGENT_STUDIO_LOCAL_STATE_ROOT` to `<suite-root>/state`. `LocalStateRoot` honors
+this absolute override before resolving the user's local application data
+folder. Child API processes inherit it. The process-exit cleanup and six-hour
+stale-suite cleanup therefore own instance state as well as fixture files.
+A child-process test deliberately testing platform state resolution must clear
+this override in that child's environment. Do not change it while hosts in the
+same test process are running: state resolution is cached for the process.
+
+`LocalStateRootGuardTests` checks that resolved instance state stays inside the
+suite directory. `BatchGateStartupCostTests` exercises 50,000 and 200,000
+synthetic siblings in suite-owned storage, with a 250 ms preparation tolerance.
+`BatchGateHostStartupCostTests` starts the actual API with the same sibling
+counts and a 1 s tolerance, comparing medians of three starts after warmup.
+Both timing probes are `MachineBound`; the isolation guard runs routinely.
+Startup no longer inspects unmatched instances. Restore troubleshooting uses
+the explicit command described in [storage hygiene](../temp-and-cache-hygiene.md).

@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.TestSupport;
 
@@ -152,6 +153,10 @@ public static class TestTempRoot
             Environment.SetEnvironmentVariable("TMPDIR", suite);
             Environment.SetEnvironmentVariable("TMP", suite);
             Environment.SetEnvironmentVariable("TEMP", suite);
+
+            // State must share the suite's lifetime too. Child API processes
+            // inherit this explicit root rather than the user's local data root.
+            Environment.SetEnvironmentVariable(LocalStateRoot.OverrideVariable, Path.Combine(suite, "state"));
 
             AppDomain.CurrentDomain.ProcessExit += (_, _) => TryDelete(suite);
             _suiteRoot = suite;

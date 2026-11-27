@@ -120,6 +120,9 @@ public class TaskFolderAccessIsolationTest
             ["backend/Features/Pipeline/BatchGate/BatchGateStorageRoot.cs"] =
                 "Moves only local instance state below the application data root, never task folders.",
 
+            ["backend/Features/Pipeline/BatchGate/HostStorageRetention.cs"] =
+                "Deletes only inspected empty sibling instances below the local state root, never task folders.",
+
             // One-shot Claude removes only its GUID-named scratch folder under the system temp root, never a job folder.
             ["backend/Features/Cli/Routing/OneShot/HostOneShotIsolation.cs"] =
                 "Deletes only a temporary one-shot folder under the system temp root, never a job folder.",

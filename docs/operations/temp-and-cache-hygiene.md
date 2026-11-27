@@ -375,7 +375,35 @@ set with `DiskPressure:WarningFreeBytes`, `WarningFreePercent`,
 old `gate-evidence.jsonl` from published or abandoned batches whose members
 are terminal, and rotated `cli-output.log.1` on completed or archived cards.
 Pending batches, nonterminal members, and isolation evidence references are
-kept. The runner's existing salvage sweep also removes clean worktrees and
+kept.
+
+The same `HostStorageRetention` pass owns abandoned instance directories under
+`<local-state-root>/agentstudio/instances`. `InstanceRetentionDays` is 14 days.
+It always keeps the current identity, every instance with a batch manifest,
+pending evidence, a persisted push reservation, or any unknown file. Only
+empty directories and the `batch-state-origin` metadata are eligible, and all
+inspected directories and metadata must be older than the retention age.
+Links, unreadable state, and instances exceeding 10,000 inspected entries are
+kept. Deletion is nonrecursive: evidence written during inspection prevents
+removal. Events report the first 100 paths and their reasons, with totals for
+every keep/delete reason in `instance-retention-summary`.
+
+Host startup prepares only its own identity and never enumerates siblings.
+For restore migration diagnostics, explicitly run:
+
+```sh
+dotnet backend/bin/Debug/net10.0/OrchestratorApi.dll --inspect-batch-state-instances /path/to/workspace /path/to/local-state-root
+```
+
+The state-root argument is optional and defaults to `LocalStateRoot.Resolve()`.
+This read-only command reports `batch-state-unmatched-instance` for other
+instances containing manifests. It inspects at most 10,000 entries across
+instances and their batch folders, or two seconds of elapsed time, and reports
+`limitReached` when truncated. It skips links and reports unreadable folders.
+The time budget is checked between filesystem operations; a blocked disk call
+can exceed it. A truncated report is not a complete inventory.
+
+The runner's existing salvage sweep also removes clean worktrees and
 runner result copies for
 completed or archived cards after its configured `SalvageRetentionDays`, while
 active attempts, lease markers, retained worktree markers, dirty worktrees, and
