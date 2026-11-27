@@ -58,6 +58,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
 | Managed PostgreSQL databases for hosted apps: project.yml `databases`, run-zone provisioning, generated credentials, retention and owner deletion (IP-D5 option B, AGT-3877); backups, restore runbook, liveness, size and connection metrics (AGT-3878) | [operations/managed-databases/](../operations/managed-databases/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
+| Release startup preflight, SSH screenshot shadow and preparation copy cleanup | [operations/studio-host-tools.md](../operations/studio-host-tools.md) |
 | [CLI rollout](../operations/cli-rollout.md) | German operator runbook for CLI rollout, legacy launcher adoption, KORI image pins, drift alerts, and rollback. |
 | Server-first networked deploy, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
 | Deploy without lost work: host drain, quiet point, server then hosts one by one, resume; review relaunch and gate refund across restarts (AGT-3647) | [operations/deploy-drain-procedure.md](../operations/deploy-drain-procedure.md) |
