@@ -145,14 +145,26 @@ public sealed class ManagedRepositoryMutationService
             if (!changed)
                 return new ManagedRepositoryMutationResult(true, false, false, null, false, null);
 
+            var pushRequest = PushRequest(projectName, root, operationId, before.Branch, requireCleanCheckoutAndPush);
+            var intent = pushRequest == null ? null : _pushQueue!.Prepare(pushRequest);
+            if (pushRequest != null && intent == null)
+            {
+                var cleanup = RestoreAfterFailure(root, paths, operationId);
+                var suffix = cleanup.Success ? string.Empty : $" Cleanup also failed: {cleanup.Error}";
+                return ManagedRepositoryMutationResult.Failed(
+                    $"Managed repository push obligation could not be persisted before commit.{suffix}");
+            }
             var recordedMessage = operationId == DocumentKeyOperationId
                 ? $"{commitMessage}\n\n{DocumentKeyCommitTrailer}"
                 : operationId.StartsWith(DecisionReceiptOperationPrefix, StringComparison.Ordinal)
                     ? $"{commitMessage}\n\n{DecisionReceiptCommitTrailer}"
                     : commitMessage;
+            if (intent != null) recordedMessage += $"\n\n{intent.Marker}";
             var commit = _git.CommitPaths(root, recordedMessage, paths);
             if (!commit.Success || string.IsNullOrWhiteSpace(commit.Sha))
             {
+                // Retain the intent on an ambiguous Git failure: a commit may
+                // have landed before its process outcome or SHA read was lost.
                 var cleanup = RestoreAfterFailure(root, paths, operationId);
                 var suffix = cleanup.Success ? string.Empty : $" Cleanup also failed: {cleanup.Error}";
                 return ManagedRepositoryMutationResult.Failed(
@@ -160,20 +172,23 @@ public sealed class ManagedRepositoryMutationService
             }
 
             var fullSha = _git.ReadHeadShaAt(root) ?? commit.Sha!;
-            var pushQueued = QueuePush(projectName, root, operationId, fullSha,
-                requireCleanCheckoutAndPush ? before.Branch : null, requireCleanCheckoutAndPush);
+            var pushQueued = pushRequest != null && _pushQueue!.Enqueue(pushRequest with { Sha = fullSha });
+            if (pushQueued && intent != null) CompleteIntent(intent);
+            var pushError = pushRequest != null && !pushQueued
+                ? "Managed repository commit exists locally, but its exact-SHA push obligation could not be persisted. The durable intent remains for recovery."
+                : null;
             _logger?.LogInformation(
                 "managed-repository-mutation committed project={Project} operation={Operation} sha={Sha} paths={Paths} pushQueued={PushQueued}",
                 projectName, operationId, fullSha, string.Join(",", paths), pushQueued);
             return new ManagedRepositoryMutationResult(
-                true, true, true, fullSha, pushQueued, null);
+                pushError == null, true, true, fullSha, pushQueued, pushError);
         }
     }
 
-    private bool QueuePush(string projectName, string repositoryRoot, string operationId, string sha,
-        string? knownBranch = null, bool required = false)
+    private WorkspaceArtifactPushRequest? PushRequest(string projectName, string repositoryRoot, string operationId,
+        string? knownBranch, bool required)
     {
-        if (_pushQueue == null) return false;
+        if (_pushQueue == null) return null;
 
         var strategy = AutoPushStrategies.AlwaysImmediate;
         if (_settings != null && !required)
@@ -184,23 +199,33 @@ public sealed class ManagedRepositoryMutationService
                 SilentCatch.Note(ex, "ManagedRepositoryMutationService: project auto-push settings defaulted to immediate.");
             }
         }
-        if (strategy == AutoPushStrategies.Never) return false;
+        if (strategy == AutoPushStrategies.Never) return null;
 
         var branch = knownBranch ?? _git.ReadCurrentBranchAt(repositoryRoot);
-        if (string.IsNullOrWhiteSpace(branch))
+        if (string.IsNullOrWhiteSpace(branch) || branch == "HEAD")
         {
             _logger?.LogWarning(
-                "managed-repository-mutation push skipped because HEAD is detached project={Project} operation={Operation} sha={Sha}",
-                projectName, operationId, sha);
-            return false;
+                "managed-repository-mutation push skipped because HEAD is detached project={Project} operation={Operation}",
+                projectName, operationId);
+            return null;
         }
 
-        return _pushQueue.Enqueue(new WorkspaceArtifactPushRequest(
+        return new WorkspaceArtifactPushRequest(
             repositoryRoot,
             operationId,
             TargetBranch: branch,
-            Sha: sha,
-            Project: projectName));
+            Project: projectName);
+    }
+
+    private void CompleteIntent(WorkspaceArtifactPushIntent intent)
+    {
+        try { _pushQueue!.CompleteIntent(intent); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A retained intent is safe: replay identifies its exact marked commit
+            // and checks origin containment before acknowledging it again.
+            _logger?.LogWarning(ex, "managed-repository-mutation intent cleanup deferred repo={Repo}", intent.Request.RepositoryRoot);
+        }
     }
 
     private GitWorktreeResult RestoreAfterFailure(
