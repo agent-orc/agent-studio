@@ -27,11 +27,13 @@ const currentBriefConcerns: Review = {
   skippedAspects: [],
 };
 
-async function mount(item: AcceptanceReadinessItem | null, review: Review | null = currentBriefConcerns) {
+async function mount(item: AcceptanceReadinessItem | null, review: Review | null = currentBriefConcerns,
+  checkCard?: () => Promise<void>) {
+  const answer = signal(item);
   const draft = signal<AcceptanceRoundDraft | null>(null);
   const store = {
-    itemFor: vi.fn(() => item),
-    checkCard: vi.fn(async () => undefined),
+    itemFor: vi.fn(() => answer()),
+    checkCard: checkCard ?? vi.fn(async () => { if (answer()) answer.set({ ...answer()! }); }),
     draftFor: vi.fn((origin: string) => draft()?.origin === origin ? draft() : null),
     openRound: vi.fn((job, origin) => draft.set({ job, item: item!, origin })),
     roundError: signal(null),
@@ -60,7 +62,8 @@ async function mount(item: AcceptanceReadinessItem | null, review: Review | null
   fixture.componentRef.setInput('contentReview', review);
   fixture.detectChanges();
   await fixture.whenStable();
-  return { fixture, host: fixture.nativeElement as HTMLElement, store, tasks };
+  fixture.detectChanges();
+  return { fixture, host: fixture.nativeElement as HTMLElement, store, tasks, answer };
 }
 
 const testId = (host: HTMLElement, id: string) => host.querySelector(`[data-testid="${id}"]`) as HTMLElement | null;
@@ -99,10 +102,114 @@ describe('AcceptanceNextStepsComponent (AGT-3867)', () => {
     expect(testId(host, 'content-verdict-acceptance')?.textContent).toContain('The lane hides the reason.');
   });
 
+  it('clears old claim concerns when a newer readiness pass arrives, including a late old claim response', async () => {
+    const old = { ...currentBriefConcerns, runAttemptId: 'run-current', reviewAttemptId: 'review-old',
+      reportRef: 'reports/old.md', reviewedAtUtc: '2026-11-26T10:00:00Z' };
+    const { fixture, host, answer } = await mount(null, old);
+    answer.set(readinessItem('DEMO-19', 'ready', { runAttemptId: 'run-current',
+      reviewAttemptId: 'review-new', reportRef: 'reports/new.md', reviewedAtUtc: '2026-11-26T11:00:00Z' }));
+    fixture.detectChanges();
+    expect(testId(host, 'acceptance-next-steps')).toBeNull();
+    fixture.componentRef.setInput('contentReview', { ...old });
+    fixture.detectChanges();
+    expect(testId(host, 'acceptance-next-steps')).toBeNull();
+  });
+
+  it.each(['ready', 'review-concerns'] as const)('keeps current %s evidence over a later-arriving older-run claim', async readiness => {
+    const { fixture, host } = await mount(readinessItem('DEMO-19', readiness, {
+      runAttemptId: 'run-current', reviewAttemptId: 'review-current', reviewedAtUtc: '2026-11-26T10:00:00Z',
+    }), { ...currentBriefConcerns, contentStatus: readiness === 'ready' ? 'concerns' : 'pass',
+      runAttemptId: 'run-old', reviewAttemptId: 'review-old',
+      reviewedAtUtc: '2026-11-26T12:00:00Z', currentBriefVersion: 'different-brief' });
+    fixture.detectChanges();
+    if (readiness === 'ready') expect(testId(host, 'acceptance-next-steps')).toBeNull();
+    else {
+      expect(testId(host, 'acceptance-review-source')?.textContent).toContain('review-current');
+      expect(testId(host, 'acceptance-secondary-gaps')?.textContent ?? '').not.toContain('brief changed');
+    }
+  });
+
+  it('rejects readiness from a superseded delivery run even when its review date is newer', async () => {
+    const { fixture, host } = await mount(readinessItem('DEMO-19', 'ready', {
+      runAttemptId: 'run-old', reviewedAtUtc: '2026-11-26T12:00:00Z',
+    }), { ...currentBriefConcerns, runAttemptId: 'run-current', reviewAttemptId: 'review-current' });
+    fixture.componentRef.setInput('job', reviewCard('DEMO-19', {
+      commit: { sha: 'current-sha', shortSha: 'current', message: 'Current delivery', filesChanged: 0,
+        files: [], at: '2026-11-26T09:00:00Z', runAttemptId: 'run-current' },
+    }));
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(testId(host, 'acceptance-readiness-fallback')?.textContent).toContain('not been verified');
+    expect(testId(host, 'acceptance-review-source')?.textContent).toContain('review-current');
+  });
+
+  it('keeps a ready answer without optional provenance from falling back to legacy claim concerns', async () => {
+    const { host } = await mount(readinessItem('DEMO-19', 'ready'), {
+      ...currentBriefConcerns, deliveryBriefVersion: null, reviewBriefVersion: null,
+    });
+    expect(testId(host, 'acceptance-next-steps')).toBeNull();
+  });
+
+  it('does not treat a failed recheck retaining a cached pass as a fresh verified pass', async () => {
+    const { host } = await mount(readinessItem('DEMO-19', 'ready'), currentBriefConcerns,
+      vi.fn(async () => undefined));
+    expect(testId(host, 'acceptance-readiness-fallback')?.textContent).toContain('unavailable');
+    expect(testId(host, 'content-verdict-acceptance')).toBeNull();
+    expect(host.textContent).not.toContain('Accept will be refused');
+    expect(testId(host, 'review-current-brief')).toBeNull();
+  });
+
+  it('rejects a readiness answer for a different delivery ref when no run identity was recorded', async () => {
+    const { fixture, host } = await mount(readinessItem('DEMO-19', 'ready', {
+      latestResultRef: 'refs/heads/task/old-delivery',
+    }));
+    fixture.componentRef.setInput('job', reviewCard('DEMO-19', {
+      commit: { sha: 'current-sha', shortSha: 'current', message: 'Current delivery', filesChanged: 0,
+        files: [], at: '2026-11-26T09:00:00Z', branch: 'task/current-delivery' },
+    }));
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(testId(host, 'acceptance-readiness-fallback')?.textContent).toContain('not been verified');
+    expect(host.textContent).not.toContain('Accept will be refused');
+  });
+
+  it('does not use an earlier same-run pass over a later claim review', async () => {
+    const { host } = await mount(readinessItem('DEMO-19', 'ready', {
+      runAttemptId: 'run-current', reviewAttemptId: 'review-old', reportRef: 'reports/current.md',
+      reviewedAtUtc: '2026-11-26T10:00:00Z',
+    }), { ...currentBriefConcerns, runAttemptId: 'run-current', reviewAttemptId: 'review-new',
+      reportRef: 'reports/current.md', reviewedAtUtc: '2026-11-26T11:00:00Z' });
+    expect(testId(host, 'acceptance-review-source')?.textContent).toContain('review-new');
+    expect(testId(host, 'acceptance-readiness-fallback')?.textContent).toContain('latest review');
+    expect(host.textContent).not.toContain('Accept will be refused');
+  });
+
+  it('distinguishes checking and unavailable claim fallback from a verified refusal', async () => {
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const { fixture, host, answer } = await mount(null, currentBriefConcerns, vi.fn(() => pending));
+    expect(testId(host, 'acceptance-readiness-fallback')?.textContent).toContain('Checking acceptance readiness');
+    expect(host.textContent).not.toContain('Accept will be refused');
+    expect(testId(host, 'review-current-brief')).toBeNull();
+    expect(testId(host, 'accept-with-reason-open')).toBeNull();
+    finish();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    fixture.detectChanges();
+    expect(testId(host, 'acceptance-readiness-fallback')?.textContent).toContain('unavailable');
+    expect(host.textContent).not.toContain('Accept will be refused');
+    answer.set(readinessItem('DEMO-19', 'ready'));
+    fixture.detectChanges();
+    expect(testId(host, 'acceptance-next-steps')).toBeNull();
+  });
+
   it('marks the gap addressed once the content review is requested, so a recorded refusal drops (F2)', async () => {
     const { fixture, host, store, tasks } = await mount(readinessItem('DEMO-19', 'review-concerns'));
     testId(host, 'review-current-brief')!.click();
     await fixture.whenStable();
+    fixture.detectChanges();
     expect(tasks.reviewContentAgainstCurrentBrief).toHaveBeenCalledOnce();
     expect(store.markAddressed).toHaveBeenCalledWith(expect.objectContaining({ id: 'DEMO-19' }));
   });
@@ -112,6 +219,7 @@ describe('AcceptanceNextStepsComponent (AGT-3867)', () => {
     testId(host, 'acceptance-next-steps-send-round')!.click();
     fixture.detectChanges();
     await fixture.whenStable();
+    fixture.detectChanges();
     expect(store.openRound).toHaveBeenCalledWith(expect.objectContaining({ id: 'DEMO-19' }), 'detail');
     const prompt = document.querySelector('[data-testid="acceptance-round-prompt"]') as HTMLTextAreaElement | null;
     expect(prompt?.value).toBe('Close the acceptance gap on this card.');
@@ -167,7 +275,8 @@ describe('AcceptanceNextStepsComponent (AGT-3867)', () => {
     expect(gap?.textContent).toContain('No brief version was recorded for this delivery');
     expect(gap?.textContent).not.toContain('changed brief');
     expect(testId(host, 'brief-difference-link')).toBeNull();
-    expect(testId(host, 'review-current-brief')).not.toBeNull();
+    expect(testId(host, 'review-current-brief')).toBeNull();
+    expect(testId(host, 'acceptance-readiness-fallback')?.textContent).toContain('unavailable');
   });
 
   it('leads with the readiness reason and its next step and lists the brief gap and other gaps under it (F12)', async () => {
