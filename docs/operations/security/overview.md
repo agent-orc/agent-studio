@@ -1783,14 +1783,41 @@ accept a sequence once, ignore a repeated identical sequence, and refuse
 every change or deletion. Neither Studio nor the operator agent holds a
 credential that can delete there.
 
-Verification: `ControlPlaneAuditVerifier` recomputes the chain, checks it
-against the highest sequence this process wrote and the forwarded position,
-and compares every forwarded entry with the sink. A broken chain, a sink
-that lacks a forwarded entry, or an entry that differs raises the acute
-alert `audit-chain-broken`, `audit-sink-gap`, or `audit-sink-mismatch`. A
-chain rewritten with valid hashes on the Studio host still fails against the
-sink. The Owner sees sessions, their entries, the verification state, and
-forwarding progress in Settings → Access → Operator activity
+Verification: `ControlPlaneAuditVerifier` captures the file bytes, the highest
+sequence known to the writer, and the forwarded position together under the writer's
+lock, then recomputes the chain outside that lock. A sink entry beyond
+that snapshot's head is checked against a later local read, so entries
+forwarded during verification do not prove local loss. If the entry is
+absent locally, verification reads the sink tail before reserving its known
+sequences for recovery. A failed tail read keeps the loss alert open and
+defers anchoring. Recovery publishes the alert before probing the remote tail
+and bounds each probe to 64 pages; pending recovery survives subsequent read
+failures in the process. A broken chain, a sink that lacks a forwarded entry, or an entry
+that differs raises `audit-chain-broken`, `audit-sink-gap`, or
+`audit-sink-mismatch`. Alerts use the bus's `error` kind with `High` severity
+and publish `audit.alert` facts in the unrestricted Owner's Needs you list. Delivery failure is
+logged once as an error naming the audit alert.
+
+A detected local break reports the affected sequence range, detection time
+in UTC, and host/process identity. The writer preserves every existing byte
+and appends an explicit `audit.chain-anchor` entry. Its `previousHash` and
+`details.prefixHash` seal the exact damaged prefix; `details.previousSequence`
+reserves every sequence known to have existed, and the anchor starts the
+next segment. Concurrent appends are preserved in the sealed prefix; a change
+to the captured prefix defers anchoring until the next check.
+Subsequent verification checks that the sealed prefix is unchanged and
+verifies the new segment. Its result explicitly says that earlier history
+remains broken. A later change to that prefix or segment raises a new alert;
+the same sealed break does not alert again after a restart. The anchor
+persists the incident identity and its first observation time, so recovery
+retries and restart preserve one owner notice. Forwarding keeps
+the sink's old entries and continues with the recovery anchor. Recovered
+history remains an Owner attention item, including after restart. An anchor
+does not reconstruct missing actions or certify the damaged history.
+
+A chain rewritten with valid hashes on the Studio host still fails against
+the sink. The Owner sees sessions, their entries, the verification state,
+and forwarding progress in Settings → Access → Operator activity
 (`GET /api/auth/audit/operator-activity`, `POST /api/auth/audit/verify`).
 
 Networked project repository candidate changes are recorded in the registry's
