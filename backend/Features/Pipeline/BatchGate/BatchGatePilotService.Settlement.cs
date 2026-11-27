@@ -37,9 +37,8 @@ public sealed partial class BatchGatePilotService
         {
             _store.ResolvePending(pending.ReviewAttemptId, "member-already-settled");
             _store.ClearQueueWait(pending.ReviewAttemptId);
-            var task = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);
-            if (task is not null)
-                BatchGateOwnershipStore.ClearIfReviewAttempt(task.FolderPath, pending.ReviewAttemptId);
+            // A settled generation keeps its receipt for Human Review and
+            // Completed acceptance. Removing queue work does not supersede it.
         }
     }
 

@@ -87,10 +87,12 @@ public static class BatchGateStateSnapshotReader
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
         // An unreadable newest state is reported under quarantined, not as a
         // readable batch with a phase inferred from an older state row.
-        var projectManifests = store.ListManifests()
+        var ledgerManifests = store.ListManifests()
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase)
-                && store.LatestState(item.BatchId).Reason != BatchGateStore.StateUnreadableReason
-                && !(store.LatestState(item.BatchId).Phase is
+                && store.LatestState(item.BatchId).Reason != BatchGateStore.StateUnreadableReason)
+            .ToArray();
+        var projectManifests = ledgerManifests
+            .Where(item => !(store.LatestState(item.BatchId).Phase is
                     (BatchPhase.Abandoned or BatchPhase.Published or BatchPhase.Red)
                     && item.Members.All(Settled)))
             .ToArray();
@@ -201,7 +203,7 @@ public static class BatchGateStateSnapshotReader
             .Concat(nonterminalManifests)
             .DistinctBy(item => item.BatchId)
             .OrderByDescending(item => item.ClosedAtUtc).ToArray();
-        var moved = projectManifests
+        var moved = ledgerManifests
             .Select(item => StateOf(store, item))
             .Where(state => state.BaseMoveToSha is not null).ToArray();
         var stacked = store.ListManifests()
