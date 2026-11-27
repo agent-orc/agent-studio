@@ -67,6 +67,7 @@ public sealed partial class BatchGatePilotService
 
     private async Task RecoverPublishedAsync(CancellationToken ct)
     {
+        var settled = SettledMembers();
         var waiting = _store.ListPending();
         var allPending = _store.ListAllPending();
         var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
@@ -75,9 +76,28 @@ public sealed partial class BatchGatePilotService
             ct.ThrowIfCancellationRequested();
             try
             {
-            var publication = _store.ReadPublication(manifest.BatchId);
+            // Older recovery marked Paused terminal. A pause remains resumable,
+            // so that marker must not suppress a later publication flight.
+            if (_store.ReadPublicationRecovery(manifest.BatchId) is { Settled: true } recovery
+                && recovery.Reason != "terminal-paused") continue;
             var phase = _store.LatestState(manifest.BatchId).Phase;
+            if (phase is BatchPhase.Abandoned
+                || phase is (BatchPhase.Published or BatchPhase.Red) && manifest.Members.All(settled))
+            {
+                SettlePublicationRecovery(manifest, 0, "terminal-" + phase.ToString().ToLowerInvariant());
+                continue;
+            }
             if (phase is not (BatchPhase.Publishing or BatchPhase.Published)) continue;
+            var publication = _store.ReadPublication(manifest.BatchId);
+            if (phase == BatchPhase.Published && publication is not null
+                && manifest.Members.All(member =>
+                    _store.ReadPublicationStep(manifest.BatchId, "released", member.TaskKey) is { } released
+                    && released.BatchRunId == publication.BatchRunId
+                    && released.CandidateSha == publication.VerifiedRemoteSha))
+            {
+                SettlePublicationRecovery(manifest, 0, "terminal-published");
+                continue;
+            }
             if (phase == BatchPhase.Publishing)
             {
                 if (manifest.StackedOnBatchId is { } predecessorId
@@ -106,7 +126,7 @@ public sealed partial class BatchGatePilotService
                         if (state.BatchRunId is null || state.CandidateSha is null)
                         {
                             HoldAmbiguousPublication(manifest, state, lease.Fence);
-                            continue;
+                            throw new InvalidDataException("batch-gate-evidence-missing");
                         }
                         var matching = _store.ListRuns(manifest.BatchId)
                             .Where(run => run.BatchRunId == state.BatchRunId
@@ -126,7 +146,7 @@ public sealed partial class BatchGatePilotService
                         if (matching.Length != 1)
                         {
                             HoldAmbiguousPublication(manifest, state, lease.Fence);
-                            continue;
+                            throw new InvalidDataException("batch-gate-evidence-missing");
                         }
                         var recoveredRun = matching[0];
                         PublicationStep(manifest, recoveredRun, "publishing");
@@ -264,9 +284,16 @@ public sealed partial class BatchGatePilotService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex,
-                    "batch-gate-publication-recovery-failed batch={BatchId} project={Project}",
-                    manifest.BatchId, manifest.Scope.Project);
+                var attempts = (_store.ReadPublicationRecovery(manifest.BatchId)?.Attempts ?? 0) + 1;
+                // Stop automatic retries after the durable budget, preserving any
+                // fenced Publishing hold until remote attribution is resolved.
+                if (attempts >= PublicationRecoveryAttempts)
+                    SettlePublicationRecovery(manifest, attempts,
+                        ex is InvalidDataException or FileNotFoundException or DirectoryNotFoundException
+                            ? "batch-gate-evidence-missing" : "publication-recovery-attempts-exhausted");
+                else
+                    _store.RecordPublicationRecovery(manifest.BatchId,
+                        new(attempts, ex.GetType().Name, _time.GetUtcNow(), false));
             }
         }
     }

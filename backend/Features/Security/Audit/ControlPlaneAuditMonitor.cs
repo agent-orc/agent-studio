@@ -37,6 +37,7 @@ public sealed class ControlPlaneAuditMonitor(
     private readonly object _gate = new();
     private readonly List<ControlPlaneAuditAlert> _raised = [];
     private readonly HashSet<string> _open = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string?> _occurrences = new(StringComparer.Ordinal);
     private ControlPlaneAuditIntegrity _integrity = new(ControlPlaneAuditIntegrityStates.NotRun, null, 0, null, false);
     private DateTime? _oldestPendingAt;
     private string? _lastError;
@@ -85,31 +86,45 @@ public sealed class ControlPlaneAuditMonitor(
         }
     }
 
-    /// <summary>Raises <paramref name="code"/> unless it is already open; returns true when it was raised now.</summary>
-    public async Task<bool> RaiseAsync(string code, string message, long? sequence, CancellationToken ct)
+    /// <summary>Raises an alert unless the same occurrence is already open; returns true when raised now.</summary>
+    public async Task<bool> RaiseAsync(string code, string message, long? sequence, CancellationToken ct,
+        string? occurrence = null, DateTime? occurredAt = null)
     {
         ControlPlaneAuditAlert alert;
         lock (_gate)
         {
-            if (!_open.Add(code)) return false;
-            alert = new ControlPlaneAuditAlert(code, message, _clock.GetUtcNow().UtcDateTime, sequence);
+            if (_open.Contains(code) && _occurrences.GetValueOrDefault(code) == occurrence) return false;
+            _open.Add(code);
+            _occurrences[code] = occurrence;
+            alert = new ControlPlaneAuditAlert(code, message, _clock.GetUtcNow().UtcDateTime, sequence)
+            {
+                Occurrence = occurrence, OccurredAt = occurredAt,
+            };
             _raised.Add(alert);
         }
-        logger?.LogError("Control plane audit alert {Code}: {Message}", code, message);
         if (channel is not null)
         {
             try { await channel.RaiseAsync(alert, ct); }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (Exception exception)
             {
-                logger?.LogError(exception, "Control plane audit alert {Code} could not reach the operator feed", code);
+                logger?.LogError(exception,
+                    "Control plane audit alert {Code} at {RaisedAt:O}, process {Process}: {Message}; could not reach the operator feed",
+                    code, alert.RaisedAt, ControlPlaneAuditLog.ProcessIdentity, message);
+                return true;
             }
         }
+        logger?.LogError("Control plane audit alert {Code} at {RaisedAt:O}, process {Process}: {Message}",
+            code, alert.RaisedAt, ControlPlaneAuditLog.ProcessIdentity, message);
         return true;
     }
 
     public void Clear(string code)
     {
-        lock (_gate) _open.Remove(code);
+        lock (_gate)
+        {
+            _open.Remove(code);
+            _occurrences.Remove(code);
+        }
     }
 
     public bool IsOpen(string code)
