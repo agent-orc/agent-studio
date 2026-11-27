@@ -195,7 +195,23 @@ public sealed class PullGateStoreTests : IDisposable
                 marker, marker, true, true));
     }
 
-    private string Enqueue(PullGateStore store)
+    [Fact]
+    public void Merge_claim_precedes_queued_regular_work_and_starts_with_regular_slots_full_after_restart()
+    {
+        var store = new PullGateStore(_root, _clock);
+        store.Register("gate", "Gate");
+        var first = Enqueue(store);
+        Assert.Equal(first, store.Claim("gate")!.RunId);
+        Enqueue(store);
+        var merge = Enqueue(store, true);
+        var restarted = new PullGateStore(_root, _clock);
+        restarted.Register("gate", "Gate");
+        Assert.Equal(merge, restarted.Claim("gate")!.RunId);
+        Assert.Null(restarted.Claim("gate"));
+        Assert.Equal(2, restarted.Hosts().Single().Busy);
+    }
+
+    private string Enqueue(PullGateStore store, bool integration = false)
     {
         var runId = Guid.NewGuid().ToString("N");
         Directory.CreateDirectory(_root);
@@ -204,7 +220,7 @@ public sealed class PullGateStoreTests : IDisposable
         var invocation = new RemoteGateInvocation(1, runId, Digest,
             new BuildTestGateRequest("source.git", Sha, "test")
             {
-                InfrastructureTimeout = TimeSpan.FromMinutes(1),
+                InfrastructureTimeout = TimeSpan.FromMinutes(1), IntegrationPriority = integration,
             }, null, null, PostStepMode.Fail, 60, 120);
         return store.Enqueue(invocation, path);
     }

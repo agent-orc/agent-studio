@@ -46,6 +46,7 @@ public sealed class PullGateTransport(PullGateStore store, TimeProvider clock,
         var overall = queue + timeout + infra * 4 + TimeSpan.FromMinutes(2);
         if (overall > TimeSpan.FromHours(24))
             throw new InvalidOperationException("Pull gate total budget exceeds 24 hours.");
+        var preparationTimer = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             var repository = Path.Combine(local, "source.git");
@@ -80,16 +81,27 @@ public sealed class PullGateTransport(PullGateStore store, TimeProvider clock,
                 (int)Math.Ceiling(overall.TotalSeconds))
             {
                 SourceCacheKey = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
-                    request.Project ?? Path.GetFullPath(request.RepositoryPath))))
+                    (request.Project ?? Path.GetFullPath(request.RepositoryPath))
+                + (request.IntegrationPriority ? "\0integration" : ""))))
             };
             store.Enqueue(invocation, bundle);
+            preparationTimer.Stop();
+            var enqueuedAt = clock.GetUtcNow();
             var deadline = clock.GetUtcNow() + overall;
             string? lastProgress = null;
             while (clock.GetUtcNow() < deadline)
             {
                 ct.ThrowIfCancellationRequested();
                 if (store.Response(runId) is { } response)
-                    return AcceptResponse(response, runId, digest);
+                {
+                    var stages = new Dictionary<string, long>(response.Result.StageDurationsMs)
+                    { ["bundlePreparation"] = preparationTimer.ElapsedMilliseconds };
+                    if (store.StartedAt(runId) is { } startedAt)
+                        stages["dispatchQueueWait"] = Math.Max(0, (long)(startedAt - enqueuedAt).TotalMilliseconds);
+                    if (response.WorkerCompletedAtUtc is { } completedAt)
+                        stages["verdictHandBack"] = Math.Max(0, (long)(clock.GetUtcNow() - completedAt).TotalMilliseconds);
+                    return AcceptResponse(response, runId, digest) with { StageDurationsMs = stages };
+                }
                 var progress = store.Progress(runId);
                 if (progress != lastProgress)
                 {
