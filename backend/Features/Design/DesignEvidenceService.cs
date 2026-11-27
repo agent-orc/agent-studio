@@ -75,8 +75,8 @@ public sealed class DesignEvidenceService
         var status = !string.IsNullOrWhiteSpace(loopStatus) ? loopStatus
             : (!string.IsNullOrWhiteSpace(briefStatus) ? briefStatus : "no iteration");
 
-        var refs = ListReferencesInternal(designDir);
-        var council = ListCouncilNotesInternal(designDir);
+        var refs = ListReferencesInternal(designDir, out _);
+        var council = ListCouncilNotesInternal(designDir, out _);
 
         var accepted = 0;
         var rejected = 0;
@@ -122,10 +122,8 @@ public sealed class DesignEvidenceService
         if (designDir is null)
             return new DesignReferencesResponse(projectName, string.Empty, false, Array.Empty<DesignReferenceItem>());
         var refsDir = Path.Combine(designDir, "references");
-        if (!IsEvidenceDirectory(designDir, refsDir))
-            return new DesignReferencesResponse(projectName, refsDir, false, Array.Empty<DesignReferenceItem>());
-        var list = ListReferencesInternal(designDir);
-        return new DesignReferencesResponse(projectName, refsDir, true, list);
+        var list = ListReferencesInternal(designDir, out var exists);
+        return new DesignReferencesResponse(projectName, refsDir, exists, list);
     }
 
     public DesignCouncilResponse ListCouncilNotes(string projectName)
@@ -134,10 +132,8 @@ public sealed class DesignEvidenceService
         if (designDir is null)
             return new DesignCouncilResponse(projectName, string.Empty, false, Array.Empty<DesignCouncilNote>());
         var councilDir = Path.Combine(designDir, "council");
-        if (!IsEvidenceDirectory(designDir, councilDir))
-            return new DesignCouncilResponse(projectName, councilDir, false, Array.Empty<DesignCouncilNote>());
-        var list = ListCouncilNotesInternal(designDir);
-        return new DesignCouncilResponse(projectName, councilDir, true, list);
+        var list = ListCouncilNotesInternal(designDir, out var exists);
+        return new DesignCouncilResponse(projectName, councilDir, exists, list);
     }
 
     /// <summary>
@@ -172,7 +168,6 @@ public sealed class DesignEvidenceService
         if (designDir is null) return null;
         var full = Path.Combine(designDir, "council", fileName);
         var root = Path.GetDirectoryName(designDir)!;
-        if (!FilesystemPathBoundary.IsRegularFileUnder(root, full)) return null;
 
         var stamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
         try
@@ -197,11 +192,11 @@ public sealed class DesignEvidenceService
     internal Action? BeforeAcceptReplace { get; set; }
     internal Action? BeforeEvidenceOpen { get; set; }
 
-    private List<DesignReferenceItem> ListReferencesInternal(string designDir)
+    private List<DesignReferenceItem> ListReferencesInternal(string designDir, out bool exists)
     {
         var refsDir = Path.Combine(designDir, "references");
         var items = new List<DesignReferenceItem>();
-        foreach (var path in ListEvidenceFiles(designDir, refsDir))
+        foreach (var path in ListEvidenceFiles(designDir, refsDir, out exists))
         {
             var text = ReadEvidence(designDir, path);
             if (text is null) continue;
@@ -226,11 +221,11 @@ public sealed class DesignEvidenceService
         return items;
     }
 
-    private List<DesignCouncilNote> ListCouncilNotesInternal(string designDir)
+    private List<DesignCouncilNote> ListCouncilNotesInternal(string designDir, out bool exists)
     {
         var councilDir = Path.Combine(designDir, "council");
         var items = new List<DesignCouncilNote>();
-        foreach (var path in ListEvidenceFiles(designDir, councilDir))
+        foreach (var path in ListEvidenceFiles(designDir, councilDir, out exists))
         {
             var text = ReadEvidence(designDir, path);
             if (text is null) continue;
@@ -399,13 +394,18 @@ public sealed class DesignEvidenceService
     }
 
     private static bool IsEvidenceDirectory(string designDir, string path)
-        => FilesystemPathBoundary.IsPathUnderWithoutLinks(Path.GetDirectoryName(designDir)!, path)
-            && Directory.Exists(path);
+    {
+        try
+        {
+            using var directory = EvidenceDirectory.Open(Path.GetDirectoryName(designDir)!, path);
+            return true;
+        }
+        catch (Exception ex) when (IsFileBoundaryFailure(ex)) { return false; }
+    }
 
     private string? ReadEvidence(string designDir, string path)
     {
         var root = Path.GetDirectoryName(designDir)!;
-        if (!FilesystemPathBoundary.IsRegularFileUnder(root, path)) return null;
         try
         {
             using var directory = EvidenceDirectory.Open(root, Path.GetDirectoryName(path)!);
@@ -421,19 +421,33 @@ public sealed class DesignEvidenceService
         }
     }
 
-    private static string[] ListEvidenceFiles(string designDir, string path)
+    private static string[] ListEvidenceFiles(string designDir, string path, out bool exists)
     {
+        exists = false;
         try
         {
             using var directory = EvidenceDirectory.Open(Path.GetDirectoryName(designDir)!, path);
-            return Directory.GetFiles(directory.IoPath, "*.md", SearchOption.TopDirectoryOnly)
+            var files = Directory.GetFiles(directory.IoPath, "*.md", SearchOption.TopDirectoryOnly)
                 .Select(file => Path.Combine(path, Path.GetFileName(file))).ToArray();
+            exists = true;
+            return files;
         }
         catch (Exception ex) when (IsFileBoundaryFailure(ex)) { return []; }
     }
 
     private static bool IsFileBoundaryFailure(Exception ex)
         => ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
+
+    // Linux ARM uses different O_DIRECTORY/O_NOFOLLOW bits from x86.
+    // Keep the ABI selection in one place and refuse unrecognised platforms.
+    internal static (int Directory, int NoFollow, int CloseOnExec, int NonBlock) UnixOpenFlags(
+        bool macOS, Architecture architecture) => (macOS, architecture) switch
+        {
+            (true, Architecture.X64 or Architecture.Arm64) => (0x100000, 0x100, 0x1000000, 4),
+            (false, Architecture.X64 or Architecture.X86) => (0x10000, 0x20000, 0x80000, 0x800),
+            (false, Architecture.Arm or Architecture.Arm64) => (0x4000, 0x8000, 0x80000, 0x800),
+            _ => throw new PlatformNotSupportedException("Design evidence file ABI is not supported."),
+        };
 
     /// <summary>
     /// Pins every directory below the repository. Unix I/O uses the open parent
@@ -445,9 +459,6 @@ public sealed class DesignEvidenceService
         private readonly List<SafeFileHandle> _handles = [];
         public string IoPath { get; private set; } = "";
         private int Descriptor => _handles[^1].DangerousGetHandle().ToInt32();
-        private static int DirectoryFlags => OperatingSystem.IsMacOS() ? 0x100000 : 0x10000;
-        private static int NoFollowFlags => OperatingSystem.IsMacOS() ? 0x100 : 0x20000;
-        private static int CloseOnExecFlags => OperatingSystem.IsMacOS() ? 0x1000000 : 0x80000;
 
         public static EvidenceDirectory Open(string root, string path)
         {
@@ -483,7 +494,8 @@ public sealed class DesignEvidenceService
             {
                 // macOS AT_FDCWD differs from Linux.
                 if (OperatingSystem.IsMacOS() && parent == -100) parent = -2;
-                handle = UnixOpen(parent, path, DirectoryFlags | NoFollowFlags | CloseOnExecFlags);
+                var flags = UnixOpenFlags(OperatingSystem.IsMacOS(), RuntimeInformation.ProcessArchitecture);
+                handle = UnixOpen(parent, path, flags.Directory | flags.NoFollow | flags.CloseOnExec);
             }
             _handles.Add(handle);
             if (handle.IsInvalid || (File.GetAttributes(handle) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
@@ -492,10 +504,15 @@ public sealed class DesignEvidenceService
 
         public FileStream OpenRead(string name)
         {
-            var handle = OperatingSystem.IsWindows()
-                ? CreateFile(Path.Combine(IoPath, name), 0x80000000, FileShare.Read | FileShare.Delete,
-                    IntPtr.Zero, 3, 0x00200000, IntPtr.Zero)
-                : UnixOpen(Descriptor, name, NoFollowFlags | CloseOnExecFlags | (OperatingSystem.IsMacOS() ? 4 : 0x800));
+            SafeFileHandle handle;
+            if (OperatingSystem.IsWindows())
+                handle = CreateFile(Path.Combine(IoPath, name), 0x80000000, FileShare.Read | FileShare.Delete,
+                    IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
+            else
+            {
+                var flags = UnixOpenFlags(OperatingSystem.IsMacOS(), RuntimeInformation.ProcessArchitecture);
+                handle = UnixOpen(Descriptor, name, flags.NoFollow | flags.CloseOnExec | flags.NonBlock);
+            }
             try
             {
                 if (handle.IsInvalid || (File.GetAttributes(handle) & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)

@@ -3,6 +3,7 @@ using AgentStudio.Security;
 using System.Net;
 using System.Net.Http.Json;
 using System.Runtime.InteropServices;
+using NativeArchitecture = System.Runtime.InteropServices.Architecture;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -33,6 +34,46 @@ public sealed class DesignEvidenceServiceTests : IDisposable
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         return new DesignEvidenceService(scanner, NullLogger<DesignEvidenceService>.Instance);
+    }
+
+    [Theory]
+    [InlineData(false, NativeArchitecture.X64, 0x10000, 0x20000, 0x80000, 0x800)]
+    [InlineData(false, NativeArchitecture.X86, 0x10000, 0x20000, 0x80000, 0x800)]
+    [InlineData(false, NativeArchitecture.Arm, 0x4000, 0x8000, 0x80000, 0x800)]
+    [InlineData(false, NativeArchitecture.Arm64, 0x4000, 0x8000, 0x80000, 0x800)]
+    [InlineData(true, NativeArchitecture.X64, 0x100000, 0x100, 0x1000000, 4)]
+    [InlineData(true, NativeArchitecture.Arm64, 0x100000, 0x100, 0x1000000, 4)]
+    public void Unix_open_flags_match_the_target_ABI_including_ARM(
+        bool macOS, NativeArchitecture architecture, int directory, int noFollow, int closeOnExec, int nonBlock)
+    {
+        Assert.Equal((directory, noFollow, closeOnExec, nonBlock),
+            DesignEvidenceService.UnixOpenFlags(macOS, architecture));
+    }
+
+    [Theory]
+    [InlineData(false, NativeArchitecture.Wasm)]
+    [InlineData(true, NativeArchitecture.Arm)]
+    public void Unknown_Unix_ABIs_are_refused_instead_of_using_x86_flags(bool macOS, NativeArchitecture architecture)
+    {
+        Assert.Throws<PlatformNotSupportedException>(() => DesignEvidenceService.UnixOpenFlags(macOS, architecture));
+    }
+
+    [Theory]
+    [InlineData("council")]
+    [InlineData("references")]
+    public void List_existence_distinguishes_an_empty_directory_from_a_missing_or_linked_directory(string folder)
+    {
+        var service = Service();
+        bool Exists() => folder == "council"
+            ? service.ListCouncilNotes("alpha").Exists : service.ListReferences("alpha").Exists;
+        Assert.False(Exists());
+
+        var path = Path.Combine(Repository, "design", folder);
+        Directory.CreateDirectory(path);
+        Assert.True(Exists());
+        Directory.Delete(path);
+        Directory.CreateSymbolicLink(path, Outside);
+        Assert.False(Exists());
     }
 
     [Theory]
