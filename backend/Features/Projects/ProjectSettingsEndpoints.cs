@@ -1327,71 +1327,8 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(TestingView(projectName, settings, postMergeMode, coverage));
         });
 
-        var setTestingStrategy = async Task<IResult> (
-            string projectName,
-            HttpContext context,
-            ControlPlaneAuditLog audit,
-            TestingStrategyRequest req,
-            ProjectSettingsService settings,
-            TaskScannerService scanner,
-            ProjectRegistry projects,
-            GitService git,
-            RemoteReviewPlanBuilder remoteReviewPlans,
-            ReviewAttemptTaskLifecycleService reviewLifecycle,
-            PostMergeModeService postMergeMode,
-            PostMergeCoverageService coverage,
-            BatchGatePilotService batchGate,
-            CancellationToken ct) =>
-        {
-            await TestingStrategyElevation.MutationGate.WaitAsync(ct);
-            try
-            {
-                long? undoSequence = long.TryParse(context.Request.RouteValues["sequence"]?.ToString(), out var seq) ? seq : null;
-                if (undoSequence is { } sequence)
-                {
-                    var previous = TestingStrategyElevation.UndoStrategy(audit, projectName, sequence);
-                    if (previous is null) return Results.Conflict(new { error = "testing-undo-unavailable", message = "This change is unavailable or has already been undone." });
-                    req = req with { Strategy = previous };
-                }
-                var known = scanner.GetWatchPaths().Any(entry =>
-                    string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
-                if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
-                if (req.Strategy is null && (req.PerCard is not null || req.Mode is not null))
-                    return Results.BadRequest(new
-                    {
-                        error = "perCard and mode are derived from testing.strategy since AGT-3965; "
-                            + "send {\"strategy\": \"fast\"}, \"balanced\" or \"strict\".",
-                    });
-                if (!TestingStrategies.IsKnown(req.Strategy))
-                    return Results.BadRequest(new { error = "strategy must be 'fast', 'balanced' or 'strict'." });
-                var transition = await batchGate.SwitchTestingStrategyAsync(projectName, req.Strategy!, ct);
-                var oldStrategy = transition.PreviousStrategy;
-                var newStrategy = transition.Strategy;
-                var reason = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal { Operator: not null }
-                    ? AccessSecurityMiddleware.StatedReason(context.Request.Headers[OperatorApprovalHeaders.Reason].ToString()) : null;
-                var elevated = context.Items[AccessSecurityMiddleware.OperatorPolicyItem] as OperatorPolicyDecision;
-                var record = audit.Append(new ControlPlaneAuditRecord(ControlPlaneAuditStreams.Operator,
-                    AgentStudio.Operator.OperatorEndpoints.Actor(context), OperatorOperationIds.ProjectTestingSet,
-                    "updated", projectName, Details: new { project = projectName, oldStrategy, newStrategy, reason,
-                        undoSequence, elevationClass = elevated?.ElevationClass, armingId = elevated?.ArmingId,
-                        confirmingOwner = elevated?.ApprovedBy, deviceThumbprint = elevated?.DeviceThumbprint,
-                        instructionSource = OperatorInstructionSources.Normalize(context.Request.Headers[OperatorApprovalHeaders.InstructionSource].ToString()) }));
-                if (elevated?.ElevationClass is not null)
-                {
-                    var log = context.RequestServices.GetRequiredService<OrchestratorLog>();
-                    var path = scanner.GetWatchPaths().First(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)).Path;
-                    log.Append(path, new OrchestratorLogEntry { Ts = record.At, Topic = "operator-elevated-action",
-                        Summary = $"Testing strategy: {oldStrategy} to {newStrategy}. {reason}",
-                        Reasoning = $"{record.Actor} used {elevated.ElevationClass}; confirmed by {elevated.ApprovedBy}.",
-                        TestingUndoSequence = record.Sequence });
-                }
-                ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
-                return Results.Ok(TestingView(projectName, settings, postMergeMode, coverage, transition));
-            }
-            finally { TestingStrategyElevation.MutationGate.Release(); }
-        };
-        app.MapPut("/api/projects/{projectName}/testing", setTestingStrategy).RequirePermission(IamPermissions.ProjectSettingsWrite);
-        app.MapPost("/api/projects/{projectName}/testing/undo/{sequence:long}", setTestingStrategy).RequireStudioRole(StudioRoles.Owner);
+        app.MapPut("/api/projects/{projectName}/testing", SetTestingStrategyAsync).RequirePermission(IamPermissions.ProjectSettingsWrite);
+        app.MapPost("/api/projects/{projectName}/testing/undo/{sequence:long}", SetTestingStrategyAsync).RequireStudioRole(StudioRoles.Owner);
 
         // AGT-3400 S4: review.package. Shadow forms Dossier wave packages beside
         // the unchanged per-card review; dossier (live, S5) is not accepted yet.
@@ -1968,6 +1905,71 @@ public static class ProjectSettingsEndpoints
         windows = OverlapWindows.All,
         starvationMinutes = projectSettings.DispatchOverlapStarvationMinutes,
     };
+
+    // Method group (not a run-time delegate) so the request delegate generator intercepts both routes (AGT-4242).
+    private static async Task<IResult> SetTestingStrategyAsync(
+        string projectName,
+        HttpContext context,
+        ControlPlaneAuditLog audit,
+        TestingStrategyRequest req,
+        ProjectSettingsService settings,
+        TaskScannerService scanner,
+        ProjectRegistry projects,
+        GitService git,
+        RemoteReviewPlanBuilder remoteReviewPlans,
+        ReviewAttemptTaskLifecycleService reviewLifecycle,
+        PostMergeModeService postMergeMode,
+        PostMergeCoverageService coverage,
+        BatchGatePilotService batchGate,
+        CancellationToken ct)
+    {
+        await TestingStrategyElevation.MutationGate.WaitAsync(ct);
+        try
+        {
+            long? undoSequence = long.TryParse(context.Request.RouteValues["sequence"]?.ToString(), out var seq) ? seq : null;
+            if (undoSequence is { } sequence)
+            {
+                var previous = TestingStrategyElevation.UndoStrategy(audit, projectName, sequence);
+                if (previous is null) return Results.Conflict(new { error = "testing-undo-unavailable", message = "This change is unavailable or has already been undone." });
+                req = req with { Strategy = previous };
+            }
+            var known = scanner.GetWatchPaths().Any(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (req.Strategy is null && (req.PerCard is not null || req.Mode is not null))
+                return Results.BadRequest(new
+                {
+                    error = "perCard and mode are derived from testing.strategy since AGT-3965; "
+                        + "send {\"strategy\": \"fast\"}, \"balanced\" or \"strict\".",
+                });
+            if (!TestingStrategies.IsKnown(req.Strategy))
+                return Results.BadRequest(new { error = "strategy must be 'fast', 'balanced' or 'strict'." });
+            var transition = await batchGate.SwitchTestingStrategyAsync(projectName, req.Strategy!, ct);
+            var oldStrategy = transition.PreviousStrategy;
+            var newStrategy = transition.Strategy;
+            var reason = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal { Operator: not null }
+                ? AccessSecurityMiddleware.StatedReason(context.Request.Headers[OperatorApprovalHeaders.Reason].ToString()) : null;
+            var elevated = context.Items[AccessSecurityMiddleware.OperatorPolicyItem] as OperatorPolicyDecision;
+            var record = audit.Append(new ControlPlaneAuditRecord(ControlPlaneAuditStreams.Operator,
+                AgentStudio.Operator.OperatorEndpoints.Actor(context), OperatorOperationIds.ProjectTestingSet,
+                "updated", projectName, Details: new { project = projectName, oldStrategy, newStrategy, reason,
+                    undoSequence, elevationClass = elevated?.ElevationClass, armingId = elevated?.ArmingId,
+                    confirmingOwner = elevated?.ApprovedBy, deviceThumbprint = elevated?.DeviceThumbprint,
+                    instructionSource = OperatorInstructionSources.Normalize(context.Request.Headers[OperatorApprovalHeaders.InstructionSource].ToString()) }));
+            if (elevated?.ElevationClass is not null)
+            {
+                var log = context.RequestServices.GetRequiredService<OrchestratorLog>();
+                var path = scanner.GetWatchPaths().First(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)).Path;
+                log.Append(path, new OrchestratorLogEntry { Ts = record.At, Topic = "operator-elevated-action",
+                    Summary = $"Testing strategy: {oldStrategy} to {newStrategy}. {reason}",
+                    Reasoning = $"{record.Actor} used {elevated.ElevationClass}; confirmed by {elevated.ApprovedBy}.",
+                    TestingUndoSequence = record.Sequence });
+            }
+            ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
+            return Results.Ok(TestingView(projectName, settings, postMergeMode, coverage, transition));
+        }
+        finally { TestingStrategyElevation.MutationGate.Release(); }
+    }
 
     /// <summary>
     /// AGT-2827: a build-profile or pipeline-step edit lands here so every
