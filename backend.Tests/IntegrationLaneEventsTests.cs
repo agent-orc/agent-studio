@@ -9,6 +9,27 @@ public sealed class IntegrationLaneEventsTests
     private static readonly DateTimeOffset Now = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public void Stage_measurements_and_retry_provenance_survive_persistence()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "lane-stage-events-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            using (IntegrationLaneEvents.BeginDelivery(42))
+                IntegrationLaneEvents.Append(folder, "project", "card", "gate-finished",
+                    stageDurationsMs: new Dictionary<string, long> { ["restore"] = 12, ["build"] = 34 },
+                    gateAttempts: 2, gateRetryReasons: ["transport response"], stageTimingsIncomplete: true);
+            var row = Assert.Single(IntegrationLaneEvents.Read(folder));
+            Assert.Equal(34, row.StageDurationsMs!["build"]);
+            Assert.Equal(12, row.StageDurationsMs["restore"]);
+            Assert.Equal(2, row.GateAttempts);
+            Assert.Equal("transport response", Assert.Single(row.GateRetryReasons!));
+            Assert.True(row.StageTimingsIncomplete);
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+
+    [Fact]
     public void Gate_wait_can_name_the_project_currently_holding_the_machine_slot()
     {
         var health = new PipelineHealthDetector();

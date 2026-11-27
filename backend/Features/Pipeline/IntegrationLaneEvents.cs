@@ -10,7 +10,8 @@ public sealed record IntegrationLaneEvent(
     long? QueueWaitMs = null, long? DurationMs = null, long? PublicationLockWaitMs = null,
     string? Level = null,
     string? Outcome = null, string? ReuseToken = null, string? Reason = null,
-    string? Receipt = null, string? HoldingProject = null, bool? CollisionDetected = null);
+    string? Receipt = null, string? HoldingProject = null, bool? CollisionDetected = null, IReadOnlyDictionary<string, long>? StageDurationsMs = null, DateTimeOffset? ReviewPassedAtUtc = null,
+    int? GateAttempts = null, IReadOnlyList<string>? GateRetryReasons = null, bool StageTimingsIncomplete = false);
 
 public static class IntegrationLaneEvents
 {
@@ -45,7 +46,9 @@ public static class IntegrationLaneEvents
         long? publicationLockWaitMs = null,
         string? level = null, string? outcome = null, string? reuseToken = null,
         string? reason = null, string? receipt = null, string? holdingProject = null,
-        bool? collisionDetected = null, DateTimeOffset? atUtc = null)
+        bool? collisionDetected = null, DateTimeOffset? atUtc = null,
+        IReadOnlyDictionary<string, long>? stageDurationsMs = null, DateTimeOffset? reviewPassedAtUtc = null,
+        int? gateAttempts = null, IReadOnlyList<string>? gateRetryReasons = null, bool stageTimingsIncomplete = false)
     {
         var currentSequence = sequence ?? Ambient.Value;
         if (currentSequence is null || !Directory.Exists(folder)) return;
@@ -57,7 +60,7 @@ public static class IntegrationLaneEvents
                 var row = new IntegrationLaneEvent(project, jobId, currentSequence.Value,
                     atUtc ?? DateTimeOffset.UtcNow, kind, deliveredAtUtc, mergeLockWaitMs,
                     queueWaitMs, durationMs, publicationLockWaitMs, level, outcome, reuseToken, reason,
-                    receipt, holdingProject, collisionDetected);
+                    receipt, holdingProject, collisionDetected, stageDurationsMs, reviewPassedAtUtc, gateAttempts, gateRetryReasons, stageTimingsIncomplete);
                 File.AppendAllText(path, JsonSerializer.Serialize(row) + "\n");
             }
         }

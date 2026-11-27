@@ -33,7 +33,10 @@ public sealed record RemoteGateResponse(
     int Version,
     string RunId,
     string BundleSha256,
-    BuildTestGateResult Result);
+    BuildTestGateResult Result)
+{
+    public DateTimeOffset? WorkerCompletedAtUtc { get; init; }
+}
 
 public interface IRemoteGateTransport
 {
@@ -83,6 +86,18 @@ public sealed class RemoteBuildTestGateRunner(
         // cancels a gate whose card was completed or integrated meanwhile.
         var gateToken = gateCancellation.Token;
         var started = Stopwatch.StartNew();
+        var retryReasons = new List<string>();
+        var priorStages = new Dictionary<string, long>();
+        var incompleteTimings = false;
+        BuildTestGateResult Finish(BuildTestGateResult result, int attempts, bool incomplete = false)
+            => result with
+            {
+                GateAttempts = attempts,
+                GateRetryReasons = [.. retryReasons, .. result.GateRetryReasons],
+                StageDurationsMs = GateStageTimings.Sum(priorStages, result.StageDurationsMs),
+                StageTimingsIncomplete = incompleteTimings || incomplete || result.StageTimingsIncomplete
+                    || attempts > 1 && result.StageTimingsVersion == 0,
+            };
         for (var attempt = 1; attempt <= MaxTransportAttempts; attempt++)
         {
             try
@@ -96,14 +111,17 @@ public sealed class RemoteBuildTestGateRunner(
                     || !string.Equals(result.GateId, request.GateId, StringComparison.Ordinal)
                     || (result.Verdict is BuildTestGateVerdict.Ok or BuildTestGateVerdict.Warn or BuildTestGateVerdict.NotApplicable
                         && !string.Equals(result.TestedSha, request.ExpectedSha, StringComparison.OrdinalIgnoreCase)))
-                    return Failure(request, BuildTestGateFailureKind.MissingSource,
-                        "Remote gate evidence does not prove the requested commit and gate.");
+                    return Finish(Failure(request, BuildTestGateFailureKind.MissingSource,
+                        "Remote gate evidence does not prove the requested commit and gate."), attempt, incomplete: true);
                 var transportFailure = result.Verdict == BuildTestGateVerdict.Fail
                     && GateFailureTriagePolicy.ContainsTransportMarker(result.Reason + "\n" + result.Output)
                     && GateFailureTriagePolicy.FailingItems(result.Output).Count == 0;
                 ReportHost(transportFailure, result.Reason + "\n" + result.Output);
                 if (attempt < MaxTransportAttempts && transportFailure)
                 {
+                    retryReasons.Add("Transport response required another gate attempt.");
+                    priorStages = GateStageTimings.Sum(priorStages, result.StageDurationsMs);
+                    incompleteTimings |= result.StageTimingsIncomplete || result.StageTimingsVersion == 0;
                     logger.LogWarning(
                         "remote_gate_transport_retry gate={GateId} expected_sha={ExpectedSha} attempt={Attempt}",
                         request.GateId, request.ExpectedSha, attempt);
@@ -112,20 +130,20 @@ public sealed class RemoteBuildTestGateRunner(
                 // AGT-3792: a gate whose host never answered judged nothing. Every
                 // gate path (batch, per-card, pre-main full suite) reads the kind,
                 // so the transport is a gate environment failure on all of them.
-                return transportFailure
+                return Finish(transportFailure
                     ? result with { Repository = request.RepositoryPath, FailureKind = BuildTestGateFailureKind.Environment }
-                    : result with { Repository = request.RepositoryPath };
+                    : result with { Repository = request.RepositoryPath }, attempt);
             }
             catch (OperationCanceledException)
             {
-                return Failure(request, BuildTestGateFailureKind.Cancellation,
+                return Finish(Failure(request, BuildTestGateFailureKind.Cancellation,
                     "Remote verification was cancelled.") with
                     {
                         DurationMs = started.ElapsedMilliseconds,
                         CancellationReason = ct.IsCancellationRequested ? GateCancellationReasons.Shutdown
                             : gateToken.IsCancellationRequested ? GateCancellationReasons.Superseded
                             : GateCancellationReasons.Operator,
-                    };
+                    }, attempt, incomplete: true);
             }
             catch (Exception exception) when (exception is IOException or TimeoutException or System.Net.Sockets.SocketException)
             {
@@ -133,17 +151,22 @@ public sealed class RemoteBuildTestGateRunner(
                     "remote_gate_transport_failed gate={GateId} expected_sha={ExpectedSha} attempt={Attempt}",
                     request.GateId, request.ExpectedSha, attempt);
                 ReportHost(true, exception.Message);
-                if (attempt < MaxTransportAttempts) continue;
-                return Failure(request, BuildTestGateFailureKind.Environment, "Remote gate transport failure after bounded retries: " + exception.Message)
-                    with { DurationMs = started.ElapsedMilliseconds };
+                incompleteTimings = true;
+                if (attempt < MaxTransportAttempts)
+                {
+                    retryReasons.Add("Transport exception required another gate attempt: " + exception.GetType().Name + ".");
+                    continue;
+                }
+                return Finish(Failure(request, BuildTestGateFailureKind.Environment, "Remote gate transport failure after bounded retries: " + exception.Message)
+                    with { DurationMs = started.ElapsedMilliseconds }, attempt, incomplete: true);
             }
             catch (Exception exception)
             {
                 logger.LogWarning(exception, "remote_gate_transport_failed gate={GateId} expected_sha={ExpectedSha}",
                     request.GateId, request.ExpectedSha);
-                return Failure(request, BuildTestGateFailureKind.Environment,
+                return Finish(Failure(request, BuildTestGateFailureKind.Environment,
                     "Remote verification could not complete: " + exception.Message)
-                    with { DurationMs = started.ElapsedMilliseconds };
+                    with { DurationMs = started.ElapsedMilliseconds }, attempt, incomplete: true);
             }
         }
         throw new InvalidOperationException("The bounded transport retry loop did not return a verdict.");

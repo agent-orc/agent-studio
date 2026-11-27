@@ -4960,3 +4960,85 @@ Legacy workspace HEAD catch-up and Task Server export exclusions retain their
 existing behavior. This contract adds no orchestration transition, integration
 permission, force push or branch-tip approval. Pre-upgrade commits without an
 outbox receipt or marker cannot be inferred safely from arbitrary local history.
+
+## Integration stage timings and warm compile checks (AGT-4141)
+
+The integration lane persists measured stage durations with its existing
+`integration-lane-events.jsonl` record. Gate receipts also include
+`stage-durations-ms.json`. `GET /api/gate-economics` returns
+`recentIntegrations` (last 50 terminal attempts per project) and
+`integrationStages` (median and p90 using the page's existing linear-interpolation convention, with measured sample counts).
+The existing Gate economics block shows these stages. Missing legacy
+measurements stay null. Review-to-push requires a matching passed review
+attempt timestamp; delivery completion is not substituted for review pass.
+Stage times include queue, dispatch and slot waits, bundle preparation and
+transfer, source lock and objects, checkout, restore, each build command,
+verdict hand-back, merge and push. Build-command durations are summed within
+an attempt; a second publication cycle records its reason. They do not infer
+CPU consumption or host load from elapsed time.
+
+The SSH transport reports checkout readiness when it receives the worker
+progress line. Previously the checkout-ready log was emitted only after the
+whole worker completed. Its old timestamp cannot identify a ten-minute
+checkout or queue wait. The short/long gate class describes slot occupancy,
+not source transport or checkout. Existing dedicated machine integration
+admission stays in place. Pull admission now reserves one merge alongside
+regular lanes, prioritizes queued merges, and continues polling with regular
+lanes full. Healthy pull discovery takes at most the five-second busy poll
+interval plus HTTP time; the machine slot polls every 100 ms. Review work
+cannot occupy the reserved merge slot or integration source-cache lock.
+These are admission bounds, not CPU or end-to-end latency guarantees.
+
+SSH and pull merge workers keep a project-specific private bare repository
+and a detached integration worktree. A process-held file lease spans source
+import, reset, commands and cleanup. Every candidate resets tracked files to
+its exact SHA and removes non-ignored residue. Successful commands must leave
+tracked content and HEAD unchanged. Ignored packages, bin/obj and compiler
+caches survive a green run. Failed runs discard the worktree. Interrupted
+locks release with the process; the next candidate resets the worktree before
+using it. The rollback journal, publication fence and startup barrier retain
+their existing ownership. No warm workspace can authorize publication.
+
+The root project definition deliberately omits `integrationBuild` until the
+reader support has been deployed to every run host (AGT-4173). For this
+repository's exact three build commands and owned preparation entry points,
+`IntegrationCompilePlan` supplies the same frontend/backend map by default.
+Other layouts and unknown/shared paths keep the full build. The explicit map
+is exercised through `testdata/project-integration-build.project.yml`.
+
+An optional repository `integrationBuild` map selects build-command indices
+and preparation shell commands for compile-only integration checks. This does
+not change review plans or post-merge checks. Each row has inline `paths`,
+`build` (zero-based indices of `commands.build`) and `prepare` lists. Every
+changed path must match; unmatched paths, malformed maps, profile overrides
+and missing path evidence retain the full declared build and preparation.
+Agent Studio declares frontend and .NET scopes. Backend changes build the
+solution and the Release backend/runner/task-server checks incrementally;
+frontend changes run its declared Angular build. Package installation is
+reused only with matching package and tool inputs and an existing installation.
+Restore still validates .NET lockfiles and project references. Shared pipeline
+and build-script changes retain the complete build because they can alter
+both build contracts. Cold workers and invalidated package/tool inputs also
+require preparation. Promotion retains its full verification.
+
+A green Remote Review for the exact integration tree can supply the build
+verdict without another command. Under a compile-only strategy, changed commit
+ancestry or mechanical replay alone does not invalidate identical tree proof.
+A changed or missing tree still requires one check on the final candidate.
+A push rejected by a moved origin may require another cycle; its old green
+build is reused only if the replay also reproduces the exact tested tree.
+
+The SSH merge bundle freezes its ref in a temporary shared local clone, using
+Git alternates only while writing the self-contained transfer bundle. This
+avoids copying the complete local object history before producing an
+incremental transfer. The remote warm mirror owns its objects and never uses
+that alternate. Warm mirrors are limited to eight recently used projects and
+24 hours of inactivity; eviction takes the worker's own lease.
+
+Transport and capacity-admission retries persist their actual attempt count and
+reason, even when the caller issued one gate request. Measured stage times are
+summed across attempts. When a failed transport lost an attempt's measurements,
+the record marks `hasIncompleteGateTimings` and the phase totals remain unknown
+in the percentile input, rather than presenting the final attempt as the whole
+integration. Initial admission and held re-entry waits are summed. The standard
+median averages the two middle values for an even sample count.

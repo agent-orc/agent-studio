@@ -19,6 +19,7 @@ import {
   RELEASE_2,
   RELEASE_3,
 } from '../../src/app/features/project-detail/testing/deploy-fixtures';
+import { FLOW_FIXTURE_NOW, flowHealthFixture } from '../../src/app/features/flow-health/testing/flow-health.fixtures';
 import { healthResponse } from '../../src/testing/environment-health';
 
 /**
@@ -1695,5 +1696,50 @@ test('Project Secrets shows approval for a custom-id Production environment and 
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
     await capture(page, `deploy-secrets-${theme}`);
+  }
+});
+
+
+test('integration stage metrics show percentiles and unknowns in both themes and phone width', async ({ page }) => {
+  test.setTimeout(120_000);
+  await openDeploy(page, fullMocks());
+  const fixture = flowHealthFixture('healthyWeek', PROJECT, FLOW_FIXTURE_NOW);
+  const stages = [
+    { stage: 'queueWait', medianMs: 4000, p90Ms: 9000, samples: 50 },
+    { stage: 'bundleTransfer', medianMs: 120, p90Ms: 400, samples: 50 },
+    { stage: 'sourceCheckout', medianMs: 700, p90Ms: 1700, samples: 50 },
+    { stage: 'restore', medianMs: null, p90Ms: null, samples: 0 },
+    { stage: 'build', medianMs: 12000, p90Ms: 32000, samples: 50 },
+    { stage: 'releaseBuildCheck', medianMs: 6000, p90Ms: 14000, samples: 50 },
+    { stage: 'frontendBuild', medianMs: 0, p90Ms: 0, samples: 50 },
+    { stage: 'verdictHandBack', medianMs: 100, p90Ms: 300, samples: 50 },
+    { stage: 'merge', medianMs: 50, p90Ms: 150, samples: 50 },
+    { stage: 'push', medianMs: 1200, p90Ms: 2200, samples: 50 },
+  ];
+  await page.route('**/api/gate-economics**', route => route.fulfill(json({
+    ...fixture.economics['7d'], rows: [{ ...fixture.economics['7d'].rows[0], integrationStages: stages }],
+  })));
+  await page.route('**/api/projects/*/pipeline-health', route => route.fulfill(json(fixture.pipelineHealth)));
+  await page.route('**/api/projects/*/operator-sweeps', route => route.fulfill(json({ error: 'fixture' }, 404)));
+  await page.getByTestId('deploy-tab-steps').click();
+  const table = page.getByTestId('integration-stage-metrics');
+  await expect(table.locator('[data-stage="build"]')).toContainText('12 s');
+  await expect(table.locator('[data-stage="build"]')).toContainText('32 s');
+  await expect(table.locator('[data-stage="restore"]')).toContainText('Unknown');
+  await expect(table.locator('[data-stage="frontendBuild"]')).toContainText('0 s');
+  fs.mkdirSync(results, { recursive: true });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await table.scrollIntoViewIfNeeded();
+      const scroll = table.locator('..');
+      await scroll.evaluate(element => { element.scrollLeft = 0; });
+      await scroll.screenshot({ path: path.join(results, `integration-stages-${width}-${theme}--mocked.png`) });
+      if (width === 390) {
+        await scroll.evaluate(element => { element.scrollLeft = element.scrollWidth; });
+        await scroll.screenshot({ path: path.join(results, `integration-stages-${width}-${theme}-right--mocked.png`) });
+      }
+    }
   }
 });
