@@ -44,6 +44,30 @@ also contribute their full delivery and integration SHAs and conflict report.
 A successful integration gate clears the previous failure input. The parked
 card detail shows the receipt's test list and an expandable full reason.
 
+## Interrupted direct integration custody (AGT-4114)
+
+The in-flight integration gate journal retains the exact pre-merge anchor until
+branch custody is settled. A rejected gate persists `RollbackRequired` before
+its receipt is recorded. The red receipt proves rejection; it does not complete
+the branch mutation. Only a successful reset followed by a durable
+`RollbackCompleted` journal update permits deletion. A failed reset or recovery
+escalation retains the journal and refuses new direct merge admission.
+
+Startup recovery and direct merge admission reconcile surviving journals under
+the same fenced `RefMutationLeaseService` publication boundary used by ordinary
+integration. Recovery refreshes `origin/<branch>` before collecting lane and
+ancestry facts for the existing `InterruptedIntegrationGatePolicy`. It refuses
+repair when remote state cannot be obtained. The policy protects published
+commits and recognizes a rejected merge already absent from the lane, including
+a restart after reset but before its completion record. Repeated recovery then
+records the repair without resetting the lane again. Owner checks keep a late
+old gate from completing a newer invocation's journal.
+
+The admission reconciliation closes the startup scheduling race: even if the
+startup sweep has not reached a project yet, a new direct merge cannot use its
+unreconciled rejected tip. See the
+[interrupted integration gate contract](../../operations/git/interrupted-integration-gate.md).
+
 ## Gate economics and integration lane
 
 The batch gate state read reports `phaseAtUtc` for each batch and
