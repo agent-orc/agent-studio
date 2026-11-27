@@ -42,7 +42,20 @@ public sealed class BatchGatePublicationRecoveryTests : BatchGatePilotServiceTes
         var manifest = Assert.Single(store.ListManifests());
         var run = Assert.Single(store.ListRuns(manifest.BatchId));
         File.Delete(run.EvidencePath);
-        await Recover(pilot);
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            await Recover(pilot);
+            var recovery = Assert.IsType<BatchPublicationRecovery>(store.ReadPublicationRecovery(manifest.BatchId));
+            Assert.Equal(attempt, recovery.Attempts);
+            Assert.Equal(attempt == 3, recovery.Settled);
+            var held = AssertPhase(store, manifest.BatchId, BatchPhase.Publishing);
+            Assert.Equal("publication-remote-proof-ambiguous", held.Reason);
+            Assert.Equal(run.BatchRunId, held.BatchRunId);
+            Assert.Equal(run.CandidateSha, held.CandidateSha);
+            Assert.Equal(2, store.ListPending().Count);
+            Assert.Equal(0, _gate.FallbackRuns);
+            if (attempt < 3) Assert.DoesNotContain("publication-recovery-settled", _errors.ToString());
+        }
         var first = _errors.ToString();
         Assert.Contains("publication-recovery-settled", first);
         for (var i = 0; i < 5; i++) await Recover(pilot);
@@ -51,6 +64,27 @@ public sealed class BatchGatePublicationRecoveryTests : BatchGatePilotServiceTes
         _ = restarted.CreateClient();
         await Recover(restarted.Services.GetRequiredService<BatchGatePilotService>());
         Assert.Equal(first, _errors.ToString());
+    }
+
+    [Fact]
+    public async Task Paused_batch_is_visible_and_does_not_permanently_disable_publication_recovery()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, 3);
+        SeedMember(factory, "PAUSED-A", "docs/a.md");
+        SeedMember(factory, "PAUSED-B", "docs/b.md");
+        var manifest = ClosePendingBatch(factory);
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        foreach (var phase in new[] { BatchPhase.Assembling, BatchPhase.Paused })
+            store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+                phase, null, 1, _clock, "recoverable pause"));
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        await Recover(pilot);
+        Assert.Null(store.ReadPublicationRecovery(manifest.BatchId));
+        foreach (var item in store.ListPending()) Complete(factory, item.JobFolderPath);
+        using var state = JsonDocument.Parse(JsonSerializer.Serialize(pilot.State(ProjectName)));
+        Assert.Single(state.RootElement.GetProperty("batches").EnumerateArray());
     }
 
     [Fact]

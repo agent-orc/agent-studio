@@ -91,7 +91,7 @@ public static class BatchGateStateSnapshotReader
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase)
                 && store.LatestState(item.BatchId).Reason != BatchGateStore.StateUnreadableReason
                 && !(store.LatestState(item.BatchId).Phase is
-                    (BatchPhase.Abandoned or BatchPhase.Paused or BatchPhase.Published or BatchPhase.Red)
+                    (BatchPhase.Abandoned or BatchPhase.Published or BatchPhase.Red)
                     && item.Members.All(Settled)))
             .ToArray();
         var nonterminalManifests = projectManifests.Where(item => StateOf(store, item).Phase

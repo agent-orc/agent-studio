@@ -76,9 +76,12 @@ public sealed partial class BatchGatePilotService
             ct.ThrowIfCancellationRequested();
             try
             {
-            if (_store.ReadPublicationRecovery(manifest.BatchId)?.Settled == true) continue;
+            // Older recovery marked Paused terminal. A pause remains resumable,
+            // so that marker must not suppress a later publication flight.
+            if (_store.ReadPublicationRecovery(manifest.BatchId) is { Settled: true } recovery
+                && recovery.Reason != "terminal-paused") continue;
             var phase = _store.LatestState(manifest.BatchId).Phase;
-            if (phase is BatchPhase.Abandoned or BatchPhase.Paused
+            if (phase is BatchPhase.Abandoned
                 || phase is (BatchPhase.Published or BatchPhase.Red) && manifest.Members.All(settled))
             {
                 SettlePublicationRecovery(manifest, 0, "terminal-" + phase.ToString().ToLowerInvariant());
@@ -122,6 +125,7 @@ public sealed partial class BatchGatePilotService
                         var state = _store.LatestState(manifest.BatchId);
                         if (state.BatchRunId is null || state.CandidateSha is null)
                         {
+                            HoldAmbiguousPublication(manifest, state, lease.Fence);
                             throw new InvalidDataException("batch-gate-evidence-missing");
                         }
                         var matching = _store.ListRuns(manifest.BatchId)
@@ -140,7 +144,10 @@ public sealed partial class BatchGatePilotService
                                 && File.Exists(run.EvidencePath))
                             .ToArray();
                         if (matching.Length != 1)
+                        {
+                            HoldAmbiguousPublication(manifest, state, lease.Fence);
                             throw new InvalidDataException("batch-gate-evidence-missing");
+                        }
                         var recoveredRun = matching[0];
                         PublicationStep(manifest, recoveredRun, "publishing");
                         var remote = _git.FetchBatchIntegrationTip(pendingRepo.RepositoryPath,
@@ -278,9 +285,9 @@ public sealed partial class BatchGatePilotService
             catch (Exception ex)
             {
                 var attempts = (_store.ReadPublicationRecovery(manifest.BatchId)?.Attempts ?? 0) + 1;
-                // Missing or malformed immutable evidence cannot recover on another tick.
-                if (ex is InvalidDataException or FileNotFoundException or DirectoryNotFoundException
-                    || attempts >= PublicationRecoveryAttempts)
+                // Stop automatic retries after the durable budget, preserving any
+                // fenced Publishing hold until remote attribution is resolved.
+                if (attempts >= PublicationRecoveryAttempts)
                     SettlePublicationRecovery(manifest, attempts,
                         ex is InvalidDataException or FileNotFoundException or DirectoryNotFoundException
                             ? "batch-gate-evidence-missing" : "publication-recovery-attempts-exhausted");
