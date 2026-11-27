@@ -46,6 +46,82 @@ public sealed class RemoteGateDaemonTests
             fixture.Lease.ResourceNamespace)));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PostMergeGateRunsTheExistingProtocolAndClosesAnAbsentTestDefinition(bool hasTests)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var fixture = new GateFixture();
+        var previous = fixture.CreateRepository();
+        var sha = fixture.AddPostMergeDefinition(hasTests);
+        var raw = fixture.Subject(sha, sha, "unused", commandTimeout: 90, overallTimeout: 120);
+        var plan = raw.Plan with { PostMerge = new("product", "main", "window") };
+        var subject = raw with { Kind = GateSubjectKinds.PostMerge, Plan = plan, PlanHash = GateRules.PlanHash(plan) };
+        var server = new GateServer(subject, fixture.Attempt, fixture.Lease);
+        using var client = fixture.Client(server);
+        var state = new PostMergeState(previous, server);
+        var daemon = new RemoteGateDaemon(fixture.Options, client, _ => { })
+        {
+            PostMergeGateLockPrefix = Path.Combine(fixture.Root, "gate-slots"),
+            PostMergeClientFactory = () =>
+            {
+                if (hasTests) fixture.TakeRepositoryOffline();
+                return new HttpClient(state, disposeHandler: false) { BaseAddress = new Uri("http://studio/") };
+            },
+        };
+        Assert.True(await daemon.ExecuteAsync(subject, fixture.Attempt, fixture.Lease, default));
+        Assert.Equal(GateStates.Passed, Assert.Single(server.Reports).Report.Outcome);
+        if (hasTests)
+        {
+            var receipt = state.Runs.Last();
+            Assert.Equal("green", receipt.Status);
+            Assert.Equal(subject.SubjectId, receipt.Id);
+            Assert.Equal(sha, receipt.TipSha);
+            Assert.Equal("gate", receipt.ExecutionPlane);
+            Assert.Equal("host-a", receipt.ExecutionHost);
+            Assert.NotNull(receipt.Envelope);
+            Assert.NotNull(receipt.StartLoadPerCore);
+            Assert.Contains(GateStates.Running, server.Phases);
+        }
+        else
+        {
+            Assert.Empty(state.Runs);
+            Assert.Contains("no valid test definition", state.Closed!.Reason);
+            Assert.True(await daemon.ExecuteAsync(subject, fixture.Attempt, fixture.Lease, default));
+            Assert.Equal(1, state.CloseRequests);
+        }
+    }
+
+    private sealed class PostMergeState(string previous, GateServer gate) : HttpMessageHandler
+    {
+        public List<PostMergeRunRecord> Runs { get; } = [];
+        public PostMergeWindowClosure? Closed { get; private set; }
+        public int CloseRequests { get; private set; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Get)
+                return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(
+                    PostMergeProjectState.Empty("product") with { LastWindowTipSha = previous, WindowMinutes = 0, ClosedWindow = Closed }, Json),
+                    Encoding.UTF8, "application/json") };
+            if (path.EndsWith("/runs", StringComparison.Ordinal))
+            {
+                var run = JsonSerializer.Deserialize<PostMergeRunRecord>(await request.Content!.ReadAsStringAsync(ct), Json)!;
+                if (run.Status == "running") Assert.DoesNotContain(GateStates.Running, gate.Phases);
+                else Assert.Contains(GateStates.Running, gate.Phases);
+                Runs.Add(run);
+                return new(HttpStatusCode.OK) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
+            }
+            if (path.EndsWith("/close-window", StringComparison.Ordinal))
+            {
+                CloseRequests++;
+                Closed = JsonSerializer.Deserialize<PostMergeWindowClosure>(await request.Content!.ReadAsStringAsync(ct), Json);
+            }
+            return new(HttpStatusCode.NoContent);
+        }
+    }
+
     [Fact]
     public async Task Executor_runs_a_verification_command_in_its_declared_subdirectory()
     {
@@ -331,6 +407,43 @@ public sealed class RemoteGateDaemonTests
             File.WriteAllText(Path.Combine(Repository, "nonce.txt"), Guid.NewGuid().ToString("N"));
             Git("-C", Repository, "add", "proof.txt", "frontend/.keep", "nonce.txt");
             Git("-C", Repository, "commit", "-m", "fixture");
+            return Git("-C", Repository, "rev-parse", "HEAD").Trim();
+        }
+
+        public void TakeRepositoryOffline() => Directory.Move(Repository, Repository + "-offline");
+
+        public string AddPostMergeDefinition(bool hasTests)
+        {
+            if (hasTests)
+            {
+                Directory.CreateDirectory(Path.Combine(Repository, ".agent-studio"));
+                File.WriteAllText(Path.Combine(Repository, ".agent-studio", "project.yml"), """
+                    schemaVersion: 1
+                    stack: [custom]
+                    toolVersions:
+                    commands:
+                      prepare: .agent-studio/prepare
+                      build:
+                        - "true"
+                      test:
+                        - "git rev-parse HEAD"
+                      lint:
+                    testSuites:
+                      - id: routine
+                        category: routine
+                        expectedDurationSeconds: 1
+                        command: "git rev-parse HEAD"
+                    cachePaths:
+                    capabilities: [git]
+                    """);
+                var prepare = Path.Combine(Repository, ".agent-studio", "prepare");
+                File.WriteAllText(prepare, "#!/bin/sh\nexit 0\n");
+                if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(prepare,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+            File.WriteAllText(Path.Combine(Repository, "next.txt"), "merged");
+            Git("-C", Repository, "add", ".");
+            Git("-C", Repository, "commit", "-m", "post-merge fixture");
             return Git("-C", Repository, "rev-parse", "HEAD").Trim();
         }
 

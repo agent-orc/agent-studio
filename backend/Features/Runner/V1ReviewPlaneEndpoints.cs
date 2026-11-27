@@ -4626,6 +4626,19 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
     /// Gate executor identity and its admitted capabilities: the registered
     /// role keys plus every fresh, claimable advertised capability.
     /// </summary>
+    public Contract.PostMergeHostAvailability PostMergeHosts()
+    {
+        lock (_gate)
+        {
+            var fresh = _registrations.Values.Where(item =>
+                item.LastSeenAt > _time.GetUtcNow().UtcDateTime.AddMinutes(-3)).ToArray();
+            return new(fresh.Any(item => item.Capabilities.Contains(Contract.GateCapabilities.Executor)
+                && item.Capabilities.Contains(Contract.GateCapabilities.PostMerge)),
+                fresh.Any(item => item.Capabilities.Contains(Contract.ReviewCapabilities.CodingExecutor)
+                    || item.Capabilities.Contains(Contract.CapabilityProtocol.CodingExecutor)));
+        }
+    }
+
     public bool TryGetGateExecutor(string runnerId, string instanceId,
         out string hostId, out IReadOnlySet<string> capabilities)
     {
@@ -4645,6 +4658,7 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     .Where(item => item.FreshUntil > now && Claimable(item.AdvertisedStatus))
                     .Select(item => item.Key));
             }
+            _registrations[runnerId] = registration with { LastSeenAt = _time.GetUtcNow().UtcDateTime };
             hostId = registration.HostId;
             capabilities = admitted;
             return true;

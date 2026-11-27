@@ -336,9 +336,11 @@ public sealed class OperatorPostMergeCoverageFactSource(Func<IReadOnlyList<PostM
     public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
         => missing().Select(coverage => new OperatorDecisionFact(
             OperatorDecisionTypes.PostMergeRunsMissing,
-            $"{OperatorDecisionTypes.PostMergeRunsMissing}|{coverage.Project}|{coverage.LastReportedTipSha ?? "never"}",
+            $"{OperatorDecisionTypes.PostMergeRunsMissing}|{coverage.Project}|{coverage.PendingWindow?.OpenedAtUtc?.ToString("O") ?? coverage.LastMeasuredTipSha ?? "never"}",
             coverage.Project, null, coverage.Message,
-            (coverage.LastReportedAtUtc + PostMergeCoveragePolicy.Limit)?.UtcDateTime ?? nowUtc,
+            coverage.PendingWindow?.OpenedAtUtc is { } opened
+                ? opened.AddMinutes(Math.Max(1, coverage.PendingWindow.WindowMinutes) * 3).UtcDateTime
+                : (coverage.LastMeasuredAtUtc + PostMergeCoveragePolicy.Limit)?.UtcDateTime ?? nowUtc,
             [new OperatorEvidenceLink("testing", "/api/projects/" + Uri.EscapeDataString(coverage.Project) + "/testing")],
             Title: "Post-merge runs missing")).ToArray();
 }

@@ -11,9 +11,10 @@ public static class PostMergeCoverageStates
 {
     /// <summary>Strict: the project tests before integration and expects no post-merge run.</summary>
     public const string NotExpected = "not-expected";
-    /// <summary>A post-merge run covers develop, or reported within the limit.</summary>
+    /// <summary>A completed measurement covers the exact develop tip.</summary>
     public const string Current = "current";
-    /// <summary>Develop moved, and no post-merge run reported within the limit.</summary>
+    public const string Pending = "pending";
+    /// <summary>Develop has an unmeasured commit older than the coverage limit.</summary>
     public const string Missing = "missing";
     /// <summary>The develop tip or its history could not be read on this host.</summary>
     public const string Unknown = "unknown";
@@ -34,6 +35,11 @@ public sealed record PostMergeCoverage(
     string Message)
 {
     public bool Missing => State == PostMergeCoverageStates.Missing;
+    public string? LastMeasuredTipSha { get; init; }
+    public DateTimeOffset? LastMeasuredAtUtc { get; init; }
+    public bool TipMeasured => DevelopTipSha is not null && DevelopTipSha == LastMeasuredTipSha;
+    public PostMergeWindowObservation? PendingWindow { get; init; }
+    public string? AttentionReason { get; init; }
 }
 
 /// <summary>The newest post-merge receipt of a project: the tip it checked and when it reported.</summary>
@@ -44,9 +50,9 @@ public sealed record PostMergeLastReport(string TipSha, DateTimeOffset AtUtc);
 /// fast or balanced integrates before its tests run; the post-merge timers
 /// are the only check develop gets. When develop has a first-parent commit
 /// that no reported run covers, that commit is at least <see cref="Limit"/>
-/// old, and no run reported within <see cref="Limit"/>, the project runs
-/// blind and must say so. Any receipt counts as a report, a skip and a red
-/// run included: red develop has its own repair path.
+/// old, and no completed measurement covers it, the project runs blind and
+/// must say so. Report liveness is separate: skips, active starts and
+/// inconclusive receipts cannot satisfy the measurement obligation.
 /// </summary>
 public static class PostMergeCoveragePolicy
 {
@@ -62,6 +68,16 @@ public static class PostMergeCoveragePolicy
             .OrderByDescending(report => report.AtUtc).FirstOrDefault();
     }
 
+    public static PostMergeLastReport? LastMeasurement(PostMergeProjectState state)
+        => state.Runs.Where(run => run.FinishedAtUtc is not null && !run.Verdicts.Any(verdict => verdict.TimedOut)
+                && (run.Status == "green" && run.Verdicts.Count > 0 && run.Verdicts.Count >= run.Commands.Count
+                        && run.Verdicts.All(verdict => verdict.ExitCode == 0)
+                    || run.Status == "red" && (run.TestVerdicts?.Any(test => test.Attempts.Any(attempt =>
+                            attempt.Result is PostMergeTestResults.Pass or PostMergeTestResults.Fail)) == true
+                        || run.Verdicts.Any(verdict => verdict.FailedTests is { Count: > 0 }))))
+            .OrderByDescending(run => run.FinishedAtUtc)
+            .Select(run => new PostMergeLastReport(run.TipSha, run.FinishedAtUtc!.Value)).FirstOrDefault();
+
     /// <summary>
     /// The state before any history walk: null means the caller must ask
     /// whether develop holds an uncovered commit older than <see cref="Limit"/>.
@@ -73,7 +89,7 @@ public static class PostMergeCoveragePolicy
         if (string.IsNullOrWhiteSpace(developTip)) return PostMergeCoverageStates.Unknown;
         if (last is not null && string.Equals(last.TipSha, developTip, StringComparison.OrdinalIgnoreCase))
             return PostMergeCoverageStates.Current;
-        if (last is not null && now - last.AtUtc < Limit) return PostMergeCoverageStates.Current;
+        if (last is not null && now - last.AtUtc < Limit) return PostMergeCoverageStates.Pending;
         return null;
     }
 
@@ -81,7 +97,7 @@ public static class PostMergeCoveragePolicy
         => precheck ?? uncoveredOlderThanLimit switch
         {
             true => PostMergeCoverageStates.Missing,
-            false => PostMergeCoverageStates.Current,
+            false => PostMergeCoverageStates.Pending,
             null => PostMergeCoverageStates.Unknown,
         };
 
@@ -93,6 +109,8 @@ public static class PostMergeCoveragePolicy
         {
             PostMergeCoverageStates.NotExpected =>
                 $"{project} tests before integration (strict); no post-merge run is expected.",
+            PostMergeCoverageStates.Pending => $"{branch} awaits a completed post-merge measurement on {Short(developTip)}; "
+                + "the six-hour coverage deadline has not expired.",
             PostMergeCoverageStates.Current => last is null
                 ? $"{branch} has no unverified commit older than {hours} hours."
                 : $"The last post-merge run reported at {last.AtUtc.UtcDateTime:yyyy-MM-dd HH:mm} UTC on {Short(last.TipSha)}.",
@@ -101,8 +119,8 @@ public static class PostMergeCoveragePolicy
                     : $"No post-merge run was reported for {project} in the last {hours} hours "
                         + $"(last at {last.AtUtc.UtcDateTime:yyyy-MM-dd HH:mm} UTC on {Short(last.TipSha)})")
                 + $", while {branch} moved to {Short(developTip)}. Testing strategy {strategy} integrates "
-                + "before the tests run, so these merges are untested. Start the post-merge window and "
-                + "nightly timers for this project, or choose strict on the project settings page.",
+                + "before the tests run, so these merges are untested. Check the pending window admission cause "
+                + "and connected execution hosts, or choose strict on the project settings page.",
             _ => $"Studio cannot read {branch} for {project}, so it cannot tell whether post-merge runs cover it.",
         };
     }
@@ -198,7 +216,8 @@ public sealed class PostMergeCoverageService(ProjectRegistry projects, PostMerge
 
     /// <summary>The published missing projects whose strategy still expects post-merge runs; no Git.</summary>
     public IReadOnlyList<PostMergeCoverage> Missing()
-        => _latest.Values.Where(coverage => coverage.Missing
+        => _latest.Values.Where(coverage => (coverage.Missing || coverage.AttentionReason is not null)
+                && TestingStrategies.ExpectsPostMergeRuns(coverage.Strategy)
                 && Find(coverage.Project) is { Archived: false } record
                 && TestingStrategies.Resolve(settings.Get(record.DisplayName)) == coverage.Strategy)
             .OrderBy(coverage => coverage.Project, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -218,7 +237,7 @@ public sealed class PostMergeCoverageService(ProjectRegistry projects, PostMerge
         {
             try
             {
-                last = PostMergeCoveragePolicy.LastReport(runs.Read(record.Id));
+                last = PostMergeCoveragePolicy.LastMeasurement(runs.Read(record.Id));
                 tip = git.Tip(record.DisplayName, branch);
                 precheck = PostMergeCoveragePolicy.Precheck(strategy, last, tip, now);
             }
@@ -231,7 +250,21 @@ public sealed class PostMergeCoverageService(ProjectRegistry projects, PostMerge
         }
         var state = PostMergeCoveragePolicy.Decide(precheck,
             precheck is null ? Walk(record.DisplayName, tip!, last?.TipSha, now) : null);
-        var coverage = Coverage(record, strategy, state, branch, tip, last);
+        var saved = runs.Read(record.Id);
+        var pending = saved.PendingWindow is { } window ? window with { ObservedAtUtc = now } : null;
+        var reason = pending is not null && AgentStudio.Runner.MonolithTransitionAdapter.PostMergeNeedsOwner(
+            pending.OpenedAtUtc, pending.WindowMinutes, now)
+            ? $"Post-merge window has waited more than three times its {pending.WindowMinutes}-minute window: "
+                + (pending.AdmissionReason ?? "execution has not completed admission") + "."
+            : null;
+        var report = PostMergeCoveragePolicy.LastReport(saved);
+        var coverage = Coverage(record, strategy, state, branch, tip, last) with
+        {
+            LastMeasuredTipSha = last?.TipSha, LastMeasuredAtUtc = last?.AtUtc,
+            LastReportedTipSha = report?.TipSha, LastReportedAtUtc = report?.AtUtc,
+            PendingWindow = pending, AttentionReason = reason,
+            Message = reason ?? PostMergeCoveragePolicy.Message(record.DisplayName, strategy, state, branch, tip, last),
+        };
         _latest[record.DisplayName] = coverage;
         return coverage;
     }
@@ -268,7 +301,7 @@ public sealed class PostMergeCoverageService(ProjectRegistry projects, PostMerge
 /// request path, so read routes and Needs you never start Git for it.
 /// </summary>
 public sealed class PostMergeCoverageRefresher(PostMergeCoverageService coverage,
-    ILogger<PostMergeCoverageRefresher> logger, TimeProvider clock) : BackgroundService
+    ILogger<PostMergeCoverageRefresher> logger, TimeProvider clock, PostMergeGateScheduler scheduler) : BackgroundService
 {
     public static readonly TimeSpan Interval = TimeSpan.FromMinutes(1);
 
@@ -276,6 +309,11 @@ public sealed class PostMergeCoverageRefresher(PostMergeCoverageService coverage
     {
         while (!stoppingToken.IsCancellationRequested)
         {
+            try { await scheduler.MaintainAsync(stoppingToken); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "post-merge queue maintenance failed");
+            }
             try { coverage.RefreshAll(); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
