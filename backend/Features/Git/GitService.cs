@@ -2331,7 +2331,16 @@ public partial class GitService
     public string? ResolveRepoRoot(string jobId, string? watchPath)
     {
         var info = _scanner.FindJob(jobId, watchPath);
-        if (info == null) return null;
+        return info == null ? null : ResolveRepoRoot(info);
+    }
+
+    /// <summary>
+    /// <see cref="ResolveRepoRoot(string, string?)"/> for a card the caller
+    /// already holds. Skips the task lookup, which waits for a fresh task index
+    /// after every write and dominated per-card repair sweeps (AGT-4239).
+    /// </summary>
+    public string? ResolveRepoRoot(TaskInfo info)
+    {
         var entry = _scanner.GetWatchPaths().FirstOrDefault(e => e.Name == info.ProjectName);
         var configured = entry == null ? null : ResolveConfiguredRepositoryPath(entry);
         if (string.IsNullOrWhiteSpace(configured)) return null;
@@ -3274,7 +3283,7 @@ public partial class GitService
     /// (<see cref="GetProjectCommitFiles"/>) entry points so both derive an
     /// identical file list. Assumes <paramref name="sha"/> is already validated.
     /// </summary>
-    private List<GitFileChange> GetCommitFilesAtRoot(string root, string sha)
+    internal List<GitFileChange> GetCommitFilesAtRoot(string root, string sha)
     {
         if (string.IsNullOrWhiteSpace(sha) || !IsLikelyShaOrRef(sha)) return [];
         var (statusOut, _, statusCode) = RunGitArgs(root, "show", "--name-status", "--pretty=format:", sha);
@@ -8506,17 +8515,28 @@ public partial class GitService
     /// </summary>
     public Dictionary<string, CommitMeta> GetCommitMeta(string jobId, string? watchPath, IEnumerable<string> shas)
     {
+        var list = (shas ?? [])
+            .Where(s => !string.IsNullOrWhiteSpace(s) && IsLikelyShaOrRef(s))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (list.Count == 0) return new Dictionary<string, CommitMeta>(StringComparer.OrdinalIgnoreCase);
+
+        var configured = ResolveRepoRoot(jobId, watchPath);
+        if (configured == null) return new Dictionary<string, CommitMeta>(StringComparer.OrdinalIgnoreCase);
+        var root = ResolveGitToplevel(configured);
+        if (root == null) return new Dictionary<string, CommitMeta>(StringComparer.OrdinalIgnoreCase);
+        return GetCommitMetaAtRoot(root, list);
+    }
+
+    /// <summary>Root-scoped core of <see cref="GetCommitMeta"/> for an already-resolved git toplevel.</summary>
+    internal Dictionary<string, CommitMeta> GetCommitMetaAtRoot(string root, IEnumerable<string> shas)
+    {
         var result = new Dictionary<string, CommitMeta>(StringComparer.OrdinalIgnoreCase);
         var list = (shas ?? [])
             .Where(s => !string.IsNullOrWhiteSpace(s) && IsLikelyShaOrRef(s))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (list.Count == 0) return result;
-
-        var configured = ResolveRepoRoot(jobId, watchPath);
-        if (configured == null) return result;
-        var root = ResolveGitToplevel(configured);
-        if (root == null) return result;
 
         const char US = '';
         const char RS = '';
@@ -9736,6 +9756,9 @@ public partial class GitService
     /// equal the input or be a parent directory) or null if the path is not
     /// inside a git repository.
     /// </summary>
+    /// <summary>The git toplevel of <paramref name="path"/>, or null when it is not a repository.</summary>
+    internal static string? ResolveToplevelOrNull(string path) => ResolveGitToplevel(path);
+
     private static string? ResolveGitToplevel(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return null;

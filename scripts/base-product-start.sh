@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Base suite (AGT-3966): one end-to-end start of the product.
+# Base suite (AGT-3966): one end-to-end start of the product, preceded by a
+# deadline-bound start on the production-shaped fixture (AGT-4239).
 #
 # A merge-window run has just run commands.build (solution Debug build and the
 # frontend build) on this checkout. Publish that Debug build without
@@ -18,5 +19,9 @@ if [[ -f "${browser}/index.html" && -z "$(git -C "${repo_root}" status --porcela
 fi
 
 export PW_E2E_DOTNET_CONFIGURATION="${PW_E2E_DOTNET_CONFIGURATION:-Debug}"
+# AGT-4239: a fresh workspace cannot show a start-up that only hangs on real
+# data. Start the same build on the production-shaped fixture first, with the
+# production start path and a deadline; a failure names the stuck phase.
+bash "${repo_root}/scripts/product-start-fixture-check.sh"
 export PW_E2E_PUBLISH_NO_BUILD="${PW_E2E_PUBLISH_NO_BUILD:-1}"
 exec bash "${repo_root}/scripts/npm-frontend.sh" run e2e -- e2e/system/base-product-start.spec.ts

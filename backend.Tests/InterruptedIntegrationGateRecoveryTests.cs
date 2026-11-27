@@ -534,6 +534,64 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// AGT-4239: Git-backed start-up repairs run after the host is healthy and
+    /// keep integration and push admission closed. A merge or push requested
+    /// while one runs enters no publication boundary, and proceeds once the
+    /// repair ends.
+    /// </summary>
+    [Theory]
+    [InlineData("merge")]
+    [InlineData("push")]
+    public async Task MergeOrPushRequestedDuringStartupRepair_WaitsForTheRepairAndThenProceeds(string operation)
+    {
+        var repairs = new StartupRepairAdmission(NullLogger<StartupRepairAdmission>.Instance);
+        var mutations = 0;
+        var stack = Build(gateDies: false, mutationBoundary: _ => Interlocked.Increment(ref mutations),
+            startupRepairs: repairs);
+        var folder = SeedDelivery(stack, "repair-wait");
+        if (operation == "push")
+        {
+            var merged = await stack.Runner.RunAsync(Project, "repair-wait", folder, _repo, "develop", CancellationToken.None);
+            Assert.True(merged.Outcome.IsSuccessfulIntegration(), merged.Error);
+        }
+        var before = Volatile.Read(ref mutations);
+        using var release = new ManualResetEventSlim(false);
+        var repairEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        repairs.Enqueue("CommitMetadataBackfill", StartupAdmission.Integration | StartupAdmission.Push, () =>
+        {
+            repairEntered.TrySetResult();
+            release.Wait(TimeSpan.FromSeconds(60));
+        });
+        var drain = Task.Factory.StartNew(() => repairs.Drain(null, null, CancellationToken.None),
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        await repairEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        var request = Task.Run(async () => operation == "merge"
+            ? (await stack.Runner.RunAsync(Project, "repair-wait", folder, _repo, "develop", CancellationToken.None))
+                .Outcome.IsSuccessfulIntegration()
+            : (await stack.Runner.PushIntegrationBranchAsync(Project, "repair-wait", folder, _repo, "develop",
+                approvedSha: Line())).Success);
+        try
+        {
+            await Task.WhenAny(request, Task.Delay(TimeSpan.FromSeconds(2)));
+            Assert.False(request.IsCompleted);
+            Assert.Equal(before, Volatile.Read(ref mutations));
+            Assert.Equal("startup-repair:CommitMetadataBackfill (running)",
+                repairs.WaitingReason(operation == "merge" ? StartupAdmission.Integration : StartupAdmission.Push));
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        Assert.True(await request.WaitAsync(TimeSpan.FromSeconds(60)));
+        await drain.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.True(Volatile.Read(ref mutations) > before);
+        if (operation == "push")
+            Assert.Equal(Line(), Git(_origin, "rev-parse", "develop"));
+    }
+
     // ---- helpers ------------------------------------------------------------
 
     private TaskIntegrationStatus Status(Stack stack, string id)
@@ -592,7 +650,8 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
     /// <summary>The integration line: the Studio lane the merges and rollbacks move (AGT-2996).</summary>
     private string Line() => Head(GitService.IntegrationLaneRef("develop"));
 
-    private Stack Build(bool gateDies, bool gateRed = false, bool recoverOnAdmission = true, Action<string>? mutationBoundary = null)
+    private Stack Build(bool gateDies, bool gateRed = false, bool recoverOnAdmission = true, Action<string>? mutationBoundary = null,
+        StartupRepairAdmission? startupRepairs = null)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -627,7 +686,8 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
             projectSettings: settings,
             preDevelopBuildGate: new PreDevelopBuildGate(new DyingBuildTestGateRunner(gateDies, gateRed)),
             integrationWorktrees: worktrees, refMutationLeases: leases,
-            interruptedGateRecovery: recoverOnAdmission ? recovery : null);
+            interruptedGateRecovery: recoverOnAdmission ? recovery : null,
+            startupRepairs: startupRepairs);
         return new Stack(scanner, git, settings, pipeline, timeline, integration, worktrees, runner, recovery);
     }
 

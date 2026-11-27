@@ -1829,23 +1829,16 @@ public class TaskMutationService
         var migrated = 0;
         foreach (var task in _scanner.ScanAllJobsWithArchive())
         {
-            var metadata = PrepareCommitMetadata(task.FolderPath, []);
+            // AGT-4239: Git metadata is read only for a card this migration
+            // actually rewrites. Preparing it for every card ran Git and a full
+            // task-tree walk per card on every boot, and kept a 4,000-card
+            // workspace unhealthy for longer than the deploy window.
+            if (NormalizeLegacyRepositories(ReadPersistedCommitChain(task.FolderPath)) is null) continue;
+            var metadata = PrepareCommitMetadata(task.FolderPath, [], task);
             lock (TaskJsonFile.SyncRoot(task.FolderPath))
             {
-                var persisted = ReadPersistedCommitChain(task.FolderPath);
-                if (persisted is null || persisted.Count == 0) continue;
-
-                var changed = false;
-                var normalized = persisted.Select(commit =>
-                {
-                    var replacement = TaskCommitRepository.NormalizeLegacy(commit);
-                    changed |= !string.Equals(
-                        replacement.Repository,
-                        commit.Repository,
-                        StringComparison.Ordinal);
-                    return replacement;
-                }).ToList();
-                if (!changed || !WriteCommitState(task.FolderPath, ApplyCommitMetadata(normalized, metadata))) continue;
+                var normalized = NormalizeLegacyRepositories(ReadPersistedCommitChain(task.FolderPath));
+                if (normalized is null || !WriteCommitState(task.FolderPath, ApplyCommitMetadata(normalized, metadata))) continue;
                 migrated++;
             }
         }
@@ -1853,6 +1846,20 @@ public class TaskMutationService
         if (migrated > 0)
             _logger.LogInformation("commit-repository-backfill migratedTasks={Tasks}", migrated);
         return migrated;
+    }
+
+    /// <summary>The normalized chain, or null when no commit carries a legacy repository prefix.</summary>
+    private static List<TaskCommitInfo>? NormalizeLegacyRepositories(List<TaskCommitInfo>? persisted)
+    {
+        if (persisted is null || persisted.Count == 0) return null;
+        var changed = false;
+        var normalized = persisted.Select(commit =>
+        {
+            var replacement = TaskCommitRepository.NormalizeLegacy(commit);
+            changed |= !string.Equals(replacement.Repository, commit.Repository, StringComparison.Ordinal);
+            return replacement;
+        }).ToList();
+        return changed ? normalized : null;
     }
 
     /// <summary>
@@ -1882,7 +1889,8 @@ public class TaskMutationService
             var enriched = EnrichCommitMetadataFromGit(
                 task.FolderPath,
                 persisted,
-                out var resolved);
+                out var resolved,
+                task);
             if (missing.Any(sha => !ShaSetContains(resolved, sha)))
             {
                 unresolvedTasks++;
@@ -1923,12 +1931,12 @@ public class TaskMutationService
     }
 
     private List<TaskCommitInfo> PrepareCommitMetadata(
-        string folderPath, IReadOnlyList<TaskCommitInfo> incoming)
+        string folderPath, IReadOnlyList<TaskCommitInfo> incoming, TaskInfo? knownTask = null)
     {
         if (_git is null) return [];
         var candidates = (ReadPersistedCommitChain(folderPath) ?? [])
             .Concat(incoming).ToList();
-        var enriched = EnrichCommitMetadataFromGit(folderPath, candidates, out var resolved);
+        var enriched = EnrichCommitMetadataFromGit(folderPath, candidates, out var resolved, knownTask);
         return enriched.Where(commit => ShaSetContains(resolved, commit.Sha)).ToList();
     }
 
@@ -1951,7 +1959,8 @@ public class TaskMutationService
     private List<TaskCommitInfo> EnrichCommitMetadataFromGit(
         string folderPath,
         IReadOnlyList<TaskCommitInfo> commits,
-        out HashSet<string> resolvedShas)
+        out HashSet<string> resolvedShas,
+        TaskInfo? knownTask = null)
     {
         resolvedShas = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (_git is null || commits.Count == 0) return commits.ToList();
@@ -1959,6 +1968,9 @@ public class TaskMutationService
         try
         {
             var normalizedFolder = NormalizePath(folderPath);
+            if (knownTask is not null && string.Equals(NormalizePath(knownTask.FolderPath), normalizedFolder,
+                    StringComparison.OrdinalIgnoreCase))
+                return EnrichCommitMetadataAtRoot(knownTask, commits, resolvedShas);
             var task = _scanner.ScanAllJobsWithArchive().FirstOrDefault(candidate =>
                 string.Equals(
                     NormalizePath(candidate.FolderPath),
@@ -1998,6 +2010,38 @@ public class TaskMutationService
                 folderPath);
             return commits.ToList();
         }
+    }
+
+    /// <summary>
+    /// The same Git truth as the lookup path, for a card the sweep already
+    /// holds: one repository resolution per card and root-scoped Git reads,
+    /// with no task-index lookup per commit (AGT-4239).
+    /// </summary>
+    private List<TaskCommitInfo> EnrichCommitMetadataAtRoot(
+        TaskInfo task, IReadOnlyList<TaskCommitInfo> commits, HashSet<string> resolvedShas)
+    {
+        var configured = _git!.ResolveRepoRoot(task);
+        var root = configured is null ? null : GitService.ResolveToplevelOrNull(configured);
+        if (root is null) return commits.ToList();
+        var metadata = _git.GetCommitMetaAtRoot(root, commits.Select(commit => commit.Sha));
+        var enriched = new List<TaskCommitInfo>(commits.Count);
+        foreach (var commit in commits)
+        {
+            var resolvedSha = ResolveSha(metadata.Keys, commit.Sha);
+            if (resolvedSha is null)
+            {
+                enriched.Add(commit);
+                continue;
+            }
+            var files = _git.GetCommitFilesAtRoot(root, commit.Sha);
+            enriched.Add(commit with
+            {
+                FilesChanged = files.Count,
+                Files = files.Select(file => file.Path).ToList(),
+            });
+            resolvedShas.Add(resolvedSha);
+        }
+        return enriched;
     }
 
     private static HashSet<string> ReadMissingCommitMetadataShas(string folderPath)
