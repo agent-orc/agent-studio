@@ -22,7 +22,9 @@
                             testId="delivery-claim-integration-state" />
     </span>
 
-    <app-studio-release-state [state]="answer()?.studioLive ?? null" />
+    @if (answer()?.studioLive; as live) {
+      <app-studio-release-state [state]="live" />
+    }
 
     @if (mergeLabel(); as merge) {
       <span class="claim__merge"
